@@ -69,6 +69,75 @@ function saveConfig(cfg) {
 
 let config = loadConfig();
 
+// ─── PAI bootstrap (packaged binaries) ───────────────────────────────────────
+// When Husk runs from a packaged binary (electron-builder output), there is no
+// install.sh to copy libs/pai into ~/.claude/. We do it here on first launch.
+// In dev mode the bundle path won't exist; install.sh handles it.
+function bootstrapPaiIfNeeded() {
+  try {
+    const claudeDir = path.join(HOME, '.claude');
+    // Only bootstrap when ~/.claude/ does not yet exist OR it exists but has
+    // no CLAUDE.md (a fresh first-run state). Never overwrite a configured
+    // ~/.claude/.
+    const hasClaudeMd = fs.existsSync(path.join(claudeDir, 'CLAUDE.md'));
+    if (hasClaudeMd) return;
+
+    // Packaged: app.isPackaged && process.resourcesPath/pai/ exists.
+    // Dev:      <repo>/libs/pai/ relative to __dirname (which is <repo>/src/).
+    const candidates = [];
+    if (app.isPackaged && process.resourcesPath) {
+      candidates.push(path.join(process.resourcesPath, 'pai'));
+    }
+    candidates.push(path.join(__dirname, '..', 'libs', 'pai'));
+
+    let bundle = null;
+    for (const c of candidates) {
+      if (fs.existsSync(c) && fs.existsSync(path.join(c, 'CLAUDE.md.template'))) {
+        bundle = c; break;
+      }
+    }
+    if (!bundle) return;
+
+    fs.mkdirSync(claudeDir, { recursive: true });
+    // Copy CLAUDE.md template (or fallback to CLAUDE.md).
+    const tpl = fs.existsSync(path.join(bundle, 'CLAUDE.md.template'))
+      ? path.join(bundle, 'CLAUDE.md.template')
+      : path.join(bundle, 'CLAUDE.md');
+    if (fs.existsSync(tpl)) fs.copyFileSync(tpl, path.join(claudeDir, 'CLAUDE.md'));
+
+    // Copy framework subdirs only if missing. Never overwrite user data.
+    for (const sub of ['PAI', 'agents', 'hooks', 'lib', 'skills']) {
+      const src = path.join(bundle, sub);
+      const dst = path.join(claudeDir, sub);
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        copyDirRecursiveSync(src, dst);
+      }
+    }
+    const blockSrc = path.join(bundle, 'blocklist.json');
+    const blockDst = path.join(claudeDir, 'blocklist.json');
+    if (fs.existsSync(blockSrc) && !fs.existsSync(blockDst)) fs.copyFileSync(blockSrc, blockDst);
+    const slSrc = path.join(bundle, 'statusline-command.sh');
+    const slDst = path.join(claudeDir, 'statusline-command.sh');
+    if (fs.existsSync(slSrc) && !fs.existsSync(slDst)) {
+      fs.copyFileSync(slSrc, slDst);
+      try { fs.chmodSync(slDst, 0o755); } catch (_) {}
+    }
+  } catch (err) {
+    console.error('[husk] PAI bootstrap failed:', err && err.message);
+  }
+}
+
+function copyDirRecursiveSync(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dst, entry.name);
+    if (entry.isDirectory()) copyDirRecursiveSync(s, d);
+    else if (entry.isFile()) fs.copyFileSync(s, d);
+    // ignore symlinks/devices
+  }
+}
+
 // ─── Window ──────────────────────────────────────────────────────────────────────
 
 function createWindow() {
@@ -1373,6 +1442,7 @@ if (!gotLock) {
   process.on('unhandledRejection', (err) => { try { console.error('[husk] unhandledRejection:', err); } catch (_) {} });
 
   app.whenReady().then(async () => {
+    bootstrapPaiIfNeeded();
     await startNullVoiceServer();
     createWindow();
   });

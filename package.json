@@ -12,7 +12,11 @@
   },
   "scripts": {
     "start": "electron .",
-    "rebuild": "electron-rebuild -f -w node-pty"
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "dist": "electron-builder",
+    "dist:linux": "electron-builder --linux",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -22,6 +26,81 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",
-    "electron": "^32.0.0"
+    "electron": "^32.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.husk.app",
+    "productName": "Husk",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!**/node_modules/.cache/**/*",
+      "!**/*.{md,iml,ts,map,test.js}",
+      "!**/.DS_Store",
+      "!**/.eslintrc*",
+      "!**/.gitignore",
+      "!**/CHANGELOG*"
+    ],
+    "extraResources": [
+      {
+        "from": "libs/pai",
+        "to": "pai",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "installer",
+        "to": "installer",
+        "filter": ["**/*"]
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Development",
+      "icon": "installer/husk-icon.png",
+      "synopsis": "Desktop home for CLI AI agents",
+      "description": "Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.",
+      "maintainer": "DorShaer <85877103+DorShaer@users.noreply.github.com>"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "installer/husk-icon.png",
+      "category": "public.app-category.developer-tools",
+      "darkModeSupport": true,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "installer/husk-icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Husk"
+    },
+    "appImage": {
+      "license": "LICENSE"
+    },
+    "publish": null
   }
 }
