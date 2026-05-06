@@ -58,8 +58,11 @@ function loadConfig() {
 
 function saveConfig(cfg) {
   try {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+    // Tighten any pre-existing-but-loose perms left over from before this guard.
+    try { fs.chmodSync(CONFIG_PATH, 0o600); } catch (_) {}
+    try { fs.chmodSync(CONFIG_DIR, 0o700); } catch (_) {}
     return true;
   } catch (_) { return false; }
 }
@@ -284,7 +287,11 @@ function readClaudeUserConfig() {
 }
 function writeClaudeUserConfig(obj) {
   try {
-    fs.writeFileSync(CLAUDE_USER_CONFIG, JSON.stringify(obj, null, 2));
+    // Mode 600 because this file holds MCP API keys, OAuth tokens, and other
+    // secrets in plaintext (mcpServers.<id>.env / .headers). Default umask
+    // would leave it world-readable on multi-user systems.
+    fs.writeFileSync(CLAUDE_USER_CONFIG, JSON.stringify(obj, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(CLAUDE_USER_CONFIG, 0o600); } catch (_) {}
     return true;
   } catch (_) { return false; }
 }
@@ -1076,22 +1083,32 @@ ipcMain.handle('context:remove', (_e, filePath) => {
 });
 
 ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
-  if (!sourcePath || !fs.existsSync(sourcePath)) return { ok: false, error: 'Source not found' };
+  if (!sourcePath || typeof sourcePath !== 'string') return { ok: false, error: 'No source path' };
+  if (!fs.existsSync(sourcePath)) return { ok: false, error: 'Source not found' };
   try {
+    // path.basename normalizes ".." segments to "..", so we also reject any
+    // basename starting with "..", a literal "/", or a "\" — defense in depth.
     const baseName = path.basename(sourcePath);
-    let dest;
+    if (!baseName || baseName.startsWith('..') || /[\/\\]/.test(baseName)) {
+      return { ok: false, error: 'Invalid file name' };
+    }
+    let destDir; let dest;
     if (kind === 'skill') {
       const skillName = baseName.replace(/\.md$/i, '');
-      const skillDir = path.join(CLAUDE_DIR, 'skills', skillName);
-      fs.mkdirSync(skillDir, { recursive: true });
-      dest = path.join(skillDir, 'SKILL.md');
-      fs.copyFileSync(sourcePath, dest);
+      if (!/^[A-Za-z0-9._-]+$/.test(skillName)) return { ok: false, error: 'Invalid skill name' };
+      destDir = path.resolve(path.join(CLAUDE_DIR, 'skills', skillName));
+      const skillsRoot = path.resolve(path.join(CLAUDE_DIR, 'skills'));
+      if (!destDir.startsWith(skillsRoot + path.sep)) return { ok: false, error: 'Refusing path outside skills/' };
+      fs.mkdirSync(destDir, { recursive: true });
+      dest = path.join(destDir, 'SKILL.md');
     } else {
-      const ctxDir = path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT');
-      fs.mkdirSync(ctxDir, { recursive: true });
-      dest = path.join(ctxDir, baseName);
-      fs.copyFileSync(sourcePath, dest);
+      destDir = path.resolve(path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT'));
+      const resolvedDest = path.resolve(path.join(destDir, baseName));
+      if (!resolvedDest.startsWith(destDir + path.sep)) return { ok: false, error: 'Refusing path outside CONTEXT/' };
+      fs.mkdirSync(destDir, { recursive: true });
+      dest = resolvedDest;
     }
+    fs.copyFileSync(sourcePath, dest);
     return { ok: true, dest };
   } catch (err) { return { ok: false, error: err.message }; }
 });
