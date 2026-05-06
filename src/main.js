@@ -195,21 +195,27 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     } catch (_) {}
   }
 
-  // Wrap the agent in `script -q -c` so it gets a proper controlling-terminal handoff.
-  // node-pty's bare spawn doesn't fully establish the controlling tty for claude's TUI,
-  // which causes claude --resume <id> to exit with code 129 (no controlling terminal /
-  // session-leader handoff). `script(1)` explicitly does setsid + TIOCSCTTY for us.
-  // /dev/null as the typescript path = no logging, just the pty wrapping.
+  // Establishing the controlling terminal is platform-specific:
+  //  - Linux: node-pty's bare spawn doesn't always do setsid + TIOCSCTTY,
+  //    so we wrap with GNU script(1): `script -q -c <cmd> /dev/null`.
+  //    This is what makes `claude --resume <id>` work without exit code 129.
+  //  - macOS: node-pty handles the tty correctly on Darwin, AND BSD
+  //    script(1) does NOT accept `-c` (it's "illegal option -- c"), so the
+  //    Linux trick is actively harmful. We use `sh -c "<cmd>"` so quoting
+  //    inside the command (e.g. claude's long --append-system-prompt) is
+  //    parsed by the shell instead of being naively split on whitespace.
   let exe; let argv;
   if (!cmd) {
     exe = shellBin; argv = ['-i'];
+  } else if (process.platform === 'darwin') {
+    exe = '/bin/sh';
+    argv = ['-c', cmd];
   } else if (fs.existsSync('/usr/bin/script')) {
     exe = '/usr/bin/script';
     argv = ['-q', '-c', cmd, '/dev/null'];
   } else {
-    // macOS: script syntax is different, fall back to direct spawn
-    const tokens = cmd.split(/\s+/).filter(Boolean);
-    exe = tokens[0]; argv = tokens.slice(1);
+    exe = '/bin/sh';
+    argv = ['-c', cmd];
   }
 
   ptyProc = pty.spawn(exe, argv, { name: 'xterm-256color', cols, rows, cwd, env });
