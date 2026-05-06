@@ -1,0 +1,26 @@
+node_modules/
+dist/
+out/
+build/
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.env
+.env.local
+.env.*.local
+
+# Local Husk data and config (live on the user's machine, not in source)
+config.json
+**/voice-models/
+.husk-tmp/
