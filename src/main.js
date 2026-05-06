@@ -1,7 +1,7 @@
 // Husk: Electron main process.
 // Wraps a configurable agent CLI via node-pty and exposes pages: chat, skills, sessions, files, preferences.
 
-const { app, BrowserWindow, ipcMain, shell, dialog, webUtils, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -143,10 +143,15 @@ function buildClaudeSettingsOverride() {
     // Give skill descriptions room so claude does not silently drop them.
     // Default 0.01 is too tight when more than ~10 skills are installed.
     cloned.skillListingBudgetFraction = 0.05;
-    const tmpDir = path.join(os.tmpdir(), 'husk');
-    fs.mkdirSync(tmpDir, { recursive: true });
+    // Use a per-user husk subdir under tmpdir with mode 0700 so other local
+    // users on a multi-user system can't pre-create the file, symlink it, or
+    // read its contents. The file itself is mode 0600.
+    const tmpDir = path.join(os.tmpdir(), `husk-${process.getuid ? process.getuid() : 'u'}`);
+    fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(tmpDir, 0o700); } catch (_) {}
     const tmpFile = path.join(tmpDir, 'claude-settings.json');
-    fs.writeFileSync(tmpFile, JSON.stringify(cloned, null, 2));
+    fs.writeFileSync(tmpFile, JSON.stringify(cloned, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(tmpFile, 0o600); } catch (_) {}
     return tmpFile;
   } catch (_) { return null; }
 }
@@ -672,7 +677,10 @@ ipcMain.handle('skills:create', (_e, { name, description, content }) => {
   if (!description || !description.trim()) {
     return { ok: false, error: 'Description is required.' };
   }
-  const safeDesc = description.trim().replace(/"/g, '\\"');
+  // Escape backslashes BEFORE quotes so we don't leave half-escaped pairs:
+  //   raw: foo\"bar    naive: foo\\"bar (broken, closes the JSON string)
+  //   escape \\ first:  foo\\\"bar -> when YAML parses double-quoted, it sees foo\"bar
+  const safeDesc = description.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const body = (content || '').trim() || `# ${name}\n\n${description.trim()}\n\n## When to use\n\nDescribe trigger conditions.\n\n## How to use\n\nDescribe steps.\n`;
   const md = `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
   const agentKind = getAgentKind();
@@ -688,10 +696,18 @@ ipcMain.handle('skills:create', (_e, { name, description, content }) => {
     fs.mkdirSync(HUSK_PROMPTS_DIR, { recursive: true });
     const fileName = `${name}.md`;
     const mdPath = path.join(HUSK_PROMPTS_DIR, fileName);
-    if (fs.existsSync(mdPath) || fs.existsSync(mdPath + '.disabled')) {
+    if (fs.existsSync(mdPath + '.disabled')) {
       return { ok: false, error: `A prompt named "${name}" already exists.` };
     }
-    fs.writeFileSync(mdPath, md);
+    // Atomic create-if-not-exists via O_EXCL avoids a TOCTOU race between an
+    // existsSync probe and the writeFileSync. Throws EEXIST if the path is
+    // already there.
+    try {
+      fs.writeFileSync(mdPath, md, { flag: 'wx', mode: 0o644 });
+    } catch (e) {
+      if (e && e.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
+      throw e;
+    }
     return { ok: true, source: 'husk', id: fileName, path: mdPath, mdPath };
   } catch (err) {
     return { ok: false, error: err.message };
