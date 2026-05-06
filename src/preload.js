@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('husk', {
     list: () => ipcRenderer.invoke('sessions:list'),
     read: (prdPath) => ipcRenderer.invoke('sessions:read', prdPath),
     findClaudeId: (payload) => ipcRenderer.invoke('sessions:findClaudeId', payload),
+    delete: (paths) => ipcRenderer.invoke('sessions:delete', { paths }),
   },
   prds: { list: () => ipcRenderer.invoke('prds:list') },
   fs: {
