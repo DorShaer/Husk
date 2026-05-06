@@ -662,6 +662,31 @@ input[type="checkbox"]:disabled {
   transform: translateX(2px);
   box-shadow: var(--shadow-soft);
 }
+.sessions-list.select-mode .session-row {
+  grid-template-columns: auto 1fr auto auto auto;
+}
+.sessions-list.select-mode .session-row:hover { transform: none; }
+.session-row.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-1));
+}
+.session-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+}
+.session-check input[type="checkbox"] {
+  width: 16px; height: 16px; margin: 0;
+  accent-color: var(--accent); cursor: pointer;
+}
+.ghost-btn-danger {
+  color: var(--danger, #ef4444);
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 35%, var(--line));
+}
+.ghost-btn-danger:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 18%, var(--bg-3));
+}
 .session-task { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .session-task strong {
   font-weight: 600; font-size: 14px;

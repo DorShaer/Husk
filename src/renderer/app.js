@@ -478,6 +478,8 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
 
 // ─── Sessions page ───────────────────────────────────────────────────────────────
 let sessionsCache = [];
+let sessionsSelectMode = false;
+const sessionsSelected = new Set();
 async function renderSessions() {
   const list = $('#sessions-list');
   list.innerHTML = '<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">Loading sessions…</div></div>';
@@ -487,7 +489,11 @@ async function renderSessions() {
     return;
   }
   sessionsCache = res.sessions;
+  // Drop selections that no longer exist (e.g. after delete + refresh).
+  const live = new Set(sessionsCache.map((s) => s.path));
+  for (const p of sessionsSelected) if (!live.has(p)) sessionsSelected.delete(p);
   paintSessions(sessionsCache, $('#sessions-search').value);
+  syncSelectModeUI();
   // Keep the rail's Recent list in sync with the full Sessions page.
   refreshRecentList();
 }
@@ -519,13 +525,19 @@ function paintSessions(list, query) {
     ul.innerHTML = `<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">${msg}</div></div>`;
     return;
   }
+  ul.classList.toggle('select-mode', sessionsSelectMode);
   ul.innerHTML = filtered.map((s) => {
     const phaseHTML = s.prdPhase
       ? `<span class="session-phase ${escapeAttr(s.prdPhase)}">${escapeHtml(s.prdPhase)}</span>`
       : `<span class="session-phase">chat</span>`;
     const progressHTML = s.prdProgress ? `<span class="session-progress">${escapeHtml(s.prdProgress)}</span>` : '';
+    const checked = sessionsSelected.has(s.path) ? 'checked' : '';
+    const checkboxHTML = sessionsSelectMode
+      ? `<span class="session-check"><input type="checkbox" tabindex="-1" ${checked} data-path="${escapeAttr(s.path)}" /></span>`
+      : '';
     return `
-      <button class="session-row" data-id="${escapeAttr(s.id)}" data-title="${escapeAttr(s.title)}" data-project="${escapeAttr(s.projectPath)}" data-path="${escapeAttr(s.path)}" data-prdpath="${escapeAttr(s.prdPath)}" data-started="${escapeAttr(s.startedISO)}" data-mtime="${s.mtime}" data-size="${s.sizeBytes}" data-phase="${escapeAttr(s.prdPhase || '')}" data-progress="${escapeAttr(s.prdProgress || '')}">
+      <button class="session-row${sessionsSelected.has(s.path) ? ' selected' : ''}" data-id="${escapeAttr(s.id)}" data-title="${escapeAttr(s.title)}" data-project="${escapeAttr(s.projectPath)}" data-path="${escapeAttr(s.path)}" data-prdpath="${escapeAttr(s.prdPath)}" data-started="${escapeAttr(s.startedISO)}" data-mtime="${s.mtime}" data-size="${s.sizeBytes}" data-phase="${escapeAttr(s.prdPhase || '')}" data-progress="${escapeAttr(s.prdProgress || '')}">
+        ${checkboxHTML}
         <div class="session-task">
           <strong>${escapeHtml(s.title)}</strong>
           <span class="session-slug">${escapeHtml(s.projectPath)} · ${escapeHtml(s.id.slice(0, 8))}</span>
@@ -537,12 +549,77 @@ function paintSessions(list, query) {
     `;
   }).join('');
   ul.querySelectorAll('.session-row').forEach((r) =>
-    r.addEventListener('click', () => openSessionDetail(r.dataset))
+    r.addEventListener('click', (e) => {
+      if (sessionsSelectMode) {
+        e.preventDefault();
+        toggleSessionSelection(r.dataset.path);
+      } else {
+        openSessionDetail(r.dataset);
+      }
+    })
   );
 }
+
+function toggleSessionSelection(p) {
+  if (!p) return;
+  if (sessionsSelected.has(p)) sessionsSelected.delete(p);
+  else sessionsSelected.add(p);
+  paintSessions(sessionsCache, $('#sessions-search').value);
+  syncSelectModeUI();
+}
+
+function syncSelectModeUI() {
+  const selectBtn = $('#btn-sessions-select');
+  const deleteBtn = $('#btn-sessions-delete');
+  const cancelBtn = $('#btn-sessions-cancel');
+  if (!selectBtn) return;
+  selectBtn.hidden = sessionsSelectMode;
+  deleteBtn.hidden = !sessionsSelectMode;
+  cancelBtn.hidden = !sessionsSelectMode;
+  const n = sessionsSelected.size;
+  deleteBtn.textContent = `Delete (${n})`;
+  deleteBtn.disabled = n === 0;
+}
+
+function enterSelectMode() {
+  sessionsSelectMode = true;
+  paintSessions(sessionsCache, $('#sessions-search').value);
+  syncSelectModeUI();
+}
+function exitSelectMode() {
+  sessionsSelectMode = false;
+  sessionsSelected.clear();
+  paintSessions(sessionsCache, $('#sessions-search').value);
+  syncSelectModeUI();
+}
+
+async function deleteSelectedSessions() {
+  const paths = [...sessionsSelected];
+  if (!paths.length) return;
+  const res = await window.husk.sessions.delete(paths);
+  if (res.cancelled) return;
+  if (!res.ok && !res.deleted) {
+    toast(res.error || 'Delete failed', 'error');
+    return;
+  }
+  toast(`Deleted ${res.deleted} session${res.deleted === 1 ? '' : 's'}`, 'success');
+  if (res.failed?.length) toast(`${res.failed.length} failed`, 'error');
+  sessionsSelectMode = false;
+  sessionsSelected.clear();
+  await renderSessions();
+}
+
 $('#sessions-search').addEventListener('input', (e) => paintSessions(sessionsCache, e.target.value));
 $('#btn-sessions-refresh').addEventListener('click', renderSessions);
 $('#btn-sessions-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.sessionsDir));
+$('#btn-sessions-select').addEventListener('click', enterSelectMode);
+$('#btn-sessions-cancel').addEventListener('click', exitSelectMode);
+$('#btn-sessions-delete').addEventListener('click', deleteSelectedSessions);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && sessionsSelectMode && document.querySelector('.page-sessions:not([hidden])')) {
+    exitSelectMode();
+  }
+});
 
 async function openSessionDetail(d) {
   // Read PRD body if matched, else show first message preview
