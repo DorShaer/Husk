@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Husk</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+    <link rel="stylesheet" href="vendor/xterm.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="vendor/xterm.js"></script>
+    <script src="vendor/addon-fit.js"></script>
+    <script src="vendor/addon-web-links.js"></script>
+  </head>
+  <body data-theme="dark" data-accent="orange" data-page="chat" data-rail="expanded">
+
+    <!-- First-run modal -->
+    <div id="first-run" class="modal" hidden>
+      <div class="modal-card">
+        <img class="modal-icon-img" src="assets/husk-logo.png" alt="Husk" />
+        <div class="modal-title">Welcome to Husk</div>
+        <div class="modal-sub">A native desktop shell for your terminal AI agent.</div>
+        <div class="modal-section">
+          <div class="modal-label">Agent name</div>
+          <input type="text" id="fr-name" value="Husk" autocomplete="off" spellcheck="false" maxlength="40" />
+          <div class="modal-hint">What the agent calls itself when you ask its name. Defaults to Husk. Pick anything you like.</div>
+        </div>
+        <div class="modal-section">
+          <div class="modal-label">Agent command</div>
+          <input type="text" id="fr-cmd" value="claude" autocomplete="off" spellcheck="false" />
+          <div class="modal-hint">The CLI we will launch in the chat tab. Try <code>claude</code>, <code>aider</code>, <code>codex</code>, or any TUI. Empty starts a plain shell.</div>
+        </div>
+        <button id="fr-go" class="btn-primary">Launch Husk</button>
+      </div>
+    </div>
+
+    <!-- Drag overlay -->
+    <div id="drag-overlay" class="drag-overlay" hidden>
+      <div class="drag-targets">
+        <div class="drag-target" data-kind="context">
+          <div class="dt-icon">⇩</div>
+          <div class="dt-title">Add to context</div>
+          <div class="dt-hint">→ ~/.claude/MEMORY/CONTEXT/</div>
+        </div>
+        <div class="drag-target" data-kind="skill">
+          <div class="dt-icon">⌬</div>
+          <div class="dt-title">Install as skill</div>
+          <div class="dt-hint">→ ~/.claude/skills/&lt;name&gt;/</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Command palette -->
+    <div id="palette" class="palette" hidden>
+      <div class="palette-card">
+        <input type="text" id="palette-input" placeholder="Search actions..." autocomplete="off" spellcheck="false" />
+        <ul id="palette-list" class="palette-list"></ul>
+        <div class="palette-foot">
+          <span><kbd>↑↓</kbd> navigate</span>
+          <span><kbd>↵</kbd> run</span>
+          <span><kbd>Esc</kbd> close</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Topbar -->
+    <header id="topbar">
+      <div class="brand">
+        <img class="logo-img" src="assets/husk-logo.png" alt="Husk" />
+        <span class="brand-text">HUSK</span>
+      </div>
+      <div class="topbar-spacer"></div>
+      <button class="iconbtn" id="btn-palette" title="Command palette (Ctrl+K)">⌘K</button>
+      <button class="iconbtn" id="btn-theme" title="Toggle theme"><span id="theme-icon">☾</span></button>
+      <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)">＋ New</button>
+    </header>
+
+    <!-- Main: rail + page area -->
+    <main id="main">
+      <aside id="rail" class="rail">
+        <button class="rail-toggle" id="rail-toggle" title="Expand sidebar">›</button>
+
+        <div class="rail-section rail-section-agent">
+          <button class="rail-agent" id="rail-agent-pill" title="Switch agent">
+            <span class="ra-name" id="ra-name">claude</span>
+            <span class="ra-chev">▾</span>
+          </button>
+          <div class="rail-agent-menu" id="rail-agent-menu" hidden></div>
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-section-head">Workspace</div>
+          <nav class="rail-nav">
+            <button class="rail-item active" data-page="chat" title="Chat">
+              <span class="ri-icon">⌧</span>
+              <span class="ri-label">Chat</span>
+            </button>
+            <button class="rail-item" data-page="skills" title="Skills">
+              <span class="ri-icon">⌬</span>
+              <span class="ri-label">Skills</span>
+            </button>
+            <button class="rail-item" data-page="sessions" title="Sessions">
+              <span class="ri-icon">⊕</span>
+              <span class="ri-label">Sessions</span>
+            </button>
+            <button class="rail-item" data-page="files" title="Files">
+              <span class="ri-icon">▤</span>
+              <span class="ri-label">Files</span>
+            </button>
+            <button class="rail-item" data-page="mcp" title="MCP servers">
+              <span class="ri-icon">⊟</span>
+              <span class="ri-label">MCP</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="rail-section rail-section-recent" id="rail-recent" hidden>
+          <div class="rail-section-head">
+            <span>Recent</span>
+            <button class="rail-section-action" id="btn-recent-all" title="See all sessions">all</button>
+          </div>
+          <div class="rail-sub" id="rail-recent-list"></div>
+        </div>
+
+        <div class="rail-section rail-section-context" id="rail-context">
+          <div class="rail-section-head">
+            <span>In context</span>
+            <button class="rail-section-action" id="btn-context-add" title="Share a file with the agent">+</button>
+          </div>
+          <div class="rail-sub" id="rail-context-list">
+            <div class="rail-sub-empty">Nothing shared yet. Drop a file or click +.</div>
+          </div>
+        </div>
+
+        <div class="rail-spacer"></div>
+
+        <div class="rail-section">
+          <nav class="rail-nav">
+            <button class="rail-item" data-page="preferences" title="Preferences">
+              <span class="ri-icon">⚙</span>
+              <span class="ri-label">Preferences</span>
+            </button>
+          </nav>
+        </div>
+      </aside>
+
+      <section class="pages" id="pages">
+
+        <!-- CHAT PAGE -->
+        <div class="page page-chat" data-page="chat">
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Chat</h1>
+              <span class="page-sub" id="chat-sub">claude · ~</span>
+            </div>
+            <div class="page-head-right">
+              <button class="ghost-btn" id="btn-restart" title="Restart agent">↻ Restart</button>
+            </div>
+          </div>
+          <div class="chat-stage">
+            <div id="chat-empty" class="chat-empty">
+              <img class="ce-logo-img" src="assets/husk-logo.png" alt="Husk" />
+              <div class="ce-title">Ready when you are</div>
+              <div class="ce-sub">Talking to <span id="ce-agent">claude</span> · drop files anywhere on the window</div>
+              <button class="ce-launch btn-primary" id="ce-launch">Start building</button>
+              <label class="ce-skip">
+                <input type="checkbox" id="ce-skip-next" />
+                <span>Don't show this on next launch</span>
+              </label>
+              <div class="ce-mcps" id="ce-mcps" hidden></div>
+              <div class="ce-suggestions">
+                <button class="ce-chip" data-prompt="What can you do?">What can you do?</button>
+                <button class="ce-chip" data-prompt="Help me plan a small feature. Walk me through it one question at a time so we don't miss anything.">Plan a feature</button>
+                <button class="ce-chip" data-prompt="What is in this directory? Give me a one-paragraph orientation of what this project does.">Orient me to this project</button>
+              </div>
+            </div>
+            <div class="terminal-wrap">
+              <div id="terminal"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SKILLS PAGE -->
+        <div class="page page-skills" data-page="skills" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Skills</h1>
+              <span class="page-sub" id="skills-sub">skills installed at ~/.claude/skills/</span>
+            </div>
+            <div class="page-head-right">
+              <input type="search" id="skills-search" class="ghost-input" placeholder="Filter skills…" />
+              <button class="ghost-btn" id="btn-skills-refresh" title="Refresh">↻</button>
+              <button class="ghost-btn" id="btn-skills-open" title="Open in OS">Open folder</button>
+              <button class="btn-primary" id="btn-skills-new" title="Create a new skill">＋ Create skill</button>
+            </div>
+          </div>
+          <div class="skills-grid" id="skills-grid"></div>
+        </div>
+
+        <!-- SESSIONS PAGE -->
+        <div class="page page-sessions" data-page="sessions" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Sessions</h1>
+              <span class="page-sub" id="sessions-sub">click a session to preview, then resume in chat</span>
+            </div>
+            <div class="page-head-right">
+              <input type="search" id="sessions-search" class="ghost-input" placeholder="Filter sessions…" />
+              <button class="ghost-btn" id="btn-sessions-refresh" title="Refresh">↻</button>
+              <button class="ghost-btn" id="btn-sessions-open" title="Open in OS">Open folder</button>
+            </div>
+          </div>
+          <div class="sessions-list" id="sessions-list"></div>
+        </div>
+
+        <!-- FILES PAGE -->
+        <!-- MCP PAGE -->
+        <div class="page page-mcp" data-page="mcp" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">MCP servers</h1>
+              <span class="page-sub">give the agent more abilities · click an entry to install</span>
+            </div>
+            <div class="page-head-right">
+              <button class="ghost-btn" id="btn-mcp-refresh" title="Refresh">↻</button>
+              <button class="btn-primary" id="btn-mcp-add-custom" title="Install any MCP server with a custom command">＋ Add custom server</button>
+            </div>
+          </div>
+          <div class="mcp-body">
+            <section class="mcp-section">
+              <div class="mcp-section-head">Installed</div>
+              <div class="mcp-installed" id="mcp-installed">
+                <div class="empty-state"><div class="es-icon">⊟</div><div class="es-msg">No MCP servers yet. Pick one below to give the agent a new ability.</div></div>
+              </div>
+            </section>
+            <section class="mcp-section">
+              <div class="mcp-section-head">Available</div>
+              <div class="mcp-grid" id="mcp-catalog"></div>
+            </section>
+          </div>
+        </div>
+
+        <!-- MCP install modal -->
+        <div id="mcp-install" class="modal" hidden>
+          <div class="modal-card">
+            <div class="modal-title" id="mcp-install-title">Install</div>
+            <div class="modal-sub" id="mcp-install-sub"></div>
+            <div id="mcp-install-fields"></div>
+            <div style="display:flex; gap:8px; margin-top:14px;">
+              <button class="ghost-btn" id="mcp-install-cancel">Cancel</button>
+              <button class="btn-primary" id="mcp-install-confirm" style="flex:1;">Install</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="page page-files" data-page="files" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Files</h1>
+              <span class="page-sub" id="files-sub"></span>
+            </div>
+            <div class="page-head-right">
+              <label class="ghost-toggle">
+                <input type="checkbox" id="files-hidden" />
+                <span>Show hidden</span>
+              </label>
+              <input type="text" id="files-root" class="ghost-input" placeholder="root path" />
+              <button class="ghost-btn" id="btn-files-refresh">↻</button>
+            </div>
+          </div>
+          <div class="tree" id="tree"></div>
+        </div>
+
+        <!-- PREFERENCES PAGE -->
+        <div class="page page-preferences" data-page="preferences" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Preferences</h1>
+              <span class="page-sub">customize Husk</span>
+            </div>
+          </div>
+          <div class="prefs-body">
+            <section class="pref-card">
+              <div class="pref-card-title">Agent</div>
+              <label class="pref-row">
+                <span class="pref-label">Name</span>
+                <input type="text" id="pref-agent-name" placeholder="Husk" maxlength="40" />
+              </label>
+              <label class="pref-row">
+                <span class="pref-label">Command</span>
+                <input type="text" id="pref-agent" placeholder="claude" />
+              </label>
+              <div class="pref-hint">Name is what the agent calls itself when asked. Saved to <code>~/.config/husk/config.json</code>.</div>
+              <button class="btn-primary" id="pref-save">Save &amp; Restart Agent</button>
+            </section>
+
+            <section class="pref-card">
+              <div class="pref-card-title">Behavior</div>
+              <label class="pref-row">
+                <span class="pref-label">Show recap line after each response</span>
+                <input type="checkbox" id="pref-recap" />
+              </label>
+              <div class="pref-hint">When on, the agent emits a one-line <code>* recap:</code> after substantive replies and the voice (if enabled) reads it aloud. Restart the agent after changing.</div>
+            </section>
+
+            <section class="pref-card">
+              <div class="pref-card-title">Appearance</div>
+              <label class="pref-row">
+                <span class="pref-label">Theme</span>
+                <select id="pref-theme">
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                </select>
+              </label>
+              <div class="pref-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+                <span class="pref-label">Accent color</span>
+                <div class="accent-picker" id="accent-picker">
+                  <div class="accent-swatch" data-c="orange" title="Orange (Claude)"></div>
+                  <div class="accent-swatch" data-c="cyan" title="Cyan"></div>
+                  <div class="accent-swatch" data-c="indigo" title="Indigo"></div>
+                  <div class="accent-swatch" data-c="emerald" title="Emerald"></div>
+                  <div class="accent-swatch" data-c="rose" title="Rose"></div>
+                </div>
+              </div>
+              <label class="pref-row">
+                <span class="pref-label">Sidebar expanded by default</span>
+                <input type="checkbox" id="pref-rail" />
+              </label>
+            </section>
+
+            <section class="pref-card">
+              <div class="pref-card-title">Voice</div>
+              <div class="pref-row">
+                <span class="pref-label">Status</span>
+                <span class="pref-status" id="voice-status">Not installed</span>
+              </div>
+              <label class="pref-row">
+                <span class="pref-label">Enable voice</span>
+                <input type="checkbox" id="pref-voice-enabled" />
+              </label>
+              <label class="pref-row">
+                <span class="pref-label">Voice</span>
+                <select id="pref-voice-name">
+                  <option value="en_US-amy-medium">Amy (en-US, medium)</option>
+                </select>
+              </label>
+              <label class="pref-row">
+                <span class="pref-label">Rate <span id="pref-voice-rate-display" style="color:var(--accent); margin-left:6px;">1.0×</span></span>
+                <input type="range" id="pref-voice-rate" min="0.5" max="1.6" step="0.1" value="1.0" />
+              </label>
+              <div style="display:flex; gap:8px; margin-top:4px;">
+                <button class="ghost-btn" id="btn-voice-install" style="flex:1;">Install voice (~50 MB)</button>
+                <button class="ghost-btn" id="btn-voice-test" style="flex:1;">Test</button>
+                <button class="ghost-btn" id="btn-voice-uninstall" style="flex:1;">Uninstall</button>
+              </div>
+              <div class="pref-hint" id="voice-hint">Local neural TTS via Piper. No API key, no network at runtime, fully offline after install.</div>
+            </section>
+
+            <section class="pref-card">
+              <div class="pref-card-title">File Browser</div>
+              <label class="pref-row">
+                <span class="pref-label">Tree root</span>
+                <input type="text" id="pref-root" />
+              </label>
+              <label class="pref-row">
+                <span class="pref-label">Show hidden files</span>
+                <input type="checkbox" id="pref-hidden" />
+              </label>
+            </section>
+          </div>
+        </div>
+
+      </section>
+
+      <aside id="status-panel">
+        <div class="sp-head">
+          <span class="sp-head-label">STATUS</span>
+          <span class="sp-live-dot" title="Auto-refreshing"></span>
+        </div>
+        <div id="sp-content" class="sp-content"></div>
+        <div class="sp-foot" id="sp-foot">Husk v0.2</div>
+      </aside>
+
+      <aside id="detail-panel" class="detail-panel" hidden>
+        <header class="dp-head">
+          <div class="dp-title-wrap">
+            <div class="dp-eyebrow" id="dp-eyebrow"></div>
+            <h2 class="dp-title" id="dp-title"></h2>
+            <div class="dp-sub" id="dp-sub"></div>
+          </div>
+          <button class="iconbtn dp-close" id="dp-close" title="Close (Esc)">✕</button>
+        </header>
+        <div class="dp-meta" id="dp-meta"></div>
+        <div class="dp-body" id="dp-body"></div>
+        <footer class="dp-foot" id="dp-foot"></footer>
+      </aside>
+    </main>
+
+
+    <!-- Create skill modal -->
+    <div id="new-skill-modal" class="modal" hidden>
+      <div class="modal-card modal-wide">
+        <div class="modal-icon">⌬</div>
+        <div class="modal-title">Create a skill</div>
+        <div class="modal-sub">Skills live at <code>~/.claude/skills/&lt;name&gt;/SKILL.md</code> and load when you start claude.</div>
+
+        <div class="modal-section">
+          <div class="modal-label">Name</div>
+          <input type="text" id="ns-name" placeholder="my-new-skill" autocomplete="off" spellcheck="false" />
+          <div class="modal-hint">Lowercase, dashes ok. Becomes the folder and frontmatter <code>name</code>.</div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-label">Description</div>
+          <input type="text" id="ns-desc" placeholder="Short one-line summary of when to use this skill" autocomplete="off" />
+          <div class="modal-hint">Shown to claude as the skill's purpose. Required.</div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-label">Content (Markdown)</div>
+          <textarea id="ns-content" placeholder="Leave empty for a template, or write your own SKILL.md body" spellcheck="false"></textarea>
+          <div class="modal-hint">Optional. empty falls back to a sensible template.</div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-btn" id="ns-cancel">Cancel</button>
+          <button class="btn-primary" id="ns-create">Create skill</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
