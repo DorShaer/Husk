@@ -73,6 +73,34 @@ let config = loadConfig();
 // When Husk runs from a packaged binary (electron-builder output), there is no
 // install.sh to copy libs/pai into ~/.claude/. We do it here on first launch.
 // In dev mode the bundle path won't exist; install.sh handles it.
+// Seed ~/.config/husk/prompts/ from the bundled curated set on first launch.
+// Never overwrites: a file that already exists in the destination is left
+// alone so user-edited prompts survive across upgrades.
+function bootstrapHuskPromptsIfNeeded() {
+  try {
+    const candidates = [];
+    if (app.isPackaged && process.resourcesPath) {
+      candidates.push(path.join(process.resourcesPath, 'installer', 'prompts'));
+    }
+    candidates.push(path.join(__dirname, '..', 'installer', 'prompts'));
+    let bundle = null;
+    for (const c of candidates) {
+      if (fs.existsSync(c) && fs.statSync(c).isDirectory()) { bundle = c; break; }
+    }
+    if (!bundle) return;
+    fs.mkdirSync(HUSK_PROMPTS_DIR, { recursive: true });
+    for (const entry of fs.readdirSync(bundle, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      const dst = path.join(HUSK_PROMPTS_DIR, entry.name);
+      // Skip if either the active file OR a user-disabled variant exists.
+      if (fs.existsSync(dst) || fs.existsSync(dst + '.disabled')) continue;
+      try { fs.copyFileSync(path.join(bundle, entry.name), dst); } catch (_) {}
+    }
+  } catch (err) {
+    console.error('[husk] prompt bootstrap failed:', err && err.message);
+  }
+}
+
 function bootstrapPaiIfNeeded() {
   try {
     const claudeDir = path.join(HOME, '.claude');
@@ -1476,6 +1504,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     bootstrapPaiIfNeeded();
+    bootstrapHuskPromptsIfNeeded();
     await startNullVoiceServer();
     createWindow();
   });
