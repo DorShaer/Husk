@@ -1541,7 +1541,10 @@ function updateAgentPill() {
 }
 async function refreshAgentMenu() {
   const r = await window.husk.agents.detect();
-  agentsCache = Array.isArray(r) ? r : [];
+  // detect() returns { agents, tools, platform } as of v0.3. Also support
+  // the older bare-array shape so a renderer running against an older main
+  // (e.g. partial upgrade) still works.
+  agentsCache = Array.isArray(r) ? r : (r && Array.isArray(r.agents) ? r.agents : []);
   paintAgentMenu();
 }
 function paintAgentMenu() {
@@ -1778,6 +1781,125 @@ function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&'
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ─── First-run modal + boot ──────────────────────────────────────────────────────
+// First-launch wizard: detect installed CLI agents on PATH (claude, copilot,
+// codex, aider, gemini), let the user pick one to use, install missing ones
+// inline via npm / pipx, or open the docs page for manual install. Selecting
+// an agent persists agentCommand + agentName + firstRunDone.
+async function runFirstRunWizard() {
+  const modal = $('#first-run');
+  const list = $('#fr-agents');
+  const log = $('#fr-log');
+  const goBtn = $('#fr-go');
+  const skipBtn = $('#fr-skip');
+  const nameInput = $('#fr-name');
+  modal.hidden = false;
+
+  let detection = null;
+  let selected = null;
+
+  async function refreshDetection() {
+    list.innerHTML = '<div class="fr-loading">Scanning your system…</div>';
+    try {
+      detection = await window.husk.agents.detect();
+    } catch (err) {
+      list.innerHTML = `<div class="fr-loading">Could not scan: ${escapeHtml(String(err))}</div>`;
+      return;
+    }
+    paintAgents();
+  }
+
+  function paintAgents() {
+    if (!detection || !detection.agents) {
+      list.innerHTML = '<div class="fr-loading">No agents probed.</div>';
+      return;
+    }
+    // If exactly one is available and nothing is selected, auto-pick it.
+    const available = detection.agents.filter((a) => a.available);
+    if (!selected && available.length >= 1) selected = available[0].command;
+    list.innerHTML = detection.agents.map((a) => {
+      const isSelected = selected === a.command;
+      const action = a.available
+        ? `<label class="fr-radio"><input type="radio" name="fr-agent" value="${escapeAttr(a.command)}" ${isSelected ? 'checked' : ''} /> use this</label>`
+        : (a.installable
+            ? `<button type="button" class="ghost-btn fr-install" data-id="${escapeAttr(a.id)}">Install</button>`
+            : `<button type="button" class="ghost-btn" data-docs="${escapeAttr(a.docs || '')}">Open install page</button>`);
+      const status = a.available
+        ? '<span class="fr-status fr-status-ok">found</span>'
+        : '<span class="fr-status fr-status-missing">not installed</span>';
+      return `
+        <div class="fr-agent" data-id="${escapeAttr(a.id)}">
+          <div class="fr-agent-info">
+            <span class="fr-agent-name">${escapeHtml(a.label)}</span>
+            <span class="fr-agent-cmd">${escapeHtml(a.command)}</span>
+          </div>
+          ${status}
+          <div class="fr-agent-action">${action}</div>
+        </div>`;
+    }).join('');
+    list.querySelectorAll('input[name="fr-agent"]').forEach((r) => {
+      r.addEventListener('change', () => { selected = r.value; updateGoBtn(); });
+    });
+    list.querySelectorAll('[data-docs]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const url = b.getAttribute('data-docs');
+        if (url) window.open(url, '_blank');
+      });
+    });
+    list.querySelectorAll('.fr-install').forEach((b) => {
+      b.addEventListener('click', () => installAgent(b.dataset.id, b));
+    });
+    updateGoBtn();
+  }
+
+  async function installAgent(id, btn) {
+    const def = detection.agents.find((a) => a.id === id);
+    if (!def) return;
+    btn.disabled = true;
+    btn.textContent = 'Installing…';
+    log.hidden = false;
+    log.textContent = '';
+    const onLine = ({ id: pid, line }) => { if (pid === id) log.textContent += line + '\n'; log.scrollTop = log.scrollHeight; };
+    if (window.husk.agents.onInstallProgress) window.husk.agents.onInstallProgress(onLine);
+    const r = await window.husk.agents.install(id);
+    btn.disabled = false;
+    if (r && r.ok) {
+      btn.textContent = 'Installed';
+      // Re-probe and re-render so the radio appears for this agent.
+      await refreshDetection();
+      // If no agent was previously selected, auto-pick the just-installed one.
+      if (!selected) selected = def.command;
+      paintAgents();
+    } else {
+      btn.textContent = 'Retry';
+      log.textContent += `\n[install failed] ${(r && r.error) || 'unknown error'}\n`;
+    }
+  }
+
+  function updateGoBtn() {
+    goBtn.disabled = !selected;
+  }
+
+  async function commit() {
+    const name = (nameInput.value || '').trim().slice(0, 40) || 'Husk';
+    const cmd = (selected || 'claude').trim();
+    cfg = await window.husk.config.set({ agentCommand: cmd, agentName: name, firstRunDone: true });
+    modal.hidden = true;
+  }
+
+  goBtn.addEventListener('click', commit);
+  skipBtn.addEventListener('click', async () => {
+    const name = (nameInput.value || '').trim().slice(0, 40) || 'Husk';
+    cfg = await window.husk.config.set({ agentCommand: cfg.agentCommand || 'claude', agentName: name, firstRunDone: true });
+    modal.hidden = true;
+  });
+
+  await refreshDetection();
+  // Block boot until the modal is dismissed by Continue or Skip.
+  await new Promise((resolve) => {
+    const i = setInterval(() => { if (modal.hidden) { clearInterval(i); resolve(); } }, 100);
+  });
+}
+
 async function boot() {
   cfg = await window.husk.config.get();
   applyTheme(cfg.theme || 'dark');
@@ -1785,20 +1907,7 @@ async function boot() {
   document.body.dataset.rail = cfg.railExpanded ? 'expanded' : 'collapsed';
 
   if (!cfg.firstRunDone) {
-    $('#first-run').hidden = false;
-    setTimeout(() => { $('#fr-name').focus(); $('#fr-name').select(); }, 50);
-    await new Promise((resolve) => {
-      const submit = async () => {
-        const cmd = $('#fr-cmd').value.trim() || 'claude';
-        const name = ($('#fr-name').value || '').trim().slice(0, 40) || 'Husk';
-        cfg = await window.husk.config.set({ agentCommand: cmd, agentName: name, firstRunDone: true });
-        $('#first-run').hidden = true;
-        resolve();
-      };
-      $('#fr-go').addEventListener('click', submit);
-      $('#fr-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#fr-cmd').focus(); });
-      $('#fr-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-    });
+    await runFirstRunWizard();
   }
 
   bindPrefs();
