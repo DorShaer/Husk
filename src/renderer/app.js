@@ -1018,6 +1018,14 @@ function openUpdatePop() {
   const notesBtn = $('#up-notes');
   notesBtn.hidden = !s.url;
   notesBtn.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
+  if (s.dev) {
+    title.textContent = 'Auto-update disabled in dev mode';
+    body.innerHTML = `Running from source as <strong>${escapeHtml(cur)}</strong>. Auto-update only runs in packaged builds. Install the latest release to get update notifications in-app.`;
+    cta.textContent = 'Open releases page';
+    cta.onclick = () => { window.husk.updates.openRelease(); pop.hidden = true; };
+    pop.hidden = false;
+    return;
+  }
   if (s.status === 'available') {
     title.textContent = `Husk ${next} is available`;
     body.innerHTML = `You're on <strong>${escapeHtml(cur)}</strong>. The new version is ready to install.`;
@@ -1079,7 +1087,12 @@ window.addEventListener('click', (e) => {
   if (e.target.closest('#update-pop') || e.target.closest('#btn-update')) return;
   pop.hidden = true;
 });
-window.husk.updates.onStatus((s) => { updateState = s; paintUpdatePill(); });
+window.husk.updates.onStatus((s) => {
+  updateState = s;
+  paintUpdatePill();
+  const pop = $('#update-pop');
+  if (pop && !pop.hidden) openUpdatePop();
+});
 (async () => {
   try { updateState = (await window.husk.updates.get()) || updateState; } catch (_) {}
   paintUpdatePill();

@@ -1659,7 +1659,9 @@ function setupAutoUpdater() {
 ipcMain.handle('update:get', () => updateState);
 
 ipcMain.handle('update:check', async () => {
-  if (!updaterInstance) { sendUpdateStatus({ status: 'idle' }); return updateState; }
+  // In dev mode there is no updater. Re-emit current state (preserving dev:true)
+  // so the popover refreshes its dev-mode copy instead of looking dead.
+  if (!updaterInstance) { sendUpdateStatus({}); return updateState; }
   try { await updaterInstance.checkForUpdates(); } catch (err) {
     sendUpdateStatus({ status: 'error', error: err.message });
   }
