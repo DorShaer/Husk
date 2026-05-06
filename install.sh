@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
-# Husk — production installer for Linux
-# Installs deps, builds native modules, registers as a real desktop app
-# (icon + .desktop entry). Launchable from app menu, dock, favorites.
+# Husk — production installer. Detects the OS and registers Husk the way
+# that OS expects: a .desktop entry on Linux, a Husk.app bundle on macOS.
+# Everything else (deps, native rebuild, wrapper, PAI bootstrap) is shared.
 set -e
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ID="husk"
 APP_NAME="Husk"
+PLATFORM="$(uname -s)"
 
 BIN_DIR="$HOME/.local/bin"
-DESKTOP_DIR="$HOME/.local/share/applications"
-ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 WRAPPER="$BIN_DIR/$APP_ID"
-DESKTOP_FILE="$DESKTOP_DIR/$APP_ID.desktop"
-ICON_FILE="$ICON_DIR/$APP_ID.png"
 
-C_OK='\033[0;32m'; C_INFO='\033[0;36m'; C_WARN='\033[1;33m'; C_RST='\033[0m'
-info()    { echo -e "${C_INFO}▸${C_RST} $1"; }
-ok()      { echo -e "${C_OK}✓${C_RST} $1"; }
-warn()    { echo -e "${C_WARN}!${C_RST} $1"; }
+C_OK='\033[0;32m'; C_INFO='\033[0;36m'; C_WARN='\033[1;33m'; C_DIM='\033[2m'; C_RST='\033[0m'
+info() { echo -e "${C_INFO}▸${C_RST} $1"; }
+ok()   { echo -e "${C_OK}✓${C_RST} $1"; }
+warn() { echo -e "${C_WARN}!${C_RST} $1"; }
+dim()  { echo -e "${C_DIM}$1${C_RST}"; }
 
 cd "$APP_DIR"
 
-# ─── 1. Dependencies ──────────────────────────────────────────────
+case "$PLATFORM" in
+    Linux)  ok "Detected Linux" ;;
+    Darwin) ok "Detected macOS" ;;
+    *)      warn "Detected $PLATFORM (best-effort, no native registration)" ;;
+esac
+
+# ─── 1. Dependencies (all platforms) ──────────────────────────────
 if [ ! -d node_modules ] || [ ! -f node_modules/node-pty/build/Release/pty.node ]; then
     info "Installing Node dependencies..."
     npm install --no-audit --no-fund
@@ -33,20 +37,22 @@ else
     ok "Dependencies already installed"
 fi
 
-# ─── 2. Sandbox helper (one-time secure-mode prep) ────────────────
-SANDBOX_BIN="$APP_DIR/node_modules/electron/dist/chrome-sandbox"
-if [ -e "$SANDBOX_BIN" ]; then
-    OWNER=$(stat -c '%U' "$SANDBOX_BIN" 2>/dev/null || echo "")
-    PERMS=$(stat -c '%a' "$SANDBOX_BIN" 2>/dev/null || echo "")
-    if [ "$OWNER" = "root" ] && [ "$PERMS" = "4755" ]; then
-        ok "Sandbox helper is setuid root (secure mode)"
-    else
-        warn "Sandbox helper not setuid — app will run with --no-sandbox (fine for personal use)"
-        info "  To enable secure sandbox: sudo chown root:root \"$SANDBOX_BIN\" && sudo chmod 4755 \"$SANDBOX_BIN\""
+# ─── 2. Sandbox helper check (Linux only; macOS uses its own sandbox model) ─
+if [ "$PLATFORM" = "Linux" ]; then
+    SANDBOX_BIN="$APP_DIR/node_modules/electron/dist/chrome-sandbox"
+    if [ -e "$SANDBOX_BIN" ]; then
+        OWNER=$(stat -c '%U' "$SANDBOX_BIN" 2>/dev/null || echo "")
+        PERMS=$(stat -c '%a' "$SANDBOX_BIN" 2>/dev/null || echo "")
+        if [ "$OWNER" = "root" ] && [ "$PERMS" = "4755" ]; then
+            ok "Sandbox helper is setuid root (secure mode)"
+        else
+            warn "Sandbox helper not setuid — app will run with --no-sandbox (fine for personal use)"
+            dim "  To enable secure sandbox: sudo chown root:root \"$SANDBOX_BIN\" && sudo chmod 4755 \"$SANDBOX_BIN\""
+        fi
     fi
 fi
 
-# ─── 3. Wrapper script (launcher target) ──────────────────────────
+# ─── 3. Wrapper script (all platforms) ─────────────────────────────
 mkdir -p "$BIN_DIR"
 cat > "$WRAPPER" <<EOF
 #!/usr/bin/env bash
@@ -56,15 +62,55 @@ exec ./run.sh
 EOF
 chmod +x "$WRAPPER"
 ok "Wrapper installed: $WRAPPER"
+case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) warn "$BIN_DIR is not on your PATH. Add it to your shell rc to launch Husk by name." ;;
+esac
 
-# ─── 4. Icon ──────────────────────────────────────────────────────
-mkdir -p "$ICON_DIR"
-cp "$APP_DIR/installer/husk-icon.png" "$ICON_FILE"
-ok "Icon installed: $ICON_FILE"
+# ─── 4. PAI bootstrap (all platforms) ──────────────────────────────
+# Husk ships with a copy of PAI by Daniel Miessler. We copy the framework,
+# agents, hooks, lib, skills, and a CLAUDE.md template into ~/.claude/ on
+# first install. Existing files are never overwritten — if you have your
+# own ~/.claude/, we only add what is missing.
+PAI_BUNDLE="$APP_DIR/libs/pai"
+CLAUDE_DIR="$HOME/.claude"
+if [ -d "$PAI_BUNDLE" ]; then
+    info "Bootstrapping PAI into $CLAUDE_DIR (only adds missing files)..."
+    mkdir -p "$CLAUDE_DIR"
+    if [ ! -f "$CLAUDE_DIR/CLAUDE.md" ]; then
+        cp "$PAI_BUNDLE/CLAUDE.md.template" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null \
+            || cp "$PAI_BUNDLE/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null || true
+        ok "Installed CLAUDE.md (you can edit it any time)"
+    fi
+    for SUBDIR in PAI agents hooks lib skills; do
+        if [ -d "$PAI_BUNDLE/$SUBDIR" ]; then
+            if [ ! -d "$CLAUDE_DIR/$SUBDIR" ]; then
+                cp -R "$PAI_BUNDLE/$SUBDIR" "$CLAUDE_DIR/$SUBDIR"
+                ok "Installed $SUBDIR/"
+            else
+                cp -Rn "$PAI_BUNDLE/$SUBDIR/." "$CLAUDE_DIR/$SUBDIR/" 2>/dev/null || true
+            fi
+        fi
+    done
+    [ ! -f "$CLAUDE_DIR/blocklist.json" ] && cp "$PAI_BUNDLE/blocklist.json" "$CLAUDE_DIR/blocklist.json" 2>/dev/null || true
+    [ ! -f "$CLAUDE_DIR/statusline-command.sh" ] && cp "$PAI_BUNDLE/statusline-command.sh" "$CLAUDE_DIR/statusline-command.sh" 2>/dev/null && chmod +x "$CLAUDE_DIR/statusline-command.sh" || true
+    ok "PAI ready"
+fi
 
-# ─── 5. Desktop entry ─────────────────────────────────────────────
-mkdir -p "$DESKTOP_DIR"
-cat > "$DESKTOP_FILE" <<EOF
+# ─── 5. Platform-specific app registration ─────────────────────────
+case "$PLATFORM" in
+    Linux)
+        DESKTOP_DIR="$HOME/.local/share/applications"
+        ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+        DESKTOP_FILE="$DESKTOP_DIR/$APP_ID.desktop"
+        ICON_FILE="$ICON_DIR/$APP_ID.png"
+
+        mkdir -p "$ICON_DIR"
+        cp "$APP_DIR/installer/husk-icon.png" "$ICON_FILE"
+        ok "Icon installed: $ICON_FILE"
+
+        mkdir -p "$DESKTOP_DIR"
+        cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
@@ -79,72 +125,99 @@ StartupNotify=true
 StartupWMClass=Husk
 Keywords=ai;claude;agent;chat;terminal;husk;
 EOF
-chmod +x "$DESKTOP_FILE"
-ok "Desktop entry installed: $DESKTOP_FILE"
+        chmod +x "$DESKTOP_FILE"
+        ok "Desktop entry installed: $DESKTOP_FILE"
 
-# ─── 5b. Bootstrap PAI (reasoning + skills) into ~/.claude/ ────────
-# Husk ships with a copy of PAI (Personal AI Infrastructure) by Daniel
-# Miessler. We copy the framework, agents, hooks, lib, skills, and a
-# CLAUDE.md template into ~/.claude/ on first install so the agent has a
-# rich reasoning + thinking layer out of the box. Existing files are
-# never overwritten — if you have your own ~/.claude/, we only add what's
-# missing.
-PAI_BUNDLE="$APP_DIR/libs/pai"
-CLAUDE_DIR="$HOME/.claude"
-if [ -d "$PAI_BUNDLE" ]; then
-    info "Bootstrapping PAI into $CLAUDE_DIR (only adds missing files)..."
-    mkdir -p "$CLAUDE_DIR"
-    if [ ! -f "$CLAUDE_DIR/CLAUDE.md" ]; then
-        cp "$PAI_BUNDLE/CLAUDE.md.template" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null \
-            || cp "$PAI_BUNDLE/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null || true
-        ok "Installed CLAUDE.md (you can edit it any time)"
-    fi
-    for SUBDIR in PAI agents hooks lib skills; do
-        if [ -d "$PAI_BUNDLE/$SUBDIR" ]; then
-            if [ ! -d "$CLAUDE_DIR/$SUBDIR" ]; then
-                cp -r "$PAI_BUNDLE/$SUBDIR" "$CLAUDE_DIR/$SUBDIR"
-                ok "Installed $SUBDIR/"
-            else
-                # Merge in any missing items without overwriting user data.
-                cp -rn "$PAI_BUNDLE/$SUBDIR/." "$CLAUDE_DIR/$SUBDIR/" 2>/dev/null || true
+        command -v update-desktop-database >/dev/null 2>&1 \
+            && update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+        command -v gtk-update-icon-cache >/dev/null 2>&1 \
+            && gtk-update-icon-cache -tf "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+
+        # GNOME favorites (best-effort, opt-in)
+        if command -v gsettings >/dev/null 2>&1; then
+            CURRENT=$(gsettings get org.gnome.shell favorite-apps 2>/dev/null || echo "")
+            if [ -n "$CURRENT" ] && ! echo "$CURRENT" | grep -q "$APP_ID.desktop"; then
+                echo
+                read -p "Pin Husk to GNOME favorites bar? [Y/n]: " -r REPLY
+                if [[ -z "$REPLY" || "$REPLY" =~ ^[Yy]$ ]]; then
+                    NEW=$(echo "$CURRENT" | sed "s/]/, '$APP_ID.desktop']/")
+                    gsettings set org.gnome.shell favorite-apps "$NEW" 2>/dev/null && ok "Pinned to favorites" || warn "Could not pin (non-GNOME?)"
+                fi
             fi
         fi
-    done
-    [ ! -f "$CLAUDE_DIR/blocklist.json" ] && cp "$PAI_BUNDLE/blocklist.json" "$CLAUDE_DIR/blocklist.json" 2>/dev/null || true
-    [ ! -f "$CLAUDE_DIR/statusline-command.sh" ] && cp "$PAI_BUNDLE/statusline-command.sh" "$CLAUDE_DIR/statusline-command.sh" 2>/dev/null && chmod +x "$CLAUDE_DIR/statusline-command.sh" || true
-    ok "PAI ready"
-fi
 
-# ─── 6. Refresh system caches ─────────────────────────────────────
-if command -v update-desktop-database >/dev/null 2>&1; then
-    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
-    ok "Desktop database refreshed"
-fi
-if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-    gtk-update-icon-cache -tf "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-    ok "Icon cache refreshed"
-fi
+        LAUNCH_HINT="open the Activities / Apps menu, search '$APP_NAME'"
+        ;;
+    Darwin)
+        # Build a minimal .app bundle in ~/Applications. macOS picks it up in
+        # Spotlight, Launchpad, and Finder. The bundle's MacOS launcher just
+        # execs our wrapper, which in turn execs run.sh from the source dir.
+        APPS_DIR="$HOME/Applications"
+        APP_BUNDLE="$APPS_DIR/$APP_NAME.app"
+        mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 
-# ─── 7. Add to GNOME favorites (best-effort, opt-in) ──────────────
-if command -v gsettings >/dev/null 2>&1; then
-    CURRENT=$(gsettings get org.gnome.shell favorite-apps 2>/dev/null || echo "")
-    if [ -n "$CURRENT" ] && ! echo "$CURRENT" | grep -q "$APP_ID.desktop"; then
-        echo
-        read -p "Pin Husk to GNOME favorites bar? [Y/n]: " -r REPLY
-        if [[ -z "$REPLY" || "$REPLY" =~ ^[Yy]$ ]]; then
-            NEW=$(echo "$CURRENT" | sed "s/]/, '$APP_ID.desktop']/")
-            gsettings set org.gnome.shell favorite-apps "$NEW" 2>/dev/null && ok "Pinned to favorites" || warn "Could not pin (non-GNOME?)"
+        cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key><string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key><string>com.husk.app</string>
+    <key>CFBundleExecutable</key><string>$APP_NAME</string>
+    <key>CFBundleIconFile</key><string>$APP_ID</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.2</string>
+    <key>CFBundleVersion</key><string>0.2</string>
+    <key>LSMinimumSystemVersion</key><string>10.13</string>
+    <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+EOF
+
+        cat > "$APP_BUNDLE/Contents/MacOS/$APP_NAME" <<EOF
+#!/usr/bin/env bash
+# Auto-generated by Husk install.sh
+cd "$APP_DIR"
+exec ./run.sh
+EOF
+        chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+
+        # Icon: prefer .icns built via iconutil if available, else fall back to PNG.
+        SRC_ICON="$APP_DIR/installer/husk-icon.png"
+        if command -v iconutil >/dev/null 2>&1 && command -v sips >/dev/null 2>&1; then
+            ICONSET="$(mktemp -d)/$APP_ID.iconset"
+            mkdir -p "$ICONSET"
+            for SZ in 16 32 64 128 256 512; do
+                sips -z $SZ $SZ "$SRC_ICON" --out "$ICONSET/icon_${SZ}x${SZ}.png" >/dev/null 2>&1 || true
+                sips -z $((SZ*2)) $((SZ*2)) "$SRC_ICON" --out "$ICONSET/icon_${SZ}x${SZ}@2x.png" >/dev/null 2>&1 || true
+            done
+            iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/$APP_ID.icns" 2>/dev/null \
+                && ok "Icon (.icns) generated" \
+                || cp "$SRC_ICON" "$APP_BUNDLE/Contents/Resources/$APP_ID.png"
+        else
+            cp "$SRC_ICON" "$APP_BUNDLE/Contents/Resources/$APP_ID.png"
         fi
-    fi
-fi
+        ok "App bundle installed: $APP_BUNDLE"
+
+        # Refresh Launch Services so Spotlight / Finder pick it up immediately.
+        LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+        [ -x "$LSREG" ] && "$LSREG" -f "$APP_BUNDLE" 2>/dev/null || true
+
+        LAUNCH_HINT="open Spotlight (⌘+Space) and search '$APP_NAME', or open Launchpad"
+        ;;
+    *)
+        LAUNCH_HINT="run: $WRAPPER"
+        ;;
+esac
 
 echo
 echo -e "${C_OK}═══════════════════════════════════════════════════════${C_RST}"
-echo -e "${C_OK}  Husk installed${C_RST}"
+echo -e "${C_OK}  $APP_NAME installed${C_RST}"
 echo -e "${C_OK}═══════════════════════════════════════════════════════${C_RST}"
 echo
-echo "  Launch: open the Activities / Apps menu, search 'Husk'"
-echo "  Or run: $WRAPPER"
+echo "  Launch:    $LAUNCH_HINT"
+echo "  Or run:    $WRAPPER"
 echo
-echo "  Uninstall:  ./uninstall.sh"
+echo "  Uninstall: ./uninstall.sh"
 echo
