@@ -194,6 +194,13 @@ async function refreshStatusline() {
   const s = lastStats;
   const here = (s.location && s.location.city) || '';
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // Timezone is always available locally via Intl, no network. We fall back to
+  // it as the WHERE headline whenever IP geolocation didn't resolve to a city
+  // (common on Windows / corporate networks / VPNs / offline). Honest UX: show
+  // what we know, never blank a section.
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
+  const headline = here || tz || '';
   const weatherStr = s.weather && s.weather.temp
     ? `${s.weather.temp}°C${s.weather.condition ? ' · ' + s.weather.condition : ''}`
     : '';
@@ -204,7 +211,7 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">◷</span><span>Where</span></div>
       <div class="sp-section-body">
-        ${here ? `<div><strong>${escapeHtml(here)}</strong></div>` : ''}
+        ${headline ? `<div><strong>${escapeHtml(headline)}</strong></div>` : ''}
         <div class="sp-row"><span class="sp-muted">Time</span><span class="sp-mono">${time}</span></div>
         ${weatherStr ? `<div class="sp-row"><span class="sp-muted">Weather</span><span class="sp-mono">${escapeHtml(weatherStr)}</span></div>` : ''}
       </div>
