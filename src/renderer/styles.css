@@ -114,16 +114,16 @@ body {
   background: var(--bg-1);
   -webkit-app-region: drag;
 }
-.brand { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
+.brand { display: flex; align-items: center; gap: 12px; -webkit-app-region: no-drag; }
 .logo-img {
-  width: 34px; height: 34px;
+  width: 40px; height: 40px;
   display: block;
   filter: drop-shadow(0 0 8px rgba(217, 119, 87, 0.55));
   user-select: none;
   -webkit-user-drag: none;
 }
 .brand-text {
-  font-weight: 800; letter-spacing: 0.18em; font-size: 19px;
+  font-weight: 800; letter-spacing: 0.16em; font-size: 30px; line-height: 1;
   background: linear-gradient(135deg, #d97757 0%, #ec8b6b 100%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
@@ -217,10 +217,12 @@ body[data-rail="expanded"] .rail-toggle { transform: rotate(180deg); }
   color: var(--text);
 }
 .rail-item .ri-icon {
-  font-size: 20px; flex: 0 0 auto; width: 22px; text-align: center;
+  font-size: 20px; flex: 0 0 auto; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-3);
   transition: color 0.14s ease;
 }
+.rail-item .ri-icon svg { width: 20px; height: 20px; display: block; }
 .rail-item:hover .ri-icon, .rail-item.active .ri-icon { color: var(--accent); }
 .rail-item .ri-label { font-weight: 500; opacity: 0; transform: translateX(-4px); transition: opacity 0.18s ease, transform 0.18s ease; }
 body[data-rail="expanded"] .rail-item .ri-label { opacity: 1; transform: translateX(0); }
@@ -258,17 +260,25 @@ body[data-rail="expanded"] .rail-section-context { display: flex; }
 .rail-agent {
   display: flex; align-items: center; gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: var(--bg-3); color: var(--text);
-  border: 1px solid var(--line); border-radius: 9px;
-  cursor: pointer; font-family: inherit; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  cursor: pointer; font-family: inherit;
   transition: border-color 0.14s ease, background 0.14s ease;
   white-space: nowrap; overflow: hidden;
 }
+.rail-agent .ra-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-3);
+  flex: 0 0 auto;
+  opacity: 0; transform: translateX(-4px); transition: all 0.18s ease;
+}
+body[data-rail="expanded"] .rail-agent .ra-label { opacity: 1; transform: translateX(0); }
 .rail-agent:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .rail-agent .ra-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis;
-  font-weight: 600; letter-spacing: 0.02em;
+  font-weight: 700; font-size: 14px; letter-spacing: 0.01em;
+  color: var(--text);
   opacity: 0; transform: translateX(-4px); transition: opacity 0.18s ease, transform 0.18s ease;
 }
 body[data-rail="expanded"] .rail-agent .ra-name { opacity: 1; transform: translateX(0); }
