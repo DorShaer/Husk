@@ -225,9 +225,19 @@ function buildClaudeSettingsOverride() {
   } catch (_) { return null; }
 }
 
+// POSIX-shell-quote one argument: 'value' with internal single-quotes escaped
+// as '\\''. Use to serialize an (exe, argv) tuple back into a string we can
+// hand to /bin/sh -c or /usr/bin/script -q -c. Not used on Windows.
+function shJoin(exe, args) {
+  const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
+  return [exe, ...args.map(q)].join(' ');
+}
+
 function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null) {
   if (ptyProc) try { ptyProc.kill(); } catch (_) {}
-  const shellBin = process.env.SHELL || '/bin/bash';
+  const shellBin = process.platform === 'win32'
+    ? (process.env.ComSpec || 'cmd.exe')
+    : (process.env.SHELL || '/bin/bash');
   const env = Object.assign({}, process.env, {
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
@@ -236,27 +246,35 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
 
-  let cmd = (overrideCmd || config.agentCommand || 'claude').trim();
+  const rawCmd = (overrideCmd || config.agentCommand || 'claude').trim();
 
-  // For claude commands, inject the Husk runtime context: a settings override that
-  // silences the inline statusline, and an appended system prompt that forces the
-  // agent to identify as Claude inside Husk regardless of any persona configured
-  // in the user's CLAUDE.md or memory files. Skip if user already passed --settings.
-  if (cmd.startsWith('claude') && !/--settings\b/.test(cmd)) {
+  // Tokenize the user's agent command into program + extra args. Naive
+  // whitespace split is fine for the vast majority of cases (most users type
+  // 'claude' or 'claude --some-flag'); if someone sets an agent command with
+  // shell-quoted args we will mistokenize, but that is a corner case.
+  const userTokens = rawCmd.split(/\s+/).filter(Boolean);
+  let agentExe = userTokens.shift() || 'claude';
+  let agentArgs = userTokens;
+
+  // For claude commands, inject the Husk runtime context: a settings override
+  // that silences the inline statusline, and an appended system prompt that
+  // forces the agent to identify by the user's chosen agentName regardless of
+  // any persona configured in the user's CLAUDE.md or memory files. Skip if
+  // the user already passed --settings.
+  if (/^claude(\.cmd|\.exe)?$/i.test(agentExe) && !agentArgs.includes('--settings')) {
     const overridePath = buildClaudeSettingsOverride();
     const agentName = (config.agentName || 'Husk').replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || 'Husk';
     const huskPromptParts = [
-      `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/Algorithm, and memory-file instructions exactly — including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
+      `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/Algorithm, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
     ];
     if (config.recap === false) {
       huskPromptParts.push(`The user has disabled recaps in Husk. Suppress any "* recap:" line and end-of-response summary footer for this session.`);
     }
     const huskPrompt = huskPromptParts.join(' ');
-    const escaped = huskPrompt.replace(/'/g, "'\\''");
-    const inject = overridePath
-      ? `--settings ${overridePath} --append-system-prompt '${escaped}'`
-      : `--append-system-prompt '${escaped}'`;
-    cmd = cmd.replace(/^claude\b/, `claude ${inject}`);
+    const injected = [];
+    if (overridePath) injected.push('--settings', overridePath);
+    injected.push('--append-system-prompt', huskPrompt);
+    agentArgs = [...injected, ...agentArgs];
   }
 
   let cwd = HOME;
@@ -273,27 +291,35 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   }
 
   // Establishing the controlling terminal is platform-specific:
-  //  - Linux: node-pty's bare spawn doesn't always do setsid + TIOCSCTTY,
-  //    so we wrap with GNU script(1): `script -q -c <cmd> /dev/null`.
-  //    This is what makes `claude --resume <id>` work without exit code 129.
-  //  - macOS: node-pty handles the tty correctly on Darwin, AND BSD
-  //    script(1) does NOT accept `-c` (it's "illegal option -- c"), so the
-  //    Linux trick is actively harmful. We use `sh -c "<cmd>"` so quoting
-  //    inside the command (e.g. claude's long --append-system-prompt) is
-  //    parsed by the shell instead of being naively split on whitespace.
-  //  - Windows: not supported (no PTY tty story we use).
+  //  - Linux:   wrap with GNU script(1) `script -q -c <cmd> /dev/null` so
+  //             node-pty gets a proper setsid + TIOCSCTTY (otherwise
+  //             `claude --resume <id>` exits with code 129).
+  //  - macOS:   sh -c <cmd>; node-pty handles the tty on Darwin, and BSD
+  //             script(1) does NOT accept -c.
+  //  - Windows: pty.spawn directly with the program + argv array. ConPTY
+  //             handles the TTY. Going through cmd.exe /c <cmd> would
+  //             mangle our long single-quoted --append-system-prompt
+  //             (cmd.exe does not recognize single quotes).
   let exe; let argv;
-  if (!cmd) {
-    exe = shellBin; argv = ['-i'];
-  } else if (process.platform === 'darwin') {
-    exe = '/bin/sh';
-    argv = ['-c', cmd];
-  } else if (fs.existsSync('/usr/bin/script')) {
-    exe = '/usr/bin/script';
-    argv = ['-q', '-c', cmd, '/dev/null'];
+  if (!rawCmd) {
+    // No agent command configured at all: drop into an interactive shell.
+    exe = shellBin;
+    argv = process.platform === 'win32' ? [] : ['-i'];
+  } else if (process.platform === 'win32') {
+    exe = agentExe;
+    argv = agentArgs;
   } else {
-    exe = '/bin/sh';
-    argv = ['-c', cmd];
+    const cmdStr = shJoin(agentExe, agentArgs);
+    if (process.platform === 'darwin') {
+      exe = '/bin/sh';
+      argv = ['-c', cmdStr];
+    } else if (fs.existsSync('/usr/bin/script')) {
+      exe = '/usr/bin/script';
+      argv = ['-q', '-c', cmdStr, '/dev/null'];
+    } else {
+      exe = '/bin/sh';
+      argv = ['-c', cmdStr];
+    }
   }
 
   ptyProc = pty.spawn(exe, argv, { name: 'xterm-256color', cols, rows, cwd, env });
