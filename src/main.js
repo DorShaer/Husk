@@ -104,12 +104,8 @@ function bootstrapHuskPromptsIfNeeded() {
 function bootstrapPaiIfNeeded() {
   try {
     const claudeDir = path.join(HOME, '.claude');
-    // Only bootstrap when ~/.claude/ does not yet exist OR it exists but has
-    // no CLAUDE.md (a fresh first-run state). Never overwrite a configured
-    // ~/.claude/.
-    const hasClaudeMd = fs.existsSync(path.join(claudeDir, 'CLAUDE.md'));
-    if (hasClaudeMd) return;
 
+    // Locate the bundled PAI tree.
     // Packaged: app.isPackaged && process.resourcesPath/pai/ exists.
     // Dev:      <repo>/libs/pai/ relative to __dirname (which is <repo>/src/).
     const candidates = [];
@@ -127,20 +123,32 @@ function bootstrapPaiIfNeeded() {
     if (!bundle) return;
 
     fs.mkdirSync(claudeDir, { recursive: true });
-    // Copy CLAUDE.md template (or fallback to CLAUDE.md).
-    const tpl = fs.existsSync(path.join(bundle, 'CLAUDE.md.template'))
-      ? path.join(bundle, 'CLAUDE.md.template')
-      : path.join(bundle, 'CLAUDE.md');
-    if (fs.existsSync(tpl)) fs.copyFileSync(tpl, path.join(claudeDir, 'CLAUDE.md'));
 
-    // Copy framework subdirs only if missing. Never overwrite user data.
+    // CLAUDE.md: only copy when the user does NOT already have one. This
+    // protects user customizations across upgrades.
+    const claudemdDst = path.join(claudeDir, 'CLAUDE.md');
+    if (!fs.existsSync(claudemdDst)) {
+      const tpl = fs.existsSync(path.join(bundle, 'CLAUDE.md.template'))
+        ? path.join(bundle, 'CLAUDE.md.template')
+        : path.join(bundle, 'CLAUDE.md');
+      if (fs.existsSync(tpl)) fs.copyFileSync(tpl, claudemdDst);
+    }
+
+    // Framework subdirs: merge missing children into existing dirs (cp -Rn
+    // semantics). This is the key fix: previously the whole bootstrap was
+    // gated on CLAUDE.md absence, which meant users who had ever installed
+    // claude code (which creates ~/.claude/CLAUDE.md) got NONE of the
+    // bundled skills, agents, or hooks. Now each subdir is checked
+    // independently and missing entries are added without ever overwriting
+    // a file the user already has.
     for (const sub of ['PAI', 'agents', 'hooks', 'lib', 'skills']) {
       const src = path.join(bundle, sub);
       const dst = path.join(claudeDir, sub);
-      if (fs.existsSync(src) && !fs.existsSync(dst)) {
-        copyDirRecursiveSync(src, dst);
-      }
+      if (!fs.existsSync(src)) continue;
+      if (!fs.existsSync(dst)) copyDirRecursiveSync(src, dst);
+      else copyMissingChildrenSync(src, dst);
     }
+
     const blockSrc = path.join(bundle, 'blocklist.json');
     const blockDst = path.join(claudeDir, 'blocklist.json');
     if (fs.existsSync(blockSrc) && !fs.existsSync(blockDst)) fs.copyFileSync(blockSrc, blockDst);
@@ -152,6 +160,21 @@ function bootstrapPaiIfNeeded() {
     }
   } catch (err) {
     console.error('[husk] PAI bootstrap failed:', err && err.message);
+  }
+}
+
+// Like cp -Rn at the immediate-children level: for each top-level entry in
+// src, copy it to dst only when the destination entry does not exist. Never
+// recurses into existing destination subtrees, so user-edited files inside
+// already-present skills are never touched.
+function copyMissingChildrenSync(src, dst) {
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dst, entry.name);
+    if (fs.existsSync(d)) continue;
+    if (entry.isDirectory()) copyDirRecursiveSync(s, d);
+    else if (entry.isFile()) fs.copyFileSync(s, d);
+    // ignore symlinks/devices
   }
 }
 
