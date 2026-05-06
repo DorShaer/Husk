@@ -128,6 +128,66 @@ body {
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .topbar-spacer { flex: 1; -webkit-app-region: drag; min-height: 36px; }
+
+/* Topbar version / update pill. Always shows; muted by default. When an
+   update is available it grows a pulsing orange dot and a brighter label
+   to invite a click. Clicking opens the small update-pop card below. */
+.topbar-version {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px;
+  background: var(--bg-3);
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.topbar-version:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.topbar-version[data-state="available"], .topbar-version[data-state="ready"] {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.topbar-version[data-state="downloading"] { color: var(--text-2); }
+.tv-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: tv-pulse 1.6s ease-out infinite;
+}
+@keyframes tv-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
+.update-pop {
+  position: absolute; top: 56px; right: 18px; z-index: 50;
+  width: 320px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.42);
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  animation: tv-pop 0.16s ease-out;
+}
+@keyframes tv-pop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.update-pop .up-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.update-pop .up-head strong { color: var(--text); font-size: 13px; }
+.update-pop .up-close { background: transparent; border: 0; color: var(--text-3); font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1; }
+.update-pop .up-close:hover { color: var(--text); }
+.update-pop .up-body { color: var(--text-2); font-size: 12px; line-height: 1.5; }
+.update-pop .up-body strong { color: var(--text); }
+.update-pop .up-actions { display: flex; gap: 8px; }
+.update-pop .up-actions .btn-primary { flex: 1; padding: 9px 12px; font-size: 13px; }
+.update-pop .up-actions .ghost-btn { padding: 9px 12px; font-size: 12px; }
 .iconbtn {
   -webkit-app-region: no-drag;
   background: var(--bg-3);
