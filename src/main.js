@@ -260,8 +260,10 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   // that silences the inline statusline, and an appended system prompt that
   // forces the agent to identify by the user's chosen agentName regardless of
   // any persona configured in the user's CLAUDE.md or memory files. Skip if
-  // the user already passed --settings.
-  if (/^claude(\.cmd|\.exe)?$/i.test(agentExe) && !agentArgs.includes('--settings')) {
+  // the user already passed --settings, or if we're on Windows (see the
+  // platform switch below for why Windows uses cmd.exe /c without the inject).
+  const isWin32 = process.platform === 'win32';
+  if (!isWin32 && /^claude(\.cmd|\.exe)?$/i.test(agentExe) && !agentArgs.includes('--settings')) {
     const overridePath = buildClaudeSettingsOverride();
     const agentName = (config.agentName || 'Husk').replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || 'Husk';
     const huskPromptParts = [
@@ -296,18 +298,23 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   //             `claude --resume <id>` exits with code 129).
   //  - macOS:   sh -c <cmd>; node-pty handles the tty on Darwin, and BSD
   //             script(1) does NOT accept -c.
-  //  - Windows: pty.spawn directly with the program + argv array. ConPTY
-  //             handles the TTY. Going through cmd.exe /c <cmd> would
-  //             mangle our long single-quoted --append-system-prompt
-  //             (cmd.exe does not recognize single quotes).
+  //  - Windows: cmd.exe /c <user's raw agentCommand>. Direct pty.spawn of
+  //             'claude' fails because Win32 CreateProcess does NOT honor
+  //             PATHEXT — it only finds .exe, never .cmd / .bat / .ps1, and
+  //             npm-installed CLIs land as claude.cmd shims. Going through
+  //             cmd.exe means PATHEXT resolves and the .cmd is found.
+  //             Trade-off: we can't safely inject our long --append-system-
+  //             prompt because cmd.exe's quoting plus node-pty's argv-to-
+  //             cmdline serializer would fragment it. v0.3.0 will resolve
+  //             via `where claude` and re-enable injection.
   let exe; let argv;
   if (!rawCmd) {
     // No agent command configured at all: drop into an interactive shell.
     exe = shellBin;
-    argv = process.platform === 'win32' ? [] : ['-i'];
-  } else if (process.platform === 'win32') {
-    exe = agentExe;
-    argv = agentArgs;
+    argv = isWin32 ? [] : ['-i'];
+  } else if (isWin32) {
+    exe = process.env.ComSpec || 'cmd.exe';
+    argv = ['/c', rawCmd];
   } else {
     const cmdStr = shJoin(agentExe, agentArgs);
     if (process.platform === 'darwin') {
