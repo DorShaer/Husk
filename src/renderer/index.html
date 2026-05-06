@@ -74,6 +74,21 @@
         <span class="brand-text">HUSK</span>
       </div>
       <div class="topbar-spacer"></div>
+      <button class="topbar-version" id="btn-update" title="Click to check for updates">
+        <span class="tv-dot" hidden></span>
+        <span class="tv-text" id="tv-text">v0.3.0</span>
+      </button>
+      <div class="update-pop" id="update-pop" hidden>
+        <div class="up-head">
+          <strong id="up-title">Update available</strong>
+          <button class="up-close" id="up-close" title="Dismiss">×</button>
+        </div>
+        <div class="up-body" id="up-body"></div>
+        <div class="up-actions">
+          <button class="ghost-btn" id="up-notes" hidden>Release notes</button>
+          <button class="btn-primary" id="up-cta">Install</button>
+        </div>
+      </div>
       <button class="iconbtn" id="btn-palette" title="Command palette (Ctrl+K)">⌘K</button>
       <button class="iconbtn" id="btn-theme" title="Toggle theme"><span id="theme-icon">☾</span></button>
       <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)">＋ New</button>

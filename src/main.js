@@ -1592,6 +1592,103 @@ function stopNullVoiceServer() {
 }
 
 
+// ─── Auto-update (electron-updater + GitHub Releases) ──────────────────────────
+//
+// Flow per platform:
+//   Windows NSIS  full auto-update: check, download, quitAndInstall
+//   AppImage      full auto-update (the AppImage runtime swaps in the new image)
+//   macOS dmg     auto-update requires signing. On unsigned builds we surface
+//                 the new version + a 'Download from GitHub' button, no install.
+//   deb / rpm     not auto-updatable; same fallback as unsigned macOS.
+//   dev mode      autoUpdater is disabled by electron-updater itself.
+//
+// Status events are pushed to the renderer over 'update:status'. The renderer
+// renders a small version pill in the topbar that picks the right CTA based
+// on which state we are in.
+
+let updaterInstance = null;
+let updateState = { status: 'idle', current: app.getVersion() };
+
+function sendUpdateStatus(extra = {}) {
+  updateState = { ...updateState, ...extra };
+  if (mainWindow) mainWindow.webContents.send('update:status', updateState);
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) {
+    sendUpdateStatus({ status: 'idle', dev: true });
+    return;
+  }
+  let autoUpdater;
+  try { autoUpdater = require('electron-updater').autoUpdater; }
+  catch (err) {
+    sendUpdateStatus({ status: 'error', error: 'updater module missing' });
+    return;
+  }
+  updaterInstance = autoUpdater;
+  autoUpdater.autoDownload = false;       // we choose when to download
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  autoUpdater.on('checking-for-update', () => sendUpdateStatus({ status: 'checking' }));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus({
+    status: 'available',
+    version: info.version,
+    releaseDate: info.releaseDate,
+    releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '',
+    url: `https://github.com/DorShaer/Husk/releases/tag/v${info.version}`,
+  }));
+  autoUpdater.on('update-not-available', () => sendUpdateStatus({ status: 'up-to-date' }));
+  autoUpdater.on('download-progress', (p) => sendUpdateStatus({
+    status: 'downloading',
+    percent: Math.round(p.percent || 0),
+  }));
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({
+    status: 'ready',
+    version: info.version,
+  }));
+  autoUpdater.on('error', (err) => sendUpdateStatus({
+    status: 'error',
+    error: (err && err.message) || String(err),
+  }));
+
+  // Fire one check shortly after launch and again every 6 hours.
+  setTimeout(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 4000);
+  setInterval(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 6 * 60 * 60 * 1000);
+}
+
+ipcMain.handle('update:get', () => updateState);
+
+ipcMain.handle('update:check', async () => {
+  if (!updaterInstance) { sendUpdateStatus({ status: 'idle' }); return updateState; }
+  try { await updaterInstance.checkForUpdates(); } catch (err) {
+    sendUpdateStatus({ status: 'error', error: err.message });
+  }
+  return updateState;
+});
+
+ipcMain.handle('update:download', async () => {
+  if (!updaterInstance) return { ok: false, error: 'no updater' };
+  try { await updaterInstance.downloadUpdate(); return { ok: true }; }
+  catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('update:install', () => {
+  if (!updaterInstance) return { ok: false, error: 'no updater' };
+  // Quit current app, install update, relaunch. forceRunAfter true so the
+  // user does not have to relaunch manually.
+  setImmediate(() => { try { updaterInstance.quitAndInstall(false, true); } catch (_) {} });
+  return { ok: true };
+});
+
+ipcMain.handle('update:open-release', (_e, url) => {
+  if (typeof url === 'string' && /^https:\/\/github\.com\/DorShaer\/Husk\/releases/.test(url)) {
+    shell.openExternal(url);
+    return { ok: true };
+  }
+  shell.openExternal('https://github.com/DorShaer/Husk/releases');
+  return { ok: true };
+});
+
 // ─── Lifecycle ────────────────────────────────────────────────────────────────────
 
 // Only allow one Husk at a time. A second launch focuses the existing window
@@ -1618,6 +1715,7 @@ if (!gotLock) {
     bootstrapHuskPromptsIfNeeded();
     await startNullVoiceServer();
     createWindow();
+    setupAutoUpdater();
   });
   app.on('window-all-closed', () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });
   app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); });

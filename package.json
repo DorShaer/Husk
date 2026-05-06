@@ -22,6 +22,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.3",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
@@ -47,12 +48,16 @@
       {
         "from": "libs/pai",
         "to": "pai",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "installer",
         "to": "installer",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "linux": {
@@ -71,11 +76,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "installer/husk-icon.png",
@@ -101,6 +112,10 @@
     "appImage": {
       "license": "LICENSE"
     },
-    "publish": null
+    "publish": {
+      "provider": "github",
+      "owner": "DorShaer",
+      "repo": "Husk"
+    }
   }
 }
