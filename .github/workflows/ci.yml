@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  syntax:
+    name: Syntax + lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install (no scripts)
+        run: npm ci --ignore-scripts
+
+      - name: node --check on every JS file we own
+        run: |
+          set -euo pipefail
+          for f in src/main.js src/preload.js src/renderer/app.js; do
+            echo "checking $f"
+            node --check "$f"
+          done
+
+      - name: bash -n on shell scripts
+        run: |
+          set -euo pipefail
+          for f in install.sh run.sh uninstall.sh; do
+            echo "checking $f"
+            bash -n "$f"
+          done
+
+  package-meta:
+    name: Package metadata + lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate package.json
+        run: node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"
+
+      - name: Validate package-lock.json
+        run: node -e "JSON.parse(require('fs').readFileSync('package-lock.json','utf8'))"
+
+      - name: Lockfile is in sync
+        # `npm ci` only succeeds if package.json and package-lock.json agree.
+        # Catches accidental package.json edits without lockfile regeneration.
+        run: npm ci --ignore-scripts --dry-run

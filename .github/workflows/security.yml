@@ -1,0 +1,313 @@
+name: Security analysis
+
+# Runs on every push to a long-lived branch, every pull request that targets
+# one, weekly on Sunday 02:00 UTC for drift detection, and on demand.
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - '**.js'
+      - '**.html'
+      - '**.css'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/security.yml'
+      - '.github/codeql/**'
+  pull_request:
+    branches: [main, master, develop]
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+  security-events: write
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  secret-detection:
+    name: Secret detection (Gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Gitleaks
+        # Pin the version. Resolving "latest" via the GitHub API hits rate
+        # limits intermittently; bumps go through dependabot (github-actions
+        # ecosystem).
+        env:
+          GITLEAKS_VERSION: "8.22.0"
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Run Gitleaks
+        run: |
+          mkdir -p security-reports
+          if [ "${{ github.event_name }}" = "push" ]; then
+            gitleaks detect --log-opts="${{ github.event.before }}..${{ github.sha }}" --report-format=json --report-path=security-reports/gitleaks-report.json
+          else
+            gitleaks detect --report-format=json --report-path=security-reports/gitleaks-report.json
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secret-detection-report
+          path: security-reports/
+          retention-days: 30
+
+  npm-audit:
+    name: Dependency audit (npm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install (no scripts)
+        run: npm ci --ignore-scripts
+
+      - name: npm audit (high + critical)
+        run: npm audit --audit-level=high
+
+      - name: npm audit JSON report
+        if: always()
+        run: |
+          mkdir -p security-reports
+          npm audit --json > security-reports/npm-audit.json || true
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: security-reports/
+          retention-days: 30
+
+  javascript-security:
+    name: JavaScript security (ESLint plugins)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install (no scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Install security linters
+        run: |
+          npm install --no-save \
+            eslint@8 \
+            eslint-plugin-security \
+            eslint-plugin-no-unsanitized@4.0.2
+
+      - name: Run ESLint security rules
+        # Scope to our own JS only. libs/pai is bundled third-party; the
+        # vendored xterm.js inside src/renderer/vendor/ is minified.
+        run: |
+          npx eslint \
+            --no-eslintrc \
+            --parser-options=ecmaVersion:2022,sourceType:script \
+            --env es2022,browser,node \
+            --plugin security \
+            --plugin no-unsanitized \
+            --rule 'security/detect-eval-with-expression: error' \
+            --rule 'security/detect-non-literal-fs-filename: warn' \
+            --rule 'security/detect-non-literal-require: error' \
+            --rule 'security/detect-child-process: warn' \
+            --rule 'security/detect-unsafe-regex: error' \
+            --rule 'security/detect-non-literal-regexp: warn' \
+            --rule 'security/detect-pseudoRandomBytes: error' \
+            --rule 'security/detect-buffer-noassert: error' \
+            --rule 'security/detect-object-injection: warn' \
+            --rule 'no-unsanitized/method: warn' \
+            --rule 'no-unsanitized/property: warn' \
+            --ignore-pattern 'libs/' \
+            --ignore-pattern 'node_modules/' \
+            --ignore-pattern 'src/renderer/vendor/' \
+            src/main.js src/preload.js src/renderer/app.js
+
+  codeql:
+    name: CodeQL (JavaScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          config-file: ./.github/codeql/codeql-config.yml
+          queries: security-extended,security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript-typescript"
+
+  semgrep:
+    name: Semgrep OWASP
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: semgrep/semgrep:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        env:
+          SEMGREP_RULES: >-
+            p/owasp-top-ten
+            p/javascript
+            p/nodejs
+            p/electron
+            p/xss
+            p/command-injection
+        run: semgrep scan --error --severity ERROR --exclude libs --exclude src/renderer/vendor --exclude node_modules .
+
+      - name: Semgrep JSON (on failure)
+        if: failure()
+        run: |
+          mkdir -p security-reports
+          semgrep scan --config auto --exclude libs --exclude src/renderer/vendor --exclude node_modules --json > security-reports/semgrep.json || true
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: security-reports/
+          retention-days: 30
+
+  trivy:
+    name: Filesystem CVEs (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reports dir
+        run: mkdir -p security-reports
+
+      - name: Trivy filesystem scan
+        # Pinned by SHA (do not move to @master). Bumps go through dependabot.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          output: 'security-reports/trivy-fs.txt'
+          severity: 'CRITICAL'
+          vuln-type: 'library'
+          exit-code: '1'
+          skip-dirs: 'libs/pai,src/renderer/vendor,node_modules'
+
+      - name: Trivy JSON (always)
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'json'
+          output: 'security-reports/trivy.json'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'library'
+          skip-dirs: 'libs/pai,src/renderer/vendor,node_modules'
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: security-reports/
+          retention-days: 30
+
+  summary:
+    name: Security summary
+    runs-on: ubuntu-latest
+    needs:
+      - secret-detection
+      - npm-audit
+      - javascript-security
+      - codeql
+      - semgrep
+      - trivy
+    if: always()
+    steps:
+      - name: Job summary
+        run: |
+          {
+            echo "# Security scan summary"
+            echo
+            echo "| Check | Status |"
+            echo "|-------|--------|"
+            echo "| Secret detection | ${{ needs.secret-detection.result == 'success' && 'CLEAN' || 'FAILED' }} |"
+            echo "| npm audit | ${{ needs.npm-audit.result == 'success' && 'PASSED' || 'FAILED' }} |"
+            echo "| JavaScript security | ${{ needs.javascript-security.result == 'success' && 'PASSED' || 'FAILED' }} |"
+            echo "| CodeQL | ${{ needs.codeql.result == 'success' && 'PASSED' || 'FAILED' }} |"
+            echo "| Semgrep OWASP | ${{ needs.semgrep.result == 'success' && 'PASSED' || 'FAILED' }} |"
+            echo "| Trivy CVEs | ${{ needs.trivy.result == 'success' && 'PASSED' || 'FAILED' }} |"
+            echo
+            echo "Reports are in the Artifacts section of this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## Security scan summary
+
+            | Check | Status |
+            |-------|--------|
+            | Secret detection | ${{ needs.secret-detection.result == 'success' && 'CLEAN' || 'FAILED' }} |
+            | npm audit | ${{ needs.npm-audit.result == 'success' && 'PASSED' || 'FAILED' }} |
+            | JavaScript security | ${{ needs.javascript-security.result == 'success' && 'PASSED' || 'FAILED' }} |
+            | CodeQL | ${{ needs.codeql.result == 'success' && 'PASSED' || 'FAILED' }} |
+            | Semgrep OWASP | ${{ needs.semgrep.result == 'success' && 'PASSED' || 'FAILED' }} |
+            | Trivy CVEs | ${{ needs.trivy.result == 'success' && 'PASSED' || 'FAILED' }} |
+
+            Detailed reports are in **Actions > this run > Artifacts**.`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body
+            });
