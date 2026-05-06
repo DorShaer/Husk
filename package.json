@@ -13,10 +13,10 @@
   "scripts": {
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "dist": "electron-builder",
-    "dist:linux": "electron-builder --linux",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist": "electron-builder --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
