@@ -10,7 +10,7 @@ Husk wraps `claude`, `copilot`, `codex`, `aider`, or any other terminal-based AI
 
 <br />
 
-<img src="docs/husk-dashboard.gif" alt="Husk dashboard" width="900" />
+<img src="docs/images/husk-dashboard.gif" alt="Husk dashboard" width="900" />
 
 </div>
 
@@ -22,18 +22,18 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <div align="center">
 
-<img src="docs/husk-chat.png" alt="Chat with the agent inside Husk" width="900" />
+<img src="docs/images/husk-chat.png" alt="Chat with the agent inside Husk" width="900" />
 <br /><sub><i>Chat in a real PTY with full TUI fidelity, drag-drop context, and a live status panel.</i></sub>
 
 <br /><br />
 
-<img src="docs/husk-skills.png" alt="Skills page" width="450" />
-<img src="docs/husk-mcp.png" alt="MCP servers page" width="450" />
+<img src="docs/images/husk-skills.png" alt="Skills page" width="450" />
+<img src="docs/images/husk-mcp.png" alt="MCP servers page" width="450" />
 <br /><sub><i>Skills with one-click <b>Use</b>, animated toggles, and source badges. MCP servers with live connection state and a curated catalog.</i></sub>
 
 <br /><br />
 
-<img src="docs/husk-mcp-install.png" alt="Install a custom MCP server" width="600" />
+<img src="docs/images/husk-mcp-install.png" alt="Install a custom MCP server" width="600" />
 <br /><sub><i>Install any MCP server: pick stdio or HTTP/SSE, fill the form, or paste the canonical JSON shape and Husk fills it for you.</i></sub>
 
 </div>
