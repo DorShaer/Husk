@@ -8,6 +8,10 @@
 
 Husk wraps `claude`, `copilot`, `codex`, `aider`, or any other terminal-based AI agent in a clean Electron window with a real PTY, drag-drop file context, voice output, session resume, and a one-glance dashboard. The reasoning, thinking format, and Algorithm phase machine are bundled in. Clone, install, run.
 
+<br />
+
+<img src="docs/husk-dashboard.gif" alt="Husk dashboard" width="900" />
+
 </div>
 
 ---
@@ -16,24 +20,23 @@ Husk wraps `claude`, `copilot`, `codex`, `aider`, or any other terminal-based AI
 
 CLI agents are powerful and free. But they live in a black-on-black terminal that newcomers find intimidating, lose track of work in, and never discover the features of. Husk keeps the agent exactly as it is and adds the surface that makes it usable: file drops, persistent sessions, a status panel, a skills view, voice readback, and an installer that takes care of itself. If you can already use the terminal, Husk does not get in your way. If you cannot, Husk makes the same agent approachable.
 
-## Features
+<div align="center">
 
-- **Real PTY, not a fake terminal.** Husk spawns the actual `claude` (or whichever CLI you choose) inside `xterm.js` using `node-pty` plus `script(1)` for proper controlling-terminal handoff. Full ANSI, full TUI, real session resume.
-- **Pick any CLI.** Default is `claude`, but you can set the agent command in Preferences. Anything that runs in a terminal works: `copilot`, `codex`, `aider`, `gemini`, your own wrapper script.
-- **Reasoning and thinking baked in.** Husk ships with a complete reasoning + Algorithm + skills layer so the agent thinks deeply out of the box. No extra install, no separate setup. The framework is dropped into `~/.claude/` on first run.
-- **Name your agent.** First-run prompt asks what to call it. Husk injects a runtime override so the agent introduces itself by your chosen name and not as the upstream persona.
-- **Drag-drop context.** Drop any file on the window, it is copied into your agent's memory directory and announced in the chat.
-- **Prompts page (Skills).** Shows every installed agent skill plus your personal Husk-managed prompts in one unified list. One-click "Use" button injects any prompt into the live chat. Toggle on/off in place with an animated switch. Create new prompts from the UI.
-- **Sessions page.** Reads your agent's session log, decodes original project paths, and resumes any prior conversation in the original working directory using a real `--resume <id>` invocation.
-- **Files page.** A scoped tree browser rooted wherever you choose, so you can drop files into the chat or open them in your OS file manager.
-- **Live status panel.** Shows location, time, build versions, tool counts, usage, memory totals, and a learning sparkline updated every few seconds.
-- **Voice readback (optional).** Local-only Piper TTS. No API key, no network at runtime. One click to install, one toggle to use. When enabled, Husk speaks the trailing summary line of each response.
-- **Themed and accent-aware.** Dark and light theme, five accent palettes. Brand wordmark stays orange regardless of accent.
-- **Animated everywhere.** Every toggle in the product uses one shared iOS-style switch with the same easing curve.
-- **Zoom controls.** `Ctrl/Cmd` with `+` / `-` / `0` or the topbar buttons. The whole UI scales, including the terminal.
-- **Welcome screen with opt-out.** First-time users get a soft landing with a Launch button. Power users tick the box and never see it again.
-- **One-shot installer.** `./install.sh` drops a launcher into `~/.local/bin`, adds a desktop entry with the app icon, bootstraps PAI into `~/.claude/`, and offers to pin Husk to GNOME favorites. `./uninstall.sh` removes everything cleanly, with `--keep-data` if you want to preserve your voice models and config.
-- **Sandboxed Linux launch.** Detects when `chrome-sandbox` is not setuid root and passes `--no-sandbox` automatically, so Husk runs out of the box on most distros.
+<img src="docs/husk-chat.png" alt="Chat with the agent inside Husk" width="900" />
+<br /><sub><i>Chat in a real PTY with full TUI fidelity, drag-drop context, and a live status panel.</i></sub>
+
+<br /><br />
+
+<img src="docs/husk-skills.png" alt="Skills page" width="450" />
+<img src="docs/husk-mcp.png" alt="MCP servers page" width="450" />
+<br /><sub><i>Skills with one-click <b>Use</b>, animated toggles, and source badges. MCP servers with live connection state and a curated catalog.</i></sub>
+
+<br /><br />
+
+<img src="docs/husk-mcp-install.png" alt="Install a custom MCP server" width="600" />
+<br /><sub><i>Install any MCP server: pick stdio or HTTP/SSE, fill the form, or paste the canonical JSON shape and Husk fills it for you.</i></sub>
+
+</div>
 
 ## Install
 
