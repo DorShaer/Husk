@@ -127,7 +127,7 @@ body {
 .brand-text {
   font-family: 'Cause', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-weight: 900; font-size: 40px; line-height: 1; letter-spacing: 0.04em;
-  color: #F75418;
+  color: #F77115;
 }
 .topbar-spacer { flex: 1; -webkit-app-region: drag; min-height: 36px; }
 
