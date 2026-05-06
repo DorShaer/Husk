@@ -1,6 +1,11 @@
 // Renderer-safe API surface.
 const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 
+// Default UI scale Husk mounts at, so the renderer comes up comfortable on
+// every platform. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
+const HUSK_BASE_ZOOM = 1;
+try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
+
 contextBridge.exposeInMainWorld('husk', {
   pty: {
     start: (size) => ipcRenderer.invoke('pty:start', size),
@@ -67,7 +72,9 @@ contextBridge.exposeInMainWorld('husk', {
   ui: {
     zoomIn: () => { const lvl = Math.min(webFrame.getZoomLevel() + 0.5, 5); webFrame.setZoomLevel(lvl); return lvl; },
     zoomOut: () => { const lvl = Math.max(webFrame.getZoomLevel() - 0.5, -3); webFrame.setZoomLevel(lvl); return lvl; },
-    zoomReset: () => { webFrame.setZoomLevel(0); return 0; },
+    // Reset returns to Husk's default UI scale, not the browser default.
+    zoomReset: () => { webFrame.setZoomLevel(HUSK_BASE_ZOOM); return HUSK_BASE_ZOOM; },
     zoomGet: () => webFrame.getZoomLevel(),
   },
 });
+
