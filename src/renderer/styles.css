@@ -1108,11 +1108,52 @@ input[type="checkbox"]:disabled {
 .modal-hint code { background: var(--bg-3); padding: 1px 6px; border-radius: 4px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
 .modal-card .btn-primary { width: 100%; padding: 12px 16px; font-size: 14px; }
 
+.modal-card.modal-card-wide { width: 600px; max-width: 92vw; text-align: left; }
 .modal-card.modal-wide { width: 600px; max-width: 92vw; text-align: left; }
 .modal-card.modal-wide .modal-icon { text-align: center; }
 .modal-card.modal-wide .modal-title { text-align: center; }
 .modal-card.modal-wide .modal-sub { text-align: center; }
 .modal-card.modal-wide .modal-sub code { background: var(--bg-3); padding: 1px 5px; border-radius: 4px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+/* First-run wizard */
+.fr-agents { display: flex; flex-direction: column; gap: 6px; margin: 14px 0 8px; }
+.fr-loading { padding: 18px; text-align: center; color: var(--text-3); font-size: 13px; }
+.fr-agent {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.fr-agent-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.fr-agent-name { font-weight: 600; font-size: 13px; color: var(--text); }
+.fr-agent-cmd { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-3); }
+.fr-status {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.fr-status-ok { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 35%, var(--line)); }
+.fr-status-missing { color: var(--text-3); }
+.fr-agent-action { display: flex; align-items: center; gap: 8px; }
+.fr-radio { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; user-select: none; }
+.fr-radio input[type="radio"] { accent-color: var(--accent); }
+
+.fr-log {
+  margin-top: 8px;
+  max-height: 160px; overflow-y: auto;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.fr-actions { display: flex; gap: 10px; margin-top: 14px; }
+.fr-actions .btn-primary { flex: 1; }
 .modal-card textarea {
   width: 100%; min-height: 160px; padding: 12px 14px;
   background: var(--bg-3); color: var(--text);

@@ -12,23 +12,29 @@
   </head>
   <body data-theme="dark" data-accent="orange" data-page="chat" data-rail="expanded">
 
-    <!-- First-run modal -->
+    <!-- First-run wizard -->
     <div id="first-run" class="modal" hidden>
-      <div class="modal-card">
+      <div class="modal-card modal-card-wide">
         <img class="modal-icon-img" src="assets/husk-logo.png" alt="Husk" />
         <div class="modal-title">Welcome to Husk</div>
-        <div class="modal-sub">A native desktop shell for your terminal AI agent.</div>
+        <div class="modal-sub">Pick the AI agent you want to use. We'll detect what's already on your machine and install whatever's missing.</div>
+
+        <div class="fr-agents" id="fr-agents">
+          <div class="fr-loading">Scanning your system…</div>
+        </div>
+
+        <div class="fr-log" id="fr-log" hidden></div>
+
         <div class="modal-section">
-          <div class="modal-label">Agent name</div>
+          <div class="modal-label">What should we call the agent?</div>
           <input type="text" id="fr-name" value="Husk" autocomplete="off" spellcheck="false" maxlength="40" />
-          <div class="modal-hint">What the agent calls itself when you ask its name. Defaults to Husk. Pick anything you like.</div>
+          <div class="modal-hint">The name the agent uses for itself when you ask. Pick anything; you can change it later in Preferences.</div>
         </div>
-        <div class="modal-section">
-          <div class="modal-label">Agent command</div>
-          <input type="text" id="fr-cmd" value="claude" autocomplete="off" spellcheck="false" />
-          <div class="modal-hint">The CLI we will launch in the chat tab. Try <code>claude</code>, <code>aider</code>, <code>codex</code>, or any TUI. Empty starts a plain shell.</div>
+
+        <div class="fr-actions">
+          <button id="fr-skip" class="ghost-btn" type="button">I'll do this later</button>
+          <button id="fr-go" class="btn-primary" disabled>Continue</button>
         </div>
-        <button id="fr-go" class="btn-primary">Launch Husk</button>
       </div>
     </div>
 

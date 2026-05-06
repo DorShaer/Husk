@@ -382,29 +382,117 @@ ipcMain.handle('config:set', (_e, partial) => {
   return { ...config };
 });
 
-// Probe well-known CLI agents on PATH so the rail's quick-switcher can show
-// which ones are actually installed. Cheap synchronous PATH walk, no spawn.
+// Probe well-known CLI agents on PATH so the rail's quick-switcher and the
+// first-launch wizard can show which ones are actually installed. Cheap
+// synchronous PATH walk, no subprocess. On Windows we also walk PATHEXT
+// (.cmd, .bat, .exe) because npm-installed CLIs land as <name>.cmd shims
+// and Win32 file lookup does NOT auto-append PATHEXT.
 const KNOWN_AGENTS = [
-  { id: 'claude', label: 'Claude Code',  command: 'claude' },
-  { id: 'copilot', label: 'GitHub Copilot CLI', command: 'copilot' },
-  { id: 'codex', label: 'Codex CLI',  command: 'codex' },
-  { id: 'aider',  label: 'Aider',  command: 'aider' },
-  { id: 'gemini', label: 'Gemini CLI', command: 'gemini' },
+  {
+    id: 'claude', label: 'Claude Code', command: 'claude',
+    install: { tool: 'npm', args: ['install', '-g', '@anthropic-ai/claude-code'] },
+    docs: 'https://docs.anthropic.com/claude/docs/claude-code',
+  },
+  {
+    id: 'copilot', label: 'GitHub Copilot CLI', command: 'copilot',
+    install: { tool: 'npm', args: ['install', '-g', '@github/copilot'] },
+    docs: 'https://docs.github.com/en/copilot/github-copilot-in-the-cli',
+  },
+  {
+    id: 'codex', label: 'OpenAI Codex CLI', command: 'codex',
+    install: { tool: 'npm', args: ['install', '-g', '@openai/codex'] },
+    docs: 'https://github.com/openai/codex',
+  },
+  {
+    id: 'aider', label: 'Aider', command: 'aider',
+    install: { tool: 'pipx', args: ['install', 'aider-chat'] },
+    docs: 'https://aider.chat/docs/install.html',
+  },
+  {
+    id: 'gemini', label: 'Gemini CLI', command: 'gemini',
+    install: { tool: 'npm', args: ['install', '-g', '@google/gemini-cli'] },
+    docs: 'https://github.com/google-gemini/gemini-cli',
+  },
 ];
+
 function isOnPath(binName) {
-  const dirs = (process.env.PATH || '').split(path.delimiter);
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const isWin = process.platform === 'win32';
+  const candidates = isWin
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => binName + e)
+    : [binName];
   for (const d of dirs) {
-    if (!d) continue;
-    try {
-      const p = path.join(d, binName);
-      const st = fs.statSync(p);
-      if (st.isFile() && (st.mode & 0o111)) return true;
-    } catch (_) {}
+    for (const c of candidates) {
+      try {
+        const p = path.join(d, c);
+        const st = fs.statSync(p);
+        if (!st.isFile()) continue;
+        if (isWin) return true;
+        if (st.mode & 0o111) return true;
+      } catch (_) {}
+    }
   }
   return false;
 }
+
 ipcMain.handle('agents:detect', () => {
-  return KNOWN_AGENTS.map((a) => ({ ...a, available: isOnPath(a.command) }));
+  // Probe the install tools too so the renderer can decide between Install
+  // and 'Open install page'. npm and pipx are the most likely available.
+  const tools = {
+    npm: isOnPath('npm'),
+    pipx: isOnPath('pipx'),
+    pip: isOnPath('pip') || isOnPath('pip3'),
+  };
+  return {
+    agents: KNOWN_AGENTS.map((a) => ({
+      id: a.id,
+      label: a.label,
+      command: a.command,
+      docs: a.docs,
+      installer: a.install ? a.install.tool : null,
+      installable: a.install ? !!tools[a.install.tool] : false,
+      available: isOnPath(a.command),
+    })),
+    tools,
+    platform: process.platform,
+  };
+});
+
+// Run the install command for a known agent and stream progress lines back to
+// the renderer over the 'agents:install:progress' event. Resolves with
+// { ok, code, error? } when the subprocess exits.
+ipcMain.handle('agents:install', async (_e, { id }) => {
+  const def = KNOWN_AGENTS.find((a) => a.id === id);
+  if (!def || !def.install) return { ok: false, error: 'unknown agent' };
+  const { tool, args } = def.install;
+  if (!isOnPath(tool)) return { ok: false, error: `${tool} is not installed; open the docs link to install ${def.label} manually.` };
+  return new Promise((resolve) => {
+    let proc;
+    const send = (line) => {
+      if (mainWindow) mainWindow.webContents.send('agents:install:progress', { id, line });
+    };
+    try {
+      // shell:false. spawn looks the tool up via PATH; on Windows we also
+      // get PATHEXT resolution since spawn calls ShellExecuteEx-equivalent.
+      proc = spawn(tool, args, { shell: process.platform === 'win32', windowsHide: true });
+    } catch (err) {
+      resolve({ ok: false, error: err.message });
+      return;
+    }
+    send(`$ ${tool} ${args.join(' ')}`);
+    proc.stdout.on('data', (d) => d.toString().split(/\r?\n/).forEach((l) => l && send(l)));
+    proc.stderr.on('data', (d) => d.toString().split(/\r?\n/).forEach((l) => l && send(l)));
+    proc.on('error', (err) => resolve({ ok: false, error: err.message }));
+    proc.on('close', (code) => {
+      if (code === 0) {
+        send('done.');
+        resolve({ ok: true, code, available: isOnPath(def.command) });
+      } else {
+        send(`exited ${code}`);
+        resolve({ ok: false, code, error: `${tool} exited with code ${code}` });
+      }
+    });
+  });
 });
 
 // ─── MCP servers (~/.claude.json mcpServers) ────────────────────────────────────

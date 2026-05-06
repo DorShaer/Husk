@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('husk', {
   },
   agents: {
     detect: () => ipcRenderer.invoke('agents:detect'),
+    install: (id) => ipcRenderer.invoke('agents:install', { id }),
+    onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
   },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),
