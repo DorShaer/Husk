@@ -191,12 +191,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Semgrep
+        # p/electron does not exist on semgrep.dev (404). The other packs
+        # cover Electron-relevant patterns (XSS in renderer, command
+        # injection in main, Node.js-wide rules).
         env:
           SEMGREP_RULES: >-
             p/owasp-top-ten
             p/javascript
             p/nodejs
-            p/electron
             p/xss
             p/command-injection
         run: semgrep scan --error --severity ERROR --exclude libs --exclude src/renderer/vendor --exclude node_modules .
