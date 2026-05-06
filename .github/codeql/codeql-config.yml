@@ -1,0 +1,18 @@
+name: "Husk CodeQL config"
+
+# Husk is a single-package Electron app. We analyse our own JS only:
+# main process, preload, renderer. The bundled PAI framework and the
+# vendored xterm bundle are excluded — they are third-party content
+# that we ship as-is.
+
+paths:
+  - src
+
+paths-ignore:
+  - libs/pai
+  - src/renderer/vendor
+  - node_modules
+  - docs
+
+# Use the security-extended + security-and-quality query suites (set
+# in the workflow). No custom queries today.

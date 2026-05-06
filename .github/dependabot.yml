@@ -1,0 +1,64 @@
+# Dependabot configuration for Husk.
+#
+# Philosophy:
+#   - Weekly cadence, grouped by family, minor + patch only.
+#   - Major bumps are ignored by default and must be opened manually. They
+#     are almost always breaking and belong in a deliberate, human-authored
+#     PR (Electron majors, xterm majors, node-pty majors all change ABI or
+#     wire format).
+#   - Security advisories are still processed regardless of the ignore
+#     rules — GitHub fires those through a separate pipeline, so the
+#     ignore-major rule does not hide vulnerabilities.
+
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      npm-minor-patches:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(ci)"
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions-minor-patches:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
