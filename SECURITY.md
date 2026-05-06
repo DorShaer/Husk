@@ -70,7 +70,7 @@ Out of scope (today):
 
 Please do not file vulnerabilities as public issues.
 
-Email: `dor.shaer` at gmail.
+Email: `dor.shaer@gmail.com`
 
 Include:
 - A short description of the issue.
