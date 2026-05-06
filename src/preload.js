@@ -69,6 +69,14 @@ contextBridge.exposeInMainWorld('husk', {
     onProgress: (cb) => ipcRenderer.on('voice:progress', (_e, p) => cb(p)),
   },
   getPathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch (_) { return null; } },
+  updates: {
+    get: () => ipcRenderer.invoke('update:get'),
+    check: () => ipcRenderer.invoke('update:check'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    openRelease: (url) => ipcRenderer.invoke('update:open-release', url),
+    onStatus: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s)),
+  },
   ui: {
     zoomIn: () => { const lvl = Math.min(webFrame.getZoomLevel() + 0.5, 5); webFrame.setZoomLevel(lvl); return lvl; },
     zoomOut: () => { const lvl = Math.max(webFrame.getZoomLevel() - 0.5, -3); webFrame.setZoomLevel(lvl); return lvl; },

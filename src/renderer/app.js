@@ -968,6 +968,123 @@ $('#pref-recap').addEventListener('change', async (e) => {
   toast(`Recap ${cfg.recap ? 'enabled' : 'disabled'} · restart agent to apply`, 'success');
 });
 
+// ─── Update pill (topbar) ───────────────────────────────────────────────────────
+// One element drives every state: idle, checking, up-to-date, available,
+// downloading (n%), ready (restart to install), error. The dot pulses only
+// when there's something for the user to do.
+let updateState = { status: 'idle', current: 'v?' };
+function paintUpdatePill() {
+  const btn = $('#btn-update');
+  const text = $('#tv-text');
+  const dot = btn ? btn.querySelector('.tv-dot') : null;
+  if (!btn) return;
+  const s = updateState || { status: 'idle' };
+  const cur = s.current ? (s.current.startsWith('v') ? s.current : 'v' + s.current) : '';
+  const next = s.version ? ('v' + s.version) : '';
+  let label = cur || 'Husk';
+  let title = 'Click to check for updates';
+  let showDot = false;
+  switch (s.status) {
+    case 'checking':
+      label = 'checking…'; title = 'Looking for a new version'; break;
+    case 'available':
+      label = `${next} available →`; title = `Update from ${cur} to ${next}`; showDot = true; break;
+    case 'downloading':
+      label = `downloading ${s.percent || 0}%`; title = 'Downloading update'; break;
+    case 'ready':
+      label = 'restart to update'; title = `${next} ready, click to install and relaunch`; showDot = true; break;
+    case 'up-to-date':
+      label = cur; title = `You're up to date (${cur})`; break;
+    case 'error':
+      label = cur; title = `Update check failed: ${s.error || 'unknown'}`; break;
+    case 'idle':
+    default:
+      label = cur; title = 'Click to check for updates';
+  }
+  text.textContent = label;
+  btn.title = title;
+  btn.dataset.state = s.status;
+  if (dot) dot.hidden = !showDot;
+}
+function openUpdatePop() {
+  const pop = $('#update-pop');
+  if (!pop) return;
+  const s = updateState;
+  const cur = s.current && (s.current.startsWith('v') ? s.current : 'v' + s.current);
+  const next = s.version ? ('v' + s.version) : '';
+  const title = $('#up-title');
+  const body = $('#up-body');
+  const cta = $('#up-cta');
+  const notesBtn = $('#up-notes');
+  notesBtn.hidden = !s.url;
+  notesBtn.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
+  if (s.status === 'available') {
+    title.textContent = `Husk ${next} is available`;
+    body.innerHTML = `You're on <strong>${escapeHtml(cur)}</strong>. The new version is ready to install.`;
+    cta.textContent = 'Install update';
+    cta.onclick = async () => {
+      cta.disabled = true; cta.textContent = 'Downloading…';
+      const r = await window.husk.updates.download();
+      if (!r.ok) {
+        // Auto-download not supported here (likely unsigned macOS or .deb / .rpm).
+        cta.textContent = 'Open releases page';
+        cta.disabled = false;
+        cta.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
+      }
+    };
+  } else if (s.status === 'ready') {
+    title.textContent = `Husk ${next} is ready`;
+    body.innerHTML = `Click below to relaunch Husk with the new version. Your current chat will end.`;
+    cta.textContent = 'Restart and install';
+    cta.onclick = () => window.husk.updates.install();
+  } else if (s.status === 'downloading') {
+    title.textContent = `Downloading ${next}`;
+    body.innerHTML = `${s.percent || 0}% ... please don't quit Husk.`;
+    cta.textContent = 'Close';
+    cta.onclick = () => { pop.hidden = true; };
+  } else if (s.status === 'up-to-date') {
+    title.textContent = "You're up to date";
+    body.innerHTML = `Running <strong>${escapeHtml(cur)}</strong>. Husk checks again every six hours.`;
+    cta.textContent = 'Check now';
+    cta.onclick = async () => {
+      cta.disabled = true;
+      await window.husk.updates.check();
+      cta.disabled = false;
+    };
+  } else {
+    title.textContent = 'Updates';
+    body.innerHTML = s.status === 'checking'
+      ? 'Looking for a new version…'
+      : (s.error
+          ? `Update check failed: ${escapeHtml(s.error)}.`
+          : `Running <strong>${escapeHtml(cur || 'Husk')}</strong>.`);
+    cta.textContent = 'Check now';
+    cta.onclick = async () => {
+      cta.disabled = true;
+      await window.husk.updates.check();
+      cta.disabled = false;
+    };
+  }
+  pop.hidden = false;
+}
+$('#btn-update').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const pop = $('#update-pop');
+  if (pop.hidden) openUpdatePop(); else pop.hidden = true;
+});
+$('#up-close').addEventListener('click', () => { $('#update-pop').hidden = true; });
+window.addEventListener('click', (e) => {
+  const pop = $('#update-pop');
+  if (pop.hidden) return;
+  if (e.target.closest('#update-pop') || e.target.closest('#btn-update')) return;
+  pop.hidden = true;
+});
+window.husk.updates.onStatus((s) => { updateState = s; paintUpdatePill(); });
+(async () => {
+  try { updateState = (await window.husk.updates.get()) || updateState; } catch (_) {}
+  paintUpdatePill();
+})();
+
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
 $('#btn-restart').addEventListener('click', restartPty);
 $('#btn-theme').addEventListener('click', async () => {
