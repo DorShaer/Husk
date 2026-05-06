@@ -38,7 +38,23 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 </div>
 
-## Install
+## Download
+
+Grab the latest installer for your OS from the [releases page](https://github.com/DorShaer/Husk/releases):
+
+| OS | Download |
+|----|----------|
+| Linux | `Husk-<version>.AppImage` (double-click), `.deb`, or `.rpm` |
+| macOS | `Husk-<version>.dmg` (drag to Applications); both Apple Silicon and Intel |
+| Windows | `Husk-<version>-Setup.exe` (NSIS installer) |
+
+No Node, no npm, no `git clone`. Husk bundles its own Electron runtime and copies the agent reasoning layer into `~/.claude/` on first launch.
+
+> macOS first launch: the .dmg is unsigned today. Right-click the app, choose **Open**, confirm once. Apple Developer ID signing is on the roadmap.
+
+## Install from source
+
+For contributors and tinkerers:
 
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
@@ -46,15 +62,13 @@ cd husk
 ./install.sh
 ```
 
-The installer takes care of `npm install`, native module rebuild for `node-pty`, the desktop entry, the icon, and the PAI bootstrap into `~/.claude/`. After it finishes, Husk is in your application launcher.
+`install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS), and bootstraps PAI into `~/.claude/`.
 
-For development you can skip the system install:
+For pure dev mode without system registration:
 
 ```bash
 ./run.sh
 ```
-
-This boots Husk in dev mode without registering anything system-wide.
 
 ## Uninstall
 
