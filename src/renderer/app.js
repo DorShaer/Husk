@@ -1669,20 +1669,35 @@ $$('.ce-chip').forEach((c) => {
 });
 
 // ─── Command palette ────────────────────────────────────────────────────────────
+// Palette icons match the rail surface so the user sees the same glyph in
+// both places. Inline SVGs (stroke: currentColor, sized by .pi-icon CSS).
+const ICONS = {
+  chat:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg>',
+  skills:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg>',
+  sessions:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>',
+  files:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
+  mcp:         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg>',
+  preferences: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.16.39.43.72.78.95.34.23.74.35 1.14.36H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  restart:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>',
+  plus:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+  theme:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>',
+  folder:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
+};
+
 const PALETTE_ACTIONS = [
-  { icon: '⌧', label: 'Switch to Chat',          run: () => setPage('chat'),         shortcut: '1' },
-  { icon: '⌬', label: 'Switch to Skills',        run: () => setPage('skills'),       shortcut: '2' },
-  { icon: '⊕', label: 'Switch to Sessions',      run: () => setPage('sessions'),     shortcut: '3' },
-  { icon: '▤', label: 'Switch to Files',         run: () => setPage('files'),        shortcut: '4' },
-  { icon: '⚙', label: 'Switch to Preferences',   run: () => setPage('preferences'),  shortcut: ',' },
-  { icon: '↻', label: 'Restart Agent',           run: restartPty },
-  { icon: '＋', label: 'Share file (picker)',     run: shareFilesViaPicker },
-  { icon: '＋', label: 'New chat session',         run: () => restartPty() },
-  { icon: '◐', label: 'Toggle theme',            run: () => $('#btn-theme').click() },
-  { icon: '⊕', label: 'Open ~/.claude/MEMORY/WORK/', run: () => lastStats && window.husk.fs.open(lastStats.sessionsDir) },
-  { icon: '⌬', label: 'Open ~/.claude/skills/',     run: () => lastStats && window.husk.fs.open(lastStats.skillsDir) },
-  { icon: '◐', label: 'Open ~/.claude/hooks/',      run: () => lastStats && window.husk.fs.open(lastStats.hooksDir) },
-  { icon: '↗', label: 'Reveal config file',         run: () => window.husk.fs.open(`${ /* HOME */ ''}`) || true },
+  { icon: ICONS.chat,        label: 'Switch to Chat',                 run: () => setPage('chat'),        shortcut: '1' },
+  { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: '2' },
+  { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: '3' },
+  { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: '4' },
+  { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: '5' },
+  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('preferences'), shortcut: ',' },
+  { icon: ICONS.restart,     label: 'Restart Agent',                  run: restartPty },
+  { icon: ICONS.plus,        label: 'Share file (picker)',            run: shareFilesViaPicker },
+  { icon: ICONS.plus,        label: 'New chat session',               run: () => restartPty() },
+  { icon: ICONS.theme,       label: 'Toggle theme',                   run: () => $('#btn-theme').click() },
+  { icon: ICONS.folder,      label: 'Open ~/.claude/MEMORY/WORK/',    run: () => lastStats && window.husk.fs.open(lastStats.sessionsDir) },
+  { icon: ICONS.skills,      label: 'Open ~/.claude/skills/',         run: () => lastStats && window.husk.fs.open(lastStats.skillsDir) },
+  { icon: ICONS.folder,      label: 'Open ~/.claude/hooks/',          run: () => lastStats && window.husk.fs.open(lastStats.hooksDir) },
 ];
 
 let paletteSel = 0;

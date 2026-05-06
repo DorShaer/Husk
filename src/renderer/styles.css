@@ -1243,7 +1243,8 @@ input[type="checkbox"]:disabled {
 .palette-list li.active, .palette-list li:hover {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-3)); color: var(--text);
 }
-.palette-list .pi-icon { color: var(--accent); width: 18px; text-align: center; }
+.palette-list .pi-icon { color: var(--accent); width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.palette-list .pi-icon svg { width: 16px; height: 16px; display: block; }
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: 11px; font-family: 'JetBrains Mono', monospace; }
 .palette-foot {
   display: flex; gap: 14px;
