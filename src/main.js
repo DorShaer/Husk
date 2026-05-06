@@ -204,6 +204,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   //    Linux trick is actively harmful. We use `sh -c "<cmd>"` so quoting
   //    inside the command (e.g. claude's long --append-system-prompt) is
   //    parsed by the shell instead of being naively split on whitespace.
+  //  - Windows: not supported (no PTY tty story we use).
   let exe; let argv;
   if (!cmd) {
     exe = shellBin; argv = ['-i'];
@@ -923,12 +924,70 @@ ipcMain.handle('sessions:list', () => {
       });
     }
   }
-  return { ok: true, sessions: out };
+
+  // Deduplicate Claude's shadow/sidecar JSONL files. For a single conversation
+  // Claude can persist multiple files (queue snapshots, resume shadows) that share
+  // the same first user prompt and ai-title. Group by (project, title, firstMessage)
+  // and keep only the largest file — the canonical session always grows past its shadows.
+  const dedup = new Map();
+  for (const s of out) {
+    const key = `${s.project}${(s.title || '').toLowerCase()}${(s.firstMessage || '').slice(0, 200)}`;
+    const cur = dedup.get(key);
+    if (!cur || s.sizeBytes > cur.sizeBytes
+        || (s.sizeBytes === cur.sizeBytes && s.mtime > cur.mtime)) {
+      dedup.set(key, s);
+    }
+  }
+  const deduped = [...dedup.values()].sort((a, b) => b.mtime - a.mtime);
+  return { ok: true, sessions: deduped };
 });
 
 ipcMain.handle('sessions:read', (_e, prdPath) => {
   try { return { ok: true, content: fs.readFileSync(prdPath, 'utf8') }; }
   catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Permanently delete one or more claude session JSONL files.
+// Native confirm dialog runs in main; renderer just hands over paths.
+ipcMain.handle('sessions:delete', async (_e, payload) => {
+  const paths = Array.isArray(payload?.paths) ? payload.paths : [];
+  if (!paths.length) return { ok: false, error: 'No sessions selected' };
+
+  const projectsDir = path.resolve(path.join(CLAUDE_DIR, 'projects'));
+  const safe = [];
+  for (const p of paths) {
+    if (typeof p !== 'string') continue;
+    const resolved = path.resolve(p);
+    // Must live under ~/.claude/projects and be a .jsonl file
+    if (!resolved.startsWith(projectsDir + path.sep)) continue;
+    if (!resolved.endsWith('.jsonl')) continue;
+    safe.push(resolved);
+  }
+  if (!safe.length) return { ok: false, error: 'No valid session paths' };
+
+  if (payload?.confirm !== false) {
+    const r = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancel', 'Delete'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Delete sessions',
+      message: safe.length === 1
+        ? 'Permanently delete this claude session?'
+        : `Permanently delete ${safe.length} claude sessions?`,
+      detail: safe.map((p) => path.basename(p)).slice(0, 10).join('\n')
+        + (safe.length > 10 ? `\n…and ${safe.length - 10} more` : ''),
+    });
+    if (r.response !== 1) return { ok: false, cancelled: true };
+  }
+
+  const failed = [];
+  let deleted = 0;
+  for (const p of safe) {
+    try { fs.unlinkSync(p); deleted++; }
+    catch (err) { failed.push({ path: p, error: err.message }); }
+  }
+  return { ok: failed.length === 0, deleted, failed };
 });
 
 // Find the closest claude session (by file mtime/ctime) to a PRD's started timestamp.
@@ -1060,7 +1119,14 @@ ipcMain.handle('fs:listDir', async (_e, { dir, showHidden }) => {
 
 ipcMain.handle('fs:home', () => HOME);
 
-// ─── Voice (Piper TTS, local, no API keys) ──────────────────────────────────────
+// ─── Voice (local TTS, no API keys) ─────────────────────────────────────────────
+//
+// Two backends:
+//   - Linux: Piper (downloaded into ~/.local/share/husk/piper, ~50 MB)
+//   - macOS: built-in `say` command. No install needed, no download. The Linux
+//     Piper binary is x86_64 ELF and won't run on Darwin anyway, so attempting
+//     to install Piper there used to throw 'spawn Unknown system error -8' from
+//     the running-not-runnable binary. The darwin branch sidesteps that.
 
 const HUSK_DATA = path.join(HOME, '.local', 'share', 'husk');
 const PIPER_DIR = path.join(HUSK_DATA, 'piper');
@@ -1070,7 +1136,16 @@ const VOICES_DIR = path.join(PIPER_DIR, 'voices');
 const PIPER_RELEASE = 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
 const VOICE_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
 
+const IS_MAC = process.platform === 'darwin';
+const MAC_SAY_BIN = '/usr/bin/say';
+const MAC_DEFAULT_VOICE = 'Samantha';
+// A small curated list of macOS system voices that ship by default. The
+// renderer feeds these into the same dropdown that lists Piper voices on
+// Linux, so the existing UI keeps working unchanged.
+const MAC_SAY_VOICES = ['Samantha', 'Alex', 'Daniel', 'Karen', 'Moira', 'Tessa', 'Victoria'];
+
 function listInstalledVoices() {
+  if (IS_MAC) return MAC_SAY_VOICES;
   try {
     return fs.readdirSync(VOICES_DIR)
       .filter((f) => f.endsWith('.onnx'))
@@ -1079,13 +1154,16 @@ function listInstalledVoices() {
 }
 
 function piperReady() {
+  if (IS_MAC) return fs.existsSync(MAC_SAY_BIN);
   return fs.existsSync(PIPER_BIN) && listInstalledVoices().length > 0;
 }
 
 ipcMain.handle('voice:status', () => ({
   installed: piperReady(),
-  binaryPresent: fs.existsSync(PIPER_BIN),
+  binaryPresent: IS_MAC ? fs.existsSync(MAC_SAY_BIN) : fs.existsSync(PIPER_BIN),
   voices: listInstalledVoices(),
+  platform: process.platform,
+  backend: IS_MAC ? 'say' : 'piper',
 }));
 
 function emitVoiceProgress(stage, detail) {
@@ -1104,6 +1182,14 @@ function runStep(cmd, args, label) {
 }
 
 ipcMain.handle('voice:install', async (_e, { voice = 'en_US-amy-medium' } = {}) => {
+  // macOS uses the built-in `say` command. No download, no install.
+  if (IS_MAC) {
+    if (!fs.existsSync(MAC_SAY_BIN)) {
+      return { ok: false, error: 'macOS say(1) not found at /usr/bin/say' };
+    }
+    emitVoiceProgress('done', 'macOS say is ready (no install needed)');
+    return { ok: true, voices: listInstalledVoices(), backend: 'say' };
+  }
   try {
     fs.mkdirSync(HUSK_DATA, { recursive: true });
     fs.mkdirSync(VOICES_DIR, { recursive: true });
@@ -1139,8 +1225,23 @@ ipcMain.handle('voice:install', async (_e, { voice = 'en_US-amy-medium' } = {}) 
 
 let speakProc = null;
 ipcMain.handle('voice:speak', async (_e, { text, voice, rate = 1.0 }) => {
-  if (!piperReady()) return { ok: false, error: 'Piper not installed' };
   if (!text || !text.trim()) return { ok: false, error: 'Empty text' };
+
+  if (IS_MAC) {
+    if (!fs.existsSync(MAC_SAY_BIN)) return { ok: false, error: 'macOS say(1) not found' };
+    if (speakProc) { try { speakProc.kill(); } catch (_) {} speakProc = null; }
+    const sayVoice = (voice && MAC_SAY_VOICES.includes(voice)) ? voice : MAC_DEFAULT_VOICE;
+    // say's -r is words per minute. Default ~175. Map our 0.5..1.6 scalar onto a sensible range.
+    const wpm = Math.max(120, Math.min(280, Math.round(175 * (rate || 1.0))));
+    const args = ['-v', sayVoice, '-r', String(wpm), text];
+    const proc = spawn(MAC_SAY_BIN, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    speakProc = proc;
+    proc.on('close', () => { if (speakProc === proc) speakProc = null; });
+    proc.on('error', () => { if (speakProc === proc) speakProc = null; });
+    return { ok: true };
+  }
+
+  if (!piperReady()) return { ok: false, error: 'Piper not installed' };
 
   const onnxPath = path.join(VOICES_DIR, (voice || 'en_US-amy-medium') + '.onnx');
   const jsonPath = onnxPath + '.json';
@@ -1182,6 +1283,8 @@ ipcMain.handle('voice:stop', () => {
 
 ipcMain.handle('voice:uninstall', async () => {
   if (speakProc) { try { speakProc.kill('SIGTERM'); } catch (_) {} speakProc = null; }
+  // macOS: nothing to uninstall (using built-in say). Just confirm.
+  if (IS_MAC) return { ok: true, voices: listInstalledVoices() };
   try {
     if (fs.existsSync(PIPER_DIR)) fs.rmSync(PIPER_DIR, { recursive: true, force: true });
     return { ok: true };
