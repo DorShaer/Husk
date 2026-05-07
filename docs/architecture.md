@@ -117,6 +117,6 @@ The release workflow in `.github/workflows/release.yml` builds for all three OSe
 
 ## Threading and shutdown
 
-- `app.requestSingleInstanceLock()` — second `husk` invocation focuses the existing window instead of starting another process tree.
-- `killPtyTree()` — on window close or quit, SIGTERMs the PTY's process group, then SIGKILLs after 250 ms grace. Wired to `window-all-closed`, `before-quit`, `will-quit`, `SIGINT`, `SIGTERM`, `SIGHUP`, `exit`.
+- `app.requestSingleInstanceLock()`: second `husk` invocation focuses the existing window instead of starting another process tree.
+- `killPtyTree()`: on window close or quit, SIGTERMs the PTY's process group, then SIGKILLs after 250 ms grace. Wired to `window-all-closed`, `before-quit`, `will-quit`, `SIGINT`, `SIGTERM`, `SIGHUP`, `exit`.
 - `run.sh` reaps stale Electron processes whose `--app-path` matches the local source dir, so a hard kill from the prior run does not pile up inotify watchers.

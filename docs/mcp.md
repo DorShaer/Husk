@@ -33,9 +33,9 @@ AVAILABLE
 
 Three semantic sections in "Installed":
 
-- **Loaded** — green dot. Enabled AND in the snapshot taken when the current agent process started. These are live in the chat right now.
-- **Applying** — amber dot. Enabled now but added or re-enabled since launch. Husk silently restarts the agent to load them; the dot becomes green when the new session starts.
-- **Inactive** — grey dot. Toggled off. Persisted in `_huskMcpDisabled` inside `~/.claude.json` so re-enabling is one click and zero retyping.
+- **Loaded**: green dot. Enabled AND in the snapshot taken when the current agent process started. These are live in the chat right now.
+- **Applying**: amber dot. Enabled now but added or re-enabled since launch. Husk silently restarts the agent to load them; the dot becomes green when the new session starts.
+- **Inactive**: grey dot. Toggled off. Persisted in `_huskMcpDisabled` inside `~/.claude.json` so re-enabling is one click and zero retyping.
 
 Plus a per-row connection state pill: `connected` / `failed` / `needs auth` / `checking…`. Source: a `claude mcp list` shell-out, parsed and cached in the renderer.
 
@@ -57,14 +57,14 @@ Top-right of the MCP page: `＋ Add custom server`. Modal opens with a "Paste JS
 
 **Two transports:**
 
-- **Local command (stdio)** — for npm-installed servers like the catalog ones, but for any package, including private. Form: server name, command, arguments (one per line), env vars (`KEY=value`, one per line).
+- **Local command (stdio)**: for npm-installed servers like the catalog ones, but for any package, including private. Form: server name, command, arguments (one per line), env vars (`KEY=value`, one per line).
 
   Stored shape:
   ```json
   "my-server": { "command": "npx", "args": ["-y", "@my-org/my-mcp-server"], "env": { "API_KEY": "..." } }
   ```
 
-- **Remote (HTTP / SSE)** — for hosted MCP servers. Form: server name, URL, transport type, headers (`Header: value`, one per line).
+- **Remote (HTTP / SSE)**: for hosted MCP servers. Form: server name, URL, transport type, headers (`Header: value`, one per line).
 
   Stored shape:
   ```json

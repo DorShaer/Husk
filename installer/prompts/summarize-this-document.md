@@ -17,7 +17,7 @@ Once you have it, write the summary in this exact shape:
 
 **Sections** (one short paragraph per section or major argument, in original order)
 
-Then stop. Do not add "let me know if you want more" — I will ask if I do.
+Then stop. Do not add "let me know if you want more": I will ask if I do.
 
 Rules:
 - No filler. No "the document discusses".

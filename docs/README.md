@@ -12,8 +12,8 @@ Deeper reading than the project README. Pick a topic.
 
 Project-level docs that live at the repo root:
 
-- [`../README.md`](../README.md) — entry point, screenshots, quick install.
-- [`../SECURITY.md`](../SECURITY.md) — threat model and vulnerability reporting.
-- [`../LICENSE`](../LICENSE) — MIT.
+- [`../README.md`](../README.md): entry point, screenshots, quick install.
+- [`../SECURITY.md`](../SECURITY.md): threat model and vulnerability reporting.
+- [`../LICENSE`](../LICENSE): MIT.
 
 Images used by the project README live under [`images/`](images/).
