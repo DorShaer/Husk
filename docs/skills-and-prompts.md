@@ -4,7 +4,7 @@ Husk's Skills page is a unified surface for two different stores. Each row carri
 
 ## The two stores
 
-### Claude skills — `~/.claude/skills/`
+### Claude skills: `~/.claude/skills/`
 
 These are the skills the **agent** auto-loads when it starts. Each skill is a folder containing a `SKILL.md` (plus optionally extra files). Claude reads the front-matter `name` + `description` from `SKILL.md` and decides on its own when to invoke that skill, based on the description.
 
@@ -16,7 +16,7 @@ Husk does not load these into the chat. Claude does. Husk's job here is to:
 
 Source badge: `skill`.
 
-### Husk-managed prompts — `~/.config/husk/prompts/`
+### Husk-managed prompts: `~/.config/husk/prompts/`
 
 These are **template strings** Husk owns. They never auto-load into the agent. Instead each one has a "Use ▶" button. Click it and Husk types the prompt into the active chat. The agent receives it as if you had typed it yourself.
 
@@ -73,4 +73,4 @@ The slow path: drop a `.md` file onto the Husk window. The drag overlay offers t
 
 ## Why one page
 
-Showing two stores side-by-side keeps the user's mental model simple: "things I can use with my agent". The internal split — auto-loaded vs. paste-on-click — is a badge, not a separate page. New users do not need to learn the difference to be productive.
+Showing two stores side-by-side keeps the user's mental model simple: "things I can use with my agent". The internal split: auto-loaded vs. paste-on-click: is a badge, not a separate page. New users do not need to learn the difference to be productive.

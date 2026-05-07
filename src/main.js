@@ -22,7 +22,7 @@ function getAgentKind() {
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // GPU acceleration hints. Electron on Linux often falls back to software
-// compositing when --no-sandbox is set or the GPU sits on a blocklist —
+// compositing when --no-sandbox is set or the GPU sits on a blocklist,
 // that's the "feels like 30Hz" symptom. These three switches push it to
 // the GPU path. Safe defaults for desktop Electron 32.
 app.commandLine.appendSwitch('enable-gpu-rasterization');
@@ -44,6 +44,7 @@ const DEFAULT_CONFIG = {
   theme: 'dark',
   accent: 'orange',
   railExpanded: true,
+  statusCollapsed: false,
   voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
   skipWelcome: false,
   recap: true,
@@ -351,7 +352,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   //             script(1) does NOT accept -c.
   //  - Windows: cmd.exe /c <user's raw agentCommand>. Direct pty.spawn of
   //             'claude' fails because Win32 CreateProcess does NOT honor
-  //             PATHEXT — it only finds .exe, never .cmd / .bat / .ps1, and
+  //             PATHEXT, it only finds .exe, never .cmd / .bat / .ps1, and
   //             npm-installed CLIs land as claude.cmd shims. Going through
   //             cmd.exe means PATHEXT resolves and the .cmd is found.
   //             Trade-off: we can't safely inject our long --append-system-
@@ -381,11 +382,58 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   }
 
   ptyProc = pty.spawn(exe, argv, { name: 'xterm-256color', cols, rows, cwd, env });
+  activePtyCwd = cwd;
   ptyProc.onData((data) => { if (mainWindow) mainWindow.webContents.send('pty:data', data); });
   ptyProc.onExit(({ exitCode }) => {
     if (mainWindow) mainWindow.webContents.send('pty:exit', exitCode);
     ptyProc = null;
   });
+}
+
+let activePtyCwd = null;
+
+// Read the most-recent claude session JSONL for the active PTY cwd and
+// return a coarse usage estimate: turn count + a token estimate based on
+// total content characters (chars/4 is the common heuristic). This is the
+// only honest "session usage" Husk can show, since the agent process owns
+// the real token counter and only writes it to usage-cache.json if PAI's
+// statusline is wired up. No statusline → 0% forever.
+function readActiveSessionStats() {
+  try {
+    if (!activePtyCwd) return null;
+    const projectsDir = path.join(CLAUDE_DIR, 'projects');
+    const encoded = activePtyCwd.replace(/[/\\:]/g, '-');
+    const dir = path.join(projectsDir, encoded);
+    if (!fs.existsSync(dir)) return null;
+    const files = fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => {
+        const p = path.join(dir, f);
+        try { return { p, mtime: fs.statSync(p).mtimeMs }; } catch (_) { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime);
+    if (!files.length) return null;
+    const latest = files[0].p;
+    const raw = fs.readFileSync(latest, 'utf8').split('\n').filter(Boolean);
+    let turns = 0;
+    let chars = 0;
+    for (const line of raw) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type === 'user' || obj.type === 'assistant') turns++;
+        const content = obj.message && obj.message.content;
+        if (typeof content === 'string') chars += content.length;
+        else if (Array.isArray(content)) {
+          for (const part of content) {
+            if (typeof part === 'string') chars += part.length;
+            else if (part && typeof part.text === 'string') chars += part.text.length;
+          }
+        }
+      } catch (_) {}
+    }
+    return { turns, chars, tokens: Math.round(chars / 4), file: latest };
+  } catch (_) { return null; }
 }
 
 ipcMain.handle('pty:start', (_e, { cols, rows }) => { spawnPty(cols, rows); return true; });
@@ -521,7 +569,7 @@ ipcMain.handle('agents:install', async (_e, { id }) => {
 // ─── MCP servers (~/.claude.json mcpServers) ────────────────────────────────────
 // We treat ~/.claude.json's `mcpServers` object as the source of truth (Claude
 // Code's user-scoped MCP config). For "disabled" state, we move entries to a
-// Husk-private key `_huskMcpDisabled` so a toggle never loses configuration —
+// Husk-private key `_huskMcpDisabled` so a toggle never loses configuration,
 // just hides it from claude until re-enabled.
 const CLAUDE_USER_CONFIG = path.join(HOME, '.claude.json');
 
@@ -803,7 +851,7 @@ ipcMain.handle('stats:get', () => {
 
   return {
     skills, workflows, hooks, sessions, ratings, research,
-    huskVer: '0.2',
+    huskVer: app.getVersion(),
     claudeDir: CLAUDE_DIR, skillsDir, hooksDir,
     memoryDir: path.join(CLAUDE_DIR, 'MEMORY'),
     workflowsDir,
@@ -827,6 +875,8 @@ ipcMain.handle('stats:get', () => {
       extra_used: usage.extra_used_dollars || 0,
       extra_limit: usage.extra_limit_dollars || 0,
       session_cost: usage.session_cost || '',
+      cache_present: Object.keys(usage).length > 0,
+      session: readActiveSessionStats(),
     },
     learning,
     home: HOME,
@@ -1192,7 +1242,7 @@ ipcMain.handle('sessions:list', () => {
   // Deduplicate Claude's shadow/sidecar JSONL files. For a single conversation
   // Claude can persist multiple files (queue snapshots, resume shadows) that share
   // the same first user prompt and ai-title. Group by (project, title, firstMessage)
-  // and keep only the largest file — the canonical session always grows past its shadows.
+  // and keep only the largest file, the canonical session always grows past its shadows.
   const dedup = new Map();
   for (const s of out) {
     const key = `${s.project}${(s.title || '').toLowerCase()}${(s.firstMessage || '').slice(0, 200)}`;
@@ -1344,7 +1394,7 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
   if (!fs.existsSync(sourcePath)) return { ok: false, error: 'Source not found' };
   try {
     // path.basename normalizes ".." segments to "..", so we also reject any
-    // basename starting with "..", a literal "/", or a "\" — defense in depth.
+    // basename starting with "..", a literal "/", or a "\", defense in depth.
     const baseName = path.basename(sourcePath);
     if (!baseName || baseName.startsWith('..') || /[\/\\]/.test(baseName)) {
       return { ok: false, error: 'Invalid file name' };
