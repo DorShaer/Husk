@@ -330,7 +330,7 @@ body[data-rail="expanded"] .rail-section-context { display: flex; }
 /* Agent quick-switch pill */
 .rail-section-agent { position: relative; }
 .rail-agent {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 10px;
   width: 100%;
   padding: 10px 12px;
   background: var(--bg-3); color: var(--text);
@@ -339,6 +339,23 @@ body[data-rail="expanded"] .rail-section-context { display: flex; }
   transition: border-color 0.14s ease, background 0.14s ease;
   white-space: nowrap; overflow: hidden;
 }
+.rail-agent .ra-icon {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-3);
+  transition: color 0.14s ease;
+}
+.rail-agent .ra-icon svg { width: 20px; height: 20px; display: block; }
+.rail-agent:hover .ra-icon { color: var(--accent); }
+body[data-rail="collapsed"] .rail-agent {
+  padding: 10px 0;
+  justify-content: center;
+  gap: 0;
+}
+body[data-rail="collapsed"] .rail-agent .ra-label,
+body[data-rail="collapsed"] .rail-agent .ra-name,
+body[data-rail="collapsed"] .rail-agent .ra-chev { display: none; }
 .rail-agent .ra-label {
   font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--text-3);
@@ -370,6 +387,7 @@ body[data-rail="expanded"] .rail-agent .ra-chev { opacity: 1; }
   z-index: 10;
   display: flex; flex-direction: column; gap: 2px;
 }
+body[data-rail="collapsed"] .rail-agent-menu { display: none !important; }
 .rail-agent-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px;
