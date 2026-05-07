@@ -152,20 +152,33 @@ function setPage(name) {
 $$('.rail-item').forEach((b) => b.addEventListener('click', () => setPage(b.dataset.page)));
 
 // Rail expand/collapse
+function syncRailToggleTitle() {
+  const t = $('#rail-toggle');
+  if (!t) return;
+  t.title = document.body.dataset.rail === 'expanded' ? 'Collapse sidebar' : 'Expand sidebar';
+}
+function syncStatusToggleTitle() {
+  const t = $('#sp-toggle');
+  if (!t) return;
+  t.title = document.body.dataset.status === 'collapsed' ? 'Expand status panel' : 'Collapse status panel';
+}
 $('#rail-toggle').addEventListener('click', async () => {
   const expanded = document.body.dataset.rail === 'expanded';
   document.body.dataset.rail = expanded ? 'collapsed' : 'expanded';
+  // Force-close the agent dropdown so it can never strand-open inside the
+  // narrow collapsed rail (would render as a wrapping text column overlay).
+  if (typeof closeAgentMenu === 'function') closeAgentMenu();
+  syncRailToggleTitle();
   cfg = await window.husk.config.set({ railExpanded: !expanded });
   setTimeout(fitNow, 200);
 });
 
-// Status panel collapse, frees the right column so chat expands to fill
 const spToggle = $('#sp-toggle');
 if (spToggle) {
   spToggle.addEventListener('click', async () => {
     const collapsed = document.body.dataset.status === 'collapsed';
     document.body.dataset.status = collapsed ? 'expanded' : 'collapsed';
-    spToggle.title = collapsed ? 'Collapse status panel' : 'Expand status panel';
+    syncStatusToggleTitle();
     cfg = await window.husk.config.set({ statusCollapsed: !collapsed });
     setTimeout(fitNow, 200);
   });
@@ -2085,6 +2098,8 @@ async function boot() {
   applyAccent(cfg.accent || 'orange');
   document.body.dataset.rail = cfg.railExpanded ? 'expanded' : 'collapsed';
   document.body.dataset.status = cfg.statusCollapsed ? 'collapsed' : 'expanded';
+  syncRailToggleTitle();
+  syncStatusToggleTitle();
 
   if (!cfg.firstRunDone) {
     await runFirstRunWizard();
