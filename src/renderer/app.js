@@ -159,12 +159,23 @@ $('#rail-toggle').addEventListener('click', async () => {
   setTimeout(fitNow, 200);
 });
 
+// Status panel collapse, frees the right column so chat expands to fill
+const spToggle = $('#sp-toggle');
+if (spToggle) {
+  spToggle.addEventListener('click', async () => {
+    const collapsed = document.body.dataset.status === 'collapsed';
+    document.body.dataset.status = collapsed ? 'expanded' : 'collapsed';
+    spToggle.title = collapsed ? 'Collapse status panel' : 'Expand status panel';
+    cfg = await window.husk.config.set({ statusCollapsed: !collapsed });
+    setTimeout(fitNow, 200);
+  });
+}
+
 // ─── Stats + status bar ──────────────────────────────────────────────────────────
 async function refreshStats() {
   try {
     const s = await window.husk.stats.get();
     lastStats = s;
-    if ($('#sp-foot')) $('#sp-foot').textContent = `Husk v${s.huskVer || '0.2'}`;
     $('#skills-sub').textContent = `${s.skills} skills installed at ~/.claude/skills/`;
     $('#sessions-sub').textContent = `claude sessions at ~/.claude/projects/ · click to preview, Resume to continue`;
   } catch (err) { console.warn('stats error', err); }
@@ -179,6 +190,11 @@ function ratingColor(r) {
   return 'var(--rose)';
 }
 function fmtPct(n) { return Math.round(Number(n) || 0) + '%'; }
+function fmtThousands(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000) return (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
+  return String(v);
+}
 function sparkHTML(values) {
   if (!values || !values.length) return '<div class="sp-spark"></div>';
   const max = 10;
@@ -237,17 +253,27 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⏱</span><span>Usage</span></div>
       <div class="sp-section-body">
+        ${u.cache_present ? `
         <div class="sp-row"><span class="sp-muted">5h</span><span class="sp-mono">${fmtPct(u.h5_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.h5_pct||0)}%"></div></div>
         ${u.h5_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono">${escapeHtml(u.h5_reset)}</span></div>` : ''}
         <div class="sp-row" style="margin-top:6px;"><span class="sp-muted">Weekly</span><span class="sp-mono">${fmtPct(u.week_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.week_pct||0)}%"></div></div>
         ${u.week_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono">${escapeHtml(u.week_reset)}</span></div>` : ''}
+        ` : `
+        <div class="sp-row"><span class="sp-muted">5h / Weekly</span><span class="sp-mono sp-muted">no live data</span></div>
+        <div class="sp-row sp-tiny sp-muted">Anthropic limits sync from PAI's statusline. Without it, Husk only sees the per-session counters below.</div>
+        `}
+        ${u.session ? `
+        <div class="sp-divider"></div>
+        <div class="sp-row"><span class="sp-muted">Session turns</span><span class="sp-mono sp-accent">${u.session.turns}</span></div>
+        <div class="sp-row"><span class="sp-muted">Session tokens</span><span class="sp-mono sp-accent">~${fmtThousands(u.session.tokens)}</span></div>
+        ` : ''}
         ${(u.api_cost || u.extra_used || u.session_cost) ? `
         <div class="sp-divider"></div>
         ${u.api_cost ? `<div class="sp-row"><span class="sp-muted">API</span><span class="sp-mono">$${u.api_cost}</span></div>` : ''}
         ${u.extra_limit ? `<div class="sp-row"><span class="sp-muted">Extra</span><span class="sp-mono">$${u.extra_used}/$${u.extra_limit}</span></div>` : ''}
-        ${u.session_cost ? `<div class="sp-row"><span class="sp-muted">Session</span><span class="sp-mono">${escapeHtml(String(u.session_cost))}</span></div>` : ''}
+        ${u.session_cost ? `<div class="sp-row"><span class="sp-muted">Session $</span><span class="sp-mono">${escapeHtml(String(u.session_cost))}</span></div>` : ''}
         ` : ''}
       </div>
     </div>
@@ -391,7 +417,7 @@ function paintSkills(list, query) {
       const id = card.dataset.id || card.dataset.dirname;
       const source = card.dataset.source || 'claude';
       const wasOn = t.classList.contains('on');
-      // Optimistic flip — CSS transition needs the same node, not a re-rendered one.
+      // Optimistic flip, CSS transition needs the same node, not a re-rendered one.
       t.classList.toggle('on');
       card.classList.toggle('disabled');
       const result = await window.husk.skills.toggle({ id, source, dirName: id });
@@ -876,7 +902,7 @@ async function speak(text) {
 //   🗣️ <Name>: <one-line summary>     (PAI NATIVE/MINIMAL trailing line)
 //   * recap: <one-line summary>        (Claude Code recap)
 // and pipe whichever appears latest into local TTS. Each unique line is spoken
-// at most once per session — TUIs redraw, so a time-based dedup misses.
+// at most once per session, TUIs redraw, so a time-based dedup misses.
 const SPEECH_BALLOON_RE = /\u{1F5E3}\u{FE0F}?\s*[^\r\n:]{0,40}?:\s*([^\r\n]+)/gu;
 const RECAP_RE = /(?:^|\n)\s*\*\s+recap:\s*([^\r\n]+)/gi;
 const ANSI_RE = /\x1B\[[\d;?]*[A-Za-z]|\x1B\][^\x07]*\x07/g;
@@ -981,12 +1007,13 @@ function paintUpdatePill() {
   const s = updateState || { status: 'idle' };
   const cur = s.current ? (s.current.startsWith('v') ? s.current : 'v' + s.current) : '';
   const next = s.version ? ('v' + s.version) : '';
-  let label = cur || 'Husk';
+  const baseLabel = cur ? `Husk ${cur}` : 'Husk';
+  let label = baseLabel;
   let title = 'Click to check for updates';
   let showDot = false;
   switch (s.status) {
     case 'checking':
-      label = 'checking…'; title = 'Looking for a new version'; break;
+      label = `${baseLabel} · checking…`; title = 'Looking for a new version'; break;
     case 'available':
       label = `${next} available →`; title = `Update from ${cur} to ${next}`; showDot = true; break;
     case 'downloading':
@@ -994,12 +1021,12 @@ function paintUpdatePill() {
     case 'ready':
       label = 'restart to update'; title = `${next} ready, click to install and relaunch`; showDot = true; break;
     case 'up-to-date':
-      label = cur; title = `You're up to date (${cur})`; break;
+      label = `${baseLabel} · check for updates ↻`; title = `You're up to date (${cur}) · click to recheck`; break;
     case 'error':
-      label = cur; title = `Update check failed: ${s.error || 'unknown'}`; break;
+      label = `${baseLabel} · check for updates ↻`; title = `Update check failed: ${s.error || 'unknown'}`; break;
     case 'idle':
     default:
-      label = cur; title = 'Click to check for updates';
+      label = `${baseLabel} · check for updates ↻`; title = 'Click to check for updates';
   }
   text.textContent = label;
   btn.title = title;
@@ -1075,18 +1102,25 @@ function openUpdatePop() {
   }
   pop.hidden = false;
 }
-$('#btn-update').addEventListener('click', (e) => {
-  e.stopPropagation();
-  const pop = $('#update-pop');
-  if (pop.hidden) openUpdatePop(); else pop.hidden = true;
-});
-$('#up-close').addEventListener('click', () => { $('#update-pop').hidden = true; });
-window.addEventListener('click', (e) => {
-  const pop = $('#update-pop');
-  if (pop.hidden) return;
-  if (e.target.closest('#update-pop') || e.target.closest('#btn-update')) return;
-  pop.hidden = true;
-});
+{
+  const btn = $('#btn-update');
+  if (btn) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const pop = $('#update-pop');
+      if (!pop) return;
+      if (pop.hidden) openUpdatePop(); else pop.hidden = true;
+    });
+  }
+  const close = $('#up-close');
+  if (close) close.addEventListener('click', () => { const p = $('#update-pop'); if (p) p.hidden = true; });
+  window.addEventListener('click', (e) => {
+    const pop = $('#update-pop');
+    if (!pop || pop.hidden) return;
+    if (e.target.closest('#update-pop') || e.target.closest('#btn-update')) return;
+    pop.hidden = true;
+  });
+}
 window.husk.updates.onStatus((s) => {
   updateState = s;
   paintUpdatePill();
@@ -1108,7 +1142,7 @@ $('#btn-theme').addEventListener('click', async () => {
 });
 // Send a "please read this file" message to the agent so it actually
 // ingests the dropped file. Both claude and copilot/codex/aider have a
-// file-read tool — they will pick it up automatically. We send the
+// file-read tool, they will pick it up automatically. We send the
 // message + newline so the agent receives it as a submitted prompt.
 async function tellAgentAboutFile(filePath, displayName) {
   // If the welcome screen is still up, start the PTY first.
@@ -1157,7 +1191,7 @@ function refreshContextList() {
     return;
   }
   wrap.innerHTML = sessionContext.map((it) => `
-    <div class="rail-sub-item" data-path="${escapeAttr(it.path)}" data-name="${escapeAttr(it.name)}" title="${escapeAttr(it.name)} — click to re-share with the agent">
+    <div class="rail-sub-item" data-path="${escapeAttr(it.path)}" data-name="${escapeAttr(it.name)}" title="${escapeAttr(it.name)}, click to re-share with the agent">
       <span class="rsi-dot"></span>
       <span class="rsi-name">${escapeHtml(it.name)}</span>
       <button class="rsi-remove" data-remove="1" title="Remove from this session"></button>
@@ -1225,7 +1259,7 @@ let mcpCatalog = [];
 let mcpInstalled = [];
 // Snapshot of which MCPs were enabled when the current PTY session started.
 // Anything in this set that is still enabled is "Loaded" (live in the agent
-// right now). Anything enabled but NOT in the snapshot is "Pending" — the
+// right now). Anything enabled but NOT in the snapshot is "Pending", the
 // user added or re-enabled it since launch and a restart is required.
 const loadedMcpSnapshot = new Set();
 function snapshotLoadedMcps(servers) {
@@ -1271,7 +1305,7 @@ function healthBadgeHTML(id, enabled) {
   const h = mcpHealth[id];
   if (!h) {
     if (mcpHealthLoading) return '<span class="mcp-health mcp-health-loading" title="Checking connection…">checking…</span>';
-    return '<span class="mcp-health mcp-health-unknown" title="Unknown — claude mcp list did not report status">unknown</span>';
+    return '<span class="mcp-health mcp-health-unknown" title="Unknown, claude mcp list did not report status">unknown</span>';
   }
   if (h === 'connected') return '<span class="mcp-health mcp-health-ok" title="Connected">connected</span>';
   if (h === 'failed')    return '<span class="mcp-health mcp-health-err" title="Failed to connect">failed</span>';
@@ -2050,6 +2084,7 @@ async function boot() {
   applyTheme(cfg.theme || 'dark');
   applyAccent(cfg.accent || 'orange');
   document.body.dataset.rail = cfg.railExpanded ? 'expanded' : 'collapsed';
+  document.body.dataset.status = cfg.statusCollapsed ? 'collapsed' : 'expanded';
 
   if (!cfg.firstRunDone) {
     await runFirstRunWizard();

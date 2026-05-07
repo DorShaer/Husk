@@ -7,7 +7,7 @@
 #     PR (Electron majors, xterm majors, node-pty majors all change ABI or
 #     wire format).
 #   - Security advisories are still processed regardless of the ignore
-#     rules — GitHub fires those through a separate pipeline, so the
+#     rules, GitHub fires those through a separate pipeline, so the
 #     ignore-major rule does not hide vulnerabilities.
 
 version: 2

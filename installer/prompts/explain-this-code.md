@@ -5,7 +5,7 @@ description: Plain-language walkthrough of code I share. Asks for the file or pa
 
 I want a clear, plain-language explanation of code.
 
-If I have not shared a file yet, ask me one short question: "Paste the code or share a file path?" — and wait. Once you have the code:
+If I have not shared a file yet, ask me one short question: "Paste the code or share a file path?": and wait. Once you have the code:
 
 1. One-sentence summary of what this code does, in human terms.
 2. Trace the key flow step by step. Use the actual variable and function names.

@@ -196,8 +196,10 @@ body {
   color: var(--text-2);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 7px 11px;
-  font-size: 13px;
+  padding: 0 11px;
+  height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1;
   cursor: pointer;
   font-family: inherit;
   font-weight: 500;
@@ -232,6 +234,13 @@ body[data-rail="expanded"] #main { grid-template-columns: 220px 1fr 380px; }
 body[data-detail="open"] #main { grid-template-columns: 72px 1fr 460px; }
 body[data-detail="open"][data-rail="expanded"] #main { grid-template-columns: 220px 1fr 460px; }
 body[data-detail="open"] #status-panel { display: none; }
+body[data-status="collapsed"] #main { grid-template-columns: 72px 1fr 28px; }
+body[data-status="collapsed"][data-rail="expanded"] #main { grid-template-columns: 220px 1fr 28px; }
+body[data-status="collapsed"] #status-panel .sp-head,
+body[data-status="collapsed"] #status-panel #sp-content,
+body[data-status="collapsed"] #status-panel .sp-foot { display: none; }
+body[data-status="collapsed"] #status-panel { background: var(--bg-2); }
+body[data-status="collapsed"] .sp-toggle { transform: rotate(180deg); }
 
 /* ─── Rail ──────────────────────────────────────────────────────────────── */
 
@@ -297,7 +306,7 @@ body[data-rail="expanded"] .rail-item .ri-label { opacity: 1; transform: transla
   font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-3);
-  padding: 6px 14px 4px;
+  padding: 6px 28px 4px 14px;
   opacity: 0; transition: opacity 0.18s ease;
   white-space: nowrap; overflow: hidden;
   user-select: none;
@@ -306,9 +315,10 @@ body[data-rail="expanded"] .rail-section-head { opacity: 1; }
 .rail-section-action {
   -webkit-app-region: no-drag;
   background: transparent; border: 0; cursor: pointer;
-  color: var(--text-3); font-size: 14px; line-height: 1;
-  width: 18px; height: 18px; border-radius: 4px;
-  display: flex; align-items: center; justify-content: center;
+  color: var(--text-3); font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; line-height: 1;
+  min-width: 18px; height: 18px; padding: 0 6px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center; white-space: nowrap;
   transition: color 0.14s ease, background 0.14s ease;
 }
 .rail-section-action:hover { color: var(--accent); background: var(--bg-3); }
@@ -1041,11 +1051,23 @@ input[type="checkbox"]:disabled {
 /* ─── Status dashboard (right column) ───────────────────────────────────── */
 
 #status-panel {
+  position: relative;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--line);
   background: var(--bg-1);
   min-height: 0;
 }
+.sp-toggle {
+  position: absolute; top: 14px; left: -12px; z-index: 6;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-2); color: var(--text-3);
+  border: 1px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 13px; line-height: 1;
+  transition: color 0.14s ease, border-color 0.14s ease, transform 0.18s ease;
+}
+.sp-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.sp-tiny { font-size: 10px; line-height: 1.4; padding-top: 4px; }
 .sp-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 16px 10px;
@@ -1131,9 +1153,33 @@ input[type="checkbox"]:disabled {
 .sp-clickable { cursor: pointer; transition: background 0.14s ease; margin: -4px -8px; padding: 4px 8px; border-radius: 6px; }
 .sp-clickable:hover { background: var(--bg-3); }
 .sp-foot {
-  font-size: 10px; color: var(--text-3);
-  text-align: center; padding: 10px 8px;
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px 12px 14px;
   border-top: 1px solid var(--line);
+}
+.sp-version {
+  font-size: 12px !important;
+  padding: 8px 14px !important;
+  letter-spacing: 0.03em;
+  color: var(--text-2) !important;
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--line)) !important;
+  background: var(--bg-2) !important;
+}
+.sp-version:hover {
+  color: var(--text) !important;
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2)) !important;
+}
+.update-pop-bottom {
+  top: auto !important;
+  bottom: 56px;
+  right: 14px;
+  animation: tv-pop-up 0.16s ease-out;
+}
+@keyframes tv-pop-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ─── Modal ─────────────────────────────────────────────────────────────── */
