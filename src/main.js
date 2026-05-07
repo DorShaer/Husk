@@ -647,6 +647,40 @@ const MCP_CATALOG = [
               hint: 'Get a free key at api-dashboard.search.brave.com' }],
     envKeys: ['BRAVE_API_KEY'],
   },
+  {
+    id: 'gdrive',
+    name: 'Google Drive',
+    description: 'Search, read, and create files in your Google Drive. Uses Google\'s managed MCP endpoint over HTTP, OAuth-authenticated, no third-party server required.',
+    icon: '◫',
+    remote: {
+      url: 'https://drivemcp.googleapis.com/mcp/v1',
+      transportType: 'http',
+      authHeader: 'Authorization',
+      authPrefix: 'Bearer ',
+    },
+    permissions: {
+      grants: [
+        'Read your file list, content, and metadata across Drive (drive.readonly).',
+        'Create and edit files this app uploads. Cannot touch files other apps created (drive.file).',
+      ],
+      cannot: [
+        'Cannot delete or share existing files.',
+        'Cannot change permissions on files this app did not create.',
+        'Cannot modify your other apps\' files.',
+      ],
+      revoke: 'Revoke any time at myaccount.google.com/permissions.',
+    },
+    setup: [
+      'In Google Cloud Console, enable both APIs: drive.googleapis.com and drivemcp.googleapis.com.',
+      'Create a Desktop app OAuth client ID under APIs & Services, Credentials.',
+      'Run gcloud auth application-default login with the drive.readonly and drive.file scopes.',
+      'Copy the access token from gcloud auth application-default print-access-token and paste it below.',
+    ],
+    inputs: [
+      { id: 'TOKEN', label: 'OAuth access token', kind: 'secret', required: true,
+        hint: 'Paste a Bearer token. gcloud auth application-default print-access-token returns one. Tokens expire after roughly an hour.' },
+    ],
+  },
 ];
 
 function shapeServer(id, def, disabled) {

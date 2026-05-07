@@ -1025,6 +1025,30 @@ input[type="checkbox"]:disabled {
 }
 .mcp-input-group .mig-pick:hover { background: var(--bg-2); color: var(--text); border-color: var(--accent); }
 
+.mcp-perm-block {
+  margin-top: 14px; padding: 12px 14px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-3));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: 10px;
+}
+.mcp-perm-head {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-2); margin-bottom: 6px;
+}
+.mcp-perm-head-muted { color: var(--text-3); margin-top: 10px; }
+.mcp-perm-list { margin: 0 0 0 18px; padding: 0; }
+.mcp-perm-list li { font-size: 12px; line-height: 1.5; color: var(--text-2); margin: 2px 0; }
+.mcp-perm-cannot li { color: var(--text-3); }
+.mcp-perm-revoke {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--accent) 22%, var(--line));
+  font-size: 11px; color: var(--text-3); font-style: italic;
+}
+.mcp-setup-block { margin-top: 14px; padding: 12px 14px; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; }
+.mcp-setup-head { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); margin-bottom: 8px; }
+.mcp-setup-list { margin: 0 0 0 22px; padding: 0; counter-reset: setup; }
+.mcp-setup-list li { font-size: 12px; line-height: 1.5; color: var(--text-2); margin: 4px 0; }
+
 .mcp-tabs {
   display: flex; gap: 4px;
   background: var(--bg-3);
