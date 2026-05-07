@@ -1649,25 +1649,6 @@ function openMcpInstallModal(cat) {
   $('#mcp-install-sub').textContent = cat.description;
   const fields = $('#mcp-install-fields');
   fields.innerHTML = '';
-  const permBlock = cat.permissions ? `
-    <div class="mcp-perm-block">
-      <div class="mcp-perm-head">Permissions this grants</div>
-      <ul class="mcp-perm-list mcp-perm-grants">
-        ${cat.permissions.grants.map((p) => `<li>${escapeHtml(p)}</li>`).join('')}
-      </ul>
-      <div class="mcp-perm-head mcp-perm-head-muted">What it cannot do</div>
-      <ul class="mcp-perm-list mcp-perm-cannot">
-        ${cat.permissions.cannot.map((p) => `<li>${escapeHtml(p)}</li>`).join('')}
-      </ul>
-      ${cat.permissions.revoke ? `<div class="mcp-perm-revoke">${escapeHtml(cat.permissions.revoke)}</div>` : ''}
-    </div>` : '';
-  const setupBlock = (cat.setup && cat.setup.length) ? `
-    <div class="mcp-setup-block">
-      <div class="mcp-setup-head">Setup steps</div>
-      <ol class="mcp-setup-list">
-        ${cat.setup.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}
-      </ol>
-    </div>` : '';
   const inputs = (cat.inputs || []).map((inp) => {
     const groupId = `mig-${inp.id}`;
     if (inp.kind === 'path') {
@@ -1688,7 +1669,7 @@ function openMcpInstallModal(cat) {
         ${inp.hint ? `<div class="mig-hint">${escapeHtml(inp.hint)}</div>` : ''}
       </div>`;
   }).join('');
-  fields.innerHTML = permBlock + setupBlock + (inputs || '<div class="mig-hint" style="margin-top:8px;">No configuration needed. Click Install.</div>');
+  fields.innerHTML = inputs || '<div class="mig-hint" style="margin-top:8px;">No configuration needed. Click Install.</div>';
   fields.querySelectorAll('[data-pick]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const dir = await window.husk.dialog2.pickDir();
@@ -1700,31 +1681,6 @@ function openMcpInstallModal(cat) {
   $('#mcp-install-cancel').onclick = () => { $('#mcp-install').hidden = true; };
 }
 async function submitMcpInstall(cat) {
-  if (cat.remote) {
-    const headers = {};
-    for (const inp of (cat.inputs || [])) {
-      const el = document.querySelector(`#mig-${inp.id}`);
-      const val = (el && el.value || '').trim();
-      if (inp.required && !val) {
-        toast(`${inp.label} is required`, 'error');
-        if (el) el.focus();
-        return;
-      }
-      if (inp.id === 'TOKEN') headers[cat.remote.authHeader] = `${cat.remote.authPrefix}${val}`;
-    }
-    const r = await window.husk.mcp.add({
-      id: cat.id,
-      transport: cat.remote.transportType || 'http',
-      url: cat.remote.url,
-      headers,
-    });
-    if (!r.ok) { toast(r.error || 'Install failed', 'error'); return; }
-    $('#mcp-install').hidden = true;
-    toast(`${cat.name} installed`, 'success');
-    await renderMcp();
-    applyMcpChange(cat.name);
-    return;
-  }
   const env = {};
   let args = [...(cat.template.args || [])];
   for (const inp of (cat.inputs || [])) {
