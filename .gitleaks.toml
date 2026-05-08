@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore vendored PAI docs with placeholder/example tokens"
+paths = [
+  '''libs/pai/.*'''
+]
