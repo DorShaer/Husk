@@ -1981,7 +1981,7 @@ function showDetail({ eyebrow = '', title = '', sub = '', meta = [], body = '', 
     .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v || '')}</dd>`)
     .join('');
   $('#dp-body').textContent = body;
-  $('#dp-foot').textContent = '';
+  $('#dp-foot').replaceChildren();
   for (const a of actions) {
     const btn = document.createElement('button');
     btn.className = a.kind === 'primary' ? 'btn-primary' : 'ghost-btn';
