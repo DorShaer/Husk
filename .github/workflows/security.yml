@@ -13,6 +13,7 @@ on:
       - 'package-lock.json'
       - '.github/workflows/security.yml'
       - '.github/codeql/**'
+      - '.gitleaks.toml'
   pull_request:
     branches: [main, master, develop]
   schedule:
@@ -59,9 +60,9 @@ jobs:
         run: |
           mkdir -p security-reports
           if [ "${{ github.event_name }}" = "push" ]; then
-            gitleaks detect --log-opts="${{ github.event.before }}..${{ github.sha }}" --report-format=json --report-path=security-reports/gitleaks-report.json
+            gitleaks detect --config .gitleaks.toml --log-opts="${{ github.event.before }}..${{ github.sha }}" --report-format=json --report-path=security-reports/gitleaks-report.json
           else
-            gitleaks detect --report-format=json --report-path=security-reports/gitleaks-report.json
+            gitleaks detect --config .gitleaks.toml --report-format=json --report-path=security-reports/gitleaks-report.json
           fi
 
       - name: Upload report
