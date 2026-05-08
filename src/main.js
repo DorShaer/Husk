@@ -1452,15 +1452,42 @@ ipcMain.handle('fs:home', () => HOME);
 //     to install Piper there used to throw 'spawn Unknown system error -8' from
 //     the running-not-runnable binary. The darwin branch sidesteps that.
 
-const HUSK_DATA = path.join(HOME, '.local', 'share', 'husk');
+const IS_MAC = process.platform === 'darwin';
+
+// Detect WSL: /proc/version on WSL kernels contains "microsoft" or "wsl".
+// Result is cached so /proc/version is only read once.
+const IS_WSL = (() => {
+  try {
+    const v = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
+    return v.includes('microsoft') || v.includes('wsl');
+  } catch (_) { return false; }
+})();
+
+// Under WSL the user's HOME is often /mnt/c/Users/…, a Windows-backed
+// filesystem. Extracting Linux tarballs (which contain symlinks) onto it
+// fails with "Invalid argument". When we detect that situation we compute
+// a path that lives on the native Linux filesystem instead.
+function getHuskDataDir() {
+  if (!IS_MAC && IS_WSL && HOME.startsWith('/mnt/')) {
+    // Honour $XDG_DATA_HOME if it is set and itself not Windows-mounted.
+    const xdg = process.env.XDG_DATA_HOME;
+    if (xdg && !xdg.startsWith('/mnt/')) return path.join(xdg, 'husk');
+    // Derive a native /home/<user> from environment variables.
+    const user = process.env.USER || process.env.LOGNAME;
+    if (user) return path.join('/home', user, '.local', 'share', 'husk');
+    // Last resort: use the system temp directory (universally writable).
+    return path.join(os.tmpdir(), 'husk');
+  }
+  return path.join(HOME, '.local', 'share', 'husk');
+}
+
+const HUSK_DATA = getHuskDataDir();
 const PIPER_DIR = path.join(HUSK_DATA, 'piper');
 const PIPER_BIN = path.join(PIPER_DIR, 'piper');
 const VOICES_DIR = path.join(PIPER_DIR, 'voices');
 
 const PIPER_RELEASE = 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
 const VOICE_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
-
-const IS_MAC = process.platform === 'darwin';
 const MAC_SAY_BIN = '/usr/bin/say';
 const MAC_DEFAULT_VOICE = 'Samantha';
 // A small curated list of macOS system voices that ship by default. The
