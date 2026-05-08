@@ -82,23 +82,55 @@ A failing job blocks the PR. A failing CodeQL alert blocks until either the code
 
 ## Release pipeline
 
-Releases are tag-driven (`.github/workflows/release.yml`).
+The release process is split into two focused workflows to keep concerns separate:
 
-```bash
-git tag v0.3.1
-git push origin v0.3.1
-```
+### Workflow 1: `version.yml` - Cut Release Version (version bump + tag)
 
-The workflow then:
+Run this when you are ready to ship a new release:
+
+1. Go to **Actions** -> **Cut Release Version** -> **Run workflow** (select `main`).
+2. Pick the bump type: `patch` (bug fixes), `minor` (new features), or `major` (breaking changes).
+3. The workflow:
+   - Increments the version in `package.json` and `package-lock.json` using `npm version`.
+   - Commits the change to `main` with the new version number as the commit message.
+   - Creates and pushes the `v*` tag (e.g. `v0.3.5`).
+4. Pushing the tag automatically triggers `release.yml` (see below).
+
+You do not need to touch `package.json`, `git tag`, or `git push` manually.
+
+> **Note:** `version.yml` only runs when dispatched from `main`. Dispatching from any other branch results in the job being skipped with an explicit message in the logs.
+
+### Workflow 2: `release.yml` - Build and Publish (triggered by the tag)
+
+Fires automatically when a `v*` tag is pushed (normally by `version.yml`). You should not need to trigger this manually for a real release.
 
 1. Matrix-builds on `ubuntu-latest`, `macos-latest`, `windows-latest`.
 2. Each runner: `npm ci`, then `npm run dist` (electron-builder, `--publish never` so we control the publish step).
 3. Uploads platform artifacts as workflow artifacts.
-4. A final `release` job downloads everything, flattens into one folder, and creates the GitHub Release with `softprops/action-gh-release@v2` and auto-generated notes.
+4. A final `release` job downloads everything, flattens into one folder, guards against duplicate releases, and creates the GitHub Release with `softprops/action-gh-release@v2` and auto-generated notes.
 
 The `--publish never` flag is intentional. electron-builder used to also publish on its own, which produced a double "Full Changelog" line on the release page (one from electron-builder, one from softprops). softprops is the single writer.
 
 `electron-updater` (in-app auto-update) reads from the same Releases page; the `publish` block in `package.json` tells it `provider: github, owner: DorShaer, repo: Husk`.
+
+### Manual build-only run (no release)
+
+If you want to verify the build compiles correctly without publishing a release, run `release.yml` via **Actions** -> **Release** -> **Run workflow** from `main`. The build matrix runs, but the release job is skipped because no `v*` tag is involved. The logs will say so explicitly.
+
+### Diagram
+
+```
+Maintainer
+  -> Actions: "Cut Release Version" (patch/minor/major)
+       -> version.yml
+            -> npm version <bump>      (updates package.json, package-lock.json)
+            -> git commit + tag v*     (commit to main, tag e.g. v0.3.5)
+            -> git push --follow-tags  (pushes commit and tag)
+                 -> triggers release.yml on the v* tag
+                      -> build matrix (Linux, macOS, Windows)
+                      -> duplicate-release guard
+                      -> GitHub Release created with artifacts
+```
 
 ## Dependency policy
 

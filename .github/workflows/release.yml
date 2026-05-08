@@ -1,8 +1,21 @@
 name: Release
 
 # Builds Husk binaries for Linux, macOS, and Windows when a v* tag is pushed,
-# and uploads them to a GitHub Release. Manual workflow_dispatch is also
-# allowed for dry-runs against main.
+# then uploads them to a GitHub Release.
+#
+# This workflow has two roles:
+#   1. Build: compiles installers for every platform (always runs, tag or not).
+#      Use manual workflow_dispatch on main to verify the build without publishing.
+#   2. Release: publishes a GitHub Release (only runs when a v* tag triggered the workflow).
+#
+# Normal release flow:
+#   - Run the "Cut Release Version" workflow (version.yml) to bump version and push the tag.
+#   - This workflow fires automatically when that tag is pushed.
+#   - Do NOT push v* tags manually unless you have also updated package.json and package-lock.json.
+#
+# The release job is intentionally guarded by 'startsWith(github.ref, "refs/tags/v")'.
+# A manual workflow_dispatch run (e.g. to test the build) will run only the build job
+# and skip the release job; this is expected and logged explicitly below.
 
 on:
   push:
@@ -26,6 +39,22 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Show trigger context
+        shell: bash
+        run: |
+          echo "=== Release Workflow Context ==="
+          echo "Actor : ${GITHUB_ACTOR}"
+          echo "Event : ${GITHUB_EVENT_NAME}"
+          echo "Ref   : ${GITHUB_REF}"
+          echo "OS    : ${{ matrix.os }}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "Release job: WILL RUN after build succeeds (v* tag detected)"
+          else
+            echo "Release job: WILL BE SKIPPED (not a v* tag ref)"
+            echo "  This is expected for manual workflow_dispatch runs."
+            echo "  To publish a release, use the 'Cut Release Version' workflow."
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -77,9 +106,31 @@ jobs:
     name: GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    # Skipped on manual workflow_dispatch runs (where github.ref is a branch ref).
+    # Only a v* tag push reaches this job. This is intentional and logged in the
+    # "Show trigger context" step of the build job above.
     if: startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 10
     steps:
+      - name: Show release context
+        run: |
+          echo "=== GitHub Release Job ==="
+          echo "Tag : ${GITHUB_REF_NAME}"
+          echo "Publishing release for ${GITHUB_REF_NAME}"
+
+      - name: Guard against duplicate release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Checking whether release ${TAG} already exists..."
+          if gh release view "${TAG}" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "ERROR: Release ${TAG} already exists. Aborting to prevent duplicate."
+            echo "  If you need to re-publish, delete the existing release on GitHub first."
+            exit 1
+          fi
+          echo "No existing release found for ${TAG}. Proceeding."
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:

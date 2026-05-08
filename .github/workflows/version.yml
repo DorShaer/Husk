@@ -1,0 +1,102 @@
+name: Cut Release Version
+
+# Manually triggered workflow for bumping the version, committing to main,
+# and creating the v* tag that triggers the release build-and-publish pipeline.
+#
+# Trigger flow:
+#   Maintainer runs this workflow (Actions -> Cut Release Version -> Run workflow)
+#   -> version bumped in package.json + package-lock.json
+#   -> commit pushed to main
+#   -> v* tag pushed
+#   -> release.yml picks up the tag and builds + publishes the GitHub Release
+#
+# Choose bump type:
+#   patch: 0.3.4 -> 0.3.5  (bug fixes, small improvements)
+#   minor: 0.3.4 -> 0.4.0  (new backward-compatible features)
+#   major: 0.3.4 -> 1.0.0  (breaking changes)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type (patch / minor / major)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+# contents: write is required to push the commit and tag.
+# No other permissions are needed.
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    name: Bump version (${{ inputs.bump }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Guard: only allow bumps from the default branch.
+    # If this workflow is dispatched from a feature branch the job is skipped
+    # rather than creating an accidental release tag off a non-main HEAD.
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Show trigger context
+        run: |
+          echo "=== Cut Release Version ==="
+          echo "Actor      : ${{ github.actor }}"
+          echo "Bump type  : ${{ inputs.bump }}"
+          echo "Ref        : ${GITHUB_REF}"
+          echo ""
+          echo "This job will:"
+          echo "  1. Increment the version in package.json and package-lock.json"
+          echo "  2. Commit the change to main"
+          echo "  3. Push the v* tag"
+          echo "  4. release.yml will automatically pick up the tag and publish the release"
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          # Full history so 'git push --follow-tags' works and release notes
+          # cover the full commit range since the previous tag.
+          fetch-depth: 0
+          # Authenticate with GITHUB_TOKEN so that git push is allowed.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Show current version
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "Current version: v${CURRENT}"
+
+      - name: Bump version
+        # 'npm version' updates package.json and package-lock.json,
+        # then creates a git commit (message: the new version number)
+        # and a git tag (e.g. v0.3.5).
+        # --no-git-tag-version is NOT set, so both commit and tag are created.
+        run: npm version ${{ inputs.bump }} --no-workspaces-update
+
+      - name: Show new version and tag
+        run: |
+          NEW=$(node -p "require('./package.json').version")
+          echo "New version: v${NEW}"
+          echo "Tag created: v${NEW}"
+          echo ""
+          echo "Pushing commit and tag. release.yml will start automatically."
+
+      - name: Push commit and tag to main
+        # --follow-tags pushes the annotated/lightweight tag created by npm version.
+        run: git push origin main --follow-tags
