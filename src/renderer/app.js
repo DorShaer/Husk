@@ -257,9 +257,9 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⌬</span><span>Tools</span></div>
       <div class="sp-section-body">
-        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills</span><span class="sp-mono sp-accent">${s.skills}</span></div>
-        <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows</span><span class="sp-mono sp-accent">${s.workflows}</span></div>
-        <div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks</span><span class="sp-mono sp-accent">${s.hooks}</span></div>
+        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
+        <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows</span><span class="sp-mono sp-accent">${escapeHtml(s.workflows)}</span></div>
+        <div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>
       </div>
     </div>
 
@@ -279,13 +279,13 @@ async function refreshStatusline() {
         `}
         ${u.session ? `
         <div class="sp-divider"></div>
-        <div class="sp-row"><span class="sp-muted">Session turns</span><span class="sp-mono sp-accent">${u.session.turns}</span></div>
-        <div class="sp-row"><span class="sp-muted">Session tokens</span><span class="sp-mono sp-accent">~${fmtThousands(u.session.tokens)}</span></div>
+        <div class="sp-row"><span class="sp-muted">Session turns</span><span class="sp-mono sp-accent">${escapeHtml(u.session.turns)}</span></div>
+        <div class="sp-row"><span class="sp-muted">Session tokens</span><span class="sp-mono sp-accent">~${escapeHtml(fmtThousands(u.session.tokens))}</span></div>
         ` : ''}
         ${(u.api_cost || u.extra_used || u.session_cost) ? `
         <div class="sp-divider"></div>
-        ${u.api_cost ? `<div class="sp-row"><span class="sp-muted">API</span><span class="sp-mono">$${u.api_cost}</span></div>` : ''}
-        ${u.extra_limit ? `<div class="sp-row"><span class="sp-muted">Extra</span><span class="sp-mono">$${u.extra_used}/$${u.extra_limit}</span></div>` : ''}
+        ${u.api_cost ? `<div class="sp-row"><span class="sp-muted">API</span><span class="sp-mono">$${escapeHtml(u.api_cost)}</span></div>` : ''}
+        ${u.extra_limit ? `<div class="sp-row"><span class="sp-muted">Extra</span><span class="sp-mono">$${escapeHtml(u.extra_used)}/$${escapeHtml(u.extra_limit)}</span></div>` : ''}
         ${u.session_cost ? `<div class="sp-row"><span class="sp-muted">Session $</span><span class="sp-mono">${escapeHtml(String(u.session_cost))}</span></div>` : ''}
         ` : ''}
       </div>
@@ -314,6 +314,7 @@ async function refreshStatusline() {
     </div>
   `;
 
+  // eslint-disable-next-line no-unsanitized/property -- Template content is escaped or trusted static markup.
   $('#sp-content').innerHTML = html;
   // Wire click-to-open shortcuts
   $$('#sp-content [data-open]').forEach((el) => {
@@ -335,10 +336,12 @@ let skillsCache = [];
 let agentKindCache = 'claude';
 async function renderSkills() {
   const grid = $('#skills-grid');
+  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
   grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading…</div></div>';
   const res = await window.husk.skills.list();
   if (!res.ok) {
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${res.error}</div></div>`;
+    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
     return;
   }
   skillsCache = res.skills;
@@ -387,9 +390,11 @@ function paintSkills(list, query) {
   const filtered = q ? list.filter((s) => (s.name + ' ' + (s.description || '')).toLowerCase().includes(q)) : list;
   if (!filtered.length) {
     const msg = list.length ? `No skills match "${escapeHtml(query)}"` : 'No skills yet. Drop a .md file or use ＋.';
+    // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
     grid.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
     return;
   }
+  // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
   grid.innerHTML = filtered.map((sk) => {
     const sourceBadge = sk.source === 'husk'
       ? '<span class="sk-badge sk-badge-husk" title="Husk-managed prompt">prompt</span>'
@@ -531,7 +536,8 @@ async function renderSessions() {
   list.innerHTML = '<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">Loading sessions…</div></div>';
   const res = await window.husk.sessions.list();
   if (!res.ok) {
-    list.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${res.error}</div></div>`;
+    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
+    list.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
     return;
   }
   sessionsCache = res.sessions;
@@ -568,10 +574,12 @@ function paintSessions(list, query) {
   ) : list;
   if (!filtered.length) {
     const msg = list.length ? `No sessions match "${escapeHtml(query)}"` : 'No claude sessions yet. Start a chat to create one.';
+    // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
     ul.innerHTML = `<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">${msg}</div></div>`;
     return;
   }
   ul.classList.toggle('select-mode', sessionsSelectMode);
+  // eslint-disable-next-line no-unsanitized/property -- Session fields are escaped via escapeHtml/escapeAttr.
   ul.innerHTML = filtered.map((s) => {
     const phaseHTML = s.prdPhase
       ? `<span class="session-phase ${escapeAttr(s.prdPhase)}">${escapeHtml(s.prdPhase)}</span>`
@@ -780,7 +788,8 @@ async function renderTree(root) {
   if (!root) return;
   const res = await window.husk.fs.listDir(root, !!cfg.showHidden);
   if (!res.ok) {
-    treeEl.innerHTML = `<div class="tree-row" style="color:var(--rose)">· ${res.error}</div>`;
+    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
+    treeEl.innerHTML = `<div class="tree-row" style="color:var(--rose)">· ${escapeHtml(res.error || 'Unknown error')}</div>`;
     return;
   }
   for (const e of res.entries) {
@@ -832,8 +841,21 @@ async function refreshVoiceStatus() {
     el.textContent = `Installed · ${s.voices.length} voice${s.voices.length === 1 ? '' : 's'}`;
     el.className = 'pref-status ok';
     $('#btn-voice-install').textContent = 'Reinstall voice';
-    $('#pref-voice-name').innerHTML = s.voices.map((v) => `<option value="${v}">${v}</option>`).join('') || '<option>No voices</option>';
-    $('#pref-voice-name').value = (cfg.voice && cfg.voice.name) || s.voices[0];
+    const voiceSelect = $('#pref-voice-name');
+    voiceSelect.replaceChildren();
+    if (s.voices.length) {
+      for (const v of s.voices) {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        voiceSelect.appendChild(opt);
+      }
+    } else {
+      const opt = document.createElement('option');
+      opt.textContent = 'No voices';
+      voiceSelect.appendChild(opt);
+    }
+    voiceSelect.value = (cfg.voice && cfg.voice.name) || s.voices[0];
     enableToggle.disabled = false;
     enableToggle.title = '';
     testBtn.disabled = false;
@@ -1060,6 +1082,7 @@ function openUpdatePop() {
   notesBtn.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
   if (s.dev) {
     title.textContent = 'Auto-update disabled in dev mode';
+    // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.
     body.innerHTML = `Running from source as <strong>${escapeHtml(cur)}</strong>. Auto-update only runs in packaged builds. Install the latest release to get update notifications in-app.`;
     cta.textContent = 'Open releases page';
     cta.onclick = () => { window.husk.updates.openRelease(); pop.hidden = true; };
@@ -1068,6 +1091,7 @@ function openUpdatePop() {
   }
   if (s.status === 'available') {
     title.textContent = `Husk ${next} is available`;
+    // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.
     body.innerHTML = `You're on <strong>${escapeHtml(cur)}</strong>. The new version is ready to install.`;
     cta.textContent = 'Install update';
     cta.onclick = async () => {
@@ -1087,11 +1111,13 @@ function openUpdatePop() {
     cta.onclick = () => window.husk.updates.install();
   } else if (s.status === 'downloading') {
     title.textContent = `Downloading ${next}`;
-    body.innerHTML = `${s.percent || 0}% ... please don't quit Husk.`;
+    // eslint-disable-next-line no-unsanitized/property -- Progress value is escaped before insertion.
+    body.innerHTML = `${escapeHtml(s.percent || 0)}% ... please don't quit Husk.`;
     cta.textContent = 'Close';
     cta.onclick = () => { pop.hidden = true; };
   } else if (s.status === 'up-to-date') {
     title.textContent = "You're up to date";
+    // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.
     body.innerHTML = `Running <strong>${escapeHtml(cur)}</strong>. Husk checks again every six hours.`;
     cta.textContent = 'Check now';
     cta.onclick = async () => {
@@ -1101,6 +1127,7 @@ function openUpdatePop() {
     };
   } else {
     title.textContent = 'Updates';
+    // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.
     body.innerHTML = s.status === 'checking'
       ? 'Looking for a new version…'
       : (s.error
@@ -1203,6 +1230,7 @@ function refreshContextList() {
     wrap.innerHTML = '<div class="rail-sub-empty">Nothing shared yet. Drop a file or click +.</div>';
     return;
   }
+  // eslint-disable-next-line no-unsanitized/property -- Session context fields are escaped via escapeHtml/escapeAttr.
   wrap.innerHTML = sessionContext.map((it) => `
     <div class="rail-sub-item" data-path="${escapeAttr(it.path)}" data-name="${escapeAttr(it.name)}" title="${escapeAttr(it.name)}, click to re-share with the agent">
       <span class="rsi-dot"></span>
@@ -1253,6 +1281,7 @@ async function refreshRecentList() {
   }
   const top = r.sessions.slice(0, RAIL_RECENT_MAX);
   section.hidden = false;
+  // eslint-disable-next-line no-unsanitized/property -- Recent session fields are escaped via escapeHtml/escapeAttr.
   wrap.innerHTML = top.map((s) => `
     <div class="rail-recent-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath)}" title="${escapeAttr(s.title)}\n${escapeAttr(s.projectPath)}">
       <span class="rri-title">${escapeHtml(s.title)}</span>
@@ -1415,6 +1444,7 @@ function paintMcpSections() {
     html += `<div class="mcp-subhead"><span class="mcp-dot mcp-dot-off"></span>Inactive · turned off</div>`;
     html += disabled.map((s) => mcpRowHTML(s)).join('');
   }
+  // eslint-disable-next-line no-unsanitized/property -- MCP row templates escape dynamic values.
   wrap.innerHTML = html;
   bindMcpRows(wrap);
 }
@@ -1433,6 +1463,7 @@ function paintMcpCatalog() {
         <div class="mc-desc">${escapeHtml(c.description)}</div>
       </div>`;
   }).join('');
+  // eslint-disable-next-line no-unsanitized/property -- MCP catalog card fields are escaped via escapeHtml/escapeAttr.
   wrap.innerHTML = cards;
   wrap.querySelectorAll('.mcp-card').forEach((card) => {
     card.addEventListener('click', () => {
@@ -1449,6 +1480,7 @@ function openMcpCustomModal() {
   $('#mcp-install-sub').textContent = 'Paste a JSON snippet, or pick a transport and fill in the fields.';
   const fields = $('#mcp-install-fields');
   const codeStyle = "background:var(--bg-3); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-family:'JetBrains Mono', monospace; font-size:12px; resize:vertical;";
+  // eslint-disable-next-line no-unsanitized/property -- Static modal template for MCP custom install form.
   fields.innerHTML = `
     <div class="mcp-paste-wrap" id="mcp-paste-wrap" hidden>
       <div class="mcp-input-group">
@@ -1641,6 +1673,7 @@ async function refreshLoadedMcpsBadge() {
   if (!loadedMcpSnapshot.size) { el.hidden = true; return; }
   const ids = [...loadedMcpSnapshot];
   el.hidden = false;
+  // eslint-disable-next-line no-unsanitized/property -- MCP IDs are escaped before insertion.
   el.innerHTML = `<span class="ce-mcps-label">MCPs loaded:</span> ${ids.map((i) => `<span class="ce-mcps-chip">${escapeHtml(i)}</span>`).join('')}`;
 }
 
@@ -1669,6 +1702,7 @@ function openMcpInstallModal(cat) {
         ${inp.hint ? `<div class="mig-hint">${escapeHtml(inp.hint)}</div>` : ''}
       </div>`;
   }).join('');
+  // eslint-disable-next-line no-unsanitized/property -- Input labels/hints are escaped via escapeHtml/escapeAttr.
   fields.innerHTML = inputs || '<div class="mig-hint" style="margin-top:8px;">No configuration needed. Click Install.</div>';
   fields.querySelectorAll('[data-pick]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -1734,6 +1768,7 @@ function paintAgentMenu() {
       <span class="rai-cmd">${escapeHtml(a.command)}</span>
     </button>
   `).join('');
+  // eslint-disable-next-line no-unsanitized/property -- Agent row values are escaped via escapeHtml/escapeAttr.
   menu.innerHTML = `${rows}
     <div class="rail-agent-divider"></div>
     <button class="rail-agent-config" id="rai-config">Configure custom command…</button>`;
@@ -1889,6 +1924,7 @@ function closePalette() { $('#palette').hidden = true; term.focus(); }
 function renderPalette(query) {
   const q = query.toLowerCase().trim();
   const matches = PALETTE_ACTIONS.filter((a) => !q || a.label.toLowerCase().includes(q));
+  // eslint-disable-next-line no-unsanitized/property -- Palette labels are escaped and icons are trusted constants.
   $('#palette-list').innerHTML = matches.map((a, i) => `
     <li class="${i === paletteSel ? 'active' : ''}" data-idx="${i}">
       <span class="pi-icon">${a.icon}</span>
@@ -1940,11 +1976,12 @@ function showDetail({ eyebrow = '', title = '', sub = '', meta = [], body = '', 
   $('#dp-eyebrow').textContent = eyebrow;
   $('#dp-title').textContent = title;
   $('#dp-sub').textContent = sub;
+  // eslint-disable-next-line no-unsanitized/property -- Metadata keys/values are escaped via escapeHtml.
   $('#dp-meta').innerHTML = meta
     .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v || '')}</dd>`)
     .join('');
   $('#dp-body').textContent = body;
-  $('#dp-foot').innerHTML = '';
+  $('#dp-foot').replaceChildren();
   for (const a of actions) {
     const btn = document.createElement('button');
     btn.className = a.kind === 'primary' ? 'btn-primary' : 'ghost-btn';
@@ -1994,6 +2031,7 @@ async function runFirstRunWizard() {
     try {
       detection = await window.husk.agents.detect();
     } catch (err) {
+      // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
       list.innerHTML = `<div class="fr-loading">Could not scan: ${escapeHtml(String(err))}</div>`;
       return;
     }
@@ -2008,6 +2046,7 @@ async function runFirstRunWizard() {
     // If exactly one is available and nothing is selected, auto-pick it.
     const available = detection.agents.filter((a) => a.available);
     if (!selected && available.length >= 1) selected = available[0].command;
+    // eslint-disable-next-line no-unsanitized/property -- Agent fields are escaped via escapeHtml/escapeAttr.
     list.innerHTML = detection.agents.map((a) => {
       const isSelected = selected === a.command;
       const action = a.available
