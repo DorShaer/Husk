@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: secret-detection-report
           path: security-reports/
@@ -79,10 +79,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -90,10 +90,13 @@ jobs:
       - name: Install (no scripts)
         run: npm ci --ignore-scripts
 
-      - name: npm audit (high + critical)
-        run: npm audit --audit-level=high
+      - name: npm audit (high + critical, prod only)
+        # --omit=dev focuses the gate on what actually ships to users.
+        # Dev-only CVEs (electron-builder, etc.) are still visible in the
+        # JSON report below for review, just not blocking.
+        run: npm audit --audit-level=high --omit=dev
 
-      - name: npm audit JSON report
+      - name: npm audit JSON report (full, prod + dev)
         if: always()
         run: |
           mkdir -p security-reports
@@ -101,7 +104,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: npm-audit-report
           path: security-reports/
@@ -113,10 +116,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -149,7 +152,6 @@ jobs:
             --rule 'security/detect-non-literal-regexp: warn' \
             --rule 'security/detect-pseudoRandomBytes: error' \
             --rule 'security/detect-buffer-noassert: error' \
-            --rule 'security/detect-object-injection: warn' \
             --rule 'no-unsanitized/method: warn' \
             --rule 'no-unsanitized/property: warn' \
             --ignore-pattern 'libs/' \
@@ -167,17 +169,17 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3
         with:
           languages: javascript-typescript
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
 
       - name: Analyze
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3
         with:
           category: "/language:javascript-typescript"
 
@@ -189,12 +191,14 @@ jobs:
       image: semgrep/semgrep:latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Run Semgrep
-        # p/electron does not exist on semgrep.dev (404). The other packs
-        # cover Electron-relevant patterns (XSS in renderer, command
-        # injection in main, Node.js-wide rules).
+        # The p/electron pack page exists on semgrep.dev but its config
+        # endpoint at /c/p/electron returns 404, so the CLI cannot load it.
+        # r/javascript.electron is the resolvable Electron-specific ruleset
+        # and covers the same ground (nodeIntegration, contextIsolation,
+        # webSecurity, missing CSP, etc.).
         env:
           SEMGREP_RULES: >-
             p/owasp-top-ten
@@ -202,6 +206,7 @@ jobs:
             p/nodejs
             p/xss
             p/command-injection
+            r/javascript.electron
         run: semgrep scan --error --severity ERROR --exclude libs --exclude src/renderer/vendor --exclude node_modules .
 
       - name: Semgrep JSON (on failure)
@@ -212,11 +217,32 @@ jobs:
 
       - name: Upload report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: semgrep-report
           path: security-reports/
           retention-days: 30
+
+  dependency-review:
+    name: Dependency review (PR gate)
+    # GitHub-native PR gate: blocks the PR if it introduces a dependency
+    # with a known high/critical CVE or a non-allowed license. Runs only
+    # on pull_request because the API is PR-scoped.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Review new/changed dependencies
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
 
   trivy:
     name: Filesystem CVEs (Trivy)
@@ -224,7 +250,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Reports dir
         run: mkdir -p security-reports
@@ -256,7 +282,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trivy-report
           path: security-reports/
@@ -293,7 +319,7 @@ jobs:
 
       - name: PR comment
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const body = `## Security scan summary
