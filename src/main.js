@@ -135,6 +135,29 @@ function readClaudeOauthToken() {
   } catch (_) { return ''; }
 }
 
+// Security context (responding to CodeQL js/file-access-to-http and
+// js/http-to-file-access on this function):
+//
+// 1. The OAuth token sourced from ~/.claude/.credentials.json is sent ONLY
+//    to api.anthropic.com (hardcoded hostname + path; no user input flows
+//    into the URL). This mirrors what the bundled PAI statusline-command.sh
+//    already does on every render.
+// 2. The response body is JSON.parse'd; the cache write is restricted to a
+//    fixed allowlist of fields, each coerced to a primitive type (Number,
+//    String, ISO timestamp). The destination path is path.join(CLAUDE_DIR,
+//    'MEMORY', 'STATE', 'usage-cache.json'), no part of which is derived
+//    from the response.
+// 3. No raw nested objects from the response land in the cache, so even if
+//    the upstream response were tampered with, only typed scalars persist.
+//
+// As a defensive timeout, anything past 5s is dropped.
+function _coerceISOTimestamp(s) {
+  if (typeof s !== 'string') return '';
+  // RFC 3339-ish timestamp: digits, dashes, T, colons, dot, plus, Z.
+  // Reject anything outside that grammar to keep file content predictable.
+  return /^[0-9T:\-+.Z]{1,40}$/.test(s) ? s : '';
+}
+
 function refreshAnthropicUsageCache() {
   const token = readClaudeOauthToken();
   if (!token) return;
@@ -151,33 +174,53 @@ function refreshAnthropicUsageCache() {
     timeout: 5000,
   }, (res) => {
     let body = '';
-    res.on('data', (chunk) => { body += chunk; });
+    let bodyLen = 0;
+    res.on('data', (chunk) => {
+      bodyLen += chunk.length;
+      // Cap body size to bound the attacker (server) influence on memory.
+      if (bodyLen > 256 * 1024) { res.destroy(); return; }
+      body += chunk;
+    });
     res.on('end', () => {
       try {
         if (res.statusCode !== 200) return;
         const data = JSON.parse(body);
-        if (!data || !data.five_hour) return;
+        if (!data || typeof data !== 'object' || !data.five_hour) return;
+        const fh = data.five_hour || {};
+        const sd = data.seven_day || null;
         const cacheDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
         fs.mkdirSync(cacheDir, { recursive: true });
         const cachePath = path.join(cacheDir, 'usage-cache.json');
-        // Preserve workspace_cost from a prior write (the script populates it
-        // via a slow admin-API call inside a stop hook, not on every render).
-        let prior = {};
-        try { prior = JSON.parse(fs.readFileSync(cachePath, 'utf8')); } catch (_) {}
-        const wsCost = data.workspace_cost || prior.workspace_cost || null;
-        const wsCostDollars = wsCost && typeof wsCost.month_used_cents === 'number'
-          ? (wsCost.month_used_cents / 100).toFixed(2)
-          : (prior.ws_cost_dollars || 0);
+        // Preserve scalar fields from a prior write (the slow admin API
+        // populates ws_cost_dollars + session_cost via a stop hook, not on
+        // every render). Only typed primitives are preserved, never raw
+        // objects from the prior cache.
+        let priorWsDollars = 0;
+        let priorSessionCost = '';
+        try {
+          const prior = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+          if (prior && typeof prior.ws_cost_dollars !== 'undefined') {
+            priorWsDollars = String(prior.ws_cost_dollars).slice(0, 16);
+          }
+          if (prior && typeof prior.session_cost === 'string') {
+            priorSessionCost = prior.session_cost.slice(0, 32);
+          }
+        } catch (_) {}
+        const wsCents = data.workspace_cost && typeof data.workspace_cost.month_used_cents === 'number'
+          ? data.workspace_cost.month_used_cents
+          : null;
+        const wsCostDollars = wsCents !== null ? (wsCents / 100).toFixed(2) : priorWsDollars;
+        const sessionCost = typeof data.session_cost === 'string'
+          ? data.session_cost.slice(0, 32)
+          : priorSessionCost;
+        // Allowlisted, type-coerced fields only. No raw response objects.
         const cache = {
-          usage_5h: Number(data.five_hour.utilization || 0),
-          usage_7d: Number(data.seven_day && data.seven_day.utilization || 0),
-          reset_5h_clock: data.five_hour.resets_at || '',
-          reset_7d_clock: data.seven_day && data.seven_day.resets_at || '',
-          ws_cost_dollars: wsCostDollars,
-          workspace_cost: wsCost,
-          session_cost: data.session_cost || prior.session_cost || '',
-          five_hour: data.five_hour,
-          seven_day: data.seven_day || null,
+          usage_5h: Number(fh.utilization || 0),
+          usage_7d: Number(sd && sd.utilization || 0),
+          reset_5h_clock: _coerceISOTimestamp(fh.resets_at),
+          reset_7d_clock: sd ? _coerceISOTimestamp(sd.resets_at) : '',
+          ws_cost_dollars: String(wsCostDollars).slice(0, 16),
+          session_cost: sessionCost,
           fetched_at: new Date().toISOString(),
         };
         fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), { mode: 0o600 });
