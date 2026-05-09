@@ -84,12 +84,22 @@ window.husk.pty.onData((d) => {
     chatHasInput = true;
     $('#chat-empty').classList.remove('show');
   }
+  if (_restartInProgress) return;
   term.write(d, () => term.scrollToBottom());
   detectAndSpeak(d);
 });
 window.husk.pty.onExit((code) => {
+  // Suppress the exit notice when we're tearing the old PTY down on purpose,
+  // otherwise the line stitches into the new PTY's welcome banner.
+  if (_restartInProgress) return;
   term.writeln(`\r\n\x1b[38;2;106;115;133m[agent exited code ${code}; click ↻ Restart]\x1b[0m`);
 });
+
+// Set true while we are killing the old PTY and spawning a new one. Renderer
+// ignores all PTY output and exit events during this window so the dying
+// PTY's tail output ("killing shell... killed", "[agent exited code 0]") and
+// the new PTY's welcome banner do not interleave in xterm's single buffer.
+let _restartInProgress = false;
 
 function announceInTerminal(msg) {
   term.writeln(`\r\n\x1b[38;2;103;232;249m▸ ${msg}\x1b[0m`);
@@ -105,15 +115,24 @@ async function startPty() {
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
 }
 async function restartPty(opts = {}) {
+  _restartInProgress = true;
   fitAddon.fit();
   const { cols, rows } = term;
   chatHasInput = false;
   resetSpeechState();
   clearSessionContext();
-  // Wipe scrollback + visible buffer so a new session shows a clean screen
-  // even if the user hits New session multiple times in a row.
+  // First wipe so any earlier scrollback is gone before kill output starts.
   try { term.reset(); } catch (_) { try { term.clear(); } catch (_) {} }
-  await window.husk.pty.restart({ cols, rows, command: opts.command || null });
+  await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null });
+  // Let the dying PTY drain its tail notice into the (suppressed) handlers
+  // before we re-enable output. Claude's welcome banner takes >300ms to
+  // produce, so a 200ms quiet window does not cut into it.
+  await new Promise((r) => setTimeout(r, 200));
+  // Second wipe: clears anything that wrote to the buffer despite suppression
+  // (e.g. xterm internal sequences from the kill), so the new PTY's banner
+  // starts on a clean canvas.
+  try { term.reset(); } catch (_) {}
+  _restartInProgress = false;
   $('#chat-empty').classList.add('show');
   term.focus();
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
@@ -124,8 +143,9 @@ async function restartPty(opts = {}) {
 function applyTheme(theme) {
   document.body.dataset.theme = theme;
   try { term.options.theme = themeForXterm(); } catch (_) {}
-  const icon = $('#theme-icon');
-  if (icon) icon.textContent = theme === 'dark' ? '☾' : '☀';
+  // Theme icon swap is now handled via CSS based on body[data-theme]; the
+  // legacy #theme-icon span is gone. This function intentionally only sets
+  // the dataset attribute, the moon/sun SVGs are toggled by selectors.
 }
 function applyAccent(accent) {
   const valid = ['orange', 'cyan', 'indigo', 'emerald', 'rose'];
@@ -137,12 +157,14 @@ function applyAccent(accent) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
 function setPage(name) {
-  if (!['chat', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
+  if (!['chat', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
   currentPage = name;
   document.body.dataset.page = name;
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === name));
   if (name === 'chat') { setTimeout(fitNow, 30); term.focus(); }
+  if (name === 'projects') renderProjects();
+  if (name === 'prompts') renderPrompts();
   if (name === 'skills') renderSkills();
   if (name === 'sessions') renderSessions();
   if (name === 'files') { $('#files-root').value = cfg.treeRoot; $('#files-hidden').checked = !!cfg.showHidden; renderTree(cfg.treeRoot); }
@@ -203,6 +225,22 @@ function ratingColor(r) {
   return 'var(--rose)';
 }
 function fmtPct(n) { return Math.round(Number(n) || 0) + '%'; }
+// Format an ISO 8601 instant as "in 1h 23m" / "in 3d 5h" / "now".
+// Falls back to the raw string only if the input cannot be parsed at all.
+function fmtUntil(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!isFinite(t)) return iso;
+  const ms = t - Date.now();
+  if (ms <= 0) return 'now';
+  const total = Math.floor(ms / 1000);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (days > 0) return `in ${days}d ${hours}h`;
+  if (hours > 0) return `in ${hours}h ${minutes}m`;
+  return `in ${minutes}m`;
+}
 function fmtThousands(n) {
   const v = Number(n) || 0;
   if (v >= 1000) return (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
@@ -229,7 +267,9 @@ async function refreshStatusline() {
   // what we know, never blank a section.
   let tz = '';
   try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
-  const headline = here || tz || '';
+  // Pretty fallback: "Asia/Jerusalem" -> "Jerusalem", "America/New_York" -> "New York".
+  const tzPretty = tz.includes('/') ? tz.split('/').pop().replace(/_/g, ' ') : tz;
+  const headline = here || tzPretty || '';
   const weatherStr = s.weather && s.weather.temp
     ? `${s.weather.temp}°C${s.weather.condition ? ' · ' + s.weather.condition : ''}`
     : '';
@@ -269,13 +309,13 @@ async function refreshStatusline() {
         ${u.cache_present ? `
         <div class="sp-row"><span class="sp-muted">5h</span><span class="sp-mono">${fmtPct(u.h5_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.h5_pct||0)}%"></div></div>
-        ${u.h5_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono">${escapeHtml(u.h5_reset)}</span></div>` : ''}
+        ${u.h5_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono" title="${escapeHtml(u.h5_reset)}">${escapeHtml(fmtUntil(u.h5_reset))}</span></div>` : ''}
         <div class="sp-row" style="margin-top:6px;"><span class="sp-muted">Weekly</span><span class="sp-mono">${fmtPct(u.week_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.week_pct||0)}%"></div></div>
-        ${u.week_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono">${escapeHtml(u.week_reset)}</span></div>` : ''}
+        ${u.week_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono" title="${escapeHtml(u.week_reset)}">${escapeHtml(fmtUntil(u.week_reset))}</span></div>` : ''}
         ` : `
-        <div class="sp-row"><span class="sp-muted">5h / Weekly</span><span class="sp-mono sp-muted">no live data</span></div>
-        <div class="sp-row sp-tiny sp-muted">Anthropic limits sync from PAI's statusline. Without it, Husk only sees the per-session counters below.</div>
+        <div class="sp-row"><span class="sp-muted">5h / Weekly</span><span class="sp-mono sp-muted">warming up…</span></div>
+        <div class="sp-row sp-tiny sp-muted">Refreshing every 30s from your Anthropic OAuth token; first sample takes a few seconds after launch.</div>
         `}
         ${u.session ? `
         <div class="sp-divider"></div>
@@ -310,6 +350,7 @@ async function refreshStatusline() {
         ${L.avg1w != null ? `<div class="sp-row"><span class="sp-muted">1w</span><span class="sp-mono" style="color:${ratingColor(L.avg1w)};">${L.avg1w}</span></div>` : ''}
         ${L.avg1mo != null ? `<div class="sp-row"><span class="sp-muted">1mo</span><span class="sp-mono" style="color:${ratingColor(L.avg1mo)};">${L.avg1mo}</span></div>` : ''}
         ${L.recent && L.recent.length ? sparkHTML(L.recent) : ''}
+        ${(L.latest == null && L.avg1h == null && L.avg1d == null && L.avg1w == null && L.avg1mo == null) ? `<div class="sp-row sp-tiny sp-muted">No ratings yet · sessions you rate will land here.</div>` : ''}
       </div>
     </div>
   `;
@@ -331,7 +372,353 @@ async function refreshStatusline() {
   });
 }
 
-// ─── Prompts / Skills page ──────────────────────────────────────────────────────
+// ─── Projects page ─────────────────────────────────────────────────────────────
+let projectsCache = [];
+let activeProjectId = null;
+
+async function renderProjects() {
+  const grid = $('#projects-grid');
+  if (!grid) return;
+  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
+  grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading projects…</div></div>';
+  const res = await window.husk.projects.list();
+  if (!res || !res.ok) {
+    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml((res && res.error) || 'Unknown error')}</div></div>`;
+    return;
+  }
+  projectsCache = res.projects || [];
+  activeProjectId = res.activeProjectId || null;
+  paintProjects(projectsCache, ($('#projects-search') || {}).value || '');
+}
+
+function fmtRelTime(iso) {
+  if (!iso) return 'never';
+  const t = Date.parse(iso);
+  if (!isFinite(t)) return iso;
+  const ms = Date.now() - t;
+  if (ms < 0) return 'now';
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(t).toLocaleDateString();
+}
+
+function paintProjects(items, filter) {
+  const grid = $('#projects-grid');
+  if (!grid) return;
+  const q = (filter || '').toLowerCase().trim();
+  const filtered = q
+    ? items.filter((p) => (p.name + ' ' + p.path).toLowerCase().includes(q))
+    : items;
+  if (!filtered.length) {
+    const msg = q
+      ? `No projects match "${escapeHtml(q)}"`
+      : `No projects yet. Click + Add project to pin a folder.`;
+    // eslint-disable-next-line no-unsanitized/property -- escapeHtml on dynamic part.
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-msg">${msg}</div></div>`;
+    return;
+  }
+  const cards = filtered.map((p) => {
+    const isActive = p.id === activeProjectId;
+    return `
+      <div class="project-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}">
+        <div class="project-card-head">
+          <div class="project-card-title">${escapeHtml(p.name)}</div>
+          ${isActive ? '<span class="project-card-pill">active</span>' : ''}
+        </div>
+        <div class="project-card-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
+        <div class="project-card-meta">last used: ${escapeHtml(fmtRelTime(p.lastUsedAt))}</div>
+        <div class="project-card-actions">
+          <button class="ghost-btn ghost-btn-danger project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+          <button class="btn-primary project-open" data-id="${escapeHtml(p.id)}" title="Switch to this project">${isActive ? 'Reopen here' : 'Open here'}</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
+  grid.innerHTML = cards;
+  grid.querySelectorAll('.project-open').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
+  grid.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name, e.currentTarget); }));
+  // Whole card is also a click target for opening (excluding the action area).
+  grid.querySelectorAll('.project-card').forEach((card) => card.addEventListener('click', (e) => {
+    if (e.target.closest('.project-card-actions')) return;
+    openProject(card.dataset.id);
+  }));
+}
+
+async function openProject(id) {
+  if (!id) return;
+  const res = await window.husk.projects.setActive(id);
+  if (!res || !res.ok) return;
+  activeProjectId = id;
+  await refreshProjectsState();
+  // Pass the project's path explicitly to restartPty so the new PTY lands
+  // in the right cwd even if there is any lag between setActive persisting
+  // config and pty.restart reading it. Belt-and-suspenders.
+  const project = (res.project && res.project.path) ? res.project : (projectsCache.find((p) => p.id === id) || {});
+  await restartPty({ cwd: project.path || null });
+  setPage('chat');
+}
+
+async function refreshProjectsState() {
+  // Re-pull list so lastUsedAt freshens, then update topbar chip + grid + cfg cache.
+  const res = await window.husk.projects.list();
+  if (!res || !res.ok) return;
+  projectsCache = res.projects || [];
+  activeProjectId = res.activeProjectId || null;
+  updateActiveProjectChip();
+  if (currentPage === 'projects') paintProjects(projectsCache, ($('#projects-search') || {}).value || '');
+  // Refresh chat-sub since the agent cwd may have changed.
+  try { cfg = await window.husk.config.get(); } catch (_) {}
+  updateAgentPill && updateAgentPill();
+  const cmdShort = (cfg.agentCommand || 'agent').split(/\s+/)[0];
+  const active = projectsCache.find((p) => p.id === activeProjectId);
+  const cwdLabel = active ? active.path : (cfg.agentCwd || '$HOME');
+  if ($('#chat-sub')) $('#chat-sub').textContent = `${cmdShort} · ${cwdLabel}`;
+}
+
+function updateActiveProjectChip() {
+  const chip = document.getElementById('topbar-project');
+  const label = document.getElementById('topbar-project-name');
+  if (!chip || !label) return;
+  const active = projectsCache.find((p) => p.id === activeProjectId);
+  if (!active) { chip.hidden = true; label.textContent = ''; return; }
+  chip.hidden = false;
+  label.textContent = active.name;
+  chip.title = `Active project: ${active.name}\n${active.path}\nClick to manage projects`;
+}
+
+const _armedProjectDeletes = new WeakMap();
+async function deleteProject(id, name, btn) {
+  if (!id || !btn) return;
+  if (_armedProjectDeletes.has(btn)) {
+    clearTimeout(_armedProjectDeletes.get(btn).timer);
+    _armedProjectDeletes.delete(btn);
+    const res = await window.husk.projects.delete(id);
+    if (!res || !res.ok) {
+      const t = document.getElementById('toast');
+      if (t) { t.textContent = (res && res.error) || 'Could not delete project'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
+      return;
+    }
+    await refreshProjectsState();
+    return;
+  }
+  const originalHTML = btn.innerHTML;
+  btn.textContent = 'Confirm?';
+  btn.classList.add('is-armed');
+  const timer = setTimeout(() => {
+    if (!_armedProjectDeletes.has(btn)) return;
+    _armedProjectDeletes.delete(btn);
+    btn.classList.remove('is-armed');
+    // eslint-disable-next-line no-unsanitized/property -- originalHTML captured from this same node.
+    btn.innerHTML = originalHTML;
+  }, 3000);
+  _armedProjectDeletes.set(btn, { timer });
+}
+
+// Wire Projects page controls + Add Project modal.
+{
+  const search = document.getElementById('projects-search');
+  if (search) search.addEventListener('input', () => paintProjects(projectsCache, search.value));
+
+  const newBtn = document.getElementById('btn-projects-new');
+  const modal = document.getElementById('new-project-modal');
+  const nameEl = document.getElementById('npj-name');
+  const pathEl = document.getElementById('npj-path');
+  const pickEl = document.getElementById('npj-pick');
+  const cancelBtn = document.getElementById('npj-cancel');
+  const createBtn = document.getElementById('npj-create');
+  function open() { if (!modal) return; if (nameEl) nameEl.value = ''; if (pathEl) pathEl.value = ''; modal.hidden = false; setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30); }
+  function close() { if (modal) modal.hidden = true; }
+  async function submit() {
+    let name = (nameEl && nameEl.value || '').trim();
+    const projPath = (pathEl && pathEl.value || '').trim();
+    if (!name && projPath) name = projPath.split('/').filter(Boolean).pop() || 'project';
+    const res = await window.husk.projects.create({ name, path: projPath });
+    if (!res || !res.ok) {
+      const t = document.getElementById('toast');
+      if (t) { t.textContent = (res && res.error) || 'Could not add project'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
+      return;
+    }
+    close();
+    await refreshProjectsState();
+    if (currentPage === 'projects') await renderProjects();
+  }
+  if (newBtn) newBtn.addEventListener('click', open);
+  if (cancelBtn) cancelBtn.addEventListener('click', close);
+  if (createBtn) createBtn.addEventListener('click', submit);
+  if (pickEl) pickEl.addEventListener('click', async () => {
+    try { const picked = await window.husk.dialog2.pickDir(); if (picked && pathEl) pathEl.value = picked; } catch (_) {}
+  });
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  // Topbar chip click navigates to Projects page.
+  const chip = document.getElementById('topbar-project');
+  if (chip) chip.addEventListener('click', () => setPage('projects'));
+}
+
+// ─── Prompts page ──────────────────────────────────────────────────────────────
+let promptsCache = [];
+async function renderPrompts() {
+  const grid = $('#prompts-grid');
+  if (!grid) return;
+  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
+  grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading prompts…</div></div>';
+  const res = await window.husk.prompts.list();
+  if (!res.ok) {
+    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
+    return;
+  }
+  promptsCache = res.prompts || [];
+  paintPrompts(promptsCache, ($('#prompts-search') || {}).value || '');
+}
+
+function paintPrompts(items, filter) {
+  const grid = $('#prompts-grid');
+  if (!grid) return;
+  const q = (filter || '').toLowerCase().trim();
+  const filtered = q
+    ? items.filter((p) => (p.name + ' ' + (p.description || '')).toLowerCase().includes(q))
+    : items;
+  if (!filtered.length) {
+    const msg = q ? `No prompts match "${escapeHtml(q)}"` : 'No prompts yet. Drop markdown files in ~/.config/husk/prompts/';
+    // eslint-disable-next-line no-unsanitized/property -- escapeHtml above; rest is static.
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
+    return;
+  }
+  const cards = filtered.map((p) => `
+    <div class="prompt-card${p.disabled ? ' is-disabled' : ''}" data-md="${escapeHtml(p.mdPath)}">
+      <div class="prompt-card-head">
+        <div class="prompt-card-title">${escapeHtml(p.name)}</div>
+        ${p.disabled ? '<span class="prompt-card-pill">disabled</span>' : ''}
+      </div>
+      <div class="prompt-card-body">${escapeHtml(p.description || '')}</div>
+      <div class="prompt-card-actions">
+        <button class="ghost-btn prompt-preview" data-md="${escapeHtml(p.mdPath)}" title="Preview body">Preview</button>
+        <button class="ghost-btn ghost-btn-danger prompt-delete" data-md="${escapeHtml(p.mdPath)}" data-name="${escapeHtml(p.name)}" title="Delete prompt"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+        <button class="btn-primary prompt-run" data-md="${escapeHtml(p.mdPath)}" title="Send into chat">Run</button>
+      </div>
+    </div>
+  `).join('');
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml above.
+  grid.innerHTML = cards;
+  grid.querySelectorAll('.prompt-run').forEach((btn) => btn.addEventListener('click', (e) => runPrompt(e.currentTarget.dataset.md)));
+  grid.querySelectorAll('.prompt-preview').forEach((btn) => btn.addEventListener('click', (e) => previewPrompt(e.currentTarget.dataset.md)));
+  grid.querySelectorAll('.prompt-delete').forEach((btn) => btn.addEventListener('click', (e) => deletePrompt(e.currentTarget.dataset.md, e.currentTarget.dataset.name, e.currentTarget)));
+}
+
+// Two-click confirm pattern: first click arms the button, second click within
+// the timeout commits. Avoids window.confirm() which fires a native GTK
+// dialog and produces noisy GLib signal warnings on Linux/WSL.
+const _armedDeletes = new WeakMap();
+async function deletePrompt(mdPath, name, btn) {
+  if (!mdPath || !btn) return;
+  if (_armedDeletes.has(btn)) {
+    clearTimeout(_armedDeletes.get(btn).timer);
+    _armedDeletes.delete(btn);
+    const res = await window.husk.prompts.delete(mdPath);
+    if (!res || !res.ok) {
+      const t = document.getElementById('toast');
+      if (t) { t.textContent = (res && res.error) || 'Could not delete prompt'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
+      return;
+    }
+    await renderPrompts();
+    return;
+  }
+  // Arm. Save the original markup so we can restore the SVG icon if the user
+  // hesitates and lets the timeout fire.
+  const originalHTML = btn.innerHTML;
+  btn.textContent = 'Confirm?';
+  btn.classList.add('is-armed');
+  const timer = setTimeout(() => {
+    if (!_armedDeletes.has(btn)) return;
+    _armedDeletes.delete(btn);
+    btn.classList.remove('is-armed');
+    // eslint-disable-next-line no-unsanitized/property -- originalHTML was captured from this same DOM node, no external input.
+    btn.innerHTML = originalHTML;
+  }, 3000);
+  _armedDeletes.set(btn, { timer });
+}
+
+async function runPrompt(mdPath) {
+  if (!mdPath) return;
+  const res = await window.husk.skills.read(mdPath);
+  if (!res.ok || !res.content) return;
+  // Strip the frontmatter block; we want the body only sent into the chat.
+  const body = res.content.replace(/^---[\s\S]*?---\n?/, '').trim();
+  if (!body) return;
+  setPage('chat');
+  // Send the prompt body to the agent's PTY. Append a newline so the agent
+  // treats it as a complete user turn. setPage('chat') focuses the terminal.
+  setTimeout(() => { try { window.husk.pty.write(body + '\n'); } catch (_) {} }, 60);
+}
+
+async function previewPrompt(mdPath) {
+  if (!mdPath) return;
+  const res = await window.husk.skills.read(mdPath);
+  if (!res.ok) return;
+  const body = (res.content || '').replace(/^---[\s\S]*?---\n?/, '').trim();
+  // Reuse the existing detail panel scaffolding if present; fall back to alert.
+  const eyebrow = $('#dp-eyebrow'); const title = $('#dp-title'); const sub = $('#dp-sub'); const bodyEl = $('#dp-body'); const panel = $('#detail-panel');
+  if (panel && title && bodyEl) {
+    if (eyebrow) eyebrow.textContent = 'Prompt';
+    title.textContent = mdPath.split('/').pop().replace(/\.md$/, '');
+    if (sub) sub.textContent = mdPath;
+    bodyEl.textContent = body;
+    document.body.dataset.detail = 'open';
+    panel.hidden = false;
+  }
+}
+
+// Wire prompts search + refresh + create.
+{
+  const search = document.getElementById('prompts-search');
+  if (search) search.addEventListener('input', () => paintPrompts(promptsCache, search.value));
+  const refresh = document.getElementById('btn-prompts-refresh');
+  if (refresh) refresh.addEventListener('click', renderPrompts);
+
+  const newBtn = document.getElementById('btn-prompts-new');
+  const modal = document.getElementById('new-prompt-modal');
+  const nameEl = document.getElementById('np-name');
+  const descEl = document.getElementById('np-desc');
+  const bodyEl = document.getElementById('np-content');
+  const cancelBtn = document.getElementById('np-cancel');
+  const createBtn = document.getElementById('np-create');
+  function openNewPrompt() {
+    if (!modal) return;
+    if (nameEl) nameEl.value = '';
+    if (descEl) descEl.value = '';
+    if (bodyEl) bodyEl.value = '';
+    modal.hidden = false;
+    setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30);
+  }
+  function closeNewPrompt() { if (modal) modal.hidden = true; }
+  async function submitNewPrompt() {
+    const name = (nameEl && nameEl.value || '').trim();
+    const description = (descEl && descEl.value || '').trim();
+    const content = bodyEl && bodyEl.value || '';
+    const res = await window.husk.prompts.create({ name, description, content });
+    if (!res || !res.ok) {
+      const t = document.getElementById('toast');
+      if (t) { t.textContent = (res && res.error) || 'Could not create prompt'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
+      return;
+    }
+    closeNewPrompt();
+    await renderPrompts();
+  }
+  if (newBtn) newBtn.addEventListener('click', openNewPrompt);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeNewPrompt);
+  if (createBtn) createBtn.addEventListener('click', submitNewPrompt);
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeNewPrompt(); });
+}
+
+// ─── Skills page ──────────────────────────────────────────────────────────────
 let skillsCache = [];
 let agentKindCache = 'claude';
 async function renderSkills() {
@@ -812,6 +1199,7 @@ $('#files-root').addEventListener('change', async (e) => {
 function bindPrefs() {
   $('#pref-agent').value = cfg.agentCommand || '';
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
+  if ($('#pref-agent-cwd')) $('#pref-agent-cwd').value = cfg.agentCwd || '';
   $('#pref-recap').checked = cfg.recap !== false;
   $('#pref-theme').value = cfg.theme || 'dark';
   $('#pref-rail').checked = !!cfg.railExpanded;
@@ -825,7 +1213,9 @@ function bindPrefs() {
   $('#pref-voice-rate-display').textContent = `${Number(v.rate || 1.0).toFixed(1)}×`;
   const cmdShort = (cfg.agentCommand || 'agent').split(/\s+/)[0];
   const agentDisplay = cfg.agentName || 'Husk';
-  $('#chat-sub').textContent = `${cmdShort} · ${cfg.treeRoot || ''}`;
+  // Show the same cwd the agent is actually launched in (config.agentCwd
+  // wins; falls back to $HOME when unset, mirroring main.js's resolution).
+  $('#chat-sub').textContent = `${cmdShort} · ${cfg.agentCwd || '$HOME'}`;
   $('#ce-agent').textContent = agentDisplay;
   if ($('#sp-agent')) $('#sp-agent').textContent = cfg.agentCommand || 'claude';
 }
@@ -988,18 +1378,33 @@ function detectAndSpeak(chunk) {
 }
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
+  const cwdInput = $('#pref-agent-cwd');
+  const agentCwd = cwdInput ? cwdInput.value.trim() : '';
   cfg = await window.husk.config.set({
     agentCommand: $('#pref-agent').value.trim(),
     agentName: name,
+    agentCwd,
   });
   bindPrefs();
-  // Agent change may flip claude → generic, so refresh the prompts label / list.
   renderSkills();
   updateAgentPill();
   paintAgentMenu();
   toast('Saved, restarting agent', 'success');
   await restartPty();
 });
+
+// Folder picker for the working directory field.
+{
+  const pickBtn = document.getElementById('btn-pref-cwd-pick');
+  if (pickBtn) {
+    pickBtn.addEventListener('click', async () => {
+      try {
+        const picked = await window.husk.dialog2.pickDir();
+        if (picked && $('#pref-agent-cwd')) $('#pref-agent-cwd').value = picked;
+      } catch (_) {}
+    });
+  }
+}
 $('#pref-theme').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ theme: e.target.value });
   applyTheme(cfg.theme);
@@ -2158,6 +2563,7 @@ async function boot() {
   refreshVoiceStatus();
   refreshContextList();
   refreshRecentList();
+  refreshProjectsState();
   // Pause polling when the window is hidden so we don't burn frames or
   // recompute the status panel for an invisible UI.
   setInterval(async () => {
