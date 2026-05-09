@@ -33,6 +33,18 @@ contextBridge.exposeInMainWorld('husk', {
     delete: (paths) => ipcRenderer.invoke('sessions:delete', { paths }),
   },
   prds: { list: () => ipcRenderer.invoke('prds:list') },
+  prompts: {
+    list: () => ipcRenderer.invoke('prompts:list'),
+    create: (payload) => ipcRenderer.invoke('prompts:create', payload),
+    delete: (mdPath) => ipcRenderer.invoke('prompts:delete', mdPath),
+  },
+  projects: {
+    list: () => ipcRenderer.invoke('projects:list'),
+    create: (payload) => ipcRenderer.invoke('projects:create', payload),
+    setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
+    clearActive: () => ipcRenderer.invoke('projects:clearActive'),
+    delete: (id) => ipcRenderer.invoke('projects:delete', id),
+  },
   fs: {
     open: (p) => ipcRenderer.invoke('fs:open', p),
     dropFile: (payload) => ipcRenderer.invoke('fs:dropFile', payload),
