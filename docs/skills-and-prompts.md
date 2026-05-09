@@ -36,7 +36,7 @@ On first launch Husk seeds `~/.config/husk/prompts/` from `installer/prompts/`. 
 | `plan-a-feature.md` | 8-question PM-intake protocol. Walks the user through naming the user, problem, success metric, MVP scope, anti-scope. Emits a baked spec at the end. |
 | `write-pr-description.md` | Generates a clean PR description from a diff or branch range. Conventional-commits title, "why not what" summary, test plan, risk notes. |
 | `audit-for-security.md` | Methodical security review. Trust boundaries, input handling at each, AuthN/AuthZ, crypto sanity, OWASP-class issues with severity tags. |
-| `summarize-this-document.md` | Three-layer summary: TL;DR, key points (5–8 bullets), section-by-section. No filler. |
+| `summarize-this-document.md` | Three-layer summary: TL;DR, key points (5 to 8 bullets), section-by-section. No filler. |
 | `debug-this-error.md` | Guided triage. Quote the error literally, translate, narrow cause, ask one question if needed, propose surgical fix, verify. |
 
 ## The Skills page UI
