@@ -77,6 +77,171 @@ let config = loadConfig();
 // Seed ~/.config/husk/prompts/ from the bundled curated set on first launch.
 // Never overwrites: a file that already exists in the destination is left
 // alone so user-edited prompts survive across upgrades.
+// Periodically run ~/.claude/statusline-command.sh so the side-effect caches
+// it does write (location-cache.json, weather-cache.json, model-cache.txt)
+// stay fresh while Husk is open. Note the script does NOT write
+// usage-cache.json; the 5h / 7d Anthropic limits are only fetched live each
+// CLI render, so Husk has to mirror that fetch itself. See
+// refreshAnthropicUsageCache below.
+let statuslineTimer = null;
+function refreshStatuslineCacheOnce() {
+  try {
+    const slPath = path.join(CLAUDE_DIR, 'statusline-command.sh');
+    if (!fs.existsSync(slPath)) return;
+    const cwd = activePtyCwd || HOME;
+    // Stub session JSON for the claude-statusline contract; missing fields
+    // fall back to env defaults inside the script.
+    const stub = JSON.stringify({ workspace: { current_dir: cwd }, session_id: 'husk-bg' });
+    const child = spawn('/bin/bash', [slPath], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+      timeout: 10000,
+      cwd,
+      env: process.env,
+    });
+    try { child.stdin.write(stub); child.stdin.end(); } catch (_) {}
+    child.on('error', () => {});
+  } catch (_) {}
+}
+function startStatuslineRefresh() {
+  if (statuslineTimer) return;
+  // Kick off once on startup, then every 30s.
+  refreshStatuslineCacheOnce();
+  statuslineTimer = setInterval(refreshStatuslineCacheOnce, 30000);
+}
+function stopStatuslineRefresh() {
+  if (statuslineTimer) { clearInterval(statuslineTimer); statuslineTimer = null; }
+}
+
+// Hit the Anthropic OAuth usage endpoint with the user's claude credential
+// and write the result into ~/.claude/MEMORY/STATE/usage-cache.json. This
+// mirrors the inline fetch the PAI statusline does each render, but the
+// statusline never persisted those numbers, so Husk's stats reader was
+// always seeing a phantom file. Writing the cache here makes the existing
+// stats:get path light up.
+function readClaudeOauthToken() {
+  try {
+    if (process.platform === 'darwin') {
+      const out = require('child_process').execSync(
+        'security find-generic-password -s "Claude Code-credentials" -w',
+        { timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }
+      ).toString().trim();
+      const cj = JSON.parse(out);
+      return (cj.claudeAiOauth && cj.claudeAiOauth.accessToken) || '';
+    }
+    const credPath = path.join(HOME, '.claude', '.credentials.json');
+    if (!fs.existsSync(credPath)) return '';
+    const cj = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+    return (cj.claudeAiOauth && cj.claudeAiOauth.accessToken) || '';
+  } catch (_) { return ''; }
+}
+
+// Security context (responding to CodeQL js/file-access-to-http and
+// js/http-to-file-access on this function):
+//
+// 1. The OAuth token sourced from ~/.claude/.credentials.json is sent ONLY
+//    to api.anthropic.com (hardcoded hostname + path; no user input flows
+//    into the URL). This mirrors what the bundled PAI statusline-command.sh
+//    already does on every render.
+// 2. The response body is JSON.parse'd; the cache write is restricted to a
+//    fixed allowlist of fields, each coerced to a primitive type (Number,
+//    String, ISO timestamp). The destination path is path.join(CLAUDE_DIR,
+//    'MEMORY', 'STATE', 'usage-cache.json'), no part of which is derived
+//    from the response.
+// 3. No raw nested objects from the response land in the cache, so even if
+//    the upstream response were tampered with, only typed scalars persist.
+//
+// As a defensive timeout, anything past 5s is dropped.
+function _coerceISOTimestamp(s) {
+  if (typeof s !== 'string') return '';
+  // RFC 3339-ish timestamp: digits, dashes, T, colons, dot, plus, Z.
+  // Reject anything outside that grammar to keep file content predictable.
+  return /^[0-9T:\-+.Z]{1,40}$/.test(s) ? s : '';
+}
+
+function refreshAnthropicUsageCache() {
+  const token = readClaudeOauthToken();
+  if (!token) return;
+  const https = require('https');
+  const req = https.request({
+    hostname: 'api.anthropic.com',
+    path: '/api/oauth/usage',
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'anthropic-beta': 'oauth-2025-04-20',
+    },
+    timeout: 5000,
+  }, (res) => {
+    let body = '';
+    let bodyLen = 0;
+    res.on('data', (chunk) => {
+      bodyLen += chunk.length;
+      // Cap body size to bound the attacker (server) influence on memory.
+      if (bodyLen > 256 * 1024) { res.destroy(); return; }
+      body += chunk;
+    });
+    res.on('end', () => {
+      try {
+        if (res.statusCode !== 200) return;
+        const data = JSON.parse(body);
+        if (!data || typeof data !== 'object' || !data.five_hour) return;
+        const fh = data.five_hour || {};
+        const sd = data.seven_day || null;
+        const cacheDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
+        fs.mkdirSync(cacheDir, { recursive: true });
+        const cachePath = path.join(cacheDir, 'usage-cache.json');
+        // Preserve scalar fields from a prior write (the slow admin API
+        // populates ws_cost_dollars + session_cost via a stop hook, not on
+        // every render). Only typed primitives are preserved, never raw
+        // objects from the prior cache.
+        let priorWsDollars = 0;
+        let priorSessionCost = '';
+        try {
+          const prior = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+          if (prior && typeof prior.ws_cost_dollars !== 'undefined') {
+            priorWsDollars = String(prior.ws_cost_dollars).slice(0, 16);
+          }
+          if (prior && typeof prior.session_cost === 'string') {
+            priorSessionCost = prior.session_cost.slice(0, 32);
+          }
+        } catch (_) {}
+        const wsCents = data.workspace_cost && typeof data.workspace_cost.month_used_cents === 'number'
+          ? data.workspace_cost.month_used_cents
+          : null;
+        const wsCostDollars = wsCents !== null ? (wsCents / 100).toFixed(2) : priorWsDollars;
+        const sessionCost = typeof data.session_cost === 'string'
+          ? data.session_cost.slice(0, 32)
+          : priorSessionCost;
+        // Allowlisted, type-coerced fields only. No raw response objects.
+        const cache = {
+          usage_5h: Number(fh.utilization || 0),
+          usage_7d: Number(sd && sd.utilization || 0),
+          reset_5h_clock: _coerceISOTimestamp(fh.resets_at),
+          reset_7d_clock: sd ? _coerceISOTimestamp(sd.resets_at) : '',
+          ws_cost_dollars: String(wsCostDollars).slice(0, 16),
+          session_cost: sessionCost,
+          fetched_at: new Date().toISOString(),
+        };
+        fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), { mode: 0o600 });
+      } catch (_) {}
+    });
+  });
+  req.on('error', () => {});
+  req.on('timeout', () => { try { req.destroy(); } catch (_) {} });
+  req.end();
+}
+
+let usageTimer = null;
+function startUsageRefresh() {
+  if (usageTimer) return;
+  refreshAnthropicUsageCache();
+  usageTimer = setInterval(refreshAnthropicUsageCache, 30000);
+}
+function stopUsageRefresh() {
+  if (usageTimer) { clearInterval(usageTimer); usageTimer = null; }
+}
+
 function bootstrapHuskPromptsIfNeeded() {
   try {
     const candidates = [];
@@ -316,7 +481,17 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   // platform switch below for why Windows uses cmd.exe /c without the inject).
   const isWin32 = process.platform === 'win32';
   if (!isWin32 && /^claude(\.cmd|\.exe)?$/i.test(agentExe) && !agentArgs.includes('--settings')) {
-    const overridePath = buildClaudeSettingsOverride();
+    // We deliberately no longer inject --settings <ephemeral-temp-file>.
+    // That path made claude treat the temp file as the canonical settings,
+    // wrote folder-trust changes there, and on next launch we regenerated
+    // the temp file from the user's real settings.json, blowing the trust
+    // away. claude also hid the "Yes, and remember" trust option because
+    // it detected the ephemeral path.
+    //
+    // The price of dropping the override: claude renders its own inline
+    // statusline at the bottom of the terminal, alongside Husk's right
+    // panel. Acceptable duplication, the user gets persistent trust,
+    // skill-listing budget reverts to the claude default.
     const agentName = (config.agentName || 'Husk').replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || 'Husk';
     const huskPromptParts = [
       `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (not Atlas, not PAI, not Assistant). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/Algorithm, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
@@ -325,13 +500,36 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
       huskPromptParts.push(`The user has disabled recaps in Husk. Suppress any "* recap:" line and end-of-response summary footer for this session.`);
     }
     const huskPrompt = huskPromptParts.join(' ');
-    const injected = [];
-    if (overridePath) injected.push('--settings', overridePath);
-    injected.push('--append-system-prompt', huskPrompt);
-    agentArgs = [...injected, ...agentArgs];
+    agentArgs = ['--append-system-prompt', huskPrompt, ...agentArgs];
   }
 
+  // Default cwd policy (priority high -> low):
+  //   1. explicit overrideCwd (used by Resume to re-enter a session's project)
+  //   2. active project's path (config.activeProjectId)
+  //   3. user-configured config.agentCwd in Preferences
+  //   4. fall back to HOME
+  // Why this matters: claude refuses to offer a permanent "remember this
+  // folder" trust for $HOME because that would grant agent access to the
+  // entire user profile. Pointing Husk at a project subdirectory restores
+  // the three-option trust prompt and lets the user grant durable trust.
   let cwd = HOME;
+  if (config.agentCwd && typeof config.agentCwd === 'string') {
+    try {
+      if (fs.existsSync(config.agentCwd) && fs.statSync(config.agentCwd).isDirectory()) {
+        cwd = config.agentCwd;
+      }
+    } catch (_) {}
+  }
+  if (Array.isArray(config.projects) && config.activeProjectId) {
+    const active = config.projects.find((p) => p && p.id === config.activeProjectId);
+    if (active && active.path && typeof active.path === 'string') {
+      try {
+        if (fs.existsSync(active.path) && fs.statSync(active.path).isDirectory()) {
+          cwd = active.path;
+        }
+      } catch (_) {}
+    }
+  }
   if (overrideCwd) {
     try {
       if (fs.existsSync(overrideCwd) && fs.statSync(overrideCwd).isDirectory()) {
@@ -940,6 +1138,139 @@ function listHuskPrompts() {
       });
   } catch (_) { return []; }
 }
+
+// Returns just the curated Husk prompts (the markdown files seeded from
+// installer/prompts/ into ~/.config/husk/prompts/). The Skills page mixes
+// these with Claude skills; the dedicated Prompts page wants only the prompts.
+ipcMain.handle('prompts:list', () => {
+  try {
+    return { ok: true, prompts: listHuskPrompts() };
+  } catch (err) {
+    return { ok: false, error: err.message, prompts: [] };
+  }
+});
+
+// ─── Projects IPC ──────────────────────────────────────────────────────────
+// Projects are stored as { id, name, path, addedAt, lastUsedAt } in
+// config.projects, with config.activeProjectId pointing at the current one.
+// All persistence flows through config:set so the existing readJSON/write
+// path stays the source of truth.
+
+function _projectsList() {
+  return Array.isArray(config.projects) ? config.projects : [];
+}
+
+ipcMain.handle('projects:list', () => {
+  return {
+    ok: true,
+    projects: _projectsList(),
+    activeProjectId: config.activeProjectId || null,
+  };
+});
+
+ipcMain.handle('projects:create', (_e, payload = {}) => {
+  const name = String(payload.name || '').trim().slice(0, 80);
+  const projPath = String(payload.path || '').trim();
+  if (!name) return { ok: false, error: 'Name is required.' };
+  if (!projPath) return { ok: false, error: 'Path is required.' };
+  try {
+    if (!fs.existsSync(projPath) || !fs.statSync(projPath).isDirectory()) {
+      return { ok: false, error: 'Path is not a directory that exists.' };
+    }
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  const projects = _projectsList();
+  if (projects.some((p) => p && p.path === projPath)) {
+    return { ok: false, error: 'A project with that path already exists.' };
+  }
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const entry = { id, name, path: projPath, addedAt: new Date().toISOString(), lastUsedAt: null };
+  config = { ...config, projects: [...projects, entry] };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true, project: entry };
+});
+
+ipcMain.handle('projects:setActive', (_e, id) => {
+  const projects = _projectsList();
+  const found = projects.find((p) => p && p.id === id);
+  if (!found) return { ok: false, error: 'Project not found.' };
+  const stamped = projects.map((p) => p && p.id === id ? { ...p, lastUsedAt: new Date().toISOString() } : p);
+  config = { ...config, projects: stamped, activeProjectId: id };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true, project: found };
+});
+
+ipcMain.handle('projects:clearActive', () => {
+  config = { ...config, activeProjectId: null };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true };
+});
+
+ipcMain.handle('projects:delete', (_e, id) => {
+  const projects = _projectsList();
+  if (!projects.some((p) => p && p.id === id)) return { ok: false, error: 'Project not found.' };
+  const remaining = projects.filter((p) => p && p.id !== id);
+  const newActive = config.activeProjectId === id ? null : config.activeProjectId;
+  config = { ...config, projects: remaining, activeProjectId: newActive };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true };
+});
+
+// Delete a Husk prompt. Confines the unlink to HUSK_PROMPTS_DIR by resolving
+// both the supplied path and the prompts directory, then verifying that the
+// resolved file lives directly under it. Symlink/traversal-proof.
+ipcMain.handle('prompts:delete', (_e, mdPath) => {
+  if (!mdPath || typeof mdPath !== 'string') return { ok: false, error: 'Missing path' };
+  try {
+    const promptsRoot = path.resolve(HUSK_PROMPTS_DIR);
+    const target = path.resolve(mdPath);
+    if (!target.startsWith(promptsRoot + path.sep)) {
+      return { ok: false, error: 'Refusing to delete outside the prompts directory' };
+    }
+    if (!fs.existsSync(target)) return { ok: false, error: 'Prompt file not found' };
+    fs.unlinkSync(target);
+    // Also clear any disabled twin so the slot is fully reclaimed.
+    try { fs.unlinkSync(target + '.disabled'); } catch (_) {}
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Create a new Husk prompt. Always writes to HUSK_PROMPTS_DIR regardless of
+// agentKind (the existing skills:create handler routes by agent and would
+// instead create a claude skill for claude users; we want prompts to be
+// distinct).
+ipcMain.handle('prompts:create', (_e, payload = {}) => {
+  const { name, description, content } = payload;
+  if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
+    return { ok: false, error: 'Name must be lowercase letters, digits, dashes; start with a letter.' };
+  }
+  if (!description || !description.trim()) {
+    return { ok: false, error: 'Description is required.' };
+  }
+  const safeDesc = description.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const body = (content || '').trim() || `# ${name}\n\n${description.trim()}\n`;
+  const md = `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
+  try {
+    fs.mkdirSync(HUSK_PROMPTS_DIR, { recursive: true });
+    const fileName = `${name}.md`;
+    const mdPath = path.join(HUSK_PROMPTS_DIR, fileName);
+    if (fs.existsSync(mdPath + '.disabled')) {
+      return { ok: false, error: `A prompt named "${name}" already exists (disabled).` };
+    }
+    try {
+      fs.writeFileSync(mdPath, md, { flag: 'wx', mode: 0o644 });
+    } catch (e) {
+      if (e && e.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
+      throw e;
+    }
+    return { ok: true, id: fileName, path: mdPath, mdPath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 ipcMain.handle('skills:list', () => {
   try {
@@ -1792,12 +2123,14 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     bootstrapPaiIfNeeded();
     bootstrapHuskPromptsIfNeeded();
+    startStatuslineRefresh();
+    startUsageRefresh();
     await startNullVoiceServer();
     createWindow();
     setupAutoUpdater();
   });
-  app.on('window-all-closed', () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });
-  app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); });
+  app.on('window-all-closed', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); app.quit(); });
+  app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); });
   app.on('will-quit', () => { killPtyTree(); stopNullVoiceServer(); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   process.on('SIGINT',  () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });
