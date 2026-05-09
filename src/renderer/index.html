@@ -73,9 +73,16 @@
         <img class="logo-img" src="assets/husk-logo.png" alt="Husk" />
         <span class="brand-text">HUSK</span>
       </div>
+      <button class="topbar-project" id="topbar-project" title="Active project (click to switch)" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+        <span class="tp-name" id="topbar-project-name"></span>
+      </button>
       <div class="topbar-spacer"></div>
       <button class="iconbtn" id="btn-palette" title="Command palette (Ctrl+K)">⌘K</button>
-      <button class="iconbtn" id="btn-theme" title="Toggle theme"><span id="theme-icon">☾</span></button>
+      <button class="iconbtn" id="btn-theme" title="Toggle theme">
+        <svg class="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg class="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+      </button>
       <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)">+ New Chat</button>
     </header>
 
@@ -100,6 +107,14 @@
             <button class="rail-item active" data-page="chat" title="Chat">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg></span>
               <span class="ri-label">Chat</span>
+            </button>
+            <button class="rail-item" data-page="projects" title="Projects">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg></span>
+              <span class="ri-label">Projects</span>
+            </button>
+            <button class="rail-item" data-page="prompts" title="Prompts">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M16 4v3h3"/><path d="M8 12h8M8 16h8M8 8h4"/></svg></span>
+              <span class="ri-label">Prompts</span>
             </button>
             <button class="rail-item" data-page="skills" title="Skills">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
@@ -160,7 +175,7 @@
               <span class="page-sub" id="chat-sub">claude · ~</span>
             </div>
             <div class="page-head-right">
-              <button class="ghost-btn" id="btn-restart" title="Restart agent">↻ Restart</button>
+              <button class="ghost-btn" id="btn-restart" title="Restart agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> Restart</button>
             </div>
           </div>
           <div class="chat-stage">
@@ -186,6 +201,95 @@
           </div>
         </div>
 
+        <!-- PROJECTS PAGE -->
+        <div class="page page-projects" data-page="projects" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Projects</h1>
+              <span class="page-sub">click a project to launch the agent there; click again or use Restart to switch</span>
+            </div>
+            <div class="page-head-right">
+              <input type="search" id="projects-search" class="ghost-input" placeholder="Filter projects…" />
+              <button class="btn-primary" id="btn-projects-new" title="Add a new project"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Add project</button>
+            </div>
+          </div>
+          <div class="projects-grid" id="projects-grid"></div>
+        </div>
+
+        <!-- Create project modal -->
+        <div id="new-project-modal" class="modal" hidden>
+          <div class="modal-card modal-wide">
+            <div class="modal-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div>
+            <div class="modal-title">Add a project</div>
+            <div class="modal-sub">Pin a folder so the agent can launch into it with one click. Stored locally in <code>~/.config/husk/config.json</code>.</div>
+            <div class="modal-section">
+              <div class="modal-label">Name</div>
+              <input type="text" id="npj-name" placeholder="Husk redesign" autocomplete="off" spellcheck="false" maxlength="80" />
+              <div class="modal-hint">Short, human-readable. Appears in the Projects grid and the topbar.</div>
+            </div>
+            <div class="modal-section">
+              <div class="modal-label">Folder</div>
+              <span style="display:inline-flex; gap:6px; width:100%;">
+                <input type="text" id="npj-path" placeholder="/home/dorsh/projects/husk" autocomplete="off" spellcheck="false" style="flex:1; min-width:0;" />
+                <button class="ghost-btn" id="npj-pick" type="button">Pick&hellip;</button>
+              </span>
+              <div class="modal-hint">Must exist. The agent will <code>cd</code> here when this project is active.</div>
+            </div>
+            <div class="modal-actions">
+              <button class="ghost-btn" id="npj-cancel">Cancel</button>
+              <button class="btn-primary" id="npj-create">Add project</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- PROMPTS PAGE -->
+        <div class="page page-prompts" data-page="prompts" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Prompts</h1>
+              <span class="page-sub">starter prompts; click Run to send into the chat</span>
+            </div>
+            <div class="page-head-right">
+              <input type="search" id="prompts-search" class="ghost-input" placeholder="Filter prompts…" />
+              <button class="ghost-btn" id="btn-prompts-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+              <button class="btn-primary" id="btn-prompts-new" title="Create a new prompt"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create prompt</button>
+            </div>
+          </div>
+          <div class="prompts-grid" id="prompts-grid"></div>
+        </div>
+
+        <!-- Create prompt modal -->
+        <div id="new-prompt-modal" class="modal" hidden>
+          <div class="modal-card modal-wide">
+            <div class="modal-icon">📝</div>
+            <div class="modal-title">Create a prompt</div>
+            <div class="modal-sub">Saved as <code>~/.config/husk/prompts/&lt;name&gt;.md</code> and shown on the Prompts page.</div>
+
+            <div class="modal-section">
+              <div class="modal-label">Name</div>
+              <input type="text" id="np-name" placeholder="my-new-prompt" autocomplete="off" spellcheck="false" />
+              <div class="modal-hint">Lowercase, dashes ok. Becomes the filename and the frontmatter <code>name</code>.</div>
+            </div>
+
+            <div class="modal-section">
+              <div class="modal-label">Description</div>
+              <input type="text" id="np-desc" placeholder="One-line summary of what this prompt does" autocomplete="off" />
+              <div class="modal-hint">Shown on the Prompts card. Required.</div>
+            </div>
+
+            <div class="modal-section">
+              <div class="modal-label">Body (Markdown)</div>
+              <textarea id="np-content" placeholder="The prompt itself. Sent into the chat when you click Run." spellcheck="false"></textarea>
+              <div class="modal-hint">Optional. Empty falls back to a simple template.</div>
+            </div>
+
+            <div class="modal-actions">
+              <button class="ghost-btn" id="np-cancel">Cancel</button>
+              <button class="btn-primary" id="np-create">Create prompt</button>
+            </div>
+          </div>
+        </div>
+
         <!-- SKILLS PAGE -->
         <div class="page page-skills" data-page="skills" hidden>
           <div class="page-head">
@@ -195,9 +299,9 @@
             </div>
             <div class="page-head-right">
               <input type="search" id="skills-search" class="ghost-input" placeholder="Filter skills…" />
-              <button class="ghost-btn" id="btn-skills-refresh" title="Refresh">↻</button>
+              <button class="ghost-btn" id="btn-skills-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
               <button class="ghost-btn" id="btn-skills-open" title="Open in OS">Open folder</button>
-              <button class="btn-primary" id="btn-skills-new" title="Create a new skill">＋ Create skill</button>
+              <button class="btn-primary" id="btn-skills-new" title="Create a new skill"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create skill</button>
             </div>
           </div>
           <div class="skills-grid" id="skills-grid"></div>
@@ -212,7 +316,7 @@
             </div>
             <div class="page-head-right">
               <input type="search" id="sessions-search" class="ghost-input" placeholder="Filter sessions…" />
-              <button class="ghost-btn" id="btn-sessions-refresh" title="Refresh">↻</button>
+              <button class="ghost-btn" id="btn-sessions-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
               <button class="ghost-btn" id="btn-sessions-open" title="Open in OS">Open folder</button>
               <button class="ghost-btn" id="btn-sessions-select" title="Select sessions to delete">Select</button>
               <button class="ghost-btn ghost-btn-danger" id="btn-sessions-delete" title="Delete selected sessions" hidden>Delete (0)</button>
@@ -231,8 +335,8 @@
               <span class="page-sub">give the agent more abilities · click an entry to install</span>
             </div>
             <div class="page-head-right">
-              <button class="ghost-btn" id="btn-mcp-refresh" title="Refresh">↻</button>
-              <button class="btn-primary" id="btn-mcp-add-custom" title="Install any MCP server with a custom command">＋ Add custom server</button>
+              <button class="ghost-btn" id="btn-mcp-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+              <button class="btn-primary" id="btn-mcp-add-custom" title="Install any MCP server with a custom command"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Add custom server</button>
             </div>
           </div>
           <div class="mcp-body">
@@ -274,7 +378,7 @@
                 <span>Show hidden</span>
               </label>
               <input type="text" id="files-root" class="ghost-input" placeholder="root path" />
-              <button class="ghost-btn" id="btn-files-refresh">↻</button>
+              <button class="ghost-btn" id="btn-files-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
             </div>
           </div>
           <div class="tree" id="tree"></div>
@@ -299,7 +403,14 @@
                 <span class="pref-label">Command</span>
                 <input type="text" id="pref-agent" placeholder="claude" />
               </label>
-              <div class="pref-hint">Name is what the agent calls itself when asked. Saved to <code>~/.config/husk/config.json</code>.</div>
+              <label class="pref-row">
+                <span class="pref-label">Working directory</span>
+                <span style="display:inline-flex; gap:6px; flex:1;">
+                  <input type="text" id="pref-agent-cwd" placeholder="e.g. /home/dorsh/projects/myapp" style="flex:1; min-width:0;" />
+                  <button class="ghost-btn" id="btn-pref-cwd-pick" type="button">Pick&hellip;</button>
+                </span>
+              </label>
+              <div class="pref-hint">Where the agent launches. Leave empty for your home directory (claude refuses permanent trust there and asks every launch). A project subdirectory restores the "remember this folder" option.</div>
               <button class="btn-primary" id="pref-save">Save &amp; Restart Agent</button>
             </section>
 
