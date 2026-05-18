@@ -251,43 +251,41 @@
               <h2 class="modal-title" id="agent-modal-title">New Agent</h2>
               <button class="modal-close" id="agent-modal-close" aria-label="Close">&times;</button>
             </div>
-            <div class="modal-body">
-              <!-- Generate step: shown first -->
-              <div id="agent-generate-step">
-                <div class="form-row">
-                  <label class="form-label">What should this agent do?</label>
-                  <textarea class="form-input form-textarea" id="agent-generate-desc" rows="3" placeholder="e.g. Help me write better git commit messages, review for clarity and scope"></textarea>
-                </div>
-                <div class="agent-generate-actions">
-                  <button class="btn-primary" id="btn-generate-agent">Generate with AI</button>
-                  <button class="ghost-link" id="btn-manual-agent">Fill in manually</button>
-                </div>
-                <div id="agent-generate-status" class="agent-generate-status" hidden></div>
+            <!-- Step 1: describe -->
+            <div id="agent-generate-step" class="modal-body">
+              <div class="form-row">
+                <label class="form-label">What should this agent do?</label>
+                <textarea class="form-input form-textarea" id="agent-generate-desc" rows="4" placeholder="e.g. Help me write better git commit messages, review for clarity and scope"></textarea>
+                <button class="agent-manual-link" id="btn-manual-agent">Fill in manually</button>
               </div>
-              <!-- Edit step: shown after generate or when editing -->
-              <div id="agent-edit-step" hidden>
-                <div class="form-row">
-                  <label class="form-label">Name</label>
-                  <input class="form-input" id="agent-name" type="text" maxlength="64" placeholder="Code Reviewer" />
-                </div>
-                <div class="form-row">
-                  <label class="form-label">Description <span class="form-hint">shown on the card</span></label>
-                  <input class="form-input" id="agent-description" type="text" maxlength="256" placeholder="What this agent is good at" />
-                </div>
-                <div class="form-row">
-                  <label class="form-label">System Prompt <span class="form-hint">instructions given to the AI when active</span></label>
-                  <textarea class="form-input form-textarea" id="agent-system-prompt" rows="6" maxlength="4096" placeholder="You are a..."></textarea>
-                </div>
-                <div class="form-row form-row-inline">
-                  <label class="form-label form-label-check">
-                    <input type="checkbox" id="agent-autoselect" />
-                    <span>Auto-select <span class="form-hint">Husk activates this agent automatically based on context</span></span>
-                  </label>
-                </div>
-              </div>
+              <div id="agent-generate-status" class="agent-generate-status" hidden></div>
             </div>
-            <div class="modal-foot">
+            <div id="agent-generate-foot" class="modal-foot">
               <button class="ghost-btn" id="agent-modal-cancel">Cancel</button>
+              <button class="btn-primary" id="btn-generate-agent">Generate with AI</button>
+            </div>
+
+            <!-- Step 2: review / edit -->
+            <div id="agent-edit-step" class="modal-body" hidden>
+              <div class="form-row">
+                <label class="form-label">Name</label>
+                <input class="form-input" id="agent-name" type="text" maxlength="64" placeholder="Code Reviewer" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">Description</label>
+                <input class="form-input" id="agent-description" type="text" maxlength="256" placeholder="What this agent is good at" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">System Prompt <span class="form-hint">instructions given to the AI when active</span></label>
+                <textarea class="form-input form-textarea" id="agent-system-prompt" rows="5" maxlength="4096" placeholder="You are a..."></textarea>
+              </div>
+              <label class="form-label-check" style="margin-top:2px">
+                <input type="checkbox" id="agent-autoselect" />
+                <span>Auto-select <span class="form-hint">Husk activates this agent automatically based on context</span></span>
+              </label>
+            </div>
+            <div id="agent-edit-foot" class="modal-foot" hidden>
+              <button class="ghost-btn" id="agent-modal-back">Back</button>
               <button class="btn-primary" id="agent-modal-save">Save Agent</button>
             </div>
           </div>
