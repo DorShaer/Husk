@@ -197,12 +197,24 @@ body {
 
 #topbar {
   display: flex; align-items: center; gap: 14px;
-  padding: 0 14px 0 18px;
+  padding: 0 14px 0 10px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
   box-shadow: var(--hl-top);
   -webkit-app-region: drag;
 }
+.topbar-sidebar-btn {
+  -webkit-app-region: no-drag;
+  width: 32px; height: 32px; flex: 0 0 auto;
+  background: transparent; border: 0;
+  border-radius: var(--radius-md);
+  color: var(--text-3); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.topbar-sidebar-btn svg { width: 17px; height: 17px; display: block; }
+.topbar-sidebar-btn:hover { background: var(--bg-2); color: var(--text); }
+body[data-rail="collapsed"] .topbar-sidebar-btn { color: var(--text-2); }
 .brand { display: flex; align-items: center; gap: 12px; -webkit-app-region: no-drag; }
 .logo-img {
   width: 26px; height: 26px;
@@ -374,27 +386,7 @@ body[data-rail="expanded"] .rail { width: 220px; }
 /* Inline sidebar-toggle button. Sits inside the rail, top-right, looks like
    a proper sidebar icon (Notion / Linear convention). Replaces the floating
    off-rail circle that read as a UI artifact. */
-.rail-top {
-  display: flex; justify-content: flex-end;
-  padding: 0 4px 6px;
-  margin-bottom: 4px;
-}
-.rail-toggle {
-  width: 30px; height: 30px;
-  background: transparent;
-  color: var(--text-3);
-  border: 0;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background var(--motion-fast) var(--ease-out),
-              color var(--motion-fast) var(--ease-out);
-}
-.rail-toggle svg { width: 17px; height: 17px; display: block; }
-.rail-toggle:hover { color: var(--text); background: var(--bg-2); }
-body[data-rail="collapsed"] .rail-top { justify-content: center; padding: 0 0 6px; }
-body[data-rail="collapsed"] .rail-toggle { width: 40px; height: 40px; }
-body[data-rail="collapsed"] .rail-toggle svg { width: 19px; height: 19px; }
+/* rail-top removed — toggle lives in #topbar as .topbar-sidebar-btn */
 .rail-nav { display: flex; flex-direction: column; gap: 2px; }
 .rail-spacer { flex: 1; }
 .rail-item {
@@ -933,6 +925,26 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .agent-card .card-delete {
   position: absolute; top: 10px; right: 10px;
 }
+.agent-card-autoselect {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-3);
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+.agent-card-autoselect input { accent-color: var(--accent); cursor: pointer; }
+.agent-card-autoselect.is-on { color: var(--accent); }
+.agent-generate-actions {
+  display: flex; align-items: center; gap: 12px; margin-top: 8px;
+}
+.agent-generate-status {
+  margin-top: 10px; font-size: 12px; color: var(--text-3);
+  padding: 8px 10px; background: var(--bg-2);
+  border-radius: var(--radius-md); border: 1px solid var(--line);
+}
+.form-row-inline { flex-direction: row; align-items: center; }
+.form-label-check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 400; }
+.form-label-check input { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
 
 /* ─── Projects page ────────────────────────────────────────────────────── */
 

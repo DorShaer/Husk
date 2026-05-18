@@ -153,6 +153,14 @@ function announceInTerminal(msg) {
 async function startPty() {
   fitAddon.fit();
   const { cols, rows } = term;
+  // Auto-select: if no profile is active and one has autoSelect enabled, activate it.
+  if (!cfg.activeProfileId) {
+    const autoProfile = profilesCache.find((p) => p.autoSelect);
+    if (autoProfile) {
+      await activateProfile(autoProfile.id);
+      toast(`Agent auto-selected: ${autoProfile.name}`, '');
+    }
+  }
   await window.husk.pty.start({ cols, rows });
   term.focus();
   // Snapshot which MCPs were enabled at launch so the MCP page can split
@@ -634,6 +642,10 @@ function paintAgents() {
       ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
       <div class="agent-card-actions">
         ${!p.builtin ? `<button class="ghost-link agent-edit" data-id="${escapeHtml(p.id)}">Edit</button>` : ''}
+        <label class="agent-card-autoselect${p.autoSelect ? ' is-on' : ''}" title="When enabled, Husk activates this agent automatically based on context">
+          <input type="checkbox" class="agent-autoselect-toggle" data-id="${escapeHtml(p.id)}" ${p.autoSelect ? 'checked' : ''} />
+          Auto-select
+        </label>
         ${p.id === activeId
           ? `<button class="ghost-btn agent-deactivate" data-id="${escapeHtml(p.id)}">Deactivate</button>`
           : `<button class="card-cta agent-activate" data-id="${escapeHtml(p.id)}">Activate<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
@@ -647,6 +659,14 @@ function paintAgents() {
   grid.querySelectorAll('.agent-deactivate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); activateProfile(null); }));
   grid.querySelectorAll('.agent-edit').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openAgentModal(e.currentTarget.dataset.id); }));
   grid.querySelectorAll('.agent-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProfile(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
+  grid.querySelectorAll('.agent-autoselect-toggle').forEach((chk) => chk.addEventListener('change', async (e) => {
+    e.stopPropagation();
+    const id = e.currentTarget.dataset.id;
+    const val = e.currentTarget.checked;
+    profilesCache = profilesCache.map((p) => p.id === id ? { ...p, autoSelect: val } : p);
+    await window.husk.profiles.update({ id, autoSelect: val });
+    paintAgents();
+  }));
 }
 
 async function activateProfile(id) {
@@ -696,21 +716,33 @@ async function deleteProfile(id, name) {
 
 function openAgentModal(editId) {
   const modal = $('#agent-modal');
-  const titleEl = $('#agent-modal-title');
-  const iconEl = $('#agent-icon');
-  const nameEl = $('#agent-name');
-  const descEl = $('#agent-description');
-  const promptEl = $('#agent-system-prompt');
   if (!modal) return;
   editingProfileId = editId || null;
   const existing = editId ? profilesCache.find((p) => p.id === editId) : null;
+  const titleEl = $('#agent-modal-title');
   if (titleEl) titleEl.textContent = existing ? 'Edit Agent' : 'New Agent';
-  if (iconEl) iconEl.value = existing ? (existing.icon || '') : '';
-  if (nameEl) nameEl.value = existing ? existing.name : '';
-  if (descEl) descEl.value = existing ? (existing.description || '') : '';
-  if (promptEl) promptEl.value = existing ? (existing.systemPrompt || '') : '';
+
+  const genStep = $('#agent-generate-step');
+  const editStep = $('#agent-edit-step');
+  const genDesc = $('#agent-generate-desc');
+  const statusEl = $('#agent-generate-status');
+
+  if (existing) {
+    if (genStep) genStep.hidden = true;
+    if (editStep) editStep.hidden = false;
+    if ($('#agent-name')) $('#agent-name').value = existing.name;
+    if ($('#agent-description')) $('#agent-description').value = existing.description || '';
+    if ($('#agent-system-prompt')) $('#agent-system-prompt').value = existing.systemPrompt || '';
+    if ($('#agent-autoselect')) $('#agent-autoselect').checked = !!existing.autoSelect;
+  } else {
+    if (genStep) genStep.hidden = false;
+    if (editStep) editStep.hidden = true;
+    if (genDesc) genDesc.value = '';
+    if (statusEl) { statusEl.hidden = true; statusEl.textContent = ''; }
+  }
+
   modal.hidden = false;
-  setTimeout(() => { try { nameEl.focus(); } catch (_) {} }, 30);
+  setTimeout(() => { try { (existing ? $('#agent-name') : genDesc).focus(); } catch (_) {} }, 30);
 }
 
 function closeAgentModal() {
@@ -720,22 +752,48 @@ function closeAgentModal() {
 }
 
 async function saveAgentModal() {
-  const icon = ($('#agent-icon') || {}).value || '';
   const name = (($('#agent-name') || {}).value || '').trim();
   const description = (($('#agent-description') || {}).value || '').trim();
   const systemPrompt = (($('#agent-system-prompt') || {}).value || '').trim();
+  const autoSelect = !!(($('#agent-autoselect') || {}).checked);
   if (!name) { toast('Name is required', 'error'); return; }
   let res;
   if (editingProfileId) {
-    res = await window.husk.profiles.update({ id: editingProfileId, icon, name, description, systemPrompt });
-    if (res && res.ok) profilesCache = profilesCache.map((p) => p.id === editingProfileId ? { ...p, icon, name, description, systemPrompt } : p);
+    res = await window.husk.profiles.update({ id: editingProfileId, name, description, systemPrompt, autoSelect });
+    if (res && res.ok) profilesCache = profilesCache.map((p) => p.id === editingProfileId ? { ...p, name, description, systemPrompt, autoSelect } : p);
   } else {
-    res = await window.husk.profiles.create({ icon, name, description, systemPrompt });
+    res = await window.husk.profiles.create({ name, description, systemPrompt, autoSelect });
     if (res && res.id) profilesCache = [...profilesCache, res];
   }
   if (!res || (!res.ok && !res.id)) { toast('Could not save agent', 'error'); return; }
   closeAgentModal();
   paintAgents();
+}
+
+async function generateAgentWithAI() {
+  const descEl = $('#agent-generate-desc');
+  const statusEl = $('#agent-generate-status');
+  const genBtn = $('#btn-generate-agent');
+  const desc = descEl ? descEl.value.trim() : '';
+  if (!desc) { toast('Describe what the agent should do first', 'error'); return; }
+  if (statusEl) { statusEl.textContent = 'Generating...'; statusEl.hidden = false; }
+  if (genBtn) genBtn.disabled = true;
+  const res = await window.husk.profiles.generate(desc);
+  if (genBtn) genBtn.disabled = false;
+  if (!res || !res.ok) {
+    if (statusEl) { statusEl.textContent = res ? res.error : 'Generation failed'; statusEl.hidden = false; }
+    return;
+  }
+  if (statusEl) statusEl.hidden = true;
+  const genStep = $('#agent-generate-step');
+  const editStep = $('#agent-edit-step');
+  if (genStep) genStep.hidden = true;
+  if (editStep) editStep.hidden = false;
+  if ($('#agent-name')) $('#agent-name').value = res.name || '';
+  if ($('#agent-description')) $('#agent-description').value = res.description || '';
+  if ($('#agent-system-prompt')) $('#agent-system-prompt').value = res.systemPrompt || '';
+  if ($('#agent-autoselect')) $('#agent-autoselect').checked = false;
+  setTimeout(() => { try { $('#agent-name').focus(); } catch (_) {} }, 30);
 }
 
 $('#btn-new-agent') && $('#btn-new-agent').addEventListener('click', () => openAgentModal(null));
@@ -744,6 +802,13 @@ $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', c
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
 $('#btn-deactivate-agent') && $('#btn-deactivate-agent').addEventListener('click', () => activateProfile(null));
 $('#agent-modal') && $('#agent-modal').addEventListener('click', (e) => { if (e.target === $('#agent-modal')) closeAgentModal(); });
+$('#btn-generate-agent') && $('#btn-generate-agent').addEventListener('click', generateAgentWithAI);
+$('#btn-manual-agent') && $('#btn-manual-agent').addEventListener('click', () => {
+  const genStep = $('#agent-generate-step');
+  const editStep = $('#agent-edit-step');
+  if (genStep) genStep.hidden = true;
+  if (editStep) { editStep.hidden = false; setTimeout(() => { try { $('#agent-name').focus(); } catch (_) {} }, 30); }
+});
 
 // ─── Prompts page ──────────────────────────────────────────────────────────────
 let promptsCache = [];

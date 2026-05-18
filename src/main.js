@@ -38,26 +38,26 @@ const DEFAULT_PROFILES = [
   {
     id: 'builtin-code-review',
     name: 'Code Reviewer',
-    icon: '',
     description: 'Focused on correctness, edge cases, and clean code principles.',
     systemPrompt: 'You are a senior code reviewer. Prioritize correctness, security, edge cases, and readability. Point out specific line numbers. Suggest concrete improvements. Be direct and concise.',
     builtin: true,
+    autoSelect: false,
   },
   {
     id: 'builtin-documentation',
     name: 'Documentation Writer',
-    icon: '',
     description: 'Writes clear, structured docs, READMEs, and API references.',
     systemPrompt: 'You are a technical writer. Write clear, structured documentation. Use headers, examples, and code blocks. Assume the reader is a developer who needs to understand quickly. Avoid jargon without explanation.',
     builtin: true,
+    autoSelect: false,
   },
   {
     id: 'builtin-security',
     name: 'Security Auditor',
-    icon: '',
     description: 'Audits for vulnerabilities, OWASP risks, and insecure patterns.',
     systemPrompt: 'You are a security engineer specializing in application security. Identify vulnerabilities, insecure patterns, and OWASP Top 10 risks. Reference CVEs and CWEs where relevant. Provide remediation steps, not just findings.',
     builtin: true,
+    autoSelect: false,
   },
 ];
 
@@ -1157,14 +1157,44 @@ function getProfiles() {
 
 ipcMain.handle('profiles:list', () => getProfiles());
 
+ipcMain.handle('profiles:generate', async (_e, description) => {
+  if (!description || typeof description !== 'string') return { ok: false, error: 'description required' };
+  const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  if (!isOnPath(cmd)) return { ok: false, error: `${cmd} is not installed` };
+  const prompt = `You are configuring an AI assistant profile. Based on this description: "${description.slice(0, 500)}"
+
+Create an agent profile. Return ONLY valid JSON, no markdown fences, no explanation, with exactly these fields:
+{"name":"short name 2-4 words","description":"one sentence what this agent does","systemPrompt":"detailed system prompt 2-5 sentences starting with You are..."}`;
+  return new Promise((resolve) => {
+    let out = '';
+    let err = '';
+    const child = require('child_process').spawn(cmd, ['-p', prompt], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30000,
+    });
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('close', (code) => {
+      if (code !== 0) { resolve({ ok: false, error: err.slice(0, 200) || `exit ${code}` }); return; }
+      const match = out.match(/\{[\s\S]*\}/);
+      if (!match) { resolve({ ok: false, error: 'AI did not return valid JSON' }); return; }
+      try {
+        const parsed = JSON.parse(match[0]);
+        resolve({ ok: true, name: String(parsed.name || '').slice(0, 64), description: String(parsed.description || '').slice(0, 256), systemPrompt: String(parsed.systemPrompt || '').slice(0, 4096) });
+      } catch (_) { resolve({ ok: false, error: 'Could not parse AI response' }); }
+    });
+    child.on('error', (e) => resolve({ ok: false, error: e.message }));
+  });
+});
+
 ipcMain.handle('profiles:create', (_e, payload = {}) => {
   const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const entry = {
     id,
     name: String(payload.name || 'New Agent').slice(0, 64),
-    icon: String(payload.icon || '').slice(0, 8),
     description: String(payload.description || '').slice(0, 256),
     systemPrompt: String(payload.systemPrompt || '').slice(0, 4096),
+    autoSelect: !!payload.autoSelect,
     builtin: false,
   };
   const profiles = [...getProfiles(), entry];
@@ -1180,9 +1210,9 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
     return {
       ...p,
       name: payload.name !== undefined ? String(payload.name).slice(0, 64) : p.name,
-      icon: payload.icon !== undefined ? String(payload.icon).slice(0, 8) : p.icon,
       description: payload.description !== undefined ? String(payload.description).slice(0, 256) : p.description,
       systemPrompt: payload.systemPrompt !== undefined ? String(payload.systemPrompt).slice(0, 4096) : p.systemPrompt,
+      autoSelect: payload.autoSelect !== undefined ? !!payload.autoSelect : (p.autoSelect || false),
     };
   });
   config = { ...config, profiles };
