@@ -72,6 +72,10 @@
       "description": "Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.",
       "maintainer": "DorShaer <kassofer@gmail.com>"
     },
+    "deb": {
+      "afterInstall": "installer/after-install.sh",
+      "afterRemove": "installer/after-remove.sh"
+    },
     "mac": {
       "target": [
         {
