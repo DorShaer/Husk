@@ -416,32 +416,6 @@ function killPtyTree() {
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
 
-// Build a temporary settings file that mirrors the user's ~/.claude/settings.json
-// but with statusLine overridden to a no-op. Husk's right-panel becomes the visual
-// statusline, so we want claude's TUI to NOT also render its own inline statusline.
-function buildClaudeSettingsOverride() {
-  try {
-    const userSettings = readJSON(path.join(CLAUDE_DIR, 'settings.json'), {});
-    const cloned = JSON.parse(JSON.stringify(userSettings));
-    // Silence the inline statusline (Husk renders its own on the right panel).
-    cloned.statusLine = { type: 'command', command: '/bin/true' };
-    delete cloned.statusline;
-    // Give skill descriptions room so claude does not silently drop them.
-    // Default 0.01 is too tight when more than ~10 skills are installed.
-    cloned.skillListingBudgetFraction = 0.05;
-    // Use a per-user husk subdir under tmpdir with mode 0700 so other local
-    // users on a multi-user system can't pre-create the file, symlink it, or
-    // read its contents. The file itself is mode 0600.
-    const tmpDir = path.join(os.tmpdir(), `husk-${process.getuid ? process.getuid() : 'u'}`);
-    fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(tmpDir, 0o700); } catch (_) {}
-    const tmpFile = path.join(tmpDir, 'claude-settings.json');
-    fs.writeFileSync(tmpFile, JSON.stringify(cloned, null, 2), { mode: 0o600 });
-    try { fs.chmodSync(tmpFile, 0o600); } catch (_) {}
-    return tmpFile;
-  } catch (_) { return null; }
-}
-
 // POSIX-shell-quote one argument: 'value' with internal single-quotes escaped
 // as '\\''. Use to serialize an (exe, argv) tuple back into a string we can
 // hand to /bin/sh -c or /usr/bin/script -q -c. Not used on Windows.

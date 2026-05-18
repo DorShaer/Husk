@@ -28,7 +28,7 @@ function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabe
     const okBtn = document.getElementById('confirm-ok');
     const cancelBtn = document.getElementById('confirm-cancel');
     if (!modal || !titleEl || !bodyEl || !okBtn || !cancelBtn) {
-      resolve(window.confirm(title + '\n\n' + bodyHtml.replace(/<[^>]+>/g, '')));
+      resolve(window.confirm(title + '\n\n' + bodyHtml.replace(/<[^>]*>?/g, '')));
       return;
     }
     titleEl.textContent = title;
@@ -1472,8 +1472,8 @@ function paintUpdatePill() {
   const cur = s.current ? (s.current.startsWith('v') ? s.current : 'v' + s.current) : '';
   const next = s.version ? ('v' + s.version) : '';
   const baseLabel = cur ? `Husk ${cur}` : 'Husk';
-  let label = baseLabel;
-  let title = 'Click to check for updates';
+  let label;
+  let title;
   let showDot = false;
   switch (s.status) {
     case 'checking':
