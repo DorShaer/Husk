@@ -371,6 +371,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      zoomFactor: 1.0,
     },
   });
 
