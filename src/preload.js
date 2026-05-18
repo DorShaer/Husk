@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('husk', {
     update: (payload) => ipcRenderer.invoke('profiles:update', payload),
     delete: (id) => ipcRenderer.invoke('profiles:delete', id),
     activate: (id) => ipcRenderer.invoke('profiles:activate', id),
+    generate: (description) => ipcRenderer.invoke('profiles:generate', description),
   },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),
