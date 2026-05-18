@@ -642,7 +642,10 @@ function paintWorkflowList() {
       <button class="card-delete wf-card-delete" data-id="${escapeHtml(w.id)}" data-name="${escapeHtml(w.name)}" title="Delete workflow" aria-label="Delete workflow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
       <div class="wf-card-head">
         <div class="wf-card-title">${escapeHtml(w.name)}</div>
-        <span class="wf-card-steps-count">${w.steps.length} step${w.steps.length !== 1 ? 's' : ''}</span>
+        <div class="wf-card-meta">
+          <span class="wf-card-steps-count">${w.steps.length} step${w.steps.length !== 1 ? 's' : ''}</span>
+          ${w.trigger && w.trigger !== 'manual' ? `<span class="wf-card-trigger-pill">${w.trigger === 'on-launch' ? 'On launch' : 'On session'}</span>` : ''}
+        </div>
       </div>
       ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
       <div class="wf-card-actions">
@@ -673,7 +676,9 @@ function openWorkflowBuilder(editId) {
   editingWorkflowId = editId || null;
   const existing = editId ? workflowsCache.find((w) => w.id === editId) : null;
   const nameInput = $('#wf-name-input');
+  const triggerSel = $('#wf-trigger-select');
   if (nameInput) nameInput.value = existing ? existing.name : '';
+  if (triggerSel) triggerSel.value = existing ? (existing.trigger || 'manual') : 'manual';
   editingSteps = existing ? existing.steps.map((s) => ({ ...s })) : [];
   if (!editingSteps.length) editingSteps.push(makeNewStep(1));
   paintBuilderSteps();
@@ -691,42 +696,63 @@ function makeNewStep(index) {
   };
 }
 
+function buildAgentOptions(currentVal) {
+  const installed = (agentsCache || []).filter((a) => a.available);
+  const opts = [`<option value="">Default (from settings)</option>`];
+  installed.forEach((a) => {
+    const sel = (a.command === currentVal) ? ' selected' : '';
+    opts.push(`<option value="${escapeHtml(a.command)}"${sel}>${escapeHtml(a.label || a.command)}</option>`);
+  });
+  return opts.join('');
+}
+
 function paintBuilderSteps() {
   const list = $('#wf-steps-list');
   if (!list) return;
-  const agentOptions = ['<option value="">Default (from settings)</option>', 'claude', 'copilot', 'codex', 'aider']
-    .filter((v, i) => i === 0 || typeof v === 'string')
-    .map((v, i) => i === 0 ? v : `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`)
-    .join('');
-  const contextOptions = `
-    <option value="full">Full output</option>
-    <option value="last50">Last 50 lines</option>
-    <option value="none">None</option>
-  `;
+
+  const arrowSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
+  const upSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`;
+  const downSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>`;
+  const delSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
+
+  const ctxOpt = (val) => ['full','last50','none'].map((v) =>
+    `<option value="${v}"${v === val ? ' selected' : ''}>${v === 'full' ? 'Full output' : v === 'last50' ? 'Last 50 lines' : 'None'}</option>`
+  ).join('');
 
   const nodes = editingSteps.map((step, i) => `
-    ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">&#8595;</div></div>` : ''}
+    ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${arrowSvg}</div></div>` : ''}
     <div class="wf-step-node" data-step-idx="${i}">
       <div class="wf-step-head">
         <div class="wf-step-number">${i + 1}</div>
         <input class="wf-step-name-input" data-field="name" data-idx="${i}" value="${escapeHtml(step.name)}" placeholder="Step name" maxlength="64" />
         <div class="wf-step-controls">
-          ${i > 0 ? `<button class="wf-step-ctrl-btn wf-step-up" data-idx="${i}" title="Move up">&#8593;</button>` : ''}
-          ${i < editingSteps.length - 1 ? `<button class="wf-step-ctrl-btn wf-step-down" data-idx="${i}" title="Move down">&#8595;</button>` : ''}
-          <button class="wf-step-ctrl-btn wf-step-del" data-idx="${i}" title="Remove step">&#10005;</button>
+          ${i > 0 ? `<button class="wf-step-ctrl-btn wf-step-up" data-idx="${i}" title="Move up">${upSvg}</button>` : ''}
+          ${i < editingSteps.length - 1 ? `<button class="wf-step-ctrl-btn wf-step-down" data-idx="${i}" title="Move down">${downSvg}</button>` : ''}
+          <button class="wf-step-ctrl-btn is-danger wf-step-del" data-idx="${i}" title="Remove step">${delSvg}</button>
         </div>
       </div>
       <div class="wf-step-fields">
         <div class="wf-step-row">
           <div class="form-row" style="flex:1">
             <label class="form-label">Agent</label>
-            <select class="wf-step-select" data-field="agentCommand" data-idx="${i}">${agentOptions.replace(`value="${escapeHtml(step.agentCommand || '')}"`, `value="${escapeHtml(step.agentCommand || '')}" selected`)}</select>
+            <select class="wf-step-select" data-field="agentCommand" data-idx="${i}">${buildAgentOptions(step.agentCommand || '')}</select>
           </div>
-          ${i > 0 ? `<div class="form-row" style="flex:1"><label class="form-label">Context from prev</label><select class="wf-step-select" data-field="passContext" data-idx="${i}">${contextOptions.replace(`value="${escapeHtml(step.passContext)}"`, `value="${escapeHtml(step.passContext)}" selected`)}</select></div>` : ''}
+          ${i > 0 ? `<div class="form-row" style="flex:1"><label class="form-label">Context from prev</label><select class="wf-step-select" data-field="passContext" data-idx="${i}">${ctxOpt(step.passContext || 'full')}</select></div>` : ''}
         </div>
         <div class="form-row">
-          <label class="form-label">Prompt ${i > 0 ? '<span class="form-hint">use {{previousOutput}} to reference the previous step\'s output</span>' : ''}</label>
-          <textarea class="form-input form-textarea" data-field="prompt" data-idx="${i}" rows="4" maxlength="8192" placeholder="What should this step do?">${escapeHtml(step.prompt)}</textarea>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <label class="form-label" style="margin:0">${i > 0 ? `Prompt <span class="form-hint">use {{previousOutput}} for prev step's result</span>` : 'Prompt'}</label>
+            <button class="wf-step-gen-btn" data-idx="${i}" title="Generate prompt with AI">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+              Generate with AI
+            </button>
+          </div>
+          <textarea class="form-input form-textarea" data-field="prompt" data-idx="${i}" rows="4" maxlength="8192" placeholder="Describe what this step should do...">${escapeHtml(step.prompt)}</textarea>
+          <div class="wf-step-gen-row" id="wf-gen-row-${i}" hidden>
+            <input class="wf-step-gen-input" id="wf-gen-input-${i}" placeholder="Describe what you want this step to do..." />
+            <button class="btn-primary" style="flex:0 0 auto;font-size:12px;padding:0 12px;height:32px" data-gen-idx="${i}">Go</button>
+          </div>
+          <div id="wf-gen-status-${i}" style="font-size:11px;color:var(--text-3);margin-top:4px" hidden></div>
         </div>
       </div>
     </div>
@@ -760,13 +786,42 @@ function paintBuilderSteps() {
     editingSteps.splice(idx, 1);
     paintBuilderSteps();
   }));
+
+  // Generate prompt with AI: toggle inline input row
+  list.querySelectorAll('.wf-step-gen-btn').forEach((btn) => btn.addEventListener('click', (e) => {
+    const idx = Number(e.currentTarget.dataset.idx);
+    const row = $(`#wf-gen-row-${idx}`);
+    if (row) { row.hidden = !row.hidden; if (!row.hidden) { try { $(`#wf-gen-input-${idx}`).focus(); } catch (_) {} } }
+  }));
+  list.querySelectorAll('[data-gen-idx]').forEach((btn) => btn.addEventListener('click', async (e) => {
+    const idx = Number(e.currentTarget.dataset.genIdx);
+    const inp = $(`#wf-gen-input-${idx}`);
+    const statusEl = $(`#wf-gen-status-${idx}`);
+    const promptArea = list.querySelector(`textarea[data-idx="${idx}"]`);
+    const desc = inp ? inp.value.trim() : '';
+    if (!desc) return;
+    e.currentTarget.disabled = true;
+    if (statusEl) { statusEl.textContent = 'Generating...'; statusEl.hidden = false; }
+    const res = await window.husk.workflows.generateStepPrompt(desc);
+    e.currentTarget.disabled = false;
+    if (!res || !res.ok) {
+      if (statusEl) { statusEl.textContent = res ? res.error : 'Generation failed'; }
+      return;
+    }
+    if (promptArea) { promptArea.value = res.prompt; editingSteps[idx].prompt = res.prompt; }
+    if (inp) inp.value = '';
+    const row = $(`#wf-gen-row-${idx}`);
+    if (row) row.hidden = true;
+    if (statusEl) statusEl.hidden = true;
+  }));
 }
 
 async function saveWorkflow() {
   const name = (($('#wf-name-input') || {}).value || '').trim();
   if (!name) { toast('Workflow needs a name', 'error'); return; }
   if (!editingSteps.length) { toast('Add at least one step', 'error'); return; }
-  const payload = { name, steps: editingSteps };
+  const trigger = (($('#wf-trigger-select') || {}).value) || 'manual';
+  const payload = { name, steps: editingSteps, trigger };
   if (editingWorkflowId) {
     payload.id = editingWorkflowId;
     await window.husk.workflows.update(payload);
@@ -795,16 +850,17 @@ async function runWorkflow(workflowId) {
 
   // Render pending nodes
   if (stepsEl) {
+    const connArrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
     // eslint-disable-next-line no-unsanitized/property
     stepsEl.innerHTML = workflow.steps.map((step, i) => `
-      ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">&#8595;</div></div>` : ''}
+      ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${connArrow}</div></div>` : ''}
       <div class="wf-run-node is-pending" id="wf-node-${i}">
         <div class="wf-run-node-head">
           <div class="wf-run-node-status"></div>
           <div class="wf-run-node-title">${escapeHtml(step.name)}</div>
           <div class="wf-run-node-state-label">Pending</div>
         </div>
-        <div class="wf-run-output" id="wf-output-${i}"></div>
+        <div class="wf-run-output is-empty" id="wf-output-${i}">Waiting for previous step...</div>
       </div>
     `).join('');
   }
@@ -822,13 +878,14 @@ window.husk.workflows.onStepStart((d) => {
   if (node) node.className = 'wf-run-node is-running';
   if (label) label.textContent = 'Running';
   const out = $(`#wf-output-${d.stepIndex}`);
-  if (out) out.textContent = '';
+  if (out) { out.textContent = ''; out.classList.remove('is-empty'); }
 });
 
 window.husk.workflows.onStepOutput((d) => {
   if (d.runId !== activeRunId) return;
   const out = $(`#wf-output-${d.stepIndex}`);
   if (!out) return;
+  out.classList.remove('is-empty');
   out.textContent += d.chunk;
   out.scrollTop = out.scrollHeight;
 });

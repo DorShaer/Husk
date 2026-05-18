@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('husk', {
     delete: (id) => ipcRenderer.invoke('workflows:delete', id),
     run: (id) => ipcRenderer.invoke('workflows:run', id),
     stop: (runId) => ipcRenderer.invoke('workflows:stop', runId),
+    generateStepPrompt: (desc) => ipcRenderer.invoke('workflows:generateStepPrompt', desc),
     onStepStart: (cb) => ipcRenderer.on('wf:step:start', (_e, d) => cb(d)),
     onStepOutput: (cb) => ipcRenderer.on('wf:step:output', (_e, d) => cb(d)),
     onStepDone: (cb) => ipcRenderer.on('wf:step:done', (_e, d) => cb(d)),
