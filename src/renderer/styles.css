@@ -1014,7 +1014,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 .wf-step-gen-input {
   flex: 1;
-  height: var(--control-h-lg);
+  height: var(--control-h);
   background: var(--bg-2); border: 1px solid var(--line-2);
   border-radius: var(--radius-md); color: var(--text);
   font-family: inherit; font-size: 13px;
@@ -1022,9 +1022,10 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 .wf-step-gen-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
-.wf-step-gen-go {
+/* Compound selector beats the later .btn-primary { height: var(--control-h) } rule. */
+.btn-primary.wf-step-gen-go {
   flex: 0 0 auto;
-  height: var(--control-h-lg);
+  height: var(--control-h);
   padding: 0 18px;
   font-size: 13px;
 }
