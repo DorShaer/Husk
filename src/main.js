@@ -1180,14 +1180,35 @@ const activeRuns = new Map();
 
 ipcMain.handle('workflows:list', () => loadWorkflows());
 
+ipcMain.handle('workflows:generateStepPrompt', async (_e, description) => {
+  if (!description || typeof description !== 'string') return { ok: false, error: 'description required' };
+  const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  if (!isOnPath(cmd)) return { ok: false, error: `${cmd} is not installed` };
+  const prompt = `Write a concise, direct instruction prompt for an AI assistant. The user wants: "${description.slice(0, 400)}"
+
+Return ONLY the prompt text itself, no explanations, no quotes, no formatting. The prompt should be 1-4 sentences starting with an action verb like "Review", "Analyze", "Write", "Generate", etc.`;
+  return new Promise((resolve) => {
+    let out = '';
+    const child = require('child_process').spawn(cmd, ['-p', prompt], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('close', (code) => {
+      if (code !== 0) { resolve({ ok: false, error: `exit ${code}` }); return; }
+      resolve({ ok: true, prompt: out.trim().slice(0, 8192) });
+    });
+    child.on('error', (e) => resolve({ ok: false, error: e.message }));
+  });
+});
+
 ipcMain.handle('workflows:create', (_e, payload = {}) => {
   const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
+  const validTriggers = ['manual', 'on-launch', 'on-session'];
   const entry = {
     id,
     name: String(payload.name || 'New Workflow').slice(0, 80),
     description: String(payload.description || '').slice(0, 256),
     steps: Array.isArray(payload.steps) ? payload.steps.map(sanitizeStep) : [],
+    trigger: validTriggers.includes(payload.trigger) ? payload.trigger : 'manual',
     createdAt: now,
     updatedAt: now,
   };
@@ -1205,6 +1226,7 @@ ipcMain.handle('workflows:update', (_e, payload = {}) => {
       name: payload.name !== undefined ? String(payload.name).slice(0, 80) : w.name,
       description: payload.description !== undefined ? String(payload.description).slice(0, 256) : w.description,
       steps: Array.isArray(payload.steps) ? payload.steps.map(sanitizeStep) : w.steps,
+      trigger: ['manual','on-launch','on-session'].includes(payload.trigger) ? payload.trigger : (w.trigger || 'manual'),
       updatedAt: new Date().toISOString(),
     };
   });
@@ -1261,6 +1283,11 @@ function wfEmit(event, channel, data) {
 }
 
 async function executeWorkflow(event, workflow, run) {
+  // Yield so ipcMain.handle can return the runId to the renderer before we
+  // emit any step events. Without this, wf:step:start fires before the
+  // renderer has set activeRunId and events get silently dropped.
+  await new Promise((resolve) => setImmediate(resolve));
+
   let previousOutput = '';
 
   for (let i = 0; i < workflow.steps.length; i++) {
