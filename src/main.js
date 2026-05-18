@@ -34,6 +34,33 @@ let ptyProc = null;
 
 // ─── Config ──────────────────────────────────────────────────────────────────────
 
+const DEFAULT_PROFILES = [
+  {
+    id: 'builtin-code-review',
+    name: 'Code Reviewer',
+    icon: '',
+    description: 'Focused on correctness, edge cases, and clean code principles.',
+    systemPrompt: 'You are a senior code reviewer. Prioritize correctness, security, edge cases, and readability. Point out specific line numbers. Suggest concrete improvements. Be direct and concise.',
+    builtin: true,
+  },
+  {
+    id: 'builtin-documentation',
+    name: 'Documentation Writer',
+    icon: '',
+    description: 'Writes clear, structured docs, READMEs, and API references.',
+    systemPrompt: 'You are a technical writer. Write clear, structured documentation. Use headers, examples, and code blocks. Assume the reader is a developer who needs to understand quickly. Avoid jargon without explanation.',
+    builtin: true,
+  },
+  {
+    id: 'builtin-security',
+    name: 'Security Auditor',
+    icon: '',
+    description: 'Audits for vulnerabilities, OWASP risks, and insecure patterns.',
+    systemPrompt: 'You are a security engineer specializing in application security. Identify vulnerabilities, insecure patterns, and OWASP Top 10 risks. Reference CVEs and CWEs where relevant. Provide remediation steps, not just findings.',
+    builtin: true,
+  },
+];
+
 const DEFAULT_CONFIG = {
   firstRunDone: false,
   agentCommand: 'claude',
@@ -48,6 +75,8 @@ const DEFAULT_CONFIG = {
   voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
   skipWelcome: false,
   recap: true,
+  profiles: DEFAULT_PROFILES,
+  activeProfileId: null,
 };
 
 function loadConfig() {
@@ -1117,6 +1146,66 @@ function listHuskPrompts() {
       });
   } catch (_) { return []; }
 }
+
+// ─── Profiles (saved agent configurations) ───────────────────────────────────
+
+function getProfiles() {
+  const stored = config.profiles;
+  if (!Array.isArray(stored) || stored.length === 0) return DEFAULT_PROFILES;
+  return stored;
+}
+
+ipcMain.handle('profiles:list', () => getProfiles());
+
+ipcMain.handle('profiles:create', (_e, payload = {}) => {
+  const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const entry = {
+    id,
+    name: String(payload.name || 'New Agent').slice(0, 64),
+    icon: String(payload.icon || '').slice(0, 8),
+    description: String(payload.description || '').slice(0, 256),
+    systemPrompt: String(payload.systemPrompt || '').slice(0, 4096),
+    builtin: false,
+  };
+  const profiles = [...getProfiles(), entry];
+  config = { ...config, profiles };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return entry;
+});
+
+ipcMain.handle('profiles:update', (_e, payload = {}) => {
+  if (!payload.id) return { ok: false, error: 'missing id' };
+  const profiles = getProfiles().map((p) => {
+    if (p.id !== payload.id) return p;
+    return {
+      ...p,
+      name: payload.name !== undefined ? String(payload.name).slice(0, 64) : p.name,
+      icon: payload.icon !== undefined ? String(payload.icon).slice(0, 8) : p.icon,
+      description: payload.description !== undefined ? String(payload.description).slice(0, 256) : p.description,
+      systemPrompt: payload.systemPrompt !== undefined ? String(payload.systemPrompt).slice(0, 4096) : p.systemPrompt,
+    };
+  });
+  config = { ...config, profiles };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true };
+});
+
+ipcMain.handle('profiles:delete', (_e, id) => {
+  if (!id) return { ok: false, error: 'missing id' };
+  const profiles = getProfiles().filter((p) => p.id !== id);
+  const activeProfileId = config.activeProfileId === id ? null : config.activeProfileId;
+  config = { ...config, profiles, activeProfileId };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true };
+});
+
+ipcMain.handle('profiles:activate', (_e, id) => {
+  const profile = id ? getProfiles().find((p) => p.id === id) : null;
+  if (id && !profile) return { ok: false, error: 'profile not found' };
+  config = { ...config, activeProfileId: id || null };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true, profile: profile || null };
+});
 
 // Returns just the curated Husk prompts (the markdown files seeded from
 // installer/prompts/ into ~/.config/husk/prompts/). The Skills page mixes

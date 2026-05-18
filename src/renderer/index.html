@@ -98,10 +98,10 @@
           </button>
         </div>
 
-        <div class="rail-section rail-section-agent">
-          <button class="rail-agent" id="rail-agent-pill" title="Switch agent">
+        <!-- Tool selector: which CLI is active. No section label to avoid confusing with LLM "agents". -->
+        <div class="rail-section rail-section-tool">
+          <button class="rail-agent" id="rail-agent-pill" title="Switch AI tool">
             <span class="ra-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="12" cy="3.2" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/><path d="M2.5 12.5h2M19.5 12.5h2"/></svg></span>
-            <span class="ra-label">Agent</span>
             <span class="ra-name" id="ra-name">claude</span>
             <span class="ra-chev">▾</span>
           </button>
@@ -115,6 +115,10 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg></span>
               <span class="ri-label">Chat</span>
             </button>
+            <button class="rail-item" data-page="agents" title="Agents">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/><circle cx="18" cy="8" r="2.5" fill="currentColor" stroke="none" opacity="0.7"/><path d="M17 6l2 2-2 2" stroke-width="1.5"/></svg></span>
+              <span class="ri-label">Agents</span>
+            </button>
             <button class="rail-item" data-page="projects" title="Projects">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg></span>
               <span class="ri-label">Projects</span>
@@ -123,21 +127,33 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M16 4v3h3"/><path d="M8 12h8M8 16h8M8 8h4"/></svg></span>
               <span class="ri-label">Prompts</span>
             </button>
+          </nav>
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-section-head">Tools</div>
+          <nav class="rail-nav">
             <button class="rail-item" data-page="skills" title="Skills">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
               <span class="ri-label">Skills</span>
             </button>
-            <button class="rail-item" data-page="sessions" title="Sessions">
-              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg></span>
-              <span class="ri-label">Sessions</span>
+            <button class="rail-item" data-page="mcp" title="MCP servers">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg></span>
+              <span class="ri-label">MCP</span>
             </button>
             <button class="rail-item" data-page="files" title="Files">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
               <span class="ri-label">Files</span>
             </button>
-            <button class="rail-item" data-page="mcp" title="MCP servers">
-              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg></span>
-              <span class="ri-label">MCP</span>
+          </nav>
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-section-head">History</div>
+          <nav class="rail-nav">
+            <button class="rail-item" data-page="sessions" title="Sessions">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg></span>
+              <span class="ri-label">Sessions</span>
             </button>
           </nav>
         </div>
@@ -204,6 +220,60 @@
             </div>
             <div class="terminal-wrap">
               <div id="terminal"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AGENTS PAGE -->
+        <div class="page page-agents" data-page="agents" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Agents</h1>
+              <span class="page-sub">saved configurations that shape how the AI works for a task</span>
+            </div>
+            <div class="page-head-right">
+              <button class="btn-primary" id="btn-new-agent">+ New Agent</button>
+            </div>
+          </div>
+          <div class="page-body">
+            <div id="agents-active-banner" class="agents-active-banner" hidden>
+              <span class="aab-dot"></span>
+              <span id="agents-active-name"></span>
+              <span class="aab-hint">active for next session</span>
+              <button class="ghost-link" id="btn-deactivate-agent">Clear</button>
+            </div>
+            <div class="card-grid" id="agents-grid"></div>
+          </div>
+        </div>
+
+        <!-- NEW AGENT MODAL -->
+        <div id="agent-modal" class="modal" hidden>
+          <div class="modal-card modal-card-md">
+            <div class="modal-head">
+              <h2 class="modal-title" id="agent-modal-title">New Agent</h2>
+              <button class="modal-close" id="agent-modal-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="form-row">
+                <label class="form-label">Icon <span class="form-hint">emoji</span></label>
+                <input class="form-input form-input-icon" id="agent-icon" type="text" maxlength="4" placeholder="" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">Name</label>
+                <input class="form-input" id="agent-name" type="text" maxlength="64" placeholder="Code Reviewer" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">Description <span class="form-hint">shown on the card</span></label>
+                <input class="form-input" id="agent-description" type="text" maxlength="256" placeholder="What this agent is good at" />
+              </div>
+              <div class="form-row">
+                <label class="form-label">System Prompt <span class="form-hint">instructions given to the AI when this agent is active</span></label>
+                <textarea class="form-input form-textarea" id="agent-system-prompt" rows="6" maxlength="4096" placeholder="You are a..."></textarea>
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="ghost-btn" id="agent-modal-cancel">Cancel</button>
+              <button class="btn-primary" id="agent-modal-save">Save Agent</button>
             </div>
           </div>
         </div>
