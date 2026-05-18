@@ -2612,6 +2612,10 @@ async function boot() {
 }
 
 async function launchAgent({ initialPrompt = null } = {}) {
+  const skipBox = $('#ce-skip-next');
+  if (skipBox && skipBox.checked && !cfg.skipWelcome) {
+    cfg = await window.husk.config.set({ skipWelcome: true });
+  }
   $('#chat-empty').classList.remove('show');
   await startPty();
   if (initialPrompt) {
