@@ -1009,18 +1009,19 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 .wf-step-gen-btn:hover { color: var(--accent); }
 .wf-step-gen-row {
-  display: flex; gap: 6px; align-items: flex-start;
+  display: flex; gap: 6px; align-items: stretch;
   margin-top: 6px;
 }
 .wf-step-gen-input {
   flex: 1;
+  height: var(--control-h-lg);
   background: var(--bg-2); border: 1px solid var(--line-2);
   border-radius: var(--radius-md); color: var(--text);
-  font-family: inherit; font-size: 12px;
-  padding: 5px 8px; outline: 0;
-  transition: border-color var(--motion-fast) ease;
+  font-family: inherit; font-size: 13px;
+  padding: 0 10px; outline: 0;
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
-.wf-step-gen-input:focus { border-color: var(--accent); }
+.wf-step-gen-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
 
 /* Trigger selector */
 .wf-trigger-row { display: flex; align-items: center; gap: 10px; }
