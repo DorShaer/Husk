@@ -210,13 +210,14 @@ function applyAccent(accent) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
 function setPage(name) {
-  if (!['chat', 'agents', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
+  if (!['chat', 'agents', 'workflows', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
   currentPage = name;
   document.body.dataset.page = name;
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === name));
   if (name === 'chat') { setTimeout(fitNow, 30); term.focus(); }
   if (name === 'agents') renderAgents();
+  if (name === 'workflows') renderWorkflows();
   if (name === 'projects') renderProjects();
   if (name === 'prompts') renderPrompts();
   if (name === 'skills') renderSkills();
@@ -604,6 +605,267 @@ async function deleteProject(id, name) {
   const chip = document.getElementById('topbar-project');
   if (chip) chip.addEventListener('click', () => setPage('projects'));
 }
+
+// ─── Workflows page ────────────────────────────────────────────────────────────
+
+let workflowsCache = [];
+let editingWorkflowId = null;
+let editingSteps = [];
+let activeRunId = null;
+
+// Sub-view switcher
+function wfShowView(name) {
+  $('#wf-list-view').hidden = name !== 'list';
+  $('#wf-builder-view').hidden = name !== 'builder';
+  $('#wf-run-view').hidden = name !== 'run';
+}
+
+async function renderWorkflows() {
+  wfShowView('list');
+  const grid = $('#wf-grid');
+  if (!grid) return;
+  workflowsCache = await window.husk.workflows.list();
+  paintWorkflowList();
+}
+
+function paintWorkflowList() {
+  const grid = $('#wf-grid');
+  if (!grid) return;
+  if (!workflowsCache.length) {
+    // eslint-disable-next-line no-unsanitized/property
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon"></div><div class="es-title">No workflows yet</div><div class="es-msg">Build a pipeline by chaining agents together. Each step feeds its output to the next.</div></div>`;
+    return;
+  }
+  // eslint-disable-next-line no-unsanitized/property
+  grid.innerHTML = workflowsCache.map((w) => `
+    <div class="wf-card" data-id="${escapeHtml(w.id)}">
+      <button class="card-delete wf-card-delete" data-id="${escapeHtml(w.id)}" data-name="${escapeHtml(w.name)}" title="Delete workflow" aria-label="Delete workflow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+      <div class="wf-card-head">
+        <div class="wf-card-title">${escapeHtml(w.name)}</div>
+        <span class="wf-card-steps-count">${w.steps.length} step${w.steps.length !== 1 ? 's' : ''}</span>
+      </div>
+      ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
+      <div class="wf-card-actions">
+        <button class="ghost-link wf-edit-btn" data-id="${escapeHtml(w.id)}">Edit</button>
+        <button class="card-cta wf-run-btn" data-id="${escapeHtml(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+      </div>
+    </div>
+  `).join('');
+  grid.querySelectorAll('.wf-run-btn').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); runWorkflow(e.currentTarget.dataset.id); }));
+  grid.querySelectorAll('.wf-edit-btn').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openWorkflowBuilder(e.currentTarget.dataset.id); }));
+  grid.querySelectorAll('.wf-card-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteWorkflow(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
+}
+
+async function deleteWorkflow(id, name) {
+  const confirmed = await openConfirmDialog({
+    title: 'Delete workflow?',
+    bodyHtml: `Permanently delete <strong>${escapeHtml(name || 'this workflow')}</strong>.`,
+    confirmLabel: 'Delete workflow',
+  });
+  if (!confirmed) return;
+  await window.husk.workflows.delete(id);
+  workflowsCache = workflowsCache.filter((w) => w.id !== id);
+  paintWorkflowList();
+}
+
+// Builder
+function openWorkflowBuilder(editId) {
+  editingWorkflowId = editId || null;
+  const existing = editId ? workflowsCache.find((w) => w.id === editId) : null;
+  const nameInput = $('#wf-name-input');
+  if (nameInput) nameInput.value = existing ? existing.name : '';
+  editingSteps = existing ? existing.steps.map((s) => ({ ...s })) : [];
+  if (!editingSteps.length) editingSteps.push(makeNewStep(1));
+  paintBuilderSteps();
+  wfShowView('builder');
+  setTimeout(() => { try { $('#wf-name-input').focus(); } catch (_) {} }, 30);
+}
+
+function makeNewStep(index) {
+  return {
+    id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+    name: `Step ${index}`,
+    agentCommand: '',
+    prompt: '',
+    passContext: 'full',
+  };
+}
+
+function paintBuilderSteps() {
+  const list = $('#wf-steps-list');
+  if (!list) return;
+  const agentOptions = ['<option value="">Default (from settings)</option>', 'claude', 'copilot', 'codex', 'aider']
+    .filter((v, i) => i === 0 || typeof v === 'string')
+    .map((v, i) => i === 0 ? v : `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`)
+    .join('');
+  const contextOptions = `
+    <option value="full">Full output</option>
+    <option value="last50">Last 50 lines</option>
+    <option value="none">None</option>
+  `;
+
+  const nodes = editingSteps.map((step, i) => `
+    ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">&#8595;</div></div>` : ''}
+    <div class="wf-step-node" data-step-idx="${i}">
+      <div class="wf-step-head">
+        <div class="wf-step-number">${i + 1}</div>
+        <input class="wf-step-name-input" data-field="name" data-idx="${i}" value="${escapeHtml(step.name)}" placeholder="Step name" maxlength="64" />
+        <div class="wf-step-controls">
+          ${i > 0 ? `<button class="wf-step-ctrl-btn wf-step-up" data-idx="${i}" title="Move up">&#8593;</button>` : ''}
+          ${i < editingSteps.length - 1 ? `<button class="wf-step-ctrl-btn wf-step-down" data-idx="${i}" title="Move down">&#8595;</button>` : ''}
+          <button class="wf-step-ctrl-btn wf-step-del" data-idx="${i}" title="Remove step">&#10005;</button>
+        </div>
+      </div>
+      <div class="wf-step-fields">
+        <div class="wf-step-row">
+          <div class="form-row" style="flex:1">
+            <label class="form-label">Agent</label>
+            <select class="wf-step-select" data-field="agentCommand" data-idx="${i}">${agentOptions.replace(`value="${escapeHtml(step.agentCommand || '')}"`, `value="${escapeHtml(step.agentCommand || '')}" selected`)}</select>
+          </div>
+          ${i > 0 ? `<div class="form-row" style="flex:1"><label class="form-label">Context from prev</label><select class="wf-step-select" data-field="passContext" data-idx="${i}">${contextOptions.replace(`value="${escapeHtml(step.passContext)}"`, `value="${escapeHtml(step.passContext)}" selected`)}</select></div>` : ''}
+        </div>
+        <div class="form-row">
+          <label class="form-label">Prompt ${i > 0 ? '<span class="form-hint">use {{previousOutput}} to reference the previous step\'s output</span>' : ''}</label>
+          <textarea class="form-input form-textarea" data-field="prompt" data-idx="${i}" rows="4" maxlength="8192" placeholder="What should this step do?">${escapeHtml(step.prompt)}</textarea>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  // eslint-disable-next-line no-unsanitized/property
+  list.innerHTML = nodes;
+
+  list.querySelectorAll('.wf-step-name-input').forEach((el) => el.addEventListener('input', (e) => {
+    editingSteps[Number(e.target.dataset.idx)].name = e.target.value;
+  }));
+  list.querySelectorAll('.wf-step-select, [data-field]').forEach((el) => {
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+      el.addEventListener('change', (e) => { editingSteps[Number(e.target.dataset.idx)][e.target.dataset.field] = e.target.value; });
+      if (el.tagName === 'TEXTAREA') el.addEventListener('input', (e) => { editingSteps[Number(e.target.dataset.idx)][e.target.dataset.field] = e.target.value; });
+    }
+  });
+  list.querySelectorAll('.wf-step-up').forEach((btn) => btn.addEventListener('click', (e) => {
+    const idx = Number(e.currentTarget.dataset.idx);
+    [editingSteps[idx - 1], editingSteps[idx]] = [editingSteps[idx], editingSteps[idx - 1]];
+    paintBuilderSteps();
+  }));
+  list.querySelectorAll('.wf-step-down').forEach((btn) => btn.addEventListener('click', (e) => {
+    const idx = Number(e.currentTarget.dataset.idx);
+    [editingSteps[idx], editingSteps[idx + 1]] = [editingSteps[idx + 1], editingSteps[idx]];
+    paintBuilderSteps();
+  }));
+  list.querySelectorAll('.wf-step-del').forEach((btn) => btn.addEventListener('click', (e) => {
+    const idx = Number(e.currentTarget.dataset.idx);
+    if (editingSteps.length <= 1) { toast('A workflow needs at least one step', ''); return; }
+    editingSteps.splice(idx, 1);
+    paintBuilderSteps();
+  }));
+}
+
+async function saveWorkflow() {
+  const name = (($('#wf-name-input') || {}).value || '').trim();
+  if (!name) { toast('Workflow needs a name', 'error'); return; }
+  if (!editingSteps.length) { toast('Add at least one step', 'error'); return; }
+  const payload = { name, steps: editingSteps };
+  if (editingWorkflowId) {
+    payload.id = editingWorkflowId;
+    await window.husk.workflows.update(payload);
+    workflowsCache = workflowsCache.map((w) => w.id === editingWorkflowId ? { ...w, ...payload } : w);
+  } else {
+    const created = await window.husk.workflows.create(payload);
+    workflowsCache = [...workflowsCache, created];
+  }
+  wfShowView('list');
+  paintWorkflowList();
+}
+
+// Run view
+async function runWorkflow(workflowId) {
+  const workflow = workflowsCache.find((w) => w.id === workflowId);
+  if (!workflow) return;
+
+  const nameEl = $('#wf-run-name');
+  const badge = $('#wf-run-status-badge');
+  const stopBtn = $('#btn-stop-wf');
+  const stepsEl = $('#wf-run-steps');
+  if (nameEl) nameEl.textContent = workflow.name;
+  if (badge) { badge.textContent = 'Running'; badge.className = 'wf-run-status-badge'; }
+  if (stopBtn) stopBtn.hidden = false;
+  wfShowView('run');
+
+  // Render pending nodes
+  if (stepsEl) {
+    // eslint-disable-next-line no-unsanitized/property
+    stepsEl.innerHTML = workflow.steps.map((step, i) => `
+      ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">&#8595;</div></div>` : ''}
+      <div class="wf-run-node is-pending" id="wf-node-${i}">
+        <div class="wf-run-node-head">
+          <div class="wf-run-node-status"></div>
+          <div class="wf-run-node-title">${escapeHtml(step.name)}</div>
+          <div class="wf-run-node-state-label">Pending</div>
+        </div>
+        <div class="wf-run-output" id="wf-output-${i}"></div>
+      </div>
+    `).join('');
+  }
+
+  const res = await window.husk.workflows.run(workflowId);
+  if (!res || !res.ok) { toast(res ? res.error : 'Could not start workflow', 'error'); wfShowView('list'); return; }
+  activeRunId = res.runId;
+}
+
+// IPC event handlers for live run updates
+window.husk.workflows.onStepStart((d) => {
+  if (d.runId !== activeRunId) return;
+  const node = $(`#wf-node-${d.stepIndex}`);
+  const label = node && node.querySelector('.wf-run-node-state-label');
+  if (node) node.className = 'wf-run-node is-running';
+  if (label) label.textContent = 'Running';
+  const out = $(`#wf-output-${d.stepIndex}`);
+  if (out) out.textContent = '';
+});
+
+window.husk.workflows.onStepOutput((d) => {
+  if (d.runId !== activeRunId) return;
+  const out = $(`#wf-output-${d.stepIndex}`);
+  if (!out) return;
+  out.textContent += d.chunk;
+  out.scrollTop = out.scrollHeight;
+});
+
+window.husk.workflows.onStepDone((d) => {
+  if (d.runId !== activeRunId) return;
+  const node = $(`#wf-node-${d.stepIndex}`);
+  const label = node && node.querySelector('.wf-run-node-state-label');
+  const cls = d.status === 'done' ? 'is-done' : d.status === 'cancelled' ? 'is-cancelled' : 'is-failed';
+  const lbl = d.status === 'done' ? 'Done' : d.status === 'cancelled' ? 'Cancelled' : 'Failed';
+  if (node) node.className = `wf-run-node ${cls}`;
+  if (label) label.textContent = lbl;
+});
+
+window.husk.workflows.onRunDone((d) => {
+  if (d.runId !== activeRunId) return;
+  activeRunId = null;
+  const badge = $('#wf-run-status-badge');
+  const stopBtn = $('#btn-stop-wf');
+  if (stopBtn) stopBtn.hidden = true;
+  if (badge) {
+    const cls = d.status === 'done' ? 'is-done' : d.status === 'stopped' ? 'is-stopped' : 'is-failed';
+    const lbl = d.status === 'done' ? 'Completed' : d.status === 'stopped' ? 'Stopped' : 'Failed';
+    badge.textContent = lbl;
+    badge.className = `wf-run-status-badge ${cls}`;
+  }
+});
+
+// Button wiring
+$('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
+$('#btn-wf-builder-back') && $('#btn-wf-builder-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
+$('#btn-save-workflow') && $('#btn-save-workflow').addEventListener('click', saveWorkflow);
+$('#btn-add-wf-step') && $('#btn-add-wf-step').addEventListener('click', () => { editingSteps.push(makeNewStep(editingSteps.length + 1)); paintBuilderSteps(); });
+$('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => { wfShowView('list'); });
+$('#btn-stop-wf') && $('#btn-stop-wf').addEventListener('click', async () => {
+  if (activeRunId) await window.husk.workflows.stop(activeRunId);
+});
 
 // ─── Agents page ───────────────────────────────────────────────────────────────
 

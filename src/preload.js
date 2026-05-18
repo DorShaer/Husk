@@ -60,6 +60,18 @@ contextBridge.exposeInMainWorld('husk', {
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
   },
+  workflows: {
+    list: () => ipcRenderer.invoke('workflows:list'),
+    create: (payload) => ipcRenderer.invoke('workflows:create', payload),
+    update: (payload) => ipcRenderer.invoke('workflows:update', payload),
+    delete: (id) => ipcRenderer.invoke('workflows:delete', id),
+    run: (id) => ipcRenderer.invoke('workflows:run', id),
+    stop: (runId) => ipcRenderer.invoke('workflows:stop', runId),
+    onStepStart: (cb) => ipcRenderer.on('wf:step:start', (_e, d) => cb(d)),
+    onStepOutput: (cb) => ipcRenderer.on('wf:step:output', (_e, d) => cb(d)),
+    onStepDone: (cb) => ipcRenderer.on('wf:step:done', (_e, d) => cb(d)),
+    onRunDone: (cb) => ipcRenderer.on('wf:run:done', (_e, d) => cb(d)),
+  },
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),
     create: (payload) => ipcRenderer.invoke('profiles:create', payload),
