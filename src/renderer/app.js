@@ -16,6 +16,51 @@ function toast(msg, kind = '') {
   toastTimer = setTimeout(() => { el.hidden = true; }, 2800);
 }
 
+// ─── Confirm dialog ─────────────────────────────────────────────────────────
+// Reusable destructive-action confirmation. Replaces the two-click "is-armed"
+// pattern with a proper modal that names what is about to be deleted. Returns
+// a promise that resolves true on confirm, false on cancel/escape/backdrop.
+function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabel = 'Delete', cancelLabel = 'Cancel' } = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const titleEl = document.getElementById('confirm-title');
+    const bodyEl = document.getElementById('confirm-body');
+    const okBtn = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+    if (!modal || !titleEl || !bodyEl || !okBtn || !cancelBtn) {
+      resolve(window.confirm(title + '\n\n' + bodyHtml.replace(/<[^>]+>/g, '')));
+      return;
+    }
+    titleEl.textContent = title;
+    // eslint-disable-next-line no-unsanitized/property -- callers must escape interpolations.
+    bodyEl.innerHTML = bodyHtml;
+    okBtn.textContent = confirmLabel;
+    cancelBtn.textContent = cancelLabel;
+    modal.hidden = false;
+    setTimeout(() => { try { okBtn.focus(); } catch (_) {} }, 30);
+
+    const cleanup = (result) => {
+      modal.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => { if (e.target === modal) cleanup(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') cleanup(false);
+      else if (e.key === 'Enter') cleanup(true);
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
 // ─── Sanity ──────────────────────────────────────────────────────────────────────
 window.addEventListener('error', (e) => {
   console.error('UNCAUGHT', e.message, e.filename, e.lineno);
@@ -426,16 +471,16 @@ function paintProjects(items, filter) {
   const cards = filtered.map((p) => {
     const isActive = p.id === activeProjectId;
     return `
-      <div class="project-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}">
+      <div class="project-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}" tabindex="0">
+        <button class="card-delete project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project" aria-label="Delete project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
         <div class="project-card-head">
           <div class="project-card-title">${escapeHtml(p.name)}</div>
           ${isActive ? '<span class="project-card-pill">active</span>' : ''}
         </div>
         <div class="project-card-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
-        <div class="project-card-meta">last used: ${escapeHtml(fmtRelTime(p.lastUsedAt))}</div>
+        <div class="project-card-meta">last used ${escapeHtml(fmtRelTime(p.lastUsedAt))}</div>
         <div class="project-card-actions">
-          <button class="ghost-btn ghost-btn-danger project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
-          <button class="btn-primary project-open" data-id="${escapeHtml(p.id)}" title="Switch to this project">${isActive ? 'Reopen here' : 'Open here'}</button>
+          <button class="card-cta project-open" data-id="${escapeHtml(p.id)}" title="Switch to this project">${isActive ? 'Reopen' : 'Open'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>
     `;
@@ -443,10 +488,9 @@ function paintProjects(items, filter) {
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   grid.innerHTML = cards;
   grid.querySelectorAll('.project-open').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
-  grid.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name, e.currentTarget); }));
-  // Whole card is also a click target for opening (excluding the action area).
+  grid.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
   grid.querySelectorAll('.project-card').forEach((card) => card.addEventListener('click', (e) => {
-    if (e.target.closest('.project-card-actions')) return;
+    if (e.target.closest('.project-card-actions') || e.target.closest('.card-delete')) return;
     openProject(card.dataset.id);
   }));
 }
@@ -493,32 +537,21 @@ function updateActiveProjectChip() {
   chip.title = `Active project: ${active.name}\n${active.path}\nClick to manage projects`;
 }
 
-const _armedProjectDeletes = new WeakMap();
-async function deleteProject(id, name, btn) {
-  if (!id || !btn) return;
-  if (_armedProjectDeletes.has(btn)) {
-    clearTimeout(_armedProjectDeletes.get(btn).timer);
-    _armedProjectDeletes.delete(btn);
-    const res = await window.husk.projects.delete(id);
-    if (!res || !res.ok) {
-      const t = document.getElementById('toast');
-      if (t) { t.textContent = (res && res.error) || 'Could not delete project'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
-      return;
-    }
-    await refreshProjectsState();
+async function deleteProject(id, name) {
+  if (!id) return;
+  const confirmed = await openConfirmDialog({
+    title: 'Delete project?',
+    bodyHtml: `Remove <strong>${escapeHtml(name || 'this project')}</strong> from Husk. The folder on disk is not touched, only Husk's pin is removed.`,
+    confirmLabel: 'Delete project',
+  });
+  if (!confirmed) return;
+  const res = await window.husk.projects.delete(id);
+  if (!res || !res.ok) {
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = (res && res.error) || 'Could not delete project'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
     return;
   }
-  const originalHTML = btn.innerHTML;
-  btn.textContent = 'Confirm?';
-  btn.classList.add('is-armed');
-  const timer = setTimeout(() => {
-    if (!_armedProjectDeletes.has(btn)) return;
-    _armedProjectDeletes.delete(btn);
-    btn.classList.remove('is-armed');
-    // eslint-disable-next-line no-unsanitized/property -- originalHTML captured from this same node.
-    btn.innerHTML = originalHTML;
-  }, 3000);
-  _armedProjectDeletes.set(btn, { timer });
+  await refreshProjectsState();
 }
 
 // Wire Projects page controls + Add Project modal.
@@ -593,57 +626,48 @@ function paintPrompts(items, filter) {
     return;
   }
   const cards = filtered.map((p) => `
-    <div class="prompt-card${p.disabled ? ' is-disabled' : ''}" data-md="${escapeHtml(p.mdPath)}">
+    <div class="prompt-card${p.disabled ? ' is-disabled' : ''}" data-md="${escapeHtml(p.mdPath)}" tabindex="0">
+      <button class="card-delete prompt-delete" data-md="${escapeHtml(p.mdPath)}" data-name="${escapeHtml(p.name)}" title="Delete prompt" aria-label="Delete prompt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
       <div class="prompt-card-head">
         <div class="prompt-card-title">${escapeHtml(p.name)}</div>
         ${p.disabled ? '<span class="prompt-card-pill">disabled</span>' : ''}
       </div>
       <div class="prompt-card-body">${escapeHtml(p.description || '')}</div>
       <div class="prompt-card-actions">
-        <button class="ghost-btn prompt-preview" data-md="${escapeHtml(p.mdPath)}" title="Preview body">Preview</button>
-        <button class="ghost-btn ghost-btn-danger prompt-delete" data-md="${escapeHtml(p.mdPath)}" data-name="${escapeHtml(p.name)}" title="Delete prompt"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
-        <button class="btn-primary prompt-run" data-md="${escapeHtml(p.mdPath)}" title="Send into chat">Run</button>
+        <button class="ghost-link prompt-preview" data-md="${escapeHtml(p.mdPath)}" title="Preview body">Preview</button>
+        <button class="card-cta prompt-run" data-md="${escapeHtml(p.mdPath)}" title="Send into chat">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
       </div>
     </div>
   `).join('');
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml above.
   grid.innerHTML = cards;
-  grid.querySelectorAll('.prompt-run').forEach((btn) => btn.addEventListener('click', (e) => runPrompt(e.currentTarget.dataset.md)));
-  grid.querySelectorAll('.prompt-preview').forEach((btn) => btn.addEventListener('click', (e) => previewPrompt(e.currentTarget.dataset.md)));
-  grid.querySelectorAll('.prompt-delete').forEach((btn) => btn.addEventListener('click', (e) => deletePrompt(e.currentTarget.dataset.md, e.currentTarget.dataset.name, e.currentTarget)));
+  grid.querySelectorAll('.prompt-run').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); runPrompt(e.currentTarget.dataset.md); }));
+  grid.querySelectorAll('.prompt-preview').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); previewPrompt(e.currentTarget.dataset.md); }));
+  grid.querySelectorAll('.prompt-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deletePrompt(e.currentTarget.dataset.md, e.currentTarget.dataset.name); }));
+  /* Whole-card click previews; explicit Run button commits. Clicking inside
+     the actions row routes to the right button via stopPropagation above. */
+  grid.querySelectorAll('.prompt-card').forEach((card) => card.addEventListener('click', (e) => {
+    if (e.target.closest('.prompt-card-actions') || e.target.closest('.card-delete')) return;
+    const md = card.dataset.md;
+    if (md) previewPrompt(md);
+  }));
 }
 
-// Two-click confirm pattern: first click arms the button, second click within
-// the timeout commits. Avoids window.confirm() which fires a native GTK
-// dialog and produces noisy GLib signal warnings on Linux/WSL.
-const _armedDeletes = new WeakMap();
-async function deletePrompt(mdPath, name, btn) {
-  if (!mdPath || !btn) return;
-  if (_armedDeletes.has(btn)) {
-    clearTimeout(_armedDeletes.get(btn).timer);
-    _armedDeletes.delete(btn);
-    const res = await window.husk.prompts.delete(mdPath);
-    if (!res || !res.ok) {
-      const t = document.getElementById('toast');
-      if (t) { t.textContent = (res && res.error) || 'Could not delete prompt'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
-      return;
-    }
-    await renderPrompts();
+async function deletePrompt(mdPath, name) {
+  if (!mdPath) return;
+  const confirmed = await openConfirmDialog({
+    title: 'Delete prompt?',
+    bodyHtml: `Permanently delete <strong>${escapeHtml(name || 'this prompt')}</strong>. The markdown file on disk will be removed.`,
+    confirmLabel: 'Delete prompt',
+  });
+  if (!confirmed) return;
+  const res = await window.husk.prompts.delete(mdPath);
+  if (!res || !res.ok) {
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = (res && res.error) || 'Could not delete prompt'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
     return;
   }
-  // Arm. Save the original markup so we can restore the SVG icon if the user
-  // hesitates and lets the timeout fire.
-  const originalHTML = btn.innerHTML;
-  btn.textContent = 'Confirm?';
-  btn.classList.add('is-armed');
-  const timer = setTimeout(() => {
-    if (!_armedDeletes.has(btn)) return;
-    _armedDeletes.delete(btn);
-    btn.classList.remove('is-armed');
-    // eslint-disable-next-line no-unsanitized/property -- originalHTML was captured from this same DOM node, no external input.
-    btn.innerHTML = originalHTML;
-  }, 3000);
-  _armedDeletes.set(btn, { timer });
+  await renderPrompts();
 }
 
 async function runPrompt(mdPath) {
@@ -2588,10 +2612,6 @@ async function boot() {
 }
 
 async function launchAgent({ initialPrompt = null } = {}) {
-  const skipBox = $('#ce-skip-next');
-  if (skipBox && skipBox.checked && !cfg.skipWelcome) {
-    cfg = await window.husk.config.set({ skipWelcome: true });
-  }
   $('#chat-empty').classList.remove('show');
   await startPty();
   if (initialPrompt) {
