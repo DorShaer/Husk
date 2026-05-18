@@ -759,7 +759,7 @@ function paintBuilderSteps() {
           <textarea class="form-input form-textarea" data-field="prompt" data-idx="${i}" rows="4" maxlength="8192" placeholder="Describe what this step should do...">${escapeHtml(step.prompt)}</textarea>
           <div class="wf-step-gen-row" id="wf-gen-row-${i}" hidden>
             <input class="wf-step-gen-input" id="wf-gen-input-${i}" placeholder="Describe what you want this step to do..." />
-            <button class="btn-primary" style="flex:0 0 auto;font-size:12px;padding:0 12px;height:32px" data-gen-idx="${i}">Go</button>
+            <button class="btn-primary wf-step-gen-go" data-gen-idx="${i}">Go</button>
           </div>
           <div id="wf-gen-status-${i}" style="font-size:11px;color:var(--text-3);margin-top:4px" hidden></div>
         </div>
@@ -807,12 +807,24 @@ function paintBuilderSteps() {
     const inp = $(`#wf-gen-input-${idx}`);
     const statusEl = $(`#wf-gen-status-${idx}`);
     const promptArea = list.querySelector(`textarea[data-idx="${idx}"]`);
+    const goBtn = e.currentTarget;
     const desc = inp ? inp.value.trim() : '';
     if (!desc) return;
-    e.currentTarget.disabled = true;
-    if (statusEl) { statusEl.textContent = 'Generating...'; statusEl.hidden = false; }
-    const res = await window.husk.workflows.generateStepPrompt(desc);
-    e.currentTarget.disabled = false;
+    goBtn.disabled = true;
+    // Live elapsed counter so the user knows it is working, not frozen.
+    let elapsed = 0;
+    const tick = setInterval(() => {
+      elapsed += 1;
+      if (statusEl) statusEl.textContent = `Generating with the CLI agent... ${elapsed}s (can take up to 90s)`;
+    }, 1000);
+    if (statusEl) { statusEl.textContent = 'Generating with the CLI agent... 0s'; statusEl.hidden = false; }
+    let res;
+    try {
+      res = await window.husk.workflows.generateStepPrompt(desc);
+    } finally {
+      clearInterval(tick);
+      goBtn.disabled = false;
+    }
     if (!res || !res.ok) {
       if (statusEl) { statusEl.textContent = (res && res.error) ? `Error: ${res.error}` : 'Generation failed'; statusEl.hidden = false; }
       return;
