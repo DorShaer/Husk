@@ -60,6 +60,13 @@ contextBridge.exposeInMainWorld('husk', {
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
   },
+  profiles: {
+    list: () => ipcRenderer.invoke('profiles:list'),
+    create: (payload) => ipcRenderer.invoke('profiles:create', payload),
+    update: (payload) => ipcRenderer.invoke('profiles:update', payload),
+    delete: (id) => ipcRenderer.invoke('profiles:delete', id),
+    activate: (id) => ipcRenderer.invoke('profiles:activate', id),
+  },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),
     list: () => ipcRenderer.invoke('mcp:list'),

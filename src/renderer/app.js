@@ -202,12 +202,13 @@ function applyAccent(accent) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
 function setPage(name) {
-  if (!['chat', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
+  if (!['chat', 'agents', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
   currentPage = name;
   document.body.dataset.page = name;
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === name));
   if (name === 'chat') { setTimeout(fitNow, 30); term.focus(); }
+  if (name === 'agents') renderAgents();
   if (name === 'projects') renderProjects();
   if (name === 'prompts') renderPrompts();
   if (name === 'skills') renderSkills();
@@ -523,7 +524,8 @@ async function refreshProjectsState() {
   const cmdShort = (cfg.agentCommand || 'agent').split(/\s+/)[0];
   const active = projectsCache.find((p) => p.id === activeProjectId);
   const cwdLabel = active ? active.path : (cfg.agentCwd || '$HOME');
-  if ($('#chat-sub')) $('#chat-sub').textContent = `${cmdShort} · ${cwdLabel}`;
+  const activeProfile = cfg.activeProfileId ? profilesCache.find((p) => p.id === cfg.activeProfileId) : null;
+  if ($('#chat-sub')) $('#chat-sub').textContent = activeProfile ? `${cmdShort} · ${cwdLabel} · ${activeProfile.name}` : `${cmdShort} · ${cwdLabel}`;
 }
 
 function updateActiveProjectChip() {
@@ -594,6 +596,154 @@ async function deleteProject(id, name) {
   const chip = document.getElementById('topbar-project');
   if (chip) chip.addEventListener('click', () => setPage('projects'));
 }
+
+// ─── Agents page ───────────────────────────────────────────────────────────────
+
+let profilesCache = [];
+let editingProfileId = null;
+
+async function renderAgents() {
+  const grid = $('#agents-grid');
+  if (!grid) return;
+  // eslint-disable-next-line no-unsanitized/property
+  grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading agents…</div></div>';
+  profilesCache = await window.husk.profiles.list();
+  paintAgents();
+  updateAgentBanner();
+}
+
+function paintAgents() {
+  const grid = $('#agents-grid');
+  if (!grid) return;
+  if (!profilesCache.length) {
+    // eslint-disable-next-line no-unsanitized/property
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon"></div><div class="es-title">No agents yet</div><div class="es-msg">Create a named configuration to shape how the AI works for a specific task.</div></div>`;
+    return;
+  }
+  const activeId = cfg && cfg.activeProfileId;
+  const cards = profilesCache.map((p) => `
+    <div class="agent-card${p.id === activeId ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}">
+      ${!p.builtin ? `<button class="card-delete agent-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete agent" aria-label="Delete agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
+      <div class="agent-card-head">
+        <div class="agent-card-icon">${escapeHtml(p.icon || '')}</div>
+        <div class="agent-card-title">${escapeHtml(p.name)}</div>
+        ${p.id === activeId ? '<span class="agent-card-pill">Active</span>' : ''}
+        ${p.builtin ? '<span class="agent-card-builtin">built-in</span>' : ''}
+      </div>
+      ${p.description ? `<div class="agent-card-desc">${escapeHtml(p.description)}</div>` : ''}
+      ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
+      <div class="agent-card-actions">
+        ${!p.builtin ? `<button class="ghost-link agent-edit" data-id="${escapeHtml(p.id)}">Edit</button>` : ''}
+        ${p.id === activeId
+          ? `<button class="ghost-btn agent-deactivate" data-id="${escapeHtml(p.id)}">Deactivate</button>`
+          : `<button class="card-cta agent-activate" data-id="${escapeHtml(p.id)}">Activate<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
+      </div>
+    </div>
+  `).join('');
+  // eslint-disable-next-line no-unsanitized/property
+  grid.innerHTML = cards;
+
+  grid.querySelectorAll('.agent-activate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); activateProfile(e.currentTarget.dataset.id); }));
+  grid.querySelectorAll('.agent-deactivate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); activateProfile(null); }));
+  grid.querySelectorAll('.agent-edit').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openAgentModal(e.currentTarget.dataset.id); }));
+  grid.querySelectorAll('.agent-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProfile(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
+}
+
+async function activateProfile(id) {
+  const res = await window.husk.profiles.activate(id || null);
+  if (!res || !res.ok) return;
+  cfg = await window.husk.config.get();
+  paintAgents();
+  updateAgentBanner();
+  updateActiveChatProfile();
+}
+
+function updateAgentBanner() {
+  const banner = $('#agents-active-banner');
+  const nameEl = $('#agents-active-name');
+  if (!banner || !nameEl) return;
+  const activeId = cfg && cfg.activeProfileId;
+  const active = activeId ? profilesCache.find((p) => p.id === activeId) : null;
+  banner.hidden = !active;
+  if (active) nameEl.textContent = active.name;
+}
+
+function updateActiveChatProfile() {
+  const sub = $('#chat-sub');
+  if (!sub) return;
+  const activeId = cfg && cfg.activeProfileId;
+  const active = activeId ? profilesCache.find((p) => p.id === activeId) : null;
+  const toolName = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'claude';
+  const dir = (cfg && cfg.treeRoot) ? cfg.treeRoot.replace(/.*\//, '~') : '~';
+  sub.textContent = active ? `${toolName} · ${dir} · ${active.name}` : `${toolName} · ${dir}`;
+}
+
+async function deleteProfile(id, name) {
+  if (!id) return;
+  const confirmed = await openConfirmDialog({
+    title: 'Delete agent?',
+    bodyHtml: `Permanently delete <strong>${escapeHtml(name || 'this agent')}</strong>.`,
+    confirmLabel: 'Delete agent',
+  });
+  if (!confirmed) return;
+  const res = await window.husk.profiles.delete(id);
+  if (!res || !res.ok) { toast((res && res.error) || 'Could not delete agent', 'error'); return; }
+  profilesCache = profilesCache.filter((p) => p.id !== id);
+  if (cfg.activeProfileId === id) { cfg = await window.husk.config.get(); }
+  paintAgents();
+  updateAgentBanner();
+}
+
+function openAgentModal(editId) {
+  const modal = $('#agent-modal');
+  const titleEl = $('#agent-modal-title');
+  const iconEl = $('#agent-icon');
+  const nameEl = $('#agent-name');
+  const descEl = $('#agent-description');
+  const promptEl = $('#agent-system-prompt');
+  if (!modal) return;
+  editingProfileId = editId || null;
+  const existing = editId ? profilesCache.find((p) => p.id === editId) : null;
+  if (titleEl) titleEl.textContent = existing ? 'Edit Agent' : 'New Agent';
+  if (iconEl) iconEl.value = existing ? (existing.icon || '') : '';
+  if (nameEl) nameEl.value = existing ? existing.name : '';
+  if (descEl) descEl.value = existing ? (existing.description || '') : '';
+  if (promptEl) promptEl.value = existing ? (existing.systemPrompt || '') : '';
+  modal.hidden = false;
+  setTimeout(() => { try { nameEl.focus(); } catch (_) {} }, 30);
+}
+
+function closeAgentModal() {
+  const modal = $('#agent-modal');
+  if (modal) modal.hidden = true;
+  editingProfileId = null;
+}
+
+async function saveAgentModal() {
+  const icon = ($('#agent-icon') || {}).value || '';
+  const name = (($('#agent-name') || {}).value || '').trim();
+  const description = (($('#agent-description') || {}).value || '').trim();
+  const systemPrompt = (($('#agent-system-prompt') || {}).value || '').trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  let res;
+  if (editingProfileId) {
+    res = await window.husk.profiles.update({ id: editingProfileId, icon, name, description, systemPrompt });
+    if (res && res.ok) profilesCache = profilesCache.map((p) => p.id === editingProfileId ? { ...p, icon, name, description, systemPrompt } : p);
+  } else {
+    res = await window.husk.profiles.create({ icon, name, description, systemPrompt });
+    if (res && res.id) profilesCache = [...profilesCache, res];
+  }
+  if (!res || (!res.ok && !res.id)) { toast('Could not save agent', 'error'); return; }
+  closeAgentModal();
+  paintAgents();
+}
+
+$('#btn-new-agent') && $('#btn-new-agent').addEventListener('click', () => openAgentModal(null));
+$('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', closeAgentModal);
+$('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
+$('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
+$('#btn-deactivate-agent') && $('#btn-deactivate-agent').addEventListener('click', () => activateProfile(null));
+$('#agent-modal') && $('#agent-modal').addEventListener('click', (e) => { if (e.target === $('#agent-modal')) closeAgentModal(); });
 
 // ─── Prompts page ──────────────────────────────────────────────────────────────
 let promptsCache = [];
@@ -2230,8 +2380,14 @@ function closeAgentMenu() {
   $('#rail-agent-menu').hidden = true;
   agentMenuOpen = false;
 }
-$('#rail-agent-pill').addEventListener('click', (e) => {
+$('#rail-agent-pill').addEventListener('click', async (e) => {
   e.stopPropagation();
+  if (document.body.dataset.rail === 'collapsed') {
+    document.body.dataset.rail = 'expanded';
+    syncRailToggleTitle();
+    cfg = await window.husk.config.set({ railExpanded: true });
+    setTimeout(fitNow, 200);
+  }
   if (agentMenuOpen) closeAgentMenu(); else openAgentMenu();
 });
 window.addEventListener('click', (e) => {
@@ -2562,6 +2718,7 @@ async function runFirstRunWizard() {
 
 async function boot() {
   cfg = await window.husk.config.get();
+  profilesCache = await window.husk.profiles.list();
   applyTheme(cfg.theme || 'dark');
   applyAccent(cfg.accent || 'orange');
   document.body.dataset.rail = cfg.railExpanded ? 'expanded' : 'collapsed';
