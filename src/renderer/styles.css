@@ -393,6 +393,8 @@ body[data-rail="expanded"] .rail { width: 220px; }
 .rail-toggle svg { width: 17px; height: 17px; display: block; }
 .rail-toggle:hover { color: var(--text); background: var(--bg-2); }
 body[data-rail="collapsed"] .rail-top { justify-content: center; padding: 0 0 6px; }
+body[data-rail="collapsed"] .rail-toggle { width: 40px; height: 40px; }
+body[data-rail="collapsed"] .rail-toggle svg { width: 19px; height: 19px; }
 .rail-nav { display: flex; flex-direction: column; gap: 2px; }
 .rail-spacer { flex: 1; }
 .rail-item {
@@ -555,9 +557,18 @@ body[data-rail="expanded"] .rail-section-context { display: flex; }
 .rail-agent .ra-icon svg { width: 20px; height: 20px; display: block; }
 .rail-agent:hover .ra-icon { color: var(--text); }
 body[data-rail="collapsed"] .rail-agent {
-  padding: 10px 0;
+  width: 40px; height: 40px;
+  padding: 0;
+  margin: 0 auto;
   justify-content: center;
   gap: 0;
+  border-color: transparent;
+  background: transparent;
+  border-radius: var(--radius-md);
+}
+body[data-rail="collapsed"] .rail-agent:hover {
+  background: var(--bg-2);
+  border-color: transparent;
 }
 body[data-rail="collapsed"] .rail-agent .ra-label,
 body[data-rail="collapsed"] .rail-agent .ra-name,
