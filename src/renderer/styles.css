@@ -536,25 +536,29 @@ body[data-rail="expanded"] .rail-section-head { opacity: 1; }
 body[data-rail="expanded"] .rail-section-context { display: flex; }
 
 /* Agent quick-switch pill */
+/* Tool selector pill. Looks identical to a .rail-item so sizes align. */
+.rail-section-tool { position: relative; }
 .rail-section-agent { position: relative; }
 .rail-agent {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 12px;
   width: 100%;
-  padding: 8px 10px;
-  background: var(--bg-1); color: var(--text);
-  border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 7px 10px;
+  background: transparent; color: var(--text-2);
+  border: 0; border-radius: var(--radius-md);
   cursor: pointer; font-family: inherit;
-  transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+  font-size: 13px; font-weight: 500;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
   white-space: nowrap; overflow: hidden;
 }
 .rail-agent .ra-icon {
   flex: 0 0 auto;
-  width: 22px; height: 22px;
+  width: 20px; height: 20px;
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-3);
-  transition: color 0.14s ease;
+  transition: color 0.12s ease;
 }
-.rail-agent .ra-icon svg { width: 20px; height: 20px; display: block; }
+.rail-agent .ra-icon svg { width: 19px; height: 19px; display: block; }
+.rail-agent:hover { background: var(--bg-2); color: var(--text); }
 .rail-agent:hover .ra-icon { color: var(--text); }
 body[data-rail="collapsed"] .rail-agent {
   width: 40px; height: 40px;
@@ -857,6 +861,78 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 #terminal { height: 100%; min-height: 0; }
 .xterm-viewport { background-color: transparent !important; }
+
+/* ─── Agents page ─────────────────────────────────────────────────────── */
+
+.agents-active-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.aab-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); flex: 0 0 auto;
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.aab-hint { color: var(--text-3); font-size: 12px; flex: 1; }
+.agent-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px 14px;
+  position: relative;
+  cursor: default;
+  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+  box-shadow: var(--elev-1);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.agent-card:hover { border-color: var(--line-2); box-shadow: var(--elev-2); }
+.agent-card.is-active {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent), var(--elev-2);
+}
+.agent-card-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.agent-card-icon {
+  width: 36px; height: 36px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-2));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex: 0 0 auto;
+}
+.agent-card-title { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+.agent-card-pill {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-3));
+  color: var(--accent);
+}
+.agent-card-builtin {
+  font-size: 10px; color: var(--text-3); font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.agent-card-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.agent-card-prompt {
+  font-size: 11px; color: var(--text-3);
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-family: monospace;
+  line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.agent-card-actions {
+  display: flex; align-items: center; gap: 8px; margin-top: 4px;
+}
+.agent-card .card-delete {
+  position: absolute; top: 10px; right: 10px;
+}
 
 /* ─── Projects page ────────────────────────────────────────────────────── */
 
@@ -1697,6 +1773,45 @@ input[type="checkbox"]:disabled {
   box-shadow: var(--elev-4);
   text-align: center;
 }
+.modal-card-md {
+  width: 520px; max-width: 94vw;
+  padding: 22px 24px 20px;
+  text-align: left;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 18px;
+}
+.modal-head .modal-title { font-size: 15px; font-weight: 700; margin: 0; }
+.modal-close {
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--text-3); font-size: 20px; line-height: 1;
+  padding: 2px 6px; border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+.modal-close:hover { color: var(--text); background: var(--bg-3); }
+.modal-body { display: flex; flex-direction: column; gap: 14px; }
+.modal-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  margin-top: 20px; padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.form-row { display: flex; flex-direction: column; gap: 5px; }
+.form-label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.form-hint { font-weight: 400; color: var(--text-3); }
+.form-input {
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit; font-size: 13px;
+  padding: 7px 10px;
+  outline: 0;
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.form-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.form-input-icon { width: 56px; text-align: center; font-size: 20px; }
+.form-textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
 .modal-icon {
   font-size: 28px;
   color: var(--accent);
