@@ -75,6 +75,7 @@ if (typeof Terminal === 'undefined' || typeof window.husk === 'undefined') {
 
 // ─── State ───────────────────────────────────────────────────────────────────────
 let cfg = null;
+let huskHome = '~';
 let lastStats = null;
 let currentPage = 'chat';
 let chatHasInput = false;
@@ -541,7 +542,7 @@ async function refreshProjectsState() {
   updateAgentPill && updateAgentPill();
   const cmdShort = (cfg.agentCommand || 'agent').split(/\s+/)[0];
   const active = projectsCache.find((p) => p.id === activeProjectId);
-  const cwdLabel = active ? active.path : (cfg.agentCwd || '$HOME');
+  const cwdLabel = active ? active.path : (cfg.agentCwd || huskHome);
   const activeProfile = cfg.activeProfileId ? profilesCache.find((p) => p.id === cfg.activeProfileId) : null;
   if ($('#chat-sub')) $('#chat-sub').textContent = activeProfile ? `${cmdShort} · ${cwdLabel} · ${activeProfile.name}` : `${cmdShort} · ${cwdLabel}`;
 }
@@ -1762,10 +1763,10 @@ async function resumeSessionInChat(d) {
   try { term.clear(); term.reset(); } catch (_) {}
   const cmd = `claude --resume ${d.id}`;
   const cwd = d.project || null;
-  toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || '$HOME'})`, 'success');
-  $('#chat-sub').textContent = `claude --resume ${d.id.slice(0, 8)} · ${cwd || '$HOME'}`;
+  toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
+  $('#chat-sub').textContent = `claude --resume ${d.id.slice(0, 8)} · ${cwd || huskHome}`;
   if ($('#sp-agent')) $('#sp-agent').textContent = `claude --resume ${d.id.slice(0, 8)}`;
-  if ($('#sp-session-id')) $('#sp-session-id').textContent = `${d.id.slice(0, 8)} · ${cwd || '$HOME'}`;
+  if ($('#sp-session-id')) $('#sp-session-id').textContent = `${d.id.slice(0, 8)} · ${cwd || huskHome}`;
   fitAddon.fit();
   const { cols, rows } = term;
   chatHasInput = false;
@@ -1875,7 +1876,7 @@ function bindPrefs() {
   const agentDisplay = cfg.agentName || 'Husk';
   // Show the same cwd the agent is actually launched in (config.agentCwd
   // wins; falls back to $HOME when unset, mirroring main.js's resolution).
-  $('#chat-sub').textContent = `${cmdShort} · ${cfg.agentCwd || '$HOME'}`;
+  $('#chat-sub').textContent = `${cmdShort} · ${cfg.agentCwd || huskHome}`;
   $('#ce-agent').textContent = agentDisplay;
   if ($('#sp-agent')) $('#sp-agent').textContent = cfg.agentCommand || 'claude';
 }
@@ -3204,6 +3205,7 @@ async function runFirstRunWizard() {
 
 async function boot() {
   cfg = await window.husk.config.get();
+  try { huskHome = await window.husk.fs.home() || '~'; } catch (_) {}
   profilesCache = await window.husk.profiles.list();
   applyTheme(cfg.theme || 'dark');
   applyAccent(cfg.accent || 'orange');
