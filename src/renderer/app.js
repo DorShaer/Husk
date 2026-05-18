@@ -633,7 +633,6 @@ function paintAgents() {
     <div class="agent-card${p.id === activeId ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}">
       ${!p.builtin ? `<button class="card-delete agent-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete agent" aria-label="Delete agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
       <div class="agent-card-head">
-        <div class="agent-card-icon">${escapeHtml(p.icon || '')}</div>
         <div class="agent-card-title">${escapeHtml(p.name)}</div>
         ${p.id === activeId ? '<span class="agent-card-pill">Active</span>' : ''}
         ${p.builtin ? '<span class="agent-card-builtin">built-in</span>' : ''}
@@ -727,16 +726,23 @@ function openAgentModal(editId) {
   const genDesc = $('#agent-generate-desc');
   const statusEl = $('#agent-generate-status');
 
+  const genFoot = $('#agent-generate-foot');
+  const editFoot = $('#agent-edit-foot');
+
   if (existing) {
     if (genStep) genStep.hidden = true;
+    if (genFoot) genFoot.hidden = true;
     if (editStep) editStep.hidden = false;
+    if (editFoot) editFoot.hidden = false;
     if ($('#agent-name')) $('#agent-name').value = existing.name;
     if ($('#agent-description')) $('#agent-description').value = existing.description || '';
     if ($('#agent-system-prompt')) $('#agent-system-prompt').value = existing.systemPrompt || '';
     if ($('#agent-autoselect')) $('#agent-autoselect').checked = !!existing.autoSelect;
   } else {
     if (genStep) genStep.hidden = false;
+    if (genFoot) genFoot.hidden = false;
     if (editStep) editStep.hidden = true;
+    if (editFoot) editFoot.hidden = true;
     if (genDesc) genDesc.value = '';
     if (statusEl) { statusEl.hidden = true; statusEl.textContent = ''; }
   }
@@ -787,8 +793,12 @@ async function generateAgentWithAI() {
   if (statusEl) statusEl.hidden = true;
   const genStep = $('#agent-generate-step');
   const editStep = $('#agent-edit-step');
+  const genFoot = $('#agent-generate-foot');
+  const editFoot = $('#agent-edit-foot');
   if (genStep) genStep.hidden = true;
+  if (genFoot) genFoot.hidden = true;
   if (editStep) editStep.hidden = false;
+  if (editFoot) editFoot.hidden = false;
   if ($('#agent-name')) $('#agent-name').value = res.name || '';
   if ($('#agent-description')) $('#agent-description').value = res.description || '';
   if ($('#agent-system-prompt')) $('#agent-system-prompt').value = res.systemPrompt || '';
@@ -804,10 +814,18 @@ $('#btn-deactivate-agent') && $('#btn-deactivate-agent').addEventListener('click
 $('#agent-modal') && $('#agent-modal').addEventListener('click', (e) => { if (e.target === $('#agent-modal')) closeAgentModal(); });
 $('#btn-generate-agent') && $('#btn-generate-agent').addEventListener('click', generateAgentWithAI);
 $('#btn-manual-agent') && $('#btn-manual-agent').addEventListener('click', () => {
-  const genStep = $('#agent-generate-step');
-  const editStep = $('#agent-edit-step');
-  if (genStep) genStep.hidden = true;
-  if (editStep) { editStep.hidden = false; setTimeout(() => { try { $('#agent-name').focus(); } catch (_) {} }, 30); }
+  $('#agent-generate-step').hidden = true;
+  $('#agent-generate-foot').hidden = true;
+  $('#agent-edit-step').hidden = false;
+  $('#agent-edit-foot').hidden = false;
+  setTimeout(() => { try { $('#agent-name').focus(); } catch (_) {} }, 30);
+});
+$('#agent-modal-back') && $('#agent-modal-back').addEventListener('click', () => {
+  $('#agent-edit-step').hidden = true;
+  $('#agent-edit-foot').hidden = true;
+  $('#agent-generate-step').hidden = false;
+  $('#agent-generate-foot').hidden = false;
+  setTimeout(() => { try { $('#agent-generate-desc').focus(); } catch (_) {} }, 30);
 });
 
 // ─── Prompts page ──────────────────────────────────────────────────────────────
