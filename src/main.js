@@ -1190,21 +1190,33 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
   return new Promise((resolve) => {
     let out = '';
     let err = '';
+    let settled = false;
+    const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+
     const child = require('child_process').spawn(cmd, ['-p', prompt], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 60000,
+      env: { ...process.env },
     });
+
+    // Hard timeout. The spawn `timeout` option is unreliable when the CLI
+    // catches SIGTERM, so we force-kill with SIGKILL and resolve regardless.
+    const killTimer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch (_) {}
+      const text = out.trim();
+      finish(text
+        ? { ok: true, prompt: text.slice(0, 8192) }
+        : { ok: false, error: 'Timed out after 90s. The CLI may be slow or need authentication.' });
+    }, 90000);
+
     child.stdout.on('data', (d) => { out += d.toString(); });
     child.stderr.on('data', (d) => { err += d.toString(); });
     child.on('close', (code) => {
+      clearTimeout(killTimer);
       const text = out.trim();
-      if (text.length > 0) {
-        resolve({ ok: true, prompt: text.slice(0, 8192) });
-      } else {
-        resolve({ ok: false, error: err.trim().slice(0, 300) || `process exited ${code}` });
-      }
+      if (text.length > 0) finish({ ok: true, prompt: text.slice(0, 8192) });
+      else finish({ ok: false, error: err.trim().slice(0, 300) || `exited ${code} with no output` });
     });
-    child.on('error', (e) => resolve({ ok: false, error: e.message }));
+    child.on('error', (e) => { clearTimeout(killTimer); finish({ ok: false, error: e.message }); });
   });
 });
 
