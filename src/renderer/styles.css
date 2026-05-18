@@ -351,8 +351,11 @@ body[data-status="collapsed"] .sp-toggle { transform: rotate(180deg); }
   background: var(--bg);
   padding: 12px 8px 16px;
   position: relative;
-  transition: width 0.18s var(--ease);
+  width: 72px;
+  transition: width var(--motion-base) var(--ease);
+  overflow: visible;
 }
+body[data-rail="expanded"] .rail { width: 220px; }
 /* Brand accent stripe on extreme left edge of rail. Full-height 2px column.
    Subtle ramp from accent at the top fading to transparent so it reads as
    a hint of identity, not a UI feature. */
@@ -455,9 +458,51 @@ body[data-rail="collapsed"] .rail-item.active {
 }
 body[data-rail="collapsed"] .rail-item.active .ri-icon { color: var(--accent); }
 body[data-rail="collapsed"] .rail-item.active::before { display: none; }
+/* Accent-tinted background for active item in icon-only mode */
+body[data-rail="collapsed"] .rail-item.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-2));
+}
+body[data-rail="collapsed"] .rail-item.active .ri-icon { color: var(--accent); }
 .rail-item:hover .ri-icon, .rail-item.active .ri-icon { color: var(--text); }
+
+/* Labels: opacity+transform animation when expanding; fully removed when collapsed
+   so no glyph bleed at non-100% zoom and no phantom horizontal space. */
 .rail-item .ri-label { font-weight: 500; opacity: 0; transform: translateX(-4px); transition: opacity 0.18s ease, transform 0.18s ease; }
 body[data-rail="expanded"] .rail-item .ri-label { opacity: 1; transform: translateX(0); }
+body[data-rail="collapsed"] .ri-label { display: none; }
+
+/* Section heads have opacity:0 when collapsed but still occupy height. Remove them. */
+body[data-rail="collapsed"] .rail-section-head { display: none; }
+body[data-rail="collapsed"] .rail-section + .rail-section { margin-top: 4px; }
+
+/* Allow tooltip ::after to overflow the rail into the content area */
+body[data-rail="collapsed"] .rail-item { overflow: visible; }
+
+/* Hover tooltip for icon-only mode. Slides in from left, fades. */
+body[data-rail="collapsed"] .rail-item::after {
+  content: attr(title);
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-6px);
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 300;
+  box-shadow: var(--elev-2);
+  transition: opacity var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+}
+body[data-rail="collapsed"] .rail-item:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
 
 /* Sectioned rail layout */
 .rail-section { display: flex; flex-direction: column; gap: 4px; }
