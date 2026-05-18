@@ -1022,6 +1022,12 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 .wf-step-gen-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.wf-step-gen-go {
+  flex: 0 0 auto;
+  height: var(--control-h-lg);
+  padding: 0 18px;
+  font-size: 13px;
+}
 
 /* Trigger selector */
 .wf-trigger-row { display: flex; align-items: center; gap: 10px; }
