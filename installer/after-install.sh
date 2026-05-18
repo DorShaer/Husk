@@ -4,9 +4,9 @@
 SRC="/usr/share/icons/hicolor/1024x1024/apps/husk.png"
 if [ -f "$SRC" ]; then
   for SIZE in 512x512 256x256 128x128 64x64 48x48; do
-    DIR="/usr/share/icons/hicolor/${SIZE}/apps"
+    DIR="/usr/share/icons/hicolor/$SIZE/apps"
     mkdir -p "$DIR"
-    cp "$SRC" "${DIR}/husk.png"
+    cp "$SRC" "$DIR/husk.png"
   done
 fi
 if command -v update-desktop-database &>/dev/null; then
