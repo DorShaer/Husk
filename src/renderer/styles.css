@@ -934,9 +934,14 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 .agent-card-autoselect input { accent-color: var(--accent); cursor: pointer; }
 .agent-card-autoselect.is-on { color: var(--accent); }
-.agent-generate-actions {
-  display: flex; align-items: center; gap: 12px; margin-top: 8px;
+.agent-manual-link {
+  background: transparent; border: 0; cursor: pointer;
+  font-size: 11px; color: var(--text-3);
+  padding: 4px 0; margin-top: 4px;
+  text-align: left;
+  transition: color var(--motion-fast) ease;
 }
+.agent-manual-link:hover { color: var(--text-2); }
 .agent-generate-status {
   margin-top: 10px; font-size: 12px; color: var(--text-3);
   padding: 8px 10px; background: var(--bg-2);
