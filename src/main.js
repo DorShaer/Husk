@@ -1157,6 +1157,176 @@ function getProfiles() {
 
 ipcMain.handle('profiles:list', () => getProfiles());
 
+// ─── Workflows ────────────────────────────────────────────────────────────────
+
+const WORKFLOWS_PATH = path.join(CONFIG_DIR, 'workflows.json');
+
+function loadWorkflows() {
+  try {
+    if (!fs.existsSync(WORKFLOWS_PATH)) return [];
+    return JSON.parse(fs.readFileSync(WORKFLOWS_PATH, 'utf8'));
+  } catch (_) { return []; }
+}
+
+function saveWorkflows(list) {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(WORKFLOWS_PATH, JSON.stringify(list, null, 2), { mode: 0o600 });
+  } catch (_) {}
+}
+
+// In-memory active runs: runId -> { workflow, steps state, currentChild }
+const activeRuns = new Map();
+
+ipcMain.handle('workflows:list', () => loadWorkflows());
+
+ipcMain.handle('workflows:create', (_e, payload = {}) => {
+  const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date().toISOString();
+  const entry = {
+    id,
+    name: String(payload.name || 'New Workflow').slice(0, 80),
+    description: String(payload.description || '').slice(0, 256),
+    steps: Array.isArray(payload.steps) ? payload.steps.map(sanitizeStep) : [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const list = [...loadWorkflows(), entry];
+  saveWorkflows(list);
+  return entry;
+});
+
+ipcMain.handle('workflows:update', (_e, payload = {}) => {
+  if (!payload.id) return { ok: false, error: 'missing id' };
+  const list = loadWorkflows().map((w) => {
+    if (w.id !== payload.id) return w;
+    return {
+      ...w,
+      name: payload.name !== undefined ? String(payload.name).slice(0, 80) : w.name,
+      description: payload.description !== undefined ? String(payload.description).slice(0, 256) : w.description,
+      steps: Array.isArray(payload.steps) ? payload.steps.map(sanitizeStep) : w.steps,
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  saveWorkflows(list);
+  return { ok: true };
+});
+
+ipcMain.handle('workflows:delete', (_e, id) => {
+  if (!id) return { ok: false, error: 'missing id' };
+  saveWorkflows(loadWorkflows().filter((w) => w.id !== id));
+  return { ok: true };
+});
+
+ipcMain.handle('workflows:run', (event, workflowId) => {
+  const workflow = loadWorkflows().find((w) => w.id === workflowId);
+  if (!workflow) return { ok: false, error: 'workflow not found' };
+  if (!workflow.steps.length) return { ok: false, error: 'workflow has no steps' };
+
+  const runId = `run-${Date.now()}`;
+  const runState = {
+    id: runId,
+    workflowId,
+    status: 'running',
+    currentStep: 0,
+    stepStates: workflow.steps.map((s) => ({ stepId: s.id, status: 'pending', output: '' })),
+    currentChild: null,
+    startedAt: new Date().toISOString(),
+  };
+  activeRuns.set(runId, runState);
+  executeWorkflow(event, workflow, runState);
+  return { ok: true, runId };
+});
+
+ipcMain.handle('workflows:stop', (_e, runId) => {
+  const run = activeRuns.get(runId);
+  if (!run) return { ok: false, error: 'run not found' };
+  run.status = 'stopped';
+  try { if (run.currentChild) run.currentChild.kill('SIGTERM'); } catch (_) {}
+  return { ok: true };
+});
+
+function sanitizeStep(s) {
+  return {
+    id: s.id || `step-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+    name: String(s.name || 'Step').slice(0, 64),
+    agentCommand: String(s.agentCommand || '').slice(0, 128) || null,
+    prompt: String(s.prompt || '').slice(0, 8192),
+    passContext: ['full', 'last50', 'none'].includes(s.passContext) ? s.passContext : 'full',
+  };
+}
+
+function wfEmit(event, channel, data) {
+  try { if (!event.sender.isDestroyed()) event.sender.send(channel, data); } catch (_) {}
+}
+
+async function executeWorkflow(event, workflow, run) {
+  let previousOutput = '';
+
+  for (let i = 0; i < workflow.steps.length; i++) {
+    if (run.status === 'stopped') break;
+
+    const step = workflow.steps[i];
+    const stepState = run.stepStates[i];
+    stepState.status = 'running';
+    run.currentStep = i;
+    wfEmit(event, 'wf:step:start', { runId: run.id, stepIndex: i });
+
+    const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+
+    // Build prompt: replace {{previousOutput}} placeholder or append context
+    let prompt = step.prompt;
+    if (i > 0 && previousOutput) {
+      if (prompt.includes('{{previousOutput}}')) {
+        prompt = prompt.replace(/\{\{previousOutput\}\}/g, previousOutput);
+      } else if (step.passContext !== 'none') {
+        const ctx = step.passContext === 'last50'
+          ? previousOutput.split('\n').slice(-50).join('\n')
+          : previousOutput;
+        prompt = `${prompt}\n\n[Output from previous step "${workflow.steps[i - 1].name}"]\n${ctx}`;
+      }
+    }
+
+    let output = '';
+    const child = spawn(cmd, ['-p', prompt], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 300000,
+    });
+    run.currentChild = child;
+
+    child.stdout.on('data', (d) => {
+      output += d.toString();
+      stepState.output = output;
+      wfEmit(event, 'wf:step:output', { runId: run.id, stepIndex: i, chunk: d.toString() });
+    });
+    child.stderr.on('data', (d) => {
+      wfEmit(event, 'wf:step:output', { runId: run.id, stepIndex: i, chunk: d.toString() });
+    });
+
+    await new Promise((resolve) => {
+      child.on('close', (code) => {
+        stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
+        stepState.finishedAt = new Date().toISOString();
+        previousOutput = output;
+        wfEmit(event, 'wf:step:done', { runId: run.id, stepIndex: i, status: stepState.status });
+        resolve();
+      });
+      child.on('error', () => {
+        stepState.status = 'failed';
+        wfEmit(event, 'wf:step:done', { runId: run.id, stepIndex: i, status: 'failed' });
+        resolve();
+      });
+    });
+
+    if (stepState.status === 'failed') { run.status = 'failed'; break; }
+  }
+
+  if (run.status === 'running') run.status = 'done';
+  run.finishedAt = new Date().toISOString();
+  wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
+  activeRuns.delete(run.id);
+}
+
 ipcMain.handle('profiles:generate', async (_e, description) => {
   if (!description || typeof description !== 'string') return { ok: false, error: 'description required' };
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];

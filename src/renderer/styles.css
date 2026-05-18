@@ -854,6 +854,196 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 #terminal { height: 100%; min-height: 0; }
 .xterm-viewport { background-color: transparent !important; }
 
+/* ─── Workflows page ──────────────────────────────────────────────────── */
+
+.wf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+.wf-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px 14px;
+  position: relative;
+  box-shadow: var(--elev-1);
+  display: flex; flex-direction: column; gap: 10px;
+  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+.wf-card:hover { border-color: var(--line-2); box-shadow: var(--elev-2); }
+.wf-card-head { display: flex; align-items: center; gap: 10px; }
+.wf-card-title { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+.wf-card-steps-count {
+  font-size: 11px; color: var(--text-3); font-weight: 500;
+  background: var(--bg-3); border-radius: var(--radius-pill);
+  padding: 2px 8px;
+}
+.wf-card-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.wf-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.wf-card .card-delete { position: absolute; top: 10px; right: 10px; }
+.wf-card-last-run { font-size: 11px; color: var(--text-3); }
+.wf-card-last-run.run-done { color: var(--emerald); }
+.wf-card-last-run.run-failed { color: var(--rose); }
+
+/* Builder */
+.wf-name-input {
+  background: transparent; border: 0; border-bottom: 1px solid var(--line-2);
+  color: var(--text); font-size: 16px; font-weight: 600;
+  padding: 4px 0; outline: 0; min-width: 240px;
+  transition: border-color var(--motion-fast) ease;
+}
+.wf-name-input:focus { border-color: var(--accent); }
+.wf-builder-body { display: flex; flex-direction: column; gap: 0; padding-bottom: 40px; }
+.wf-steps-list { display: flex; flex-direction: column; gap: 0; }
+.wf-step-node {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px 14px;
+  box-shadow: var(--elev-1);
+  position: relative;
+}
+.wf-step-connector {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 6px 0;
+  position: relative;
+}
+.wf-step-connector::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 2px;
+  background: var(--line-2);
+  transform: translateX(-50%);
+}
+.wf-connector-arrow {
+  width: 22px; height: 22px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-3); font-size: 11px;
+  z-index: 1; position: relative;
+  flex: 0 0 auto;
+}
+.wf-step-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px;
+}
+.wf-step-number {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-3); border: 1px solid var(--line-2);
+  font-size: 11px; font-weight: 700; color: var(--text-2);
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.wf-step-name-input {
+  flex: 1; background: transparent; border: 0;
+  color: var(--text); font-size: 13px; font-weight: 600;
+  padding: 2px 0; outline: 0; border-bottom: 1px solid transparent;
+  transition: border-color var(--motion-fast) ease;
+}
+.wf-step-name-input:focus { border-color: var(--line-2); }
+.wf-step-controls { display: flex; gap: 4px; margin-left: auto; }
+.wf-step-ctrl-btn {
+  width: 26px; height: 26px;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+.wf-step-ctrl-btn:hover { background: var(--bg-2); color: var(--text); }
+.wf-step-fields { display: flex; flex-direction: column; gap: 10px; }
+.wf-step-row { display: flex; gap: 10px; align-items: flex-start; }
+.wf-step-select {
+  background: var(--bg-2); border: 1px solid var(--line-2);
+  color: var(--text); font-family: inherit; font-size: 12px;
+  padding: 5px 8px; border-radius: var(--radius-md);
+  outline: 0; cursor: pointer; min-width: 0;
+  transition: border-color var(--motion-fast) ease;
+}
+.wf-step-select:focus { border-color: var(--accent); }
+.wf-add-step-btn {
+  margin-top: 10px; align-self: flex-start;
+  background: transparent; border: 1px dashed var(--line-2);
+  border-radius: var(--radius-md); color: var(--text-3);
+  font-size: 13px; font-weight: 500; padding: 8px 16px;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) ease, color var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+.wf-add-step-btn:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+/* Run view */
+.wf-run-meta { display: flex; align-items: center; gap: 10px; }
+.wf-run-name { font-size: 15px; font-weight: 600; color: var(--text); }
+.wf-run-status-badge {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-2));
+  color: var(--accent);
+}
+.wf-run-status-badge.is-done { background: color-mix(in srgb, var(--emerald) 15%, var(--bg-2)); color: var(--emerald); }
+.wf-run-status-badge.is-failed { background: color-mix(in srgb, var(--rose) 15%, var(--bg-2)); color: var(--rose); }
+.wf-run-status-badge.is-stopped { background: var(--bg-3); color: var(--text-3); }
+.wf-run-body { padding-bottom: 40px; }
+.wf-run-steps { display: flex; flex-direction: column; gap: 0; }
+.wf-run-node {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--elev-1);
+  transition: border-color var(--motion-fast) var(--ease);
+}
+.wf-run-node.is-running {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), var(--elev-2);
+}
+.wf-run-node.is-done { border-color: color-mix(in srgb, var(--emerald) 40%, var(--line)); }
+.wf-run-node.is-failed { border-color: color-mix(in srgb, var(--rose) 40%, var(--line)); }
+.wf-run-node-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer; user-select: none;
+}
+.wf-run-node-status {
+  width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--line-3);
+}
+.wf-run-node.is-pending .wf-run-node-status { background: var(--line-3); }
+.wf-run-node.is-running .wf-run-node-status {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  animation: wf-pulse 1.2s ease-in-out infinite;
+}
+.wf-run-node.is-done .wf-run-node-status { background: var(--emerald); }
+.wf-run-node.is-failed .wf-run-node-status { background: var(--rose); }
+.wf-run-node.is-cancelled .wf-run-node-status { background: var(--line-3); }
+@keyframes wf-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 10%, transparent); }
+}
+.wf-run-node-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+.wf-run-node-state-label { font-size: 11px; color: var(--text-3); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+.wf-run-node.is-running .wf-run-node-state-label { color: var(--accent); }
+.wf-run-node.is-done .wf-run-node-state-label { color: var(--emerald); }
+.wf-run-node.is-failed .wf-run-node-state-label { color: var(--rose); }
+.wf-run-output {
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px; line-height: 1.6;
+  color: var(--text-2);
+  padding: 12px 16px;
+  max-height: 280px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.wf-run-output:empty::before { content: 'Waiting...'; color: var(--text-3); font-style: italic; }
+
 /* ─── Agents page ─────────────────────────────────────────────────────── */
 
 .agents-active-banner {

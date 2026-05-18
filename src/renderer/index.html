@@ -117,6 +117,10 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/><circle cx="18" cy="8" r="2.5" fill="currentColor" stroke="none" opacity="0.7"/><path d="M17 6l2 2-2 2" stroke-width="1.5"/></svg></span>
               <span class="ri-label">Agents</span>
             </button>
+            <button class="rail-item" data-page="workflows" title="Workflows">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><rect x="17" y="9" width="6" height="6" rx="1.5"/><path d="M7 12h2M15 12h2"/><path d="M4 9V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg></span>
+              <span class="ri-label">Workflows</span>
+            </button>
             <button class="rail-item" data-page="projects" title="Projects">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg></span>
               <span class="ri-label">Projects</span>
@@ -220,6 +224,63 @@
               <div id="terminal"></div>
             </div>
           </div>
+        </div>
+
+        <!-- WORKFLOWS PAGE -->
+        <div class="page page-workflows" data-page="workflows" hidden>
+
+          <!-- List sub-view -->
+          <div id="wf-list-view">
+            <div class="page-head">
+              <div class="page-head-left">
+                <h1 class="page-title">Workflows</h1>
+                <span class="page-sub">chain agents into automated pipelines</span>
+              </div>
+              <div class="page-head-right">
+                <button class="btn-primary" id="btn-new-workflow">+ New Workflow</button>
+              </div>
+            </div>
+            <div class="page-body">
+              <div id="wf-grid" class="wf-grid"></div>
+            </div>
+          </div>
+
+          <!-- Builder sub-view -->
+          <div id="wf-builder-view" hidden>
+            <div class="page-head">
+              <div class="page-head-left">
+                <button class="ghost-btn" id="btn-wf-builder-back">Back</button>
+                <input class="wf-name-input" id="wf-name-input" type="text" maxlength="80" placeholder="Workflow name" />
+              </div>
+              <div class="page-head-right">
+                <button class="btn-primary" id="btn-save-workflow">Save Workflow</button>
+              </div>
+            </div>
+            <div class="page-body wf-builder-body">
+              <div id="wf-steps-list" class="wf-steps-list"></div>
+              <button class="wf-add-step-btn" id="btn-add-wf-step">+ Add step</button>
+            </div>
+          </div>
+
+          <!-- Run sub-view (live execution) -->
+          <div id="wf-run-view" hidden>
+            <div class="page-head">
+              <div class="page-head-left">
+                <button class="ghost-btn" id="btn-wf-run-back">Back</button>
+                <div class="wf-run-meta">
+                  <span class="wf-run-name" id="wf-run-name"></span>
+                  <span class="wf-run-status-badge" id="wf-run-status-badge">Running</span>
+                </div>
+              </div>
+              <div class="page-head-right">
+                <button class="btn-danger" id="btn-stop-wf" hidden>Stop</button>
+              </div>
+            </div>
+            <div class="page-body wf-run-body">
+              <div id="wf-run-steps" class="wf-run-steps"></div>
+            </div>
+          </div>
+
         </div>
 
         <!-- AGENTS PAGE -->
