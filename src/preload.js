@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('husk', {
     run: (id) => ipcRenderer.invoke('workflows:run', id),
     stop: (runId) => ipcRenderer.invoke('workflows:stop', runId),
     generateStepPrompt: (desc) => ipcRenderer.invoke('workflows:generateStepPrompt', desc),
+    getSessionContext: () => ipcRenderer.invoke('workflows:getSessionContext'),
     onStepStart: (cb) => ipcRenderer.on('wf:step:start', (_e, d) => cb(d)),
     onStepOutput: (cb) => ipcRenderer.on('wf:step:output', (_e, d) => cb(d)),
     onStepDone: (cb) => ipcRenderer.on('wf:step:done', (_e, d) => cb(d)),

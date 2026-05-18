@@ -1183,17 +1183,26 @@ ipcMain.handle('workflows:list', () => loadWorkflows());
 ipcMain.handle('workflows:generateStepPrompt', async (_e, description) => {
   if (!description || typeof description !== 'string') return { ok: false, error: 'description required' };
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
-  if (!isOnPath(cmd)) return { ok: false, error: `${cmd} is not installed` };
-  const prompt = `Write a concise, direct instruction prompt for an AI assistant. The user wants: "${description.slice(0, 400)}"
+  if (!isOnPath(cmd)) return { ok: false, error: `${cmd} not found on PATH` };
+  const prompt = `Write a concise instruction prompt for an AI assistant. The user wants: "${description.slice(0, 400)}"
 
-Return ONLY the prompt text itself, no explanations, no quotes, no formatting. The prompt should be 1-4 sentences starting with an action verb like "Review", "Analyze", "Write", "Generate", etc.`;
+Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with an action verb. Keep it 1-3 sentences.`;
   return new Promise((resolve) => {
     let out = '';
-    const child = require('child_process').spawn(cmd, ['-p', prompt], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
-    child.stdout.on('data', (d) => { out += d; });
+    let err = '';
+    const child = require('child_process').spawn(cmd, ['-p', prompt], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60000,
+    });
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', (d) => { err += d.toString(); });
     child.on('close', (code) => {
-      if (code !== 0) { resolve({ ok: false, error: `exit ${code}` }); return; }
-      resolve({ ok: true, prompt: out.trim().slice(0, 8192) });
+      const text = out.trim();
+      if (text.length > 0) {
+        resolve({ ok: true, prompt: text.slice(0, 8192) });
+      } else {
+        resolve({ ok: false, error: err.trim().slice(0, 300) || `process exited ${code}` });
+      }
     });
     child.on('error', (e) => resolve({ ok: false, error: e.message }));
   });
@@ -1202,7 +1211,7 @@ Return ONLY the prompt text itself, no explanations, no quotes, no formatting. T
 ipcMain.handle('workflows:create', (_e, payload = {}) => {
   const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
-  const validTriggers = ['manual', 'on-launch', 'on-session'];
+  const validTriggers = ['manual', 'ai-suggested'];
   const entry = {
     id,
     name: String(payload.name || 'New Workflow').slice(0, 80),
@@ -1226,7 +1235,7 @@ ipcMain.handle('workflows:update', (_e, payload = {}) => {
       name: payload.name !== undefined ? String(payload.name).slice(0, 80) : w.name,
       description: payload.description !== undefined ? String(payload.description).slice(0, 256) : w.description,
       steps: Array.isArray(payload.steps) ? payload.steps.map(sanitizeStep) : w.steps,
-      trigger: ['manual','on-launch','on-session'].includes(payload.trigger) ? payload.trigger : (w.trigger || 'manual'),
+      trigger: ['manual','ai-suggested'].includes(payload.trigger) ? payload.trigger : (w.trigger || 'manual'),
       updatedAt: new Date().toISOString(),
     };
   });
@@ -1258,6 +1267,18 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
   activeRuns.set(runId, runState);
   executeWorkflow(event, workflow, runState);
   return { ok: true, runId };
+});
+
+// Returns a context block to inject at session start for ai-suggested workflows.
+// The AI reads this and knows when to suggest running a workflow.
+ipcMain.handle('workflows:getSessionContext', () => {
+  const suggested = loadWorkflows().filter((w) => w.trigger === 'ai-suggested');
+  if (!suggested.length) return null;
+  const lines = suggested.map((w) => {
+    const stepSummary = w.steps.map((s, i) => `  Step ${i + 1}: ${s.name}`).join('\n');
+    return `- "${w.name}": ${w.description || w.steps.map((s) => s.name).join(' -> ')}\n${stepSummary}`;
+  }).join('\n');
+  return `[Husk Workflows available - suggest running when relevant]\n${lines}\nTo suggest: mention the workflow by name and tell the user to click Run in the Workflows tab.`;
 });
 
 ipcMain.handle('workflows:stop', (_e, runId) => {

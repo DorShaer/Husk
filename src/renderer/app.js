@@ -163,6 +163,15 @@ async function startPty() {
   }
   await window.husk.pty.start({ cols, rows });
   term.focus();
+  // Inject ai-suggested workflow context so the AI knows what workflows exist
+  try {
+    const wfCtx = await window.husk.workflows.getSessionContext();
+    if (wfCtx) {
+      setTimeout(() => {
+        try { window.husk.pty.write(wfCtx + '\n'); } catch (_) {}
+      }, 800);
+    }
+  } catch (_) {}
   // Snapshot which MCPs were enabled at launch so the MCP page can split
   // them into Loaded vs Pending, and the welcome screen can show what's live.
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
@@ -644,7 +653,7 @@ function paintWorkflowList() {
         <div class="wf-card-title">${escapeHtml(w.name)}</div>
         <div class="wf-card-meta">
           <span class="wf-card-steps-count">${w.steps.length} step${w.steps.length !== 1 ? 's' : ''}</span>
-          ${w.trigger && w.trigger !== 'manual' ? `<span class="wf-card-trigger-pill">${w.trigger === 'on-launch' ? 'On launch' : 'On session'}</span>` : ''}
+          ${w.trigger === 'ai-suggested' ? `<span class="wf-card-trigger-pill">AI suggested</span>` : ''}
         </div>
       </div>
       ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
@@ -805,14 +814,14 @@ function paintBuilderSteps() {
     const res = await window.husk.workflows.generateStepPrompt(desc);
     e.currentTarget.disabled = false;
     if (!res || !res.ok) {
-      if (statusEl) { statusEl.textContent = res ? res.error : 'Generation failed'; }
+      if (statusEl) { statusEl.textContent = (res && res.error) ? `Error: ${res.error}` : 'Generation failed'; statusEl.hidden = false; }
       return;
     }
     if (promptArea) { promptArea.value = res.prompt; editingSteps[idx].prompt = res.prompt; }
     if (inp) inp.value = '';
     const row = $(`#wf-gen-row-${idx}`);
     if (row) row.hidden = true;
-    if (statusEl) statusEl.hidden = true;
+    if (statusEl) { statusEl.hidden = true; statusEl.textContent = ''; }
   }));
 }
 
