@@ -856,10 +856,55 @@ async function saveWorkflow() {
 }
 
 // Run view
+const wfStepTimers = {};   // stepIndex -> { interval, startedAt }
+
+function wfClearTimers() {
+  Object.values(wfStepTimers).forEach((t) => { try { clearInterval(t.interval); } catch (_) {} });
+  Object.keys(wfStepTimers).forEach((k) => delete wfStepTimers[k]);
+}
+
+function wfActIcon(kind) {
+  if (kind === 'tool') return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.7 2.7-2-2 2.7-2.7z"/></svg>`;
+  if (kind === 'text') return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`;
+  if (kind === 'error') return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>`;
+}
+
+function wfAppendActivity(stepIndex, kind, text) {
+  const feed = $(`#wf-activity-${stepIndex}`);
+  if (!feed) return;
+  const emptyEl = feed.querySelector('.wf-activity-empty');
+  if (emptyEl) emptyEl.remove();
+  const row = document.createElement('div');
+  row.className = `wf-act wf-act-${kind}`;
+  const icon = document.createElement('div');
+  icon.className = 'wf-act-icon';
+  // eslint-disable-next-line no-unsanitized/property -- static SVG markup, no user input
+  icon.innerHTML = wfActIcon(kind);
+  const body = document.createElement('div');
+  body.className = 'wf-act-body';
+  if (kind === 'tool') {
+    const sp = text.indexOf('  ');
+    if (sp > 0) {
+      const strong = document.createElement('strong');
+      strong.textContent = text.slice(0, sp);
+      body.appendChild(strong);
+      body.appendChild(document.createTextNode(' ' + text.slice(sp + 2)));
+    } else { body.textContent = text; }
+  } else {
+    body.textContent = text;
+  }
+  row.appendChild(icon);
+  row.appendChild(body);
+  feed.appendChild(row);
+  feed.scrollTop = feed.scrollHeight;
+}
+
 async function runWorkflow(workflowId) {
   const workflow = workflowsCache.find((w) => w.id === workflowId);
   if (!workflow) return;
 
+  wfClearTimers();
   const nameEl = $('#wf-run-name');
   const badge = $('#wf-run-status-badge');
   const stopBtn = $('#btn-stop-wf');
@@ -869,19 +914,24 @@ async function runWorkflow(workflowId) {
   if (stopBtn) stopBtn.hidden = false;
   wfShowView('run');
 
-  // Render pending nodes
   if (stepsEl) {
     const connArrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
-    // eslint-disable-next-line no-unsanitized/property
+    // eslint-disable-next-line no-unsanitized/property -- step name/prompt escaped via escapeHtml
     stepsEl.innerHTML = workflow.steps.map((step, i) => `
       ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${connArrow}</div></div>` : ''}
       <div class="wf-run-node is-pending" id="wf-node-${i}">
         <div class="wf-run-node-head">
           <div class="wf-run-node-status"></div>
-          <div class="wf-run-node-title">${escapeHtml(step.name)}</div>
+          <div class="wf-run-node-titlewrap">
+            <div class="wf-run-node-title">${escapeHtml(step.name)}</div>
+            <div class="wf-run-node-prompt">${escapeHtml((step.prompt || '').split('\n')[0] || 'No prompt set')}</div>
+          </div>
+          <div class="wf-run-node-timer" id="wf-timer-${i}"></div>
           <div class="wf-run-node-state-label">Pending</div>
         </div>
-        <div class="wf-run-output is-empty" id="wf-output-${i}">Waiting for previous step...</div>
+        <div class="wf-run-activity" id="wf-activity-${i}">
+          <div class="wf-activity-empty">${i === 0 ? 'Starting...' : 'Waiting for previous step...'}</div>
+        </div>
       </div>
     `).join('');
   }
@@ -898,17 +948,21 @@ window.husk.workflows.onStepStart((d) => {
   const label = node && node.querySelector('.wf-run-node-state-label');
   if (node) node.className = 'wf-run-node is-running';
   if (label) label.textContent = 'Running';
-  const out = $(`#wf-output-${d.stepIndex}`);
-  if (out) { out.textContent = ''; out.classList.remove('is-empty'); }
+  const feed = $(`#wf-activity-${d.stepIndex}`);
+  if (feed) { const e = feed.querySelector('.wf-activity-empty'); if (e) e.remove(); }
+  // Start an elapsed timer for this step.
+  const startedAt = Date.now();
+  const timerEl = $(`#wf-timer-${d.stepIndex}`);
+  const interval = setInterval(() => {
+    if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - startedAt) / 1000)}s`;
+  }, 1000);
+  wfStepTimers[d.stepIndex] = { interval, startedAt };
+  if (timerEl) timerEl.textContent = '0s';
 });
 
-window.husk.workflows.onStepOutput((d) => {
+window.husk.workflows.onStepActivity((d) => {
   if (d.runId !== activeRunId) return;
-  const out = $(`#wf-output-${d.stepIndex}`);
-  if (!out) return;
-  out.classList.remove('is-empty');
-  out.textContent += d.chunk;
-  out.scrollTop = out.scrollHeight;
+  wfAppendActivity(d.stepIndex, d.kind || 'status', d.text || '');
 });
 
 window.husk.workflows.onStepDone((d) => {
@@ -919,11 +973,20 @@ window.husk.workflows.onStepDone((d) => {
   const lbl = d.status === 'done' ? 'Done' : d.status === 'cancelled' ? 'Cancelled' : 'Failed';
   if (node) node.className = `wf-run-node ${cls}`;
   if (label) label.textContent = lbl;
+  // Freeze the timer at its final value.
+  const t = wfStepTimers[d.stepIndex];
+  if (t) {
+    clearInterval(t.interval);
+    const timerEl = $(`#wf-timer-${d.stepIndex}`);
+    if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - t.startedAt) / 1000)}s`;
+    delete wfStepTimers[d.stepIndex];
+  }
 });
 
 window.husk.workflows.onRunDone((d) => {
   if (d.runId !== activeRunId) return;
   activeRunId = null;
+  wfClearTimers();
   const badge = $('#wf-run-status-badge');
   const stopBtn = $('#btn-stop-wf');
   if (stopBtn) stopBtn.hidden = true;

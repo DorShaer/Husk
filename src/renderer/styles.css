@@ -4,7 +4,7 @@
 
 /* Base dark theme (warm neutral).  Accent is set independently via [data-accent]. */
 /* Refined Pro: cool-neutral surfaces with a slight warm cast to honor the
-   HUSK orange brand. Accent is rationed — used only on primary CTA, active
+   HUSK orange brand. Accent is rationed - used only on primary CTA, active
    nav indicator, focus ring, and progress bars. Everything else is neutral
    so the chrome reads as a serious tool, not a candy app. */
 :root,
@@ -386,7 +386,7 @@ body[data-rail="expanded"] .rail { width: 220px; }
 /* Inline sidebar-toggle button. Sits inside the rail, top-right, looks like
    a proper sidebar icon (Notion / Linear convention). Replaces the floating
    off-rail circle that read as a UI artifact. */
-/* rail-top removed — toggle lives in #topbar as .topbar-sidebar-btn */
+/* rail-top removed - toggle lives in #topbar as .topbar-sidebar-btn */
 .rail-nav { display: flex; flex-direction: column; gap: 2px; }
 .rail-spacer { flex: 1; }
 .rail-item {
@@ -424,7 +424,7 @@ body[data-rail="expanded"] .rail { width: 220px; }
   transition: color 0.12s var(--ease);
 }
 .rail-item .ri-icon svg { width: 19px; height: 19px; display: block; }
-/* When the rail is collapsed (icon-only), icons need to be visibly comfortable —
+/* When the rail is collapsed (icon-only), icons need to be visibly comfortable -
    16px feels stunted at 72px column width. Bigger targets + brighter color +
    square hit area so the row reads as a proper icon-nav (Linear/Notion style). */
 body[data-rail="collapsed"] .rail-item {
@@ -1095,7 +1095,17 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   0%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
   50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 8%, transparent); }
 }
-.wf-run-node-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+.wf-run-node-titlewrap { flex: 1; min-width: 0; }
+.wf-run-node-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.wf-run-node-prompt {
+  font-size: 11px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 1px;
+}
+.wf-run-node-timer {
+  font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
 .wf-run-node-state-label {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--text-3);
@@ -1105,20 +1115,60 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .wf-run-node.is-running .wf-run-node-state-label { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg-2)); }
 .wf-run-node.is-done .wf-run-node-state-label { color: var(--emerald); background: color-mix(in srgb, var(--emerald) 10%, var(--bg-2)); }
 .wf-run-node.is-failed .wf-run-node-state-label { color: var(--rose); background: color-mix(in srgb, var(--rose) 10%, var(--bg-2)); }
-.wf-run-output {
+
+/* Live activity feed */
+.wf-run-activity {
   border-top: 1px solid var(--line);
   background: var(--bg);
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 12px; line-height: 1.65;
-  color: var(--text-2);
-  padding: 14px 18px;
-  min-height: 60px;
-  max-height: 320px;
+  padding: 10px 14px;
+  min-height: 56px;
+  max-height: 360px;
   overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  display: flex; flex-direction: column; gap: 7px;
 }
-.wf-run-output.is-empty { color: var(--text-3); font-style: italic; }
+.wf-activity-empty { color: var(--text-3); font-style: italic; font-size: 12px; padding: 6px 4px; }
+.wf-act {
+  display: flex; gap: 8px; align-items: flex-start;
+  font-size: 12px; line-height: 1.55;
+}
+.wf-act-icon {
+  flex: 0 0 auto; width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  margin-top: 1px;
+}
+.wf-act-icon svg { width: 13px; height: 13px; display: block; }
+.wf-act-body { flex: 1; min-width: 0; word-break: break-word; }
+.wf-act-status .wf-act-body, .wf-act-status .wf-act-icon { color: var(--text-3); }
+.wf-act-tool .wf-act-body {
+  color: var(--text-2);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px;
+}
+.wf-act-tool .wf-act-body strong { color: var(--accent); font-weight: 600; }
+.wf-act-tool .wf-act-icon { color: var(--accent); }
+.wf-act-text .wf-act-body {
+  color: var(--text); white-space: pre-wrap;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px 10px;
+}
+.wf-act-text .wf-act-icon { color: var(--text-3); }
+.wf-act-error .wf-act-body { color: var(--rose); white-space: pre-wrap; }
+.wf-act-error .wf-act-icon { color: var(--rose); }
+
+/* Stop button */
+.btn-danger {
+  background: var(--rose);
+  color: #fff; border: 0;
+  border-radius: var(--radius-md);
+  padding: 0 14px; height: var(--control-h);
+  font-size: 13px; font-weight: 500; line-height: 1;
+  font-family: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  white-space: nowrap;
+  transition: background 0.12s var(--ease);
+}
+.btn-danger svg { width: 13px; height: 13px; display: block; }
+.btn-danger:hover { background: color-mix(in srgb, var(--rose) 86%, black); }
+.btn-danger:active { background: color-mix(in srgb, var(--rose) 75%, black); }
 
 /* ─── Agents page ─────────────────────────────────────────────────────── */
 
