@@ -249,16 +249,36 @@
           <div id="wf-builder-view" hidden>
             <div class="page-head">
               <div class="page-head-left">
-                <button class="ghost-btn" id="btn-wf-builder-back">Back</button>
-                <input class="wf-name-input" id="wf-name-input" type="text" maxlength="80" placeholder="Workflow name" />
+                <button class="wf-back-link" id="btn-wf-builder-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                  Workflows
+                </button>
               </div>
               <div class="page-head-right">
-                <button class="btn-primary" id="btn-save-workflow">Save Workflow</button>
+                <button class="btn-primary" id="btn-save-workflow">Save</button>
               </div>
             </div>
-            <div class="page-body wf-builder-body">
-              <div id="wf-steps-list" class="wf-steps-list"></div>
-              <button class="wf-add-step-btn" id="btn-add-wf-step">+ Add step</button>
+            <div class="page-body">
+              <div class="wf-builder-header">
+                <div class="wf-builder-title-row">
+                  <input class="wf-name-input" id="wf-name-input" type="text" maxlength="80" placeholder="Workflow name" />
+                </div>
+                <div class="wf-builder-meta-row">
+                  <span class="wf-trigger-label">Run:</span>
+                  <select class="wf-step-select" id="wf-trigger-select" style="width:auto;flex:0 0 auto">
+                    <option value="manual">Manually only</option>
+                    <option value="on-launch">On Husk launch</option>
+                    <option value="on-session">On new chat session</option>
+                  </select>
+                </div>
+              </div>
+              <div class="wf-builder-body">
+                <div id="wf-steps-list" class="wf-steps-list"></div>
+                <button class="wf-add-step-btn" id="btn-add-wf-step">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
+                  Add step
+                </button>
+              </div>
             </div>
           </div>
 
@@ -266,7 +286,10 @@
           <div id="wf-run-view" hidden>
             <div class="page-head">
               <div class="page-head-left">
-                <button class="ghost-btn" id="btn-wf-run-back">Back</button>
+                <button class="wf-back-link" id="btn-wf-run-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                  Workflows
+                </button>
                 <div class="wf-run-meta">
                   <span class="wf-run-name" id="wf-run-name"></span>
                   <span class="wf-run-status-badge" id="wf-run-status-badge">Running</span>
