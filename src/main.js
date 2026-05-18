@@ -1347,31 +1347,73 @@ async function executeWorkflow(event, workflow, run) {
       }
     }
 
-    let output = '';
-    const child = spawn(cmd, ['-p', prompt], {
+    // claude supports stream-json: real-time agent events. Other CLIs fall
+    // back to plain -p (buffered text). useStreamJson drives the parser path.
+    const useStreamJson = cmd === 'claude';
+    const args = useStreamJson
+      ? ['-p', prompt, '--output-format', 'stream-json', '--verbose']
+      : ['-p', prompt];
+
+    const activity = (kind, text) => {
+      wfEmit(event, 'wf:step:activity', { runId: run.id, stepIndex: i, kind, text: String(text || '') });
+    };
+
+    let resultText = '';
+    let lineBuf = '';
+    let sawAnyEvent = false;
+
+    const child = spawn(cmd, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 300000,
+      env: { ...process.env },
     });
     run.currentChild = child;
+    activity('status', 'Starting the CLI agent...');
 
     child.stdout.on('data', (d) => {
-      output += d.toString();
-      stepState.output = output;
-      wfEmit(event, 'wf:step:output', { runId: run.id, stepIndex: i, chunk: d.toString() });
+      if (!useStreamJson) {
+        resultText += d.toString();
+        activity('text', d.toString());
+        return;
+      }
+      lineBuf += d.toString();
+      let nl;
+      while ((nl = lineBuf.indexOf('\n')) >= 0) {
+        const line = lineBuf.slice(0, nl).trim();
+        lineBuf = lineBuf.slice(nl + 1);
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line); } catch (_) { activity('text', line); continue; }
+        sawAnyEvent = true;
+        handleStreamEvent(ev, activity, (txt) => { resultText = txt; });
+      }
     });
     child.stderr.on('data', (d) => {
-      wfEmit(event, 'wf:step:output', { runId: run.id, stepIndex: i, chunk: d.toString() });
+      const t = d.toString().trim();
+      if (t) activity('error', t);
     });
+
+    // Hard timeout: 5 min per step, force-killed.
+    const killTimer = setTimeout(() => {
+      activity('error', 'Step timed out after 5 minutes, killing the agent.');
+      try { child.kill('SIGKILL'); } catch (_) {}
+    }, 300000);
 
     await new Promise((resolve) => {
       child.on('close', (code) => {
+        clearTimeout(killTimer);
+        if (useStreamJson && !sawAnyEvent && resultText === '') {
+          activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
+        }
         stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
         stepState.finishedAt = new Date().toISOString();
-        previousOutput = output;
-        wfEmit(event, 'wf:step:done', { runId: run.id, stepIndex: i, status: stepState.status });
+        stepState.output = resultText;
+        previousOutput = resultText;
+        wfEmit(event, 'wf:step:done', { runId: run.id, stepIndex: i, status: stepState.status, output: resultText });
         resolve();
       });
-      child.on('error', () => {
+      child.on('error', (e) => {
+        clearTimeout(killTimer);
+        activity('error', e.message);
         stepState.status = 'failed';
         wfEmit(event, 'wf:step:done', { runId: run.id, stepIndex: i, status: 'failed' });
         resolve();
@@ -1385,6 +1427,28 @@ async function executeWorkflow(event, workflow, run) {
   run.finishedAt = new Date().toISOString();
   wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
   activeRuns.delete(run.id);
+}
+
+// Translates one claude stream-json event into activity feed lines.
+function handleStreamEvent(ev, activity, setResult) {
+  if (!ev || !ev.type) return;
+  if (ev.type === 'system' && ev.subtype === 'init') {
+    activity('status', `Agent ready (model: ${ev.model || 'default'})`);
+  } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
+    for (const block of ev.message.content) {
+      if (block.type === 'text' && block.text && block.text.trim()) {
+        activity('text', block.text.trim());
+      } else if (block.type === 'tool_use') {
+        const inp = block.input || {};
+        const detail = inp.command || inp.file_path || inp.pattern || inp.description || inp.url || '';
+        activity('tool', detail ? `${block.name}  ${String(detail).slice(0, 140)}` : block.name);
+      }
+    }
+  } else if (ev.type === 'result') {
+    if (ev.result) setResult(String(ev.result));
+    const secs = Math.round((ev.duration_ms || 0) / 1000);
+    activity('status', ev.is_error ? 'Agent finished with an error' : `Completed in ${secs}s`);
+  }
 }
 
 ipcMain.handle('profiles:generate', async (_e, description) => {

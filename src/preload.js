@@ -70,7 +70,7 @@ contextBridge.exposeInMainWorld('husk', {
     generateStepPrompt: (desc) => ipcRenderer.invoke('workflows:generateStepPrompt', desc),
     getSessionContext: () => ipcRenderer.invoke('workflows:getSessionContext'),
     onStepStart: (cb) => ipcRenderer.on('wf:step:start', (_e, d) => cb(d)),
-    onStepOutput: (cb) => ipcRenderer.on('wf:step:output', (_e, d) => cb(d)),
+    onStepActivity: (cb) => ipcRenderer.on('wf:step:activity', (_e, d) => cb(d)),
     onStepDone: (cb) => ipcRenderer.on('wf:step:done', (_e, d) => cb(d)),
     onRunDone: (cb) => ipcRenderer.on('wf:run:done', (_e, d) => cb(d)),
   },
