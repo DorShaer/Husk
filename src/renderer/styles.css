@@ -1164,6 +1164,109 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .wf-act-error .wf-act-body { color: var(--rose); white-space: pre-wrap; }
 .wf-act-error .wf-act-icon { color: var(--rose); }
 
+/* Tool call chip */
+.wf-tool-chip {
+  display: inline-block;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-3));
+  color: var(--accent);
+  font-weight: 600; font-size: 10.5px;
+  padding: 1px 7px; border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  letter-spacing: 0.02em;
+}
+.wf-tool-arg { color: var(--text-3); margin-left: 7px; }
+
+/* Markdown-rendered text block */
+.wf-act-text .wf-act-body { padding: 0; background: none; border: 0; }
+.wf-act-text .md-p { margin: 0 0 6px; color: var(--text); }
+.wf-act-text .md-p:last-child { margin-bottom: 0; }
+.wf-act-text .md-h1, .wf-act-text .md-h2, .wf-act-text .md-h3 {
+  margin: 10px 0 6px; color: var(--text); font-weight: 600; line-height: 1.3;
+  font-family: var(--font-display); letter-spacing: -0.01em;
+}
+.wf-act-text .md-h1 { font-size: 16px; }
+.wf-act-text .md-h2 { font-size: 14px; }
+.wf-act-text .md-h3 { font-size: 13px; }
+.wf-act-text .md-ul, .wf-act-text .md-ol { margin: 4px 0 8px; padding-left: 20px; }
+.wf-act-text .md-ul li, .wf-act-text .md-ol li { margin: 2px 0; color: var(--text); }
+.md-code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px; background: var(--bg-3);
+  padding: 1px 5px; border-radius: 4px; color: var(--accent);
+}
+.md-pre {
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px; margin: 6px 0; overflow-x: auto;
+}
+.md-pre code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11.5px; color: var(--text); background: none; padding: 0;
+  white-space: pre;
+}
+
+/* Collapsible run node */
+.wf-run-node-head { cursor: pointer; }
+.wf-run-node-caret {
+  flex: 0 0 auto; color: var(--text-3);
+  display: flex; align-items: center;
+  transition: transform var(--motion-base) var(--ease);
+}
+.wf-run-node-caret svg { width: 16px; height: 16px; display: block; }
+.wf-run-node.is-collapsed .wf-run-node-caret { transform: rotate(-90deg); }
+.wf-run-node.is-collapsed .wf-run-node-body { display: none; }
+.wf-run-node-body { display: block; }
+
+/* Result card */
+.wf-run-result {
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--emerald) 5%, var(--bg-1));
+  padding: 12px 16px 14px;
+}
+.wf-run-node.is-failed .wf-run-result { background: color-mix(in srgb, var(--rose) 5%, var(--bg-1)); }
+.wf-run-result-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--emerald); margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.wf-run-result-label::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--emerald);
+}
+.wf-run-node.is-failed .wf-run-result-label { color: var(--rose); }
+.wf-run-node.is-failed .wf-run-result-label::before { background: var(--rose); }
+.wf-run-result-body { font-size: 12.5px; line-height: 1.6; color: var(--text); }
+.wf-run-result-body .md-p { margin: 0 0 6px; }
+.wf-run-result-body .md-p:last-child { margin-bottom: 0; }
+.wf-run-result-body .md-h1 { font-size: 16px; }
+.wf-run-result-body .md-h2 { font-size: 14px; }
+.wf-run-result-body .md-h3 { font-size: 13px; }
+.wf-run-result-body .md-h1, .wf-run-result-body .md-h2, .wf-run-result-body .md-h3 {
+  margin: 10px 0 6px; font-weight: 600; font-family: var(--font-display); letter-spacing: -0.01em;
+}
+.wf-run-result-body .md-ul, .wf-run-result-body .md-ol { margin: 4px 0 8px; padding-left: 20px; }
+.wf-run-result-body .md-ul li, .wf-run-result-body .md-ol li { margin: 2px 0; }
+
+/* Progress bar */
+.wf-progress-wrap {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 20px;
+}
+.wf-progress-track {
+  flex: 1; height: 6px;
+  background: var(--bg-3); border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.wf-progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, white));
+  border-radius: var(--radius-pill);
+  transition: width var(--motion-slow) var(--ease);
+}
+.wf-progress-label {
+  font-size: 11px; color: var(--text-3); font-weight: 500;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
 /* Stop button */
 .btn-danger {
   background: var(--rose);
