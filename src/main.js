@@ -1428,6 +1428,55 @@ function wfPickNextEdge(graph, nodeId, output) {
   return fallback || null;
 }
 
+// True when a branching node should route by the AI's own decision: it has
+// 2+ outgoing edges and none of them carries an explicit text condition.
+function wfIsAiRouted(graph, nodeId) {
+  const out = graph.edges.filter((e) => e.from === nodeId);
+  if (out.length < 2) return false;
+  return !out.some((e) => e.condition && (e.condition.type === 'contains' || e.condition.type === 'regex'));
+}
+
+// Instruction appended to a branching step's system prompt so it ends its
+// response with a machine-readable routing directive.
+function wfRouteInstruction(targetNames) {
+  return `\n\nThis step decides which step runs next. After your full response, on a final separate line, output exactly:\nROUTE: <name>\nwhere <name> is one of: ${targetNames.join(' | ')}. To end the workflow instead, output ROUTE: END. The ROUTE line must be the very last line, with nothing after it.`;
+}
+
+// Resolve the next edge for a branching node. AI-routed nodes parse the
+// ROUTE: directive from the output; explicit-condition nodes use the
+// condition matcher. Returns { edge, decision } or null to end.
+function wfResolveNext(graph, node, output, byId) {
+  const out = graph.edges.filter((e) => e.from === node.id);
+  if (!out.length) return null;
+  if (out.length === 1) return { edge: out[0], decision: null };
+
+  if (!wfIsAiRouted(graph, node.id)) {
+    const edge = wfPickNextEdge(graph, node.id, output);
+    return edge ? { edge, decision: null } : null;
+  }
+
+  // AI-routed: parse the last ROUTE: line.
+  const matches = String(output || '').match(/ROUTE:\s*([^\n\r]+)/gi);
+  if (matches && matches.length) {
+    const raw = matches[matches.length - 1].replace(/ROUTE:\s*/i, '').trim();
+    if (/^END\b/i.test(raw)) return { edge: null, decision: 'END' };
+    const want = raw.toLowerCase();
+    let edge = out.find((e) => {
+      const n = byId.get(e.to);
+      return n && n.name.trim().toLowerCase() === want;
+    });
+    if (!edge) {
+      edge = out.find((e) => {
+        const n = byId.get(e.to);
+        return n && n.name.trim() && want.includes(n.name.trim().toLowerCase());
+      });
+    }
+    if (edge) return { edge, decision: (byId.get(edge.to) || {}).name };
+  }
+  // The AI did not give a usable directive: fall back to the first branch.
+  return { edge: out[0], decision: null };
+}
+
 async function executeWorkflow(event, workflow, run) {
   // Yield so ipcMain.handle can return the runId to the renderer before we
   // emit any step events. Without this, wf:node:start fires before the
@@ -1467,10 +1516,20 @@ async function executeWorkflow(event, workflow, run) {
     }
 
     const useStreamJson = cmd === 'claude';
-    const WF_SYSTEM = 'You are running as an automated workflow step. Respond with only the direct result of the task. Do not use status banners, mode headers, structured output scaffolding, or voice notification commands. Plain, direct output only.';
+    let wfSystem = 'You are running as an automated workflow step. Respond with only the direct result of the task. Do not use status banners, mode headers, structured output scaffolding, or voice notification commands. Plain, direct output only.';
+    // If this node has 2+ branches with no explicit conditions, it routes by
+    // its own decision: tell it to end with a ROUTE: directive.
+    if (wfIsAiRouted(graph, node.id)) {
+      const targets = graph.edges
+        .filter((e) => e.from === node.id)
+        .map((e) => byId.get(e.to))
+        .filter(Boolean)
+        .map((n) => n.name);
+      if (targets.length >= 2) wfSystem += wfRouteInstruction(targets);
+    }
     const args = useStreamJson
-      ? ['-p', prompt, '--append-system-prompt', WF_SYSTEM, '--output-format', 'stream-json', '--verbose']
-      : ['-p', prompt, '--append-system-prompt', WF_SYSTEM];
+      ? ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose']
+      : ['-p', prompt, '--append-system-prompt', wfSystem];
 
     const nid = node.id;
     const activity = (kind, text) => {
@@ -1539,12 +1598,19 @@ async function executeWorkflow(event, workflow, run) {
     previousOutput = resultText;
     prevName = step.name;
 
-    // Condition-based routing: pick the next edge from this node's output.
-    const edge = wfPickNextEdge(graph, node.id, resultText);
-    if (edge) {
-      wfEmit(event, 'wf:edge:taken', { runId: run.id, edgeId: edge.id, from: edge.from, to: edge.to });
-      node = byId.get(edge.to) || null;
+    // Resolve the next step: AI-decided ROUTE directive, or text conditions.
+    const next = wfResolveNext(graph, node, resultText, byId);
+    if (next && next.edge) {
+      const target = byId.get(next.edge.to);
+      if (next.decision && target) {
+        wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: node.id, kind: 'status', text: `Routing decision: continue to "${target.name}"` });
+      }
+      wfEmit(event, 'wf:edge:taken', { runId: run.id, edgeId: next.edge.id, from: next.edge.from, to: next.edge.to });
+      node = target || null;
     } else {
+      if (next && next.decision === 'END') {
+        wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: node.id, kind: 'status', text: 'Routing decision: end the workflow' });
+      }
       node = null;
     }
   }
