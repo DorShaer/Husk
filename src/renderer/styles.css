@@ -1056,6 +1056,108 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 .wf-add-step-btn:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
 
+/* ─── Canvas builder ──────────────────────────────────────────────────── */
+
+.wf-builder-page-body { display: flex; flex-direction: column; overflow: hidden; }
+.wf-canvas-wrap {
+  flex: 1; min-height: 0;
+  position: relative;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg);
+}
+.wf-canvas {
+  flex: 1; min-width: 0; height: 100%;
+  position: relative;
+  background:
+    radial-gradient(circle, var(--line) 1px, transparent 1px) 0 0 / 22px 22px;
+}
+.wf-canvas-hint {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  font-size: 11px; color: var(--text-3);
+  background: var(--bg-2); border: 1px solid var(--line);
+  padding: 5px 12px; border-radius: var(--radius-pill);
+  pointer-events: none; white-space: nowrap;
+  box-shadow: var(--elev-1);
+}
+
+/* Drawflow dark theme overrides */
+.wf-canvas .drawflow { width: 100%; height: 100%; }
+.wf-canvas .drawflow .drawflow-node {
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-2);
+  padding: 0; width: 200px;
+  color: var(--text);
+}
+.wf-canvas .drawflow .drawflow-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--elev-3);
+}
+.wf-canvas .drawflow .drawflow-node .input,
+.wf-canvas .drawflow .drawflow-node .output {
+  background: var(--bg-3);
+  border: 2px solid var(--line-3);
+  width: 13px; height: 13px;
+}
+.wf-canvas .drawflow .drawflow-node .output:hover,
+.wf-canvas .drawflow .drawflow-node .input:hover { border-color: var(--accent); }
+.wf-canvas .drawflow .connection .main-path {
+  stroke: var(--line-3); stroke-width: 2.5px;
+}
+.wf-canvas .drawflow .connection .main-path:hover { stroke: var(--accent); }
+.wf-canvas .drawflow .connection .point {
+  stroke: var(--accent); fill: var(--bg-1);
+}
+
+/* Node card rendered inside a Drawflow node */
+.wf-cv-node { padding: 12px 14px; cursor: grab; }
+.wf-cv-node-top { display: flex; align-items: center; gap: 8px; }
+.wf-cv-node-badge {
+  width: 22px; height: 22px; flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-2));
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+.wf-cv-node-badge svg { width: 13px; height: 13px; }
+.wf-cv-node-name {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+}
+.wf-cv-node-meta {
+  font-size: 10.5px; color: var(--text-3); margin-top: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Node config side panel */
+.wf-node-panel {
+  width: 320px; flex: 0 0 auto;
+  border-left: 1px solid var(--line);
+  background: var(--bg-1);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.wf-node-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.wf-node-panel-title {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.wf-node-panel-close {
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--text-3); font-size: 20px; line-height: 1;
+  padding: 0 4px; border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+.wf-node-panel-close:hover { color: var(--text); background: var(--bg-3); }
+.wf-node-panel #wf-np-delete { margin-top: 4px; align-self: flex-start; }
+
 /* Run view */
 .wf-run-meta { display: flex; align-items: center; gap: 10px; }
 .wf-run-name { font-size: 15px; font-weight: 600; color: var(--text); }
