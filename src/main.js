@@ -1360,9 +1360,14 @@ async function executeWorkflow(event, workflow, run) {
     // claude supports stream-json: real-time agent events. Other CLIs fall
     // back to plain -p (buffered text). useStreamJson drives the parser path.
     const useStreamJson = cmd === 'claude';
+    // Keep workflow step output clean: tell the agent to skip any persona
+    // output format (PAI banners, NATIVE MODE scaffolding, voice notifications)
+    // and just return the result. Appended to the system prompt so it
+    // outranks CLAUDE.md memory directives.
+    const WF_SYSTEM = 'You are running as an automated workflow step. Respond with only the direct result of the task. Do not use status banners, mode headers, structured output scaffolding, or voice notification commands. Plain, direct output only.';
     const args = useStreamJson
-      ? ['-p', prompt, '--output-format', 'stream-json', '--verbose']
-      : ['-p', prompt];
+      ? ['-p', prompt, '--append-system-prompt', WF_SYSTEM, '--output-format', 'stream-json', '--verbose']
+      : ['-p', prompt, '--append-system-prompt', WF_SYSTEM];
 
     const activity = (kind, text) => {
       wfEmit(event, 'wf:step:activity', { runId: run.id, stepIndex: i, kind, text: String(text || '') });
