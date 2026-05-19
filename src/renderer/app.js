@@ -730,16 +730,29 @@ function wfNodeHtml(data) {
 
 // Create the Drawflow editor once, reuse it (clear between opens) so its
 // container listeners are not duplicated.
+// Edge conditions keyed by `${fromDfId}->${toDfId}`. Drawflow connections
+// cannot carry custom data, so conditions live here and merge in on export.
+const wfEdgeConditions = {};
+let wfSelectedEdge = null;
+function wfEdgeKey(from, to) { return `${from}->${to}`; }
+
 function wfEnsureEditor() {
-  if (wfEditor) { wfEditor.clear(); return; }
+  if (wfEditor) {
+    wfEditor.clear();
+    Object.keys(wfEdgeConditions).forEach((k) => delete wfEdgeConditions[k]);
+    return;
+  }
   const container = $('#wf-canvas');
   if (!container || typeof Drawflow === 'undefined') return;
   wfEditor = new Drawflow(container);
   wfEditor.reroute = true;
   wfEditor.start();
-  wfEditor.on('nodeSelected', (id) => showNodePanel(id));
+  wfEditor.on('nodeSelected', (id) => { hideEdgePanel(); showNodePanel(id); });
   wfEditor.on('nodeUnselected', () => hideNodePanel());
   wfEditor.on('nodeRemoved', () => hideNodePanel());
+  wfEditor.on('connectionSelected', (c) => { hideNodePanel(); showEdgePanel(c); });
+  wfEditor.on('connectionUnselected', () => hideEdgePanel());
+  wfEditor.on('connectionRemoved', (c) => { delete wfEdgeConditions[wfEdgeKey(c.output_id, c.input_id)]; });
 }
 
 function wfAddCanvasNode(data, x, y) {
@@ -772,6 +785,7 @@ function wfLoadGraph(graph) {
     const to = idMap[e.to];
     if (from != null && to != null) {
       try { wfEditor.addConnection(from, to, 'output_1', 'input_1'); } catch (_) {}
+      wfEdgeConditions[wfEdgeKey(from, to)] = e.condition || { type: 'always', value: '' };
     }
   });
 }
@@ -795,7 +809,8 @@ function wfExportGraph() {
     });
     Object.keys(n.outputs || {}).forEach((ok) => {
       ((n.outputs[ok] || {}).connections || []).forEach((c) => {
-        edges.push({ id: `edge-${id}-${c.node}`, from: String(id), to: String(c.node), condition: { type: 'always', value: '' } });
+        const cond = wfEdgeConditions[wfEdgeKey(id, c.node)] || { type: 'always', value: '' };
+        edges.push({ id: `edge-${id}-${c.node}`, from: String(id), to: String(c.node), condition: cond });
       });
     });
   });
@@ -821,6 +836,42 @@ function hideNodePanel() {
   if (panel) panel.hidden = true;
 }
 
+function showEdgePanel(conn) {
+  if (!conn) return;
+  wfSelectedEdge = { from: conn.output_id, to: conn.input_id };
+  const cond = wfEdgeConditions[wfEdgeKey(conn.output_id, conn.input_id)] || { type: 'always', value: '' };
+  $('#wf-ec-type').value = cond.type || 'always';
+  $('#wf-ec-value').value = cond.value || '';
+  wfUpdateEdgeValueRow();
+  $('#wf-edge-panel').hidden = false;
+}
+
+function hideEdgePanel() {
+  wfSelectedEdge = null;
+  const p = $('#wf-edge-panel');
+  if (p) p.hidden = true;
+}
+
+function wfUpdateEdgeValueRow() {
+  const type = $('#wf-ec-type').value;
+  const show = type === 'contains' || type === 'regex';
+  const row = $('#wf-ec-value-row');
+  const label = $('#wf-ec-value-label');
+  const input = $('#wf-ec-value');
+  if (row) row.hidden = !show;
+  if (label) label.textContent = type === 'regex' ? 'Regex pattern' : 'Text to look for';
+  if (input) input.placeholder = type === 'regex' ? 'e.g. ^(yes|true)' : 'e.g. YES';
+}
+
+function wfSyncEdgePanel() {
+  if (!wfSelectedEdge) return;
+  wfEdgeConditions[wfEdgeKey(wfSelectedEdge.from, wfSelectedEdge.to)] = {
+    type: $('#wf-ec-type').value || 'always',
+    value: $('#wf-ec-value').value || '',
+  };
+  wfUpdateEdgeValueRow();
+}
+
 function wfSyncPanelToNode() {
   if (!wfEditor || wfSelectedNodeId == null) return;
   const data = {
@@ -843,6 +894,7 @@ function openWorkflowBuilder(editId) {
   if ($('#wf-trigger-select')) $('#wf-trigger-select').value = existing ? (existing.trigger || 'manual') : 'manual';
   wfShowView('builder');
   hideNodePanel();
+  hideEdgePanel();
   // Drawflow needs the container visible and sized before start().
   setTimeout(() => {
     wfEnsureEditor();
@@ -872,11 +924,40 @@ async function saveWorkflow() {
 }
 
 // Run view
-const wfStepTimers = {};   // stepIndex -> { interval, startedAt }
+const wfStepTimers = {};   // nodeId -> { interval, startedAt }
+let wfLastRunningNode = null;
 
 function wfClearTimers() {
   Object.values(wfStepTimers).forEach((t) => { try { clearInterval(t.interval); } catch (_) {} });
   Object.keys(wfStepTimers).forEach((k) => delete wfStepTimers[k]);
+}
+
+// Every graph node in execution-ish order: BFS from the start node following
+// all edges, then any unreachable nodes appended. Branching means not all of
+// these will run; the run view shows the whole graph and lights up the path.
+function wfAllNodes(graph) {
+  const g = (graph && typeof graph === 'object') ? graph : { nodes: [], edges: [] };
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const edges = Array.isArray(g.edges) ? g.edges : [];
+  if (!nodes.length) return [];
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const hasIncoming = new Set(edges.map((e) => e.to));
+  const start = nodes.find((n) => !hasIncoming.has(n.id)) || nodes[0];
+  const order = [];
+  const seen = new Set();
+  const queue = [start];
+  while (queue.length) {
+    const n = queue.shift();
+    if (!n || seen.has(n.id)) continue;
+    seen.add(n.id);
+    order.push(n);
+    edges.filter((e) => e.from === n.id).forEach((e) => {
+      const t = byId.get(e.to);
+      if (t && !seen.has(t.id)) queue.push(t);
+    });
+  }
+  nodes.forEach((n) => { if (!seen.has(n.id)) order.push(n); });
+  return order;
 }
 
 function wfActIcon(kind) {
@@ -886,8 +967,8 @@ function wfActIcon(kind) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>`;
 }
 
-function wfAppendActivity(stepIndex, kind, text) {
-  const feed = $(`#wf-activity-${stepIndex}`);
+function wfAppendActivity(nodeId, kind, text) {
+  const feed = document.getElementById(`wf-activity-${nodeId}`);
   if (!feed) return;
 
   // Suppress PAI voice-notification tool calls outright.
@@ -933,28 +1014,31 @@ function wfAppendActivity(stepIndex, kind, text) {
   row.appendChild(body);
   feed.appendChild(row);
   // Auto-scroll only while the step is the live one.
-  const node = $(`#wf-node-${stepIndex}`);
+  const node = document.getElementById(`wf-node-${nodeId}`);
   if (node && node.classList.contains('is-running')) feed.scrollTop = feed.scrollHeight;
 }
 
-function wfToggleNode(i) {
-  const node = $(`#wf-node-${i}`);
+function wfToggleNode(nodeId) {
+  const node = document.getElementById(`wf-node-${nodeId}`);
   if (node) node.classList.toggle('is-collapsed');
 }
 
-function wfSetProgress(done, total) {
+function wfSetProgress(done, total, pctOverride) {
   const fill = $('#wf-progress-fill');
   const label = $('#wf-progress-label');
-  const pct = total ? Math.round((done / total) * 100) : 0;
+  const pct = pctOverride != null ? pctOverride : (total ? Math.round((done / total) * 100) : 0);
   if (fill) fill.style.width = `${pct}%`;
-  if (label) label.textContent = `${done} of ${total} steps`;
+  if (label) label.textContent = `${done} step${done !== 1 ? 's' : ''} run`;
 }
+
+let wfActiveRun = { total: 0, done: 0 };
 
 async function runWorkflow(workflowId) {
   const workflow = workflowsCache.find((w) => w.id === workflowId);
   if (!workflow) return;
 
   wfClearTimers();
+  wfLastRunningNode = null;
   const nameEl = $('#wf-run-name');
   const badge = $('#wf-run-status-badge');
   const stopBtn = $('#btn-stop-wf');
@@ -964,100 +1048,95 @@ async function runWorkflow(workflowId) {
   if (stopBtn) stopBtn.hidden = false;
   wfShowView('run');
 
-  let wfRunTotal = 0;
-  const orderedSteps = wfGraphOrder(workflow.graph);
+  const allNodes = wfAllNodes(workflow.graph);
 
   if (stepsEl) {
-    wfRunTotal = orderedSteps.length;
-    wfSetProgress(0, wfRunTotal);
+    wfActiveRun = { total: allNodes.length, done: 0 };
+    wfSetProgress(0, allNodes.length);
     const caret = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`;
     const connArrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
-    // eslint-disable-next-line no-unsanitized/property -- step name/prompt escaped via escapeHtml
-    stepsEl.innerHTML = orderedSteps.map((step, i) => `
+    // eslint-disable-next-line no-unsanitized/property -- node name/prompt escaped via escapeHtml
+    stepsEl.innerHTML = allNodes.map((step, i) => `
       ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${connArrow}</div></div>` : ''}
-      <div class="wf-run-node is-pending is-collapsed" id="wf-node-${i}">
-        <div class="wf-run-node-head" data-toggle="${i}">
+      <div class="wf-run-node is-pending is-collapsed" id="wf-node-${escapeAttr(step.id)}">
+        <div class="wf-run-node-head" data-toggle="${escapeAttr(step.id)}">
           <div class="wf-run-node-status"></div>
           <div class="wf-run-node-titlewrap">
             <div class="wf-run-node-title">${escapeHtml(step.name)}</div>
             <div class="wf-run-node-prompt">${escapeHtml((step.prompt || '').split('\n')[0] || 'No prompt set')}</div>
           </div>
-          <div class="wf-run-node-timer" id="wf-timer-${i}"></div>
+          <div class="wf-run-node-timer" id="wf-timer-${escapeAttr(step.id)}"></div>
           <div class="wf-run-node-state-label">Pending</div>
           <div class="wf-run-node-caret">${caret}</div>
         </div>
         <div class="wf-run-node-body">
-          <div class="wf-run-activity" id="wf-activity-${i}">
-            <div class="wf-activity-empty">${i === 0 ? 'Starting...' : 'Waiting for the previous step...'}</div>
+          <div class="wf-run-activity" id="wf-activity-${escapeAttr(step.id)}">
+            <div class="wf-activity-empty">Waiting...</div>
           </div>
-          <div class="wf-run-result" id="wf-result-${i}" hidden>
+          <div class="wf-run-result" id="wf-result-${escapeAttr(step.id)}" hidden>
             <div class="wf-run-result-label">Result</div>
-            <div class="wf-run-result-body" id="wf-result-body-${i}"></div>
+            <div class="wf-run-result-body" id="wf-result-body-${escapeAttr(step.id)}"></div>
           </div>
         </div>
       </div>
     `).join('');
     stepsEl.querySelectorAll('[data-toggle]').forEach((head) =>
-      head.addEventListener('click', () => wfToggleNode(Number(head.dataset.toggle))));
+      head.addEventListener('click', () => wfToggleNode(head.dataset.toggle)));
   }
-  wfActiveRun = { total: wfRunTotal, done: 0 };
 
   const res = await window.husk.workflows.run(workflowId);
   if (!res || !res.ok) { toast(res ? res.error : 'Could not start workflow', 'error'); wfShowView('list'); return; }
   activeRunId = res.runId;
 }
 
-let wfActiveRun = { total: 0, done: 0 };
-
-// IPC event handlers for live run updates
-window.husk.workflows.onStepStart((d) => {
+// IPC event handlers for live run updates (keyed by node id)
+window.husk.workflows.onNodeStart((d) => {
   if (d.runId !== activeRunId) return;
-  // Collapse the previous step so the active one is the focus.
-  if (d.stepIndex > 0) {
-    const prev = $(`#wf-node-${d.stepIndex - 1}`);
+  // Collapse whichever node was running so the new active one is the focus.
+  if (wfLastRunningNode) {
+    const prev = document.getElementById(`wf-node-${wfLastRunningNode}`);
     if (prev) prev.classList.add('is-collapsed');
   }
-  const node = $(`#wf-node-${d.stepIndex}`);
+  wfLastRunningNode = d.nodeId;
+  const node = document.getElementById(`wf-node-${d.nodeId}`);
   const label = node && node.querySelector('.wf-run-node-state-label');
   if (node) node.className = 'wf-run-node is-running';
   if (label) label.textContent = 'Running';
-  const feed = $(`#wf-activity-${d.stepIndex}`);
+  const feed = document.getElementById(`wf-activity-${d.nodeId}`);
   if (feed) { const e = feed.querySelector('.wf-activity-empty'); if (e) e.remove(); }
   const startedAt = Date.now();
-  const timerEl = $(`#wf-timer-${d.stepIndex}`);
+  const timerEl = document.getElementById(`wf-timer-${d.nodeId}`);
   const interval = setInterval(() => {
     if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - startedAt) / 1000)}s`;
   }, 1000);
-  wfStepTimers[d.stepIndex] = { interval, startedAt };
+  wfStepTimers[d.nodeId] = { interval, startedAt };
   if (timerEl) timerEl.textContent = '0s';
 });
 
-window.husk.workflows.onStepActivity((d) => {
+window.husk.workflows.onNodeActivity((d) => {
   if (d.runId !== activeRunId) return;
-  wfAppendActivity(d.stepIndex, d.kind || 'status', d.text || '');
+  wfAppendActivity(d.nodeId, d.kind || 'status', d.text || '');
 });
 
-window.husk.workflows.onStepDone((d) => {
+window.husk.workflows.onNodeDone((d) => {
   if (d.runId !== activeRunId) return;
-  const node = $(`#wf-node-${d.stepIndex}`);
+  const node = document.getElementById(`wf-node-${d.nodeId}`);
   const label = node && node.querySelector('.wf-run-node-state-label');
   const cls = d.status === 'done' ? 'is-done' : d.status === 'cancelled' ? 'is-cancelled' : 'is-failed';
   const lbl = d.status === 'done' ? 'Done' : d.status === 'cancelled' ? 'Cancelled' : 'Failed';
-  // Keep is-collapsed off so the just-finished step shows its result.
   if (node) node.className = `wf-run-node ${cls}`;
   if (label) label.textContent = lbl;
-  // Freeze the timer.
-  const t = wfStepTimers[d.stepIndex];
+  const t = wfStepTimers[d.nodeId];
   if (t) {
     clearInterval(t.interval);
-    const timerEl = $(`#wf-timer-${d.stepIndex}`);
+    const timerEl = document.getElementById(`wf-timer-${d.nodeId}`);
     if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - t.startedAt) / 1000)}s`;
-    delete wfStepTimers[d.stepIndex];
+    delete wfStepTimers[d.nodeId];
   }
   const cleaned = stripPaiNoise(d.output || '');
   if (cleaned) {
-    const resWrap = $(`#wf-result-${d.stepIndex}`);
-    const resBody = $(`#wf-result-body-${d.stepIndex}`);
+    const resWrap = document.getElementById(`wf-result-${d.nodeId}`);
+    const resBody = document.getElementById(`wf-result-body-${d.nodeId}`);
     if (resBody) {
       // eslint-disable-next-line no-unsanitized/property -- renderMarkdown escapes all HTML first
       resBody.innerHTML = renderMarkdown(cleaned);
@@ -1068,10 +1147,23 @@ window.husk.workflows.onStepDone((d) => {
   wfSetProgress(wfActiveRun.done, wfActiveRun.total);
 });
 
+// A branch was taken: the routing decision. The vertical run list does not
+// draw edges, so this is informational; 2c surfaces it on the canvas.
+window.husk.workflows.onEdgeTaken(() => {});
+
 window.husk.workflows.onRunDone((d) => {
   if (d.runId !== activeRunId) return;
   activeRunId = null;
   wfClearTimers();
+  // Any node never reached by the taken path is a skipped branch.
+  document.querySelectorAll('#wf-run-steps .wf-run-node.is-pending').forEach((node) => {
+    node.className = 'wf-run-node is-skipped is-collapsed';
+    const label = node.querySelector('.wf-run-node-state-label');
+    if (label) label.textContent = 'Skipped';
+    const feed = node.querySelector('.wf-run-activity');
+    if (feed) { const e = feed.querySelector('.wf-activity-empty'); if (e) e.textContent = 'Skipped by a branch condition.'; }
+  });
+  wfSetProgress(wfActiveRun.done, wfActiveRun.total, 100);
   const badge = $('#wf-run-status-badge');
   const stopBtn = $('#btn-stop-wf');
   if (stopBtn) stopBtn.hidden = true;
@@ -1095,6 +1187,9 @@ $('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => {
   if (el) { el.addEventListener('input', wfSyncPanelToNode); el.addEventListener('change', wfSyncPanelToNode); }
 });
 $('#wf-node-panel-close') && $('#wf-node-panel-close').addEventListener('click', hideNodePanel);
+$('#wf-edge-panel-close') && $('#wf-edge-panel-close').addEventListener('click', hideEdgePanel);
+$('#wf-ec-type') && $('#wf-ec-type').addEventListener('change', wfSyncEdgePanel);
+$('#wf-ec-value') && $('#wf-ec-value').addEventListener('input', wfSyncEdgePanel);
 $('#wf-np-delete') && $('#wf-np-delete').addEventListener('click', () => {
   if (wfEditor && wfSelectedNodeId != null) {
     wfEditor.removeNodeId('node-' + wfSelectedNodeId);
