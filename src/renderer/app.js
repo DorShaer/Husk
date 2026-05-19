@@ -874,8 +874,17 @@ function wfActIcon(kind) {
 function wfAppendActivity(stepIndex, kind, text) {
   const feed = $(`#wf-activity-${stepIndex}`);
   if (!feed) return;
+
+  // Suppress PAI voice-notification tool calls outright.
+  if (kind === 'tool' && /curl .*localhost:8888\/notify/.test(text)) return;
+  if (kind === 'text') {
+    text = stripPaiNoise(text);
+    if (!text) return;
+  }
+
   const emptyEl = feed.querySelector('.wf-activity-empty');
   if (emptyEl) emptyEl.remove();
+
   const row = document.createElement('div');
   row.className = `wf-act wf-act-${kind}`;
   const icon = document.createElement('div');
@@ -884,21 +893,46 @@ function wfAppendActivity(stepIndex, kind, text) {
   icon.innerHTML = wfActIcon(kind);
   const body = document.createElement('div');
   body.className = 'wf-act-body';
+
   if (kind === 'tool') {
+    // "Bash  git diff" -> chip with tool name + muted args.
     const sp = text.indexOf('  ');
+    const chip = document.createElement('span');
+    chip.className = 'wf-tool-chip';
+    chip.textContent = sp > 0 ? text.slice(0, sp) : text;
+    body.appendChild(chip);
     if (sp > 0) {
-      const strong = document.createElement('strong');
-      strong.textContent = text.slice(0, sp);
-      body.appendChild(strong);
-      body.appendChild(document.createTextNode(' ' + text.slice(sp + 2)));
-    } else { body.textContent = text; }
+      const arg = document.createElement('span');
+      arg.className = 'wf-tool-arg';
+      arg.textContent = text.slice(sp + 2);
+      body.appendChild(arg);
+    }
+  } else if (kind === 'text') {
+    // eslint-disable-next-line no-unsanitized/property -- renderMarkdown escapes all HTML first
+    body.innerHTML = renderMarkdown(text);
   } else {
     body.textContent = text;
   }
+
   row.appendChild(icon);
   row.appendChild(body);
   feed.appendChild(row);
-  feed.scrollTop = feed.scrollHeight;
+  // Auto-scroll only while the step is the live one.
+  const node = $(`#wf-node-${stepIndex}`);
+  if (node && node.classList.contains('is-running')) feed.scrollTop = feed.scrollHeight;
+}
+
+function wfToggleNode(i) {
+  const node = $(`#wf-node-${i}`);
+  if (node) node.classList.toggle('is-collapsed');
+}
+
+function wfSetProgress(done, total) {
+  const fill = $('#wf-progress-fill');
+  const label = $('#wf-progress-label');
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  if (fill) fill.style.width = `${pct}%`;
+  if (label) label.textContent = `${done} of ${total} steps`;
 }
 
 async function runWorkflow(workflowId) {
@@ -915,13 +949,18 @@ async function runWorkflow(workflowId) {
   if (stopBtn) stopBtn.hidden = false;
   wfShowView('run');
 
+  let wfRunTotal = 0;
+
   if (stepsEl) {
+    wfRunTotal = workflow.steps.length;
+    wfSetProgress(0, wfRunTotal);
+    const caret = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`;
     const connArrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
     // eslint-disable-next-line no-unsanitized/property -- step name/prompt escaped via escapeHtml
     stepsEl.innerHTML = workflow.steps.map((step, i) => `
       ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${connArrow}</div></div>` : ''}
-      <div class="wf-run-node is-pending" id="wf-node-${i}">
-        <div class="wf-run-node-head">
+      <div class="wf-run-node is-pending is-collapsed" id="wf-node-${i}">
+        <div class="wf-run-node-head" data-toggle="${i}">
           <div class="wf-run-node-status"></div>
           <div class="wf-run-node-titlewrap">
             <div class="wf-run-node-title">${escapeHtml(step.name)}</div>
@@ -929,29 +968,45 @@ async function runWorkflow(workflowId) {
           </div>
           <div class="wf-run-node-timer" id="wf-timer-${i}"></div>
           <div class="wf-run-node-state-label">Pending</div>
+          <div class="wf-run-node-caret">${caret}</div>
         </div>
-        <div class="wf-run-activity" id="wf-activity-${i}">
-          <div class="wf-activity-empty">${i === 0 ? 'Starting...' : 'Waiting for previous step...'}</div>
+        <div class="wf-run-node-body">
+          <div class="wf-run-activity" id="wf-activity-${i}">
+            <div class="wf-activity-empty">${i === 0 ? 'Starting...' : 'Waiting for the previous step...'}</div>
+          </div>
+          <div class="wf-run-result" id="wf-result-${i}" hidden>
+            <div class="wf-run-result-label">Result</div>
+            <div class="wf-run-result-body" id="wf-result-body-${i}"></div>
+          </div>
         </div>
       </div>
     `).join('');
+    stepsEl.querySelectorAll('[data-toggle]').forEach((head) =>
+      head.addEventListener('click', () => wfToggleNode(Number(head.dataset.toggle))));
   }
+  wfActiveRun = { total: wfRunTotal, done: 0 };
 
   const res = await window.husk.workflows.run(workflowId);
   if (!res || !res.ok) { toast(res ? res.error : 'Could not start workflow', 'error'); wfShowView('list'); return; }
   activeRunId = res.runId;
 }
 
+let wfActiveRun = { total: 0, done: 0 };
+
 // IPC event handlers for live run updates
 window.husk.workflows.onStepStart((d) => {
   if (d.runId !== activeRunId) return;
+  // Collapse the previous step so the active one is the focus.
+  if (d.stepIndex > 0) {
+    const prev = $(`#wf-node-${d.stepIndex - 1}`);
+    if (prev) prev.classList.add('is-collapsed');
+  }
   const node = $(`#wf-node-${d.stepIndex}`);
   const label = node && node.querySelector('.wf-run-node-state-label');
   if (node) node.className = 'wf-run-node is-running';
   if (label) label.textContent = 'Running';
   const feed = $(`#wf-activity-${d.stepIndex}`);
   if (feed) { const e = feed.querySelector('.wf-activity-empty'); if (e) e.remove(); }
-  // Start an elapsed timer for this step.
   const startedAt = Date.now();
   const timerEl = $(`#wf-timer-${d.stepIndex}`);
   const interval = setInterval(() => {
@@ -972,9 +1027,10 @@ window.husk.workflows.onStepDone((d) => {
   const label = node && node.querySelector('.wf-run-node-state-label');
   const cls = d.status === 'done' ? 'is-done' : d.status === 'cancelled' ? 'is-cancelled' : 'is-failed';
   const lbl = d.status === 'done' ? 'Done' : d.status === 'cancelled' ? 'Cancelled' : 'Failed';
+  // Keep is-collapsed off so the just-finished step shows its result.
   if (node) node.className = `wf-run-node ${cls}`;
   if (label) label.textContent = lbl;
-  // Freeze the timer at its final value.
+  // Freeze the timer.
   const t = wfStepTimers[d.stepIndex];
   if (t) {
     clearInterval(t.interval);
@@ -982,6 +1038,18 @@ window.husk.workflows.onStepDone((d) => {
     if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - t.startedAt) / 1000)}s`;
     delete wfStepTimers[d.stepIndex];
   }
+  const cleaned = stripPaiNoise(d.output || '');
+  if (cleaned) {
+    const resWrap = $(`#wf-result-${d.stepIndex}`);
+    const resBody = $(`#wf-result-body-${d.stepIndex}`);
+    if (resBody) {
+      // eslint-disable-next-line no-unsanitized/property -- renderMarkdown escapes all HTML first
+      resBody.innerHTML = renderMarkdown(cleaned);
+    }
+    if (resWrap) resWrap.hidden = false;
+  }
+  wfActiveRun.done += 1;
+  wfSetProgress(wfActiveRun.done, wfActiveRun.total);
 });
 
 window.husk.workflows.onRunDone((d) => {
@@ -3079,6 +3147,62 @@ window.addEventListener('keydown', (e) => {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+// Minimal, safe markdown -> HTML. Escapes ALL html first, then layers
+// formatting on the already-safe string. Used for workflow step output,
+// which is untrusted AI text. Order matters: escape before any tag insertion.
+function renderMarkdown(src) {
+  let s = escapeHtml(String(src ?? ''));
+  const codeBlocks = [];
+  // Fenced code blocks: stash, restore last so inner content is untouched.
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => {
+    codeBlocks.push(`<pre class="md-pre"><code>${code.replace(/\n$/, '')}</code></pre>`);
+    return ` CB${codeBlocks.length - 1} `;
+  });
+  const lines = s.split('\n');
+  const out = [];
+  let listType = null;
+  const closeList = () => { if (listType) { out.push(`</${listType}>`); listType = null; } };
+  for (const line of lines) {
+    if (/^ CB\d+ $/.test(line.trim())) { closeList(); out.push(line.trim()); continue; }
+    let m;
+    if ((m = line.match(/^### (.+)/))) { closeList(); out.push(`<h3 class="md-h3">${inlineMd(m[1])}</h3>`); continue; }
+    if ((m = line.match(/^## (.+)/)))  { closeList(); out.push(`<h2 class="md-h2">${inlineMd(m[1])}</h2>`); continue; }
+    if ((m = line.match(/^# (.+)/)))   { closeList(); out.push(`<h1 class="md-h1">${inlineMd(m[1])}</h1>`); continue; }
+    if ((m = line.match(/^\s*[-*]\s+(.+)/))) {
+      if (listType !== 'ul') { closeList(); out.push('<ul class="md-ul">'); listType = 'ul'; }
+      out.push(`<li>${inlineMd(m[1])}</li>`); continue;
+    }
+    if ((m = line.match(/^\s*\d+\.\s+(.+)/))) {
+      if (listType !== 'ol') { closeList(); out.push('<ol class="md-ol">'); listType = 'ol'; }
+      out.push(`<li>${inlineMd(m[1])}</li>`); continue;
+    }
+    if (line.trim() === '') { closeList(); continue; }
+    closeList();
+    out.push(`<p class="md-p">${inlineMd(line)}</p>`);
+  }
+  closeList();
+  let html = out.join('\n');
+  html = html.replace(/ CB(\d+) /g, (_m, i) => codeBlocks[Number(i)] || '');
+  return html;
+}
+function inlineMd(s) {
+  return s
+    .replace(/`([^`]+)`/g, '<code class="md-code">$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+// Drop PAI persona ceremony that leaks into workflow step output.
+function stripPaiNoise(text) {
+  return String(text || '')
+    .split('\n')
+    .filter((ln) => !/^[═=]{3,}.*PAI/.test(ln.trim()))
+    .filter((ln) => !/Executing using PAI native mode/.test(ln))
+    .join('\n')
+    .trim();
+}
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ─── First-run modal + boot ──────────────────────────────────────────────────────
