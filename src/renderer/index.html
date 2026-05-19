@@ -5,10 +5,12 @@
     <title>Husk</title>
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none';" />
     <link rel="stylesheet" href="vendor/xterm.css" />
+    <link rel="stylesheet" href="vendor/drawflow.min.css" />
     <link rel="stylesheet" href="styles.css" />
     <script src="vendor/xterm.js"></script>
     <script src="vendor/addon-fit.js"></script>
     <script src="vendor/addon-web-links.js"></script>
+    <script src="vendor/drawflow.min.js"></script>
   </head>
   <body data-theme="dark" data-accent="orange" data-page="chat" data-rail="expanded">
 
@@ -255,10 +257,14 @@
                 </button>
               </div>
               <div class="page-head-right">
+                <button class="ghost-btn" id="btn-add-wf-node">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
+                  Add node
+                </button>
                 <button class="btn-primary" id="btn-save-workflow">Save</button>
               </div>
             </div>
-            <div class="page-body">
+            <div class="page-body wf-builder-page-body">
               <div class="wf-builder-header">
                 <div class="wf-builder-title-row">
                   <input class="wf-name-input" id="wf-name-input" type="text" maxlength="80" placeholder="Workflow name" />
@@ -271,12 +277,36 @@
                   </select>
                 </div>
               </div>
-              <div class="wf-builder-body">
-                <div id="wf-steps-list" class="wf-steps-list"></div>
-                <button class="wf-add-step-btn" id="btn-add-wf-step">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
-                  Add step
-                </button>
+              <div class="wf-canvas-wrap">
+                <div id="wf-canvas" class="wf-canvas"></div>
+                <div class="wf-canvas-hint" id="wf-canvas-hint">Drag from a node's right dot to another node's left dot to connect them. Click a node to edit it.</div>
+                <aside class="wf-node-panel" id="wf-node-panel" hidden>
+                  <div class="wf-node-panel-head">
+                    <span class="wf-node-panel-title">Step</span>
+                    <button class="wf-node-panel-close" id="wf-node-panel-close" aria-label="Close">&times;</button>
+                  </div>
+                  <div class="form-row">
+                    <label class="form-label">Name</label>
+                    <input class="form-input" id="wf-np-name" type="text" maxlength="64" />
+                  </div>
+                  <div class="form-row">
+                    <label class="form-label">Agent</label>
+                    <select class="wf-step-select" id="wf-np-agent"></select>
+                  </div>
+                  <div class="form-row">
+                    <label class="form-label">Context from previous</label>
+                    <select class="wf-step-select" id="wf-np-context">
+                      <option value="full">Full output</option>
+                      <option value="last50">Last 50 lines</option>
+                      <option value="none">None</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label class="form-label">Prompt</label>
+                    <textarea class="form-input form-textarea" id="wf-np-prompt" rows="7" maxlength="8192" placeholder="What should this step do?"></textarea>
+                  </div>
+                  <button class="ghost-btn ghost-btn-danger" id="wf-np-delete">Delete node</button>
+                </aside>
               </div>
             </div>
           </div>
