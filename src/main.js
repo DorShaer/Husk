@@ -1180,6 +1180,16 @@ const activeRuns = new Map();
 
 ipcMain.handle('workflows:list', () => loadWorkflows());
 
+// Environment for spawned one-shot CLI agents (workflow steps, prompt
+// generation). Mirrors the PTY env so PAI hooks resolve: ~/.bun/bin must be
+// on PATH or every bun-based SessionEnd hook fails with 'bun: not found'.
+function buildAgentEnv() {
+  const env = Object.assign({}, process.env, { CLAUDE_DIR, HUSK_HOST: '1' });
+  const bunBin = path.join(HOME, '.bun', 'bin');
+  if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
+  return env;
+}
+
 ipcMain.handle('workflows:generateStepPrompt', async (_e, description) => {
   if (!description || typeof description !== 'string') return { ok: false, error: 'description required' };
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
@@ -1195,7 +1205,7 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
 
     const child = require('child_process').spawn(cmd, ['-p', prompt], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: buildAgentEnv(),
     });
 
     // Hard timeout. The spawn `timeout` option is unreliable when the CLI
@@ -1364,7 +1374,7 @@ async function executeWorkflow(event, workflow, run) {
 
     const child = spawn(cmd, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: buildAgentEnv(),
     });
     run.currentChild = child;
     activity('status', 'Starting the CLI agent...');
