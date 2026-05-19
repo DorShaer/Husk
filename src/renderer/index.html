@@ -307,6 +307,26 @@
                   </div>
                   <button class="ghost-btn ghost-btn-danger" id="wf-np-delete">Delete node</button>
                 </aside>
+                <aside class="wf-node-panel" id="wf-edge-panel" hidden>
+                  <div class="wf-node-panel-head">
+                    <span class="wf-node-panel-title">Connection</span>
+                    <button class="wf-node-panel-close" id="wf-edge-panel-close" aria-label="Close">&times;</button>
+                  </div>
+                  <p class="wf-edge-panel-hint">When the source step has more than one connection, the engine takes the first one whose condition matches that step's output.</p>
+                  <div class="form-row">
+                    <label class="form-label">Take this path</label>
+                    <select class="wf-step-select" id="wf-ec-type">
+                      <option value="always">Always</option>
+                      <option value="contains">If output contains text</option>
+                      <option value="regex">If output matches a regex</option>
+                      <option value="otherwise">Otherwise (fallback)</option>
+                    </select>
+                  </div>
+                  <div class="form-row" id="wf-ec-value-row">
+                    <label class="form-label" id="wf-ec-value-label">Text to look for</label>
+                    <input class="form-input" id="wf-ec-value" type="text" maxlength="256" placeholder="e.g. YES" />
+                  </div>
+                </aside>
               </div>
             </div>
           </div>
