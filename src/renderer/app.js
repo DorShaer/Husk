@@ -620,8 +620,30 @@ async function deleteProject(id, name) {
 
 let workflowsCache = [];
 let editingWorkflowId = null;
-let editingSteps = [];
 let activeRunId = null;
+let wfEditor = null;          // Drawflow instance (created lazily, reused)
+let wfSelectedNodeId = null;  // currently selected canvas node id
+
+// Resolve a workflow graph to a linear ordered step list. Mirrors the
+// main-process graphToOrderedSteps so the run view renders the same order.
+function wfGraphOrder(graph) {
+  const g = (graph && typeof graph === 'object') ? graph : { nodes: [], edges: [] };
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  const edges = Array.isArray(g.edges) ? g.edges : [];
+  if (!nodes.length) return [];
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const hasIncoming = new Set(edges.map((e) => e.to));
+  let cur = nodes.find((n) => !hasIncoming.has(n.id)) || nodes[0];
+  const order = [];
+  const seen = new Set();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    order.push(cur);
+    const edge = edges.find((e) => e.from === cur.id);
+    cur = edge ? byId.get(edge.to) : null;
+  }
+  return order;
+}
 
 // Sub-view switcher
 function wfShowView(name) {
@@ -653,7 +675,7 @@ function paintWorkflowList() {
       <div class="wf-card-head">
         <div class="wf-card-title">${escapeHtml(w.name)}</div>
         <div class="wf-card-meta">
-          <span class="wf-card-steps-count">${w.steps.length} step${w.steps.length !== 1 ? 's' : ''}</span>
+          ${(() => { const n = ((w.graph && w.graph.nodes) || []).length; return `<span class="wf-card-steps-count">${n} step${n !== 1 ? 's' : ''}</span>`; })()}
           ${w.trigger === 'ai-suggested' ? `<span class="wf-card-trigger-pill">AI suggested</span>` : ''}
         </div>
       </div>
@@ -681,30 +703,7 @@ async function deleteWorkflow(id, name) {
   paintWorkflowList();
 }
 
-// Builder
-function openWorkflowBuilder(editId) {
-  editingWorkflowId = editId || null;
-  const existing = editId ? workflowsCache.find((w) => w.id === editId) : null;
-  const nameInput = $('#wf-name-input');
-  const triggerSel = $('#wf-trigger-select');
-  if (nameInput) nameInput.value = existing ? existing.name : '';
-  if (triggerSel) triggerSel.value = existing ? (existing.trigger || 'manual') : 'manual';
-  editingSteps = existing ? existing.steps.map((s) => ({ ...s })) : [];
-  if (!editingSteps.length) editingSteps.push(makeNewStep(1));
-  paintBuilderSteps();
-  wfShowView('builder');
-  setTimeout(() => { try { $('#wf-name-input').focus(); } catch (_) {} }, 30);
-}
-
-function makeNewStep(index) {
-  return {
-    id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-    name: `Step ${index}`,
-    agentCommand: '',
-    prompt: '',
-    passContext: 'full',
-  };
-}
+// ─── Canvas builder (Drawflow) ──────────────────────────────────────────────
 
 function buildAgentOptions(currentVal) {
   const installed = (agentsCache || []).filter((a) => a.available);
@@ -716,142 +715,158 @@ function buildAgentOptions(currentVal) {
   return opts.join('');
 }
 
-function paintBuilderSteps() {
-  const list = $('#wf-steps-list');
-  if (!list) return;
-
-  const arrowSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
-  const upSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`;
-  const downSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>`;
-  const delSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
-
-  const ctxOpt = (val) => ['full','last50','none'].map((v) =>
-    `<option value="${v}"${v === val ? ' selected' : ''}>${v === 'full' ? 'Full output' : v === 'last50' ? 'Last 50 lines' : 'None'}</option>`
-  ).join('');
-
-  const nodes = editingSteps.map((step, i) => `
-    ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${arrowSvg}</div></div>` : ''}
-    <div class="wf-step-node" data-step-idx="${i}">
-      <div class="wf-step-head">
-        <div class="wf-step-number">${i + 1}</div>
-        <input class="wf-step-name-input" data-field="name" data-idx="${i}" value="${escapeHtml(step.name)}" placeholder="Step name" maxlength="64" />
-        <div class="wf-step-controls">
-          ${i > 0 ? `<button class="wf-step-ctrl-btn wf-step-up" data-idx="${i}" title="Move up">${upSvg}</button>` : ''}
-          ${i < editingSteps.length - 1 ? `<button class="wf-step-ctrl-btn wf-step-down" data-idx="${i}" title="Move down">${downSvg}</button>` : ''}
-          <button class="wf-step-ctrl-btn is-danger wf-step-del" data-idx="${i}" title="Remove step">${delSvg}</button>
-        </div>
-      </div>
-      <div class="wf-step-fields">
-        <div class="wf-step-row">
-          <div class="form-row" style="flex:1">
-            <label class="form-label">Agent</label>
-            <select class="wf-step-select" data-field="agentCommand" data-idx="${i}">${buildAgentOptions(step.agentCommand || '')}</select>
-          </div>
-          ${i > 0 ? `<div class="form-row" style="flex:1"><label class="form-label">Context from prev</label><select class="wf-step-select" data-field="passContext" data-idx="${i}">${ctxOpt(step.passContext || 'full')}</select></div>` : ''}
-        </div>
-        <div class="form-row">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-            <label class="form-label" style="margin:0">${i > 0 ? `Prompt <span class="form-hint">use {{previousOutput}} for prev step's result</span>` : 'Prompt'}</label>
-            <button class="wf-step-gen-btn" data-idx="${i}" title="Generate prompt with AI">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
-              Generate with AI
-            </button>
-          </div>
-          <textarea class="form-input form-textarea" data-field="prompt" data-idx="${i}" rows="4" maxlength="8192" placeholder="Describe what this step should do...">${escapeHtml(step.prompt)}</textarea>
-          <div class="wf-step-gen-row" id="wf-gen-row-${i}" hidden>
-            <input class="wf-step-gen-input" id="wf-gen-input-${i}" placeholder="Describe what you want this step to do..." />
-            <button class="btn-primary wf-step-gen-go" data-gen-idx="${i}">Go</button>
-          </div>
-          <div id="wf-gen-status-${i}" style="font-size:11px;color:var(--text-3);margin-top:4px" hidden></div>
-        </div>
-      </div>
+// HTML for one canvas node. Drawflow renders this; we update it in place
+// when the config panel changes a node, since Drawflow does not re-render.
+function wfNodeHtml(data) {
+  const badge = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>`;
+  return `<div class="wf-cv-node">
+    <div class="wf-cv-node-top">
+      <div class="wf-cv-node-badge">${badge}</div>
+      <div class="wf-cv-node-name">${escapeHtml(data.name || 'Step')}</div>
     </div>
-  `).join('');
+    <div class="wf-cv-node-meta">${escapeHtml(data.agentCommand || 'default agent')}</div>
+  </div>`;
+}
 
-  // eslint-disable-next-line no-unsanitized/property
-  list.innerHTML = nodes;
+// Create the Drawflow editor once, reuse it (clear between opens) so its
+// container listeners are not duplicated.
+function wfEnsureEditor() {
+  if (wfEditor) { wfEditor.clear(); return; }
+  const container = $('#wf-canvas');
+  if (!container || typeof Drawflow === 'undefined') return;
+  wfEditor = new Drawflow(container);
+  wfEditor.reroute = true;
+  wfEditor.start();
+  wfEditor.on('nodeSelected', (id) => showNodePanel(id));
+  wfEditor.on('nodeUnselected', () => hideNodePanel());
+  wfEditor.on('nodeRemoved', () => hideNodePanel());
+}
 
-  list.querySelectorAll('.wf-step-name-input').forEach((el) => el.addEventListener('input', (e) => {
-    editingSteps[Number(e.target.dataset.idx)].name = e.target.value;
-  }));
-  list.querySelectorAll('.wf-step-select, [data-field]').forEach((el) => {
-    if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-      el.addEventListener('change', (e) => { editingSteps[Number(e.target.dataset.idx)][e.target.dataset.field] = e.target.value; });
-      if (el.tagName === 'TEXTAREA') el.addEventListener('input', (e) => { editingSteps[Number(e.target.dataset.idx)][e.target.dataset.field] = e.target.value; });
+function wfAddCanvasNode(data, x, y) {
+  if (!wfEditor) return;
+  const nodeData = {
+    name: (data && data.name) || 'New Step',
+    agentCommand: (data && data.agentCommand) || '',
+    prompt: (data && data.prompt) || '',
+    passContext: (data && data.passContext) || 'full',
+  };
+  const px = Number.isFinite(x) ? x : 60 + Math.round(Math.random() * 60);
+  const py = Number.isFinite(y) ? y : 60 + Math.round(Math.random() * 60);
+  wfEditor.addNode('step', 1, 1, px, py, 'wf-cv', nodeData, wfNodeHtml(nodeData));
+}
+
+function wfLoadGraph(graph) {
+  if (!wfEditor) return;
+  const idMap = {};
+  (graph.nodes || []).forEach((n) => {
+    const data = {
+      name: n.name || 'Step',
+      agentCommand: n.agentCommand || '',
+      prompt: n.prompt || '',
+      passContext: n.passContext || 'full',
+    };
+    idMap[n.id] = wfEditor.addNode('step', 1, 1, n.x || 60, n.y || 60, 'wf-cv', data, wfNodeHtml(data));
+  });
+  (graph.edges || []).forEach((e) => {
+    const from = idMap[e.from];
+    const to = idMap[e.to];
+    if (from != null && to != null) {
+      try { wfEditor.addConnection(from, to, 'output_1', 'input_1'); } catch (_) {}
     }
   });
-  list.querySelectorAll('.wf-step-up').forEach((btn) => btn.addEventListener('click', (e) => {
-    const idx = Number(e.currentTarget.dataset.idx);
-    [editingSteps[idx - 1], editingSteps[idx]] = [editingSteps[idx], editingSteps[idx - 1]];
-    paintBuilderSteps();
-  }));
-  list.querySelectorAll('.wf-step-down').forEach((btn) => btn.addEventListener('click', (e) => {
-    const idx = Number(e.currentTarget.dataset.idx);
-    [editingSteps[idx], editingSteps[idx + 1]] = [editingSteps[idx + 1], editingSteps[idx]];
-    paintBuilderSteps();
-  }));
-  list.querySelectorAll('.wf-step-del').forEach((btn) => btn.addEventListener('click', (e) => {
-    const idx = Number(e.currentTarget.dataset.idx);
-    if (editingSteps.length <= 1) { toast('A workflow needs at least one step', ''); return; }
-    editingSteps.splice(idx, 1);
-    paintBuilderSteps();
-  }));
+}
 
-  // Generate prompt with AI: toggle inline input row
-  list.querySelectorAll('.wf-step-gen-btn').forEach((btn) => btn.addEventListener('click', (e) => {
-    const idx = Number(e.currentTarget.dataset.idx);
-    const row = $(`#wf-gen-row-${idx}`);
-    if (row) { row.hidden = !row.hidden; if (!row.hidden) { try { $(`#wf-gen-input-${idx}`).focus(); } catch (_) {} } }
-  }));
-  list.querySelectorAll('[data-gen-idx]').forEach((btn) => btn.addEventListener('click', async (e) => {
-    const idx = Number(e.currentTarget.dataset.genIdx);
-    const inp = $(`#wf-gen-input-${idx}`);
-    const statusEl = $(`#wf-gen-status-${idx}`);
-    const promptArea = list.querySelector(`textarea[data-idx="${idx}"]`);
-    const goBtn = e.currentTarget;
-    const desc = inp ? inp.value.trim() : '';
-    if (!desc) return;
-    goBtn.disabled = true;
-    // Live elapsed counter so the user knows it is working, not frozen.
-    let elapsed = 0;
-    const tick = setInterval(() => {
-      elapsed += 1;
-      if (statusEl) statusEl.textContent = `Generating with the CLI agent... ${elapsed}s (can take up to 90s)`;
-    }, 1000);
-    if (statusEl) { statusEl.textContent = 'Generating with the CLI agent... 0s'; statusEl.hidden = false; }
-    let res;
-    try {
-      res = await window.husk.workflows.generateStepPrompt(desc);
-    } finally {
-      clearInterval(tick);
-      goBtn.disabled = false;
-    }
-    if (!res || !res.ok) {
-      if (statusEl) { statusEl.textContent = (res && res.error) ? `Error: ${res.error}` : 'Generation failed'; statusEl.hidden = false; }
-      return;
-    }
-    if (promptArea) { promptArea.value = res.prompt; editingSteps[idx].prompt = res.prompt; }
-    if (inp) inp.value = '';
-    const row = $(`#wf-gen-row-${idx}`);
-    if (row) row.hidden = true;
-    if (statusEl) { statusEl.hidden = true; statusEl.textContent = ''; }
-  }));
+function wfExportGraph() {
+  if (!wfEditor) return { nodes: [], edges: [] };
+  const dump = wfEditor.export();
+  const data = (dump && dump.drawflow && dump.drawflow.Home && dump.drawflow.Home.data) || {};
+  const nodes = [];
+  const edges = [];
+  Object.keys(data).forEach((id) => {
+    const n = data[id];
+    const d = n.data || {};
+    nodes.push({
+      id: String(id),
+      name: d.name || 'Step',
+      agentCommand: d.agentCommand || null,
+      prompt: d.prompt || '',
+      passContext: d.passContext || 'full',
+      x: n.pos_x, y: n.pos_y,
+    });
+    Object.keys(n.outputs || {}).forEach((ok) => {
+      ((n.outputs[ok] || {}).connections || []).forEach((c) => {
+        edges.push({ id: `edge-${id}-${c.node}`, from: String(id), to: String(c.node), condition: { type: 'always', value: '' } });
+      });
+    });
+  });
+  return { nodes, edges };
+}
+
+function showNodePanel(id) {
+  if (!wfEditor) return;
+  wfSelectedNodeId = id;
+  const node = wfEditor.getNodeFromId(id);
+  const d = (node && node.data) || {};
+  $('#wf-np-name').value = d.name || '';
+  // eslint-disable-next-line no-unsanitized/property -- option values escaped in buildAgentOptions
+  $('#wf-np-agent').innerHTML = buildAgentOptions(d.agentCommand || '');
+  $('#wf-np-context').value = d.passContext || 'full';
+  $('#wf-np-prompt').value = d.prompt || '';
+  $('#wf-node-panel').hidden = false;
+}
+
+function hideNodePanel() {
+  wfSelectedNodeId = null;
+  const panel = $('#wf-node-panel');
+  if (panel) panel.hidden = true;
+}
+
+function wfSyncPanelToNode() {
+  if (!wfEditor || wfSelectedNodeId == null) return;
+  const data = {
+    name: ($('#wf-np-name').value || 'Step').slice(0, 64),
+    agentCommand: $('#wf-np-agent').value || '',
+    prompt: $('#wf-np-prompt').value || '',
+    passContext: $('#wf-np-context').value || 'full',
+  };
+  wfEditor.updateNodeDataFromId(wfSelectedNodeId, data);
+  const nameEl = document.querySelector(`#node-${wfSelectedNodeId} .wf-cv-node-name`);
+  const metaEl = document.querySelector(`#node-${wfSelectedNodeId} .wf-cv-node-meta`);
+  if (nameEl) nameEl.textContent = data.name;
+  if (metaEl) metaEl.textContent = data.agentCommand || 'default agent';
+}
+
+function openWorkflowBuilder(editId) {
+  editingWorkflowId = editId || null;
+  const existing = editId ? workflowsCache.find((w) => w.id === editId) : null;
+  if ($('#wf-name-input')) $('#wf-name-input').value = existing ? existing.name : '';
+  if ($('#wf-trigger-select')) $('#wf-trigger-select').value = existing ? (existing.trigger || 'manual') : 'manual';
+  wfShowView('builder');
+  hideNodePanel();
+  // Drawflow needs the container visible and sized before start().
+  setTimeout(() => {
+    wfEnsureEditor();
+    const graph = (existing && existing.graph) ? existing.graph : { nodes: [], edges: [] };
+    wfLoadGraph(graph);
+    if (!graph.nodes || !graph.nodes.length) wfAddCanvasNode(null, 80, 80);
+    try { $('#wf-name-input').focus(); } catch (_) {}
+  }, 50);
 }
 
 async function saveWorkflow() {
   const name = (($('#wf-name-input') || {}).value || '').trim();
   if (!name) { toast('Workflow needs a name', 'error'); return; }
-  if (!editingSteps.length) { toast('Add at least one step', 'error'); return; }
+  const graph = wfExportGraph();
+  if (!graph.nodes.length) { toast('Add at least one node', 'error'); return; }
   const trigger = (($('#wf-trigger-select') || {}).value) || 'manual';
-  const payload = { name, steps: editingSteps, trigger };
+  const payload = { name, graph, trigger };
   if (editingWorkflowId) {
     payload.id = editingWorkflowId;
     await window.husk.workflows.update(payload);
-    workflowsCache = workflowsCache.map((w) => w.id === editingWorkflowId ? { ...w, ...payload } : w);
   } else {
-    const created = await window.husk.workflows.create(payload);
-    workflowsCache = [...workflowsCache, created];
+    await window.husk.workflows.create(payload);
   }
+  workflowsCache = await window.husk.workflows.list();
   wfShowView('list');
   paintWorkflowList();
 }
@@ -950,14 +965,15 @@ async function runWorkflow(workflowId) {
   wfShowView('run');
 
   let wfRunTotal = 0;
+  const orderedSteps = wfGraphOrder(workflow.graph);
 
   if (stepsEl) {
-    wfRunTotal = workflow.steps.length;
+    wfRunTotal = orderedSteps.length;
     wfSetProgress(0, wfRunTotal);
     const caret = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`;
     const connArrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
     // eslint-disable-next-line no-unsanitized/property -- step name/prompt escaped via escapeHtml
-    stepsEl.innerHTML = workflow.steps.map((step, i) => `
+    stepsEl.innerHTML = orderedSteps.map((step, i) => `
       ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${connArrow}</div></div>` : ''}
       <div class="wf-run-node is-pending is-collapsed" id="wf-node-${i}">
         <div class="wf-run-node-head" data-toggle="${i}">
@@ -1071,8 +1087,20 @@ window.husk.workflows.onRunDone((d) => {
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
 $('#btn-wf-builder-back') && $('#btn-wf-builder-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
 $('#btn-save-workflow') && $('#btn-save-workflow').addEventListener('click', saveWorkflow);
-$('#btn-add-wf-step') && $('#btn-add-wf-step').addEventListener('click', () => { editingSteps.push(makeNewStep(editingSteps.length + 1)); paintBuilderSteps(); });
+$('#btn-add-wf-node') && $('#btn-add-wf-node').addEventListener('click', () => wfAddCanvasNode(null));
 $('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => { wfShowView('list'); });
+// Node config panel
+['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt'].forEach((id) => {
+  const el = $(`#${id}`);
+  if (el) { el.addEventListener('input', wfSyncPanelToNode); el.addEventListener('change', wfSyncPanelToNode); }
+});
+$('#wf-node-panel-close') && $('#wf-node-panel-close').addEventListener('click', hideNodePanel);
+$('#wf-np-delete') && $('#wf-np-delete').addEventListener('click', () => {
+  if (wfEditor && wfSelectedNodeId != null) {
+    wfEditor.removeNodeId('node-' + wfSelectedNodeId);
+    hideNodePanel();
+  }
+});
 $('#btn-stop-wf') && $('#btn-stop-wf').addEventListener('click', async () => {
   if (activeRunId) await window.husk.workflows.stop(activeRunId);
 });

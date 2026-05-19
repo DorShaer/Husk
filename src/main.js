@@ -1178,7 +1178,7 @@ function saveWorkflows(list) {
 // In-memory active runs: runId -> { workflow, steps state, currentChild }
 const activeRuns = new Map();
 
-ipcMain.handle('workflows:list', () => loadWorkflows());
+ipcMain.handle('workflows:list', () => loadWorkflows().map(migrateWorkflow));
 
 // Environment for spawned one-shot CLI agents (workflow steps, prompt
 // generation). Mirrors the PTY env so PAI hooks resolve: ~/.bun/bin must be
@@ -1238,7 +1238,7 @@ ipcMain.handle('workflows:create', (_e, payload = {}) => {
     id,
     name: String(payload.name || 'New Workflow').slice(0, 80),
     description: String(payload.description || '').slice(0, 256),
-    steps: Array.isArray(payload.steps) ? payload.steps.map(sanitizeStep) : [],
+    graph: sanitizeGraph(payload.graph),
     trigger: validTriggers.includes(payload.trigger) ? payload.trigger : 'manual',
     createdAt: now,
     updatedAt: now,
@@ -1252,12 +1252,13 @@ ipcMain.handle('workflows:update', (_e, payload = {}) => {
   if (!payload.id) return { ok: false, error: 'missing id' };
   const list = loadWorkflows().map((w) => {
     if (w.id !== payload.id) return w;
+    const migrated = migrateWorkflow(w);
     return {
-      ...w,
-      name: payload.name !== undefined ? String(payload.name).slice(0, 80) : w.name,
-      description: payload.description !== undefined ? String(payload.description).slice(0, 256) : w.description,
-      steps: Array.isArray(payload.steps) ? payload.steps.map(sanitizeStep) : w.steps,
-      trigger: ['manual','ai-suggested'].includes(payload.trigger) ? payload.trigger : (w.trigger || 'manual'),
+      ...migrated,
+      name: payload.name !== undefined ? String(payload.name).slice(0, 80) : migrated.name,
+      description: payload.description !== undefined ? String(payload.description).slice(0, 256) : migrated.description,
+      graph: payload.graph !== undefined ? sanitizeGraph(payload.graph) : migrated.graph,
+      trigger: ['manual','ai-suggested'].includes(payload.trigger) ? payload.trigger : (migrated.trigger || 'manual'),
       updatedAt: new Date().toISOString(),
     };
   });
@@ -1272,9 +1273,11 @@ ipcMain.handle('workflows:delete', (_e, id) => {
 });
 
 ipcMain.handle('workflows:run', (event, workflowId) => {
-  const workflow = loadWorkflows().find((w) => w.id === workflowId);
-  if (!workflow) return { ok: false, error: 'workflow not found' };
-  if (!workflow.steps.length) return { ok: false, error: 'workflow has no steps' };
+  const raw = loadWorkflows().find((w) => w.id === workflowId);
+  if (!raw) return { ok: false, error: 'workflow not found' };
+  const workflow = migrateWorkflow(raw);
+  const steps = graphToOrderedSteps(workflow.graph);
+  if (!steps.length) return { ok: false, error: 'workflow has no steps' };
 
   const runId = `run-${Date.now()}`;
   const runState = {
@@ -1282,23 +1285,24 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
     workflowId,
     status: 'running',
     currentStep: 0,
-    stepStates: workflow.steps.map((s) => ({ stepId: s.id, status: 'pending', output: '' })),
+    stepStates: steps.map((s) => ({ stepId: s.id, status: 'pending', output: '' })),
     currentChild: null,
     startedAt: new Date().toISOString(),
   };
   activeRuns.set(runId, runState);
-  executeWorkflow(event, workflow, runState);
+  executeWorkflow(event, { ...workflow, steps }, runState);
   return { ok: true, runId };
 });
 
 // Returns a context block to inject at session start for ai-suggested workflows.
 // The AI reads this and knows when to suggest running a workflow.
 ipcMain.handle('workflows:getSessionContext', () => {
-  const suggested = loadWorkflows().filter((w) => w.trigger === 'ai-suggested');
+  const suggested = loadWorkflows().map(migrateWorkflow).filter((w) => w.trigger === 'ai-suggested');
   if (!suggested.length) return null;
   const lines = suggested.map((w) => {
-    const stepSummary = w.steps.map((s, i) => `  Step ${i + 1}: ${s.name}`).join('\n');
-    return `- "${w.name}": ${w.description || w.steps.map((s) => s.name).join(' -> ')}\n${stepSummary}`;
+    const steps = graphToOrderedSteps(w.graph);
+    const stepSummary = steps.map((s, i) => `  Step ${i + 1}: ${s.name}`).join('\n');
+    return `- "${w.name}": ${w.description || steps.map((s) => s.name).join(' -> ')}\n${stepSummary}`;
   }).join('\n');
   return `[Husk Workflows available - suggest running when relevant]\n${lines}\nTo suggest: mention the workflow by name and tell the user to click Run in the Workflows tab.`;
 });
@@ -1311,14 +1315,86 @@ ipcMain.handle('workflows:stop', (_e, runId) => {
   return { ok: true };
 });
 
-function sanitizeStep(s) {
+// ─── Workflow graph model ─────────────────────────────────────────────────────
+// A workflow is a graph of step nodes connected by edges. Edges carry a
+// routing condition (used by the 2b branch engine; 2a treats all as 'always').
+
+function sanitizeNode(n) {
   return {
-    id: s.id || `step-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-    name: String(s.name || 'Step').slice(0, 64),
-    agentCommand: String(s.agentCommand || '').slice(0, 128) || null,
-    prompt: String(s.prompt || '').slice(0, 8192),
-    passContext: ['full', 'last50', 'none'].includes(s.passContext) ? s.passContext : 'full',
+    id: n.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name: String(n.name || 'Step').slice(0, 64),
+    agentCommand: String(n.agentCommand || '').slice(0, 128) || null,
+    prompt: String(n.prompt || '').slice(0, 8192),
+    passContext: ['full', 'last50', 'none'].includes(n.passContext) ? n.passContext : 'full',
+    x: Number.isFinite(n.x) ? n.x : 0,
+    y: Number.isFinite(n.y) ? n.y : 0,
   };
+}
+
+function sanitizeEdge(e) {
+  const c = (e && e.condition && typeof e.condition === 'object') ? e.condition : {};
+  return {
+    id: e.id || `edge-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    from: String(e.from || ''),
+    to: String(e.to || ''),
+    condition: {
+      type: ['always', 'contains', 'regex'].includes(c.type) ? c.type : 'always',
+      value: String(c.value || '').slice(0, 256),
+    },
+  };
+}
+
+function sanitizeGraph(g) {
+  if (!g || typeof g !== 'object') return { nodes: [], edges: [] };
+  const nodes = Array.isArray(g.nodes) ? g.nodes.map(sanitizeNode) : [];
+  const ids = new Set(nodes.map((n) => n.id));
+  const edges = Array.isArray(g.edges)
+    ? g.edges.map(sanitizeEdge).filter((e) => ids.has(e.from) && ids.has(e.to))
+    : [];
+  return { nodes, edges };
+}
+
+// Convert a legacy steps[] workflow to the graph model: a straight node chain.
+function migrateWorkflow(w) {
+  if (w && w.graph && Array.isArray(w.graph.nodes)) {
+    const { steps, ...rest } = w;
+    return rest;
+  }
+  const steps = Array.isArray(w && w.steps) ? w.steps : [];
+  const nodes = steps.map((s, i) => ({
+    id: s.id || `node-mig-${i}-${Math.random().toString(36).slice(2, 6)}`,
+    name: s.name || `Step ${i + 1}`,
+    agentCommand: s.agentCommand || null,
+    prompt: s.prompt || '',
+    passContext: s.passContext || 'full',
+    x: 80, y: 80 + i * 200,
+  }));
+  const edges = [];
+  for (let i = 1; i < nodes.length; i++) {
+    edges.push({ id: `edge-mig-${i}`, from: nodes[i - 1].id, to: nodes[i].id, condition: { type: 'always', value: '' } });
+  }
+  const { steps: _drop, ...rest } = w || {};
+  return { ...rest, graph: { nodes, edges } };
+}
+
+// Resolve a graph to a linear ordered step list: start at the node with no
+// incoming edge, follow the first outgoing edge. 2b replaces this with real
+// condition-based branch traversal.
+function graphToOrderedSteps(graph) {
+  const g = sanitizeGraph(graph);
+  if (!g.nodes.length) return [];
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  const hasIncoming = new Set(g.edges.map((e) => e.to));
+  let cur = g.nodes.find((n) => !hasIncoming.has(n.id)) || g.nodes[0];
+  const order = [];
+  const seen = new Set();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    order.push(cur);
+    const edge = g.edges.find((e) => e.from === cur.id);
+    cur = edge ? byId.get(edge.to) : null;
+  }
+  return order;
 }
 
 function wfEmit(event, channel, data) {
