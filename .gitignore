@@ -24,3 +24,18 @@ Thumbs.db
 config.json
 **/voice-models/
 .husk-tmp/
+MEMORY/
+data/
+
+# Bundled PAI: ship the framework only. Personal PAI data (memory, learning,
+# credentials, user-specific extensions) must never enter the repo, even if a
+# sync tool copies a populated ~/.claude tree into libs/pai.
+libs/pai/PAI/USER/**
+!libs/pai/PAI/USER/**/
+!libs/pai/PAI/USER/**/README.md
+libs/pai/**/MEMORY/
+libs/pai/**/LEARNING/
+libs/pai/**/.credentials.json
+libs/pai/**/ratings.jsonl
+libs/pai/**/*reflections*.jsonl
+libs/pai/**/history.jsonl
