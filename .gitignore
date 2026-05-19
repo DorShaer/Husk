@@ -25,7 +25,7 @@ config.json
 **/voice-models/
 .husk-tmp/
 MEMORY/
-data/
+data
 
 # Bundled PAI: ship the framework only. Personal PAI data (memory, learning,
 # credentials, user-specific extensions) must never enter the repo, even if a
