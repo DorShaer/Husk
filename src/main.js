@@ -1276,21 +1276,21 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
   const raw = loadWorkflows().find((w) => w.id === workflowId);
   if (!raw) return { ok: false, error: 'workflow not found' };
   const workflow = migrateWorkflow(raw);
-  const steps = graphToOrderedSteps(workflow.graph);
-  if (!steps.length) return { ok: false, error: 'workflow has no steps' };
+  if (!workflow.graph || !workflow.graph.nodes || !workflow.graph.nodes.length) {
+    return { ok: false, error: 'workflow has no steps' };
+  }
 
   const runId = `run-${Date.now()}`;
   const runState = {
     id: runId,
     workflowId,
     status: 'running',
-    currentStep: 0,
-    stepStates: steps.map((s) => ({ stepId: s.id, status: 'pending', output: '' })),
+    stepStates: {},   // keyed by node id; branching means the path is dynamic
     currentChild: null,
     startedAt: new Date().toISOString(),
   };
   activeRuns.set(runId, runState);
-  executeWorkflow(event, { ...workflow, steps }, runState);
+  executeWorkflow(event, workflow, runState);
   return { ok: true, runId };
 });
 
@@ -1401,62 +1401,87 @@ function wfEmit(event, channel, data) {
   try { if (!event.sender.isDestroyed()) event.sender.send(channel, data); } catch (_) {}
 }
 
+// Evaluate one edge condition against a node's output text.
+function wfEdgeMatches(condition, output) {
+  const c = condition || { type: 'always' };
+  const text = String(output || '');
+  if (c.type === 'contains') return text.toLowerCase().includes(String(c.value || '').toLowerCase());
+  if (c.type === 'regex') {
+    try { return new RegExp(c.value || '').test(text); } catch (_) { return false; }
+  }
+  // 'always' and 'otherwise' are not matched here; 'always' is an
+  // unconditional follow, 'otherwise' is the fallback. Both handled by caller.
+  return false;
+}
+
+// Pick the next node id after `nodeId` produced `output`. Conditional edges
+// (contains/regex) are evaluated in order; the first match wins. If none
+// match, an 'otherwise'/'always' edge is the fallback.
+function wfPickNextEdge(graph, nodeId, output) {
+  const out = graph.edges.filter((e) => e.from === nodeId);
+  if (!out.length) return null;
+  const conditional = out.filter((e) => e.condition && (e.condition.type === 'contains' || e.condition.type === 'regex'));
+  for (const e of conditional) {
+    if (wfEdgeMatches(e.condition, output)) return e;
+  }
+  const fallback = out.find((e) => !e.condition || e.condition.type === 'always' || e.condition.type === 'otherwise');
+  return fallback || null;
+}
+
 async function executeWorkflow(event, workflow, run) {
   // Yield so ipcMain.handle can return the runId to the renderer before we
-  // emit any step events. Without this, wf:step:start fires before the
+  // emit any step events. Without this, wf:node:start fires before the
   // renderer has set activeRunId and events get silently dropped.
   await new Promise((resolve) => setImmediate(resolve));
 
+  const graph = sanitizeGraph(workflow.graph);
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const hasIncoming = new Set(graph.edges.map((e) => e.to));
+  let node = graph.nodes.find((n) => !hasIncoming.has(n.id)) || graph.nodes[0];
+
   let previousOutput = '';
+  let prevName = '';
+  const visited = new Set();
+  const MAX_NODES = 64; // cycle / runaway guard
 
-  for (let i = 0; i < workflow.steps.length; i++) {
+  while (node && !visited.has(node.id) && visited.size < MAX_NODES) {
     if (run.status === 'stopped') break;
-
-    const step = workflow.steps[i];
-    const stepState = run.stepStates[i];
+    visited.add(node.id);
+    const step = node;
+    const stepState = run.stepStates[node.id] || (run.stepStates[node.id] = { status: 'pending', output: '' });
     stepState.status = 'running';
-    run.currentStep = i;
-    wfEmit(event, 'wf:step:start', { runId: run.id, stepIndex: i });
+    wfEmit(event, 'wf:node:start', { runId: run.id, nodeId: node.id });
 
     const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
 
-    // Build prompt: replace {{previousOutput}} placeholder or append context
     let prompt = step.prompt;
-    if (i > 0 && previousOutput) {
+    if (previousOutput) {
       if (prompt.includes('{{previousOutput}}')) {
         prompt = prompt.replace(/\{\{previousOutput\}\}/g, previousOutput);
       } else if (step.passContext !== 'none') {
         const ctx = step.passContext === 'last50'
           ? previousOutput.split('\n').slice(-50).join('\n')
           : previousOutput;
-        prompt = `${prompt}\n\n[Output from previous step "${workflow.steps[i - 1].name}"]\n${ctx}`;
+        prompt = `${prompt}\n\n[Output from previous step "${prevName}"]\n${ctx}`;
       }
     }
 
-    // claude supports stream-json: real-time agent events. Other CLIs fall
-    // back to plain -p (buffered text). useStreamJson drives the parser path.
     const useStreamJson = cmd === 'claude';
-    // Keep workflow step output clean: tell the agent to skip any persona
-    // output format (PAI banners, NATIVE MODE scaffolding, voice notifications)
-    // and just return the result. Appended to the system prompt so it
-    // outranks CLAUDE.md memory directives.
     const WF_SYSTEM = 'You are running as an automated workflow step. Respond with only the direct result of the task. Do not use status banners, mode headers, structured output scaffolding, or voice notification commands. Plain, direct output only.';
     const args = useStreamJson
       ? ['-p', prompt, '--append-system-prompt', WF_SYSTEM, '--output-format', 'stream-json', '--verbose']
       : ['-p', prompt, '--append-system-prompt', WF_SYSTEM];
 
+    const nid = node.id;
     const activity = (kind, text) => {
-      wfEmit(event, 'wf:step:activity', { runId: run.id, stepIndex: i, kind, text: String(text || '') });
+      wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: nid, kind, text: String(text || '') });
     };
 
     let resultText = '';
     let lineBuf = '';
     let sawAnyEvent = false;
 
-    const child = spawn(cmd, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: buildAgentEnv(),
-    });
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
     run.currentChild = child;
     activity('status', 'Starting the CLI agent...');
 
@@ -1483,7 +1508,6 @@ async function executeWorkflow(event, workflow, run) {
       if (t) activity('error', t);
     });
 
-    // Hard timeout: 5 min per step, force-killed.
     const killTimer = setTimeout(() => {
       activity('error', 'Step timed out after 5 minutes, killing the agent.');
       try { child.kill('SIGKILL'); } catch (_) {}
@@ -1496,22 +1520,33 @@ async function executeWorkflow(event, workflow, run) {
           activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
         }
         stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
-        stepState.finishedAt = new Date().toISOString();
         stepState.output = resultText;
-        previousOutput = resultText;
-        wfEmit(event, 'wf:step:done', { runId: run.id, stepIndex: i, status: stepState.status, output: resultText });
+        wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: nid, status: stepState.status, output: resultText });
         resolve();
       });
       child.on('error', (e) => {
         clearTimeout(killTimer);
         activity('error', e.message);
         stepState.status = 'failed';
-        wfEmit(event, 'wf:step:done', { runId: run.id, stepIndex: i, status: 'failed' });
+        wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: nid, status: 'failed' });
         resolve();
       });
     });
 
     if (stepState.status === 'failed') { run.status = 'failed'; break; }
+    if (run.status === 'stopped') break;
+
+    previousOutput = resultText;
+    prevName = step.name;
+
+    // Condition-based routing: pick the next edge from this node's output.
+    const edge = wfPickNextEdge(graph, node.id, resultText);
+    if (edge) {
+      wfEmit(event, 'wf:edge:taken', { runId: run.id, edgeId: edge.id, from: edge.from, to: edge.to });
+      node = byId.get(edge.to) || null;
+    } else {
+      node = null;
+    }
   }
 
   if (run.status === 'running') run.status = 'done';

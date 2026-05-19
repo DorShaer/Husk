@@ -69,9 +69,10 @@ contextBridge.exposeInMainWorld('husk', {
     stop: (runId) => ipcRenderer.invoke('workflows:stop', runId),
     generateStepPrompt: (desc) => ipcRenderer.invoke('workflows:generateStepPrompt', desc),
     getSessionContext: () => ipcRenderer.invoke('workflows:getSessionContext'),
-    onStepStart: (cb) => ipcRenderer.on('wf:step:start', (_e, d) => cb(d)),
-    onStepActivity: (cb) => ipcRenderer.on('wf:step:activity', (_e, d) => cb(d)),
-    onStepDone: (cb) => ipcRenderer.on('wf:step:done', (_e, d) => cb(d)),
+    onNodeStart: (cb) => ipcRenderer.on('wf:node:start', (_e, d) => cb(d)),
+    onNodeActivity: (cb) => ipcRenderer.on('wf:node:activity', (_e, d) => cb(d)),
+    onNodeDone: (cb) => ipcRenderer.on('wf:node:done', (_e, d) => cb(d)),
+    onEdgeTaken: (cb) => ipcRenderer.on('wf:edge:taken', (_e, d) => cb(d)),
     onRunDone: (cb) => ipcRenderer.on('wf:run:done', (_e, d) => cb(d)),
   },
   profiles: {
