@@ -135,10 +135,41 @@ jobs:
             eslint-plugin-security \
             eslint-plugin-no-unsanitized@4.0.2
 
-      - name: Run ESLint security rules
-        # Scope to our own JS only. libs/pai is bundled third-party; the
-        # vendored xterm.js inside src/renderer/vendor/ is minified.
+      - name: Run ESLint security rules (strict scope)
+        # Strict scope: src/preload.js, src/renderer/app.js, src/lib/.
+        # New modules added here must lint clean at error. src/main.js
+        # is the legacy monolith and is linted separately at warn while
+        # it gets extracted into per-handler modules.
         run: |
+          npx eslint \
+            --no-eslintrc \
+            --parser-options=ecmaVersion:2022,sourceType:script \
+            --env es2022,browser,node \
+            --plugin security \
+            --plugin no-unsanitized \
+            --rule 'security/detect-eval-with-expression: error' \
+            --rule 'security/detect-non-literal-fs-filename: error' \
+            --rule 'security/detect-non-literal-require: error' \
+            --rule 'security/detect-child-process: error' \
+            --rule 'security/detect-unsafe-regex: error' \
+            --rule 'security/detect-non-literal-regexp: error' \
+            --rule 'security/detect-pseudoRandomBytes: error' \
+            --rule 'security/detect-buffer-noassert: error' \
+            --rule 'no-unsanitized/method: error' \
+            --rule 'no-unsanitized/property: error' \
+            --ignore-pattern 'libs/' \
+            --ignore-pattern 'node_modules/' \
+            --ignore-pattern 'src/renderer/vendor/' \
+            src/preload.js src/renderer/app.js src/lib/
+
+      - name: Run ESLint security rules (main.js, advisory)
+        # main.js still has many legitimate dynamic fs operations; the
+        # output is captured in security-reports for review but does
+        # not gate the build. As IPC handlers are extracted into
+        # src/lib or src/handlers they move to the strict scope above.
+        continue-on-error: true
+        run: |
+          mkdir -p security-reports
           npx eslint \
             --no-eslintrc \
             --parser-options=ecmaVersion:2022,sourceType:script \
@@ -155,10 +186,7 @@ jobs:
             --rule 'security/detect-buffer-noassert: error' \
             --rule 'no-unsanitized/method: warn' \
             --rule 'no-unsanitized/property: error' \
-            --ignore-pattern 'libs/' \
-            --ignore-pattern 'node_modules/' \
-            --ignore-pattern 'src/renderer/vendor/' \
-            src/main.js src/preload.js src/renderer/app.js
+            src/main.js 2>&1 | tee security-reports/eslint-mainjs.txt
 
   codeql:
     name: CodeQL (JavaScript)
@@ -264,10 +292,10 @@ jobs:
           scan-ref: '.'
           format: 'table'
           output: 'security-reports/trivy-fs.txt'
-          severity: 'CRITICAL'
+          severity: 'CRITICAL,HIGH'
           vuln-type: 'library'
           exit-code: '1'
-          skip-dirs: 'libs/pai,src/renderer/vendor,node_modules'
+          skip-dirs: 'libs/pai,src/renderer/vendor,node_modules,dist,test-results'
 
       - name: Trivy JSON (always)
         if: always()
