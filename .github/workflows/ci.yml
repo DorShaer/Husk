@@ -42,7 +42,10 @@ jobs:
       - name: bash -n on shell scripts
         run: |
           set -euo pipefail
-          for f in install.sh run.sh uninstall.sh; do
+          shopt -s nullglob
+          files=(install.sh run.sh uninstall.sh installer/lib/*.sh installer/after-install.sh installer/after-remove.sh)
+          for f in "${files[@]}"; do
+            [ -f "$f" ] || continue
             echo "checking $f"
             bash -n "$f"
           done

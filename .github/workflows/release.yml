@@ -91,6 +91,20 @@ jobs:
           find artifacts -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name 'latest*.yml' \) -exec cp -v {} release/ \;
           ls -la release/
 
+      - name: Generate SHA256SUMS for release artifacts
+        run: |
+          cd release
+          # Hash every artifact and write a single SHA256SUMS file that
+          # users can verify with `sha256sum -c SHA256SUMS`.
+          rm -f SHA256SUMS
+          for f in *; do
+            [ -f "$f" ] || continue
+            [ "$f" = "SHA256SUMS" ] && continue
+            sha256sum "$f" >> SHA256SUMS
+          done
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
