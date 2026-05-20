@@ -1475,6 +1475,7 @@ async function openAgentsImportModal() {
   listEl.innerHTML = res.agents.map((a) => `
     <label class="ai-row${a.alreadyImported ? ' is-duplicate' : ''}">
       <input type="checkbox" class="ai-check" data-source="${escapeAttr(a.source)}" data-file="${escapeAttr(a.filename)}" ${a.alreadyImported ? 'disabled' : ''} />
+      <span class="ai-check-box" aria-hidden="true"></span>
       <div class="ai-row-body">
         <div class="ai-row-name">${escapeHtml(a.name)}<span class="ai-row-source">${escapeHtml(a.source)}</span></div>
         ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
