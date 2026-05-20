@@ -59,8 +59,13 @@ jobs:
       - name: Run Gitleaks
         run: |
           mkdir -p security-reports
-          if [ "${{ github.event_name }}" = "push" ]; then
-            gitleaks detect --config .gitleaks.toml --log-opts="${{ github.event.before }}..${{ github.sha }}" --report-format=json --report-path=security-reports/gitleaks-report.json
+          # On the first push of a new branch github.event.before is the
+          # all-zeros sha, which makes the diff range invalid. Detect
+          # that and scan the whole repo instead, same as the PR path.
+          BEFORE='${{ github.event.before }}'
+          ZERO_SHA='0000000000000000000000000000000000000000'
+          if [ "${{ github.event_name }}" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "$ZERO_SHA" ]; then
+            gitleaks detect --config .gitleaks.toml --log-opts="$BEFORE..${{ github.sha }}" --report-format=json --report-path=security-reports/gitleaks-report.json
           else
             gitleaks detect --config .gitleaks.toml --report-format=json --report-path=security-reports/gitleaks-report.json
           fi
