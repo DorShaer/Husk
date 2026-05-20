@@ -2116,11 +2116,8 @@ input[type="checkbox"]:disabled {
 }
 .session-check {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px;
-}
-.session-check input[type="checkbox"] {
-  width: 16px; height: 16px; margin: 0;
-  accent-color: var(--accent); cursor: pointer;
+  width: 16px; height: 16px;
+  cursor: pointer;
 }
 .ghost-btn-danger {
   color: var(--danger, #ef4444);
