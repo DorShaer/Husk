@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
@@ -14,6 +14,21 @@ const { resolveInside, isInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
+const { getUserPath } = require('./lib/user-path');
+
+// On macOS in particular, a GUI-launched Electron app inherits a
+// minimal PATH that does not include the npm-global, homebrew, or bun
+// install directories where users keep their agent CLIs. Read the
+// user's actual shell PATH once at startup so subsequent spawns can
+// find their binaries.
+try {
+  const userPath = getUserPath({
+    platform: process.platform,
+    env: process.env,
+    runShell: (shell, args) => spawnSync(shell, args, { encoding: 'utf8', timeout: 5000 }),
+  });
+  if (userPath) process.env.PATH = userPath;
+} catch (_) {}
 const {
   sanitizeNode,
   sanitizeEdge,
