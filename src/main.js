@@ -9,6 +9,23 @@ const http = require('http');
 const { spawn } = require('child_process');
 const pty = require('node-pty');
 
+const { shJoin } = require('./lib/shell-quote');
+const { resolveInside, isInside } = require('./lib/path-confine');
+const { parseAgentMd } = require('./lib/agent-md');
+const wfLib = require('./lib/workflow-graph');
+const {
+  sanitizeNode,
+  sanitizeEdge,
+  sanitizeGraph,
+  migrateWorkflow,
+  graphToOrderedSteps,
+  wfEdgeMatches,
+  wfPickNextEdge,
+  wfIsAiRouted,
+  wfRouteInstruction,
+  wfResolveNext,
+} = wfLib;
+
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const HOME = os.homedir();
 const CONFIG_DIR = path.join(HOME, '.config', 'husk');
@@ -445,14 +462,6 @@ function killPtyTree() {
 }
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
-
-// POSIX-shell-quote one argument: 'value' with internal single-quotes escaped
-// as '\\''. Use to serialize an (exe, argv) tuple back into a string we can
-// hand to /bin/sh -c or /usr/bin/script -q -c. Not used on Windows.
-function shJoin(exe, args) {
-  const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
-  return [exe, ...args.map(q)].join(' ');
-}
 
 function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null) {
   if (ptyProc) try { ptyProc.kill(); } catch (_) {}
@@ -1319,162 +1328,8 @@ ipcMain.handle('workflows:stop', (_e, runId) => {
 // A workflow is a graph of step nodes connected by edges. Edges carry a
 // routing condition (used by the 2b branch engine; 2a treats all as 'always').
 
-function sanitizeNode(n) {
-  return {
-    id: n.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    name: String(n.name || 'Step').slice(0, 64),
-    agentCommand: String(n.agentCommand || '').slice(0, 128) || null,
-    prompt: String(n.prompt || '').slice(0, 8192),
-    passContext: ['full', 'last50', 'none'].includes(n.passContext) ? n.passContext : 'full',
-    x: Number.isFinite(n.x) ? n.x : 0,
-    y: Number.isFinite(n.y) ? n.y : 0,
-  };
-}
-
-function sanitizeEdge(e) {
-  const c = (e && e.condition && typeof e.condition === 'object') ? e.condition : {};
-  return {
-    id: e.id || `edge-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    from: String(e.from || ''),
-    to: String(e.to || ''),
-    condition: {
-      type: ['always', 'contains', 'regex'].includes(c.type) ? c.type : 'always',
-      value: String(c.value || '').slice(0, 256),
-    },
-  };
-}
-
-function sanitizeGraph(g) {
-  if (!g || typeof g !== 'object') return { nodes: [], edges: [] };
-  const nodes = Array.isArray(g.nodes) ? g.nodes.map(sanitizeNode) : [];
-  const ids = new Set(nodes.map((n) => n.id));
-  const edges = Array.isArray(g.edges)
-    ? g.edges.map(sanitizeEdge).filter((e) => ids.has(e.from) && ids.has(e.to))
-    : [];
-  return { nodes, edges };
-}
-
-// Convert a legacy steps[] workflow to the graph model: a straight node chain.
-function migrateWorkflow(w) {
-  if (w && w.graph && Array.isArray(w.graph.nodes)) {
-    const { steps, ...rest } = w;
-    return rest;
-  }
-  const steps = Array.isArray(w && w.steps) ? w.steps : [];
-  const nodes = steps.map((s, i) => ({
-    id: s.id || `node-mig-${i}-${Math.random().toString(36).slice(2, 6)}`,
-    name: s.name || `Step ${i + 1}`,
-    agentCommand: s.agentCommand || null,
-    prompt: s.prompt || '',
-    passContext: s.passContext || 'full',
-    x: 80, y: 80 + i * 200,
-  }));
-  const edges = [];
-  for (let i = 1; i < nodes.length; i++) {
-    edges.push({ id: `edge-mig-${i}`, from: nodes[i - 1].id, to: nodes[i].id, condition: { type: 'always', value: '' } });
-  }
-  const { steps: _drop, ...rest } = w || {};
-  return { ...rest, graph: { nodes, edges } };
-}
-
-// Resolve a graph to a linear ordered step list: start at the node with no
-// incoming edge, follow the first outgoing edge. 2b replaces this with real
-// condition-based branch traversal.
-function graphToOrderedSteps(graph) {
-  const g = sanitizeGraph(graph);
-  if (!g.nodes.length) return [];
-  const byId = new Map(g.nodes.map((n) => [n.id, n]));
-  const hasIncoming = new Set(g.edges.map((e) => e.to));
-  let cur = g.nodes.find((n) => !hasIncoming.has(n.id)) || g.nodes[0];
-  const order = [];
-  const seen = new Set();
-  while (cur && !seen.has(cur.id)) {
-    seen.add(cur.id);
-    order.push(cur);
-    const edge = g.edges.find((e) => e.from === cur.id);
-    cur = edge ? byId.get(edge.to) : null;
-  }
-  return order;
-}
-
 function wfEmit(event, channel, data) {
   try { if (!event.sender.isDestroyed()) event.sender.send(channel, data); } catch (_) {}
-}
-
-// Evaluate one edge condition against a node's output text.
-function wfEdgeMatches(condition, output) {
-  const c = condition || { type: 'always' };
-  const text = String(output || '');
-  if (c.type === 'contains') return text.toLowerCase().includes(String(c.value || '').toLowerCase());
-  if (c.type === 'regex') {
-    try { return new RegExp(c.value || '').test(text); } catch (_) { return false; }
-  }
-  // 'always' and 'otherwise' are not matched here; 'always' is an
-  // unconditional follow, 'otherwise' is the fallback. Both handled by caller.
-  return false;
-}
-
-// Pick the next node id after `nodeId` produced `output`. Conditional edges
-// (contains/regex) are evaluated in order; the first match wins. If none
-// match, an 'otherwise'/'always' edge is the fallback.
-function wfPickNextEdge(graph, nodeId, output) {
-  const out = graph.edges.filter((e) => e.from === nodeId);
-  if (!out.length) return null;
-  const conditional = out.filter((e) => e.condition && (e.condition.type === 'contains' || e.condition.type === 'regex'));
-  for (const e of conditional) {
-    if (wfEdgeMatches(e.condition, output)) return e;
-  }
-  const fallback = out.find((e) => !e.condition || e.condition.type === 'always' || e.condition.type === 'otherwise');
-  return fallback || null;
-}
-
-// True when a branching node should route by the AI's own decision: it has
-// 2+ outgoing edges and none of them carries an explicit text condition.
-function wfIsAiRouted(graph, nodeId) {
-  const out = graph.edges.filter((e) => e.from === nodeId);
-  if (out.length < 2) return false;
-  return !out.some((e) => e.condition && (e.condition.type === 'contains' || e.condition.type === 'regex'));
-}
-
-// Instruction appended to a branching step's system prompt so it ends its
-// response with a machine-readable routing directive.
-function wfRouteInstruction(targetNames) {
-  return `\n\nThis step decides which step runs next. After your full response, on a final separate line, output exactly:\nROUTE: <name>\nwhere <name> is one of: ${targetNames.join(' | ')}. To end the workflow instead, output ROUTE: END. The ROUTE line must be the very last line, with nothing after it.`;
-}
-
-// Resolve the next edge for a branching node. AI-routed nodes parse the
-// ROUTE: directive from the output; explicit-condition nodes use the
-// condition matcher. Returns { edge, decision } or null to end.
-function wfResolveNext(graph, node, output, byId) {
-  const out = graph.edges.filter((e) => e.from === node.id);
-  if (!out.length) return null;
-  if (out.length === 1) return { edge: out[0], decision: null };
-
-  if (!wfIsAiRouted(graph, node.id)) {
-    const edge = wfPickNextEdge(graph, node.id, output);
-    return edge ? { edge, decision: null } : null;
-  }
-
-  // AI-routed: parse the last ROUTE: line.
-  const matches = String(output || '').match(/ROUTE:\s*([^\n\r]+)/gi);
-  if (matches && matches.length) {
-    const raw = matches[matches.length - 1].replace(/ROUTE:\s*/i, '').trim();
-    if (/^END\b/i.test(raw)) return { edge: null, decision: 'END' };
-    const want = raw.toLowerCase();
-    let edge = out.find((e) => {
-      const n = byId.get(e.to);
-      return n && n.name.trim().toLowerCase() === want;
-    });
-    if (!edge) {
-      edge = out.find((e) => {
-        const n = byId.get(e.to);
-        return n && n.name.trim() && want.includes(n.name.trim().toLowerCase());
-      });
-    }
-    if (edge) return { edge, decision: (byId.get(edge.to) || {}).name };
-  }
-  // The AI did not give a usable directive: fall back to the first branch.
-  return { edge: out[0], decision: null };
 }
 
 async function executeWorkflow(event, workflow, run) {
@@ -1672,26 +1527,6 @@ Create an agent profile. Return ONLY valid JSON, no markdown fences, no explanat
     child.on('error', (e) => resolve({ ok: false, error: e.message }));
   });
 });
-
-// Parse one Claude Code agent markdown file: YAML frontmatter + body.
-// Frontmatter is intentionally parsed with regex (no yaml dep): only the
-// name and description fields matter for the profile mapping.
-function parseAgentMd(text) {
-  const t = String(text || '');
-  const m = t.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!m) return { name: null, description: null, body: t.trim() };
-  const fm = m[1];
-  const body = m[2].trim();
-  const getField = (k) => {
-    const re = new RegExp(`^${k}\\s*:\\s*(.*)$`, 'm');
-    const mm = fm.match(re);
-    if (!mm) return null;
-    let v = mm[1].trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    return v;
-  };
-  return { name: getField('name'), description: getField('description'), body };
-}
 
 // Per-tool directories to scan for importable agents. To add a tool, append
 // a { label, dir } entry. Files in each dir are parsed by parseAgentMd.
@@ -2050,24 +1885,29 @@ ipcMain.handle('skills:toggle', (_e, payload = {}) => {
   const itemId = id || dirName;
   if (!itemId) return { ok: false, error: 'No item id' };
   if (source === 'husk' || (!source && itemId.endsWith('.md') || itemId.endsWith('.md.disabled'))) {
-    const oldPath = path.join(HUSK_PROMPTS_DIR, itemId);
-    if (!fs.existsSync(oldPath)) return { ok: false, error: 'Prompt not found' };
     const isDisabled = itemId.endsWith('.disabled');
     const newName = isDisabled ? itemId.slice(0, -'.disabled'.length) : `${itemId}.disabled`;
-    const newPath = path.join(HUSK_PROMPTS_DIR, newName);
+    let oldPath, newPath;
+    try {
+      oldPath = resolveInside(HUSK_PROMPTS_DIR, itemId);
+      newPath = resolveInside(HUSK_PROMPTS_DIR, newName);
+    } catch (_) { return { ok: false, error: 'Invalid prompt name' }; }
+    if (!fs.existsSync(oldPath)) return { ok: false, error: 'Prompt not found' };
     if (fs.existsSync(newPath)) return { ok: false, error: 'Target already exists' };
     try {
       fs.renameSync(oldPath, newPath);
       return { ok: true, source: 'husk', id: newName, dirName: newName, disabled: !isDisabled };
     } catch (err) { return { ok: false, error: err.message }; }
   }
-  // Claude skill (default).
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
-  const oldPath = path.join(skillsDir, itemId);
-  if (!fs.existsSync(oldPath)) return { ok: false, error: 'Skill not found' };
   const isDisabled = itemId.startsWith(DISABLED_PREFIX);
   const newDirName = isDisabled ? itemId.slice(DISABLED_PREFIX.length) : DISABLED_PREFIX + itemId;
-  const newPath = path.join(skillsDir, newDirName);
+  let oldPath, newPath;
+  try {
+    oldPath = resolveInside(skillsDir, itemId);
+    newPath = resolveInside(skillsDir, newDirName);
+  } catch (_) { return { ok: false, error: 'Invalid skill name' }; }
+  if (!fs.existsSync(oldPath)) return { ok: false, error: 'Skill not found' };
   if (fs.existsSync(newPath)) return { ok: false, error: 'Target already exists' };
   try {
     fs.renameSync(oldPath, newPath);
