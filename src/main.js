@@ -13,6 +13,7 @@ const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
+const { buildSpawnSpec } = require('./lib/pty-spawn');
 const {
   sanitizeNode,
   sanitizeEdge,
@@ -559,44 +560,26 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     } catch (_) {}
   }
 
-  // Establishing the controlling terminal is platform-specific:
-  //  - Linux:   wrap with GNU script(1) `script -q -c <cmd> /dev/null` so
-  //             node-pty gets a proper setsid + TIOCSCTTY (otherwise
-  //             `claude --resume <id>` exits with code 129).
-  //  - macOS:   sh -c <cmd>; node-pty handles the tty on Darwin, and BSD
-  //             script(1) does NOT accept -c.
-  //  - Windows: cmd.exe /c <user's raw agentCommand>. Direct pty.spawn of
-  //             'claude' fails because Win32 CreateProcess does NOT honor
-  //             PATHEXT, it only finds .exe, never .cmd / .bat / .ps1, and
-  //             npm-installed CLIs land as claude.cmd shims. Going through
-  //             cmd.exe means PATHEXT resolves and the .cmd is found.
-  //             Trade-off: we can't safely inject our long --append-system-
-  //             prompt because cmd.exe's quoting plus node-pty's argv-to-
-  //             cmdline serializer would fragment it. v0.3.0 will resolve
-  //             via `where claude` and re-enable injection.
-  let exe; let argv;
-  if (!rawCmd) {
-    // No agent command configured at all: drop into an interactive shell.
-    exe = shellBin;
-    argv = isWin32 ? [] : ['-i'];
-  } else if (isWin32) {
-    exe = process.env.ComSpec || 'cmd.exe';
-    argv = ['/c', rawCmd];
-  } else {
-    const cmdStr = shJoin(agentExe, agentArgs);
-    if (process.platform === 'darwin') {
-      exe = '/bin/sh';
-      argv = ['-c', cmdStr];
-    } else if (fs.existsSync('/usr/bin/script')) {
-      exe = '/usr/bin/script';
-      argv = ['-q', '-c', cmdStr, '/dev/null'];
-    } else {
-      exe = '/bin/sh';
-      argv = ['-c', cmdStr];
-    }
-  }
+  // Per-platform argv assembly (see src/lib/pty-spawn.js for the rules):
+  //   darwin   pty.spawn(agentExe, agentArgs); no shell parser involved
+  //   linux    pty.spawn('/usr/bin/script', ['-q', '-c', shJoin(...), '/dev/null'])
+  //            because `claude --resume` needs the script setsid/TIOCSCTTY
+  //            setup; argv inside the -c string is shell-escaped by shJoin
+  //   win32    pty.spawn(resolved-via-PATHEXT, agentArgs) when the program
+  //            name resolves to a real file; falls back to cmd.exe /c
+  //            <rawCmd> only when no candidate exists (preserves legacy)
+  const spec = buildSpawnSpec({
+    platform: process.platform,
+    agentExe,
+    agentArgs,
+    rawCmd,
+    env,
+    shell: shellBin,
+    shJoin,
+    scriptExists: process.platform === 'linux' && fs.existsSync('/usr/bin/script'),
+  });
 
-  ptyProc = pty.spawn(exe, argv, { name: 'xterm-256color', cols, rows, cwd, env });
+  ptyProc = pty.spawn(spec.exe, spec.argv, { name: 'xterm-256color', cols, rows, cwd, env });
   activePtyCwd = cwd;
   ptyProc.onData((data) => { if (mainWindow) mainWindow.webContents.send('pty:data', data); });
   ptyProc.onExit(({ exitCode }) => {

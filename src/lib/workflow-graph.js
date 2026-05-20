@@ -4,6 +4,13 @@
 // linear ordering, and edge resolution. No Electron, no fs, no spawn. The
 // IPC handlers in main.js wrap these for the renderer.
 
+// agentCommand is the binary spawned for a step. Today it is the user's
+// own config (typed in the workflow editor) so the trust gate is the
+// same as config.agentCommand: only the renderer that already controls
+// the workflows JSON can write it. Before this field accepts a workflow
+// imported from any non-local source (template marketplace, shared URL,
+// pasted JSON drop), add an allowlist check here against a known set of
+// agent binaries plus a "Custom" opt-in confirmation.
 function sanitizeNode(n) {
   n = n || {};
   return {
