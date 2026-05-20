@@ -1436,10 +1436,37 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 .ai-row:hover { border-color: var(--line-2); }
 .ai-row input[type="checkbox"] {
-  accent-color: var(--accent);
-  width: 15px; height: 15px;
-  margin-top: 2px; flex: 0 0 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px; height: 16px;
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--line-3);
+  background: var(--bg-1);
   cursor: pointer;
+  position: relative;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.ai-row input[type="checkbox"]:hover { border-color: var(--accent); }
+.ai-row input[type="checkbox"]:focus-visible {
+  outline: 0; box-shadow: var(--focus-ring);
+}
+.ai-row input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.ai-row input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px; top: 0;
+  width: 5px; height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.ai-row input[type="checkbox"]:disabled {
+  opacity: 0.4; cursor: not-allowed; background: var(--bg-2);
 }
 .ai-row.is-duplicate { opacity: 0.55; }
 .ai-row-body { flex: 1; min-width: 0; }
