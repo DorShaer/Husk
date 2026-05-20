@@ -1402,6 +1402,75 @@ async function generateAgentWithAI() {
 }
 
 $('#btn-new-agent') && $('#btn-new-agent').addEventListener('click', () => openAgentModal(null));
+
+// Import agents from ~/.claude/agents/*.md
+async function openAgentsImportModal() {
+  const modal = $('#agents-import-modal');
+  const listEl = $('#ai-list');
+  const confirmBtn = $('#ai-confirm');
+  if (!modal || !listEl) return;
+  // eslint-disable-next-line no-unsanitized/property -- static placeholder
+  listEl.innerHTML = `<div class="ai-empty">Loading...</div>`;
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Import 0 agents'; }
+  modal.hidden = false;
+
+  const res = await window.husk.profiles.listClaudeAgents();
+  if (!res || !res.ok) {
+    // eslint-disable-next-line no-unsanitized/property -- error from local fs read, no html
+    listEl.innerHTML = `<div class="ai-empty">${escapeHtml((res && res.error) || 'Could not read agents')}</div>`;
+    return;
+  }
+  if (!res.agents.length) {
+    // eslint-disable-next-line no-unsanitized/property -- static html
+    listEl.innerHTML = `<div class="ai-empty">No agents found in ~/.claude/agents.</div>`;
+    return;
+  }
+  // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
+  listEl.innerHTML = res.agents.map((a) => `
+    <label class="ai-row${a.alreadyImported ? ' is-duplicate' : ''}">
+      <input type="checkbox" class="ai-check" data-file="${escapeAttr(a.filename)}" ${a.alreadyImported ? 'disabled' : ''} />
+      <div class="ai-row-body">
+        <div class="ai-row-name">${escapeHtml(a.name)}</div>
+        ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
+      </div>
+      ${a.alreadyImported ? `<span class="ai-row-pill">Already added</span>` : ''}
+    </label>
+  `).join('');
+
+  const updateCount = () => {
+    const n = listEl.querySelectorAll('.ai-check:checked').length;
+    if (confirmBtn) { confirmBtn.disabled = n === 0; confirmBtn.textContent = `Import ${n} agent${n !== 1 ? 's' : ''}`; }
+  };
+  listEl.querySelectorAll('.ai-check').forEach((el) => el.addEventListener('change', updateCount));
+  updateCount();
+}
+
+function closeAgentsImportModal() {
+  const m = $('#agents-import-modal');
+  if (m) m.hidden = true;
+}
+
+async function confirmAgentsImport() {
+  const listEl = $('#ai-list');
+  if (!listEl) return;
+  const filenames = Array.from(listEl.querySelectorAll('.ai-check:checked')).map((el) => el.dataset.file);
+  if (!filenames.length) return;
+  const btn = $('#ai-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
+  const res = await window.husk.profiles.importClaude(filenames);
+  if (!res || !res.ok) { toast((res && res.error) || 'Import failed', 'error'); if (btn) btn.disabled = false; return; }
+  toast(`Imported ${res.imported} agent${res.imported !== 1 ? 's' : ''}`, 'success');
+  closeAgentsImportModal();
+  profilesCache = await window.husk.profiles.list();
+  paintAgents();
+  updateAgentBanner();
+}
+
+$('#btn-import-agents') && $('#btn-import-agents').addEventListener('click', openAgentsImportModal);
+$('#ai-close') && $('#ai-close').addEventListener('click', closeAgentsImportModal);
+$('#ai-cancel') && $('#ai-cancel').addEventListener('click', closeAgentsImportModal);
+$('#ai-confirm') && $('#ai-confirm').addEventListener('click', confirmAgentsImport);
+$('#agents-import-modal') && $('#agents-import-modal').addEventListener('click', (e) => { if (e.target === $('#agents-import-modal')) closeAgentsImportModal(); });
 $('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', closeAgentModal);
 $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
