@@ -11,6 +11,11 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# Local screen recordings used to generate docs/images/*.gif. The
+# optimized GIFs go in the repo; the source MP4 / MOV stays local.
+docs/*.mp4
+docs/*.mov
+
 .vscode/
 .idea/
 *.swp
