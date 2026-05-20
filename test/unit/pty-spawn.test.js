@@ -1,0 +1,209 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { resolveWindowsExe, buildSpawnSpec } = require('../../src/lib/pty-spawn');
+const { shJoin } = require('../../src/lib/shell-quote');
+
+// ─── resolveWindowsExe ───────────────────────────────────────────────────────
+
+function tempBin() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rwe-'));
+  return dir;
+}
+
+test('resolveWindowsExe: finds an .EXE via PATHEXT', () => {
+  const dir = tempBin();
+  fs.writeFileSync(path.join(dir, 'claude.EXE'), '');
+  const got = resolveWindowsExe('claude', { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' });
+  assert.equal(got, path.join(dir, 'claude.EXE'));
+});
+
+test('resolveWindowsExe: finds a .CMD shim via PATHEXT', () => {
+  const dir = tempBin();
+  fs.writeFileSync(path.join(dir, 'claude.CMD'), '');
+  const got = resolveWindowsExe('claude', { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' });
+  assert.equal(got, path.join(dir, 'claude.CMD'));
+});
+
+test('resolveWindowsExe: respects PATHEXT order', () => {
+  const dir = tempBin();
+  fs.writeFileSync(path.join(dir, 'claude.EXE'), '');
+  fs.writeFileSync(path.join(dir, 'claude.CMD'), '');
+  const got = resolveWindowsExe('claude', { PATH: dir, PATHEXT: '.CMD;.EXE' });
+  assert.equal(got, path.join(dir, 'claude.CMD'));
+});
+
+test('resolveWindowsExe: when exe already has an extension, only that file is tried', () => {
+  const dir = tempBin();
+  fs.writeFileSync(path.join(dir, 'claude.EXE'), '');
+  const hit = resolveWindowsExe('claude.EXE', { PATH: dir, PATHEXT: '.COM;.EXE' });
+  assert.equal(hit, path.join(dir, 'claude.EXE'));
+  const miss = resolveWindowsExe('claude.bat', { PATH: dir, PATHEXT: '.COM;.EXE' });
+  assert.equal(miss, null);
+});
+
+test('resolveWindowsExe: returns null when not found', () => {
+  const dir = tempBin();
+  assert.equal(resolveWindowsExe('nope', { PATH: dir, PATHEXT: '.EXE' }), null);
+});
+
+test('resolveWindowsExe: returns null when PATH is empty', () => {
+  assert.equal(resolveWindowsExe('claude', { PATH: '', PATHEXT: '.EXE' }), null);
+});
+
+test('resolveWindowsExe: refuses an exe containing a path separator', () => {
+  const dir = tempBin();
+  fs.writeFileSync(path.join(dir, 'claude.EXE'), '');
+  assert.equal(resolveWindowsExe('sub\\claude', { PATH: dir, PATHEXT: '.EXE' }), null);
+  assert.equal(resolveWindowsExe('sub/claude', { PATH: dir, PATHEXT: '.EXE' }), null);
+});
+
+test('resolveWindowsExe: absolute path is accepted when the file exists', () => {
+  const dir = tempBin();
+  const f = path.join(dir, 'tool.exe');
+  fs.writeFileSync(f, '');
+  assert.equal(resolveWindowsExe(f, {}), f);
+});
+
+test('resolveWindowsExe: absolute path is rejected when the file does not exist', () => {
+  assert.equal(resolveWindowsExe('/no/such/file.exe', {}), null);
+});
+
+test('resolveWindowsExe: walks multiple directories in PATH', () => {
+  const dir1 = tempBin();
+  const dir2 = tempBin();
+  fs.writeFileSync(path.join(dir2, 'claude.EXE'), '');
+  const env = { PATH: [dir1, dir2].join(';'), PATHEXT: '.EXE' };
+  assert.equal(resolveWindowsExe('claude', env), path.join(dir2, 'claude.EXE'));
+});
+
+// ─── buildSpawnSpec ──────────────────────────────────────────────────────────
+
+test('buildSpawnSpec: darwin uses direct exe+argv, no shell parser', () => {
+  const spec = buildSpawnSpec({
+    platform: 'darwin',
+    agentExe: 'claude',
+    agentArgs: ['--resume', 'abc'],
+    rawCmd: 'claude --resume abc',
+    env: {},
+    shell: '/bin/zsh',
+    shJoin,
+    scriptExists: false,
+  });
+  assert.equal(spec.exe, 'claude');
+  assert.deepEqual(spec.argv, ['--resume', 'abc']);
+});
+
+test('buildSpawnSpec: darwin with metacharacters in exe stays one argv[0]', () => {
+  const spec = buildSpawnSpec({
+    platform: 'darwin',
+    agentExe: 'a;b',
+    agentArgs: ['x'],
+    rawCmd: 'a;b x',
+    env: {},
+    shell: '/bin/zsh',
+    shJoin,
+    scriptExists: false,
+  });
+  assert.equal(spec.exe, 'a;b');
+  assert.deepEqual(spec.argv, ['x']);
+});
+
+test('buildSpawnSpec: linux wraps with /usr/bin/script when available', () => {
+  const spec = buildSpawnSpec({
+    platform: 'linux',
+    agentExe: 'claude',
+    agentArgs: ['--resume', 'abc'],
+    rawCmd: 'claude --resume abc',
+    env: {},
+    shell: '/bin/bash',
+    shJoin,
+    scriptExists: true,
+  });
+  assert.equal(spec.exe, '/usr/bin/script');
+  assert.deepEqual(spec.argv, ['-q', '-c', "'claude' '--resume' 'abc'", '/dev/null']);
+});
+
+test('buildSpawnSpec: linux falls back to /bin/sh when script is absent', () => {
+  const spec = buildSpawnSpec({
+    platform: 'linux',
+    agentExe: 'claude',
+    agentArgs: ['--resume', 'abc'],
+    rawCmd: 'claude --resume abc',
+    env: {},
+    shell: '/bin/bash',
+    shJoin,
+    scriptExists: false,
+  });
+  assert.equal(spec.exe, '/bin/sh');
+  assert.deepEqual(spec.argv, ['-c', "'claude' '--resume' 'abc'"]);
+});
+
+test('buildSpawnSpec: linux argv-inside-string is shell-escaped against injection', () => {
+  const spec = buildSpawnSpec({
+    platform: 'linux',
+    agentExe: 'a;b',
+    agentArgs: ['x'],
+    rawCmd: 'a;b x',
+    env: {},
+    shell: '/bin/bash',
+    shJoin,
+    scriptExists: true,
+  });
+  // The exe must be quoted inside the -c string so /bin/sh treats it as
+  // one program name, not two commands separated by ';'.
+  const cmdStr = spec.argv[2];
+  assert.equal(cmdStr.startsWith("'a;b'"), true, cmdStr);
+});
+
+test('buildSpawnSpec: win32 uses the PATHEXT-resolved exe directly when available', () => {
+  const dir = tempBin();
+  fs.writeFileSync(path.join(dir, 'claude.CMD'), '');
+  const spec = buildSpawnSpec({
+    platform: 'win32',
+    agentExe: 'claude',
+    agentArgs: ['--help'],
+    rawCmd: 'claude --help',
+    env: { PATH: dir, PATHEXT: '.EXE;.CMD' },
+    shell: 'cmd.exe',
+    shJoin,
+  });
+  assert.equal(spec.exe, path.join(dir, 'claude.CMD'));
+  assert.deepEqual(spec.argv, ['--help']);
+});
+
+test('buildSpawnSpec: win32 falls back to cmd.exe /c when exe is not resolvable', () => {
+  const dir = tempBin();
+  const spec = buildSpawnSpec({
+    platform: 'win32',
+    agentExe: 'ghost',
+    agentArgs: ['--help'],
+    rawCmd: 'ghost --help',
+    env: { PATH: dir, PATHEXT: '.EXE', ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    shell: 'cmd.exe',
+    shJoin,
+  });
+  assert.equal(spec.exe, 'C:\\Windows\\System32\\cmd.exe');
+  assert.deepEqual(spec.argv, ['/c', 'ghost --help']);
+});
+
+test('buildSpawnSpec: empty rawCmd drops into the platform shell', () => {
+  const mac = buildSpawnSpec({
+    platform: 'darwin', agentExe: '', agentArgs: [], rawCmd: '',
+    env: {}, shell: '/bin/zsh', shJoin,
+  });
+  assert.equal(mac.exe, '/bin/zsh');
+  assert.deepEqual(mac.argv, ['-i']);
+
+  const win = buildSpawnSpec({
+    platform: 'win32', agentExe: '', agentArgs: [], rawCmd: '',
+    env: {}, shell: 'cmd.exe', shJoin,
+  });
+  assert.equal(win.exe, 'cmd.exe');
+  assert.deepEqual(win.argv, []);
+});
