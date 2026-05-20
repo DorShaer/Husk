@@ -11,6 +11,10 @@ on:
 
 permissions:
   contents: write
+  # id-token + attestations let actions/attest-build-provenance sign
+  # the release artifacts with a GitHub-issued, Sigstore-backed claim.
+  id-token: write
+  attestations: write
 
 env:
   NODE_VERSION: '20'
@@ -104,6 +108,16 @@ jobs:
           done
           echo "--- SHA256SUMS ---"
           cat SHA256SUMS
+
+      - name: Attest provenance for release artifacts
+        # Signs every release artifact with a Sigstore-backed claim
+        # tied to this workflow run. Users can verify with:
+        #   gh attestation verify <file> --repo DorShaer/Husk
+        # This also protects SHA256SUMS itself, so an attacker who
+        # swaps a release asset cannot silently rewrite the sums file.
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'release/*'
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
