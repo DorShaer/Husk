@@ -11,6 +11,9 @@ function parseAgentMd(text) {
   const fm = m[1];
   const body = m[2].trim();
   const getField = (k) => {
+    // k is one of the literal field names supplied by this module
+    // ('name', 'description'); never user input.
+    // eslint-disable-next-line security/detect-non-literal-regexp
     const re = new RegExp(`^${k}\\s*:\\s*(.*)$`, 'm');
     const mm = fm.match(re);
     if (!mm) return null;

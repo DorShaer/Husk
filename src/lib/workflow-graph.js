@@ -85,7 +85,13 @@ function wfEdgeMatches(condition, output) {
   const text = String(output || '');
   if (c.type === 'contains') return text.toLowerCase().includes(String(c.value || '').toLowerCase());
   if (c.type === 'regex') {
-    try { return new RegExp(c.value || '').test(text); } catch (_) { return false; }
+    // c.value is the user's own workflow routing pattern, capped at
+    // 256 chars by sanitizeEdge. Match runs against this node's output,
+    // not against any privileged input.
+    try {
+      // eslint-disable-next-line security/detect-non-literal-regexp
+      return new RegExp(c.value || '').test(text);
+    } catch (_) { return false; }
   }
   return false;
 }
