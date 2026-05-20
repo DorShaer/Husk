@@ -1693,10 +1693,8 @@ function parseAgentMd(text) {
   return { name: getField('name'), description: getField('description'), body };
 }
 
-// Tool-agnostic agent sources. Husk wraps any CLI agent; this list is the
-// only place that knows about specific tools. Adding another tool is one
-// line: { label, dir }. Each source's files are parsed with parseAgentMd
-// (markdown with optional YAML frontmatter), which is the common shape.
+// Per-tool directories to scan for importable agents. To add a tool, append
+// a { label, dir } entry. Files in each dir are parsed by parseAgentMd.
 const AGENT_SOURCES = [
   { label: 'Claude Code', dir: path.join(HOME, '.claude', 'agents') },
 ];
@@ -1802,8 +1800,8 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
   return { ok: true };
 });
 
-// Active profiles are stored as a set in activeProfileIds[]. Migrate the
-// legacy single-active field so old configs keep working.
+// Returns the active profile ids, falling back to the legacy single-active
+// field for configs written before multi-active landed.
 function getActiveIds() {
   const arr = Array.isArray(config.activeProfileIds) ? config.activeProfileIds : null;
   if (arr) return arr;

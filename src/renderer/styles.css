@@ -1435,15 +1435,10 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease;
 }
 .ai-row:hover { border-color: var(--line-2); }
-/* Reusable custom checkbox: native input hidden, sibling .ai-check-box is
-   the visible control. Driven by :checked +. Pseudo-element renders on a
-   span (reliable everywhere) rather than the input (Chromium-unreliable). */
+/* Custom checkbox: native input is hidden, the sibling .ai-check-box is
+   the visible control driven by `input:checked + .ai-check-box`. */
 .ai-check {
-  position: absolute;
-  opacity: 0;
-  width: 0; height: 0;
-  margin: 0; padding: 0;
-  pointer-events: none;
+  display: none;
 }
 .ai-check-box {
   width: 16px; height: 16px;
@@ -1483,9 +1478,32 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .ai-foot-toggle {
   display: inline-flex; align-items: center; gap: 8px;
   margin-right: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 12px; color: var(--text-2); font-weight: 500;
   cursor: pointer; user-select: none;
   letter-spacing: 0.01em;
+}
+
+/* Already-added row: non-interactive, with a static check icon. */
+.ai-check-box-done {
+  width: 16px; height: 16px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--emerald) 18%, var(--bg-2));
+  border: 1.5px solid color-mix(in srgb, var(--emerald) 35%, var(--line-2));
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--emerald);
+}
+.ai-check-box-done svg { width: 11px; height: 11px; display: block; }
+.ai-row-done {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  opacity: 0.62;
+  cursor: default;
 }
 .ai-row.is-duplicate { opacity: 0.55; }
 .ai-row-body { flex: 1; min-width: 0; }
@@ -1558,54 +1576,52 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .aab-chip-x:hover { background: color-mix(in srgb, var(--rose) 16%, var(--bg-2)); color: var(--rose); }
 .aab-clear { flex: 0 0 auto; }
 
-/* Agents grid: comfortable multi-column at wide widths, breathes between cards. */
+/* Agents grid: 3-column at wide widths, comfortable gap. */
 .agents-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
   align-content: start;
 }
 
-/* Agent card: the whole card is the activation control. Clicking anywhere
-   on the card (outside Edit/Delete/etc.) toggles its active state. */
+/* Agent card. Clicking anywhere except a button toggles activation. */
 .agent-card {
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  padding: 16px 18px;
+  padding: 14px 16px;
   position: relative;
   box-shadow: var(--elev-1);
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: 8px;
   cursor: pointer;
-  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
 }
 .agent-card:hover {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--line-2));
   box-shadow: var(--elev-2);
-  transform: translateY(-1px);
 }
 .agent-card.is-active {
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-  background: color-mix(in srgb, var(--accent) 4%, var(--bg-1));
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-1));
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
-    0 8px 24px color-mix(in srgb, var(--accent) 10%, transparent),
     var(--elev-2);
 }
 .agent-card.is-active:hover {
-  transform: translateY(-1px);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
-    0 10px 30px color-mix(in srgb, var(--accent) 14%, transparent),
     var(--elev-3);
 }
+.agent-card:focus-visible { outline: 0; box-shadow: var(--focus-ring), var(--elev-2); }
 .agent-card-head {
-  display: flex; align-items: center; gap: 10px; padding-right: 28px;
+  display: flex; align-items: center; gap: 8px; padding-right: 64px;
+  min-height: 24px;
 }
 .agent-card-title {
-  font-size: 14.5px; font-weight: 600; color: var(--text);
+  font-size: 14px; font-weight: 600; color: var(--text);
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  letter-spacing: -0.005em;
 }
 .agent-card-pill {
   font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
@@ -1622,44 +1638,48 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   flex: 0 0 auto;
 }
 .agent-card-desc {
-  font-size: 12.5px; color: var(--text-2); line-height: 1.55;
+  font-size: 12.5px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
+  margin: 0;
 }
+/* Prompt preview: muted italic, 2-line clamp. */
 .agent-card-prompt {
-  font-size: 12px; color: var(--text-3); line-height: 1.6;
-  background: var(--bg-2); border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 10px 12px;
-  position: relative;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  font-size: 11.5px; color: var(--text-3); line-height: 1.55;
+  font-style: italic;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
-  white-space: normal;
-  word-break: break-word;
+  white-space: normal; word-break: break-word;
+  margin: 0;
 }
-.agent-card-prompt::after {
-  content: '';
-  position: absolute; left: 0; right: 0; bottom: 0; height: 24px;
-  background: linear-gradient(to bottom, transparent, var(--bg-2));
-  pointer-events: none;
-}
-.agent-card.is-active .agent-card-prompt::after {
-  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--accent) 3%, var(--bg-2)));
-}
-.agent-card-actions {
-  display: flex; align-items: center; gap: 10px;
-  margin-top: 4px; padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-.agent-card-actions .card-cta,
-.agent-card-actions .ghost-btn { height: var(--control-h); }
-/* Switch always anchors right; Edit (when present) stays at the left. */
-.agent-card-actions .agent-switch { margin-left: auto; }
-.agent-card .card-delete { position: absolute; top: 12px; right: 12px; }
 
-/* Auto-select: iOS-style switch. The native input is hidden; the visible
-   track is a sibling span with the thumb as its ::after pseudo. ::after
-   on a span renders consistently everywhere, unlike ::after on input. */
+/* Edit and delete icons, revealed on card hover, for non-builtin agents. */
+.agent-card-corner {
+  position: absolute; top: 10px; right: 10px;
+  display: flex; gap: 4px;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
+}
+.agent-card:hover .agent-card-corner,
+.agent-card:focus-within .agent-card-corner { opacity: 1; }
+.agent-card-icon {
+  width: 26px; height: 26px;
+  background: var(--bg-2); border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--text-3); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.agent-card-icon svg { width: 13px; height: 13px; display: block; }
+.agent-card-icon:hover { background: var(--bg-3); color: var(--text); border-color: var(--line-3); }
+.agent-card-icon.is-danger:hover {
+  color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 12%, var(--bg-2));
+  border-color: color-mix(in srgb, var(--rose) 30%, var(--line-3));
+}
+
+/* Auto-select switch. Native input hidden; the sibling .agent-switch-track
+   is the visible control, driven by `input:checked + .agent-switch-track`. */
 .agent-switch {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 11.5px; font-weight: 500; color: var(--text-3);
@@ -2644,6 +2664,15 @@ input[type="checkbox"]:disabled {
 .modal-hint { color: var(--text-3); font-size: 12px; margin: 12px 0 18px; }
 .modal-hint code { background: var(--bg-3); padding: 1px 6px; border-radius: 4px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
 .modal-card .btn-primary { width: 100%; height: var(--control-h-lg); padding: 0 16px; font-size: 14px; }
+/* Footer buttons use standard sizing, overriding the stacked default above. */
+.modal-foot .btn-primary,
+.modal-foot .ghost-btn,
+.modal-foot .btn-danger {
+  width: auto;
+  height: var(--control-h);
+  padding: 0 14px;
+  font-size: 13px;
+}
 
 .modal-card.modal-card-wide { width: 600px; max-width: 92vw; text-align: left; }
 .modal-card.modal-wide { width: 600px; max-width: 92vw; text-align: left; }
