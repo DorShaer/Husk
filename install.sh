@@ -20,6 +20,15 @@ dim()  { echo -e "${C_DIM}$1${C_RST}"; }
 
 cd "$APP_DIR"
 
+# Pinned SHA-256 of the upstream bun installer script revision we
+# accept. ensure_bun verifies the downloaded file against this constant
+# before running it. Procedure for bumping is in installer/lib/verify.sh.
+BUN_INSTALLER_URL="https://bun.sh/install"
+BUN_INSTALLER_SHA256="bab8acfb046aac8c72407bdcce903957665d655d7acaa3e11c7c4616beae68dd"
+
+# shellcheck source=installer/lib/verify.sh
+. "$APP_DIR/installer/lib/verify.sh"
+
 case "$PLATFORM" in
     Linux)  ok "Detected Linux" ;;
     Darwin) ok "Detected macOS" ;;
@@ -117,13 +126,24 @@ ensure_bun() {
         return 1
     fi
     _ensure_unzip
-    # Official unattended installer. Writes to ~/.bun/bin and updates the
-    # shell rc files. The next login picks it up automatically; we also add
-    # it to this script's PATH so any further checks below see it.
-    if curl -fsSL https://bun.sh/install | bash; then :; else
-        warn "bun installer reported a failure; continuing without bun. PAI hooks will not run until bun is installed."
+    # Download the bun installer to a temp file and check its SHA-256
+    # against the pinned constant before running it.
+    local installer_tmp
+    if ! installer_tmp=$(mktemp 2>/dev/null); then
+        warn "Could not create temp file for bun installer; continuing without bun."
         return 1
     fi
+    if ! download_and_verify "$BUN_INSTALLER_URL" "$BUN_INSTALLER_SHA256" "$installer_tmp"; then
+        warn "bun installer SHA-256 did not match the pinned value (expected $BUN_INSTALLER_SHA256). Skipping. To update the pin, see installer/lib/verify.sh."
+        rm -f "$installer_tmp"
+        return 1
+    fi
+    if ! bash "$installer_tmp"; then
+        warn "bun installer reported a failure; continuing without bun. PAI hooks will not run until bun is installed."
+        rm -f "$installer_tmp"
+        return 1
+    fi
+    rm -f "$installer_tmp"
     if [ -x "$HOME/.bun/bin/bun" ]; then
         export PATH="$HOME/.bun/bin:$PATH"
         ok "bun installed at $HOME/.bun/bin (added to PATH for this session)"
