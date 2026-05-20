@@ -1731,10 +1731,11 @@ ipcMain.handle('profiles:listImportableAgents', () => {
 
 ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
   const picks = Array.isArray(payload && payload.picks) ? payload.picks : [];
+  const activateAfter = !!(payload && payload.activate);
   if (!picks.length) return { ok: false, error: 'nothing to import' };
   const byLabel = new Map(AGENT_SOURCES.map((s) => [s.label, s]));
-  let imported = 0;
   const list = getProfiles().slice();
+  const importedIds = [];
   for (const pick of picks) {
     const src = byLabel.get(pick && pick.source);
     const fname = String((pick && pick.filename) || '');
@@ -1742,20 +1743,30 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
     try {
       const text = fs.readFileSync(path.join(src.dir, fname), 'utf8');
       const parsed = parseAgentMd(text);
+      const id = `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       list.push({
-        id: `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id,
         name: (parsed.name || fname.replace(/\.md$/, '')).slice(0, 64),
         description: (parsed.description || '').slice(0, 256),
         systemPrompt: (parsed.body || '').slice(0, 4096),
         autoSelect: false,
         builtin: false,
       });
-      imported += 1;
+      importedIds.push(id);
     } catch (_) {}
   }
-  config = { ...config, profiles: list };
+  let nextConfig = { ...config, profiles: list };
+  if (activateAfter && importedIds.length) {
+    const prevActive = Array.isArray(config.activeProfileIds)
+      ? config.activeProfileIds
+      : (config.activeProfileId ? [config.activeProfileId] : []);
+    const active = prevActive.slice();
+    for (const id of importedIds) { if (!active.includes(id)) active.push(id); }
+    nextConfig = { ...nextConfig, activeProfileIds: active, activeProfileId: active[0] || null };
+  }
+  config = nextConfig;
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
-  return { ok: true, imported };
+  return { ok: true, imported: importedIds.length, importedIds };
 });
 
 ipcMain.handle('profiles:create', (_e, payload = {}) => {
