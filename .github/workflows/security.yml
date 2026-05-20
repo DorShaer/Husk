@@ -90,11 +90,12 @@ jobs:
       - name: Install (no scripts)
         run: npm ci --ignore-scripts
 
-      - name: npm audit (high + critical, prod only)
-        # --omit=dev focuses the gate on what actually ships to users.
-        # Dev-only CVEs (electron-builder, etc.) are still visible in the
-        # JSON report below for review, just not blocking.
-        run: npm audit --audit-level=high --omit=dev
+      - name: npm audit (high + critical, all deps)
+        # Run against the full dependency graph including devDependencies
+        # since the build chain (electron-builder, electron itself) ships
+        # binaries to end users. Local-only dev tools that do not touch
+        # the build can be excluded via per-advisory ignores when needed.
+        run: npm audit --audit-level=high
 
       - name: npm audit JSON report (full, prod + dev)
         if: always()
