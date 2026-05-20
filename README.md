@@ -26,6 +26,18 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <br /><br />
 
+<img src="docs/images/husk-agents.png" alt="Agents page" width="450" />
+<img src="docs/images/husk-workflows.png" alt="Workflows graph editor" width="450" />
+<br /><sub><i>Curate the agent personas active for the next session. Build multi-step automations with conditional branching in the Workflows graph editor.</i></sub>
+
+<br /><br />
+
+<img src="docs/images/husk-projects.png" alt="Pin a project folder" width="450" />
+<img src="docs/images/husk-prompts.png" alt="Prompts library" width="450" />
+<br /><sub><i>Pin folders as Projects so the agent always starts in the right cwd. Save reusable prompts and fire them with one click.</i></sub>
+
+<br /><br />
+
 <img src="docs/images/husk-skills.png" alt="Skills page" width="450" />
 <img src="docs/images/husk-mcp.png" alt="MCP servers page" width="450" />
 <br /><sub><i>Skills with one-click <b>Use</b>, animated toggles, and source badges. MCP servers with live connection state and a curated catalog.</i></sub>
