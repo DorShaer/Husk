@@ -1235,18 +1235,21 @@ function paintAgents() {
     return;
   }
   const activeIds = new Set(getActiveProfileIds());
-  // Active agents float to the top; the rest sort by name.
-  const sorted = [...profilesCache].sort((a, b) => {
-    const av = activeIds.has(a.id) ? 0 : 1;
-    const bv = activeIds.has(b.id) ? 0 : 1;
-    if (av !== bv) return av - bv;
-    return (a.name || '').localeCompare(b.name || '');
-  });
+  // Alphabetical only; active state is purely visual, not positional.
+  const sorted = [...profilesCache].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  const editIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`;
+  const trashIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
+
   const cards = sorted.map((p) => {
     const isActive = activeIds.has(p.id);
     return `
     <div class="agent-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}" role="button" aria-pressed="${isActive}" tabindex="0" title="${isActive ? 'Click to deactivate' : 'Click to activate'}">
-      ${!p.builtin ? `<button class="card-delete agent-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete agent" aria-label="Delete agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
+      ${!p.builtin ? `
+        <div class="agent-card-corner">
+          <button class="agent-card-icon agent-edit" data-id="${escapeHtml(p.id)}" title="Edit agent" aria-label="Edit agent">${editIcon}</button>
+          <button class="agent-card-icon is-danger agent-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete agent" aria-label="Delete agent">${trashIcon}</button>
+        </div>` : ''}
       <div class="agent-card-head">
         <div class="agent-card-title">${escapeHtml(p.name)}</div>
         ${isActive ? '<span class="agent-card-pill">Active</span>' : ''}
@@ -1254,15 +1257,13 @@ function paintAgents() {
       </div>
       ${p.description ? `<div class="agent-card-desc">${escapeHtml(p.description)}</div>` : ''}
       ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
-      ${!p.builtin ? `<div class="agent-card-actions"><button class="ghost-link agent-edit" data-id="${escapeHtml(p.id)}">Edit details</button></div>` : ''}
     </div>
   `;
   }).join('');
   // eslint-disable-next-line no-unsanitized/property
   grid.innerHTML = cards;
 
-  // Whole card toggles activation. Buttons inside (Edit, Delete) opt out via
-  // closest('button') check so they trigger their own handlers cleanly.
+  // Whole-card click toggles activation; clicks on inner buttons fall through.
   grid.querySelectorAll('.agent-card').forEach((card) => {
     const id = card.dataset.id;
     const toggle = () => {
@@ -1271,7 +1272,7 @@ function paintAgents() {
     };
     card.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
-      // Ignore plain text-selection drags so users can read the prompt preview.
+      // Skip toggle when the user just selected text inside the card.
       if (window.getSelection && window.getSelection().toString().length > 0) return;
       toggle();
     });
@@ -1478,18 +1479,32 @@ async function openAgentsImportModal() {
     listEl.innerHTML = `<div class="ai-empty">No agents found on this machine.</div>`;
     return;
   }
+  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
-  listEl.innerHTML = res.agents.map((a) => `
-    <label class="ai-row${a.alreadyImported ? ' is-duplicate' : ''}">
-      <input type="checkbox" class="ai-check" data-source="${escapeAttr(a.source)}" data-file="${escapeAttr(a.filename)}" ${a.alreadyImported ? 'disabled' : ''} />
-      <span class="ai-check-box" aria-hidden="true"></span>
-      <div class="ai-row-body">
-        <div class="ai-row-name">${escapeHtml(a.name)}<span class="ai-row-source">${escapeHtml(a.source)}</span></div>
-        ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
+  listEl.innerHTML = res.agents.map((a) => {
+    if (a.alreadyImported) {
+      return `
+      <div class="ai-row-done">
+        <span class="ai-check-box-done" aria-hidden="true">${checkIcon}</span>
+        <div class="ai-row-body">
+          <div class="ai-row-name">${escapeHtml(a.name)}<span class="ai-row-source">${escapeHtml(a.source)}</span></div>
+          ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
+        </div>
+        <span class="ai-row-pill">Already added</span>
       </div>
-      ${a.alreadyImported ? `<span class="ai-row-pill">Already added</span>` : ''}
-    </label>
-  `).join('');
+    `;
+    }
+    return `
+      <label class="ai-row">
+        <input type="checkbox" class="ai-check" data-source="${escapeAttr(a.source)}" data-file="${escapeAttr(a.filename)}" />
+        <span class="ai-check-box" aria-hidden="true"></span>
+        <div class="ai-row-body">
+          <div class="ai-row-name">${escapeHtml(a.name)}<span class="ai-row-source">${escapeHtml(a.source)}</span></div>
+          ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
+        </div>
+      </label>
+    `;
+  }).join('');
 
   const updateCount = () => {
     const n = listEl.querySelectorAll('.ai-check:checked').length;
