@@ -1414,7 +1414,7 @@ async function openAgentsImportModal() {
   if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Import 0 agents'; }
   modal.hidden = false;
 
-  const res = await window.husk.profiles.listClaudeAgents();
+  const res = await window.husk.profiles.listImportableAgents();
   if (!res || !res.ok) {
     // eslint-disable-next-line no-unsanitized/property -- error from local fs read, no html
     listEl.innerHTML = `<div class="ai-empty">${escapeHtml((res && res.error) || 'Could not read agents')}</div>`;
@@ -1422,15 +1422,15 @@ async function openAgentsImportModal() {
   }
   if (!res.agents.length) {
     // eslint-disable-next-line no-unsanitized/property -- static html
-    listEl.innerHTML = `<div class="ai-empty">No agents found in ~/.claude/agents.</div>`;
+    listEl.innerHTML = `<div class="ai-empty">No agents found on this machine.</div>`;
     return;
   }
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
   listEl.innerHTML = res.agents.map((a) => `
     <label class="ai-row${a.alreadyImported ? ' is-duplicate' : ''}">
-      <input type="checkbox" class="ai-check" data-file="${escapeAttr(a.filename)}" ${a.alreadyImported ? 'disabled' : ''} />
+      <input type="checkbox" class="ai-check" data-source="${escapeAttr(a.source)}" data-file="${escapeAttr(a.filename)}" ${a.alreadyImported ? 'disabled' : ''} />
       <div class="ai-row-body">
-        <div class="ai-row-name">${escapeHtml(a.name)}</div>
+        <div class="ai-row-name">${escapeHtml(a.name)}<span class="ai-row-source">${escapeHtml(a.source)}</span></div>
         ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
       </div>
       ${a.alreadyImported ? `<span class="ai-row-pill">Already added</span>` : ''}
@@ -1453,11 +1453,11 @@ function closeAgentsImportModal() {
 async function confirmAgentsImport() {
   const listEl = $('#ai-list');
   if (!listEl) return;
-  const filenames = Array.from(listEl.querySelectorAll('.ai-check:checked')).map((el) => el.dataset.file);
-  if (!filenames.length) return;
+  const picks = Array.from(listEl.querySelectorAll('.ai-check:checked')).map((el) => ({ source: el.dataset.source, filename: el.dataset.file }));
+  if (!picks.length) return;
   const btn = $('#ai-confirm');
   if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
-  const res = await window.husk.profiles.importClaude(filenames);
+  const res = await window.husk.profiles.importAgents(picks);
   if (!res || !res.ok) { toast((res && res.error) || 'Import failed', 'error'); if (btn) btn.disabled = false; return; }
   toast(`Imported ${res.imported} agent${res.imported !== 1 ? 's' : ''}`, 'success');
   closeAgentsImportModal();
