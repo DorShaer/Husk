@@ -49,7 +49,19 @@ Grab the latest installer for your OS from the [releases page](https://github.co
 
 No Node, no npm, no `git clone`. Husk bundles its own Electron runtime and copies the agent reasoning layer into `~/.claude/` on first launch.
 
-> macOS first launch: the .dmg is unsigned today. Right-click the app, choose **Open**, confirm once. Apple Developer ID signing is on the roadmap.
+> **macOS first launch (unsigned builds).** The .dmg ships unsigned today. Drag Husk to Applications, try to open it, click **Cancel** on the Gatekeeper prompt, then open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. A second prompt confirms and Husk launches normally from then on. Faster path if you live in the terminal: `xattr -dr com.apple.quarantine /Applications/Husk.app`. Apple Developer ID signing is on the roadmap.
+
+### Verifying your download
+
+Every release ships a `SHA256SUMS` file plus Sigstore build-provenance attestations bound to the workflow run that produced the artifacts.
+
+```bash
+# Checksum the file you downloaded
+sha256sum -c SHA256SUMS
+
+# Verify provenance (requires gh CLI 2.49+)
+gh attestation verify Husk-1.2.1.dmg --repo DorShaer/Husk
+```
 
 ## Install from source
 
@@ -84,22 +96,46 @@ For pure dev mode without system registration:
 4. Drag files onto the window to share them with the agent. Use the topbar `+` button as a fallback file picker.
 5. Switch pages with the rail or `Alt+1..5`. Open the command palette with `Cmd/Ctrl+K`.
 
+### Pages
+
+- **Chat**: the PTY surface. Drag-drop files, status panel on the right.
+- **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir.
+- **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
+- **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
+- **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
+- **Skills**: toggle PAI skills bundled with Husk plus any skills you keep in `~/.claude/skills/`.
+- **MCP**: install / toggle / health-check Model Context Protocol servers.
+- **Files**: drag-drop file context, with a tree view of your working directory.
+- **Sessions**: resume any prior agent session from its JSONL log.
+- **Preferences**: agent command, name, theme, accent, voice, recap, sidebar defaults.
+
 ## Architecture
 
 ```
 husk/
 ├── src/                       Application source
-│   ├── main.js                Electron main process: PTY, IPC, agent control
+│   ├── main.js                Electron main process: IPC, agent control
 │   ├── preload.js             contextBridge window.husk surface
+│   ├── lib/                   Pure helpers (unit-tested)
+│   │   ├── shell-quote.js     POSIX argv serializer
+│   │   ├── path-confine.js    resolveInside / isInside under a root
+│   │   ├── pty-spawn.js       Per-platform pty.spawn argv assembly
+│   │   ├── user-path.js       Inherit shell PATH on GUI launch
+│   │   ├── agent-md.js        Agent markdown frontmatter parser
+│   │   └── workflow-graph.js  Sanitize, migrate, traverse, route
 │   └── renderer/              UI (single-page Electron view)
 │       ├── index.html
 │       ├── app.js
 │       ├── styles.css
 │       ├── assets/
 │       └── vendor/            Bundled xterm.js + addons
+├── installer/                 OS install assets + verify helpers
+│   └── lib/                   Download-and-verify (verify.sh, verify.ps1)
 ├── libs/
 │   └── pai/                   Bundled PAI framework, third-party
-├── installer/                 OS install assets (icon)
+├── test/                      Unit tests (node:test) + Electron smoke
+│   ├── unit/                  124 unit tests against src/lib/
+│   └── e2e/                   Playwright smoke (real Electron boot)
 ├── install.sh / run.sh / uninstall.sh
 ├── package.json
 ├── README.md
@@ -107,32 +143,42 @@ husk/
 ```
 
 ```
-+--------------------+       IPC       +---------------------+
-|   Electron main    |  <----------->  |      Renderer        |
-|   src/main.js      |                 |   src/renderer/      |
-|                    |                 |                      |
-|  - node-pty        |   PTY stream    |  - chat surface      |
-|  - script(1)       |  ------------>  |  - skills + prompts  |
-|  - skill IPC       |                 |  - sessions          |
-|  - session IPC     |                 |  - files tree        |
-|  - voice IPC       |                 |  - MCP page          |
-|  - mcp IPC         |                 |  - preferences       |
-|  - stats IPC       |                 |  - status panel      |
-+--------------------+                 +----------------------+
-         |                                       |
-         v                                       v
-   ~/.claude/*                            contextBridge
-   (bootstrapped from                     window.husk API
-    libs/pai on first                     (src/preload.js)
++--------------------+       IPC       +-----------------------+
+|   Electron main    |  <----------->  |       Renderer        |
+|   src/main.js      |                 |    src/renderer/      |
+|                    |                 |                       |
+|  - node-pty        |   PTY stream    |  - chat surface       |
+|  - per-platform    |  ------------>  |  - agents + workflows |
+|    spawn (see lib) |                 |  - skills + prompts   |
+|  - all IPC handlers|                 |  - sessions + files   |
+|  - shell PATH      |                 |  - MCP + preferences  |
+|    augmentation    |                 |  - status panel       |
++--------------------+                 +-----------------------+
+         |                                        |
+         v                                        v
+   ~/.claude/*                             contextBridge
+   (bootstrapped from                      window.husk API
+    libs/pai on first                      (src/preload.js)
     install)
 ```
 
-- `src/main.js` spawns the chosen CLI via `script -q -c <cmd>` so the agent gets a real controlling terminal. It exposes IPC handlers for skills, sessions, voice, MCP servers, file drops, and live stats.
+- `src/main.js` is the Electron main process. It assembles the PTY spawn per platform (see `src/lib/pty-spawn.js`): direct `pty.spawn(exe, argv)` on macOS, `/usr/bin/script -q -c <argv>` on Linux so `claude --resume` gets its TIOCSCTTY setup, and PATH+PATHEXT resolution before `pty.spawn` on Windows. It exposes IPC handlers for skills, sessions, voice, MCP servers, file drops, workflows, agents, projects, and live stats.
+- `src/lib/` holds the pure helpers: shell-quote, path-confine, pty-spawn, user-path, agent-md, workflow-graph. Each is small, with no Electron / fs / spawn coupling, and unit-tested. New IPC handler logic should land here.
 - `src/preload.js` exposes a narrow `window.husk` API to the renderer through `contextBridge`. The renderer never gets Node access.
-- `src/renderer/` is the renderer: a single-page Electron view with rail navigation, an embedded xterm, a status panel, and the Skills / Sessions / Files / MCP / Preferences surfaces.
+- `src/renderer/` is the renderer: a single-page Electron view with rail navigation, an embedded xterm, a status panel, and the Chat / Agents / Workflows / Projects / Prompts / Skills / MCP / Files / Sessions / Preferences surfaces.
 - `libs/pai/` is the bundled PAI framework, copied into `~/.claude/` on first install. Contains the system prompt, Algorithm phase machine, agents, hooks, lib, and the curated skills set.
-- `installer/` holds OS-level install assets (icon for the desktop entry).
+- `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
 - `install.sh` / `run.sh` / `uninstall.sh` are the entry-point scripts and stay at the repo root for easy `git clone && cd && ./install.sh`.
+
+### Testing
+
+```bash
+npm test         # 124 node:test unit tests, ~100ms
+npm run test:e2e # Playwright smoke that boots real Electron
+npm run test:all # both
+```
+
+CI runs both jobs on every push and pull request to `main`, `development`, and `dev/**` feature branches.
 
 ## Branches
 
@@ -145,11 +191,13 @@ husk/
 
 All settings live in `~/.config/husk/config.json` and are editable from the Preferences page:
 
-- **Agent command** and **agent name**
+- **Agent command** (`claude`, `copilot`, `codex`, `aider`, or any binary on `$PATH`) and **agent name**
+- **Active agent profiles**: one or more PAI agent personas applied to the next session
+- **Active project**: drives the agent's working directory so per-folder trust prompts work
 - **Theme** (dark / light) and **accent color** (orange / cyan / indigo / emerald / rose)
 - **Voice** (enable, voice model, speaking rate)
 - **Show recap line** (when off, suppresses end-of-response summaries)
-- **Sidebar default state**, **file tree root**, **show hidden files**
+- **Sidebar default state**, **status panel collapsed**, **file tree root**, **show hidden files**
 
 ## Privacy
 
@@ -163,4 +211,4 @@ MIT.
 
 Husk's reasoning, thinking format, and Algorithm phase machine come from [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) and Telos by **Daniel Miessler**. If you find Husk useful go show him some love.
 
-The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js), `node-pty`, and `script(1)`. Voice is via [Piper TTS](https://github.com/rhasspy/piper).
+The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js) plus [`node-pty`](https://github.com/microsoft/node-pty). On Linux the PTY is established through `script(1)` so `claude --resume` gets its controlling terminal. Voice is via [Piper TTS](https://github.com/rhasspy/piper). The workflow editor uses [Drawflow](https://github.com/jerosoler/Drawflow).
