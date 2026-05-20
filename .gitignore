@@ -39,3 +39,7 @@ libs/pai/**/.credentials.json
 libs/pai/**/ratings.jsonl
 libs/pai/**/*reflections*.jsonl
 libs/pai/**/history.jsonl
+
+# playwright run artifacts
+test-results/
+playwright-report/
