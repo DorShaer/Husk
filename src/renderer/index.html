@@ -378,12 +378,14 @@
           </div>
           <div class="page-body">
             <div id="agents-active-banner" class="agents-active-banner" hidden>
-              <span class="aab-dot"></span>
-              <span id="agents-active-name"></span>
-              <span class="aab-hint">active for next session</span>
-              <button class="ghost-link" id="btn-deactivate-agent">Clear</button>
+              <div class="aab-meta">
+                <span class="aab-dot"></span>
+                <span class="aab-meta-text">Active for next session</span>
+              </div>
+              <div class="aab-chips" id="aab-chips"></div>
+              <button class="ghost-link aab-clear" id="btn-deactivate-all">Clear all</button>
             </div>
-            <div class="card-grid" id="agents-grid"></div>
+            <div class="agents-grid" id="agents-grid"></div>
           </div>
         </div>
 

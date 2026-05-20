@@ -1791,21 +1791,48 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
   return { ok: true };
 });
 
+// Active profiles are stored as a set in activeProfileIds[]. Migrate the
+// legacy single-active field so old configs keep working.
+function getActiveIds() {
+  const arr = Array.isArray(config.activeProfileIds) ? config.activeProfileIds : null;
+  if (arr) return arr;
+  return config.activeProfileId ? [config.activeProfileId] : [];
+}
+function writeActiveIds(ids) {
+  config = { ...config, activeProfileIds: ids, activeProfileId: ids[0] || null };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+}
+
 ipcMain.handle('profiles:delete', (_e, id) => {
   if (!id) return { ok: false, error: 'missing id' };
   const profiles = getProfiles().filter((p) => p.id !== id);
-  const activeProfileId = config.activeProfileId === id ? null : config.activeProfileId;
-  config = { ...config, profiles, activeProfileId };
+  const active = getActiveIds().filter((a) => a !== id);
+  config = { ...config, profiles, activeProfileIds: active, activeProfileId: active[0] || null };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
   return { ok: true };
 });
 
+// Activate adds the profile to the active set. Null clears all (legacy).
 ipcMain.handle('profiles:activate', (_e, id) => {
-  const profile = id ? getProfiles().find((p) => p.id === id) : null;
-  if (id && !profile) return { ok: false, error: 'profile not found' };
-  config = { ...config, activeProfileId: id || null };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
-  return { ok: true, profile: profile || null };
+  if (id == null) { writeActiveIds([]); return { ok: true, activeIds: [] }; }
+  const profile = getProfiles().find((p) => p.id === id);
+  if (!profile) return { ok: false, error: 'profile not found' };
+  const active = getActiveIds();
+  if (!active.includes(id)) active.push(id);
+  writeActiveIds(active);
+  return { ok: true, activeIds: active, profile };
+});
+
+ipcMain.handle('profiles:deactivate', (_e, id) => {
+  if (!id) return { ok: false, error: 'missing id' };
+  const active = getActiveIds().filter((a) => a !== id);
+  writeActiveIds(active);
+  return { ok: true, activeIds: active };
+});
+
+ipcMain.handle('profiles:deactivateAll', () => {
+  writeActiveIds([]);
+  return { ok: true, activeIds: [] };
 });
 
 // Returns just the curated Husk prompts (the markdown files seeded from
