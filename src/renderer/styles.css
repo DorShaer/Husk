@@ -1435,39 +1435,48 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease;
 }
 .ai-row:hover { border-color: var(--line-2); }
+/* Hide the native input completely; the visible checkbox is the sibling
+   .ai-check-box, driven by :checked + selector. This avoids the unreliable
+   ::after-on-input rendering and any native indicator bleed-through. */
 .ai-row input[type="checkbox"] {
-  appearance: none;
-  -webkit-appearance: none;
+  position: absolute;
+  opacity: 0;
+  width: 0; height: 0;
+  margin: 0; padding: 0;
+  pointer-events: none;
+}
+.ai-check-box {
   width: 16px; height: 16px;
-  margin: 2px 0 0;
   flex: 0 0 auto;
+  margin-top: 2px;
   border-radius: var(--radius-sm);
   border: 1.5px solid var(--line-3);
   background: var(--bg-1);
-  cursor: pointer;
   position: relative;
-  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
-.ai-row input[type="checkbox"]:hover { border-color: var(--accent); }
-.ai-row input[type="checkbox"]:focus-visible {
-  outline: 0; box-shadow: var(--focus-ring);
-}
-.ai-row input[type="checkbox"]:checked {
+.ai-row:hover .ai-check-box { border-color: var(--accent); }
+.ai-row input[type="checkbox"]:checked + .ai-check-box {
   background: var(--accent);
   border-color: var(--accent);
 }
-.ai-row input[type="checkbox"]:checked::after {
+.ai-row input[type="checkbox"]:checked + .ai-check-box::after {
   content: '';
   position: absolute;
-  left: 4px; top: 0;
-  width: 5px; height: 9px;
+  left: 4px; top: 1px;
+  width: 4px; height: 8px;
   border: solid #fff;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.ai-row input[type="checkbox"]:disabled {
+.ai-row input[type="checkbox"]:focus-visible + .ai-check-box {
+  box-shadow: var(--focus-ring);
+}
+.ai-row input[type="checkbox"]:disabled + .ai-check-box {
   opacity: 0.4; cursor: not-allowed; background: var(--bg-2);
 }
+.ai-row.is-duplicate .ai-check-box { cursor: not-allowed; }
 .ai-row.is-duplicate { opacity: 0.55; }
 .ai-row-body { flex: 1; min-width: 0; }
 .ai-row-name { font-size: 13px; font-weight: 600; color: var(--text); }
