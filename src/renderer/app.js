@@ -154,8 +154,8 @@ function announceInTerminal(msg) {
 async function startPty() {
   fitAddon.fit();
   const { cols, rows } = term;
-  // Auto-select: if no profile is active and one has autoSelect enabled, activate it.
-  if (!cfg.activeProfileId) {
+  // Auto-select: if nothing is active and a profile has autoSelect enabled, activate it.
+  if (!getActiveProfileIds().length) {
     const autoProfile = profilesCache.find((p) => p.autoSelect);
     if (autoProfile) {
       await activateProfile(autoProfile.id);
@@ -543,8 +543,14 @@ async function refreshProjectsState() {
   const cmdShort = (cfg.agentCommand || 'agent').split(/\s+/)[0];
   const active = projectsCache.find((p) => p.id === activeProjectId);
   const cwdLabel = active ? active.path : (cfg.agentCwd || huskHome);
-  const activeProfile = cfg.activeProfileId ? profilesCache.find((p) => p.id === cfg.activeProfileId) : null;
-  if ($('#chat-sub')) $('#chat-sub').textContent = activeProfile ? `${cmdShort} · ${cwdLabel} · ${activeProfile.name}` : `${cmdShort} · ${cwdLabel}`;
+  const activeProfiles = getActiveProfileIds()
+    .map((id) => profilesCache.find((p) => p.id === id))
+    .filter(Boolean);
+  let profileTag = '';
+  if (activeProfiles.length === 1) profileTag = activeProfiles[0].name;
+  else if (activeProfiles.length === 2) profileTag = `${activeProfiles[0].name}, ${activeProfiles[1].name}`;
+  else if (activeProfiles.length > 2) profileTag = `${activeProfiles.length} agents`;
+  if ($('#chat-sub')) $('#chat-sub').textContent = profileTag ? `${cmdShort} · ${cwdLabel} · ${profileTag}` : `${cmdShort} · ${cwdLabel}`;
 }
 
 function updateActiveProjectChip() {
@@ -1215,6 +1221,11 @@ async function renderAgents() {
   updateAgentBanner();
 }
 
+function getActiveProfileIds() {
+  if (Array.isArray(cfg && cfg.activeProfileIds)) return cfg.activeProfileIds;
+  return cfg && cfg.activeProfileId ? [cfg.activeProfileId] : [];
+}
+
 function paintAgents() {
   const grid = $('#agents-grid');
   if (!grid) return;
@@ -1223,34 +1234,37 @@ function paintAgents() {
     grid.innerHTML = `<div class="empty-state"><div class="es-icon"></div><div class="es-title">No agents yet</div><div class="es-msg">Create a named configuration to shape how the AI works for a specific task.</div></div>`;
     return;
   }
-  const activeId = cfg && cfg.activeProfileId;
-  const cards = profilesCache.map((p) => `
-    <div class="agent-card${p.id === activeId ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}">
+  const activeIds = new Set(getActiveProfileIds());
+  const cards = profilesCache.map((p) => {
+    const isActive = activeIds.has(p.id);
+    return `
+    <div class="agent-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}">
       ${!p.builtin ? `<button class="card-delete agent-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete agent" aria-label="Delete agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
       <div class="agent-card-head">
         <div class="agent-card-title">${escapeHtml(p.name)}</div>
-        ${p.id === activeId ? '<span class="agent-card-pill">Active</span>' : ''}
-        ${p.builtin ? '<span class="agent-card-builtin">built-in</span>' : ''}
+        ${isActive ? '<span class="agent-card-pill">Active</span>' : ''}
+        ${p.builtin ? '<span class="agent-card-builtin">Built-in</span>' : ''}
       </div>
       ${p.description ? `<div class="agent-card-desc">${escapeHtml(p.description)}</div>` : ''}
       ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
       <div class="agent-card-actions">
         ${!p.builtin ? `<button class="ghost-link agent-edit" data-id="${escapeHtml(p.id)}">Edit</button>` : ''}
-        <label class="agent-card-autoselect${p.autoSelect ? ' is-on' : ''}" title="When enabled, Husk activates this agent automatically based on context">
+        <label class="agent-switch${p.autoSelect ? ' is-on' : ''}" title="When enabled, Husk activates this agent automatically based on context">
           <input type="checkbox" class="agent-autoselect-toggle" data-id="${escapeHtml(p.id)}" ${p.autoSelect ? 'checked' : ''} />
           Auto-select
         </label>
-        ${p.id === activeId
+        ${isActive
           ? `<button class="ghost-btn agent-deactivate" data-id="${escapeHtml(p.id)}">Deactivate</button>`
           : `<button class="card-cta agent-activate" data-id="${escapeHtml(p.id)}">Activate<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
   // eslint-disable-next-line no-unsanitized/property
   grid.innerHTML = cards;
 
   grid.querySelectorAll('.agent-activate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); activateProfile(e.currentTarget.dataset.id); }));
-  grid.querySelectorAll('.agent-deactivate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); activateProfile(null); }));
+  grid.querySelectorAll('.agent-deactivate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deactivateProfile(e.currentTarget.dataset.id); }));
   grid.querySelectorAll('.agent-edit').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openAgentModal(e.currentTarget.dataset.id); }));
   grid.querySelectorAll('.agent-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProfile(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
   grid.querySelectorAll('.agent-autoselect-toggle').forEach((chk) => chk.addEventListener('change', async (e) => {
@@ -1264,7 +1278,25 @@ function paintAgents() {
 }
 
 async function activateProfile(id) {
-  const res = await window.husk.profiles.activate(id || null);
+  const res = await window.husk.profiles.activate(id);
+  if (!res || !res.ok) return;
+  cfg = await window.husk.config.get();
+  paintAgents();
+  updateAgentBanner();
+  updateActiveChatProfile();
+}
+
+async function deactivateProfile(id) {
+  const res = await window.husk.profiles.deactivate(id);
+  if (!res || !res.ok) return;
+  cfg = await window.husk.config.get();
+  paintAgents();
+  updateAgentBanner();
+  updateActiveChatProfile();
+}
+
+async function deactivateAllProfiles() {
+  const res = await window.husk.profiles.deactivateAll();
   if (!res || !res.ok) return;
   cfg = await window.husk.config.get();
   paintAgents();
@@ -1274,22 +1306,36 @@ async function activateProfile(id) {
 
 function updateAgentBanner() {
   const banner = $('#agents-active-banner');
-  const nameEl = $('#agents-active-name');
-  if (!banner || !nameEl) return;
-  const activeId = cfg && cfg.activeProfileId;
-  const active = activeId ? profilesCache.find((p) => p.id === activeId) : null;
-  banner.hidden = !active;
-  if (active) nameEl.textContent = active.name;
+  const chipsEl = $('#aab-chips');
+  if (!banner || !chipsEl) return;
+  const active = getActiveProfileIds()
+    .map((id) => profilesCache.find((p) => p.id === id))
+    .filter(Boolean);
+  if (!active.length) { banner.hidden = true; chipsEl.innerHTML = ''; return; }
+  banner.hidden = false;
+  // eslint-disable-next-line no-unsanitized/property -- escapeHtml on each interpolated value
+  chipsEl.innerHTML = active.map((p) => `
+    <span class="aab-chip">
+      <span class="aab-chip-name">${escapeHtml(p.name)}</span>
+      <button class="aab-chip-x" data-id="${escapeHtml(p.id)}" aria-label="Remove ${escapeAttr(p.name)}">&times;</button>
+    </span>
+  `).join('');
+  chipsEl.querySelectorAll('.aab-chip-x').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deactivateProfile(e.currentTarget.dataset.id); }));
 }
 
 function updateActiveChatProfile() {
   const sub = $('#chat-sub');
   if (!sub) return;
-  const activeId = cfg && cfg.activeProfileId;
-  const active = activeId ? profilesCache.find((p) => p.id === activeId) : null;
+  const active = getActiveProfileIds()
+    .map((id) => profilesCache.find((p) => p.id === id))
+    .filter(Boolean);
   const toolName = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'claude';
   const dir = (cfg && cfg.treeRoot) ? cfg.treeRoot.replace(/.*\//, '~') : '~';
-  sub.textContent = active ? `${toolName} · ${dir} · ${active.name}` : `${toolName} · ${dir}`;
+  let tag = '';
+  if (active.length === 1) tag = active[0].name;
+  else if (active.length === 2) tag = `${active[0].name}, ${active[1].name}`;
+  else if (active.length > 2) tag = `${active.length} agents`;
+  sub.textContent = tag ? `${toolName} · ${dir} · ${tag}` : `${toolName} · ${dir}`;
 }
 
 async function deleteProfile(id, name) {
@@ -1303,7 +1349,7 @@ async function deleteProfile(id, name) {
   const res = await window.husk.profiles.delete(id);
   if (!res || !res.ok) { toast((res && res.error) || 'Could not delete agent', 'error'); return; }
   profilesCache = profilesCache.filter((p) => p.id !== id);
-  if (cfg.activeProfileId === id) { cfg = await window.husk.config.get(); }
+  if (getActiveProfileIds().includes(id)) { cfg = await window.husk.config.get(); }
   paintAgents();
   updateAgentBanner();
 }
@@ -1474,7 +1520,7 @@ $('#agents-import-modal') && $('#agents-import-modal').addEventListener('click',
 $('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', closeAgentModal);
 $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
-$('#btn-deactivate-agent') && $('#btn-deactivate-agent').addEventListener('click', () => activateProfile(null));
+$('#btn-deactivate-all') && $('#btn-deactivate-all').addEventListener('click', () => deactivateAllProfiles());
 $('#agent-modal') && $('#agent-modal').addEventListener('click', (e) => { if (e.target === $('#agent-modal')) closeAgentModal(); });
 $('#btn-generate-agent') && $('#btn-generate-agent').addEventListener('click', generateAgentWithAI);
 $('#btn-manual-agent') && $('#btn-manual-agent').addEventListener('click', () => {
