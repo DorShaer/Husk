@@ -21,6 +21,14 @@ degraded.
 $ErrorActionPreference = 'Stop'
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
+# Pinned SHA-256 of the upstream bun installer script revision we
+# accept. Install-Bun verifies the downloaded file against this constant
+# before running it. Procedure for bumping is in installer/lib/verify.ps1.
+$Script:BunInstallerUrl = 'https://bun.sh/install.ps1'
+$Script:BunInstallerSha256 = '54fd5c34e08d2e363e9ee4cc52f58eca72b3c307c170869eec1e394c16fb7744'
+
+. (Join-Path $AppDir 'installer/lib/verify.ps1')
+
 function Write-Info  ($msg) { Write-Host ("> " + $msg) -ForegroundColor Cyan }
 function Write-Ok    ($msg) { Write-Host ("[OK] " + $msg) -ForegroundColor Green }
 function Write-Warn2 ($msg) { Write-Host ("[!] " + $msg) -ForegroundColor Yellow }
@@ -87,12 +95,19 @@ function Install-Bun {
         return
     }
     Write-Info "Installing bun (PAI hooks need it for rating capture and learning)..."
+    # Download the bun installer to a temp file and check its SHA-256
+    # against the pinned constant before running it.
+    $installerTmp = Join-Path $env:TEMP ("husk-bun-installer-" + [Guid]::NewGuid().ToString('N') + '.ps1')
+    if (-not (Get-VerifiedDownload -Url $Script:BunInstallerUrl -Expected $Script:BunInstallerSha256 -OutFile $installerTmp)) {
+        Write-Warn2 ("bun installer SHA-256 did not match the pinned value (expected " + $Script:BunInstallerSha256 + "). Skipping. To update the pin, see installer/lib/verify.ps1.")
+        return
+    }
     try {
-        # Official unattended Windows installer.
-        Invoke-RestMethod https://bun.sh/install.ps1 | Invoke-Expression
+        & powershell -ExecutionPolicy Bypass -File $installerTmp
     } catch {
         Write-Warn2 ("bun installer failed: " + $_.Exception.Message + ". Install manually from https://bun.sh")
-        return
+    } finally {
+        Remove-Item -LiteralPath $installerTmp -Force -ErrorAction SilentlyContinue
     }
     # bun.exe lands at $env:USERPROFILE\.bun\bin\bun.exe
     $bunBin = Join-Path $env:USERPROFILE ".bun\bin"
