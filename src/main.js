@@ -2520,24 +2520,30 @@ ipcMain.handle('voice:uninstall', async () => {
   }
 });
 
-// Claim port 8888 with a silent sink so external TTS POSTs do not produce sound.
-// Husk owns voice while it is running; whatever else listens on 8888 is freed and
-// the port is reclaimed. Released cleanly on quit.
+// Listen on 127.0.0.1:8888 with a silent sink so external TTS POSTs do
+// not produce sound while Husk is running. If the port is already held
+// by another process we leave it alone and continue without the sink.
+// Released cleanly on quit.
 let nullVoiceServer = null;
 function startNullVoiceServer() {
   return new Promise((resolve) => {
-    const claim = spawn('bash', ['-c', 'lsof -ti:8888 -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; true'], { stdio: 'ignore' });
-    claim.on('close', () => {
-      setTimeout(() => {
-        const server = http.createServer((req, res) => {
-          if (req.method === 'POST') { req.resume(); req.on('end', () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"status":"ok","silent":true}'); }); }
-          else { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('husk-null-voice'); }
+    const server = http.createServer((req, res) => {
+      if (req.method === 'POST') {
+        req.resume();
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"status":"ok","silent":true}');
         });
-        server.on('error', () => resolve());
-        server.listen(8888, '127.0.0.1', () => { nullVoiceServer = server; resolve(); });
-      }, 200);
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('husk-null-voice');
+      }
     });
-    claim.on('error', () => resolve());
+    server.on('error', () => resolve());
+    server.listen(8888, '127.0.0.1', () => {
+      nullVoiceServer = server;
+      resolve();
+    });
   });
 }
 function stopNullVoiceServer() {
