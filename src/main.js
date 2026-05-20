@@ -1693,57 +1693,63 @@ function parseAgentMd(text) {
   return { name: getField('name'), description: getField('description'), body };
 }
 
-ipcMain.handle('profiles:listClaudeAgents', () => {
+// Tool-agnostic agent sources. Husk wraps any CLI agent; this list is the
+// only place that knows about specific tools. Adding another tool is one
+// line: { label, dir }. Each source's files are parsed with parseAgentMd
+// (markdown with optional YAML frontmatter), which is the common shape.
+const AGENT_SOURCES = [
+  { label: 'Claude Code', dir: path.join(HOME, '.claude', 'agents') },
+];
+
+ipcMain.handle('profiles:listImportableAgents', () => {
   try {
-    const dir = path.join(CLAUDE_DIR, 'agents');
-    if (!fs.existsSync(dir)) return { ok: true, agents: [] };
     const existing = new Set(getProfiles().map((p) => String(p.name || '').toLowerCase()));
     const out = [];
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-      try {
-        const text = fs.readFileSync(path.join(dir, entry.name), 'utf8');
-        const parsed = parseAgentMd(text);
-        const name = (parsed.name || entry.name.replace(/\.md$/, '')).slice(0, 64);
-        const description = (parsed.description || '').slice(0, 256);
-        const systemPrompt = (parsed.body || '').slice(0, 4096);
-        out.push({
-          filename: entry.name,
-          name,
-          description,
-          systemPrompt,
-          alreadyImported: existing.has(name.toLowerCase()),
-        });
-      } catch (_) {}
+    for (const src of AGENT_SOURCES) {
+      if (!fs.existsSync(src.dir)) continue;
+      for (const entry of fs.readdirSync(src.dir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+        try {
+          const text = fs.readFileSync(path.join(src.dir, entry.name), 'utf8');
+          const parsed = parseAgentMd(text);
+          const name = (parsed.name || entry.name.replace(/\.md$/, '')).slice(0, 64);
+          out.push({
+            source: src.label,
+            filename: entry.name,
+            name,
+            description: (parsed.description || '').slice(0, 256),
+            systemPrompt: (parsed.body || '').slice(0, 4096),
+            alreadyImported: existing.has(name.toLowerCase()),
+          });
+        } catch (_) {}
+      }
     }
     out.sort((a, b) => a.name.localeCompare(b.name));
     return { ok: true, agents: out };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle('profiles:importClaude', (_e, payload = {}) => {
-  const filenames = Array.isArray(payload && payload.filenames) ? payload.filenames : [];
-  if (!filenames.length) return { ok: false, error: 'no filenames' };
-  const dir = path.join(CLAUDE_DIR, 'agents');
-  if (!fs.existsSync(dir)) return { ok: false, error: 'no agents directory' };
+ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
+  const picks = Array.isArray(payload && payload.picks) ? payload.picks : [];
+  if (!picks.length) return { ok: false, error: 'nothing to import' };
+  const byLabel = new Map(AGENT_SOURCES.map((s) => [s.label, s]));
   let imported = 0;
   const list = getProfiles().slice();
-  for (const raw of filenames) {
-    const fname = String(raw || '');
-    if (!fname.endsWith('.md') || fname.includes('/') || fname.includes('\\') || fname.includes('..')) continue;
-    const full = path.join(dir, fname);
+  for (const pick of picks) {
+    const src = byLabel.get(pick && pick.source);
+    const fname = String((pick && pick.filename) || '');
+    if (!src || !fname.endsWith('.md') || fname.includes('/') || fname.includes('\\') || fname.includes('..')) continue;
     try {
-      const text = fs.readFileSync(full, 'utf8');
+      const text = fs.readFileSync(path.join(src.dir, fname), 'utf8');
       const parsed = parseAgentMd(text);
-      const entry = {
+      list.push({
         id: `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: (parsed.name || fname.replace(/\.md$/, '')).slice(0, 64),
         description: (parsed.description || '').slice(0, 256),
         systemPrompt: (parsed.body || '').slice(0, 4096),
         autoSelect: false,
         builtin: false,
-      };
-      list.push(entry);
+      });
       imported += 1;
     } catch (_) {}
   }
