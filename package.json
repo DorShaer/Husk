@@ -16,7 +16,10 @@
     "dist": "electron-builder --publish never",
     "dist:linux": "electron-builder --linux --publish never",
     "dist:mac": "electron-builder --mac --publish never",
-    "dist:win": "electron-builder --win --publish never"
+    "dist:win": "electron-builder --win --publish never",
+    "test": "node --test test/unit/",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test && npm run test:e2e"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -28,8 +31,10 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.0",
+    "@playwright/test": "^1.60.0",
     "electron": "^41.6.1",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "playwright": "^1.60.0"
   },
   "build": {
     "appId": "com.husk.app",
