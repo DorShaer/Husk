@@ -1673,6 +1673,85 @@ Create an agent profile. Return ONLY valid JSON, no markdown fences, no explanat
   });
 });
 
+// Parse one Claude Code agent markdown file: YAML frontmatter + body.
+// Frontmatter is intentionally parsed with regex (no yaml dep): only the
+// name and description fields matter for the profile mapping.
+function parseAgentMd(text) {
+  const t = String(text || '');
+  const m = t.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!m) return { name: null, description: null, body: t.trim() };
+  const fm = m[1];
+  const body = m[2].trim();
+  const getField = (k) => {
+    const re = new RegExp(`^${k}\\s*:\\s*(.*)$`, 'm');
+    const mm = fm.match(re);
+    if (!mm) return null;
+    let v = mm[1].trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    return v;
+  };
+  return { name: getField('name'), description: getField('description'), body };
+}
+
+ipcMain.handle('profiles:listClaudeAgents', () => {
+  try {
+    const dir = path.join(CLAUDE_DIR, 'agents');
+    if (!fs.existsSync(dir)) return { ok: true, agents: [] };
+    const existing = new Set(getProfiles().map((p) => String(p.name || '').toLowerCase()));
+    const out = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      try {
+        const text = fs.readFileSync(path.join(dir, entry.name), 'utf8');
+        const parsed = parseAgentMd(text);
+        const name = (parsed.name || entry.name.replace(/\.md$/, '')).slice(0, 64);
+        const description = (parsed.description || '').slice(0, 256);
+        const systemPrompt = (parsed.body || '').slice(0, 4096);
+        out.push({
+          filename: entry.name,
+          name,
+          description,
+          systemPrompt,
+          alreadyImported: existing.has(name.toLowerCase()),
+        });
+      } catch (_) {}
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, agents: out };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('profiles:importClaude', (_e, payload = {}) => {
+  const filenames = Array.isArray(payload && payload.filenames) ? payload.filenames : [];
+  if (!filenames.length) return { ok: false, error: 'no filenames' };
+  const dir = path.join(CLAUDE_DIR, 'agents');
+  if (!fs.existsSync(dir)) return { ok: false, error: 'no agents directory' };
+  let imported = 0;
+  const list = getProfiles().slice();
+  for (const raw of filenames) {
+    const fname = String(raw || '');
+    if (!fname.endsWith('.md') || fname.includes('/') || fname.includes('\\') || fname.includes('..')) continue;
+    const full = path.join(dir, fname);
+    try {
+      const text = fs.readFileSync(full, 'utf8');
+      const parsed = parseAgentMd(text);
+      const entry = {
+        id: `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: (parsed.name || fname.replace(/\.md$/, '')).slice(0, 64),
+        description: (parsed.description || '').slice(0, 256),
+        systemPrompt: (parsed.body || '').slice(0, 4096),
+        autoSelect: false,
+        builtin: false,
+      };
+      list.push(entry);
+      imported += 1;
+    } catch (_) {}
+  }
+  config = { ...config, profiles: list };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true, imported };
+});
+
 ipcMain.handle('profiles:create', (_e, payload = {}) => {
   const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const entry = {
