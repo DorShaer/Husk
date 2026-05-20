@@ -4,7 +4,7 @@ name: Security analysis
 # one, weekly on Sunday 02:00 UTC for drift detection, and on demand.
 on:
   push:
-    branches: [main, master, develop]
+    branches: [main, development, "dev/**"]
     paths:
       - '**.js'
       - '**.html'
@@ -15,7 +15,7 @@ on:
       - '.github/codeql/**'
       - '.gitleaks.toml'
   pull_request:
-    branches: [main, master, develop]
+    branches: [main, development]
   schedule:
     - cron: '0 2 * * 0'
   workflow_dispatch:

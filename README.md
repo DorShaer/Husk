@@ -134,6 +134,13 @@ husk/
 - `installer/` holds OS-level install assets (icon for the desktop entry).
 - `install.sh` / `run.sh` / `uninstall.sh` are the entry-point scripts and stay at the repo root for easy `git clone && cd && ./install.sh`.
 
+## Branches
+
+- `main` carries released code. Tags `v*` are cut from here, the release workflow builds installers, and SHA256SUMS plus Sigstore build-provenance attestations ship alongside them.
+- `development` is the integration branch where active work lands. Feature branches use `dev/<short-name>` and open pull requests against `development`.
+- Releases merge `development` into `main`, then a `v<x>.<y>.<z>` tag triggers the release pipeline.
+- CI (lint, security scans, unit tests, Electron smoke) runs on every push and pull request to either long-lived branch.
+
 ## Configuration
 
 All settings live in `~/.config/husk/config.json` and are editable from the Preferences page:
