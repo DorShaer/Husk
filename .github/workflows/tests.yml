@@ -1,0 +1,43 @@
+name: tests
+
+on:
+  push:
+    branches: [main, "dev/**"]
+  pull_request:
+    branches: [main, "dev/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit (node:test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  e2e-smoke:
+    name: e2e smoke (electron)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: install system deps for headless electron
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1
+      - run: npm ci --no-audit --no-fund
+      - name: smoke test under xvfb
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:e2e
