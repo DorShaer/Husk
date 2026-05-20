@@ -85,7 +85,7 @@ contextBridge.exposeInMainWorld('husk', {
     deactivateAll: () => ipcRenderer.invoke('profiles:deactivateAll'),
     generate: (description) => ipcRenderer.invoke('profiles:generate', description),
     listImportableAgents: () => ipcRenderer.invoke('profiles:listImportableAgents'),
-    importAgents: (picks) => ipcRenderer.invoke('profiles:importAgents', { picks }),
+    importAgents: (picks, activate) => ipcRenderer.invoke('profiles:importAgents', { picks, activate: !!activate }),
   },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),

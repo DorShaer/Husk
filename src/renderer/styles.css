@@ -1435,10 +1435,10 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease;
 }
 .ai-row:hover { border-color: var(--line-2); }
-/* Hide the native input completely; the visible checkbox is the sibling
-   .ai-check-box, driven by :checked + selector. This avoids the unreliable
-   ::after-on-input rendering and any native indicator bleed-through. */
-.ai-row input[type="checkbox"] {
+/* Reusable custom checkbox: native input hidden, sibling .ai-check-box is
+   the visible control. Driven by :checked +. Pseudo-element renders on a
+   span (reliable everywhere) rather than the input (Chromium-unreliable). */
+.ai-check {
   position: absolute;
   opacity: 0;
   width: 0; height: 0;
@@ -1448,7 +1448,6 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .ai-check-box {
   width: 16px; height: 16px;
   flex: 0 0 auto;
-  margin-top: 2px;
   border-radius: var(--radius-sm);
   border: 1.5px solid var(--line-3);
   background: var(--bg-1);
@@ -1456,12 +1455,14 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
-.ai-row:hover .ai-check-box { border-color: var(--accent); }
-.ai-row input[type="checkbox"]:checked + .ai-check-box {
+.ai-row .ai-check-box { margin-top: 2px; }
+.ai-row:hover .ai-check-box,
+.ai-foot-toggle:hover .ai-check-box { border-color: var(--accent); }
+.ai-check:checked + .ai-check-box {
   background: var(--accent);
   border-color: var(--accent);
 }
-.ai-row input[type="checkbox"]:checked + .ai-check-box::after {
+.ai-check:checked + .ai-check-box::after {
   content: '';
   position: absolute;
   left: 4px; top: 1px;
@@ -1470,13 +1471,22 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.ai-row input[type="checkbox"]:focus-visible + .ai-check-box {
+.ai-check:focus-visible + .ai-check-box {
   box-shadow: var(--focus-ring);
 }
-.ai-row input[type="checkbox"]:disabled + .ai-check-box {
+.ai-check:disabled + .ai-check-box {
   opacity: 0.4; cursor: not-allowed; background: var(--bg-2);
 }
 .ai-row.is-duplicate .ai-check-box { cursor: not-allowed; }
+
+/* The "Activate after import" toggle at the bottom of the import modal. */
+.ai-foot-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-right: auto;
+  font-size: 12px; color: var(--text-2); font-weight: 500;
+  cursor: pointer; user-select: none;
+  letter-spacing: 0.01em;
+}
 .ai-row.is-duplicate { opacity: 0.55; }
 .ai-row-body { flex: 1; min-width: 0; }
 .ai-row-name { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -1556,8 +1566,8 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   align-content: start;
 }
 
-/* Agent card: refined hierarchy, no monospace clutter, fade-masked prompt
-   preview, professional action row. */
+/* Agent card: the whole card is the activation control. Clicking anywhere
+   on the card (outside Edit/Delete/etc.) toggles its active state. */
 .agent-card {
   background: var(--bg-1);
   border: 1px solid var(--line);
@@ -1566,15 +1576,28 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   position: relative;
   box-shadow: var(--elev-1);
   display: flex; flex-direction: column; gap: 10px;
-  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
 }
-.agent-card:hover { border-color: var(--line-2); box-shadow: var(--elev-2); }
+.agent-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line-2));
+  box-shadow: var(--elev-2);
+  transform: translateY(-1px);
+}
 .agent-card.is-active {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg-1));
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
-    0 8px 24px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 8px 24px color-mix(in srgb, var(--accent) 10%, transparent),
     var(--elev-2);
+}
+.agent-card.is-active:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 10px 30px color-mix(in srgb, var(--accent) 14%, transparent),
+    var(--elev-3);
 }
 .agent-card-head {
   display: flex; align-items: center; gap: 10px; padding-right: 28px;
