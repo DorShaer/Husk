@@ -1634,7 +1634,9 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .agent-card-actions .agent-switch { margin-left: auto; }
 .agent-card .card-delete { position: absolute; top: 12px; right: 12px; }
 
-/* Auto-select: real iOS-style switch, replaces the previous checkbox. */
+/* Auto-select: iOS-style switch. The native input is hidden; the visible
+   track is a sibling span with the thumb as its ::after pseudo. ::after
+   on a span renders consistently everywhere, unlike ::after on input. */
 .agent-switch {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 11.5px; font-weight: 500; color: var(--text-3);
@@ -1642,30 +1644,44 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   letter-spacing: 0.01em;
 }
 .agent-switch input {
-  appearance: none; -webkit-appearance: none;
+  position: absolute;
+  opacity: 0;
+  width: 0; height: 0;
+  margin: 0; padding: 0;
+  pointer-events: none;
+}
+.agent-switch-track {
   width: 30px; height: 17px;
   border-radius: 999px;
-  background: var(--bg-3); border: 1px solid var(--line-2);
-  position: relative; cursor: pointer;
-  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  position: relative;
   flex: 0 0 auto;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
-.agent-switch input::after {
-  content: ''; position: absolute;
+.agent-switch-track::after {
+  content: '';
+  position: absolute;
   top: 1.5px; left: 1.5px;
   width: 12px; height: 12px;
   border-radius: 50%;
   background: var(--text-3);
-  transition: transform var(--motion-base) var(--ease), background var(--motion-fast) ease;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform var(--motion-base) var(--ease), background var(--motion-fast) ease;
 }
-.agent-switch input:checked {
-  background: var(--accent); border-color: var(--accent);
+.agent-switch:hover .agent-switch-track { border-color: var(--line-3); }
+.agent-switch input:checked + .agent-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
 }
-.agent-switch input:checked::after {
-  transform: translateX(13px); background: #fff;
+.agent-switch input:checked + .agent-switch-track::after {
+  transform: translateX(13px);
+  background: #fff;
 }
-.agent-switch:hover input:not(:checked) { border-color: var(--line-3); }
+.agent-switch input:focus-visible + .agent-switch-track {
+  box-shadow: var(--focus-ring);
+}
 .agent-switch.is-on { color: var(--accent); }
 .agent-manual-link {
   background: transparent; border: 0; cursor: pointer;

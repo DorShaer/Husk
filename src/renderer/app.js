@@ -1251,6 +1251,7 @@ function paintAgents() {
         ${!p.builtin ? `<button class="ghost-link agent-edit" data-id="${escapeHtml(p.id)}">Edit</button>` : ''}
         <label class="agent-switch${p.autoSelect ? ' is-on' : ''}" title="When enabled, Husk activates this agent automatically based on context">
           <input type="checkbox" class="agent-autoselect-toggle" data-id="${escapeHtml(p.id)}" ${p.autoSelect ? 'checked' : ''} />
+          <span class="agent-switch-track" aria-hidden="true"></span>
           Auto-select
         </label>
         ${isActive
