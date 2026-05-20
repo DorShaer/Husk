@@ -5,7 +5,19 @@
 # upstream revision of any script we fetch. We download to a temp file
 # and check its hash against the pinned value before executing.
 #
-# Updating a pin: review the upstream script you intend to allow, run
+# Trust model for the current bun pin:
+#   - The pinned bun installer downloads bun-<target>.zip from
+#     github.com/oven-sh/bun/releases. We do not independently verify
+#     that zip; the trust assumption is on the GitHub release.
+#   - The installer writes only under $HOME/.bun (or $BUN_INSTALL),
+#     appends a PATH line to the user's shell rc, and adds shell
+#     completions. No sudo, no eval, no writes outside that scope.
+#   - A stronger model is to skip the installer entirely and fetch the
+#     bun release zip + verify against bun's SHASUMS256.txt. Tracked
+#     as a follow-up.
+#
+# Updating a pin: read the upstream script you intend to allow line
+# by line, then
 #   curl -fsSL <url> | sha256sum
 # and replace the matching constant in install.sh.
 
