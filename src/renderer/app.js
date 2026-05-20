@@ -1235,10 +1235,17 @@ function paintAgents() {
     return;
   }
   const activeIds = new Set(getActiveProfileIds());
-  const cards = profilesCache.map((p) => {
+  // Active agents float to the top; the rest sort by name.
+  const sorted = [...profilesCache].sort((a, b) => {
+    const av = activeIds.has(a.id) ? 0 : 1;
+    const bv = activeIds.has(b.id) ? 0 : 1;
+    if (av !== bv) return av - bv;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+  const cards = sorted.map((p) => {
     const isActive = activeIds.has(p.id);
     return `
-    <div class="agent-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}">
+    <div class="agent-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}" role="button" aria-pressed="${isActive}" tabindex="0" title="${isActive ? 'Click to deactivate' : 'Click to activate'}">
       ${!p.builtin ? `<button class="card-delete agent-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete agent" aria-label="Delete agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
       <div class="agent-card-head">
         <div class="agent-card-title">${escapeHtml(p.name)}</div>
@@ -1247,35 +1254,33 @@ function paintAgents() {
       </div>
       ${p.description ? `<div class="agent-card-desc">${escapeHtml(p.description)}</div>` : ''}
       ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
-      <div class="agent-card-actions">
-        ${!p.builtin ? `<button class="ghost-link agent-edit" data-id="${escapeHtml(p.id)}">Edit</button>` : ''}
-        <label class="agent-switch${p.autoSelect ? ' is-on' : ''}" title="When enabled, Husk activates this agent automatically based on context">
-          <input type="checkbox" class="agent-autoselect-toggle" data-id="${escapeHtml(p.id)}" ${p.autoSelect ? 'checked' : ''} />
-          <span class="agent-switch-track" aria-hidden="true"></span>
-          Auto-select
-        </label>
-        ${isActive
-          ? `<button class="ghost-btn agent-deactivate" data-id="${escapeHtml(p.id)}">Deactivate</button>`
-          : `<button class="card-cta agent-activate" data-id="${escapeHtml(p.id)}">Activate<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
-      </div>
+      ${!p.builtin ? `<div class="agent-card-actions"><button class="ghost-link agent-edit" data-id="${escapeHtml(p.id)}">Edit details</button></div>` : ''}
     </div>
   `;
   }).join('');
   // eslint-disable-next-line no-unsanitized/property
   grid.innerHTML = cards;
 
-  grid.querySelectorAll('.agent-activate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); activateProfile(e.currentTarget.dataset.id); }));
-  grid.querySelectorAll('.agent-deactivate').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deactivateProfile(e.currentTarget.dataset.id); }));
+  // Whole card toggles activation. Buttons inside (Edit, Delete) opt out via
+  // closest('button') check so they trigger their own handlers cleanly.
+  grid.querySelectorAll('.agent-card').forEach((card) => {
+    const id = card.dataset.id;
+    const toggle = () => {
+      if (activeIds.has(id)) deactivateProfile(id);
+      else activateProfile(id);
+    };
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      // Ignore plain text-selection drags so users can read the prompt preview.
+      if (window.getSelection && window.getSelection().toString().length > 0) return;
+      toggle();
+    });
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  });
   grid.querySelectorAll('.agent-edit').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openAgentModal(e.currentTarget.dataset.id); }));
   grid.querySelectorAll('.agent-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProfile(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
-  grid.querySelectorAll('.agent-autoselect-toggle').forEach((chk) => chk.addEventListener('change', async (e) => {
-    e.stopPropagation();
-    const id = e.currentTarget.dataset.id;
-    const val = e.currentTarget.checked;
-    profilesCache = profilesCache.map((p) => p.id === id ? { ...p, autoSelect: val } : p);
-    await window.husk.profiles.update({ id, autoSelect: val });
-    paintAgents();
-  }));
 }
 
 async function activateProfile(id) {
@@ -1459,6 +1464,7 @@ async function openAgentsImportModal() {
   // eslint-disable-next-line no-unsanitized/property -- static placeholder
   listEl.innerHTML = `<div class="ai-empty">Loading...</div>`;
   if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Import 0 agents'; }
+  if ($('#ai-activate-after')) $('#ai-activate-after').checked = true;
   modal.hidden = false;
 
   const res = await window.husk.profiles.listImportableAgents();
@@ -1501,17 +1507,22 @@ function closeAgentsImportModal() {
 async function confirmAgentsImport() {
   const listEl = $('#ai-list');
   if (!listEl) return;
-  const picks = Array.from(listEl.querySelectorAll('.ai-check:checked')).map((el) => ({ source: el.dataset.source, filename: el.dataset.file }));
+  const picks = Array.from(listEl.querySelectorAll('.ai-check:checked'))
+    .filter((el) => el.dataset.source)
+    .map((el) => ({ source: el.dataset.source, filename: el.dataset.file }));
   if (!picks.length) return;
   const btn = $('#ai-confirm');
   if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
-  const res = await window.husk.profiles.importAgents(picks);
+  const activate = !!($('#ai-activate-after') && $('#ai-activate-after').checked);
+  const res = await window.husk.profiles.importAgents(picks, activate);
   if (!res || !res.ok) { toast((res && res.error) || 'Import failed', 'error'); if (btn) btn.disabled = false; return; }
-  toast(`Imported ${res.imported} agent${res.imported !== 1 ? 's' : ''}`, 'success');
+  toast(`Imported ${res.imported} agent${res.imported !== 1 ? 's' : ''}${activate ? ' and activated' : ''}`, 'success');
   closeAgentsImportModal();
   profilesCache = await window.husk.profiles.list();
+  if (activate) cfg = await window.husk.config.get();
   paintAgents();
   updateAgentBanner();
+  updateActiveChatProfile();
 }
 
 $('#btn-import-agents') && $('#btn-import-agents').addEventListener('click', openAgentsImportModal);
