@@ -18,13 +18,71 @@ test('sanitizeNode: clamps prompt to 8192 chars', () => {
 });
 
 test('sanitizeNode: clamps agentCommand to 128 chars', () => {
-  const n = wf.sanitizeNode({ agentCommand: 'c'.repeat(500) });
+  // First token must be an allowed agent name for sanitizeNode to keep
+  // the value at all (see allowlist tests below). Use claude with a
+  // long flag tail so the result is both clamped and preserved.
+  const n = wf.sanitizeNode({ agentCommand: 'claude ' + 'x'.repeat(500) });
   assert.equal(n.agentCommand.length, 128);
+  assert.equal(n.agentCommand.startsWith('claude '), true);
 });
 
 test('sanitizeNode: empty agentCommand becomes null', () => {
   const n = wf.sanitizeNode({ agentCommand: '' });
   assert.equal(n.agentCommand, null);
+});
+
+test('sanitizeNode: agentCommand outside the allowlist becomes null', () => {
+  for (const bad of ['sh', 'bash', 'dash', 'zsh', 'fish', 'python', 'python3', 'perl', 'ruby', 'node', '/bin/sh', '/usr/local/bin/bash', 'sh script.sh', '../sh']) {
+    const n = wf.sanitizeNode({ agentCommand: bad });
+    assert.equal(n.agentCommand, null, `expected null for input ${JSON.stringify(bad)}`);
+  }
+});
+
+test('sanitizeNode: known agent commands are preserved', () => {
+  for (const good of ['claude', 'copilot', 'codex', 'aider', 'gemini']) {
+    const n = wf.sanitizeNode({ agentCommand: good });
+    assert.equal(n.agentCommand, good);
+  }
+});
+
+test('sanitizeNode: known agent with flags is preserved', () => {
+  const n = wf.sanitizeNode({ agentCommand: 'claude --print --verbose' });
+  assert.equal(n.agentCommand, 'claude --print --verbose');
+});
+
+test('sanitizeNode: known agent at an absolute path is preserved', () => {
+  const n = wf.sanitizeNode({ agentCommand: '/opt/homebrew/bin/claude' });
+  assert.equal(n.agentCommand, '/opt/homebrew/bin/claude');
+});
+
+test('sanitizeNode: allowlist comparison is case-insensitive on basename', () => {
+  const n = wf.sanitizeNode({ agentCommand: 'CLAUDE' });
+  assert.equal(n.agentCommand, 'CLAUDE');
+});
+
+// ─── isAllowedAgentCommand direct ───────────────────────────────────────────
+
+test('isAllowedAgentCommand: returns true for every entry in the allowlist', () => {
+  for (const name of wf.ALLOWED_AGENT_COMMANDS) {
+    assert.equal(wf.isAllowedAgentCommand(name), true);
+  }
+});
+
+test('isAllowedAgentCommand: returns false for shells and interpreters', () => {
+  for (const bad of ['sh', 'bash', 'zsh', 'fish', 'python', 'node', 'ruby', 'perl', '']) {
+    assert.equal(wf.isAllowedAgentCommand(bad), false, bad);
+  }
+});
+
+test('isAllowedAgentCommand: returns false for non-string input', () => {
+  assert.equal(wf.isAllowedAgentCommand(null), false);
+  assert.equal(wf.isAllowedAgentCommand(undefined), false);
+  assert.equal(wf.isAllowedAgentCommand(42), false);
+});
+
+test('isAllowedAgentCommand: ignores arguments after the first token', () => {
+  assert.equal(wf.isAllowedAgentCommand('claude --any --thing'), true);
+  assert.equal(wf.isAllowedAgentCommand('sh --pretending-to-be-claude'), false);
 });
 
 test('sanitizeNode: invalid passContext falls back to full', () => {
@@ -274,4 +332,24 @@ test('wfRouteInstruction: includes all target names and END option', () => {
   const txt = wf.wfRouteInstruction(['A', 'B', 'C']);
   assert.match(txt, /A \| B \| C/);
   assert.match(txt, /ROUTE: END/);
+});
+
+// ─── Source-shape regression guard ──────────────────────────────────────────
+
+test('executeWorkflow in main.js gates the spawn behind isAllowedAgentCommand', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const text = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const m = text.match(/async function executeWorkflow[\s\S]*?\n\}/);
+  assert.ok(m, 'executeWorkflow not found');
+  const body = m[0];
+
+  // The allowlist call must appear before the spawn call inside the
+  // body so a future edit cannot accidentally re-introduce an
+  // unconstrained spawn.
+  const guardAt = body.indexOf('isAllowedAgentCommand(cmd)');
+  const spawnAt = body.indexOf('spawn(cmd, args');
+  assert.ok(guardAt > -1, 'isAllowedAgentCommand(cmd) check missing in executeWorkflow');
+  assert.ok(spawnAt > -1, 'spawn(cmd, args, ...) not found in executeWorkflow');
+  assert.ok(guardAt < spawnAt, 'isAllowedAgentCommand check must precede the spawn call');
 });
