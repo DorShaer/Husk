@@ -36,6 +36,7 @@ const {
   wfIsAiRouted,
   wfRouteInstruction,
   wfResolveNext,
+  isAllowedAgentCommand,
 } = wfLib;
 
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
@@ -1370,6 +1371,21 @@ async function executeWorkflow(event, workflow, run) {
     wfEmit(event, 'wf:node:start', { runId: run.id, nodeId: node.id });
 
     const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+
+    // The resolved cmd may come from step.agentCommand (already
+    // checked by sanitizeNode) or from config.agentCommand. Apply the
+    // same allowlist here so both paths agree.
+    if (!isAllowedAgentCommand(cmd)) {
+      wfEmit(event, 'wf:node:activity', {
+        runId: run.id,
+        nodeId: node.id,
+        kind: 'error',
+        text: `Step "${node.name}" needs one of ${Array.from(wfLib.ALLOWED_AGENT_COMMANDS).join(', ')}; got "${cmd}".`,
+      });
+      wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: node.id, ok: false });
+      wfEmit(event, 'wf:run:done', { runId: run.id, ok: false, error: 'unsupported_agent_command' });
+      return;
+    }
 
     let prompt = step.prompt;
     if (previousOutput) {
