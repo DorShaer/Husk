@@ -59,13 +59,24 @@ jobs:
       - name: Run Gitleaks
         run: |
           mkdir -p security-reports
-          # On the first push of a new branch github.event.before is the
-          # all-zeros sha, which makes the diff range invalid. Detect
-          # that and scan the whole repo instead, same as the PR path.
+          # github.event.before is unreliable in two cases:
+          #   - first push of a new branch: it is the all-zeros sha
+          #   - force-push: it points to a now-orphaned sha that may
+          #     not be reachable from the current HEAD
+          # In either case the diff range is invalid and gitleaks
+          # exits non-zero. Fall back to a full-repo scan, which is
+          # the same path the pull_request event takes.
           BEFORE='${{ github.event.before }}'
+          HEAD='${{ github.sha }}'
           ZERO_SHA='0000000000000000000000000000000000000000'
+          USE_RANGE=0
           if [ "${{ github.event_name }}" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "$ZERO_SHA" ]; then
-            gitleaks detect --config .gitleaks.toml --log-opts="$BEFORE..${{ github.sha }}" --report-format=json --report-path=security-reports/gitleaks-report.json
+            if git merge-base --is-ancestor "$BEFORE" "$HEAD" 2>/dev/null; then
+              USE_RANGE=1
+            fi
+          fi
+          if [ "$USE_RANGE" = "1" ]; then
+            gitleaks detect --config .gitleaks.toml --log-opts="$BEFORE..$HEAD" --report-format=json --report-path=security-reports/gitleaks-report.json
           else
             gitleaks detect --config .gitleaks.toml --report-format=json --report-path=security-reports/gitleaks-report.json
           fi
@@ -291,7 +302,7 @@ jobs:
 
       - name: Trivy filesystem scan
         # Pinned by SHA (do not move to @master). Bumps go through dependabot.
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -304,7 +315,7 @@ jobs:
 
       - name: Trivy JSON (always)
         if: always()
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
