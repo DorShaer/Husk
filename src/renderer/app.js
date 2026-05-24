@@ -2335,6 +2335,17 @@ const RECAP_RE = /(?:^|\n)\s*\*\s+recap:\s*([^\r\n]+)/gi;
 const ANSI_RE = /\x1B\[[\d;?]*[A-Za-z]|\x1B\][^\x07]*\x07/g;
 const SPOKEN_HISTORY_MAX = 32;
 let speechBuf = '';
+// Total bytes of speechBuf that have been written across the lifetime of
+// this session (speechBuf itself is a sliding window of the tail of that
+// stream). Match indexes are translated into this absolute coordinate
+// so we can compare positions across windowed shrinks.
+let speechAbsBase = 0;
+// The absolute position of the last spoken match. detectAndSpeak only
+// considers matches strictly after this position. TUI redraws emitted
+// after a SIGWINCH (terminal resize, including zoom) re-paint the same
+// speech-balloon line at a buffer position that is older in absolute
+// terms, so the cursor guards against re-firing the same line.
+let lastSpokenAbsIdx = -1;
 const spokenSet = new Set();
 const spokenOrder = [];
 
@@ -2353,6 +2364,8 @@ function recordSpoken(key) {
 }
 function resetSpeechState() {
   speechBuf = '';
+  speechAbsBase = 0;
+  lastSpokenAbsIdx = -1;
   spokenSet.clear();
   spokenOrder.length = 0;
 }
@@ -2360,22 +2373,34 @@ function detectAndSpeak(chunk) {
   if (!cfg || !cfg.voice || !cfg.voice.enabled) return;
   if (cfg.recap === false) return;
   speechBuf += chunk;
-  if (speechBuf.length > 16384) speechBuf = speechBuf.slice(-8192);
+  if (speechBuf.length > 16384) {
+    const dropped = speechBuf.length - 8192;
+    speechBuf = speechBuf.slice(-8192);
+    speechAbsBase += dropped;
+  }
   const clean = speechBuf.replace(ANSI_RE, '');
-  // Pick whichever match appears latest in the buffer (by index of the match).
+  // Pick whichever match appears latest in the buffer (by index of the
+  // match). Translate to an absolute position so windowed shrinks and
+  // TUI redraws (which re-emit older content) cannot move the cursor
+  // backward.
   let latest = null;
-  let latestIdx = -1;
+  let latestAbs = -1;
   for (const re of [SPEECH_BALLOON_RE, RECAP_RE]) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(clean)) !== null) {
-      if (m.index > latestIdx) { latestIdx = m.index; latest = (m[1] || '').trim(); }
+      const abs = speechAbsBase + m.index;
+      if (abs > latestAbs) { latestAbs = abs; latest = (m[1] || '').trim(); }
       if (m.index === re.lastIndex) re.lastIndex++;
     }
   }
   if (!latest) return;
+  // Already spoken from a position at or before this one (handles redraws
+  // after SIGWINCH from terminal resize / zoom).
+  if (latestAbs <= lastSpokenAbsIdx) return;
   const key = normalizeForDedup(latest);
   if (!recordSpoken(key)) return;
+  lastSpokenAbsIdx = latestAbs;
   speak(latest);
 }
 $('#pref-save').addEventListener('click', async () => {
