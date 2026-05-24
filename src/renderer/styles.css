@@ -2354,8 +2354,9 @@ input[type="checkbox"]:disabled {
 .mcp-health-ok       { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 35%, var(--line)); background: color-mix(in srgb, var(--emerald) 10%, var(--bg-2)); }
 .mcp-health-err      { color: var(--rose);    border-color: color-mix(in srgb, var(--rose) 40%, var(--line));    background: color-mix(in srgb, var(--rose) 10%, var(--bg-2)); }
 .mcp-health-warn     { color: var(--amber);   border-color: color-mix(in srgb, var(--amber) 40%, var(--line));   background: color-mix(in srgb, var(--amber) 10%, var(--bg-2)); }
-.mcp-health-loading  { color: var(--text-3); font-style: italic; }
-.mcp-health-unknown  { color: var(--text-3); }
+.mcp-health-loading    { color: var(--text-3); font-style: italic; }
+.mcp-health-unknown    { color: var(--text-3); }
+.mcp-health-configured { color: var(--text-2); border-color: var(--line-2); background: var(--bg-3); }
 .mcp-row .mr-cmd { color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-row .mr-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .mcp-row .mr-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }

@@ -2854,13 +2854,22 @@ function snapshotLoadedMcps(servers) {
   // visibly without needing to navigate away and back.
   if (currentPage === 'mcp') paintMcpSections();
 }
-// Live connection status from `claude mcp list`. id -> 'connected' | 'failed' | 'auth' | 'disabled'
+// Live connection status from the active agent's CLI. id -> 'connected'
+// | 'failed' | 'auth' | 'disabled'. Some agents (copilot today) do not
+// expose a programmatic health command; the renderer falls back to a
+// neutral "configured" pill on those rows.
 let mcpHealth = {};
 let mcpHealthLoading = false;
+let mcpSupportsLiveStatus = true;
+let mcpAdapterAgent = 'claude';
+let mcpAdapterUnsupported = false;
 async function reloadMcpInventory() {
   if (!mcpCatalog.length) mcpCatalog = (await window.husk.mcp.catalog()) || [];
   const r = await window.husk.mcp.list();
   mcpInstalled = (r && r.servers) || [];
+  mcpSupportsLiveStatus = !!(r && r.supportsLiveStatus);
+  mcpAdapterAgent = (r && r.agent) || 'claude';
+  mcpAdapterUnsupported = !!(r && r.unsupported);
   return mcpInstalled;
 }
 async function reloadMcpHealth() {
@@ -2889,7 +2898,13 @@ function healthBadgeHTML(id, enabled) {
   const h = mcpHealth[id];
   if (!h) {
     if (mcpHealthLoading) return '<span class="mcp-health mcp-health-loading" title="Checking connection…">checking…</span>';
-    return '<span class="mcp-health mcp-health-unknown" title="Unknown, claude mcp list did not report status">unknown</span>';
+    // Some agents (copilot today) do not expose a programmatic health
+    // probe. Don't claim the row's state is unknown, it's just that we
+    // cannot probe it from outside the REPL. Show a neutral pill.
+    if (!mcpSupportsLiveStatus) {
+      return '<span class="mcp-health mcp-health-configured" title="Configured in this agent. Husk cannot fetch live status for this CLI.">configured</span>';
+    }
+    return '<span class="mcp-health mcp-health-unknown" title="Configured but the CLI did not return a status">unknown</span>';
   }
   if (h === 'connected') return '<span class="mcp-health mcp-health-ok" title="Connected">connected</span>';
   if (h === 'failed')    return '<span class="mcp-health mcp-health-err" title="Failed to connect">failed</span>';

@@ -76,7 +76,8 @@
       "icon": "installer/husk-icon.png",
       "synopsis": "Desktop home for CLI AI agents",
       "description": "Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.",
-      "maintainer": "DorShaer <85877103+DorShaer@users.noreply.github.com>"
+      "maintainer": "DorShaer <85877103+DorShaer@users.noreply.github.com>",
+      "artifactName": "${name}-v${version}-linux-${arch}.${ext}"
     },
     "deb": {
       "afterInstall": "installer/after-install.sh",
@@ -103,14 +104,16 @@
       "category": "public.app-category.developer-tools",
       "darkModeSupport": true,
       "hardenedRuntime": true,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "artifactName": "${name}-v${version}-mac-${arch}.${ext}"
     },
     "win": {
       "target": [
         "nsis",
         "zip"
       ],
-      "icon": "installer/husk-icon.png"
+      "icon": "installer/husk-icon.png",
+      "artifactName": "${name}-v${version}-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
