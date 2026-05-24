@@ -28,7 +28,15 @@ function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabe
     const okBtn = document.getElementById('confirm-ok');
     const cancelBtn = document.getElementById('confirm-cancel');
     if (!modal || !titleEl || !bodyEl || !okBtn || !cancelBtn) {
-      resolve(window.confirm(title + '\n\n' + bodyHtml.replace(/<[^>]*>?/g, '')));
+      // Fallback when the modal elements are not in the DOM (early boot
+      // race). window.confirm displays plain text, so extract the text
+      // content of bodyHtml through an inert template element. The
+      // template is parsed but never rendered, no resource loads fire,
+      // and reading textContent collapses the markup to its text nodes.
+      const tpl = document.createElement('template');
+      tpl.innerHTML = bodyHtml;
+      const plain = (tpl.content && tpl.content.textContent) || '';
+      resolve(window.confirm(title + '\n\n' + plain));
       return;
     }
     titleEl.textContent = title;
