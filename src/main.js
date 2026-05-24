@@ -15,7 +15,7 @@ const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
 const { getUserPath } = require('./lib/user-path');
-const { parseMcpListOutput } = require('./lib/mcp-status');
+const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
 // On macOS in particular, a GUI-launched Electron app inherits a
 // minimal PATH that does not include the npm-global, homebrew, or bun
@@ -806,25 +806,6 @@ ipcMain.handle('agents:install', async (_e, { id }) => {
 // Code's user-scoped MCP config). For "disabled" state, we move entries to a
 // Husk-private key `_huskMcpDisabled` so a toggle never loses configuration,
 // just hides it from claude until re-enabled.
-const CLAUDE_USER_CONFIG = path.join(HOME, '.claude.json');
-
-function readClaudeUserConfig() {
-  try {
-    if (!fs.existsSync(CLAUDE_USER_CONFIG)) return {};
-    return JSON.parse(fs.readFileSync(CLAUDE_USER_CONFIG, 'utf8'));
-  } catch (_) { return {}; }
-}
-function writeClaudeUserConfig(obj) {
-  try {
-    // Mode 600 because this file holds MCP API keys, OAuth tokens, and other
-    // secrets in plaintext (mcpServers.<id>.env / .headers). Default umask
-    // would leave it world-readable on multi-user systems.
-    fs.writeFileSync(CLAUDE_USER_CONFIG, JSON.stringify(obj, null, 2), { mode: 0o600 });
-    try { fs.chmodSync(CLAUDE_USER_CONFIG, 0o600); } catch (_) {}
-    return true;
-  } catch (_) { return false; }
-}
-
 // Curated list of well-known MCP servers users can install in one click.
 // Each entry can declare required env vars; the renderer prompts for them.
 // Anything that requires a path uses kind:'path' so the renderer opens the
@@ -884,129 +865,25 @@ const MCP_CATALOG = [
   },
 ];
 
-function shapeServer(id, def, disabled) {
-  // MCP servers come in two transport flavors:
-  //   stdio     { command, args, env }
-  //   http/sse  { type: 'http'|'sse', url, headers }
-  // We surface both shapes to the renderer so it can render whichever fields
-  // are relevant for the row.
-  const isRemote = def && (def.type === 'http' || def.type === 'sse' || def.url);
-  if (isRemote) {
-    return {
-      id,
-      enabled: !disabled,
-      transport: def.type || 'http',
-      url: def.url || '',
-      headers: def.headers || {},
-    };
-  }
-  return {
-    id,
-    enabled: !disabled,
-    transport: 'stdio',
-    command: def.command || '',
-    args: def.args || [],
-    env: def.env || {},
-  };
-}
-
 ipcMain.handle('mcp:catalog', () => MCP_CATALOG);
 
-// Real connection state per MCP server. Husk shells out to `claude mcp list`,
-// which returns each configured server with its actual runtime status (connected,
-// failed, needs auth). Parsing lives in src/lib/mcp-status.js so the contract is
-// unit-testable against captured CLI output.
-ipcMain.handle('mcp:health', () => {
-  return new Promise((resolve) => {
-    let proc;
-    try {
-      proc = spawn('claude', ['mcp', 'list'], {
-        env: process.env,
-        // claude mcp list probes each configured server (stdio spawns,
-        // HTTP roundtrips, etc.) and streams results one line at a
-        // time. Real-world runs with a handful of HTTP-backed servers
-        // routinely take 25-40 seconds. 60s gives headroom; the
-        // renderer renders a "checking…" pill in the meantime.
-        timeout: 60000,
-        windowsHide: true,
-      });
-    } catch (err) {
-      resolve({ ok: false, error: err.message, status: {} });
-      return;
-    }
-    let buf = '';
-    proc.stdout.on('data', (d) => { buf += d.toString(); });
-    proc.stderr.on('data', (d) => { buf += d.toString(); });
-    proc.on('error', (err) => resolve({ ok: false, error: err.message, status: {} }));
-    proc.on('close', () => {
-      const status = parseMcpListOutput(buf);
-      resolve({ ok: true, status });
-    });
-  });
-});
+// Every mcp:* handler routes through the per-agent adapter selected
+// by config.agentCommand. claude and copilot are fully wired; codex,
+// aider, gemini, and unknown agents fall through to a stub that
+// surfaces "not supported" without misreading another agent's config.
+function activeMcpAdapter() {
+  return getMcpAdapter(config.agentCommand);
+}
 
 ipcMain.handle('mcp:list', () => {
-  const cfg = readClaudeUserConfig();
-  const enabled = cfg.mcpServers || {};
-  const disabled = cfg._huskMcpDisabled || {};
-  const servers = [];
-  for (const id of Object.keys(enabled)) servers.push(shapeServer(id, enabled[id], false));
-  for (const id of Object.keys(disabled)) servers.push(shapeServer(id, disabled[id], true));
-  servers.sort((a, b) => a.id.localeCompare(b.id));
-  return { ok: true, servers };
+  const result = activeMcpAdapter().list();
+  return { ...result, agent: activeMcpAdapter().agent, supportsWrite: activeMcpAdapter().supportsWrite, supportsLiveStatus: activeMcpAdapter().supportsLiveStatus };
 });
 
-ipcMain.handle('mcp:add', (_e, payload = {}) => {
-  const { id } = payload;
-  if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return { ok: false, error: 'Invalid server id' };
-  const cfg = readClaudeUserConfig();
-  cfg.mcpServers = cfg.mcpServers || {};
-  if (cfg.mcpServers[id] || (cfg._huskMcpDisabled && cfg._huskMcpDisabled[id])) {
-    return { ok: false, error: `MCP server "${id}" already exists` };
-  }
-  let entry;
-  if (payload.transport === 'http' || payload.transport === 'sse' || payload.url) {
-    if (!payload.url) return { ok: false, error: 'URL required for HTTP/SSE transport' };
-    entry = { type: payload.transport || 'http', url: payload.url };
-    if (payload.headers && Object.keys(payload.headers).length) entry.headers = payload.headers;
-  } else {
-    if (!payload.command) return { ok: false, error: 'Command required for stdio transport' };
-    entry = { command: payload.command, args: Array.isArray(payload.args) ? payload.args : [] };
-    if (payload.env && Object.keys(payload.env).length) entry.env = payload.env;
-  }
-  cfg.mcpServers[id] = entry;
-  if (!writeClaudeUserConfig(cfg)) return { ok: false, error: 'Could not write ~/.claude.json' };
-  return { ok: true };
-});
-
-ipcMain.handle('mcp:remove', (_e, id) => {
-  if (!id) return { ok: false, error: 'No id' };
-  const cfg = readClaudeUserConfig();
-  if (cfg.mcpServers && cfg.mcpServers[id]) delete cfg.mcpServers[id];
-  if (cfg._huskMcpDisabled && cfg._huskMcpDisabled[id]) delete cfg._huskMcpDisabled[id];
-  writeClaudeUserConfig(cfg);
-  return { ok: true };
-});
-
-ipcMain.handle('mcp:toggle', (_e, id) => {
-  if (!id) return { ok: false, error: 'No id' };
-  const cfg = readClaudeUserConfig();
-  cfg.mcpServers = cfg.mcpServers || {};
-  cfg._huskMcpDisabled = cfg._huskMcpDisabled || {};
-  if (cfg.mcpServers[id]) {
-    cfg._huskMcpDisabled[id] = cfg.mcpServers[id];
-    delete cfg.mcpServers[id];
-    writeClaudeUserConfig(cfg);
-    return { ok: true, enabled: false };
-  }
-  if (cfg._huskMcpDisabled[id]) {
-    cfg.mcpServers[id] = cfg._huskMcpDisabled[id];
-    delete cfg._huskMcpDisabled[id];
-    writeClaudeUserConfig(cfg);
-    return { ok: true, enabled: true };
-  }
-  return { ok: false, error: 'Not found' };
-});
+ipcMain.handle('mcp:health', () => activeMcpAdapter().health());
+ipcMain.handle('mcp:add', (_e, payload = {}) => activeMcpAdapter().add(payload));
+ipcMain.handle('mcp:remove', (_e, id) => activeMcpAdapter().remove(id));
+ipcMain.handle('mcp:toggle', (_e, id) => activeMcpAdapter().toggle(id));
 
 // ─── Stats (statusline data) ─────────────────────────────────────────────────────
 
