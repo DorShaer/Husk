@@ -4,19 +4,40 @@
 // linear ordering, and edge resolution. No Electron, no fs, no spawn. The
 // IPC handlers in main.js wrap these for the renderer.
 
-// agentCommand is the binary spawned for a step. Today it is the user's
-// own config (typed in the workflow editor) so the trust gate is the
-// same as config.agentCommand: only the renderer that already controls
-// the workflows JSON can write it. Before this field accepts a workflow
-// imported from any non-local source (template marketplace, shared URL,
-// pasted JSON drop), add an allowlist check here against a known set of
-// agent binaries plus a "Custom" opt-in confirmation.
+// Workflow nodes are intended to invoke one of the supported agent CLIs.
+// The allowlist below pins the agentCommand basename to that set. Update
+// this list when a new agent CLI is added to KNOWN_AGENTS in main.js.
+const ALLOWED_AGENT_COMMANDS = new Set([
+  'claude',
+  'copilot',
+  'codex',
+  'aider',
+  'gemini',
+]);
+
+// isAllowedAgentCommand(value) returns true when the first whitespace-
+// separated token's basename (case-insensitive) is in the allowlist.
+function isAllowedAgentCommand(value) {
+  if (typeof value !== 'string') return false;
+  const first = value.trim().split(/\s+/)[0];
+  if (!first) return false;
+  const base = first.split(/[\\/]/).pop().toLowerCase();
+  return ALLOWED_AGENT_COMMANDS.has(base);
+}
+
+// agentCommand is the binary executeWorkflow spawns for a step. Values
+// whose first token's basename is not in ALLOWED_AGENT_COMMANDS are
+// dropped to null here. executeWorkflow then falls back to the user's
+// config.agentCommand, which is independently checked against the same
+// allowlist at run time.
 function sanitizeNode(n) {
   n = n || {};
+  const raw = String(n.agentCommand || '').slice(0, 128);
+  const agentCommand = (raw && isAllowedAgentCommand(raw)) ? raw : null;
   return {
     id: n.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: String(n.name || 'Step').slice(0, 64),
-    agentCommand: String(n.agentCommand || '').slice(0, 128) || null,
+    agentCommand,
     prompt: String(n.prompt || '').slice(0, 8192),
     passContext: ['full', 'last50', 'none'].includes(n.passContext) ? n.passContext : 'full',
     x: Number.isFinite(n.x) ? n.x : 0,
@@ -155,6 +176,8 @@ function wfResolveNext(graph, node, output, byId) {
 }
 
 module.exports = {
+  ALLOWED_AGENT_COMMANDS,
+  isAllowedAgentCommand,
   sanitizeNode,
   sanitizeEdge,
   sanitizeGraph,

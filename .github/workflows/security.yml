@@ -302,7 +302,7 @@ jobs:
 
       - name: Trivy filesystem scan
         # Pinned by SHA (do not move to @master). Bumps go through dependabot.
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -315,7 +315,7 @@ jobs:
 
       - name: Trivy JSON (always)
         if: always()
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
