@@ -922,7 +922,12 @@ ipcMain.handle('mcp:health', () => {
     try {
       proc = spawn('claude', ['mcp', 'list'], {
         env: process.env,
-        timeout: 12000,
+        // claude mcp list probes each configured server (stdio spawns,
+        // HTTP roundtrips, etc.) and streams results one line at a
+        // time. Real-world runs with a handful of HTTP-backed servers
+        // routinely take 25-40 seconds. 60s gives headroom; the
+        // renderer renders a "checking…" pill in the meantime.
+        timeout: 60000,
         windowsHide: true,
       });
     } catch (err) {
