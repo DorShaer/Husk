@@ -132,6 +132,81 @@ term.onData((d) => {
   window.husk.pty.write(d);
   term.scrollToBottom();
 });
+
+// Copy / paste affordances for the embedded terminal.
+//   - Right-click on the terminal opens a small Copy / Paste / Select all menu.
+//   - Ctrl+Shift+C (macOS: Cmd+C) copies the selection.
+//   - Ctrl+Shift+V (macOS: Cmd+V) pastes the clipboard into the PTY.
+// Ctrl+C is intentionally left as SIGINT, matching every other terminal.
+const isMac = (navigator.userAgentData && navigator.userAgentData.platform === 'macOS') ||
+              /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+async function copyTerminalSelection() {
+  const text = term.getSelection();
+  if (!text) return false;
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) { return false; }
+}
+async function pasteIntoTerminal() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) term.paste(text);
+    return true;
+  } catch (_) { return false; }
+}
+term.attachCustomKeyEventHandler((e) => {
+  if (e.type !== 'keydown') return true;
+  const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
+  if (meta && (e.key === 'c' || e.key === 'C')) {
+    if (term.hasSelection()) { copyTerminalSelection(); return false; }
+  }
+  if (meta && (e.key === 'v' || e.key === 'V')) {
+    pasteIntoTerminal(); return false;
+  }
+  return true;
+});
+{
+  const terminalEl = $('#terminal');
+  const menu = document.createElement('div');
+  menu.id = 'terminal-ctx-menu';
+  menu.className = 'ctx-menu';
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button type="button" data-action="copy">Copy</button>
+    <button type="button" data-action="paste">Paste</button>
+    <button type="button" data-action="select-all">Select all</button>
+  `;
+  document.body.appendChild(menu);
+  function hideMenu() { menu.hidden = true; }
+  function showMenu(x, y) {
+    menu.hidden = false;
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    menu.style.left = Math.min(x, window.innerWidth - w - 6) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - h - 6) + 'px';
+    const copyBtn = menu.querySelector('[data-action="copy"]');
+    if (copyBtn) copyBtn.disabled = !term.hasSelection();
+  }
+  terminalEl.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY);
+  });
+  menu.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    hideMenu();
+    if (btn.dataset.action === 'copy') await copyTerminalSelection();
+    else if (btn.dataset.action === 'paste') await pasteIntoTerminal();
+    else if (btn.dataset.action === 'select-all') term.selectAll();
+  });
+  window.addEventListener('click', (e) => {
+    if (menu.hidden) return;
+    if (e.target.closest('#terminal-ctx-menu')) return;
+    hideMenu();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (!menu.hidden && e.key === 'Escape') hideMenu();
+  });
+  window.addEventListener('blur', hideMenu);
+}
 window.husk.pty.onData((d) => {
   if (!chatHasInput) {
     chatHasInput = true;
