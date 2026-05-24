@@ -95,16 +95,23 @@ const term = new Terminal({
   theme: themeForXterm(),
 });
 const fitAddon = new FitAddon.FitAddon();
-// Custom click handler: route http(s) URLs to the user's default
-// browser via the main process. xterm's built-in handler would call
-// window.open / window.confirm, which we don't want.
-const linksAddon = new WebLinksAddon.WebLinksAddon((_event, uri) => {
+// Route every URL click through the OS browser via shell.openExternal.
+// Two paths need to be covered:
+//   - WebLinksAddon: regex-detected plain-text URLs in TUI output
+//   - term.options.linkHandler: OSC 8 hyperlinks emitted by the agent
+//     as terminal escape codes
+// Both handlers must return a truthy value so xterm's internal
+// `result || defaultConfirmAndOpen` fallback does not fire.
+function openTerminalLink(_event, uri) {
   if (typeof uri === 'string' && /^https?:\/\//i.test(uri)) {
     try { window.husk.urls.openExternal(uri); } catch (_) {}
   }
-});
+  return true;
+}
+const linksAddon = new WebLinksAddon.WebLinksAddon(openTerminalLink);
 term.loadAddon(fitAddon);
 term.loadAddon(linksAddon);
+term.options.linkHandler = { activate: openTerminalLink };
 term.open($('#terminal'));
 
 function themeForXterm() {
