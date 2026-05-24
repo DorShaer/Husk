@@ -2663,6 +2663,16 @@ ipcMain.handle('update:open-release', (_e, url) => {
   return { ok: true };
 });
 
+// Open an http(s) URL in the user's default browser. Used by the
+// terminal link click handler (xterm WebLinksAddon) and any future
+// in-renderer surface that needs to surface a clickable URL.
+ipcMain.handle('urls:openExternal', (_e, url) => {
+  if (typeof url !== 'string') return { ok: false, error: 'invalid url' };
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'unsupported scheme' };
+  shell.openExternal(url).catch(() => {});
+  return { ok: true };
+});
+
 // ─── Lifecycle ────────────────────────────────────────────────────────────────────
 
 // Only allow one Husk at a time. A second launch focuses the existing window
