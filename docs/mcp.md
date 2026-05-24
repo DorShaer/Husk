@@ -7,13 +7,25 @@ MCP (Model Context Protocol) is the open spec Anthropic published for connecting
 The agents Husk runs can already read files, write files, run shell, fetch URLs, and call git. MCP servers are not "enabling" those things. They are **specializations** that give the agent typed tools for a specific domain. The catalog descriptions reflect that honestly:
 
 | Server | What it adds (not what it enables) |
-|--------|-----------------------------------|
+|--------|------------------------------------|
 | Filesystem (sandbox) | Restricts the agent to one folder you pick. Tighter than the default. |
 | Memory | Structured key-value memory across conversations. Cleaner than ad-hoc notes files. |
 | GitHub | Typed GitHub API tools (search code, list issues, open PRs) over a personal token. No `gh` CLI required. |
 | Time | Timezone-aware time tools. |
 | Fetch | URL fetcher with HTML-to-text extraction. Cleaner than parsing raw HTML. |
 | Brave Search | Structured web search results without scraping a search page. |
+
+## The page is per-agent
+
+The MCP page reads from whichever agent is active. Each agent has its own config file, and Husk routes reads and writes through an adapter that knows that agent's on-disk shape:
+
+| Active agent | Config file Husk writes | Live status probe |
+|--------------|-------------------------|-------------------|
+| `claude` | `~/.claude.json` | yes (`claude mcp list`) |
+| `copilot` | `~/.copilot/mcp-config.json` | no, the page shows `configured` for every entry |
+| `codex`, `aider`, `gemini` | not wired up yet | the page is empty with a clear "not yet supported" state |
+
+The adapter pattern lives in `src/lib/mcp/`. The on-disk shape is the same across all wired-up agents (`mcpServers` plus the Husk-private `_huskMcpDisabled`), so a config Husk wrote can be loaded by the agent CLI directly, and an MCP entry someone else dropped in is readable by Husk.
 
 ## The page
 
@@ -35,19 +47,19 @@ Three semantic sections in "Installed":
 
 - **Loaded**: green dot. Enabled AND in the snapshot taken when the current agent process started. These are live in the chat right now.
 - **Applying**: amber dot. Enabled now but added or re-enabled since launch. Husk silently restarts the agent to load them; the dot becomes green when the new session starts.
-- **Inactive**: grey dot. Toggled off. Persisted in `_huskMcpDisabled` inside `~/.claude.json` so re-enabling is one click and zero retyping.
+- **Inactive**: grey dot. Toggled off. Persisted in `_huskMcpDisabled` inside the active agent's config file, so re-enabling is one click and zero retyping.
 
-Plus a per-row connection state pill: `connected` / `failed` / `needs auth` / `checking…`. Source: a `claude mcp list` shell-out, parsed and cached in the renderer.
+Plus a per-row connection state pill: `connected` / `failed` / `needs auth` / `checking…` / `configured`. The first four come from the claude adapter's parse of `claude mcp list`. The `configured` pill is the copilot adapter's response when there is no live probe.
 
 ## Installing a curated server
 
-Click any catalog card. If the server needs configuration (a folder for Filesystem, an API key for GitHub or Brave Search), the modal prompts inline. Submit, Husk:
+Click any catalog card. If the server needs configuration (a folder for Filesystem, an API key for GitHub or Brave Search), the modal prompts inline. Submit, and Husk:
 
 1. Validates the inputs.
-2. Writes a clean entry into `~/.claude.json` `mcpServers`.
+2. Writes a clean entry into the active agent's `mcpServers` config.
 3. chmods the file to `0600` (it now holds your token).
 4. Silently restarts the agent so the new server loads.
-5. Re-runs `mcp:health` and flips the row's status pill from `checking…` to `connected` when claude reports the server up.
+5. Re-runs `mcp:health` and flips the row's status pill from `checking…` to `connected` (claude) or `configured` (copilot) once the write lands.
 
 You never touch JSON.
 
@@ -84,7 +96,7 @@ Husk parses (forgiving of trailing commas and the optional outer wrapper key), r
 
 ## Connection health
 
-Husk shells out to `claude mcp list` shortly after each install/toggle/remove and again every time the MCP page opens. The output is parsed into a per-server status. You see the live result as a small uppercase pill next to the server name:
+When the active agent is `claude`, Husk shells out to `claude mcp list` shortly after each install / toggle / remove and again every time the MCP page opens. The output is parsed by `src/lib/mcp-status.js` into a per-server status. You see the live result as a small uppercase pill next to the server name:
 
 | State | When | Color |
 |-------|------|-------|
@@ -92,11 +104,12 @@ Husk shells out to `claude mcp list` shortly after each install/toggle/remove an
 | `FAILED` | claude reported a connection error (bad URL, bad token) | rose |
 | `NEEDS AUTH` | server requires an OAuth flow (e.g. claude.ai connectors) | amber |
 | `CHECKING…` | probe in flight | grey, italic |
+| `CONFIGURED` | the active adapter has no live probe (copilot today) | slate |
 
-This is the difference between "I configured it" (green section dot, "loaded") and "the agent can actually reach it" (per-row pill). Both are true configuration metadata; only the per-row pill is connectivity.
+This is the difference between "I configured it" (green section dot, "loaded") and "the agent can actually reach it" (per-row pill).
 
 ## On-disk format
 
-Husk reads and writes claude's standard `~/.claude.json` user config. Disabled servers move to a Husk-private `_huskMcpDisabled` key inside the same file (claude ignores unknown keys), so re-enabling never asks for re-configuration.
+Husk reads and writes the active agent's standard config file. Disabled servers move to a Husk-private `_huskMcpDisabled` key inside the same file (the agent CLIs ignore unknown keys), so re-enabling never asks for re-configuration.
 
-Both `mcpServers` and `_huskMcpDisabled` follow the standard MCP entry shape, so an `~/.claude.json` written by Husk is readable by any MCP-aware tool, and an MCP entry someone else dropped in is readable by Husk.
+Both `mcpServers` and `_huskMcpDisabled` follow the standard MCP entry shape, so a config written by Husk is readable by any MCP-aware tool, and an MCP entry someone else dropped in is readable by Husk.
