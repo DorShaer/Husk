@@ -10,7 +10,7 @@ const { spawn, spawnSync } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
-const { resolveInside, isInside } = require('./lib/path-confine');
+const { resolveInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
@@ -30,13 +30,9 @@ try {
   if (userPath) process.env.PATH = userPath;
 } catch (_) {}
 const {
-  sanitizeNode,
-  sanitizeEdge,
   sanitizeGraph,
   migrateWorkflow,
   graphToOrderedSteps,
-  wfEdgeMatches,
-  wfPickNextEdge,
   wfIsAiRouted,
   wfRouteInstruction,
   wfResolveNext,
