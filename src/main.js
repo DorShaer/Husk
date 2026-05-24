@@ -435,6 +435,25 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
+  // Any URL the renderer tries to open as a new window (xterm link
+  // clicks, anchor targets, window.open) is routed to the user's
+  // default browser. Husk never spawns a secondary Electron window.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+  // Belt-and-suspenders: also catch top-level navigation attempts so
+  // the main window cannot be hijacked away from its loaded index.html.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url === mainWindow.webContents.getURL()) return;
+    event.preventDefault();
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
     { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
@@ -2641,6 +2660,16 @@ ipcMain.handle('update:open-release', (_e, url) => {
     return { ok: true };
   }
   shell.openExternal('https://github.com/DorShaer/Husk/releases');
+  return { ok: true };
+});
+
+// Open an http(s) URL in the user's default browser. Used by the
+// terminal link click handler (xterm WebLinksAddon) and any future
+// in-renderer surface that needs to surface a clickable URL.
+ipcMain.handle('urls:openExternal', (_e, url) => {
+  if (typeof url !== 'string') return { ok: false, error: 'invalid url' };
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'unsupported scheme' };
+  shell.openExternal(url).catch(() => {});
   return { ok: true };
 });
 
