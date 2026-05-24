@@ -95,16 +95,26 @@ const term = new Terminal({
   theme: themeForXterm(),
 });
 const fitAddon = new FitAddon.FitAddon();
-// Route every URL click through the OS browser via shell.openExternal.
-// Two paths need to be covered:
+// Route every URL click through the OS browser via shell.openExternal,
+// gated by Husk's own confirm dialog so the user sees the destination
+// before leaving the app. Two paths need to be covered:
 //   - WebLinksAddon: regex-detected plain-text URLs in TUI output
 //   - term.options.linkHandler: OSC 8 hyperlinks emitted by the agent
 //     as terminal escape codes
 // Both handlers must return a truthy value so xterm's internal
-// `result || defaultConfirmAndOpen` fallback does not fire.
+// `result || defaultConfirmAndOpen` fallback does not fire. The
+// confirm runs asynchronously; we return true immediately.
 function openTerminalLink(_event, uri) {
   if (typeof uri === 'string' && /^https?:\/\//i.test(uri)) {
-    try { window.husk.urls.openExternal(uri); } catch (_) {}
+    openConfirmDialog({
+      title: 'Open link in your browser?',
+      bodyHtml: `Husk is about to open this URL in your default browser:<br/><br/><code style="word-break:break-all;">${escapeHtml(uri)}</code><br/><br/>Only open links you trust.`,
+      confirmLabel: 'Open link',
+      cancelLabel: 'Cancel',
+    }).then((ok) => {
+      if (!ok) return;
+      try { window.husk.urls.openExternal(uri); } catch (_) {}
+    });
   }
   return true;
 }
