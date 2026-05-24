@@ -108,6 +108,9 @@ contextBridge.exposeInMainWorld('husk', {
     onProgress: (cb) => ipcRenderer.on('voice:progress', (_e, p) => cb(p)),
   },
   getPathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch (_) { return null; } },
+  urls: {
+    openExternal: (url) => ipcRenderer.invoke('urls:openExternal', url),
+  },
   updates: {
     get: () => ipcRenderer.invoke('update:get'),
     check: () => ipcRenderer.invoke('update:check'),
