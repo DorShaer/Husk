@@ -15,6 +15,7 @@ const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
 const { getUserPath } = require('./lib/user-path');
+const { parseMcpListOutput } = require('./lib/mcp-status');
 
 // On macOS in particular, a GUI-launched Electron app inherits a
 // minimal PATH that does not include the npm-global, homebrew, or bun
@@ -913,9 +914,8 @@ ipcMain.handle('mcp:catalog', () => MCP_CATALOG);
 
 // Real connection state per MCP server. Husk shells out to `claude mcp list`,
 // which returns each configured server with its actual runtime status (connected,
-// failed, needs auth). Parsed into { id: 'connected' | 'failed' | 'auth' | 'unknown' }
-// so the renderer can paint a real status badge on every row.
-const ANSI_STRIP_RE = /\x1B\[[\d;?]*[A-Za-z]|\x1B\][^\x07]*\x07/g;
+// failed, needs auth). Parsing lives in src/lib/mcp-status.js so the contract is
+// unit-testable against captured CLI output.
 ipcMain.handle('mcp:health', () => {
   return new Promise((resolve) => {
     let proc;
@@ -934,25 +934,7 @@ ipcMain.handle('mcp:health', () => {
     proc.stderr.on('data', (d) => { buf += d.toString(); });
     proc.on('error', (err) => resolve({ ok: false, error: err.message, status: {} }));
     proc.on('close', () => {
-      const clean = buf.replace(ANSI_STRIP_RE, '');
-      const status = {};
-      // claude mcp list lines look like:
-      //   <server-id>    ✗ Failed to connect
-      //   <server-id>    ✓ Connected
-      //   <server-id>    ⚠ Needs authentication
-      // We accept the human-readable form and a few variations.
-      for (const raw of clean.split('\n')) {
-        const line = raw.trim();
-        if (!line) continue;
-        const m = line.match(/^([A-Za-z0-9._-]+)\s+(.*)$/);
-        if (!m) continue;
-        const id = m[1];
-        const rest = m[2].toLowerCase();
-        if (rest.includes('fail')) status[id] = 'failed';
-        else if (rest.includes('connect')) status[id] = 'connected';
-        else if (rest.includes('auth')) status[id] = 'auth';
-        else if (rest.includes('disabled')) status[id] = 'disabled';
-      }
+      const status = parseMcpListOutput(buf);
       resolve({ ok: true, status });
     });
   });
