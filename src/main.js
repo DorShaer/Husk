@@ -435,6 +435,25 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
+  // Any URL the renderer tries to open as a new window (xterm link
+  // clicks, anchor targets, window.open) is routed to the user's
+  // default browser. Husk never spawns a secondary Electron window.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+  // Belt-and-suspenders: also catch top-level navigation attempts so
+  // the main window cannot be hijacked away from its loaded index.html.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url === mainWindow.webContents.getURL()) return;
+    event.preventDefault();
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
     { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
