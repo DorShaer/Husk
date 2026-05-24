@@ -431,6 +431,11 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       zoomFactor: 1.0,
+      // DevTools available when running from source (./run.sh, npm start)
+      // so the maintainer can debug, locked in shipped builds so end users
+      // cannot open the inspector via F12, Ctrl+Shift+I, the View menu,
+      // or programmatic openDevTools.
+      devTools: !app.isPackaged,
     },
   });
 
@@ -455,18 +460,18 @@ function createWindow() {
     }
   });
 
+  // The View submenu drops the DevTools toggle in shipped builds so the
+  // menu does not advertise an entry that webPreferences.devTools:false
+  // would silently no-op.
+  const viewSubmenu = [
+    { role: 'reload' },
+    ...(app.isPackaged ? [] : [{ role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }]),
+    { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+  ];
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
     { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'toggleDevTools', accelerator: 'F12' },
-        { type: 'separator' },
-        { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
-      ],
-    },
+    { label: 'View', submenu: viewSubmenu },
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] },
   ]));
 
