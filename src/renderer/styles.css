@@ -779,6 +779,43 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .ghost-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 .ghost-input[type="search"] { font-family: inherit; min-width: 240px; }
 
+/* ─── Terminal context menu ─────────────────────────────────────────────── */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.ctx-menu button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.ctx-menu button:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--text);
+}
+.ctx-menu button:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
 /* ─── Chat page ─────────────────────────────────────────────────────────── */
 
 .page-chat .chat-stage {
