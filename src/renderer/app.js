@@ -95,9 +95,33 @@ const term = new Terminal({
   theme: themeForXterm(),
 });
 const fitAddon = new FitAddon.FitAddon();
-const linksAddon = new WebLinksAddon.WebLinksAddon();
+// Route every URL click through the OS browser via shell.openExternal,
+// gated by Husk's own confirm dialog so the user sees the destination
+// before leaving the app. Two paths need to be covered:
+//   - WebLinksAddon: regex-detected plain-text URLs in TUI output
+//   - term.options.linkHandler: OSC 8 hyperlinks emitted by the agent
+//     as terminal escape codes
+// Both handlers must return a truthy value so xterm's internal
+// `result || defaultConfirmAndOpen` fallback does not fire. The
+// confirm runs asynchronously; we return true immediately.
+function openTerminalLink(_event, uri) {
+  if (typeof uri === 'string' && /^https?:\/\//i.test(uri)) {
+    openConfirmDialog({
+      title: 'Open link in your browser?',
+      bodyHtml: `Husk is about to open this URL in your default browser:<br/><br/><code style="word-break:break-all;">${escapeHtml(uri)}</code><br/><br/>Only open links you trust.`,
+      confirmLabel: 'Open link',
+      cancelLabel: 'Cancel',
+    }).then((ok) => {
+      if (!ok) return;
+      try { window.husk.urls.openExternal(uri); } catch (_) {}
+    });
+  }
+  return true;
+}
+const linksAddon = new WebLinksAddon.WebLinksAddon(openTerminalLink);
 term.loadAddon(fitAddon);
 term.loadAddon(linksAddon);
+term.options.linkHandler = { activate: openTerminalLink };
 term.open($('#terminal'));
 
 function themeForXterm() {
@@ -132,6 +156,81 @@ term.onData((d) => {
   window.husk.pty.write(d);
   term.scrollToBottom();
 });
+
+// Copy / paste affordances for the embedded terminal.
+//   - Right-click on the terminal opens a small Copy / Paste / Select all menu.
+//   - Ctrl+Shift+C (macOS: Cmd+C) copies the selection.
+//   - Ctrl+Shift+V (macOS: Cmd+V) pastes the clipboard into the PTY.
+// Ctrl+C is intentionally left as SIGINT, matching every other terminal.
+const isMac = (navigator.userAgentData && navigator.userAgentData.platform === 'macOS') ||
+              /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+async function copyTerminalSelection() {
+  const text = term.getSelection();
+  if (!text) return false;
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) { return false; }
+}
+async function pasteIntoTerminal() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) term.paste(text);
+    return true;
+  } catch (_) { return false; }
+}
+term.attachCustomKeyEventHandler((e) => {
+  if (e.type !== 'keydown') return true;
+  const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
+  if (meta && (e.key === 'c' || e.key === 'C')) {
+    if (term.hasSelection()) { copyTerminalSelection(); return false; }
+  }
+  if (meta && (e.key === 'v' || e.key === 'V')) {
+    pasteIntoTerminal(); return false;
+  }
+  return true;
+});
+{
+  const terminalEl = $('#terminal');
+  const menu = document.createElement('div');
+  menu.id = 'terminal-ctx-menu';
+  menu.className = 'ctx-menu';
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button type="button" data-action="copy">Copy</button>
+    <button type="button" data-action="paste">Paste</button>
+    <button type="button" data-action="select-all">Select all</button>
+  `;
+  document.body.appendChild(menu);
+  function hideMenu() { menu.hidden = true; }
+  function showMenu(x, y) {
+    menu.hidden = false;
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    menu.style.left = Math.min(x, window.innerWidth - w - 6) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - h - 6) + 'px';
+    const copyBtn = menu.querySelector('[data-action="copy"]');
+    if (copyBtn) copyBtn.disabled = !term.hasSelection();
+  }
+  terminalEl.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY);
+  });
+  menu.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    hideMenu();
+    if (btn.dataset.action === 'copy') await copyTerminalSelection();
+    else if (btn.dataset.action === 'paste') await pasteIntoTerminal();
+    else if (btn.dataset.action === 'select-all') term.selectAll();
+  });
+  window.addEventListener('click', (e) => {
+    if (menu.hidden) return;
+    if (e.target.closest('#terminal-ctx-menu')) return;
+    hideMenu();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (!menu.hidden && e.key === 'Escape') hideMenu();
+  });
+  window.addEventListener('blur', hideMenu);
+}
 window.husk.pty.onData((d) => {
   if (!chatHasInput) {
     chatHasInput = true;
@@ -600,8 +699,19 @@ async function deleteProject(id, name) {
   const pickEl = document.getElementById('npj-pick');
   const cancelBtn = document.getElementById('npj-cancel');
   const createBtn = document.getElementById('npj-create');
-  function open() { if (!modal) return; if (nameEl) nameEl.value = ''; if (pathEl) pathEl.value = ''; modal.hidden = false; setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30); }
-  function close() { if (modal) modal.hidden = true; }
+  // Renamed from `open` / `close` because in non-strict mode a function
+  // declaration in a block hoists to the script scope and shadows the
+  // global window.open / window.close. xterm's link click path calls
+  // window.open(), so without the rename the local function was running
+  // in place of the browser builtin and opening the project modal.
+  function openProjectModal() {
+    if (!modal) return;
+    if (nameEl) nameEl.value = '';
+    if (pathEl) pathEl.value = '';
+    modal.hidden = false;
+    setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30);
+  }
+  function closeProjectModal() { if (modal) modal.hidden = true; }
   async function submit() {
     let name = (nameEl && nameEl.value || '').trim();
     const projPath = (pathEl && pathEl.value || '').trim();
@@ -612,17 +722,17 @@ async function deleteProject(id, name) {
       if (t) { t.textContent = (res && res.error) || 'Could not add project'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
       return;
     }
-    close();
+    closeProjectModal();
     await refreshProjectsState();
     if (currentPage === 'projects') await renderProjects();
   }
-  if (newBtn) newBtn.addEventListener('click', open);
-  if (cancelBtn) cancelBtn.addEventListener('click', close);
+  if (newBtn) newBtn.addEventListener('click', openProjectModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeProjectModal);
   if (createBtn) createBtn.addEventListener('click', submit);
   if (pickEl) pickEl.addEventListener('click', async () => {
     try { const picked = await window.husk.dialog2.pickDir(); if (picked && pathEl) pathEl.value = picked; } catch (_) {}
   });
-  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeProjectModal(); });
 
   // Topbar chip click navigates to Projects page.
   const chip = document.getElementById('topbar-project');
@@ -2335,6 +2445,17 @@ const RECAP_RE = /(?:^|\n)\s*\*\s+recap:\s*([^\r\n]+)/gi;
 const ANSI_RE = /\x1B\[[\d;?]*[A-Za-z]|\x1B\][^\x07]*\x07/g;
 const SPOKEN_HISTORY_MAX = 32;
 let speechBuf = '';
+// Total bytes of speechBuf that have been written across the lifetime of
+// this session (speechBuf itself is a sliding window of the tail of that
+// stream). Match indexes are translated into this absolute coordinate
+// so we can compare positions across windowed shrinks.
+let speechAbsBase = 0;
+// The absolute position of the last spoken match. detectAndSpeak only
+// considers matches strictly after this position. TUI redraws emitted
+// after a SIGWINCH (terminal resize, including zoom) re-paint the same
+// speech-balloon line at a buffer position that is older in absolute
+// terms, so the cursor guards against re-firing the same line.
+let lastSpokenAbsIdx = -1;
 const spokenSet = new Set();
 const spokenOrder = [];
 
@@ -2353,6 +2474,8 @@ function recordSpoken(key) {
 }
 function resetSpeechState() {
   speechBuf = '';
+  speechAbsBase = 0;
+  lastSpokenAbsIdx = -1;
   spokenSet.clear();
   spokenOrder.length = 0;
 }
@@ -2360,22 +2483,34 @@ function detectAndSpeak(chunk) {
   if (!cfg || !cfg.voice || !cfg.voice.enabled) return;
   if (cfg.recap === false) return;
   speechBuf += chunk;
-  if (speechBuf.length > 16384) speechBuf = speechBuf.slice(-8192);
+  if (speechBuf.length > 16384) {
+    const dropped = speechBuf.length - 8192;
+    speechBuf = speechBuf.slice(-8192);
+    speechAbsBase += dropped;
+  }
   const clean = speechBuf.replace(ANSI_RE, '');
-  // Pick whichever match appears latest in the buffer (by index of the match).
+  // Pick whichever match appears latest in the buffer (by index of the
+  // match). Translate to an absolute position so windowed shrinks and
+  // TUI redraws (which re-emit older content) cannot move the cursor
+  // backward.
   let latest = null;
-  let latestIdx = -1;
+  let latestAbs = -1;
   for (const re of [SPEECH_BALLOON_RE, RECAP_RE]) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(clean)) !== null) {
-      if (m.index > latestIdx) { latestIdx = m.index; latest = (m[1] || '').trim(); }
+      const abs = speechAbsBase + m.index;
+      if (abs > latestAbs) { latestAbs = abs; latest = (m[1] || '').trim(); }
       if (m.index === re.lastIndex) re.lastIndex++;
     }
   }
   if (!latest) return;
+  // Already spoken from a position at or before this one (handles redraws
+  // after SIGWINCH from terminal resize / zoom).
+  if (latestAbs <= lastSpokenAbsIdx) return;
   const key = normalizeForDedup(latest);
   if (!recordSpoken(key)) return;
+  lastSpokenAbsIdx = latestAbs;
   speak(latest);
 }
 $('#pref-save').addEventListener('click', async () => {

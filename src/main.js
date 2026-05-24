@@ -36,6 +36,7 @@ const {
   wfIsAiRouted,
   wfRouteInstruction,
   wfResolveNext,
+  isAllowedAgentCommand,
 } = wfLib;
 
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
@@ -434,6 +435,25 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  // Any URL the renderer tries to open as a new window (xterm link
+  // clicks, anchor targets, window.open) is routed to the user's
+  // default browser. Husk never spawns a secondary Electron window.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+  // Belt-and-suspenders: also catch top-level navigation attempts so
+  // the main window cannot be hijacked away from its loaded index.html.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url === mainWindow.webContents.getURL()) return;
+    event.preventDefault();
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
@@ -1351,6 +1371,21 @@ async function executeWorkflow(event, workflow, run) {
     wfEmit(event, 'wf:node:start', { runId: run.id, nodeId: node.id });
 
     const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+
+    // The resolved cmd may come from step.agentCommand (already
+    // checked by sanitizeNode) or from config.agentCommand. Apply the
+    // same allowlist here so both paths agree.
+    if (!isAllowedAgentCommand(cmd)) {
+      wfEmit(event, 'wf:node:activity', {
+        runId: run.id,
+        nodeId: node.id,
+        kind: 'error',
+        text: `Step "${node.name}" needs one of ${Array.from(wfLib.ALLOWED_AGENT_COMMANDS).join(', ')}; got "${cmd}".`,
+      });
+      wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: node.id, ok: false });
+      wfEmit(event, 'wf:run:done', { runId: run.id, ok: false, error: 'unsupported_agent_command' });
+      return;
+    }
 
     let prompt = step.prompt;
     if (previousOutput) {
@@ -2641,6 +2676,16 @@ ipcMain.handle('update:open-release', (_e, url) => {
     return { ok: true };
   }
   shell.openExternal('https://github.com/DorShaer/Husk/releases');
+  return { ok: true };
+});
+
+// Open an http(s) URL in the user's default browser. Used by the
+// terminal link click handler (xterm WebLinksAddon) and any future
+// in-renderer surface that needs to surface a clickable URL.
+ipcMain.handle('urls:openExternal', (_e, url) => {
+  if (typeof url !== 'string') return { ok: false, error: 'invalid url' };
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'unsupported scheme' };
+  shell.openExternal(url).catch(() => {});
   return { ok: true };
 });
 
