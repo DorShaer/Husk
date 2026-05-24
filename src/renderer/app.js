@@ -95,7 +95,14 @@ const term = new Terminal({
   theme: themeForXterm(),
 });
 const fitAddon = new FitAddon.FitAddon();
-const linksAddon = new WebLinksAddon.WebLinksAddon();
+// Custom click handler: route http(s) URLs to the user's default
+// browser via the main process. xterm's built-in handler would call
+// window.open / window.confirm, which we don't want.
+const linksAddon = new WebLinksAddon.WebLinksAddon((_event, uri) => {
+  if (typeof uri === 'string' && /^https?:\/\//i.test(uri)) {
+    try { window.husk.urls.openExternal(uri); } catch (_) {}
+  }
+});
 term.loadAddon(fitAddon);
 term.loadAddon(linksAddon);
 term.open($('#terminal'));
@@ -675,8 +682,19 @@ async function deleteProject(id, name) {
   const pickEl = document.getElementById('npj-pick');
   const cancelBtn = document.getElementById('npj-cancel');
   const createBtn = document.getElementById('npj-create');
-  function open() { if (!modal) return; if (nameEl) nameEl.value = ''; if (pathEl) pathEl.value = ''; modal.hidden = false; setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30); }
-  function close() { if (modal) modal.hidden = true; }
+  // Renamed from `open` / `close` because in non-strict mode a function
+  // declaration in a block hoists to the script scope and shadows the
+  // global window.open / window.close. xterm's link click path calls
+  // window.open(), so without the rename the local function was running
+  // in place of the browser builtin and opening the project modal.
+  function openProjectModal() {
+    if (!modal) return;
+    if (nameEl) nameEl.value = '';
+    if (pathEl) pathEl.value = '';
+    modal.hidden = false;
+    setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30);
+  }
+  function closeProjectModal() { if (modal) modal.hidden = true; }
   async function submit() {
     let name = (nameEl && nameEl.value || '').trim();
     const projPath = (pathEl && pathEl.value || '').trim();
@@ -687,17 +705,17 @@ async function deleteProject(id, name) {
       if (t) { t.textContent = (res && res.error) || 'Could not add project'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
       return;
     }
-    close();
+    closeProjectModal();
     await refreshProjectsState();
     if (currentPage === 'projects') await renderProjects();
   }
-  if (newBtn) newBtn.addEventListener('click', open);
-  if (cancelBtn) cancelBtn.addEventListener('click', close);
+  if (newBtn) newBtn.addEventListener('click', openProjectModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeProjectModal);
   if (createBtn) createBtn.addEventListener('click', submit);
   if (pickEl) pickEl.addEventListener('click', async () => {
     try { const picked = await window.husk.dialog2.pickDir(); if (picked && pathEl) pathEl.value = picked; } catch (_) {}
   });
-  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeProjectModal(); });
 
   // Topbar chip click navigates to Projects page.
   const chip = document.getElementById('topbar-project');
