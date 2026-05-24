@@ -122,20 +122,34 @@ jobs:
         with:
           subject-path: 'release/*'
 
+      - name: Checkout for tag metadata
+        # softprops/action-gh-release does not check out the repo, so
+        # fetch the tag annotation ourselves with a minimal checkout.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract release notes from the annotated tag
+        run: |
+          # Read the annotated tag's body and hand it to the release
+          # action. Release notes live in the tag message we wrote at
+          # `git tag -a`, so the release page on github.com matches
+          # what the maintainer typed when cutting the tag.
+          TAG="${GITHUB_REF#refs/tags/}"
+          BODY=$(git tag -l --format='%(contents:body)' "$TAG")
+          if [ -z "$BODY" ]; then
+            BODY=$(git tag -l --format='%(contents)' "$TAG")
+          fi
+          if [ -z "$BODY" ]; then
+            BODY="Husk $TAG. See the repository for changes."
+          fi
+          printf '%s\n' "$BODY" > /tmp/release-notes.md
+          echo "wrote $(wc -l < /tmp/release-notes.md) lines"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release/*
-          # Use the annotated tag message as the release body (clean,
-          # user-facing). Falls back to a simple installer notice if the
-          # tag was lightweight. The previous setting (generate_release_notes:
-          # true) auto-listed every PR + contributor including bots, which is
-          # noisy for a public release page.
-          body: |
-            ## ${{ github.ref_name }}
-
-            Pick the installer for your platform from the Assets below.
-
-            See the README for documentation, and the project repository for the full changelog.
+          body_path: /tmp/release-notes.md
           generate_release_notes: false
           fail_on_unmatched_files: false
