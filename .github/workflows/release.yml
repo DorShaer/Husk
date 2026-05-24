@@ -93,20 +93,10 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name 'latest*.yml' \) -exec cp -v {} release/ \;
-          # softprops/action-gh-release uploads assets with spaces in the
-          # name replaced by dots (e.g. "Husk Setup 1.2.0.exe" becomes
-          # "Husk.Setup.1.2.0.exe"). Normalize here so SHA256SUMS and the
-          # provenance attestation use the names users see on the release
-          # page.
-          cd release
-          for f in *; do
-            [ -f "$f" ] || continue
-            new=${f// /.}
-            if [ "$new" != "$f" ]; then
-              mv -- "$f" "$new"
-            fi
-          done
-          ls -la
+          # electron-builder's artifactName in package.json produces
+          # space-free filenames (husk-vX-os-arch.ext) so no rename
+          # pass is needed here.
+          ls -la release
 
       - name: Generate SHA256SUMS for release artifacts
         run: |
