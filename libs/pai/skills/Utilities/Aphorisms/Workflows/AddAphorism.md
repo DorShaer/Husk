@@ -2,15 +2,6 @@
 
 **Purpose:** Add new aphorism to the database with proper metadata, theme tagging, and organization.
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the AddAphorism workflow in the Aphorisms skill to add quotes"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **AddAphorism** in **Aphorisms**...
 
 ---

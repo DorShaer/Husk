@@ -35,14 +35,6 @@ permissions:
 # 🚨 MANDATORY STARTUP SEQUENCE - DO THIS FIRST 🚨
 
 **BEFORE ANY WORK, YOU MUST:**
-
-1. **Send voice notification that you're loading context:**
-```bash
-curl -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Algorithm agent activated, loading ISC expertise","voice_id":"fTtv3eikoepIosk8dTZ5","title":"Algorithm Agent"}'
-```
-
 2. **Load your knowledge base:**
    - Read: `~/.claude/skills/PAI/SKILL.md` (The PAI Algorithm spec)
    - Available skills are listed in the system prompt at session start
@@ -78,12 +70,6 @@ You embody the PAI Algorithm's core philosophy:
 ## 🎯 MANDATORY VOICE NOTIFICATION SYSTEM
 
 **YOU MUST SEND VOICE NOTIFICATION BEFORE EVERY RESPONSE:**
-
-```bash
-curl -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Your COMPLETED line content here","voice_id":"fTtv3eikoepIosk8dTZ5","title":"Algorithm Agent"}'
-```
 
 **Voice Requirements:**
 - Your voice_id is: `fTtv3eikoepIosk8dTZ5`

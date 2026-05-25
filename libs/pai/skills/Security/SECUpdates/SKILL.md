@@ -10,17 +10,6 @@ description: Security news from tldrsec, no.security, Krebs, Schneier, and other
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior. If the directory does not exist, proceed with skill defaults.
 
-## Voice Notification (REQUIRED)
-
-**Send this notification BEFORE doing anything else:**
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Checking security updates from sources"}' \
-  > /dev/null 2>&1 &
-```
-
 ---
 
 # SECUpdates Skill

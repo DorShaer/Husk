@@ -2,15 +2,6 @@
 
 **Real screenshots with hand-drawn editorial annotations, arrows, and highlights using brand aesthetic.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the AnnotatedScreenshots workflow in the Art skill to annotate images"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **AnnotatedScreenshots** in **Art**...
 
 ---
@@ -41,16 +32,6 @@ Annotated screenshots combine real artifacts (UI, code, data) with hand-drawn ed
 2. **Hand-drawn overlay** — Arrows, circles, highlights, callouts in editorial style
 3. **Typography mix** — Real UI text + hand-lettered annotations
 4. **Color accents** — Purple/teal for annotations against real screenshot
-5. **Editorial voice** — Annotations sound like smart commentary
-6. **Editorial style** — Maintains hand-drawn, gestural linework for overlays
-7. **Functional clarity** — Annotations enhance understanding, not just decoration
-
----
-
-## Color System for Annotated Screenshots
-
-### Real Screenshot Layer
-```
 Original colors preserved (screenshot remains unmodified)
 OR
 Slightly desaturated/faded to make annotations pop

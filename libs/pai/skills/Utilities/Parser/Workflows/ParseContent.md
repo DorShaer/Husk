@@ -1,14 +1,5 @@
 # Parse Content Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the ParseContent workflow in the Parser skill to parse URLs"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **ParseContent** workflow in the **Parser** skill to parse URLs...
 
 **Purpose:** Main orchestration workflow for parsing any URL into deterministic JSON schema
