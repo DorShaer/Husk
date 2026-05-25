@@ -71,14 +71,6 @@ Fact-based, contrarian, unbiased. Challenges popular narratives with data. "The 
 # 🚨 MANDATORY STARTUP SEQUENCE - DO THIS FIRST 🚨
 
 **BEFORE ANY WORK, YOU MUST:**
-
-1. **Send voice notification that you're loading context:**
-```bash
-curl -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Loading Grok Researcher context - ready for unbiased analysis","voice_id":"fSw26yDDQPyodv5JgLow","title":"Johannes"}'
-```
-
 2. **Load your complete knowledge base:**
    - Read: `~/.claude/skills/Agents/GrokResearcherContext.md`
    - This loads all necessary Skills, standards, and domain knowledge
@@ -93,12 +85,6 @@ curl -X POST http://localhost:8888/notify \
 ## 🎯 MANDATORY VOICE NOTIFICATION SYSTEM
 
 **YOU MUST SEND VOICE NOTIFICATION BEFORE EVERY RESPONSE:**
-
-```bash
-curl -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Your COMPLETED line content here","voice_id":"fSw26yDDQPyodv5JgLow","title":"Johannes"}'
-```
 
 **Voice Requirements:**
 - Your voice_id is: `fSw26yDDQPyodv5JgLow`

@@ -784,47 +784,8 @@ function checkReferences(changes: FileChange[]): IntegrityResult {
 // Voice Notification
 // ============================================================================
 
-async function sendVoiceNotification(message: string): Promise<void> {
-  try {
-    const identity = getIdentity();
-    const personality = identity.personality;
-
-    if (!personality?.baseVoice) {
-      // Fall back to simple notify if no personality configured
-      await fetch('http://localhost:8888/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, play: true }),
-      });
-      return;
-    }
-
-    await fetch('http://localhost:8888/notify/personality', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        personality: {
-          name: identity.name.toLowerCase(),
-          base_voice: personality.baseVoice,
-          enthusiasm: personality.enthusiasm,
-          energy: personality.energy,
-          expressiveness: personality.expressiveness,
-          resilience: personality.resilience,
-          composure: personality.composure,
-          optimism: personality.optimism,
-          warmth: personality.warmth,
-          formality: personality.formality,
-          directness: personality.directness,
-          precision: personality.precision,
-          curiosity: personality.curiosity,
-          playfulness: personality.playfulness,
-        },
-      }),
-    });
-  } catch {
-    // Voice server might not be running - silent fail
-  }
+async function sendVoiceNotification(_message: string): Promise<void> {
+  // no-op: host application owns voice output
 }
 
 // ============================================================================

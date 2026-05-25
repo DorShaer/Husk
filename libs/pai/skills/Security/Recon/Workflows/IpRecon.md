@@ -1,18 +1,5 @@
 # IP Address Reconnaissance Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the IpRecon workflow in the Recon skill to investigate IP addresses"}' \
-  > /dev/null 2>&1 &
-```
-
-Running the **IpRecon** workflow in the **Recon** skill to investigate IP addresses...
-
-**Comprehensive investigation of individual IP addresses**
-
 ## Purpose
 
 Perform detailed reconnaissance on a specific IP address to gather:

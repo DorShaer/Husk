@@ -10,58 +10,6 @@ description: Decompose to axioms, challenge inherited assumptions, reconstruct f
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior. If the directory does not exist, proceed with skill defaults.
 
-
-## 🚨 MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-**You MUST send this notification BEFORE doing anything else when this skill is invoked.**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the FirstPrinciples skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **FirstPrinciples** skill to ACTION...
-   ```
-
-**This is not optional. Execute this curl command immediately upon skill invocation.**
-
-# FirstPrinciples Skill
-
-Foundational reasoning methodology based on Elon Musk's physics-based thinking framework. Deconstructs problems to fundamental truths rather than reasoning by analogy.
-
-## Core Concept
-
-**Reasoning by Analogy** (default, often wrong):
-- "How did we solve something similar?"
-- "What do others do?"
-- Copies existing solutions with slight variations
-
-**Reasoning from First Principles** (this skill):
-- "What are the fundamental truths here?"
-- "What is this actually made of?"
-- Rebuilds solutions from irreducible facts
-
-## When to Use
-
-- **Architects**: Challenge "is this actually a constraint or just how we've always done it?"
-- **Pentesters**: Identify actual attack surfaces vs. assumed security boundaries
-- **RedTeam**: Sharpen adversarial analysis by deconstructing assumptions
-- **Engineers**: When stuck, rebuild from fundamentals
-- **Any skill**: When inherited assumptions may be limiting the solution space
-
-
-## Workflow Routing
-
-Route to the appropriate workflow based on the request.
-
-**When executing a workflow, output this notification directly:**
-
-```
 Running the **WorkflowName** workflow in the **FirstPrinciples** skill to ACTION...
 ```
 

@@ -2,15 +2,6 @@
 
 **Comic strips in brand editorial illustration style, NOT cartoonish.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Comics workflow in the Art skill to create comic strips"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **Comics** in **Art**...
 
 ---

@@ -10,44 +10,6 @@ description: 68 US economic indicators from FRED, EIA, Treasury, BLS, Census API
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior. If the directory does not exist, proceed with skill defaults.
 
-
-## 🚨 MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-**You MUST send this notification BEFORE doing anything else when this skill is invoked.**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the USMetrics skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **USMetrics** skill to ACTION...
-   ```
-
-**This is not optional. Execute this curl command immediately upon skill invocation.**
-
-# US Metrics - Economic & Social Indicator Analysis
-
-**Purpose:** Analyze U.S. economic and social metrics using the Substrate US-Common-Metrics dataset. Provides trend analysis, cross-metric correlation, pattern detection, and research recommendations.
-
-## Data Source
-
-All metrics sourced from:
-- **Location:** Configure your data directory path (e.g., `${PAI_DIR}/data/US-Common-Metrics/`)
-- **Master Document:** `US-Common-Metrics.md` (68 metrics across 10 categories)
-- **Source Documentation:** `source.md` (full methodology)
-- **Underlying APIs:** FRED, EIA, Treasury FiscalData, BLS, Census, CDC, EPA
-
-
-## Workflow Routing
-
-**When executing a workflow, output this notification directly:**
-
-```
 Running the **WorkflowName** workflow in the **USMetrics** skill to ACTION...
 ```
 

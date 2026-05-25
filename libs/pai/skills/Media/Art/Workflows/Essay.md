@@ -2,15 +2,6 @@
 
 **Charcoal Architectural Sketch TECHNIQUE — Applied to CONTENT-RELEVANT subjects.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Essay workflow in the Art skill to create header images"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **Essay** in **Art**...
 
 ---
