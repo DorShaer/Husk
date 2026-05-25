@@ -51,7 +51,6 @@ TypeScript utilities in `PAI/Tools/`: `BuildCLAUDE.ts` (generate CLAUDE.md from 
 Hook-based security: `SecurityValidator.hook.ts` guards Bash, Edit, Write, Read. Path validation, command injection prevention, secret scanning.
 
 ### Notifications (`THENOTIFICATIONSYSTEM.md`)
-Multi-channel: ntfy, Discord, Twilio. Voice announcements via ElevenLabs at localhost:8888.
 
 ### Configuration (`settings.json`)
 Single source of truth: identity (daidentity, principal), environment, permissions, hooks, notifications, status line, spinner verbs, counts, startup file loading (`loadAtStartup`), dynamic context toggles (`dynamicContext`).

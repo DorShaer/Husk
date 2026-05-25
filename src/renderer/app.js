@@ -2459,8 +2459,13 @@ let lastSpokenAbsIdx = -1;
 const spokenSet = new Set();
 const spokenOrder = [];
 
+// Dedup key is a fixed-length prefix of the normalised line. Without the slice,
+// a SIGWINCH-triggered redraw (terminal resize / zoom) makes claude re-emit the
+// same 🗣️ line soft-wrapped at the new column width; the captured text differs
+// by a few trailing chars and spokenSet treats it as a fresh line. Comparing on
+// a fixed prefix collapses every redraw of the same line onto one key.
 function normalizeForDedup(text) {
-  return text.trim().replace(/\s+/g, ' ').toLowerCase();
+  return text.trim().replace(/\s+/g, ' ').toLowerCase().slice(0, 60);
 }
 function recordSpoken(key) {
   if (spokenSet.has(key)) return false;

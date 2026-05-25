@@ -233,38 +233,6 @@ science_cycle_time: meso
 
 [Brief description of what the skill does]
 
-## Voice Notification
-
-**When executing a workflow, do BOTH:**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the SKILLNAME skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **SkillName** skill to ACTION...
-   ```
-
-**Full documentation:** `~/.claude/PAI/THENOTIFICATIONSYSTEM.md`
-
-## Workflow Routing
-
-The notification announces workflow execution. The routing table tells Claude which workflow to execute:
-
-| Workflow | Trigger | File |
-|----------|---------|------|
-| **WorkflowOne** | "trigger phrase" | `Workflows/WorkflowOne.md` |
-| **WorkflowTwo** | "another trigger" | `Workflows/WorkflowTwo.md` |
-
-## Examples
-
-**Example 1: [Common use case]**
-```
 User: "[Typical user request]"
 → Invokes WorkflowOne workflow
 → [What skill does]
@@ -592,36 +560,6 @@ description: Complete blog workflow. USE WHEN user mentions doing anything with 
 
 Complete blog workflow.
 
-## Voice Notification
-
-**When executing a workflow, do BOTH:**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running WORKFLOWNAME in Blogging"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **Blogging** skill to ACTION...
-   ```
-
-**Full documentation:** `~/.claude/PAI/THENOTIFICATIONSYSTEM.md`
-
-## Core Paths
-
-- **Blog posts:** `${PROJECTS_DIR}/YourWebsite/blog/`
-- **CMS root:** `${PROJECTS_DIR}/YourWebsite/`
-- **Images:** `${PROJECTS_DIR}/YourWebsite/public/images/`
-
-## Workflow Routing
-
-**When executing a workflow, also output this text:**
-
-```
 Running the **WorkflowName** workflow in the **Blogging** skill to ACTION...
 ```
 

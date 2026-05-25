@@ -32,7 +32,6 @@ const CLAUDE_DIR = join(homedir(), ".claude");
 const MCP_DIR = join(CLAUDE_DIR, "MCPs");
 const ACTIVE_MCP = join(CLAUDE_DIR, ".mcp.json");
 const BANNER_SCRIPT = join(CLAUDE_DIR, "PAI", "Tools", "Banner.ts");
-const VOICE_SERVER = "http://localhost:8888/notify/personality";
 const WALLPAPER_DIR = join(homedir(), "Projects", "Wallpaper");
 // Note: RAW archiving removed - Claude Code handles its own cleanup (30-day retention in projects/)
 
@@ -81,44 +80,8 @@ function error(message: string) {
   process.exit(1);
 }
 
-function notifyVoice(message: string) {
-  // Fire and forget voice notification using Qwen3-TTS with personality
-  const identity = getIdentity();
-  const personality = identity.personality;
-
-  if (!personality?.baseVoice) {
-    // Fall back to simple notify if no personality configured
-    fetch("http://localhost:8888/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, play: true }),
-    }).catch(() => {});
-    return;
-  }
-
-  fetch(VOICE_SERVER, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      personality: {
-        name: identity.name.toLowerCase(),
-        base_voice: personality.baseVoice,
-        enthusiasm: personality.enthusiasm,
-        energy: personality.energy,
-        expressiveness: personality.expressiveness,
-        resilience: personality.resilience,
-        composure: personality.composure,
-        optimism: personality.optimism,
-        warmth: personality.warmth,
-        formality: personality.formality,
-        directness: personality.directness,
-        precision: personality.precision,
-        curiosity: personality.curiosity,
-        playfulness: personality.playfulness,
-      },
-    }),
-  }).catch(() => {}); // Silently ignore errors
+function notifyVoice(_message: string) {
+  // no-op: host application owns voice output
 }
 
 function displayBanner() {

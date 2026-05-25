@@ -1,14 +1,5 @@
 # Newsletter Extraction Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the ExtractNewsletter workflow in the Parser skill to parse newsletters"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **ExtractNewsletter** workflow in the **Parser** skill to parse newsletters...
 
 **Purpose:** Extract structured content from newsletter HTML (Substack, Beehiiv, ConvertKit, etc.)

@@ -1,14 +1,5 @@
 # Batch Entity Extraction with Gemini 3 Pro
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the BatchEntityExtractionGemini3 workflow in the Parser skill to extract entities"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **BatchEntityExtractionGemini3** workflow in the **Parser** skill to extract entities...
 
 ## Purpose
