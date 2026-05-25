@@ -1,14 +1,5 @@
 # Article Extraction Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the ExtractArticle workflow in the Parser skill to parse articles"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **ExtractArticle** workflow in the **Parser** skill to parse articles...
 
 **Purpose:** Extract content, metadata, and entities from web articles and generic web pages

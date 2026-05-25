@@ -10,33 +10,6 @@ description: Extract system improvements from content AND monitor external sourc
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior. If the directory does not exist, proceed with skill defaults.
 
-
-## 🚨 MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-**You MUST send this notification BEFORE doing anything else when this skill is invoked.**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the PAIUpgrade skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **PAIUpgrade** skill to ACTION...
-   ```
-
-**This is not optional. Execute this curl command immediately upon skill invocation.**
-
-# PAIUpgrade Skill
-
-**Primary Purpose:** Generate prioritized upgrade recommendations for the user's existing PAI setup by understanding their context and discovering what's new in the ecosystem.
-
-The skill runs **three parallel agent threads** that converge into personalized recommendations:
-
-```
 Thread 1: USER CONTEXT     Thread 2: SOURCE COLLECTION    Thread 3: INTERNAL REFLECTIONS
 ┌───────────────────┐     ┌───────────────────────┐      ┌───────────────────────┐
 │ TELOS Analysis    │     │ Anthropic Sources     │      │ Algorithm Reflections │
@@ -55,7 +28,6 @@ Thread 1: USER CONTEXT     Thread 2: SOURCE COLLECTION    Thread 3: INTERNAL REF
 ```
 
 ---
-
 
 ## Workflow Routing
 
