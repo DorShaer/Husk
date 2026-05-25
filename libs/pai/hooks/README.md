@@ -67,7 +67,6 @@ flowchart LR
 
   STOP --> LRC["LastResponseCache"]
   STOP --> RTR["ResponseTabReset"]
-  STOP --> VC["VoiceCompletion (TTS)"]
   STOP --> DI["DocIntegrity"]
   STOP --> AT["AlgorithmTab"]
 
@@ -161,7 +160,6 @@ interface StopPayload extends BasePayload {
 |------|---------|----------|--------------|
 | `LastResponseCache.hook.ts` | Cache last response for RatingCapture bridge | No | None |
 | `ResponseTabReset.hook.ts` | Reset Kitty tab title/color after response | No | Kitty terminal |
-| `VoiceCompletion.hook.ts` | Send 🗣️ voice line to TTS server | No | Voice Server |
 | `AlgorithmTab.hook.ts` | Show Algorithm phase + progress in tab | No | `work.json` |
 | `DocIntegrity.hook.ts` | Cross-ref + semantic drift checks | No | Inference API |
 
@@ -261,7 +259,6 @@ Stop
     ▼
 Stop hooks:
     ├─► ResponseTabReset → DEFAULT (brand color)
-    └─► VoiceCompletion → Voice announces completion
 ```
 
 ---
@@ -305,7 +302,6 @@ Located in `hooks/lib/`:
 | `time.ts` | PST timestamps, ISO formatting | Rating hooks, work hooks |
 | `paths.ts` | Canonical path construction | Work hooks, security |
 | `notifications.ts` | ntfy push notifications | SessionEnd hooks, UpdateTabTitle |
-| `output-validators.ts` | Tab title + voice output validation | UpdateTabTitle, TabState, VoiceNotification, SetQuestionTab |
 | `hook-io.ts` | Shared stdin reader + transcript parser | All Stop hooks |
 | `learning-utils.ts` | Learning categorization | Rating hooks, WorkCompletion |
 | `change-detection.ts` | Detect file/code changes | IntegrityCheck |

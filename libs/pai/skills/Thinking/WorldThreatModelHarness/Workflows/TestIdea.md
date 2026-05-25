@@ -36,14 +36,6 @@ If any missing: "World models incomplete. Run 'update world models' first."
 If models older than 30 days: warn user but proceed.
 ```
 
-### Step 1: Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Testing your idea against all eleven world threat models at TIER tier", "voice_id": "fTtv3eikoepIosk8dTZ5"}'
-```
-
 ### Step 2: Extract and Decompose the Idea
 
 Before hitting it with world models, decompose the idea:
@@ -103,12 +95,6 @@ Use the template in `OutputFormat.md` (loaded from skill root). Ensure:
 - Adversarial findings attribute to specific horizon contexts
 
 ### Step 5: Voice Summary
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Analysis complete. SUMMARY_OF_EXECUTIVE_VERDICT", "voice_id": "fTtv3eikoepIosk8dTZ5"}'
-```
 
 ## Output Format
 

@@ -10,53 +10,6 @@ description: Deploy and manage Cloudflare Workers, Pages, and services via Code 
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior. If the directory does not exist, proceed with skill defaults.
 
-
-## MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-**You MUST send this notification BEFORE doing anything else when this skill is invoked.**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the Cloudflare skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **Cloudflare** skill to ACTION...
-   ```
-
-**This is not optional. Execute this curl command immediately upon skill invocation.**
-
-# Cloudflare Skill
-
-Deploy and manage Cloudflare Workers, Pages, and services. Uses **two complementary tools**:
-
-- **Code Mode MCP** (primary for API operations) — `search()` + `execute()` for querying workers, managing KV/R2/D1, checking deployments, DNS, analytics. ~1,069 tokens vs 1.17M for traditional MCP.
-- **Wrangler** (deploy/dev only) — `wrangler deploy`, `wrangler dev`, `wrangler pages deploy` for deploying from local files.
-
-## Dual-Mode Reference
-
-| Operation | Tool | Why |
-|-----------|------|-----|
-| Deploy Worker | `wrangler deploy` | Needs local files + wrangler.toml |
-| Deploy Pages | `wrangler pages deploy` | Needs dist/ directory |
-| Local dev | `wrangler dev` | Local server |
-| List Workers | MCP `execute()` | API query, no local files needed |
-| Check deployment status | MCP `execute()` | API query |
-| Read/write KV | MCP `execute()` | API operation |
-| Manage DNS | MCP `execute()` | API operation |
-| View logs | MCP `execute()` | API query |
-| Inspect R2/D1/Vectorize | MCP `execute()` | API operations |
-| View analytics | MCP `execute()` | API query |
-
-## Workflow Routing
-
-**When executing a workflow, output this notification directly:**
-
-```
 Running the **WorkflowName** workflow in the **Cloudflare** skill to ACTION...
 ```
 

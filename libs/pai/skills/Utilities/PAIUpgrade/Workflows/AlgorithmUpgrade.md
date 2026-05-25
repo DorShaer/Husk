@@ -1,14 +1,5 @@
 # AlgorithmUpgrade Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Algorithm Upgrade workflow to analyze and propose improvements to the PAI Algorithm"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **AlgorithmUpgrade** workflow in the **PAIUpgrade** skill to propose Algorithm improvements...
 
 **Dedicated self-improvement workflow for the PAI Algorithm.** Combines internal reflection mining with Algorithm spec analysis to produce concrete, section-targeted upgrade proposals.
