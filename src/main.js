@@ -471,7 +471,10 @@ function createWindow() {
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
-    { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    // `paste` keeps `registerAccelerator: false` so Ctrl/Cmd+V is not bound twice:
+    // xterm already pastes on the native browser paste event, and a second
+    // `webContents.paste()` from the accelerator would duplicate the clipboard.
+    { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste', registerAccelerator: false }, { role: 'selectAll' }] },
     { label: 'View', submenu: viewSubmenu },
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] },
   ]));
