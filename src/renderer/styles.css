@@ -3047,6 +3047,15 @@ kbd {
   body[data-rail="expanded"]:not([data-status="expanded"]) #main {
     grid-template-columns: 220px 1fr 30px;
   }
+  /* When the detail panel is open, the third column belongs to it, not to the
+     status-panel sliver. Without these overrides the third track stays at 30px
+     and the detail panel gets clipped off the right edge of the window. */
+  body[data-detail="open"] #main {
+    grid-template-columns: 72px 1fr 420px;
+  }
+  body[data-detail="open"][data-rail="expanded"] #main {
+    grid-template-columns: 220px 1fr 420px;
+  }
   body:not([data-status="expanded"]) #status-panel .sp-head,
   body:not([data-status="expanded"]) #status-panel #sp-content,
   body:not([data-status="expanded"]) #status-panel .sp-foot { display: none; }
