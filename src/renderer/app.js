@@ -160,8 +160,11 @@ term.onData((d) => {
 // Copy / paste affordances for the embedded terminal.
 //   - Right-click on the terminal opens a small Copy / Paste / Select all menu.
 //   - Ctrl+Shift+C (macOS: Cmd+C) copies the selection.
-//   - Ctrl+Shift+V (macOS: Cmd+V) pastes the clipboard into the PTY.
-// Ctrl+C is intentionally left as SIGINT, matching every other terminal.
+//   - Paste is handled natively: xterm already listens for the browser `paste`
+//     event on its hidden textarea and routes the clipboard through onData.
+//     We do NOT also call term.paste() from a custom key handler, because the
+//     browser fires the native paste event independently and that would double
+//     every paste. Ctrl+C is intentionally left as SIGINT.
 const isMac = (navigator.userAgentData && navigator.userAgentData.platform === 'macOS') ||
               /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
 async function copyTerminalSelection() {
@@ -181,9 +184,6 @@ term.attachCustomKeyEventHandler((e) => {
   const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
   if (meta && (e.key === 'c' || e.key === 'C')) {
     if (term.hasSelection()) { copyTerminalSelection(); return false; }
-  }
-  if (meta && (e.key === 'v' || e.key === 'V')) {
-    pasteIntoTerminal(); return false;
   }
   return true;
 });
