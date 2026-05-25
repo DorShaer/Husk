@@ -11,15 +11,6 @@ This system provides:
 ## Task Start Announcements
 
 **When STARTING a task, do BOTH:**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "[Doing what {PRINCIPAL.NAME} asked]"}' \
-     > /dev/null 2>&1 &
-   ```
-
 2. **Output text notification**:
    ```
    [Doing what {PRINCIPAL.NAME} asked]...
@@ -69,71 +60,12 @@ Executing the **WorkflowName** workflow within the **SkillName** skill...
 
 When executing an actual workflow file from a `Workflows/` directory:
 
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the WORKFLOWNAME workflow in the SKILLNAME skill to ACTION", "voice_id": "{DAIDENTITY.VOICEID}", "title": "{DAIDENTITY.NAME}"}' \
-  > /dev/null 2>&1 &
-```
-
 **Parameters:**
 - `message` - The spoken text (workflow and skill name)
 - `voice_id` - ElevenLabs voice ID (default: {DAIDENTITY.NAME}'s voice)
 - `title` - Display name for the notification
 
 ---
-
-## Effort Level in Voice Notifications
-
-**Voice phase announcements are inline curls in the Algorithm template** (defined in CLAUDE.md), not hooks. Each Algorithm phase has a `curl -s -X POST http://localhost:8888/notify` call that gets spoken. The effort level determines which curls fire:
-
-| Effort | Budget | Voice Curls |
-|--------|--------|-------------|
-| Standard | <2min | OBSERVE + VERIFY curls only |
-| Extended | <8min | All phase curls |
-| Advanced | <16min | All phase curls |
-| Deep | <32min | All phase curls |
-| Comprehensive | <120min | All phase curls |
-
-**Task completion voice** is handled by `StopOrchestrator.hook.ts` → `handlers/VoiceNotification.ts`, which extracts the `🗣️` line from the response and POSTs to the voice server.
-
----
-
-## Voice IDs
-
-| Agent | Voice ID | Notes |
-|-------|----------|-------|
-| **{DAIDENTITY.NAME}** (default) | `{DAIDENTITY.VOICEID}` | Use for most workflows |
-| **Priya** (Artist) | `ZF6FPAbjXT4488VcRRnw` | Art skill workflows |
-
-**Full voice registry:** `~/.claude/skills/Agents/SKILL.md` (see Named Agents) and `~/.claude/settings.json` (daidentity.voiceId)
-
----
-
-## Copy-Paste Templates
-
-### Template A: Skills WITH Workflows
-
-For skills that have a `Workflows/` directory:
-
-```markdown
-## Voice Notification
-
-**When executing a workflow, do BOTH:**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the SKILLNAME skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **SkillName** skill to ACTION...
-   ```
-```
 
 Replace `WORKFLOWNAME`, `SKILLNAME`, and `ACTION` with actual values when executing. ACTION should be under 6 words describing what the workflow does.
 

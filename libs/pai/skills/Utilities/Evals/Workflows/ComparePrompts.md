@@ -4,15 +4,6 @@ A/B test two prompt versions to determine which performs better.
 
 **This workflow implements the Science Protocol for prompt experimentation.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the ComparePrompts workflow in the Evals skill to A/B test prompts"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **ComparePrompts** workflow in the **Evals** skill to A/B test prompts...
 
 ---

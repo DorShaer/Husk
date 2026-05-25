@@ -134,28 +134,12 @@ How the voice embodies the character.]
 
 1. Send voice notification:
 \`\`\`bash
-curl -s -X POST http://localhost:8888/notify \
   -H "Content-Type: application/json" \
   -d '{"message":"[Agent name] activated, loading context","voice_id":"{voiceId}","title":"{persona.name}","voice_settings":{"stability":{voice.stability},"similarity_boost":{voice.similarity_boost},"style":{voice.style},"speed":{voice.speed},"use_speaker_boost":{voice.use_speaker_boost}},"volume":{voice.volume}}'
 \`\`\`
 
 2. Load knowledge base:
    - Read: [relevant context files]
-
-## Voice Notification Format
-
-Every response must include a voice curl:
-\`\`\`bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message":"[completion message]","voice_id":"{voiceId}","title":"{persona.name}","voice_settings":{"stability":{voice.stability},"similarity_boost":{voice.similarity_boost},"style":{voice.style},"speed":{voice.speed},"use_speaker_boost":{voice.use_speaker_boost}},"volume":{voice.volume}}'
-\`\`\`
-
-## Output Format
-
-[Standard PAI output format with sections:
-SUMMARY, ANALYSIS, ACTIONS, RESULTS, STATUS, CAPTURE, NEXT, STORY EXPLANATION, COMPLETED]
-```
 
 ---
 

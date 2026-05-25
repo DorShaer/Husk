@@ -2,15 +2,6 @@
 
 **Single striking statistics illustrated as visual data points using brand aesthetic.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Stats workflow in the Art skill to create stat cards"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **Stats** in **Art**...
 
 ---
