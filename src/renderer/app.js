@@ -302,7 +302,11 @@ async function restartPty(opts = {}) {
   // starts on a clean canvas.
   try { term.reset(); } catch (_) {}
   _restartInProgress = false;
-  $('#chat-empty').classList.add('show');
+  // Respect the "Don't show this on next launch" toggle on restart too —
+  // otherwise the welcome briefly flashes in (added here) and out again
+  // (stripped by the first pty.onData tick once the new agent banner
+  // arrives), which reads as a layout glitch.
+  if (!cfg.skipWelcome) $('#chat-empty').classList.add('show');
   term.focus();
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
   if (!opts.silent) toast('New session', 'success');
