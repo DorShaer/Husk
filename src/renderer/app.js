@@ -302,7 +302,7 @@ async function restartPty(opts = {}) {
   // starts on a clean canvas.
   try { term.reset(); } catch (_) {}
   _restartInProgress = false;
-  // Respect the "Don't show this on next launch" toggle on restart too —
+  // Respect the "Don't show this on next launch" toggle on restart too;
   // otherwise the welcome briefly flashes in (added here) and out again
   // (stripped by the first pty.onData tick once the new agent banner
   // arrives), which reads as a layout glitch.
@@ -1729,7 +1729,7 @@ async function scanRepoRoot(root) {
   }
   lastRepoScan = res;
   const skillsNote = res.hasSkillsDir
-    ? `Found <code>${escapeHtml(root.replace(/\/+$/, ''))}/skills/</code> — agents that read <code>skills/&lt;id&gt;.md</code> will work after install.`
+    ? `Found <code>${escapeHtml(root.replace(/\/+$/, ''))}/skills/</code>. Agents that read <code>skills/&lt;id&gt;.md</code> will work after install.`
     : `No <code>skills/</code> directory at this root. Agents will install but any <code>skills/&lt;id&gt;.md</code> read will fail until you add one.`;
   const copilotNote = res.copilotInstructionsExists
     ? (res.copilotHasUserContent
