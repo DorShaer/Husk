@@ -92,6 +92,12 @@ contextBridge.exposeInMainWorld('husk', {
     scan: (root) => ipcRenderer.invoke('repoAgents:scan', { root }),
     install: (opts) => ipcRenderer.invoke('repoAgents:install', opts || {}),
   },
+  repoMcp: {
+    pickDir: () => ipcRenderer.invoke('repoMcp:pickDir'),
+    scan: (root) => ipcRenderer.invoke('repoMcp:scan', { root }),
+    build: (dir) => ipcRenderer.invoke('repoMcp:build', { dir }),
+    install: (opts) => ipcRenderer.invoke('repoMcp:install', opts || {}),
+  },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),
     list: () => ipcRenderer.invoke('mcp:list'),
