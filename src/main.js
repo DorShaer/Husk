@@ -938,8 +938,58 @@ ipcMain.handle('mcp:list', () => {
 
 ipcMain.handle('mcp:health', () => activeMcpAdapter().health());
 ipcMain.handle('mcp:add', (_e, payload = {}) => activeMcpAdapter().add(payload));
+ipcMain.handle('mcp:update', (_e, payload = {}) => {
+  const adapter = activeMcpAdapter();
+  if (typeof adapter.update !== 'function') return { ok: false, error: 'Edit not supported for this CLI' };
+  const { id, ...rest } = payload || {};
+  return adapter.update(id, rest);
+});
 ipcMain.handle('mcp:remove', (_e, id) => activeMcpAdapter().remove(id));
 ipcMain.handle('mcp:toggle', (_e, id) => activeMcpAdapter().toggle(id));
+
+// addMany takes a list of canonical payloads (each already split into
+// command/args + transport per the buildServerEntry contract) and tries
+// to add() each one. Returns a per-id status map so the renderer can
+// show which succeeded vs. which already existed vs. which errored.
+ipcMain.handle('mcp:addMany', (_e, payload = {}) => {
+  const adapter = activeMcpAdapter();
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  if (!items.length) return { ok: false, error: 'no items supplied' };
+  const results = {};
+  let installed = 0;
+  for (const item of items) {
+    if (!item || !item.id) {
+      results[item && item.id ? item.id : '_anon_'] = { status: 'error', error: 'missing id' };
+      continue;
+    }
+    const r = adapter.add(item);
+    if (r.ok) { results[item.id] = { status: 'installed' }; installed++; }
+    else if (/already exists/i.test(r.error || '')) results[item.id] = { status: 'exists', error: r.error };
+    else results[item.id] = { status: 'error', error: r.error };
+  }
+  return { ok: true, results, installed, total: items.length };
+});
+
+// Lenient JSON parser surface. The renderer hands the raw textarea
+// content; we return either { ok: true, entries: [{ id, payload }] }
+// where each payload is already shapeEntry()-ed and ready for add()
+// or update(), or { ok: false, error } for the user to fix and retry.
+const McpJson = require('./lib/mcp-json');
+ipcMain.handle('mcp:parseSnippet', (_e, payload = {}) => {
+  const text = (payload && typeof payload.text === 'string') ? payload.text : '';
+  const parsed = McpJson.parseLooseMcpJson(text);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  // Shape each entry, but tolerate per-entry errors so the renderer can
+  // surface the bad ones and still proceed with the good ones.
+  const items = [];
+  const errors = [];
+  for (const e of parsed.entries) {
+    const shaped = McpJson.shapeEntry(e.id, e.entry);
+    if (shaped.ok) items.push(shaped.payload);
+    else errors.push({ id: e.id || '<unnamed>', error: shaped.error });
+  }
+  return { ok: true, items, errors };
+});
 
 // ─── Stats (statusline data) ─────────────────────────────────────────────────────
 
