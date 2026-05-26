@@ -3515,7 +3515,7 @@ function renderMcpModal({ mode, server }) {
 
     <div class="mcp-form-wrap" id="mcp-form-wrap">
       ${isEdit ? '' : `
-        <div style="display:flex; gap:8px; margin-bottom:10px; align-items:center;">
+        <div style="display:flex; justify-content:center; margin-bottom:10px;">
           <button type="button" class="ghost-btn" id="mcp-view-toggle">Paste JSON instead</button>
         </div>
       `}
