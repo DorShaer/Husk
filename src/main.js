@@ -171,7 +171,7 @@ function refreshStatuslineCacheOnce() {
 function startStatuslineRefresh() {
   if (statuslineTimer) return;
   // statusline-command.sh is PAI's status feeder. Skip the tick entirely
-  // when the user has disabled PAI — no script, no caches, no need to run.
+  // when the user has disabled PAI: no script, no caches, no need to run.
   if (config.paiEnabled === false) return;
   // Kick off once on startup, then every 30s.
   refreshStatuslineCacheOnce();
@@ -334,6 +334,14 @@ function bootstrapHuskPromptsIfNeeded() {
   } catch (err) {
     console.error('[husk] prompt bootstrap failed:', err && err.message);
   }
+}
+
+// Park or restore ~/.claude/CLAUDE.md based on the current paiEnabled state.
+// Implementation lives in src/lib/pai-state.js so it can be unit-tested
+// without spinning up Electron.
+const PaiState = require('./lib/pai-state');
+function applyPaiState(active) {
+  PaiState.applyPaiState(path.join(HOME, '.claude'), active);
 }
 
 function bootstrapPaiIfNeeded() {
@@ -527,9 +535,10 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     CLAUDE_DIR,
-    // Marker so PAI hooks/statusline can suppress duplicate chrome (ATLAS
-    // dashboard, neofetch banner, inline statusline) that Husk's right
-    // panel already surfaces. PAI side checks $HUSK_HOST and early-exits.
+    // Marker so PAI hooks/statusline can suppress duplicate chrome
+    // (status dashboard, neofetch banner, inline statusline) that Husk's
+    // right panel already surfaces. PAI side checks $HUSK_HOST and
+    // early-exits.
     HUSK_HOST: '1',
   });
   const bunBin = path.join(HOME, '.bun', 'bin');
@@ -564,25 +573,11 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     // statusline at the bottom of the terminal, alongside Husk's right
     // panel. Acceptable duplication, the user gets persistent trust,
     // skill-listing budget reverts to the claude default.
-    const agentName = (config.agentName || 'Husk').replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || 'Husk';
-    // When PAI is enabled, point the model at PAI/Algorithm and the
-    // banner/TASK/CHANGE/VERIFY/recap conventions PAI's CLAUDE.md sets up.
-    // When PAI is off, keep only the lightweight Husk identity sentence and
-    // let claude follow its own (un-PAI) CLAUDE.md without our nudge.
-    const huskPromptParts = [];
-    if (config.paiEnabled === false) {
-      huskPromptParts.push(
-        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line.`,
-      );
-    } else {
-      huskPromptParts.push(
-        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/Algorithm, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
-      );
-    }
-    if (config.recap === false) {
-      huskPromptParts.push(`The user has disabled recaps in Husk. Suppress any "* recap:" line and end-of-response summary footer for this session.`);
-    }
-    const huskPrompt = huskPromptParts.join(' ');
+    const huskPrompt = PaiState.buildHuskPrompt({
+      agentName: config.agentName,
+      paiEnabled: config.paiEnabled !== false,
+      recap: config.recap,
+    });
     agentArgs = ['--append-system-prompt', huskPrompt, ...agentArgs];
   }
 
@@ -732,8 +727,20 @@ ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
 
 ipcMain.handle('config:get', () => ({ ...config }));
 ipcMain.handle('config:set', (_e, partial) => {
+  const paiChanged = Object.prototype.hasOwnProperty.call(partial || {}, 'paiEnabled')
+    && partial.paiEnabled !== config.paiEnabled;
   config = { ...config, ...partial };
   saveConfig(config);
+  if (paiChanged) {
+    // Park or restore ~/.claude/CLAUDE.md so the next agent restart actually
+    // sees (or no longer sees) the PAI mode-banner instructions. The
+    // statusline tick is best-effort kicked back in / off; bootstrap on disk
+    // is left as-is; bringing PAI back on a future launch will repair any
+    // missing pieces via bootstrapPaiIfNeeded.
+    applyPaiState(config.paiEnabled !== false);
+    if (config.paiEnabled !== false) startStatuslineRefresh();
+    else stopStatuslineRefresh();
+  }
   return { ...config };
 });
 
@@ -1571,8 +1578,11 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
 // already-known root), then repoAgents:scan to populate the picker, then
 // repoAgents:install with the user's selection.
 
-const HUSK_AGENTS_START = '<!-- HUSK-AGENTS:START -->';
-const HUSK_AGENTS_END = '<!-- HUSK-AGENTS:END -->';
+// Marker constants + the block renderer + the merger live in
+// src/lib/pai-state.js so the test suite can hit every branch without
+// loading Electron. Re-bind the names locally for readability.
+const HUSK_AGENTS_START = PaiState.HUSK_AGENTS_START;
+const HUSK_AGENTS_END = PaiState.HUSK_AGENTS_END;
 
 ipcMain.handle('repoAgents:pickDir', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
@@ -1645,23 +1655,7 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
-function renderHuskAgentsBlock(picked) {
-  // picked: [{ name, body }]
-  const lines = [
-    HUSK_AGENTS_START,
-    '<!-- Managed by Husk. Edits inside this block are overwritten on the',
-    '     next install-from-repo run. Edit content outside the markers freely. -->',
-    '',
-  ];
-  for (const item of picked) {
-    lines.push(`# Agent: ${item.name}`);
-    lines.push('');
-    lines.push(item.body.trim());
-    lines.push('');
-  }
-  lines.push(HUSK_AGENTS_END);
-  return lines.join('\n');
-}
+const renderHuskAgentsBlock = PaiState.renderHuskAgentsBlock;
 
 ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const root = String((payload && payload.root) || '').trim();
@@ -1719,24 +1713,10 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       copilotInstructionsPath = path.join(dotGithub, 'copilot-instructions.md');
       let existing = '';
       try { existing = fs.readFileSync(copilotInstructionsPath, 'utf8'); } catch (_) {}
-      const startIdx = existing.indexOf(HUSK_AGENTS_START);
-      const endIdx = existing.indexOf(HUSK_AGENTS_END);
-      let before, after;
-      if (startIdx >= 0 && endIdx > startIdx) {
-        before = existing.slice(0, startIdx).replace(/\s+$/, '');
-        after = existing.slice(endIdx + HUSK_AGENTS_END.length).replace(/^\s+/, '');
-      } else {
-        before = existing.replace(/\s+$/, '');
-        after = '';
-      }
-      const block = renderHuskAgentsBlock(copilotBlocks);
-      const parts = [];
-      if (before) parts.push(before);
-      parts.push(block);
-      if (after) parts.push(after);
-      fs.writeFileSync(copilotInstructionsPath, parts.join('\n\n') + '\n', { mode: 0o644 });
+      const merged = PaiState.mergeHuskAgentsBlock(existing, copilotBlocks);
+      fs.writeFileSync(copilotInstructionsPath, merged, { mode: 0o644 });
     } catch (err) {
-      // Surface the failure but do not abort the import — the Claude side
+      // Surface the failure but do not abort the import: the Claude side
       // and the Husk profiles still landed; the user can retry the Copilot
       // write or paste the snippet manually.
       return {
@@ -2850,6 +2830,7 @@ if (!gotLock) {
   process.on('unhandledRejection', (err) => { try { console.error('[husk] unhandledRejection:', err); } catch (_) {} });
 
   app.whenReady().then(async () => {
+    applyPaiState(config.paiEnabled !== false);
     bootstrapPaiIfNeeded();
     bootstrapHuskPromptsIfNeeded();
     startStatuslineRefresh();
