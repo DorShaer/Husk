@@ -2,7 +2,7 @@
 
 // Tests for the PAI toggle helpers + the install-from-repo copilot-
 // instructions block writer. Each test gets a private tmpdir that stands
-// in for ~/.claude/ — we never touch the real home directory.
+// in for ~/.claude/; we never touch the real home directory.
 
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -68,7 +68,7 @@ test('ISC-5: disabling when both files exist leaves both alone', () => {
   assert.equal(fs.readFileSync(parked(), 'utf8'), 'parked content\n');
 });
 
-test('ISC-6: applyPaiState is idempotent — calling twice equals once', () => {
+test('ISC-6: applyPaiState is idempotent; calling twice equals once', () => {
   fs.writeFileSync(live(), 'pai\n');
   applyPaiState(tmp, false);
   applyPaiState(tmp, false);
@@ -87,7 +87,7 @@ test('ISC-7: full disable → enable round-trip preserves byte-exact content', (
   assert.equal(fs.readFileSync(live(), 'utf8'), original);
 });
 
-test('ISC-A1: applyPaiState never deletes — same total file count survives', () => {
+test('ISC-A1: applyPaiState never deletes; same total file count survives', () => {
   fs.writeFileSync(live(), 'a');
   fs.writeFileSync(path.join(tmp, 'unrelated.txt'), 'b');
   applyPaiState(tmp, false);
