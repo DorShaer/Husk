@@ -19,6 +19,9 @@ function makeStub(agentName) {
     add() {
       return { ok: false, error: `MCP management via Husk is not yet wired up for ${agentName}` };
     },
+    update() {
+      return { ok: false, error: `MCP management via Husk is not yet wired up for ${agentName}` };
+    },
     remove() {
       return { ok: false, error: `MCP management via Husk is not yet wired up for ${agentName}` };
     },
