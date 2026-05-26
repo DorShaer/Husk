@@ -32,7 +32,7 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.0",
     "@playwright/test": "^1.60.0",
-    "electron": "^41.6.1",
+    "electron": "^41.7.0",
     "electron-builder": "^26.0.12",
     "playwright": "^1.60.0"
   },

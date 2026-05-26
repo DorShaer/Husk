@@ -2,15 +2,6 @@
 
 **Aphorisms as shareable visual quote cards using editorial aesthetic.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Aphorisms workflow in the Art skill to create quote cards"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **Aphorisms** in **Art**...
 
 ---
@@ -44,14 +35,6 @@ Visual aphorism cards turn memorable one-liners into shareable social media cont
 4. **Square format** — 1:1 for social media
 5. **High contrast** — Black text on light, or white text on dark
 6. **Hand-lettered quality** — Imperfect typography, not digital font
-7. **Editorial voice** — Punchy, memorable, thought-provoking
-
----
-
-## Color System for Aphorisms
-
-### Typography
-```
 Black #000000 — Primary text (most common)
 OR
 Deep Purple #4A148C — Full text in brand color (alternative)

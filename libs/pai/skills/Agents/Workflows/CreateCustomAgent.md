@@ -2,15 +2,6 @@
 
 **Creates custom agents with unique personalities, colors, and voices using ComposeAgent.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the CreateCustomAgent workflow in the Agents skill to create agents"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **CreateCustomAgent** in **Agents**...
 
 ---
@@ -37,103 +28,6 @@ Extract from {PRINCIPAL.NAME}'s request:
 ### Step 2: For EACH Agent, Run ComposeAgent with DIFFERENT Traits
 
 **CRITICAL: Each agent MUST have different trait combinations to get unique voices and colors.**
-
-```bash
-# Example for 3 custom research agents:
-
-# Agent 1 - Enthusiastic Explorer
-bun run ~/.claude/skills/Agents/Tools/ComposeAgent.ts \
-  --traits "research,enthusiastic,exploratory" \
-  --task "Research quantum computing applications" \
-  --output json
-
-# Agent 2 - Skeptical Analyst
-bun run ~/.claude/skills/Agents/Tools/ComposeAgent.ts \
-  --traits "research,skeptical,systematic" \
-  --task "Research quantum computing applications" \
-  --output json
-
-# Agent 3 - Thorough Synthesizer
-bun run ~/.claude/skills/Agents/Tools/ComposeAgent.ts \
-  --traits "research,analytical,synthesizing" \
-  --task "Research quantum computing applications" \
-  --output json
-```
-
-### Step 3: Extract Prompt, Voice ID, and Color from Each
-
-ComposeAgent returns JSON with:
-```json
-{
-  "name": "Research Enthusiastic Explorer",
-  "voice": "Jeremy",
-  "voice_id": "bVMeCyTHy58xNoL34h3p",
-  "color": "#FF6B35",
-  "traits": ["research", "enthusiastic", "exploratory"],
-  "prompt": "# Dynamic Agent: Research Enthusiastic Explorer\n\nYou are a specialized agent..."
-}
-```
-
-**Each agent gets a unique color** - use this in the description for visual distinction in the terminal.
-
-### Step 4: Launch Agents with Task Tool
-
-**Use a SINGLE message with MULTIPLE Task calls for parallel execution.**
-
-**CRITICAL: Use `subagent_type: "general-purpose"` - NEVER use static types like "Architect" or "Engineer" for custom agents.**
-
-```typescript
-// Send all in ONE message:
-Task({
-  description: "Research agent 1 - enthusiastic",
-  prompt: <agent1_full_prompt>,
-  subagent_type: "general-purpose",
-  model: "sonnet"  // or "haiku" for speed
-})
-Task({
-  description: "Research agent 2 - skeptical",
-  prompt: <agent2_full_prompt>,
-  subagent_type: "general-purpose",
-  model: "sonnet"
-})
-Task({
-  description: "Research agent 3 - analytical",
-  prompt: <agent3_full_prompt>,
-  subagent_type: "general-purpose",
-  model: "sonnet"
-})
-```
-
-**Note:** Store the voice_id from ComposeAgent output - you'll need it to voice the agent's results.
-
-### Step 5: Agent Voice Output
-
-**Agents voice their own completion.** The DynamicAgent template instructs each agent to call the voice server with their unique voice_id after completing their task.
-
-Each agent's prompt includes:
-- Their assigned voice_id from ComposeAgent
-- Instructions to call `curl -X POST http://localhost:8888/notify` with their voice_id
-- The requirement to voice their `🎯 COMPLETED:` message
-
-**Fallback:** If an agent fails to voice itself, you can manually voice their result:
-```bash
-curl -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message":"<COMPLETED line content>","voice_id":"<agent_voice_id>","title":"<agent_name>","voice_enabled":true}'
-```
-
-### Step 6: Spotcheck (Optional but Recommended)
-
-After all agents complete, launch one more to verify consistency:
-
-```typescript
-Task({
-  description: "Spotcheck custom agent results",
-  prompt: "Review these results for consistency and completeness: [results]",
-  subagent_type: "general-purpose",
-  model: "haiku"
-})
-```
 
 ## Trait Variation Strategies
 

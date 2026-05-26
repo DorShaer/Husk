@@ -50,8 +50,6 @@ const BASE_DIR = process.env.PAI_DIR || join(HOME, ".claude");
 const ALGORITHMS_DIR = join(BASE_DIR, "MEMORY", "STATE", "algorithms");
 const SESSION_NAMES_PATH = join(BASE_DIR, "MEMORY", "STATE", "session-names.json");
 const PROJECTS_DIR = process.env.PROJECTS_DIR || join(HOME, "Projects");
-const VOICE_URL = "http://localhost:8888/notify";
-const VOICE_ID = "fTtv3eikoepIosk8dTZ5";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -273,14 +271,8 @@ function removeSessionName(sessionId: string): void {
 
 // ─── Voice Notifications ─────────────────────────────────────────────────────
 
-function voiceNotify(message: string): void {
-  try {
-    fetch(VOICE_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, voice_id: VOICE_ID }),
-    }).catch(() => {});
-  } catch {}
+function voiceNotify(_message: string): void {
+  // no-op: host application owns voice output
 }
 
 // ─── PRD Title Extraction ────────────────────────────────────────────────────
