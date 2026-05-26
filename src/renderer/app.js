@@ -4344,4 +4344,27 @@ async function launchAgent({ initialPrompt = null } = {}) {
   }
 }
 
+// Global ESC handler: closes any visible `.modal` element. This is the
+// universal "ESC dismisses the wizard" contract, applied across every
+// modal Husk has today (create agent, create MCP, edit MCP, install
+// from repo, import agents, create project, create prompt, create
+// skill, confirm prompts, first-run wizard) and every modal we ship
+// in the future without per-dialog wiring. Per-modal ESC handlers
+// (palette, sessions detail-panel, skill modal close) run first
+// because they were registered earlier; if they have already hidden
+// their target, this handler finds nothing to do.
+//
+// We skip on composition events so an IME's ESC-to-dismiss-popup
+// keeps working without closing the surrounding modal.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.isComposing) return;
+  const open = $$('.modal:not([hidden])');
+  if (!open.length) return;
+  // DOM order is install-order for these dialogs; the LAST visible
+  // one is the most recently opened (e.g. a confirm-modal layered on
+  // top of a create-modal). Close just that one so a confirm dismisses
+  // before its parent.
+  open[open.length - 1].hidden = true;
+});
+
 requestAnimationFrame(() => boot());
