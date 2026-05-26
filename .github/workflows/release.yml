@@ -84,6 +84,19 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 10
     steps:
+      - name: Checkout for tag metadata
+        # softprops/action-gh-release does not check out the repo, so
+        # fetch the tag annotation ourselves. This runs BEFORE artifact
+        # download so the checkout's default workspace-clean behavior
+        # does not wipe the release/ directory we populate later.
+        # fetch-tags: true is required, otherwise actions/checkout
+        # pulls lightweight refs only and the tag annotation body is
+        # not available locally.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -121,19 +134,6 @@ jobs:
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: 'release/*'
-
-      - name: Checkout for tag metadata
-        # softprops/action-gh-release does not check out the repo, so
-        # fetch the tag annotation ourselves with a minimal checkout.
-        # fetch-tags: true is REQUIRED. actions/checkout by default
-        # does not pull annotated-tag objects, only lightweight refs.
-        # Without it, `git tag -l --format='%(contents:body)'` falls
-        # back to the merge commit body and the release page ends up
-        # with the PR title instead of the full release notes.
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
 
       - name: Extract release notes from the annotated tag
         run: |
