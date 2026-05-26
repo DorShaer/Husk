@@ -9,7 +9,7 @@ test('parseAgentMd: full frontmatter extracts name and description', () => {
   const text = [
     '---',
     'name: example-agent',
-    'description: Example Vendor SecOps debugging agent.',
+    'description: Example role-specific debugging agent.',
     '---',
     '',
     'Body text here.',
@@ -17,7 +17,7 @@ test('parseAgentMd: full frontmatter extracts name and description', () => {
   ].join('\n');
   const out = parseAgentMd(text);
   assert.equal(out.name, 'example-agent');
-  assert.equal(out.description, 'Example Vendor SecOps debugging agent.');
+  assert.equal(out.description, 'Example role-specific debugging agent.');
   assert.equal(out.body, 'Body text here.');
 });
 
