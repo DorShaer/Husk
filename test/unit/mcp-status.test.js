@@ -15,7 +15,7 @@ const REAL_OUTPUT = [
   'opensearch: uvx opensearch-mcp-server-py - ✗ Failed to connect',
   'Jira: uvx --python=3.12 mcp-atlassian - ✓ Connected',
   'slack-logs: node /home/u/proj/index.js - ✓ Connected',
-  'example-server: https://example.com/mcp (HTTP) - ✓ Connected',
+  'example-http: https://example.com/mcp (HTTP) - ✓ Connected',
 ].join('\n');
 
 test('parseMcpListOutput: real claude mcp list fixture', () => {
@@ -26,7 +26,7 @@ test('parseMcpListOutput: real claude mcp list fixture', () => {
     'opensearch': 'failed',
     'Jira': 'connected',
     'slack-logs': 'connected',
-    'example-server': 'connected',
+    'example-http': 'connected',
   });
 });
 
