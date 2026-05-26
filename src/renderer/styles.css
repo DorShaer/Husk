@@ -197,39 +197,21 @@ body {
 
 #topbar {
   display: flex; align-items: center; gap: 14px;
-  padding: 0 14px 0 10px;
+  /* Left padding lands the 40px logo's horizontal center at x=36px, which
+     is the center of the collapsed rail's 72px column (16 + 20 = 36). The
+     logo column therefore reads as a continuation of the rail when collapsed. */
+  padding: 0 14px 0 16px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
   box-shadow: var(--hl-top);
   -webkit-app-region: drag;
 }
-.topbar-sidebar-btn {
-  -webkit-app-region: no-drag;
-  width: 32px; height: 32px; flex: 0 0 auto;
-  background: transparent; border: 0;
-  border-radius: var(--radius-md);
-  color: var(--text-3); cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
-}
-.topbar-sidebar-btn svg { width: 17px; height: 17px; display: block; }
-.topbar-sidebar-btn:hover { background: var(--bg-2); color: var(--text); }
-body[data-rail="collapsed"] .topbar-sidebar-btn { color: var(--text-2); }
-.brand { display: flex; align-items: center; gap: 12px; -webkit-app-region: no-drag; }
+.brand { display: flex; align-items: center; -webkit-app-region: no-drag; }
 .logo-img {
-  width: 26px; height: 26px;
+  width: 40px; height: 40px;
   display: block;
   user-select: none;
   -webkit-user-drag: none;
-}
-.brand-text {
-  font-family: 'Titan One', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-weight: 400;
-  font-size: 22px;
-  line-height: 1;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--accent);
 }
 .topbar-spacer { flex: 1; -webkit-app-region: drag; min-height: 32px; }
 
@@ -383,10 +365,30 @@ body[data-rail="expanded"] .rail { width: 220px; }
   pointer-events: none;
   opacity: 0.9;
 }
-/* Inline sidebar-toggle button. Sits inside the rail, top-right, looks like
-   a proper sidebar icon (Notion / Linear convention). Replaces the floating
-   off-rail circle that read as a UI artifact. */
-/* rail-top removed - toggle lives in #topbar as .topbar-sidebar-btn */
+/* Sidebar collapse / expand control. Sits at the top of the rail itself
+   (Notion / Linear / Twitch convention) instead of in the topbar. Right-aligned
+   while expanded, centered when collapsed so it always sits inside the column. */
+.rail-top {
+  display: flex;
+  padding: 0 4px 8px;
+  min-height: 32px;
+}
+body[data-rail="expanded"] .rail-top { justify-content: flex-end; }
+body[data-rail="collapsed"] .rail-top { justify-content: center; padding: 0 0 8px; }
+.rail-toggle-btn {
+  width: 32px; height: 32px;
+  background: transparent; border: 0;
+  border-radius: var(--radius-md);
+  color: var(--text-3); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.rail-toggle-btn:hover { background: var(--bg-2); color: var(--text); }
+.rail-toggle-btn svg {
+  width: 18px; height: 18px; display: block;
+  transition: transform var(--motion-base) var(--ease);
+}
+body[data-rail="collapsed"] .rail-toggle-btn svg { transform: rotate(180deg); }
 .rail-nav { display: flex; flex-direction: column; gap: 2px; }
 .rail-spacer { flex: 1; }
 .rail-item {
@@ -1566,6 +1568,52 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   white-space: nowrap;
 }
 
+/* Install-agents-from-repo modal: path row + status banner. */
+.ra-hint {
+  font-size: 12.5px; color: var(--text-2);
+  line-height: 1.55; margin: 0 0 12px;
+}
+.ra-hint code {
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+  padding: 1px 5px; border-radius: 4px;
+  background: var(--bg-2); color: var(--text);
+}
+.ra-pathrow {
+  display: flex; gap: 8px; align-items: stretch;
+  margin-bottom: 10px;
+}
+.ra-root {
+  flex: 1;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  padding: 8px 10px;
+  outline: 0;
+  transition: border-color 0.12s var(--ease);
+}
+.ra-root:focus { border-color: var(--accent); }
+.ra-status {
+  font-size: 12px; line-height: 1.5;
+  padding: 8px 10px; border-radius: var(--radius-md);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  margin-bottom: 10px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ra-status code {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 1px 4px; border-radius: 3px;
+  background: var(--bg-3); color: var(--text);
+}
+.ra-status.ra-status-info { border-left: 3px solid var(--accent); }
+.ra-status.ra-status-error { border-left: 3px solid var(--rose); color: var(--text); }
+/* The footer of the repo-install modal has three toggles + two buttons —
+   let it wrap on narrow window widths rather than stretching off-screen. */
+.modal-foot.ra-foot { flex-wrap: wrap; gap: 10px; }
+
 /* Active-for-next-session banner with one chip per active agent. */
 .agents-active-banner {
   display: flex; align-items: center; gap: 16px;
@@ -1679,6 +1727,20 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
   margin: 0;
+}
+/* Repo binding: shown only when the profile was install-from-repo. Conveys
+   "this agent's relative paths resolve against this directory" — that is
+   what spawnPty actually does with the repoRoot field. */
+.agent-card-repo {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--text-3);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Prompt preview: muted italic, 2-line clamp. */
 .agent-card-prompt {
@@ -3135,7 +3197,6 @@ kbd {
     box-shadow: var(--shadow);
   }
   .topbar-spacer { min-height: 32px; }
-  .brand-text { font-size: 26px; }
 }
 
 /* Print: should never happen in this app but kill animations defensively. */
