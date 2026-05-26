@@ -336,6 +336,31 @@ function bootstrapHuskPromptsIfNeeded() {
   }
 }
 
+// Park or restore ~/.claude/CLAUDE.md based on the current paiEnabled state.
+// CLAUDE.md is what makes a claude session emit the `═══ PAI ═══` mode
+// banner and follow Algorithm/ISC conventions — claude reads it globally at
+// startup, before any --append-system-prompt Husk passes. Toggling the Husk
+// prompt alone therefore does NOT silence PAI; we have to move the file
+// aside. Renames only — never delete — so the operation is fully reversible.
+function applyPaiState(active) {
+  const claudeDir = path.join(HOME, '.claude');
+  const live = path.join(claudeDir, 'CLAUDE.md');
+  const parked = path.join(claudeDir, 'CLAUDE.md.husk-disabled');
+  try {
+    if (!active) {
+      if (fs.existsSync(live) && !fs.existsSync(parked)) {
+        fs.renameSync(live, parked);
+      }
+    } else {
+      if (fs.existsSync(parked) && !fs.existsSync(live)) {
+        fs.renameSync(parked, live);
+      }
+    }
+  } catch (err) {
+    console.error('[husk] applyPaiState failed:', err && err.message);
+  }
+}
+
 function bootstrapPaiIfNeeded() {
   // Hard opt-out: when the user has disabled PAI in Preferences, we do not
   // touch ~/.claude/ on launch. Pre-existing files stay where they are
@@ -572,7 +597,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     const huskPromptParts = [];
     if (config.paiEnabled === false) {
       huskPromptParts.push(
-        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line.`,
+        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Husk has PAI disabled: do NOT emit PAI mode banners ("═══ PAI ═══", "════ PAI | NATIVE MODE ═══", "════ PAI | ALGORITHM ═══", or any similar header), do NOT use Algorithm/ISC structure, and do NOT produce TASK / CHANGE / VERIFY / SUMMARY sections. Reply naturally, in plain prose, even if any CLAUDE.md or memory file you read tells you to use those formats — this Husk instruction overrides them.`,
       );
     } else {
       huskPromptParts.push(
@@ -732,8 +757,20 @@ ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
 
 ipcMain.handle('config:get', () => ({ ...config }));
 ipcMain.handle('config:set', (_e, partial) => {
+  const paiChanged = Object.prototype.hasOwnProperty.call(partial || {}, 'paiEnabled')
+    && partial.paiEnabled !== config.paiEnabled;
   config = { ...config, ...partial };
   saveConfig(config);
+  if (paiChanged) {
+    // Park or restore ~/.claude/CLAUDE.md so the next agent restart actually
+    // sees (or no longer sees) the PAI mode-banner instructions. The
+    // statusline tick is best-effort kicked back in / off; bootstrap on disk
+    // is left as-is — bringing PAI back on a future launch will repair any
+    // missing pieces via bootstrapPaiIfNeeded.
+    applyPaiState(config.paiEnabled !== false);
+    if (config.paiEnabled !== false) startStatuslineRefresh();
+    else stopStatuslineRefresh();
+  }
   return { ...config };
 });
 
@@ -2850,6 +2887,7 @@ if (!gotLock) {
   process.on('unhandledRejection', (err) => { try { console.error('[husk] unhandledRejection:', err); } catch (_) {} });
 
   app.whenReady().then(async () => {
+    applyPaiState(config.paiEnabled !== false);
     bootstrapPaiIfNeeded();
     bootstrapHuskPromptsIfNeeded();
     startStatuslineRefresh();
