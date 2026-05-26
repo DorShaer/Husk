@@ -2484,6 +2484,7 @@ function bindPrefs() {
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
   if ($('#pref-agent-cwd')) $('#pref-agent-cwd').value = cfg.agentCwd || '';
   $('#pref-recap').checked = cfg.recap !== false;
+  if ($('#pref-pai')) $('#pref-pai').checked = cfg.paiEnabled !== false;
   $('#pref-theme').value = cfg.theme || 'dark';
   $('#pref-rail').checked = !!cfg.railExpanded;
   $('#pref-root').value = cfg.treeRoot || '';
@@ -2745,6 +2746,13 @@ $('#pref-hidden').addEventListener('change', async (e) => {
 $('#pref-recap').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ recap: e.target.checked });
   toast(`Recap ${cfg.recap ? 'enabled' : 'disabled'} · restart agent to apply`, 'success');
+});
+$('#pref-pai') && $('#pref-pai').addEventListener('change', async (e) => {
+  cfg = await window.husk.config.set({ paiEnabled: e.target.checked });
+  const msg = cfg.paiEnabled
+    ? 'PAI enabled · restart Husk to bootstrap, restart agent to load it'
+    : 'PAI disabled · restart agent to drop the PAI prompt; existing ~/.claude/ files left in place';
+  toast(msg, 'success');
 });
 
 // ─── Update pill (topbar) ───────────────────────────────────────────────────────
