@@ -3338,6 +3338,9 @@ function mcpRowHTML(s) {
         <span class="mr-cmd">${escapeHtml(detail)}</span>
       </div>
       <div class="mr-actions">
+        <button class="mr-edit" data-edit="1" title="Edit" aria-label="Edit MCP server">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        </button>
         <button class="toggle ${s.enabled ? 'on' : ''}" data-toggle="1" title="${s.enabled ? 'Disable' : 'Enable'}"></button>
         <button class="mr-remove" data-remove="1" title="Remove">×</button>
       </div>
@@ -3369,6 +3372,7 @@ async function applyMcpChange(label) {
 function bindMcpRows(scope) {
   scope.querySelectorAll('.mcp-row').forEach((row) => {
     const t = row.querySelector('[data-toggle]');
+    const e = row.querySelector('[data-edit]');
     const x = row.querySelector('[data-remove]');
     if (t) t.addEventListener('click', async () => {
       const r = await window.husk.mcp.toggle(row.dataset.id);
@@ -3376,6 +3380,10 @@ function bindMcpRows(scope) {
       toast(`${row.dataset.id} ${r.enabled ? 'enabled' : 'disabled'}`, 'success');
       await renderMcp();
       applyMcpChange(row.dataset.id);
+    });
+    if (e) e.addEventListener('click', () => {
+      const server = mcpInstalled.find((s) => s.id === row.dataset.id);
+      if (server) openMcpEditModal(server);
     });
     if (x) x.addEventListener('click', async () => {
       if (!confirm(`Remove MCP server "${row.dataset.id}"?`)) return;
@@ -3443,33 +3451,74 @@ function paintMcpCatalog() {
   });
 }
 
-function openMcpCustomModal() {
-  $('#mcp-install-title').textContent = 'Install a custom MCP server';
-  $('#mcp-install-sub').textContent = 'Paste a JSON snippet, or pick a transport and fill in the fields.';
+// State for the custom MCP modal. Lives across renders of the modal
+// body so the foot button can stay contextually wired without a re-
+// lookup. mode is 'add' | 'edit'; activeTab is 'stdio' | 'http';
+// view is 'paste' | 'form'; parsedItems holds the last successful
+// parse result while paste is open (drives the foot button label).
+let mcpModalState = {
+  mode: 'add',
+  editingId: null,
+  activeTab: 'stdio',
+  view: 'form',
+  parsedItems: [],
+  parseErrors: [],
+};
+
+function openMcpCustomModal() { renderMcpModal({ mode: 'add' }); }
+function openMcpEditModal(server) {
+  if (!server || !server.id) return;
+  renderMcpModal({ mode: 'edit', server });
+}
+
+// renderMcpModal builds the body content for both Add and Edit flows.
+// Add: starts in form view, server-name input editable, paste view
+//      reachable via a small toggle button. Foot primary button shows
+//      `Install N server(s)` while paste view holds a valid JSON, or
+//      `Install` while form view is active.
+// Edit: starts in form view, pre-filled, server-name input read-only,
+//      no paste view (you cannot rename via edit). Foot primary button
+//      is `Save changes`.
+function renderMcpModal({ mode, server }) {
+  mcpModalState = {
+    mode,
+    editingId: mode === 'edit' && server ? server.id : null,
+    activeTab: 'stdio',
+    view: 'form',
+    parsedItems: [],
+    parseErrors: [],
+  };
+  const isEdit = mode === 'edit';
+  $('#mcp-install-title').textContent = isEdit
+    ? `Edit MCP server: ${server.id}`
+    : 'Install a custom MCP server';
+  $('#mcp-install-sub').textContent = isEdit
+    ? 'Update the fields below and save. The server name is fixed.'
+    : 'Paste a JSON snippet (one or many servers), or fill in the form.';
   const fields = $('#mcp-install-fields');
   const codeStyle = "background:var(--bg-3); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-family:'JetBrains Mono', monospace; font-size:12px; resize:vertical;";
-  // eslint-disable-next-line no-unsanitized/property -- Static modal template for MCP custom install form.
+  // eslint-disable-next-line no-unsanitized/property -- Static modal template; dynamic values are escaped where they appear (server.id in the title above sets textContent, not innerHTML).
   fields.innerHTML = `
+    ${isEdit ? '' : `
     <div class="mcp-paste-wrap" id="mcp-paste-wrap" hidden>
       <div class="mcp-input-group">
         <label for="mig-paste-json">Paste your MCP JSON</label>
-        <textarea id="mig-paste-json" rows="8" spellcheck="false" placeholder='{
-  "my-server": {
-    "type": "http",
-    "url": "https://example.com/mcp",
-    "headers": { "Authorization": "Bearer ..." }
-  }
+        <textarea id="mig-paste-json" rows="9" spellcheck="false" placeholder='{
+  "my-server": { "command": "node", "args": ["dist/index.js"] },
+  "remote-svc": { "type": "http", "url": "https://example.com/mcp" }
 }' style="${codeStyle}"></textarea>
-        <div class="mig-hint">Accepts the standard MCP entry shape, with or without an outer wrapper key.</div>
-        <div style="display:flex; gap:8px; margin-top:6px;">
-          <button type="button" class="ghost-btn" id="mcp-paste-cancel">Cancel</button>
-          <button type="button" class="btn-primary" id="mcp-paste-apply" style="flex:1;">Fill the form</button>
-        </div>
+        <div class="mig-hint">Accepts: full <code>mcpServers</code> wrapper, VS Code-style <code>servers</code> wrapper, single-server <code>{ "name": {...} }</code>, an array, a bare entry, or a mid-JSON paste with stray indents and trailing commas. Multiple servers install in one shot.</div>
+        <div id="mig-paste-status" class="ra-status" style="margin-top:8px;" hidden></div>
       </div>
     </div>
+    `}
 
     <div class="mcp-form-wrap" id="mcp-form-wrap">
-      <button type="button" class="ghost-btn" id="mcp-paste-open" style="margin-bottom:10px;">Paste JSON instead</button>
+      ${isEdit ? '' : `
+        <div style="display:flex; gap:8px; margin-bottom:10px; align-items:center;">
+          <button type="button" class="ghost-btn" id="mcp-view-toggle">Paste JSON instead</button>
+        </div>
+      `}
       <div class="mcp-input-group">
         <label>Transport</label>
         <div class="mcp-tabs">
@@ -3477,123 +3526,187 @@ function openMcpCustomModal() {
           <button type="button" class="mcp-tab" data-tab="http">Remote (HTTP / SSE)</button>
         </div>
       </div>
-    <div class="mcp-input-group">
-      <label for="mig-custom-id">Server name</label>
-      <input id="mig-custom-id" type="text" placeholder="my-server" autocomplete="off" />
-      <div class="mig-hint">Letters, numbers, dashes. Used as the key in ~/.claude.json.</div>
-    </div>
-
-    <div data-tab-pane="stdio">
       <div class="mcp-input-group">
-        <label for="mig-custom-cmd">Command</label>
-        <input id="mig-custom-cmd" type="text" placeholder="npx" autocomplete="off" />
+        <label for="mig-custom-id">Server name</label>
+        <input id="mig-custom-id" type="text" placeholder="my-server" autocomplete="off" ${isEdit ? 'readonly' : ''} />
+        <div class="mig-hint">Letters, numbers, dashes. Used as the key in the CLI's MCP config.</div>
       </div>
-      <div class="mcp-input-group">
-        <label for="mig-custom-args">Arguments (one per line)</label>
-        <textarea id="mig-custom-args" rows="3" placeholder="-y\n@my-org/my-mcp-server" style="${codeStyle}"></textarea>
+      <div data-tab-pane="stdio">
+        <div class="mcp-input-group">
+          <label for="mig-custom-cmd">Command</label>
+          <input id="mig-custom-cmd" type="text" placeholder="npx" autocomplete="off" />
+          <div class="mig-hint">Just the binary. Put each arg on its own line below.</div>
+        </div>
+        <div class="mcp-input-group">
+          <label for="mig-custom-args">Arguments (one per line)</label>
+          <textarea id="mig-custom-args" rows="3" placeholder="-y&#10;@my-org/my-mcp-server" style="${codeStyle}"></textarea>
+        </div>
+        <div class="mcp-input-group">
+          <label for="mig-custom-env">Environment variables (KEY=value, one per line)</label>
+          <textarea id="mig-custom-env" rows="3" placeholder="API_KEY=..." style="${codeStyle}"></textarea>
+          <div class="mig-hint">Optional. Useful for API keys or per-server settings.</div>
+        </div>
       </div>
-      <div class="mcp-input-group">
-        <label for="mig-custom-env">Environment variables (KEY=value, one per line)</label>
-        <textarea id="mig-custom-env" rows="3" placeholder="API_KEY=sk-..." style="${codeStyle}"></textarea>
-        <div class="mig-hint">Optional. Useful for API keys or per-server settings.</div>
+      <div data-tab-pane="http" hidden>
+        <div class="mcp-input-group">
+          <label for="mig-custom-type">Transport type</label>
+          <select id="mig-custom-type" style="${codeStyle}">
+            <option value="http">HTTP (streamable)</option>
+            <option value="sse">SSE (server-sent events)</option>
+          </select>
+        </div>
+        <div class="mcp-input-group">
+          <label for="mig-custom-url">URL</label>
+          <input id="mig-custom-url" type="text" placeholder="https://example.com/mcp" autocomplete="off" />
+        </div>
+        <div class="mcp-input-group">
+          <label for="mig-custom-headers">Headers (Header-Name: value, one per line)</label>
+          <textarea id="mig-custom-headers" rows="3" placeholder="Authorization: Bearer your-token-here" style="${codeStyle}"></textarea>
+          <div class="mig-hint">Optional. Used for auth tokens and per-server headers.</div>
+        </div>
       </div>
-    </div>
-
-    <div data-tab-pane="http" hidden>
-      <div class="mcp-input-group">
-        <label for="mig-custom-type">Transport type</label>
-        <select id="mig-custom-type" style="${codeStyle}">
-          <option value="http">HTTP (streamable)</option>
-          <option value="sse">SSE (server-sent events)</option>
-        </select>
-      </div>
-      <div class="mcp-input-group">
-        <label for="mig-custom-url">URL</label>
-        <input id="mig-custom-url" type="text" placeholder="https://example.com/mcp" autocomplete="off" />
-      </div>
-      <div class="mcp-input-group">
-        <label for="mig-custom-headers">Headers (Header-Name: value, one per line)</label>
-        <textarea id="mig-custom-headers" rows="3" placeholder="Authorization: api-key your-token-here\nX-Other-Header: value" style="${codeStyle}"></textarea>
-        <div class="mig-hint">Optional. Used for auth tokens and per-server headers.</div>
-      </div>
-    </div>
     </div>`;
-  // Tab switching
-  let activeTab = 'stdio';
+
+  // Tab switching keeps form view in sync with mcpModalState.activeTab.
   fields.querySelectorAll('.mcp-tab').forEach((t) => {
-    t.addEventListener('click', () => {
-      activeTab = t.dataset.tab;
-      fields.querySelectorAll('.mcp-tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === activeTab));
-      fields.querySelectorAll('[data-tab-pane]').forEach((p) => { p.hidden = p.dataset.tabPane !== activeTab; });
-    });
+    t.addEventListener('click', () => { setMcpActiveTab(t.dataset.tab); });
   });
-  // Paste-JSON flow: parse a snippet and prefill the form fields.
-  const setActiveTab = (tab) => {
-    activeTab = tab;
-    fields.querySelectorAll('.mcp-tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === activeTab));
-    fields.querySelectorAll('[data-tab-pane]').forEach((p) => { p.hidden = p.dataset.tabPane !== activeTab; });
-  };
-  $('#mcp-paste-open').addEventListener('click', () => {
-    $('#mcp-paste-wrap').hidden = false;
-    $('#mcp-form-wrap').hidden = true;
-    setTimeout(() => $('#mig-paste-json').focus(), 30);
-  });
-  $('#mcp-paste-cancel').addEventListener('click', () => {
-    $('#mcp-paste-wrap').hidden = true;
-    $('#mcp-form-wrap').hidden = false;
-  });
-  $('#mcp-paste-apply').addEventListener('click', () => {
-    const raw = ($('#mig-paste-json').value || '').trim();
-    if (!raw) { toast('Paste a JSON snippet first', 'error'); return; }
-    let parsed;
-    try {
-      // Be forgiving: accept fragments by wrapping with braces if needed,
-      // and tolerate trailing commas a user copied from a larger object.
-      const cleaned = raw.replace(/,(\s*[}\]])/g, '$1');
-      parsed = JSON.parse(cleaned);
-    } catch (e1) {
-      try {
-        parsed = JSON.parse('{' + raw.replace(/,(\s*[}\]])/g, '$1') + '}');
-      } catch (e2) {
-        toast(`Could not parse JSON: ${e1.message}`, 'error');
-        return;
-      }
-    }
-    // Normalise: accept either { name: { ... } } or a bare entry.
-    let id = '';
-    let entry = parsed;
-    const keys = Object.keys(parsed || {});
-    const looksLikeEntry = parsed && (parsed.command || parsed.url || parsed.type);
-    if (!looksLikeEntry && keys.length === 1 && parsed[keys[0]] && typeof parsed[keys[0]] === 'object') {
-      id = keys[0];
-      entry = parsed[keys[0]];
-    }
-    if (id) $('#mig-custom-id').value = id.replace(/[^a-zA-Z0-9_-]/g, '-');
-    if (entry.url || entry.type === 'http' || entry.type === 'sse') {
-      setActiveTab('http');
-      $('#mig-custom-type').value = entry.type === 'sse' ? 'sse' : 'http';
-      $('#mig-custom-url').value = entry.url || '';
-      const hdrs = entry.headers || {};
+
+  if (isEdit) {
+    // Pre-fill the form from the existing server. Editing the name is
+    // disallowed so the underlying adapter's update() can find the entry.
+    $('#mig-custom-id').value = server.id;
+    if (server.transport === 'http' || server.transport === 'sse') {
+      setMcpActiveTab('http');
+      $('#mig-custom-type').value = server.transport;
+      $('#mig-custom-url').value = server.url || '';
+      const hdrs = server.headers || {};
       $('#mig-custom-headers').value = Object.entries(hdrs).map(([k, v]) => `${k}: ${v}`).join('\n');
     } else {
-      setActiveTab('stdio');
-      $('#mig-custom-cmd').value = entry.command || '';
-      $('#mig-custom-args').value = (entry.args || []).join('\n');
-      const env = entry.env || {};
-      $('#mig-custom-env').value = Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n');
+      setMcpActiveTab('stdio');
+      $('#mig-custom-cmd').value = server.command || '';
+      $('#mig-custom-args').value = (server.args || []).join('\n');
+      $('#mig-custom-env').value = Object.entries(server.env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
     }
-    $('#mcp-paste-wrap').hidden = true;
-    $('#mcp-form-wrap').hidden = false;
-    toast('Filled from JSON · review and click Install', 'success');
-  });
+  } else {
+    // Add mode: wire the paste-view toggle + live parse + view toggle.
+    $('#mcp-view-toggle').addEventListener('click', () => { setMcpView(mcpModalState.view === 'form' ? 'paste' : 'form'); });
+    $('#mig-paste-json').addEventListener('input', mcpParseDebounced);
+  }
+
   $('#mcp-install').hidden = false;
-  $('#mcp-install-confirm').onclick = () => submitMcpCustom(() => activeTab);
+  $('#mcp-install-confirm').onclick = submitMcpModal;
   $('#mcp-install-cancel').onclick = () => { $('#mcp-install').hidden = true; };
+  updateMcpFootButton();
 }
-async function submitMcpCustom(getActiveTab) {
+
+function setMcpActiveTab(tab) {
+  mcpModalState.activeTab = tab;
+  const fields = $('#mcp-install-fields'); if (!fields) return;
+  fields.querySelectorAll('.mcp-tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
+  fields.querySelectorAll('[data-tab-pane]').forEach((p) => { p.hidden = p.dataset.tabPane !== tab; });
+}
+
+function setMcpView(view) {
+  mcpModalState.view = view;
+  const paste = $('#mcp-paste-wrap'); const form = $('#mcp-form-wrap');
+  if (paste) paste.hidden = view !== 'paste';
+  if (form) form.hidden = view !== 'form';
+  const toggle = $('#mcp-view-toggle');
+  if (toggle) toggle.textContent = view === 'paste' ? 'Use the form instead' : 'Paste JSON instead';
+  if (view === 'paste') {
+    setTimeout(() => { try { $('#mig-paste-json').focus(); } catch (_) {} }, 30);
+    mcpParseDebounced();
+  }
+  updateMcpFootButton();
+}
+
+// Live parse on every input event, debounced so a fast typist doesn't
+// pay the IPC round-trip per keystroke.
+let mcpParseTimer = null;
+function mcpParseDebounced() {
+  if (mcpParseTimer) clearTimeout(mcpParseTimer);
+  mcpParseTimer = setTimeout(mcpParseNow, 180);
+}
+async function mcpParseNow() {
+  if (mcpModalState.view !== 'paste') return;
+  const raw = ($('#mig-paste-json') && $('#mig-paste-json').value) || '';
+  if (!raw.trim()) {
+    mcpModalState.parsedItems = []; mcpModalState.parseErrors = [];
+    setMcpPasteStatus('');
+    updateMcpFootButton();
+    return;
+  }
+  const res = await window.husk.mcp.parseSnippet(raw);
+  if (!res || !res.ok) {
+    mcpModalState.parsedItems = []; mcpModalState.parseErrors = [];
+    setMcpPasteStatus((res && res.error) || 'Could not parse JSON', 'error');
+    updateMcpFootButton();
+    return;
+  }
+  mcpModalState.parsedItems = (res.items || []).filter((it) => it && it.id);
+  mcpModalState.parseErrors = res.errors || [];
+  const ok = mcpModalState.parsedItems.length;
+  const bad = mcpModalState.parseErrors.length;
+  const unnamed = (res.items || []).filter((it) => !it.id).length;
+  const parts = [];
+  if (ok) parts.push(`${ok} server${ok !== 1 ? 's' : ''} ready`);
+  if (unnamed) parts.push(`${unnamed} entry without a name (provide one in the JSON)`);
+  if (bad) parts.push(`${bad} with errors`);
+  setMcpPasteStatus(parts.join(' · '), ok ? 'info' : 'error');
+  updateMcpFootButton();
+}
+function setMcpPasteStatus(text, kind) {
+  const el = $('#mig-paste-status'); if (!el) return;
+  if (!text) { el.hidden = true; el.textContent = ''; el.className = 'ra-status'; return; }
+  el.hidden = false; el.textContent = text; el.className = 'ra-status' + (kind ? ' ra-status-' + kind : '');
+}
+function updateMcpFootButton() {
+  const btn = $('#mcp-install-confirm'); if (!btn) return;
+  if (mcpModalState.mode === 'edit') {
+    btn.textContent = 'Save changes';
+    btn.disabled = false;
+    return;
+  }
+  if (mcpModalState.view === 'paste') {
+    const n = mcpModalState.parsedItems.length;
+    btn.textContent = n > 0 ? `Install ${n} server${n !== 1 ? 's' : ''}` : 'Paste JSON above';
+    btn.disabled = n === 0;
+    return;
+  }
+  btn.textContent = 'Install';
+  btn.disabled = false;
+}
+async function submitMcpModal() {
+  if (mcpModalState.mode === 'add' && mcpModalState.view === 'paste') {
+    if (!mcpModalState.parsedItems.length) {
+      toast('Nothing valid to install. Fix the JSON above.', 'error');
+      return;
+    }
+    const r = await window.husk.mcp.addMany(mcpModalState.parsedItems);
+    if (!r || !r.ok) { toast((r && r.error) || 'Install failed', 'error'); return; }
+    const ok = []; const skip = []; const err = [];
+    for (const id of Object.keys(r.results || {})) {
+      const s = r.results[id];
+      if (s.status === 'installed') ok.push(id);
+      else if (s.status === 'exists') skip.push(id);
+      else err.push(`${id}: ${s.error || 'error'}`);
+    }
+    const msg = [];
+    if (ok.length) msg.push(`Installed ${ok.length}`);
+    if (skip.length) msg.push(`${skip.length} already existed`);
+    if (err.length) msg.push(`${err.length} failed`);
+    toast(msg.join(' · ') || 'Done', err.length ? 'error' : 'success');
+    $('#mcp-install').hidden = true;
+    await renderMcp();
+    if (ok.length) applyMcpChange(ok.join(', '));
+    return;
+  }
+  // Form-view path (add or edit). Build the payload from the current
+  // form fields, then call add() or update() based on mode.
   const id = ($('#mig-custom-id').value || '').trim();
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) { toast('Invalid server name', 'error'); return; }
-  const tab = (getActiveTab && getActiveTab()) || 'stdio';
+  const tab = mcpModalState.activeTab;
   let payload;
   if (tab === 'http') {
     const url = ($('#mig-custom-url').value || '').trim();
@@ -3625,10 +3738,12 @@ async function submitMcpCustom(getActiveTab) {
     }
     payload = { id, command, args, env };
   }
-  const r = await window.husk.mcp.add(payload);
-  if (!r.ok) { toast(r.error || 'Install failed', 'error'); return; }
+  const op = mcpModalState.mode === 'edit'
+    ? await window.husk.mcp.update(payload)
+    : await window.husk.mcp.add(payload);
+  if (!op || !op.ok) { toast((op && op.error) || 'Save failed', 'error'); return; }
   $('#mcp-install').hidden = true;
-  toast(`Installed ${id}`, 'success');
+  toast(mcpModalState.mode === 'edit' ? `Updated ${id}` : `Installed ${id}`, 'success');
   await renderMcp();
   applyMcpChange(id);
 }

@@ -49,6 +49,29 @@ function remove(id) {
   return { ok: true };
 }
 
+// update overwrites an existing server entry in place, preserving its
+// enabled/disabled status. Same contract as the claude adapter.
+function update(id, payload = {}) {
+  if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return { ok: false, error: 'Invalid server id' };
+  const cfg = readConfig();
+  const inEnabled = !!(cfg.mcpServers && cfg.mcpServers[id]);
+  const inDisabled = !!(cfg._huskMcpDisabled && cfg._huskMcpDisabled[id]);
+  if (!inEnabled && !inDisabled) {
+    return { ok: false, error: `MCP server "${id}" not found` };
+  }
+  const built = buildServerEntry(payload);
+  if (built.error) return { ok: false, error: built.error };
+  if (inEnabled) {
+    cfg.mcpServers = cfg.mcpServers || {};
+    cfg.mcpServers[id] = built.entry;
+  } else {
+    cfg._huskMcpDisabled = cfg._huskMcpDisabled || {};
+    cfg._huskMcpDisabled[id] = built.entry;
+  }
+  if (!writeConfig(cfg)) return { ok: false, error: 'Could not write ~/.copilot/mcp-config.json' };
+  return { ok: true };
+}
+
 function toggle(id) {
   if (!id) return { ok: false, error: 'No id' };
   const cfg = readConfig();
@@ -82,6 +105,7 @@ module.exports = {
   list,
   health,
   add,
+  update,
   remove,
   toggle,
 };
