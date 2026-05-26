@@ -535,9 +535,10 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     CLAUDE_DIR,
-    // Marker so PAI hooks/statusline can suppress duplicate chrome (ATLAS
-    // dashboard, neofetch banner, inline statusline) that Husk's right
-    // panel already surfaces. PAI side checks $HUSK_HOST and early-exits.
+    // Marker so PAI hooks/statusline can suppress duplicate chrome
+    // (status dashboard, neofetch banner, inline statusline) that Husk's
+    // right panel already surfaces. PAI side checks $HUSK_HOST and
+    // early-exits.
     HUSK_HOST: '1',
   });
   const bunBin = path.join(HOME, '.bun', 'bin');
