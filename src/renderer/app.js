@@ -1837,6 +1837,229 @@ $('#ra-root') && $('#ra-root').addEventListener('keydown', (e) => {
   }
 });
 $('#repo-agents-modal') && $('#repo-agents-modal').addEventListener('click', (e) => { if (e.target === $('#repo-agents-modal')) closeRepoAgentsModal(); });
+
+// ─── Install MCP servers from a cloned repo ───────────────────────────────────
+// Sibling of the agent install flow. Three views inside a single modal:
+//   1) "list" — picker for repo path + scanned servers
+//   2) "detail" — env-var form + per-CLI target checkboxes for one server
+//   3) "results" — per-CLI status pills + copy-able snippets for codex/aider
+// Each view replaces the modal body, the foot button changes role between
+// Install / Back / Done so the user always knows what to press next.
+let rmScan = null;
+let rmPicked = null;
+function openRepoMcpModal() {
+  const m = $('#repo-mcp-modal');
+  if (!m) return;
+  rmScan = null;
+  rmPicked = null;
+  if ($('#rm-root')) $('#rm-root').value = '';
+  rmSetView('list');
+  rmStatus('');
+  m.hidden = false;
+  setTimeout(() => { try { $('#rm-root').focus(); } catch (_) {} }, 0);
+}
+function closeRepoMcpModal() { const m = $('#repo-mcp-modal'); if (m) m.hidden = true; }
+function rmStatus(text, kind) {
+  const el = $('#rm-status'); if (!el) return;
+  if (!text) { el.hidden = true; el.textContent = ''; el.className = 'ra-status'; return; }
+  el.hidden = false; el.className = 'ra-status' + (kind ? ' ra-status-' + kind : '');
+  el.textContent = text;
+}
+function rmSetView(view) {
+  const list = $('#rm-list'); const detail = $('#rm-detail'); const results = $('#rm-results');
+  const installBtn = $('#rm-install'); const cancelBtn = $('#rm-cancel');
+  if (list) list.hidden = view !== 'list';
+  if (detail) detail.hidden = view !== 'detail';
+  if (results) results.hidden = view !== 'results';
+  if (installBtn) {
+    installBtn.disabled = true;
+    installBtn.textContent = view === 'detail' ? 'Install' : (view === 'list' ? 'Next' : 'Done');
+    installBtn.onclick = view === 'detail' ? rmDoInstall : (view === 'list' ? rmAdvanceToDetail : closeRepoMcpModal);
+    if (view === 'results') installBtn.disabled = false;
+  }
+  if (cancelBtn) cancelBtn.textContent = view === 'list' ? 'Close' : 'Back';
+  cancelBtn.onclick = view === 'list' ? closeRepoMcpModal : () => rmSetView(view === 'detail' ? 'list' : 'detail');
+}
+async function rmBrowse() {
+  const picked = await window.husk.repoMcp.pickDir();
+  if (!picked) return;
+  if ($('#rm-root')) $('#rm-root').value = picked;
+  await rmScanRoot(picked);
+}
+async function rmScanRoot(root) {
+  const list = $('#rm-list'); if (!list) return;
+  rmStatus('Scanning…');
+  // eslint-disable-next-line no-unsanitized/property -- static loading copy
+  list.innerHTML = '<div class="ai-empty">Looking for mcp-servers/*…</div>';
+  const res = await window.husk.repoMcp.scan(root);
+  if (!res || !res.ok) {
+    rmStatus((res && res.error) || 'Scan failed', 'error');
+    // eslint-disable-next-line no-unsanitized/property -- escapeHtml below
+    list.innerHTML = `<div class="ai-empty">${escapeHtml((res && res.error) || 'Could not scan that folder')}</div>`;
+    rmScan = null; return;
+  }
+  rmScan = res;
+  if (!res.hasServersDir) {
+    // eslint-disable-next-line no-unsanitized/property -- static html
+    list.innerHTML = '<div class="ai-empty">No <code>mcp-servers/</code> directory at that path.</div>';
+    rmStatus('');
+    return;
+  }
+  if (!res.servers.length) {
+    // eslint-disable-next-line no-unsanitized/property -- static html
+    list.innerHTML = '<div class="ai-empty">The <code>mcp-servers/</code> dir exists but contains no subfolders.</div>';
+    rmStatus('');
+    return;
+  }
+  rmStatus(res.truncated
+    ? `Showing first ${res.servers.length} of ${res.totalFound} servers. Narrow the repo if you need more.`
+    : `Found ${res.servers.length} server${res.servers.length !== 1 ? 's' : ''}.`, 'info');
+  // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
+  list.innerHTML = res.servers.map((s, i) => {
+    const pillBits = [];
+    if (!s.installable) pillBits.push('<span class="ai-row-pill">not installable</span>');
+    if (s.needsBuild) pillBits.push('<span class="ai-row-pill">needs build</span>');
+    if (s.mainExists) pillBits.push('<span class="ai-row-pill">ready</span>');
+    return `
+      <label class="ai-row${s.installable ? '' : ' is-duplicate'}">
+        <input type="radio" name="rm-pick" class="ai-check rm-pick" data-idx="${i}" ${s.installable ? '' : 'disabled'} />
+        <span class="ai-check-box" aria-hidden="true"></span>
+        <div class="ai-row-body">
+          <div class="ai-row-name">${escapeHtml(s.displayName)}<span class="ai-row-source">${escapeHtml(s.name)}</span></div>
+          ${s.description ? `<div class="ai-row-desc">${escapeHtml(s.description)}</div>` : ''}
+        </div>
+        ${pillBits.join('')}
+      </label>
+    `;
+  }).join('');
+  list.querySelectorAll('.rm-pick').forEach((el) => el.addEventListener('change', () => {
+    const i = Number(el.dataset.idx);
+    rmPicked = (rmScan && Array.isArray(rmScan.servers)) ? rmScan.servers[i] : null;
+    const btn = $('#rm-install'); if (btn) btn.disabled = !rmPicked;
+  }));
+}
+function rmAdvanceToDetail() {
+  if (!rmPicked) return;
+  const detail = $('#rm-detail'); if (!detail) return;
+  const envFields = (rmPicked.envVars || []).map((e) => {
+    const safeId = 'rm-env-' + e.key.replace(/[^a-zA-Z0-9_-]/g, '');
+    return `
+      <label class="pref-row" style="flex-direction:column; align-items:stretch; gap:4px;">
+        <span class="pref-label" style="font-family:'JetBrains Mono', monospace; font-size: 12px;">${escapeHtml(e.key)}</span>
+        <input type="text" data-env="${escapeAttr(e.key)}" id="${escapeAttr(safeId)}" placeholder="${escapeAttr(e.hint || '')}" spellcheck="false" autocomplete="off" />
+      </label>
+    `;
+  }).join('') || '<div class="ai-empty" style="padding:10px 0;">No environment variables declared.</div>';
+  const targets = [
+    { id: 'claude', label: 'Claude Code', sub: 'writes ~/.claude.json', write: true },
+    { id: 'copilot', label: 'GitHub Copilot CLI', sub: 'writes ~/.copilot/mcp-config.json', write: true },
+    { id: 'codex', label: 'Codex CLI', sub: 'shows TOML snippet to paste into ~/.codex/config.toml', write: false },
+    { id: 'aider', label: 'Aider', sub: 'shows --mcp flag snippet to paste into your aider invocation', write: false },
+  ];
+  // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
+  detail.innerHTML = `
+    <div class="ra-status ra-status-info"><strong>${escapeHtml(rmPicked.displayName)}</strong> · <code>${escapeHtml(rmPicked.dir)}</code></div>
+    ${rmPicked.needsBuild ? `
+      <label class="ai-foot-toggle" title="Run npm install + npm run build inside the server before installing">
+        <input type="checkbox" id="rm-build" class="ai-check" checked />
+        <span class="ai-check-box" aria-hidden="true"></span>
+        Run npm install + npm run build first (the server's <code>dist/</code> is missing)
+      </label>
+      <div class="ra-status ra-status-info" style="margin-top:6px;">
+        Heads up: running build executes the server's <code>package.json</code> lifecycle scripts (preinstall / install / postinstall / build). Only do this for repos you trust.
+      </div>
+    ` : ''}
+    <div class="modal-section">
+      <div class="modal-label">Environment variables</div>
+      ${envFields}
+    </div>
+    <div class="modal-section">
+      <div class="modal-label">Install into</div>
+      ${targets.map((t) => `
+        <label class="ai-foot-toggle" title="${escapeAttr(t.sub)}">
+          <input type="checkbox" class="ai-check rm-target" data-target="${escapeAttr(t.id)}" ${t.write ? 'checked' : ''} />
+          <span class="ai-check-box" aria-hidden="true"></span>
+          ${escapeHtml(t.label)} <span class="ai-row-source">${escapeHtml(t.sub)}</span>
+        </label>
+      `).join('')}
+    </div>
+  `;
+  rmSetView('detail');
+  const updateBtn = () => {
+    const picked = $$('#rm-detail .rm-target:checked').length;
+    const btn = $('#rm-install'); if (btn) btn.disabled = picked === 0;
+  };
+  $$('#rm-detail .rm-target').forEach((el) => el.addEventListener('change', updateBtn));
+  updateBtn();
+}
+async function rmDoInstall() {
+  if (!rmPicked) return;
+  const targets = $$('#rm-detail .rm-target:checked').map((el) => el.dataset.target);
+  if (!targets.length) return;
+  const envValues = {};
+  $$('#rm-detail input[data-env]').forEach((el) => { envValues[el.dataset.env] = el.value; });
+  const btn = $('#rm-install'); if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+  const shouldBuild = rmPicked.needsBuild && $('#rm-build') && $('#rm-build').checked;
+  rmStatus(shouldBuild ? 'Running npm install + build…' : 'Installing…', 'info');
+  if (shouldBuild) {
+    const br = await window.husk.repoMcp.build(rmPicked.dir);
+    if (!br || !br.ok) {
+      const lastStage = br && Array.isArray(br.stages) ? br.stages[br.stages.length - 1] : null;
+      rmStatus((lastStage && lastStage.error) ? `Build failed: ${lastStage.error}` : 'Build failed', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Install'; }
+      return;
+    }
+  }
+  const res = await window.husk.repoMcp.install({
+    server: rmPicked,
+    envValues,
+    targets,
+    serverId: (rmPicked.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '-'),
+  });
+  if (!res || !res.ok) {
+    rmStatus((res && res.error) || 'Install failed', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Install'; }
+    return;
+  }
+  rmRenderResults(res);
+  try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
+}
+function rmRenderResults(res) {
+  const wrap = $('#rm-results'); if (!wrap) return;
+  rmStatus('');
+  const rows = Object.keys(res.results || {}).map((target) => {
+    const r = res.results[target] || {};
+    let body = '';
+    let pill = '';
+    if (r.status === 'installed') { pill = 'Installed'; body = `<div class="ai-row-desc">wrote to <code>${escapeHtml(r.configPath || '')}</code></div>`; }
+    else if (r.status === 'exists') { pill = 'Already installed'; body = `<div class="ai-row-desc">entry already in <code>${escapeHtml(r.configPath || '')}</code>; remove it first if you want to replace</div>`; }
+    else if (r.status === 'snippet') {
+      pill = 'Snippet';
+      body = `<pre class="ai-row-snippet" style="white-space:pre-wrap; font-family:'JetBrains Mono', monospace; font-size: 11.5px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 8px 10px; margin: 6px 0 0;">${escapeHtml(r.snippet || '')}</pre><div style="margin-top:6px;"><button class="ghost-btn rm-copy" data-text="${escapeAttr(r.snippet || '')}">Copy</button></div>`;
+    } else { pill = 'Error'; body = `<div class="ai-row-desc">${escapeHtml(r.error || 'unknown error')}</div>`; }
+    return `
+      <div class="ai-row" style="cursor:default;">
+        <div class="ai-row-body">
+          <div class="ai-row-name">${escapeHtml(target)}<span class="ai-row-source">${escapeHtml(res.serverId || '')}</span></div>
+          ${body}
+        </div>
+        <span class="ai-row-pill">${escapeHtml(pill)}</span>
+      </div>`;
+  }).join('');
+  // eslint-disable-next-line no-unsanitized/property -- escapeHtml above for every dynamic value
+  wrap.innerHTML = `<div class="ai-list">${rows}</div>`;
+  wrap.querySelectorAll('.rm-copy').forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.text || ''); toast('Snippet copied', 'success'); } catch (_) {}
+  }));
+  rmSetView('results');
+}
+$('#btn-mcp-install-from-repo') && $('#btn-mcp-install-from-repo').addEventListener('click', openRepoMcpModal);
+$('#rm-close') && $('#rm-close').addEventListener('click', closeRepoMcpModal);
+$('#rm-browse') && $('#rm-browse').addEventListener('click', rmBrowse);
+$('#rm-root') && $('#rm-root').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); const v = ($('#rm-root').value || '').trim(); if (v) rmScanRoot(v); }
+});
+$('#repo-mcp-modal') && $('#repo-mcp-modal').addEventListener('click', (e) => { if (e.target === $('#repo-mcp-modal')) closeRepoMcpModal(); });
 $('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', closeAgentModal);
 $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
