@@ -106,6 +106,12 @@ const DEFAULT_CONFIG = {
   voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
   skipWelcome: false,
   recap: true,
+  // PAI is the bundled Claude-Code-only assistant framework Husk drops into
+  // ~/.claude/. Defaults to enabled so existing Claude users get it on
+  // first run, but Copilot-only users can switch it off to skip the
+  // bootstrap, kill the statusline tick, and drop the PAI/Algorithm
+  // reference from the Husk identity prompt.
+  paiEnabled: true,
   profiles: DEFAULT_PROFILES,
   activeProfileId: null,
 };
@@ -164,6 +170,9 @@ function refreshStatuslineCacheOnce() {
 }
 function startStatuslineRefresh() {
   if (statuslineTimer) return;
+  // statusline-command.sh is PAI's status feeder. Skip the tick entirely
+  // when the user has disabled PAI — no script, no caches, no need to run.
+  if (config.paiEnabled === false) return;
   // Kick off once on startup, then every 30s.
   refreshStatuslineCacheOnce();
   statuslineTimer = setInterval(refreshStatuslineCacheOnce, 30000);
@@ -328,6 +337,11 @@ function bootstrapHuskPromptsIfNeeded() {
 }
 
 function bootstrapPaiIfNeeded() {
+  // Hard opt-out: when the user has disabled PAI in Preferences, we do not
+  // touch ~/.claude/ on launch. Pre-existing files stay where they are
+  // (Husk never removes user files behind their back); the user can clean
+  // ~/.claude/{PAI,agents,skills,hooks}/ manually if they want.
+  if (config.paiEnabled === false) return;
   try {
     const claudeDir = path.join(HOME, '.claude');
 
@@ -551,9 +565,20 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     // panel. Acceptable duplication, the user gets persistent trust,
     // skill-listing budget reverts to the claude default.
     const agentName = (config.agentName || 'Husk').replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || 'Husk';
-    const huskPromptParts = [
-      `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/Algorithm, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
-    ];
+    // When PAI is enabled, point the model at PAI/Algorithm and the
+    // banner/TASK/CHANGE/VERIFY/recap conventions PAI's CLAUDE.md sets up.
+    // When PAI is off, keep only the lightweight Husk identity sentence and
+    // let claude follow its own (un-PAI) CLAUDE.md without our nudge.
+    const huskPromptParts = [];
+    if (config.paiEnabled === false) {
+      huskPromptParts.push(
+        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line.`,
+      );
+    } else {
+      huskPromptParts.push(
+        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/Algorithm, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
+      );
+    }
     if (config.recap === false) {
       huskPromptParts.push(`The user has disabled recaps in Husk. Suppress any "* recap:" line and end-of-response summary footer for this session.`);
     }
