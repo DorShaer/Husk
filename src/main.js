@@ -171,7 +171,7 @@ function refreshStatuslineCacheOnce() {
 function startStatuslineRefresh() {
   if (statuslineTimer) return;
   // statusline-command.sh is PAI's status feeder. Skip the tick entirely
-  // when the user has disabled PAI — no script, no caches, no need to run.
+  // when the user has disabled PAI: no script, no caches, no need to run.
   if (config.paiEnabled === false) return;
   // Kick off once on startup, then every 30s.
   refreshStatuslineCacheOnce();
@@ -734,7 +734,7 @@ ipcMain.handle('config:set', (_e, partial) => {
     // Park or restore ~/.claude/CLAUDE.md so the next agent restart actually
     // sees (or no longer sees) the PAI mode-banner instructions. The
     // statusline tick is best-effort kicked back in / off; bootstrap on disk
-    // is left as-is — bringing PAI back on a future launch will repair any
+    // is left as-is; bringing PAI back on a future launch will repair any
     // missing pieces via bootstrapPaiIfNeeded.
     applyPaiState(config.paiEnabled !== false);
     if (config.paiEnabled !== false) startStatuslineRefresh();
@@ -1715,7 +1715,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       const merged = PaiState.mergeHuskAgentsBlock(existing, copilotBlocks);
       fs.writeFileSync(copilotInstructionsPath, merged, { mode: 0o644 });
     } catch (err) {
-      // Surface the failure but do not abort the import — the Claude side
+      // Surface the failure but do not abort the import: the Claude side
       // and the Husk profiles still landed; the user can retry the Copilot
       // write or paste the snippet manually.
       return {

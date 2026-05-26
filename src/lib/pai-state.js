@@ -19,7 +19,7 @@ function parkedPath(claudeDir) {
 }
 
 // Rename ~/.claude/CLAUDE.md to/from the parked sibling based on whether
-// PAI is supposed to be active. Renames only — never deletes. All four
+// PAI is supposed to be active. Renames only; never deletes. All four
 // presence combinations are handled deliberately:
 //
 //   active=false, live present, parked absent  → rename live → parked
@@ -48,7 +48,7 @@ function applyPaiState(claudeDir, active) {
       }
     }
   } catch (_) {
-    // Swallow — same behavior the inline version had. Surfacing an
+    // Swallow: same behavior the inline version had. Surfacing an
     // exception here would crash startup; the caller logs separately.
   }
 }
@@ -64,7 +64,7 @@ function buildHuskPrompt({ agentName, paiEnabled, recap } = {}) {
   const parts = [];
   if (paiEnabled === false) {
     parts.push(
-      `You are running inside Husk, a desktop wrapper. The user has named this agent ${name}. When asked your name or identity, respond as ${name} (no other persona). Use "🗣️ ${name}:" if you emit a speech-balloon line. Husk has PAI disabled: do NOT emit PAI mode banners ("═══ PAI ═══", "════ PAI | NATIVE MODE ═══", "════ PAI | ALGORITHM ═══", or any similar header), do NOT use Algorithm/ISC structure, and do NOT produce TASK / CHANGE / VERIFY / SUMMARY sections. Reply naturally, in plain prose, even if any CLAUDE.md or memory file you read tells you to use those formats — this Husk instruction overrides them.`,
+      `You are running inside Husk, a desktop wrapper. The user has named this agent ${name}. When asked your name or identity, respond as ${name} (no other persona). Use "🗣️ ${name}:" if you emit a speech-balloon line. Husk has PAI disabled: do NOT emit PAI mode banners ("═══ PAI ═══", "════ PAI | NATIVE MODE ═══", "════ PAI | ALGORITHM ═══", or any similar header), do NOT use Algorithm/ISC structure, and do NOT produce TASK / CHANGE / VERIFY / SUMMARY sections. Reply naturally, in plain prose, even if any CLAUDE.md or memory file you read tells you to use those formats. This Husk instruction overrides them.`,
     );
   } else {
     parts.push(
