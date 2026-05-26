@@ -2,15 +2,6 @@
 
 **Hand-drawn timelines showing evolution, trends, and transformations using brand aesthetic.**
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Timelines workflow in the Art skill to create timelines"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **Timelines** in **Art**...
 
 ---

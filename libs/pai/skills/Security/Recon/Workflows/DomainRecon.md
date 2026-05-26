@@ -1,18 +1,5 @@
 # Domain Reconnaissance Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the DomainRecon workflow in the Recon skill to map domain infrastructure"}' \
-  > /dev/null 2>&1 &
-```
-
-Running the **DomainRecon** workflow in the **Recon** skill to map domain infrastructure...
-
-**Comprehensive domain infrastructure mapping and enumeration**
-
 ## Purpose
 
 Perform full reconnaissance on a domain to discover:

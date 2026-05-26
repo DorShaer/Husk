@@ -1,14 +1,5 @@
 # Domain OSINT Lookup Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the DomainLookup workflow in the OSINT skill to investigate domains"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **DomainLookup** workflow in the **OSINT** skill to investigate domains...
 
 **Purpose:** Dedicated domain and subdomain investigation — registration intel, DNS enumeration, subdomain discovery, technology fingerprinting, certificate transparency, and reputation assessment.

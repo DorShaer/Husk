@@ -1,14 +1,5 @@
 # Entity Collision Detection Workflow
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the CollisionDetection workflow in the Parser skill to prevent duplicates"}' \
-  > /dev/null 2>&1 &
-```
-
 Running the **CollisionDetection** workflow in the **Parser** skill to prevent duplicates...
 
 ## Purpose

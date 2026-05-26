@@ -10,69 +10,6 @@ description: Meta-prompting system that generates optimized prompts using templa
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior. If the directory does not exist, proceed with skill defaults.
 
-
-## 🚨 MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-**You MUST send this notification BEFORE doing anything else when this skill is invoked.**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the Prompting skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **Prompting** skill to ACTION...
-   ```
-
-**This is not optional. Execute this curl command immediately upon skill invocation.**
-
-# Prompting - Meta-Prompting & Template System
-
-**Invoke when:** meta-prompting, template generation, prompt optimization, programmatic prompt composition, creating dynamic agents, generating structured prompts from data.
-
-## Overview
-
-The Prompting skill owns ALL prompt engineering concerns:
-- **Standards** - Anthropic best practices, Claude 4.x patterns, empirical research
-- **Templates** - Handlebars-based system for programmatic prompt generation
-- **Tools** - Template rendering, validation, and composition utilities
-- **Patterns** - Reusable prompt primitives and structures
-
-This is the "standard library" for prompt engineering - other skills reference these resources when they need to generate or optimize prompts.
-
-## Core Components
-
-### 1. Standards.md
-Complete prompt engineering documentation based on:
-- Anthropic's Claude 4.x Best Practices (November 2025)
-- Context engineering principles
-- The Fabric prompt pattern system
-- 1,500+ academic papers on prompt optimization
-
-**Key Topics:**
-- Markdown-first design (NO XML tags)
-
-
-## Usage Examples
-
-### Example 1: Using Briefing Template (Agent Skill)
-
-```typescript
-// skills/Agents/Tools/ComposeAgent.ts
-import { renderTemplate } from '~/.claude/skills/Utilities/Prompting/Tools/RenderTemplate.ts';
-
-const prompt = renderTemplate('Primitives/Briefing.hbs', {
-  briefing: { type: 'research' },
-  agent: { id: 'EN-1', name: 'Skeptical Thinker', personality: {...} },
-  task: { description: 'Analyze security architecture', questions: [...] },
-  output_format: { type: 'markdown' }
-});
-```
-
 ### Example 2: Using Structure Template (Workflow)
 
 ```yaml

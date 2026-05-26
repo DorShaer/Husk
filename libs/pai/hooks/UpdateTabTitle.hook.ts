@@ -23,7 +23,6 @@
  * 4. If validation fails both paths → getWorkingFallback()
  *
  * VOICE: Announces inference-generated summary on prompt receipt.
- * Task completion voice is separate (VoiceCompletion.hook.ts → VoiceNotification handler).
  * DO NOT REMOVE voice from this hook — see MEMORY/LEARNING/SYSTEM/2026-01/
  * 2026-01-15-205500_LEARNING_voice-on-prompt-submit-architecture.md
  */
@@ -212,32 +211,6 @@ async function main() {
     const { voice: voiceSummary, title: inferredTitle } = await summarizePrompt(prompt);
     const finalTitle = inferredTitle || (quickTitle && isValidWorkingTitle(quickTitle) ? quickTitle : getWorkingFallback());
     setTabState({ title: `⚙️ ${prefix}${finalTitle}`, state: 'working', sessionId: data.session_id });
-
-    // Voice feedback — announce what's being worked on (only when we have a CLEAN summary).
-    // Voice uses inference result even if contamination filter rejected it for tab title.
-    // NO raw prompt fallback — promptToVoiceFallback sends garbage (task IDs, user anger,
-    // system-reminder content). Only speak validated working titles.
-    const voiceContent = voiceSummary || (quickTitle && isValidWorkingTitle(quickTitle) ? quickTitle : null);
-    if (voiceContent) {
-      const identity = getIdentity();
-      try {
-        await fetch('http://localhost:8888/notify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: voiceContent.replace(/\.$/, ''),
-            voice_id: identity.mainDAVoiceID,
-            voice_enabled: true,
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-        console.error(`[UpdateTabTitle] Voice sent: "${voiceContent}"`);
-      } catch {
-        console.error(`[UpdateTabTitle] Voice failed (server down or timeout)`);
-      }
-    } else {
-      console.error(`[UpdateTabTitle] No meaningful voice content, skipping`);
-    }
 
     console.error(`[UpdateTabTitle] "${finalTitle}"`);
     process.exit(0);

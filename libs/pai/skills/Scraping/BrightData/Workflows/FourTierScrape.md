@@ -1,14 +1,5 @@
 # Four-Tier URL Content Scraping
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the FourTierScrape workflow in the BrightData skill to scrape URL content"}' \
-  > /dev/null 2>&1 &
-```
-
 Running **FourTierScrape** in **BrightData**...
 
 ---

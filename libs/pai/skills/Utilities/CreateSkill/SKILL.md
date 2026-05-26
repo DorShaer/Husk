@@ -10,65 +10,6 @@ description: Scaffold new PAI skills with proper YAML front matter, TitleCase na
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior. If the directory does not exist, proceed with skill defaults.
 
-
-## 🚨 MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-**You MUST send this notification BEFORE doing anything else when this skill is invoked.**
-
-1. **Send voice notification**:
-   ```bash
-   curl -s -X POST http://localhost:8888/notify \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Running the WORKFLOWNAME workflow in the CreateSkill skill to ACTION"}' \
-     > /dev/null 2>&1 &
-   ```
-
-2. **Output text notification**:
-   ```
-   Running the **WorkflowName** workflow in the **CreateSkill** skill to ACTION...
-   ```
-
-**This is not optional. Execute this curl command immediately upon skill invocation.**
-
-# CreateSkill
-
-MANDATORY skill creation framework for ALL skill creation requests.
-
-## Authoritative Source
-
-**Before creating ANY skill, READ:** `~/.claude/PAI/SkillSystem.md`
-
-**Canonical example to follow:** `~/.claude/skills/Research/SKILL.md`
-
-## TitleCase Naming Convention
-
-**All naming must use TitleCase (PascalCase).**
-
-| Component | Format | Example |
-|-----------|--------|---------|
-| Skill directory | TitleCase | `Blogging`, `Daemon`, `CreateSkill` |
-| Workflow files | TitleCase.md | `Create.md`, `UpdateDaemonInfo.md` |
-| Reference docs | TitleCase.md | `ProsodyGuide.md`, `ApiReference.md` |
-| Tool files | TitleCase.ts | `ManageServer.ts` |
-| Help files | TitleCase.help.md | `ManageServer.help.md` |
-
-**Wrong (NEVER use):**
-- `createskill`, `create-skill`, `CREATE_SKILL`
-- `create.md`, `update-info.md`, `SYNC_REPO.md`
-
----
-
-## Flat Folder Structure (MANDATORY)
-
-**CRITICAL: Keep folder structure FLAT - maximum 2 levels deep.**
-
-### The Rule
-
-**Maximum depth:** `skills/SkillName/Category/`
-
-### ✅ ALLOWED (2 levels max)
-
-```
 skills/SkillName/SKILL.md                    # Skill root
 skills/SkillName/Workflows/Create.md         # Workflow - one level deep - GOOD
 skills/SkillName/Tools/Manage.ts             # Tool - one level deep - GOOD
@@ -221,7 +162,6 @@ Brief description.
 **See:** `~/.claude/PAI/SkillSystem.md` (Dynamic Loading Pattern section)
 
 ---
-
 
 ## Workflow Routing
 
