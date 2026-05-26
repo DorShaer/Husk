@@ -337,28 +337,11 @@ function bootstrapHuskPromptsIfNeeded() {
 }
 
 // Park or restore ~/.claude/CLAUDE.md based on the current paiEnabled state.
-// CLAUDE.md is what makes a claude session emit the `═══ PAI ═══` mode
-// banner and follow Algorithm/ISC conventions — claude reads it globally at
-// startup, before any --append-system-prompt Husk passes. Toggling the Husk
-// prompt alone therefore does NOT silence PAI; we have to move the file
-// aside. Renames only — never delete — so the operation is fully reversible.
+// Implementation lives in src/lib/pai-state.js so it can be unit-tested
+// without spinning up Electron.
+const PaiState = require('./lib/pai-state');
 function applyPaiState(active) {
-  const claudeDir = path.join(HOME, '.claude');
-  const live = path.join(claudeDir, 'CLAUDE.md');
-  const parked = path.join(claudeDir, 'CLAUDE.md.husk-disabled');
-  try {
-    if (!active) {
-      if (fs.existsSync(live) && !fs.existsSync(parked)) {
-        fs.renameSync(live, parked);
-      }
-    } else {
-      if (fs.existsSync(parked) && !fs.existsSync(live)) {
-        fs.renameSync(parked, live);
-      }
-    }
-  } catch (err) {
-    console.error('[husk] applyPaiState failed:', err && err.message);
-  }
+  PaiState.applyPaiState(path.join(HOME, '.claude'), active);
 }
 
 function bootstrapPaiIfNeeded() {
@@ -589,25 +572,11 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     // statusline at the bottom of the terminal, alongside Husk's right
     // panel. Acceptable duplication, the user gets persistent trust,
     // skill-listing budget reverts to the claude default.
-    const agentName = (config.agentName || 'Husk').replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || 'Husk';
-    // When PAI is enabled, point the model at PAI/Algorithm and the
-    // banner/TASK/CHANGE/VERIFY/recap conventions PAI's CLAUDE.md sets up.
-    // When PAI is off, keep only the lightweight Husk identity sentence and
-    // let claude follow its own (un-PAI) CLAUDE.md without our nudge.
-    const huskPromptParts = [];
-    if (config.paiEnabled === false) {
-      huskPromptParts.push(
-        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Husk has PAI disabled: do NOT emit PAI mode banners ("═══ PAI ═══", "════ PAI | NATIVE MODE ═══", "════ PAI | ALGORITHM ═══", or any similar header), do NOT use Algorithm/ISC structure, and do NOT produce TASK / CHANGE / VERIFY / SUMMARY sections. Reply naturally, in plain prose, even if any CLAUDE.md or memory file you read tells you to use those formats — this Husk instruction overrides them.`,
-      );
-    } else {
-      huskPromptParts.push(
-        `You are running inside Husk, a desktop wrapper. The user has named this agent ${agentName}. When asked your name or identity, respond as ${agentName} (no other persona). Use "🗣️ ${agentName}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/Algorithm, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
-      );
-    }
-    if (config.recap === false) {
-      huskPromptParts.push(`The user has disabled recaps in Husk. Suppress any "* recap:" line and end-of-response summary footer for this session.`);
-    }
-    const huskPrompt = huskPromptParts.join(' ');
+    const huskPrompt = PaiState.buildHuskPrompt({
+      agentName: config.agentName,
+      paiEnabled: config.paiEnabled !== false,
+      recap: config.recap,
+    });
     agentArgs = ['--append-system-prompt', huskPrompt, ...agentArgs];
   }
 
@@ -1608,8 +1577,11 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
 // already-known root), then repoAgents:scan to populate the picker, then
 // repoAgents:install with the user's selection.
 
-const HUSK_AGENTS_START = '<!-- HUSK-AGENTS:START -->';
-const HUSK_AGENTS_END = '<!-- HUSK-AGENTS:END -->';
+// Marker constants + the block renderer + the merger live in
+// src/lib/pai-state.js so the test suite can hit every branch without
+// loading Electron. Re-bind the names locally for readability.
+const HUSK_AGENTS_START = PaiState.HUSK_AGENTS_START;
+const HUSK_AGENTS_END = PaiState.HUSK_AGENTS_END;
 
 ipcMain.handle('repoAgents:pickDir', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
@@ -1682,23 +1654,7 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
-function renderHuskAgentsBlock(picked) {
-  // picked: [{ name, body }]
-  const lines = [
-    HUSK_AGENTS_START,
-    '<!-- Managed by Husk. Edits inside this block are overwritten on the',
-    '     next install-from-repo run. Edit content outside the markers freely. -->',
-    '',
-  ];
-  for (const item of picked) {
-    lines.push(`# Agent: ${item.name}`);
-    lines.push('');
-    lines.push(item.body.trim());
-    lines.push('');
-  }
-  lines.push(HUSK_AGENTS_END);
-  return lines.join('\n');
-}
+const renderHuskAgentsBlock = PaiState.renderHuskAgentsBlock;
 
 ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const root = String((payload && payload.root) || '').trim();
@@ -1756,22 +1712,8 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       copilotInstructionsPath = path.join(dotGithub, 'copilot-instructions.md');
       let existing = '';
       try { existing = fs.readFileSync(copilotInstructionsPath, 'utf8'); } catch (_) {}
-      const startIdx = existing.indexOf(HUSK_AGENTS_START);
-      const endIdx = existing.indexOf(HUSK_AGENTS_END);
-      let before, after;
-      if (startIdx >= 0 && endIdx > startIdx) {
-        before = existing.slice(0, startIdx).replace(/\s+$/, '');
-        after = existing.slice(endIdx + HUSK_AGENTS_END.length).replace(/^\s+/, '');
-      } else {
-        before = existing.replace(/\s+$/, '');
-        after = '';
-      }
-      const block = renderHuskAgentsBlock(copilotBlocks);
-      const parts = [];
-      if (before) parts.push(before);
-      parts.push(block);
-      if (after) parts.push(after);
-      fs.writeFileSync(copilotInstructionsPath, parts.join('\n\n') + '\n', { mode: 0o644 });
+      const merged = PaiState.mergeHuskAgentsBlock(existing, copilotBlocks);
+      fs.writeFileSync(copilotInstructionsPath, merged, { mode: 0o644 });
     } catch (err) {
       // Surface the failure but do not abort the import — the Claude side
       // and the Husk profiles still landed; the user can retry the Copilot
