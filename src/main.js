@@ -1750,6 +1750,163 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   };
 });
 
+// ─── MCP install-from-repo flow ───────────────────────────────────────────
+//
+// Sibling of the repoAgents flow above. A user points Husk at a cloned
+// repo that ships <root>/mcp-servers/<name>/, picks which servers to
+// install AND which CLIs to install them into, and Husk handles the
+// build (when needed) and the per-CLI config write.
+//
+// Pure scanning + spec-building lives in src/lib/repo-mcp.js so it can
+// be unit-tested without spinning up Electron. The IPC layer below is
+// the thin shell that connects the renderer to that module + the
+// existing per-CLI MCP adapters in src/lib/mcp/.
+//
+// IPCs:
+//   repoMcp:pickDir   native folder picker (same as repoAgents)
+//   repoMcp:scan      scans <root>/mcp-servers/* and returns descriptions
+//   repoMcp:build     runs npm install + npm run build inside one server
+//   repoMcp:install   takes a built spec + a list of CLI targets, writes
+//                     to each tool's MCP config via the existing adapters
+//                     (or emits a config-snippet for tools we do not own
+//                     a safe write path for yet, e.g. Codex/Aider)
+
+const RepoMcp = require('./lib/repo-mcp');
+const McpAdapters = require('./lib/mcp');
+
+ipcMain.handle('repoMcp:pickDir', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select a repo that ships mcp-servers/',
+    properties: ['openDirectory'],
+  });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
+
+ipcMain.handle('repoMcp:scan', (_e, payload = {}) => {
+  const root = String((payload && payload.root) || '').trim();
+  if (!root || !path.isAbsolute(root)) {
+    return { ok: false, error: 'absolute path required' };
+  }
+  return RepoMcp.scanRepoForMcpServers(root);
+});
+
+// Run `npm install` then (if the package declares it) `npm run build`
+// inside one server directory. Streams a final stdout/stderr tail back
+// to the renderer; no live event channel yet, keeps the wire surface
+// minimal. Honors a 5-minute total wall-clock cap so a hung native
+// build cannot freeze Husk.
+ipcMain.handle('repoMcp:build', async (_e, payload = {}) => {
+  const dir = String((payload && payload.dir) || '').trim();
+  if (!dir || !path.isAbsolute(dir)) return { ok: false, error: 'absolute server dir required' };
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    return { ok: false, error: 'server dir does not exist' };
+  }
+  const pkgPath = path.join(dir, 'package.json');
+  let pkg = null;
+  try { pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')); } catch (_) {}
+  if (!pkg) return { ok: false, error: 'no readable package.json' };
+
+  const cap = Date.now() + 5 * 60 * 1000;
+  const runOnce = (script) => new Promise((resolve) => {
+    const args = script === 'install' ? ['install', '--no-audit', '--no-fund'] : ['run', script];
+    let proc;
+    try {
+      proc = spawn('npm', args, { cwd: dir, env: process.env, windowsHide: true });
+    } catch (err) {
+      resolve({ ok: false, error: err.message, stdoutTail: '', stderrTail: '' });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => { stdout += d.toString(); if (stdout.length > 8192) stdout = stdout.slice(-4096); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); if (stderr.length > 8192) stderr = stderr.slice(-4096); });
+    const killer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} }, Math.max(1000, cap - Date.now()));
+    proc.on('close', (code) => {
+      clearTimeout(killer);
+      if (code === 0) resolve({ ok: true, stdoutTail: stdout, stderrTail: stderr });
+      else resolve({ ok: false, error: `npm ${args.join(' ')} exited ${code}`, stdoutTail: stdout, stderrTail: stderr });
+    });
+    proc.on('error', (err) => {
+      clearTimeout(killer);
+      resolve({ ok: false, error: err.message, stdoutTail: stdout, stderrTail: stderr });
+    });
+  });
+
+  const stages = [];
+  const installRes = await runOnce('install');
+  stages.push({ stage: 'install', ...installRes });
+  if (!installRes.ok) return { ok: false, stages };
+  if (pkg.scripts && typeof pkg.scripts.build === 'string') {
+    const buildRes = await runOnce('build');
+    stages.push({ stage: 'build', ...buildRes });
+    if (!buildRes.ok) return { ok: false, stages };
+  }
+  return { ok: true, stages };
+});
+
+// Targets and what each one does on install:
+//   claude   → adapter.add() writes ~/.claude.json
+//   copilot  → adapter.add() writes ~/.copilot/mcp-config.json
+//   codex    → snippet only (TOML), no write yet
+//   aider    → snippet only (CLI --mcp flag), no write yet
+//
+// Per-target results are independent. A failure in one does not block
+// the others. The renderer paints a per-target status pill from the
+// returned `results` map.
+const SNIPPET_TARGETS = new Set(['codex', 'aider']);
+const WRITE_TARGETS = new Set(['claude', 'copilot']);
+const KNOWN_TARGETS = new Set([...SNIPPET_TARGETS, ...WRITE_TARGETS]);
+
+ipcMain.handle('repoMcp:install', (_e, payload = {}) => {
+  const summary = payload && payload.server;
+  const envValues = (payload && payload.envValues) || {};
+  const targets = Array.isArray(payload && payload.targets) ? payload.targets : [];
+  const serverId = String((payload && payload.serverId) || (summary && summary.name) || '').trim();
+  if (!summary || typeof summary !== 'object') return { ok: false, error: 'server summary required' };
+  if (!serverId || !/^[a-zA-Z0-9_-]+$/.test(serverId)) {
+    return { ok: false, error: 'serverId must match [a-zA-Z0-9_-]+' };
+  }
+  if (!targets.length) return { ok: false, error: 'pick at least one target' };
+
+  const built = RepoMcp.buildServerSpec(summary, envValues);
+  if (!built.ok) return { ok: false, error: built.error };
+  const spec = built.spec;
+
+  const results = {};
+  for (const target of targets) {
+    if (!KNOWN_TARGETS.has(target)) {
+      results[target] = { status: 'error', error: 'unknown target' };
+      continue;
+    }
+    if (SNIPPET_TARGETS.has(target)) {
+      const snippet = target === 'codex'
+        ? RepoMcp.renderCodexSnippet(serverId, spec)
+        : RepoMcp.renderAiderSnippet(serverId, spec);
+      results[target] = { status: 'snippet', snippet };
+      continue;
+    }
+    // Real write path: hand off to the per-CLI adapter. add() refuses
+    // duplicates by design; we surface that as a benign "already
+    // installed" status instead of swallowing it.
+    const adapter = McpAdapters.ADAPTERS[target];
+    if (!adapter || !adapter.supportsWrite) {
+      results[target] = { status: 'error', error: 'adapter does not support writes' };
+      continue;
+    }
+    const addRes = adapter.add({
+      id: serverId,
+      transport: spec.transport,
+      command: spec.command,
+      args: spec.args,
+      env: spec.env || {},
+    });
+    if (addRes.ok) results[target] = { status: 'installed', configPath: adapter.configPath };
+    else if (/already exists/i.test(addRes.error || '')) results[target] = { status: 'exists', configPath: adapter.configPath };
+    else results[target] = { status: 'error', error: addRes.error, configPath: adapter.configPath };
+  }
+  return { ok: true, serverId, spec, results };
+});
+
 ipcMain.handle('profiles:create', (_e, payload = {}) => {
   const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const entry = {
