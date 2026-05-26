@@ -35,15 +35,25 @@ function applyPaiState(claudeDir, active) {
   if (typeof claudeDir !== 'string' || !claudeDir) {
     throw new TypeError('applyPaiState: claudeDir must be a non-empty string');
   }
+  // live and parked are derived from the caller-supplied claudeDir using
+  // path.join + a hard-coded basename, so the targets are bounded to two
+  // specific filenames inside the given directory. The eslint-disable
+  // lines below acknowledge the dynamic-path warning the security plugin
+  // raises: this function intentionally operates on user-supplied paths
+  // (the user's ~/.claude/ directory) and the inputs are validated above.
   const live = path.join(claudeDir, 'CLAUDE.md');
   const parked = parkedPath(claudeDir);
   try {
     if (!active) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- path scoped to claudeDir/CLAUDE.md, validated input
       if (fs.existsSync(live) && !fs.existsSync(parked)) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- rename target is the parked sibling, fixed basename
         fs.renameSync(live, parked);
       }
     } else {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- path scoped to claudeDir/CLAUDE.md.husk-disabled
       if (fs.existsSync(parked) && !fs.existsSync(live)) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- rename target is the live sibling, fixed basename
         fs.renameSync(parked, live);
       }
     }
