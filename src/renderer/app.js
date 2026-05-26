@@ -1373,6 +1373,7 @@ function paintAgents() {
         ${p.builtin ? '<span class="agent-card-builtin">Built-in</span>' : ''}
       </div>
       ${p.description ? `<div class="agent-card-desc">${escapeHtml(p.description)}</div>` : ''}
+      ${p.repoRoot ? `<div class="agent-card-repo" title="${escapeAttr(p.repoRoot)}">cwd: ${escapeHtml(p.repoRoot.replace(/^\/home\/[^/]+/, '~'))}</div>` : ''}
       ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
     </div>
   `;
@@ -1662,6 +1663,176 @@ $('#ai-close') && $('#ai-close').addEventListener('click', closeAgentsImportModa
 $('#ai-cancel') && $('#ai-cancel').addEventListener('click', closeAgentsImportModal);
 $('#ai-confirm') && $('#ai-confirm').addEventListener('click', confirmAgentsImport);
 $('#agents-import-modal') && $('#agents-import-modal').addEventListener('click', (e) => { if (e.target === $('#agents-import-modal')) closeAgentsImportModal(); });
+
+// ─── Install agents from a cloned repo ───────────────────────────────────────────
+// The repo is expected to ship agents/*.md (Claude-style frontmatter) and
+// optionally skills/*.md. Husk copies each picked agent to ~/.claude/agents/
+// (Claude path), writes the body into <repo>/.github/copilot-instructions.md
+// inside HUSK-AGENTS markers (Copilot path), and stamps the resulting Husk
+// profile with repoRoot. spawnPty consumes repoRoot as the cwd, so the agent's
+// relative skills/<test_id>.md reads resolve when the chat launches.
+let lastRepoScan = null;
+function openRepoAgentsModal() {
+  const modal = $('#repo-agents-modal');
+  if (!modal) return;
+  if ($('#ra-root')) $('#ra-root').value = '';
+  if ($('#ra-list')) $('#ra-list').innerHTML = '';
+  const status = $('#ra-status');
+  if (status) { status.hidden = true; status.textContent = ''; status.className = 'ra-status'; }
+  const confirmBtn = $('#ra-confirm');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Install 0 agents'; }
+  if ($('#ra-claude')) $('#ra-claude').checked = true;
+  if ($('#ra-copilot')) $('#ra-copilot').checked = true;
+  if ($('#ra-activate')) $('#ra-activate').checked = true;
+  lastRepoScan = null;
+  modal.hidden = false;
+  setTimeout(() => { try { $('#ra-root').focus(); } catch (_) {} }, 0);
+}
+function closeRepoAgentsModal() {
+  const m = $('#repo-agents-modal');
+  if (m) m.hidden = true;
+}
+function setRepoStatus(text, kind) {
+  const el = $('#ra-status');
+  if (!el) return;
+  if (!text) { el.hidden = true; el.textContent = ''; el.className = 'ra-status'; return; }
+  el.hidden = false;
+  el.textContent = text;
+  el.className = 'ra-status' + (kind ? ' ra-status-' + kind : '');
+}
+async function browseForRepoRoot() {
+  const picked = await window.husk.repoAgents.pickDir();
+  if (!picked) return;
+  if ($('#ra-root')) $('#ra-root').value = picked;
+  await scanRepoRoot(picked);
+}
+async function scanRepoRoot(root) {
+  const listEl = $('#ra-list');
+  const confirmBtn = $('#ra-confirm');
+  if (!listEl || !confirmBtn) return;
+  setRepoStatus('Scanning…');
+  // eslint-disable-next-line no-unsanitized/property -- static loading placeholder
+  listEl.innerHTML = `<div class="ai-empty">Looking for agents/*.md…</div>`;
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Install 0 agents';
+  const res = await window.husk.repoAgents.scan(root);
+  if (!res || !res.ok) {
+    setRepoStatus(res && res.error ? res.error : 'Scan failed', 'error');
+    // eslint-disable-next-line no-unsanitized/property -- error from local fs read, no html
+    listEl.innerHTML = `<div class="ai-empty">${escapeHtml((res && res.error) || 'Could not scan that folder')}</div>`;
+    lastRepoScan = null;
+    return;
+  }
+  lastRepoScan = res;
+  const skillsNote = res.hasSkillsDir
+    ? `Found <code>${escapeHtml(root.replace(/\/+$/, ''))}/skills/</code> — agents that read <code>skills/&lt;id&gt;.md</code> will work after install.`
+    : `No <code>skills/</code> directory at this root. Agents will install but any <code>skills/&lt;id&gt;.md</code> read will fail until you add one.`;
+  const copilotNote = res.copilotInstructionsExists
+    ? (res.copilotHasUserContent
+        ? `<code>.github/copilot-instructions.md</code> already exists with content. Husk only modifies the HUSK-AGENTS block; everything outside is preserved.`
+        : `<code>.github/copilot-instructions.md</code> already exists but is effectively empty. Husk will rewrite the HUSK-AGENTS block.`)
+    : `<code>.github/copilot-instructions.md</code> will be created.`;
+  // eslint-disable-next-line no-unsanitized/property -- both branches use escapeHtml on dynamic parts
+  setRepoStatus('');
+  const statusEl = $('#ra-status');
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.className = 'ra-status ra-status-info';
+    // eslint-disable-next-line no-unsanitized/property -- static + escapeHtml above
+    statusEl.innerHTML = `<div>${skillsNote}</div><div>${copilotNote}</div>`;
+  }
+  if (!res.agents.length) {
+    // eslint-disable-next-line no-unsanitized/property -- static html
+    listEl.innerHTML = `<div class="ai-empty">No <code>agents/*.md</code> files in that folder.</div>`;
+    return;
+  }
+  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+  // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
+  listEl.innerHTML = res.agents.map((a) => {
+    const pill = a.alreadyImported
+      ? `<span class="ai-row-pill">Already imported</span>`
+      : (a.alreadyInClaude ? `<span class="ai-row-source">in ~/.claude/agents</span>` : '');
+    if (a.alreadyImported) {
+      return `
+        <div class="ai-row-done">
+          <span class="ai-check-box-done" aria-hidden="true">${checkIcon}</span>
+          <div class="ai-row-body">
+            <div class="ai-row-name">${escapeHtml(a.name)}<span class="ai-row-source">${escapeHtml(a.filename)}</span></div>
+            ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
+          </div>
+          ${pill}
+        </div>
+      `;
+    }
+    return `
+      <label class="ai-row">
+        <input type="checkbox" class="ai-check ra-pick" data-file="${escapeAttr(a.filename)}" />
+        <span class="ai-check-box" aria-hidden="true"></span>
+        <div class="ai-row-body">
+          <div class="ai-row-name">${escapeHtml(a.name)}<span class="ai-row-source">${escapeHtml(a.filename)}</span></div>
+          ${a.description ? `<div class="ai-row-desc">${escapeHtml(a.description)}</div>` : ''}
+        </div>
+        ${pill}
+      </label>
+    `;
+  }).join('');
+  const updateCount = () => {
+    const n = listEl.querySelectorAll('.ra-pick:checked').length;
+    confirmBtn.disabled = n === 0;
+    confirmBtn.textContent = `Install ${n} agent${n !== 1 ? 's' : ''}`;
+  };
+  listEl.querySelectorAll('.ra-pick').forEach((el) => el.addEventListener('change', updateCount));
+  updateCount();
+}
+async function confirmRepoAgentsInstall() {
+  if (!lastRepoScan || !lastRepoScan.ok) return;
+  const root = lastRepoScan.root;
+  const listEl = $('#ra-list');
+  if (!listEl) return;
+  const picks = Array.from(listEl.querySelectorAll('.ra-pick:checked')).map((el) => ({ filename: el.dataset.file }));
+  if (!picks.length) return;
+  const btn = $('#ra-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+  const installToClaudeAgents = !!($('#ra-claude') && $('#ra-claude').checked);
+  const writeCopilotInstructions = !!($('#ra-copilot') && $('#ra-copilot').checked);
+  const activate = !!($('#ra-activate') && $('#ra-activate').checked);
+  const res = await window.husk.repoAgents.install({
+    root, picks, installToClaudeAgents, writeCopilotInstructions, activate,
+  });
+  if (!res || !res.ok) {
+    toast((res && res.error) || 'Install failed', 'error');
+    if (btn) btn.disabled = false;
+    return;
+  }
+  if (res.copilotWriteError) {
+    toast(`Imported ${res.imported}, but Copilot instructions write failed: ${res.copilotWriteError}`, 'error');
+  } else {
+    const parts = [`Installed ${res.imported} agent${res.imported !== 1 ? 's' : ''}`];
+    if (installToClaudeAgents && res.copiedToClaude && res.copiedToClaude.length) parts.push(`copied to ~/.claude/agents/`);
+    if (writeCopilotInstructions && res.copilotInstructionsPath) parts.push(`Copilot instructions written`);
+    if (activate) parts.push('activated');
+    toast(parts.join(' · '), 'success');
+  }
+  closeRepoAgentsModal();
+  profilesCache = await window.husk.profiles.list();
+  if (activate) cfg = await window.husk.config.get();
+  paintAgents();
+  updateAgentBanner();
+  updateActiveChatProfile();
+}
+$('#btn-install-from-repo') && $('#btn-install-from-repo').addEventListener('click', openRepoAgentsModal);
+$('#ra-close') && $('#ra-close').addEventListener('click', closeRepoAgentsModal);
+$('#ra-cancel') && $('#ra-cancel').addEventListener('click', closeRepoAgentsModal);
+$('#ra-browse') && $('#ra-browse').addEventListener('click', browseForRepoRoot);
+$('#ra-confirm') && $('#ra-confirm').addEventListener('click', confirmRepoAgentsInstall);
+$('#ra-root') && $('#ra-root').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const v = ($('#ra-root').value || '').trim();
+    if (v) scanRepoRoot(v);
+  }
+});
+$('#repo-agents-modal') && $('#repo-agents-modal').addEventListener('click', (e) => { if (e.target === $('#repo-agents-modal')) closeRepoAgentsModal(); });
 $('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', closeAgentModal);
 $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);

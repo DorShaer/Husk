@@ -71,15 +71,8 @@
 
     <!-- Topbar -->
     <header id="topbar">
-      <button class="topbar-sidebar-btn" id="rail-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="16" rx="2.5"/>
-          <line x1="9" y1="4" x2="9" y2="20"/>
-        </svg>
-      </button>
       <div class="brand">
         <img class="logo-img" src="assets/husk-logo.png" alt="Husk" />
-        <span class="brand-text">HUSK</span>
       </div>
       <button class="topbar-project" id="topbar-project" title="Active project (click to switch)" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
@@ -97,6 +90,15 @@
     <!-- Main: rail + page area -->
     <main id="main">
       <aside id="rail" class="rail">
+
+        <!-- Sidebar collapse / expand. Right-aligned when expanded, centered when collapsed. -->
+        <div class="rail-top">
+          <button class="rail-toggle-btn" id="rail-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </button>
+        </div>
 
         <!-- Tool selector: which CLI is active. No section label to avoid confusing with LLM "agents". -->
         <div class="rail-section rail-section-tool">
@@ -369,6 +371,10 @@
               <span class="page-sub">saved configurations that shape how the AI works for a task</span>
             </div>
             <div class="page-head-right">
+              <button class="ghost-btn" id="btn-install-from-repo" title="Install an agent pack from a cloned repo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>
+                Install from repo
+              </button>
               <button class="ghost-btn" id="btn-import-agents">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
                 Import
@@ -408,6 +414,44 @@
               </label>
               <button class="ghost-btn" id="ai-cancel">Cancel</button>
               <button class="btn-primary" id="ai-confirm" disabled>Import 0 agents</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- INSTALL AGENTS FROM REPO MODAL -->
+        <div id="repo-agents-modal" class="modal" hidden>
+          <div class="modal-card modal-card-md">
+            <div class="modal-head">
+              <h2 class="modal-title">Install agent pack from repo</h2>
+              <button class="modal-close" id="ra-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <p class="ra-hint">Point Husk at a cloned repo (e.g. <code>agent-pack</code>) that ships an <code>agents/</code> directory. Picked agents are copied to <code>~/.claude/agents/</code> for Claude Code and written into <code>.github/copilot-instructions.md</code> for GitHub Copilot. Each Husk profile is stamped with the repo path so the active CLI launches there — that's what makes the agent's relative <code>skills/&lt;test_id&gt;.md</code> reads resolve.</p>
+              <div class="ra-pathrow">
+                <input type="text" id="ra-root" class="ra-root" placeholder="/path/to/agent-pack-repo" autocomplete="off" spellcheck="false" />
+                <button class="ghost-btn" id="ra-browse">Browse…</button>
+              </div>
+              <div id="ra-status" class="ra-status" hidden></div>
+              <div id="ra-list" class="ai-list"></div>
+            </div>
+            <div class="modal-foot ra-foot">
+              <label class="ai-foot-toggle" title="Copy each picked agent file to ~/.claude/agents/ so Claude Code picks them up natively">
+                <input type="checkbox" id="ra-claude" class="ai-check" checked />
+                <span class="ai-check-box" aria-hidden="true"></span>
+                Copy to ~/.claude/agents/
+              </label>
+              <label class="ai-foot-toggle" title="Write the agent bodies into .github/copilot-instructions.md inside HUSK-AGENTS markers (existing content outside the markers is preserved)">
+                <input type="checkbox" id="ra-copilot" class="ai-check" checked />
+                <span class="ai-check-box" aria-hidden="true"></span>
+                Write Copilot instructions
+              </label>
+              <label class="ai-foot-toggle" title="Activate imported agents for the next chat session">
+                <input type="checkbox" id="ra-activate" class="ai-check" checked />
+                <span class="ai-check-box" aria-hidden="true"></span>
+                Activate after install
+              </label>
+              <button class="ghost-btn" id="ra-cancel">Cancel</button>
+              <button class="btn-primary" id="ra-confirm" disabled>Install 0 agents</button>
             </div>
           </div>
         </div>
