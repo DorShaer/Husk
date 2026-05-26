@@ -150,9 +150,19 @@ test('stub adapter: list returns empty unsupported result', async () => {
 test('stub adapter: write methods return descriptive errors', () => {
   const s = makeStub('aider');
   assert.equal(s.add({ id: 'x' }).ok, false);
+  assert.equal(s.update('x', {}).ok, false);
   assert.equal(s.remove('x').ok, false);
   assert.equal(s.toggle('x').ok, false);
   assert.match(s.add({}).error, /aider/);
+  assert.match(s.update('x', {}).error, /aider/);
+});
+
+test('real adapters expose an update() function', () => {
+  // The Edit MCP flow needs both claude and copilot to handle in-place
+  // overwrites. This guards against future refactors silently dropping
+  // the method (the renderer would then fail at runtime).
+  assert.equal(typeof ADAPTERS.claude.update, 'function');
+  assert.equal(typeof ADAPTERS.copilot.update, 'function');
 });
 
 test('stub adapter: health resolves with empty status', async () => {

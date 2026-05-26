@@ -102,9 +102,12 @@ contextBridge.exposeInMainWorld('husk', {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),
     list: () => ipcRenderer.invoke('mcp:list'),
     add: (payload) => ipcRenderer.invoke('mcp:add', payload),
+    addMany: (items) => ipcRenderer.invoke('mcp:addMany', { items }),
+    update: (payload) => ipcRenderer.invoke('mcp:update', payload),
     remove: (id) => ipcRenderer.invoke('mcp:remove', id),
     toggle: (id) => ipcRenderer.invoke('mcp:toggle', id),
     health: () => ipcRenderer.invoke('mcp:health'),
+    parseSnippet: (text) => ipcRenderer.invoke('mcp:parseSnippet', { text }),
   },
   dialog2: {
     pickDir: () => ipcRenderer.invoke('dialog:pickDir'),
