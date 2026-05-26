@@ -726,6 +726,17 @@
             </section>
 
             <section class="pref-card">
+              <div class="pref-card-title">PAI</div>
+              <label class="pref-row">
+                <span class="pref-label">Enable PAI (Personal AI Infrastructure)</span>
+                <input type="checkbox" id="pref-pai" />
+              </label>
+              <div class="pref-hint">
+                PAI is the Claude Code framework Husk bundles in <code>libs/pai/</code>: skills, agents, hooks, statusline, and the Algorithm flow. Only Claude Code reads it (Copilot does not). With this off, Husk skips the bootstrap into <code>~/.claude/</code>, stops the statusline tick, and drops the PAI/Algorithm nudge from the Husk identity prompt. Pre-existing files in <code>~/.claude/</code> are left untouched — remove them by hand if you want a clean slate. Restart the agent after changing.
+              </div>
+            </section>
+
+            <section class="pref-card">
               <div class="pref-card-title">Appearance</div>
               <label class="pref-row">
                 <span class="pref-label">Theme</span>
