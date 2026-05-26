@@ -87,6 +87,11 @@ contextBridge.exposeInMainWorld('husk', {
     listImportableAgents: () => ipcRenderer.invoke('profiles:listImportableAgents'),
     importAgents: (picks, activate) => ipcRenderer.invoke('profiles:importAgents', { picks, activate: !!activate }),
   },
+  repoAgents: {
+    pickDir: () => ipcRenderer.invoke('repoAgents:pickDir'),
+    scan: (root) => ipcRenderer.invoke('repoAgents:scan', { root }),
+    install: (opts) => ipcRenderer.invoke('repoAgents:install', opts || {}),
+  },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),
     list: () => ipcRenderer.invoke('mcp:list'),

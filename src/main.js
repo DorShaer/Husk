@@ -588,6 +588,27 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
       } catch (_) {}
     }
   }
+  // Active-profile repoRoot wins over agentCwd / activeProject, but loses to
+  // an explicit overrideCwd (e.g. Resume re-entering a session). This is what
+  // makes agents installed from a repo land in the right working directory:
+  // relative paths inside the agent's prompt (e.g. `skills/<test_id>.md`)
+  // resolve against the cloned repo, regardless of which CLI is active.
+  try {
+    const activeIds = Array.isArray(config.activeProfileIds)
+      ? config.activeProfileIds
+      : (config.activeProfileId ? [config.activeProfileId] : []);
+    if (activeIds.length && Array.isArray(config.profiles)) {
+      for (const id of activeIds) {
+        const prof = config.profiles.find((p) => p && p.id === id);
+        if (prof && prof.repoRoot && typeof prof.repoRoot === 'string') {
+          if (fs.existsSync(prof.repoRoot) && fs.statSync(prof.repoRoot).isDirectory()) {
+            cwd = prof.repoRoot;
+            break;
+          }
+        }
+      }
+    }
+  } catch (_) {}
   if (overrideCwd) {
     try {
       if (fs.existsSync(overrideCwd) && fs.statSync(overrideCwd).isDirectory()) {
@@ -1501,6 +1522,227 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
   config = nextConfig;
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
   return { ok: true, imported: importedIds.length, importedIds };
+});
+
+// ─── Install-from-repo flow ───────────────────────────────────────────────
+//
+// Lets a user point Husk at a cloned "agent pack" repo (e.g. support-ai-suite)
+// whose layout is:
+//   <repoRoot>/agents/<agent>.md      Claude-style subagent definitions
+//   <repoRoot>/skills/<test_id>.md    skill library the agents reference
+//
+// Install does three things, each individually toggleable from the renderer:
+//   1) Copy each picked agent .md into ~/.claude/agents/ so Claude Code can
+//      invoke it natively via the Task tool.
+//   2) Inject each picked agent body into <repoRoot>/.github/copilot-
+//      instructions.md inside HUSK-AGENTS markers so GitHub Copilot CLI
+//      picks it up natively when launched in that directory.
+//   3) Create a Husk profile per picked agent stamped with repoRoot. The
+//      spawnPty cwd resolver consumes that field so the active CLI runs
+//      inside the repo, which makes the agent's relative `skills/<id>.md`
+//      reads resolve.
+//
+// The renderer is expected to call repoAgents:pickDir first (or pass an
+// already-known root), then repoAgents:scan to populate the picker, then
+// repoAgents:install with the user's selection.
+
+const HUSK_AGENTS_START = '<!-- HUSK-AGENTS:START -->';
+const HUSK_AGENTS_END = '<!-- HUSK-AGENTS:END -->';
+
+ipcMain.handle('repoAgents:pickDir', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select an agent-pack repository',
+    properties: ['openDirectory'],
+  });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
+
+ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
+  const root = String((payload && payload.root) || '').trim();
+  if (!root || !path.isAbsolute(root)) {
+    return { ok: false, error: 'absolute path required' };
+  }
+  try {
+    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+      return { ok: false, error: 'directory does not exist' };
+    }
+    const agentsDir = path.join(root, 'agents');
+    const skillsDir = path.join(root, 'skills');
+    const copilotPath = path.join(root, '.github', 'copilot-instructions.md');
+    const existingProfileNames = new Set(
+      getProfiles().map((p) => String(p.name || '').toLowerCase())
+    );
+    const agents = [];
+    if (fs.existsSync(agentsDir) && fs.statSync(agentsDir).isDirectory()) {
+      for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+        try {
+          const fp = path.join(agentsDir, entry.name);
+          const text = fs.readFileSync(fp, 'utf8');
+          const parsed = parseAgentMd(text);
+          const name = (parsed.name || entry.name.replace(/\.md$/, '')).slice(0, 64);
+          agents.push({
+            filename: entry.name,
+            name,
+            description: (parsed.description || '').slice(0, 256),
+            bodyLength: (parsed.body || '').length,
+            alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', entry.name)),
+            alreadyImported: existingProfileNames.has(name.toLowerCase()),
+          });
+        } catch (_) {}
+      }
+      agents.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    let copilotPreview = null;
+    let copilotHasUserContent = false;
+    if (fs.existsSync(copilotPath)) {
+      try {
+        const existing = fs.readFileSync(copilotPath, 'utf8');
+        const startIdx = existing.indexOf(HUSK_AGENTS_START);
+        const endIdx = existing.indexOf(HUSK_AGENTS_END);
+        const userPart = startIdx >= 0 && endIdx > startIdx
+          ? (existing.slice(0, startIdx) + existing.slice(endIdx + HUSK_AGENTS_END.length))
+          : existing;
+        copilotHasUserContent = userPart.trim().length > 0;
+        copilotPreview = existing.slice(0, 400);
+      } catch (_) {}
+    }
+    return {
+      ok: true,
+      root,
+      agents,
+      hasSkillsDir: fs.existsSync(skillsDir) && fs.statSync(skillsDir).isDirectory(),
+      copilotInstructionsPath: copilotPath,
+      copilotInstructionsExists: fs.existsSync(copilotPath),
+      copilotHasUserContent,
+      copilotPreview,
+    };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+function renderHuskAgentsBlock(picked) {
+  // picked: [{ name, body }]
+  const lines = [
+    HUSK_AGENTS_START,
+    '<!-- Managed by Husk. Edits inside this block are overwritten on the',
+    '     next install-from-repo run. Edit content outside the markers freely. -->',
+    '',
+  ];
+  for (const item of picked) {
+    lines.push(`# Agent: ${item.name}`);
+    lines.push('');
+    lines.push(item.body.trim());
+    lines.push('');
+  }
+  lines.push(HUSK_AGENTS_END);
+  return lines.join('\n');
+}
+
+ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
+  const root = String((payload && payload.root) || '').trim();
+  const picks = Array.isArray(payload && payload.picks) ? payload.picks : [];
+  const installToClaudeAgents = payload.installToClaudeAgents !== false;
+  const writeCopilotInstructions = payload.writeCopilotInstructions !== false;
+  const activate = !!payload.activate;
+  if (!root || !path.isAbsolute(root)) return { ok: false, error: 'absolute path required' };
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    return { ok: false, error: 'directory does not exist' };
+  }
+  if (!picks.length) return { ok: false, error: 'nothing selected' };
+  const agentsDir = path.join(root, 'agents');
+  const claudeAgentsDir = path.join(CLAUDE_DIR, 'agents');
+  try { fs.mkdirSync(claudeAgentsDir, { recursive: true }); } catch (_) {}
+  const list = getProfiles().slice();
+  const importedIds = [];
+  const copiedToClaude = [];
+  const copilotBlocks = [];
+  for (const pick of picks) {
+    const fname = String((pick && pick.filename) || '');
+    if (!fname.endsWith('.md') || fname.includes('/') || fname.includes('\\') || fname.includes('..')) continue;
+    const src = path.join(agentsDir, fname);
+    if (!fs.existsSync(src)) continue;
+    try {
+      const text = fs.readFileSync(src, 'utf8');
+      const parsed = parseAgentMd(text);
+      const name = (parsed.name || fname.replace(/\.md$/, '')).slice(0, 64);
+      if (installToClaudeAgents) {
+        const dest = path.join(claudeAgentsDir, fname);
+        try { fs.copyFileSync(src, dest); copiedToClaude.push(dest); } catch (_) {}
+      }
+      if (writeCopilotInstructions) {
+        copilotBlocks.push({ name, body: parsed.body || '' });
+      }
+      const id = `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      list.push({
+        id,
+        name,
+        description: (parsed.description || '').slice(0, 256),
+        systemPrompt: (parsed.body || '').slice(0, 4096),
+        autoSelect: false,
+        builtin: false,
+        repoRoot: root,
+        sourceFilename: fname,
+      });
+      importedIds.push(id);
+    } catch (_) {}
+  }
+  let copilotInstructionsPath = null;
+  if (writeCopilotInstructions && copilotBlocks.length) {
+    try {
+      const dotGithub = path.join(root, '.github');
+      fs.mkdirSync(dotGithub, { recursive: true });
+      copilotInstructionsPath = path.join(dotGithub, 'copilot-instructions.md');
+      let existing = '';
+      try { existing = fs.readFileSync(copilotInstructionsPath, 'utf8'); } catch (_) {}
+      const startIdx = existing.indexOf(HUSK_AGENTS_START);
+      const endIdx = existing.indexOf(HUSK_AGENTS_END);
+      let before, after;
+      if (startIdx >= 0 && endIdx > startIdx) {
+        before = existing.slice(0, startIdx).replace(/\s+$/, '');
+        after = existing.slice(endIdx + HUSK_AGENTS_END.length).replace(/^\s+/, '');
+      } else {
+        before = existing.replace(/\s+$/, '');
+        after = '';
+      }
+      const block = renderHuskAgentsBlock(copilotBlocks);
+      const parts = [];
+      if (before) parts.push(before);
+      parts.push(block);
+      if (after) parts.push(after);
+      fs.writeFileSync(copilotInstructionsPath, parts.join('\n\n') + '\n', { mode: 0o644 });
+    } catch (err) {
+      // Surface the failure but do not abort the import — the Claude side
+      // and the Husk profiles still landed; the user can retry the Copilot
+      // write or paste the snippet manually.
+      return {
+        ok: true,
+        imported: importedIds.length,
+        importedIds,
+        copiedToClaude,
+        copilotInstructionsPath,
+        copilotWriteError: err.message,
+        partial: true,
+      };
+    }
+  }
+  let nextConfig = { ...config, profiles: list };
+  if (activate && importedIds.length) {
+    const prevActive = Array.isArray(config.activeProfileIds)
+      ? config.activeProfileIds
+      : (config.activeProfileId ? [config.activeProfileId] : []);
+    const active = prevActive.slice();
+    for (const id of importedIds) { if (!active.includes(id)) active.push(id); }
+    nextConfig = { ...nextConfig, activeProfileIds: active, activeProfileId: active[0] || null };
+  }
+  config = nextConfig;
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return {
+    ok: true,
+    imported: importedIds.length,
+    importedIds,
+    copiedToClaude,
+    copilotInstructionsPath,
+  };
 });
 
 ipcMain.handle('profiles:create', (_e, payload = {}) => {
