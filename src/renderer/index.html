@@ -426,7 +426,7 @@
               <button class="modal-close" id="ra-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">Point Husk at a cloned repo (e.g. <code>support-ai-suite</code>) that ships an <code>agents/</code> directory. Picked agents are copied to <code>~/.claude/agents/</code> for Claude Code and written into <code>.github/copilot-instructions.md</code> for GitHub Copilot. Each Husk profile is stamped with the repo path so the active CLI launches there — that's what makes the agent's relative <code>skills/&lt;test_id&gt;.md</code> reads resolve.</p>
+              <p class="ra-hint">Point Husk at a cloned repo (e.g. <code>support-ai-suite</code>) that ships an <code>agents/</code> directory. Picked agents are copied to <code>~/.claude/agents/</code> for Claude Code and written into <code>.github/copilot-instructions.md</code> for GitHub Copilot. Each Husk profile is stamped with the repo path so the active CLI launches there, which is what makes the agent's relative <code>skills/&lt;test_id&gt;.md</code> reads resolve.</p>
               <div class="ra-pathrow">
                 <input type="text" id="ra-root" class="ra-root" placeholder="/path/to/agent-pack-repo" autocomplete="off" spellcheck="false" />
                 <button class="ghost-btn" id="ra-browse">Browse…</button>
@@ -732,7 +732,7 @@
                 <input type="checkbox" id="pref-pai" />
               </label>
               <div class="pref-hint">
-                PAI is the Claude Code framework Husk bundles in <code>libs/pai/</code>: skills, agents, hooks, statusline, and the Algorithm flow. Only Claude Code reads it (Copilot does not). With this off, Husk skips the bootstrap into <code>~/.claude/</code>, stops the statusline tick, and drops the PAI/Algorithm nudge from the Husk identity prompt. Pre-existing files in <code>~/.claude/</code> are left untouched — remove them by hand if you want a clean slate. Restart the agent after changing.
+                PAI is the Claude Code framework Husk bundles in <code>libs/pai/</code>: skills, agents, hooks, statusline, and the Algorithm flow. Only Claude Code reads it (Copilot does not). With this off, Husk skips the bootstrap into <code>~/.claude/</code>, stops the statusline tick, and drops the PAI/Algorithm nudge from the Husk identity prompt. Pre-existing files in <code>~/.claude/</code> are left untouched; remove them by hand if you want a clean slate. Restart the agent after changing.
               </div>
             </section>
 

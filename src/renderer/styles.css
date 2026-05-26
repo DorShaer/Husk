@@ -1610,7 +1610,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 .ra-status.ra-status-info { border-left: 3px solid var(--accent); }
 .ra-status.ra-status-error { border-left: 3px solid var(--rose); color: var(--text); }
-/* The footer of the repo-install modal has three toggles + two buttons —
+/* The footer of the repo-install modal has three toggles + two buttons;
    let it wrap on narrow window widths rather than stretching off-screen. */
 .modal-foot.ra-foot { flex-wrap: wrap; gap: 10px; }
 
@@ -1729,7 +1729,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   margin: 0;
 }
 /* Repo binding: shown only when the profile was install-from-repo. Conveys
-   "this agent's relative paths resolve against this directory" — that is
+   "this agent's relative paths resolve against this directory", which is
    what spawnPty actually does with the repoRoot field. */
 .agent-card-repo {
   font-family: 'JetBrains Mono', monospace;
