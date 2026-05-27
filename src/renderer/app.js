@@ -1840,9 +1840,9 @@ $('#repo-agents-modal') && $('#repo-agents-modal').addEventListener('click', (e)
 
 // ─── Install MCP servers from a cloned repo ───────────────────────────────────
 // Sibling of the agent install flow. Three views inside a single modal:
-//   1) "list" — picker for repo path + scanned servers
-//   2) "detail" — env-var form + per-CLI target checkboxes for one server
-//   3) "results" — per-CLI status pills + copy-able snippets for codex/aider
+//   1) "list":    picker for repo path + scanned servers
+//   2) "detail":  env-var form + per-CLI target checkboxes for one server
+//   3) "results": per-CLI status pills + copy-able snippets for codex/aider
 // Each view replaces the modal body, the foot button changes role between
 // Install / Back / Done so the user always knows what to press next.
 let rmScan = null;
@@ -4343,6 +4343,132 @@ async function launchAgent({ initialPrompt = null } = {}) {
     }, 250);
   }
 }
+
+// ─── Autonomy Mode ────────────────────────────────────────────────────────────
+//
+// The chat header has an Autonomy button that opens a start-dialog. The
+// renderer collects goal + caps, asks the supervisor (via IPC) to start a
+// run, then shows a live banner above the chat with a Cancel button. When
+// the run ends (naturally, by cap, or by user), the supervisor sends an
+// autonomy:ended event with the summary; the renderer opens a review
+// modal with the diff and a one-click Revert.
+let autonomyActive = false;
+let autonomyLastSession = null;
+function openAutonomyStart() {
+  $('#autonomy-start-modal').hidden = false;
+  setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
+}
+function closeAutonomyStart() { $('#autonomy-start-modal').hidden = true; }
+async function startAutonomy() {
+  const goal = ($('#aut-goal').value || '').trim();
+  const caps = {
+    minutes: Number($('#aut-cap-min').value) || 60,
+    tokens: Number($('#aut-cap-tok').value) || 200000,
+    dollars: Number($('#aut-cap-usd').value) || 5,
+  };
+  const r = await window.husk.autonomy.start({ goal, caps });
+  if (!r || !r.ok) { toast((r && r.error) || 'Could not start autonomy', 'error'); return; }
+  autonomyActive = true;
+  autonomyLastSession = { sessionId: r.sessionId, workspaceRoot: r.workspaceRoot };
+  closeAutonomyStart();
+  paintAutonomyBanner();
+  toast(`Autonomy running (${r.sessionId.slice(0, 12)}...)`, 'success');
+}
+async function cancelAutonomy() {
+  if (!autonomyActive) return;
+  const r = await window.husk.autonomy.cancel({});
+  if (!r || !r.ok) { toast((r && r.error) || 'Cancel failed', 'error'); return; }
+}
+function paintAutonomyBanner() {
+  const el = $('#autonomy-banner');
+  const label = $('#autonomy-label');
+  if (!el || !label) return;
+  if (autonomyActive) {
+    el.hidden = false;
+    // eslint-disable-next-line no-unsanitized/property -- static template
+    el.innerHTML = '<span>AUTONOMY MODE ACTIVE</span><span class="aut-spacer"></span><button class="ghost-btn ghost-btn-danger" id="aut-cancel-btn">Cancel run</button>';
+    const cb = $('#aut-cancel-btn');
+    if (cb) cb.addEventListener('click', cancelAutonomy);
+    label.textContent = 'Autonomy ON';
+  } else {
+    el.hidden = true;
+    label.textContent = 'Autonomy';
+  }
+}
+function openAutonomyEndModal(sum) {
+  if (!sum || !sum.ok) { toast('Could not load run summary', 'error'); return; }
+  const meta = $('#aut-end-meta');
+  const diff = $('#aut-end-diff');
+  const title = $('#aut-end-title');
+  const status = (sum.summary && sum.summary.status) || 'ended';
+  const haltReason = (sum.summary && sum.summary.haltReason) || 'natural';
+  const durationMin = sum.summary && sum.summary.durationMs ? Math.round(sum.summary.durationMs / 60000 * 10) / 10 : 0;
+  title.textContent = `Autonomy run ${status}`;
+  // eslint-disable-next-line no-unsanitized/property -- escapeHtml on every dynamic value
+  meta.innerHTML = `
+    <div><strong>Status:</strong> ${escapeHtml(status)} (${escapeHtml(haltReason)})</div>
+    <div><strong>Duration:</strong> ${durationMin} min</div>
+    <div><strong>Events recorded:</strong> ${Number(sum.eventCount) || 0}</div>
+    <div><strong>Audit chain:</strong> ${sum.chain && sum.chain.valid ? 'valid (tamper-evident)' : 'BROKEN at row ' + (sum.chain && sum.chain.brokenAtIndex)}</div>
+  `;
+  const changes = sum.diff || [];
+  if (!changes.length) {
+    // eslint-disable-next-line no-unsanitized/property -- static html
+    diff.innerHTML = '<div class="ai-empty">No file changes detected.</div>';
+  } else {
+    // eslint-disable-next-line no-unsanitized/property -- every dynamic value escaped
+    diff.innerHTML = changes.map((c) => `
+      <div class="ai-row" style="cursor:default;">
+        <div class="ai-row-body">
+          <div class="ai-row-name">${escapeHtml(c.path)}</div>
+        </div>
+        <span class="ai-row-pill">${escapeHtml(c.status)}</span>
+      </div>
+    `).join('');
+  }
+  $('#autonomy-end-modal').hidden = false;
+}
+function closeAutonomyEndModal() { $('#autonomy-end-modal').hidden = true; }
+async function revertAutonomy() {
+  if (!autonomyLastSession) { toast('No run to revert', 'error'); return; }
+  const ok = await openConfirmDialog({
+    title: 'Revert every change from this autonomy run?',
+    bodyHtml: 'Husk will restore the workspace to the pre-run snapshot. Files the agent created will be removed. This cannot be undone from the UI.',
+    confirmLabel: 'Revert all',
+    cancelLabel: 'Keep changes',
+  });
+  if (!ok) return;
+  const r = await window.husk.autonomy.revert(autonomyLastSession);
+  if (!r || !r.ok) { toast((r && r.error) || 'Revert failed', 'error'); return; }
+  toast(`Reverted ${(r.restored || []).length} files`, 'success');
+  closeAutonomyEndModal();
+}
+$('#btn-autonomy') && $('#btn-autonomy').addEventListener('click', () => {
+  if (autonomyActive) { cancelAutonomy(); return; }
+  openAutonomyStart();
+});
+$('#aut-start-close') && $('#aut-start-close').addEventListener('click', closeAutonomyStart);
+$('#aut-start-cancel') && $('#aut-start-cancel').addEventListener('click', closeAutonomyStart);
+$('#aut-start-go') && $('#aut-start-go').addEventListener('click', startAutonomy);
+$('#aut-end-close') && $('#aut-end-close').addEventListener('click', closeAutonomyEndModal);
+$('#aut-end-close-foot') && $('#aut-end-close-foot').addEventListener('click', closeAutonomyEndModal);
+$('#aut-end-revert') && $('#aut-end-revert').addEventListener('click', revertAutonomy);
+$('#autonomy-start-modal') && $('#autonomy-start-modal').addEventListener('click', (e) => { if (e.target === $('#autonomy-start-modal')) closeAutonomyStart(); });
+$('#autonomy-end-modal') && $('#autonomy-end-modal').addEventListener('click', (e) => { if (e.target === $('#autonomy-end-modal')) closeAutonomyEndModal(); });
+
+try {
+  if (window.husk && window.husk.autonomy) {
+    window.husk.autonomy.onStarted(() => { autonomyActive = true; paintAutonomyBanner(); });
+    window.husk.autonomy.onEnded((sum) => {
+      autonomyActive = false;
+      paintAutonomyBanner();
+      openAutonomyEndModal(sum);
+    });
+    window.husk.autonomy.onHalt((info) => {
+      toast(`Autonomy halted: ${info && info.cap ? info.cap + ' cap reached' : 'budget'}`, 'error');
+    });
+  }
+} catch (_) {}
 
 // Global ESC handler: closes any visible `.modal` element. This is the
 // universal "ESC dismisses the wizard" contract, applied across every
