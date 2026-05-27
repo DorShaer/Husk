@@ -916,30 +916,31 @@
     <div id="autonomy-start-modal" class="modal" hidden>
       <div class="modal-card modal-card-md">
         <div class="modal-head">
-          <h2 class="modal-title">Start Autonomy Run</h2>
+          <h2 class="modal-title">Start an Autonomy run</h2>
           <button class="modal-close" id="aut-start-close" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-          <p class="ra-hint">Hand the agent a goal and walk away. Husk snapshots the workspace, audits every event in a hash-chained log, and caps the run by minutes / tokens / dollars. When it stops, you can review the full diff and revert with one click.</p>
-          <div class="modal-section">
-            <div class="modal-label">Goal</div>
-            <textarea id="aut-goal" rows="4" placeholder="e.g. find every TODO that mentions security, file an issue for each, do not push" spellcheck="false"></textarea>
+          <p class="ra-hint">Hand the agent a goal and walk away. Husk snapshots the workspace, audits every event in a hash-chained log, and caps the run. When it stops, you can review the diff and revert with one click.</p>
+          <div class="mcp-input-group">
+            <label for="aut-goal">Goal</label>
+            <textarea id="aut-goal" class="aut-goal-input" rows="4" placeholder="e.g. find every TODO that mentions security, draft a fix per occurrence, do not push" spellcheck="false"></textarea>
+            <div class="mig-hint">Plain text. The model sees this as the first message.</div>
           </div>
-          <div class="modal-section" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
-            <label class="pref-row" style="flex-direction:column; align-items:stretch; gap:4px;">
-              <span class="pref-label">Minutes cap</span>
+          <div class="aut-caps-grid">
+            <div class="mcp-input-group">
+              <label for="aut-cap-min">Minutes cap</label>
               <input id="aut-cap-min" type="number" min="1" step="1" value="60" />
-            </label>
-            <label class="pref-row" style="flex-direction:column; align-items:stretch; gap:4px;">
-              <span class="pref-label">Tokens cap</span>
+            </div>
+            <div class="mcp-input-group">
+              <label for="aut-cap-tok">Tokens cap</label>
               <input id="aut-cap-tok" type="number" min="1" step="1000" value="200000" />
-            </label>
-            <label class="pref-row" style="flex-direction:column; align-items:stretch; gap:4px;">
-              <span class="pref-label">Dollars cap</span>
+            </div>
+            <div class="mcp-input-group">
+              <label for="aut-cap-usd">Dollars cap</label>
               <input id="aut-cap-usd" type="number" min="0" step="0.5" value="5" />
-            </label>
+            </div>
           </div>
-          <div class="ra-status ra-status-info" style="margin-top:8px;">
+          <div class="aut-note">
             On halt or end, Husk produces a diff against the pre-run snapshot. Revert is one click. Encryption (when the OS keychain is available) wraps every blob the audit log and snapshot store write.
           </div>
         </div>
