@@ -723,6 +723,137 @@ ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
   return true;
 });
 
+// ─── Autonomy Mode IPC ────────────────────────────────────────────────────
+//
+// The supervisor module owns one autonomous-run lifecycle: snapshot,
+// audit log, budget meter, halt-on-cap. main.js wires it through IPC
+// and tracks the active runner so multiple windows / a runaway
+// renderer cannot start two runs at once over the same session id.
+//
+// Encryption: electron safeStorage wraps OS keychain APIs (libsecret /
+// macOS Keychain / Windows DPAPI). When available we use it on every
+// blob the snapshot store and the audit log write. The runtime
+// check (`isEncryptionAvailable`) returns false on a headless / dev
+// build, in which case blobs land in plaintext on disk inside the
+// Husk user-data dir; the supervisor still reports the run as
+// "trusted-by-rewind".
+
+const Autonomy = require('./lib/autonomy');
+const electronApp = require('electron');
+let activeRunner = null;
+function autonomyStorageRoot() {
+  return path.join(app.getPath('userData'), 'autonomy');
+}
+function autonomyCrypto() {
+  try {
+    if (electronApp.safeStorage && electronApp.safeStorage.isEncryptionAvailable()) {
+      return {
+        encrypt: (buf) => electronApp.safeStorage.encryptString(buf.toString('base64')),
+        decrypt: (buf) => Buffer.from(electronApp.safeStorage.decryptString(buf), 'base64'),
+      };
+    }
+  } catch (_) {}
+  return { encrypt: null, decrypt: null };
+}
+
+ipcMain.handle('autonomy:start', (_e, payload = {}) => {
+  if (activeRunner) return { ok: false, error: 'an autonomy run is already active' };
+  const workspaceRoot = payload && typeof payload.workspaceRoot === 'string' && payload.workspaceRoot
+    ? payload.workspaceRoot
+    : (activePtyCwd || HOME);
+  if (!fs.existsSync(workspaceRoot)) return { ok: false, error: 'workspaceRoot does not exist' };
+  const sessionId = 'auto-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  const { encrypt, decrypt } = autonomyCrypto();
+  const r = Autonomy.supervisor.startRun({
+    sessionId,
+    workspaceRoot,
+    storageRoot: autonomyStorageRoot(),
+    goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
+    agent: payload.agent || null,
+    modelId: payload.modelId || null,
+    caps: payload.caps,
+    encrypt, decrypt,
+  });
+  if (!r.ok) return { ok: false, error: r.error };
+  activeRunner = r.runner;
+  // Periodic wall-clock tick so even idle runs respect the minutes cap.
+  activeRunner._tickInterval = setInterval(() => {
+    if (!activeRunner) return;
+    const s = activeRunner.tickClock();
+    if (s.hitCap && mainWindow) mainWindow.webContents.send('autonomy:halt', { reason: 'budget', cap: s.hitCap });
+  }, 5000);
+  if (mainWindow) mainWindow.webContents.send('autonomy:started', { sessionId });
+  return { ok: true, sessionId, workspaceRoot };
+});
+
+ipcMain.handle('autonomy:event', (_e, event = {}) => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  const r = activeRunner.recordEvent(event);
+  return r;
+});
+
+ipcMain.handle('autonomy:cancel', (_e, detail = {}) => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  activeRunner.cancel(detail);
+  return finishActiveRun();
+});
+
+ipcMain.handle('autonomy:end', (_e, detail = {}) => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  return finishActiveRun(detail);
+});
+
+function finishActiveRun(detail) {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  try { activeRunner.endRun(detail || null); } catch (_) {}
+  try { clearInterval(activeRunner._tickInterval); } catch (_) {}
+  const sessionId = activeRunner.sessionId;
+  const workspaceRoot = activeRunner.workspaceRoot;
+  activeRunner = null;
+  const { decrypt } = autonomyCrypto();
+  const sum = Autonomy.supervisor.summarizeRun({
+    sessionId, workspaceRoot, storageRoot: autonomyStorageRoot(), decrypt,
+  });
+  if (mainWindow) mainWindow.webContents.send('autonomy:ended', sum);
+  return { ok: true, sessionId, summary: sum };
+}
+
+ipcMain.handle('autonomy:status', () => {
+  if (!activeRunner) return { ok: true, active: false };
+  return {
+    ok: true,
+    active: true,
+    sessionId: activeRunner.sessionId,
+    state: activeRunner.getState(),
+    budget: activeRunner.budgetState(),
+  };
+});
+
+ipcMain.handle('autonomy:revert', (_e, payload = {}) => {
+  const sessionId = String(payload && payload.sessionId || '').trim();
+  if (!sessionId) return { ok: false, error: 'sessionId required' };
+  const { decrypt } = autonomyCrypto();
+  return Autonomy.supervisor.revertRun({
+    sessionId,
+    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    storageRoot: autonomyStorageRoot(),
+    decrypt,
+    preserveExtras: !!payload.preserveExtras,
+  });
+});
+
+ipcMain.handle('autonomy:summary', (_e, payload = {}) => {
+  const sessionId = String(payload && payload.sessionId || '').trim();
+  if (!sessionId) return { ok: false, error: 'sessionId required' };
+  const { decrypt } = autonomyCrypto();
+  return Autonomy.supervisor.summarizeRun({
+    sessionId,
+    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    storageRoot: autonomyStorageRoot(),
+    decrypt,
+  });
+});
+
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('config:get', () => ({ ...config }));

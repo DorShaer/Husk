@@ -204,9 +204,14 @@
               <span class="page-sub" id="chat-sub">claude · ~</span>
             </div>
             <div class="page-head-right">
+              <button class="ghost-btn" id="btn-autonomy" title="Run autonomously with snapshot + audit + cap">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg>
+                <span id="autonomy-label">Autonomy</span>
+              </button>
               <button class="ghost-btn" id="btn-restart" title="Restart agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> Restart</button>
             </div>
           </div>
+          <div id="autonomy-banner" class="autonomy-banner" hidden></div>
           <div class="chat-stage">
             <div id="chat-empty" class="chat-empty">
               <img class="ce-logo-img" src="assets/husk-logo.png" alt="Husk" />
@@ -906,6 +911,63 @@
     </div>
 
     <div id="toast" class="toast" hidden></div>
+
+    <!-- Autonomy: start-run dialog -->
+    <div id="autonomy-start-modal" class="modal" hidden>
+      <div class="modal-card modal-card-md">
+        <div class="modal-head">
+          <h2 class="modal-title">Start Autonomy Run</h2>
+          <button class="modal-close" id="aut-start-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="ra-hint">Hand the agent a goal and walk away. Husk snapshots the workspace, audits every event in a hash-chained log, and caps the run by minutes / tokens / dollars. When it stops, you can review the full diff and revert with one click.</p>
+          <div class="modal-section">
+            <div class="modal-label">Goal</div>
+            <textarea id="aut-goal" rows="4" placeholder="e.g. find every TODO that mentions security, file an issue for each, do not push" spellcheck="false"></textarea>
+          </div>
+          <div class="modal-section" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
+            <label class="pref-row" style="flex-direction:column; align-items:stretch; gap:4px;">
+              <span class="pref-label">Minutes cap</span>
+              <input id="aut-cap-min" type="number" min="1" step="1" value="60" />
+            </label>
+            <label class="pref-row" style="flex-direction:column; align-items:stretch; gap:4px;">
+              <span class="pref-label">Tokens cap</span>
+              <input id="aut-cap-tok" type="number" min="1" step="1000" value="200000" />
+            </label>
+            <label class="pref-row" style="flex-direction:column; align-items:stretch; gap:4px;">
+              <span class="pref-label">Dollars cap</span>
+              <input id="aut-cap-usd" type="number" min="0" step="0.5" value="5" />
+            </label>
+          </div>
+          <div class="ra-status ra-status-info" style="margin-top:8px;">
+            On halt or end, Husk produces a diff against the pre-run snapshot. Revert is one click. Encryption (when the OS keychain is available) wraps every blob the audit log and snapshot store write.
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="ghost-btn" id="aut-start-cancel">Cancel</button>
+          <button class="btn-primary" id="aut-start-go">Start run</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Autonomy: end-of-run review dialog -->
+    <div id="autonomy-end-modal" class="modal" hidden>
+      <div class="modal-card modal-card-md">
+        <div class="modal-head">
+          <h2 class="modal-title" id="aut-end-title">Autonomy run finished</h2>
+          <button class="modal-close" id="aut-end-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="aut-end-meta" class="ra-status ra-status-info"></div>
+          <div class="modal-label" style="margin-top:10px;">Changes</div>
+          <div id="aut-end-diff" class="ai-list"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="ghost-btn" id="aut-end-close-foot">Close</button>
+          <button class="btn-primary ghost-btn-danger" id="aut-end-revert">Revert all changes</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
     <div id="confirm-modal" class="modal confirm-modal" hidden>

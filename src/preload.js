@@ -98,6 +98,18 @@ contextBridge.exposeInMainWorld('husk', {
     build: (dir) => ipcRenderer.invoke('repoMcp:build', { dir }),
     install: (opts) => ipcRenderer.invoke('repoMcp:install', opts || {}),
   },
+  autonomy: {
+    start: (opts) => ipcRenderer.invoke('autonomy:start', opts || {}),
+    event: (event) => ipcRenderer.invoke('autonomy:event', event || {}),
+    cancel: (detail) => ipcRenderer.invoke('autonomy:cancel', detail || {}),
+    end: (detail) => ipcRenderer.invoke('autonomy:end', detail || {}),
+    status: () => ipcRenderer.invoke('autonomy:status'),
+    revert: (opts) => ipcRenderer.invoke('autonomy:revert', opts || {}),
+    summary: (opts) => ipcRenderer.invoke('autonomy:summary', opts || {}),
+    onStarted: (cb) => ipcRenderer.on('autonomy:started', (_e, payload) => cb(payload)),
+    onEnded: (cb) => ipcRenderer.on('autonomy:ended', (_e, payload) => cb(payload)),
+    onHalt: (cb) => ipcRenderer.on('autonomy:halt', (_e, payload) => cb(payload)),
+  },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),
     list: () => ipcRenderer.invoke('mcp:list'),
