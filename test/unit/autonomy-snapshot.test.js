@@ -309,3 +309,117 @@ test('argument validation: workspaceRoot must exist and be absolute', () => {
   const r2 = captureSnapshot('/nope/not/here/' + crypto.randomBytes(4).toString('hex'), store, SID);
   assert.equal(r2.ok, false);
 });
+
+// ─── Adversarial review fixes ────────────────────────────────────────────
+
+test('SECURITY: writeFileSync does NOT follow a symlink-replaced file', () => {
+  // Capture a regular file. Then between capture and restore, an
+  // attacker (or buggy agent) replaces the file with a symlink to
+  // a sensitive path. The restore must not write through the link.
+  writeFile('target.txt', 'original\n');
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-snap-outside-'));
+  const outsideTarget = path.join(outsideDir, 'pwned.txt');
+  fs.writeFileSync(outsideTarget, 'untouched\n');
+  try {
+    captureSnapshot(work, store, SID);
+    // Swap: target.txt becomes a symlink to outsideTarget
+    fs.unlinkSync(path.join(work, 'target.txt'));
+    fs.symlinkSync(outsideTarget, path.join(work, 'target.txt'));
+    const res = restoreFromSnapshot(work, store, SID);
+    assert.equal(res.ok, true);
+    // The outside file MUST be unchanged. The restore must have
+    // unlinked the symlink and written a fresh file in the workspace.
+    assert.equal(fs.readFileSync(outsideTarget, 'utf8'), 'untouched\n');
+    assert.equal(fs.lstatSync(path.join(work, 'target.txt')).isSymbolicLink(), false);
+    assert.equal(fs.readFileSync(path.join(work, 'target.txt'), 'utf8'), 'original\n');
+  } finally {
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test('SECURITY: writeFileSync does NOT follow an ancestor symlink', () => {
+  // The full attack from the adversarial review: workspace/sub
+  // becomes a symlink to outside; manifest tries to write
+  // sub/inner.txt. The write would land outside workspace without
+  // the ancestor-chain validator.
+  writeFile('sub/inner.txt', 'inner original\n');
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-snap-outside-'));
+  try {
+    captureSnapshot(work, store, SID);
+    // Replace workspace/sub with a symlink pointing outside.
+    fs.rmSync(path.join(work, 'sub'), { recursive: true, force: true });
+    fs.symlinkSync(outsideDir, path.join(work, 'sub'));
+    const res = restoreFromSnapshot(work, store, SID);
+    assert.equal(res.ok, true);
+    // Nothing must have been written inside outsideDir.
+    assert.deepEqual(fs.readdirSync(outsideDir), []);
+    // The restore should have warned for sub/inner.txt.
+    assert.ok(res.warnings.find((w) => w.path === path.join('sub', 'inner.txt') || w.path === 'sub/inner.txt'));
+  } finally {
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test('SECURITY: a tampered blob (sha mismatch after decrypt) is refused', () => {
+  writeFile('a.txt', 'real content\n');
+  captureSnapshot(work, store, SID);
+  // Locate the blob and tamper it (replace with different content).
+  const blobs = path.join(store, 'sessions', SID, 'blobs');
+  const blobNames = fs.readdirSync(blobs);
+  assert.equal(blobNames.length, 1);
+  fs.writeFileSync(path.join(blobs, blobNames[0]), 'TAMPERED\n');
+  // Wipe the workspace and restore.
+  fs.unlinkSync(path.join(work, 'a.txt'));
+  const res = restoreFromSnapshot(work, store, SID);
+  assert.equal(res.ok, true);
+  // a.txt must NOT have been restored with tampered content.
+  // Because preserveExtras default is false, the destructive pass
+  // does not re-create a.txt either (file was not in manifest after
+  // tamper). Just confirm the warning shape:
+  assert.ok(res.warnings.find((w) => /sha mismatch/.test(w.reason)));
+  assert.equal(fs.existsSync(path.join(work, 'a.txt')), false);
+});
+
+test('SECURITY: manifest entries with non-hex sha values are refused', () => {
+  writeFile('a.txt', 'A');
+  captureSnapshot(work, store, SID);
+  // Tamper the manifest to point a.txt at a non-hex sha (and
+  // therefore an arbitrary filename under blobs/).
+  const mp = path.join(store, 'sessions', SID, 'snapshot.json');
+  const m = JSON.parse(fs.readFileSync(mp, 'utf8'));
+  m.entries['a.txt'] = { type: 'file', sha: '../../../etc/passwd' };
+  fs.writeFileSync(mp, JSON.stringify(m));
+  fs.unlinkSync(path.join(work, 'a.txt'));
+  const res = restoreFromSnapshot(work, store, SID);
+  assert.equal(res.ok, true);
+  assert.ok(res.warnings.find((w) => /64-char hex/.test(w.reason)));
+  assert.equal(fs.existsSync(path.join(work, 'a.txt')), false);
+});
+
+test('joinSafely tolerates a trailing path separator on base', () => {
+  // The bug from the adversarial review: base + path.sep would
+  // double up if base already ended in a separator. path.resolve
+  // strips trailing separators before the prefix check.
+  const base = '/tmp/foo' + path.sep;
+  const ok = _internal.joinSafely(base, 'sub/file.js');
+  assert.equal(ok, path.resolve('/tmp/foo/sub/file.js'));
+});
+
+test('opts.preserveExtras: true skips the destructive removeExtras pass', () => {
+  writeFile('keep.txt', 'keep');
+  captureSnapshot(work, store, SID);
+  writeFile('extra.txt', 'should survive when preserveExtras=true\n');
+  const res = restoreFromSnapshot(work, store, SID, { preserveExtras: true });
+  assert.equal(res.ok, true);
+  assert.equal(fs.existsSync(path.join(work, 'extra.txt')), true);
+  assert.equal(fs.existsSync(path.join(work, 'keep.txt')), true);
+});
+
+test('opts.preserveExtras default is false (strict-revert behavior)', () => {
+  writeFile('keep.txt', 'keep');
+  captureSnapshot(work, store, SID);
+  writeFile('extra.txt', 'should be removed by default\n');
+  const res = restoreFromSnapshot(work, store, SID);
+  assert.equal(res.ok, true);
+  assert.equal(fs.existsSync(path.join(work, 'extra.txt')), false);
+});

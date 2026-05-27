@@ -196,10 +196,17 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   const warnings = [];
 
   // First pass: ensure every snapshot entry exists at the right state.
+  // Ancestor-chain validation runs once per entry, before any fs
+  // mutation, so mkdirSync cannot accidentally resolve through a
+  // hostile or pre-existing symlink in the workspace.
   for (const relPath of Object.keys(manifest.entries)) {
     const meta = manifest.entries[relPath];
     const abs = joinSafely(workspaceRoot, relPath);
     if (!abs) { warnings.push({ path: relPath, reason: 'path escapes workspaceRoot' }); continue; }
+    if (!validateAncestorChain(workspaceRoot, abs)) {
+      warnings.push({ path: relPath, reason: 'ancestor path is a symlink, refusing write' });
+      continue;
+    }
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to workspaceRoot
       fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -211,10 +218,40 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
         fs.symlinkSync(meta.target, abs);
       } else if (meta.type === 'file') {
+        // Reject blob names that are not lowercase-hex 64-char strings.
+        // meta.sha is caller-influenced (from the manifest on disk); a
+        // tampered manifest must not be able to point us at random
+        // files outside bdir.
+        if (typeof meta.sha !== 'string' || !/^[a-f0-9]{64}$/.test(meta.sha)) {
+          warnings.push({ path: relPath, reason: 'manifest sha is not a 64-char hex string' });
+          continue;
+        }
         const blobAbs = path.join(bdir, meta.sha);
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- blobAbs is bounded to bdir
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- blobAbs is path.join(bdir, validated sha)
         let buf = fs.readFileSync(blobAbs);
         if (typeof opts.decrypt === 'function') buf = opts.decrypt(buf);
+        // Re-hash the decrypted content and require it match the
+        // manifest. Defends against blob tampering, decrypt-with-wrong
+        // -key corruption, and any future cache-skew hazard.
+        if (sha256OfBuffer(buf) !== meta.sha) {
+          warnings.push({ path: relPath, reason: 'blob sha mismatch after decrypt' });
+          continue;
+        }
+        // Pre-unlink so a hostile or pre-existing symlink at abs does
+        // not get followed by writeFileSync. fs.rmSync with force:true
+        // removes the link itself on POSIX and Windows, never the
+        // target it points at. lstat to avoid removing a directory
+        // that legitimately existed before the run.
+        try {
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+          const lst = fs.lstatSync(abs);
+          if (lst && !lst.isDirectory()) {
+            // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+            fs.rmSync(abs, { force: true });
+          }
+        } catch (_) {
+          // abs did not exist; the write below creates it fresh.
+        }
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
         fs.writeFileSync(abs, buf);
       }
@@ -228,20 +265,62 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   // manifest. This is what makes restore truly revert the run.
   // Honors the same default ignore list so node_modules etc. that
   // were never snapped are not torn out from under the user.
-  const ignores = DEFAULT_IGNORE.slice();
-  if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
-  removeExtras(workspaceRoot, '', new Set(Object.keys(manifest.entries)), ignores, warnings);
+  //
+  // opts.preserveExtras: true skips this destructive pass. The
+  // supervisor wires that flag for "additive restore" flows where
+  // the user wants the snapshotted files back without losing
+  // anything the agent added. Default stays strict-revert because
+  // that is the trust promise (a restore matches what was captured).
+  if (opts.preserveExtras !== true) {
+    const ignores = DEFAULT_IGNORE.slice();
+    if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
+    removeExtras(workspaceRoot, '', new Set(Object.keys(manifest.entries)), ignores, warnings);
+  }
 
   return { ok: true, restored, warnings };
 }
 
+// validateAncestorChain returns true iff every path component
+// between baseAbs and the parent of fileAbs is either non-existent
+// (mkdirSync will create it freshly) OR a real directory. A symlink
+// anywhere on the chain is refused. This stops a hostile or
+// pre-existing symlink in the workspace from being followed when
+// writeFileSync resolves the path. There is a TOCTOU window between
+// this check and the eventual write, but for Phase 1 the threat is
+// manifest / workspace tampering, not a concurrent attacker.
+function validateAncestorChain(baseAbs, fileAbs) {
+  const baseN = path.resolve(baseAbs);
+  const parent = path.dirname(fileAbs);
+  if (parent === baseN || parent === path.dirname(baseN)) return true;
+  const rel = path.relative(baseN, parent);
+  if (!rel || rel.startsWith('..')) return false;
+  let cur = baseN;
+  for (const seg of rel.split(path.sep)) {
+    cur = path.join(cur, seg);
+    let lst;
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under baseAbs
+      lst = fs.lstatSync(cur);
+    } catch (_) {
+      // does not exist; mkdirSync will create it as a real directory
+      return true;
+    }
+    if (lst.isSymbolicLink()) return false;
+    if (!lst.isDirectory()) return false;
+  }
+  return true;
+}
+
 function joinSafely(base, rel) {
   // Path traversal guard: a manifest entry whose normalized form
-  // escapes the workspaceRoot is rejected, never written.
+  // escapes the workspaceRoot is rejected, never written. Normalize
+  // base via path.resolve so a caller-supplied trailing separator
+  // does not break the prefix check.
+  const baseN = path.resolve(base);
   const norm = path.normalize(rel);
   if (norm.startsWith('..') || path.isAbsolute(norm)) return null;
-  const abs = path.join(base, norm);
-  if (!abs.startsWith(base + path.sep) && abs !== base) return null;
+  const abs = path.join(baseN, norm);
+  if (!abs.startsWith(baseN + path.sep) && abs !== baseN) return null;
   return abs;
 }
 
@@ -366,5 +445,5 @@ module.exports = {
   restoreFromSnapshot,
   diffWorkspace,
   // exported for unit tests; not part of the public API.
-  _internal: { sha256OfBuffer, isSafeSessionId, shouldIgnore, joinSafely },
+  _internal: { sha256OfBuffer, isSafeSessionId, shouldIgnore, joinSafely, validateAncestorChain },
 };
