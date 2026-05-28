@@ -131,3 +131,34 @@ test('negative token deltas in tick are clamped to 0 (no rewinding the counter)'
   m.tick({ now: T0, inputTokens: -50 });
   assert.equal(m.state(T0).inputTokens, 100);
 });
+
+test('setReportedTokens overrides chars/4 estimate as the truth source', () => {
+  const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-opus-4-7' });
+  // chars/4 path: would estimate 5000/4 = 1250 output tokens
+  m.tick({ now: T0, charsFromAgent: 5000 });
+  assert.equal(m.state(T0).totalTokens, 1250);
+  assert.equal(m.state(T0).tokensEstimated, true);
+  // Agent reports its real number (e.g. parsed from "↓ 800 tokens")
+  m.setReportedTokens(800);
+  const s = m.state(T0);
+  assert.equal(s.totalTokens, 800);
+  assert.equal(s.tokensReported, true);
+  assert.equal(s.tokensEstimated, false);
+});
+
+test('setReportedTokens is monotonic (never lets the counter regress)', () => {
+  const m = createBudgetMeter({ startedAt: T0 });
+  m.setReportedTokens(1500);
+  m.setReportedTokens(900);
+  assert.equal(m.state(T0).totalTokens, 1500);
+  m.setReportedTokens(2200);
+  assert.equal(m.state(T0).totalTokens, 2200);
+});
+
+test('reported tokens drive dollar cost via blended in/out rate', () => {
+  // claude-opus rates: in $15/Mtok, out $75/Mtok. Blend = 30% in + 70% out
+  // = 0.3*15 + 0.7*75 = 57. 1000 tokens => 0.057 dollars.
+  const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-opus-4-7' });
+  m.setReportedTokens(1000);
+  assert.ok(Math.abs(m.state(T0).dollars - 0.057) < 1e-6);
+});

@@ -330,7 +330,7 @@ function applyAccent(accent) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
 function setPage(name) {
-  if (!['chat', 'agents', 'workflows', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
+  if (!['chat', 'agents', 'workflows', 'autonomy', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
   currentPage = name;
   document.body.dataset.page = name;
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
@@ -338,6 +338,7 @@ function setPage(name) {
   if (name === 'chat') { setTimeout(fitNow, 30); term.focus(); }
   if (name === 'agents') renderAgents();
   if (name === 'workflows') renderWorkflows();
+  if (name === 'autonomy') renderAutonomyPage();
   if (name === 'projects') renderProjects();
   if (name === 'prompts') renderPrompts();
   if (name === 'skills') renderSkills();
@@ -4355,8 +4356,15 @@ async function launchAgent({ initialPrompt = null } = {}) {
 let autonomyActive = false;
 let autonomyLastSession = null;
 function openAutonomyStart() {
+  const hasProject = !!(activeProjectId && projectsCache.some((p) => p && p.id === activeProjectId));
+  const noProj = $('#aut-no-project');
+  const body = $('#aut-start-body');
+  const foot = $('#aut-start-foot');
+  if (noProj) noProj.hidden = hasProject;
+  if (body) body.hidden = !hasProject;
+  if (foot) foot.hidden = !hasProject;
   $('#autonomy-start-modal').hidden = false;
-  setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
+  if (hasProject) setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
 }
 function closeAutonomyStart() { $('#autonomy-start-modal').hidden = true; }
 async function startAutonomy() {
@@ -4366,34 +4374,962 @@ async function startAutonomy() {
     tokens: Number($('#aut-cap-tok').value) || 200000,
     dollars: Number($('#aut-cap-usd').value) || 5,
   };
-  const r = await window.husk.autonomy.start({ goal, caps });
-  if (!r || !r.ok) { toast((r && r.error) || 'Could not start autonomy', 'error'); return; }
-  autonomyActive = true;
-  autonomyLastSession = { sessionId: r.sessionId, workspaceRoot: r.workspaceRoot };
-  closeAutonomyStart();
-  paintAutonomyBanner();
-  toast(`Autonomy running (${r.sessionId.slice(0, 12)}...)`, 'success');
+  const goBtn = $('#aut-start-go');
+  const cancelBtn = $('#aut-start-cancel');
+  const status = $('#aut-snapshot-status');
+  const goLabelBefore = goBtn ? goBtn.textContent : 'Start run';
+  if (goBtn) { goBtn.disabled = true; goBtn.textContent = 'Capturing snapshot...'; }
+  if (cancelBtn) cancelBtn.disabled = true;
+  if (status) { status.hidden = false; status.textContent = 'Capturing workspace snapshot...'; }
+  try {
+    const r = await window.husk.autonomy.start({ goal, caps });
+    if (!r || !r.ok) {
+      toast((r && r.error) || 'Could not start autonomy', 'error');
+      if (status) { status.hidden = true; status.textContent = ''; }
+      return;
+    }
+    autonomyActive = true;
+    autonomyLastSession = { sessionId: r.sessionId, workspaceRoot: r.workspaceRoot };
+    autonomyState.startedAt = Date.now();
+    resetAutonomyPanel();
+    setAutonomyGoal(goal);
+    setAutonomyCaps(caps);
+    closeAutonomyStart();
+    try { setPage('autonomy'); } catch (_) {}
+    paintAutonomyBanner();
+    const fc = Number(r.fileCount) || 0;
+    toast(`Autonomy running, snapshot of ${fc} files captured`, 'success');
+  } finally {
+    if (goBtn) { goBtn.disabled = false; goBtn.textContent = goLabelBefore; }
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (status) { status.hidden = true; status.textContent = ''; }
+  }
 }
 async function cancelAutonomy() {
   if (!autonomyActive) return;
   const r = await window.husk.autonomy.cancel({});
   if (!r || !r.ok) { toast((r && r.error) || 'Cancel failed', 'error'); return; }
 }
-function paintAutonomyBanner() {
-  const el = $('#autonomy-banner');
-  const label = $('#autonomy-label');
-  if (!el || !label) return;
-  if (autonomyActive) {
-    el.hidden = false;
-    // eslint-disable-next-line no-unsanitized/property -- static template
-    el.innerHTML = '<span>AUTONOMY MODE ACTIVE</span><span class="aut-spacer"></span><button class="ghost-btn ghost-btn-danger" id="aut-cancel-btn">Cancel run</button>';
-    const cb = $('#aut-cancel-btn');
-    if (cb) cb.addEventListener('click', cancelAutonomy);
-    label.textContent = 'Autonomy ON';
-  } else {
-    el.hidden = true;
-    label.textContent = 'Autonomy';
+// Curated preset goals. Each preset prefills the start-run modal so
+// users have a clear first action instead of staring at a blank
+// textarea. Caps are sensible defaults; user can edit before running.
+const AUTONOMY_PRESETS = [
+  {
+    id: 'security-audit',
+    title: 'Security audit pass',
+    body: 'Walk the codebase for obvious security issues: auth bypass, missing input validation, secrets in source, unsafe deserialization. Report findings inline.',
+    caps: { minutes: 60, tokens: 250000, dollars: 6 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>',
+  },
+  {
+    id: 'cleanup-todos',
+    title: 'Cleanup TODOs',
+    body: 'Find every TODO and FIXME comment in source. Group by area, propose a fix for each, do not push.',
+    caps: { minutes: 30, tokens: 120000, dollars: 3 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+  },
+  {
+    id: 'docs-pass',
+    title: 'Documentation pass',
+    body: 'Generate or improve docstrings, comments, and README sections for public APIs. Match the existing tone.',
+    caps: { minutes: 45, tokens: 180000, dollars: 4 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  },
+  {
+    id: 'add-tests',
+    title: 'Add missing tests',
+    body: 'Identify functions and modules with no test coverage. Write unit tests using the existing test framework. Do not modify production code.',
+    caps: { minutes: 60, tokens: 220000, dollars: 5 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg>',
+  },
+  {
+    id: 'refactor-types',
+    title: 'Tighten types',
+    body: 'Find loosely typed code (any, unknown, missing return types) and add precise types. Run the type checker after each change.',
+    caps: { minutes: 45, tokens: 200000, dollars: 4 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/><path d="M9 21h6"/><path d="M12 3v18"/></svg>',
+  },
+  {
+    id: 'dep-bump',
+    title: 'Bump dependencies',
+    body: 'Review outdated dependencies. Bump patch and minor versions where safe. Run the test suite after each batch. Do not bump major versions without explicit confirmation.',
+    caps: { minutes: 30, tokens: 100000, dollars: 2 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
+  },
+];
+
+function renderAutonomyPage() {
+  // Static parts: presets gallery. Re-rendered every visit so it
+  // refreshes with workspace switches without bookkeeping.
+  const grid = $('#aut-preset-grid');
+  if (grid) {
+    while (grid.firstChild) grid.removeChild(grid.firstChild);
+    for (const p of AUTONOMY_PRESETS) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'aut-preset';
+      card.dataset.preset = p.id;
+      const icon = document.createElement('div');
+      icon.className = 'aut-preset-icon';
+      // eslint-disable-next-line no-unsanitized/property -- inline SVG from a static constant, no user input
+      icon.innerHTML = p.icon;
+      const title = document.createElement('div');
+      title.className = 'aut-preset-title';
+      title.textContent = p.title;
+      const body = document.createElement('div');
+      body.className = 'aut-preset-body';
+      body.textContent = p.body;
+      const caps = document.createElement('div');
+      caps.className = 'aut-preset-caps';
+      const capLine = (label, val) => {
+        const s = document.createElement('span');
+        s.textContent = `${label} ${val}`;
+        return s;
+      };
+      caps.appendChild(capLine('time', `${p.caps.minutes}m`));
+      caps.appendChild(capLine('tokens', formatTokens(p.caps.tokens)));
+      caps.appendChild(capLine('spend', `$${p.caps.dollars}`));
+      card.appendChild(icon);
+      card.appendChild(title);
+      card.appendChild(body);
+      card.appendChild(caps);
+      card.addEventListener('click', () => loadPresetIntoStartModal(p));
+      grid.appendChild(card);
+    }
   }
+  // Dynamic: recent runs + hero stats fetched from backend.
+  refreshAutonomyHistory();
+}
+
+function loadPresetIntoStartModal(p) {
+  openAutonomyStart();
+  setTimeout(() => {
+    const ga = $('#aut-goal');
+    const m = $('#aut-cap-min');
+    const t = $('#aut-cap-tok');
+    const d = $('#aut-cap-usd');
+    if (ga) ga.value = p.body;
+    if (m) m.value = p.caps.minutes;
+    if (t) t.value = p.caps.tokens;
+    if (d) d.value = p.caps.dollars;
+    try { ga && ga.focus(); } catch (_) {}
+  }, 30);
+}
+
+// Open the Start-run modal prefilled with a past run's goal + caps.
+// Used by the small Rerun button on Recent Runs rows and by the
+// Rerun button in review-mode footer. Falls back to defaults if the
+// past row lacks caps (older audit logs).
+function rerunFromPastRun(run) {
+  if (!run || !run.goal) { toast('That run has no goal text to rerun', 'error'); return; }
+  if (autonomyActive) { toast('A run is already active', 'info'); return; }
+  // Exit any review session so the modal opens cleanly.
+  if (autonomyReview) {
+    autonomyReview = false;
+    autonomyReviewData = null;
+    paintAutonomyBanner();
+  }
+  const caps = run.caps && typeof run.caps === 'object' ? run.caps : { minutes: 60, tokens: 200000, dollars: 5 };
+  loadPresetIntoStartModal({
+    id: 'rerun',
+    title: 'Rerun',
+    body: run.goal,
+    caps: {
+      minutes: Number(caps.minutes) || 60,
+      tokens: Number(caps.tokens) || 200000,
+      dollars: Number(caps.dollars) || 5,
+    },
+  });
+}
+
+async function refreshAutonomyHistory() {
+  const list = $('#aut-recent');
+  const meta = $('#aut-recent-meta');
+  const heroRuns = $('#aut-hero-runs');
+  const heroFiles = $('#aut-hero-files');
+  const heroSpend = $('#aut-hero-spend');
+  if (!list) return;
+  const active = projectsCache.find((p) => p && p.id === activeProjectId);
+  const workspaceRoot = active && active.path ? active.path : null;
+  let r;
+  try { r = await window.husk.autonomy.history({ workspaceRoot }); }
+  catch (_) { r = { ok: false }; }
+  if (!r || !r.ok) {
+    while (list.firstChild) list.removeChild(list.firstChild);
+    const empty = document.createElement('div');
+    empty.className = 'aut-page-feed-empty';
+    empty.textContent = 'Could not load history.';
+    list.appendChild(empty);
+    return;
+  }
+  const runs = r.runs || [];
+  while (list.firstChild) list.removeChild(list.firstChild);
+  if (!runs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'aut-page-feed-empty';
+    empty.textContent = 'No prior runs in this project.';
+    list.appendChild(empty);
+    if (meta) meta.textContent = 'no runs yet';
+    if (heroRuns) heroRuns.textContent = '0';
+    if (heroFiles) heroFiles.textContent = '0';
+    if (heroSpend) heroSpend.textContent = '$0';
+    return;
+  }
+  let totalFiles = 0;
+  let totalSpend = 0;
+  for (const run of runs) {
+    totalFiles += Number(run.fileCount) || 0;
+    totalSpend += Number(run.dollars) || 0;
+    const row = document.createElement('div');
+    row.className = 'aut-recent-row';
+    row.dataset.session = run.sessionId;
+    const main = document.createElement('div');
+    main.className = 'aut-recent-main';
+    const goal = document.createElement('div');
+    goal.className = 'aut-recent-goal';
+    goal.textContent = run.goal || '(no goal recorded)';
+    const m2 = document.createElement('div');
+    m2.className = 'aut-recent-meta';
+    const when = run.endedAt || run.capturedAt;
+    m2.textContent = `${fmtRelTime(when)} · ${run.sessionId.slice(5, 17)}`;
+    main.appendChild(goal);
+    main.appendChild(m2);
+    const files = document.createElement('div');
+    files.className = 'aut-recent-files';
+    files.textContent = run.fileCount > 0 ? `${run.fileCount} files` : 'no changes';
+    const pill = document.createElement('div');
+    pill.className = 'aut-recent-pill';
+    pill.dataset.status = run.haltReason || run.status || 'ended';
+    pill.textContent = run.haltReason || run.status || 'ended';
+    const rerun = document.createElement('button');
+    rerun.type = 'button';
+    rerun.className = 'aut-recent-rerun';
+    rerun.title = 'Rerun this task';
+    const rerunSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    rerunSvg.setAttribute('viewBox', '0 0 24 24');
+    rerunSvg.setAttribute('fill', 'none');
+    rerunSvg.setAttribute('stroke', 'currentColor');
+    rerunSvg.setAttribute('stroke-width', '2');
+    rerunSvg.setAttribute('stroke-linecap', 'round');
+    rerunSvg.setAttribute('stroke-linejoin', 'round');
+    rerunSvg.setAttribute('aria-hidden', 'true');
+    const rerunP1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    rerunP1.setAttribute('d', 'M21 12a9 9 0 1 1-3-6.7L21 8');
+    const rerunP2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    rerunP2.setAttribute('d', 'M21 3v5h-5');
+    rerunSvg.appendChild(rerunP1);
+    rerunSvg.appendChild(rerunP2);
+    const rerunLbl = document.createElement('span');
+    rerunLbl.textContent = 'Rerun';
+    rerun.appendChild(rerunSvg);
+    rerun.appendChild(rerunLbl);
+    rerun.addEventListener('click', (e) => { e.stopPropagation(); rerunFromPastRun(run); });
+    row.appendChild(main);
+    row.appendChild(files);
+    row.appendChild(pill);
+    row.appendChild(rerun);
+    row.addEventListener('click', () => openAutonomyRunReview(run.sessionId, run.workspaceRoot));
+    list.appendChild(row);
+  }
+  if (meta) meta.textContent = `${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`;
+  if (heroRuns) heroRuns.textContent = String(runs.length);
+  if (heroFiles) heroFiles.textContent = String(totalFiles);
+  if (heroSpend) heroSpend.textContent = formatDollars(totalSpend);
+}
+
+// Load a past run into the live layout in REVIEW mode. Same panes
+// (goal, rings, files, activity) but values are frozen and the
+// footer shows Revert / Start-new instead of Stop. Activity feed
+// for past runs is summarized (line text is not retained in the
+// audit log, only event kinds + char counts).
+async function openAutonomyRunReview(sessionId, workspaceRoot) {
+  try { setPage('autonomy'); } catch (_) {}
+  try {
+    const sum = await window.husk.autonomy.summary({ sessionId, workspaceRoot });
+    if (!sum || !sum.ok) { toast((sum && sum.error) || 'Could not load run', 'error'); return; }
+    enterReviewMode({ sessionId, workspaceRoot, summary: sum });
+  } catch (err) {
+    toast(`Could not load run: ${err && err.message || err}`, 'error');
+  }
+}
+
+// Autonomy live state. Driven by autonomy:started / autonomy:budget
+// IPC events, a 4s poll of autonomy:liveDiff, AND a terminal-buffer
+// snapshotter that reads what xterm.js has rendered (the right
+// source for "what the agent showed the user"). Parsing the raw
+// PTY byte stream was the previous wrong approach: that stream is
+// commands to a terminal emulator, not a log, so any naive line
+// parse over it fragments TUI output. xterm has already done the
+// hard work of rendering; we just read its buffer.
+const AP_RING_C = 2 * Math.PI * 42; // r=42 on the big page rings
+const AP_FEED_MAX_ROWS = 300;
+const AP_DIFF_POLL_MS = 4000;
+const AP_TERM_SNAP_MS = 1200;
+const AP_TERM_SCAN_WINDOW = 60;
+const AP_TERM_SEEN_MAX = 400;
+// Auto-finalize a run when the agent appears idle. Two paths:
+//   AP_IDLE_END_MS:      quiet + prompt detected -> end
+//   AP_IDLE_END_HARD_MS: quiet for much longer -> end regardless of
+//                        prompt detection (different agents render
+//                        the prompt differently; this is the safety
+//                        net so we never miss a finished run)
+// Both gated by AP_MIN_EVENTS_BEFORE_AUTO_END so we never end a run
+// that never started.
+const AP_IDLE_END_MS = 10000;
+const AP_IDLE_END_HARD_MS = 25000;
+const AP_MIN_EVENTS_BEFORE_AUTO_END = 3;
+let autonomyTermInterval = null;
+let autonomyTermSeenLines = new Set();
+let autonomyTermSeenOrder = [];
+let autonomyLastActivityAt = 0;
+let autonomyAutoEndTriggered = false;
+let autonomyReview = false;
+let autonomyReviewData = null;
+let autonomyState = {
+  goal: '',
+  startedAt: 0,
+  caps: { minutes: 60, tokens: 200000, dollars: 5 },
+  budget: null,
+  feed: [],
+  eventCount: 0,
+  files: [],
+  tickerId: null,
+  diffPollId: null,
+};
+function paintAutonomyBanner() {
+  const label = $('#autonomy-label');
+  const pulse = $('#rail-aut-pulse');
+  const empty = $('#aut-page-empty');
+  const live = $('#aut-page-live');
+  const status = $('#aut-page-status');
+  const statusText = $('#aut-page-status-text');
+  const startBtn = $('#aut-page-start');
+  const stopBtnTop = $('#aut-page-stop-top');
+  const reviewButtons = document.querySelectorAll('.aut-review-only');
+  const backBtn = $('#aut-review-back');
+  const pageEl = document.querySelector('.page-autonomy');
+  const showLive = autonomyActive || autonomyReview;
+  if (label) label.textContent = autonomyActive ? 'Autonomy ON' : 'Autonomy';
+  if (pulse) pulse.hidden = !autonomyActive;
+  if (empty) empty.hidden = showLive;
+  if (live) live.hidden = !showLive;
+  if (status) status.hidden = !showLive;
+  if (pageEl) pageEl.classList.toggle('is-live', !!showLive);
+  // While a run is active OR a review is open, the header Start
+  // button is replaced by the status pill; showing both is
+  // contradictory.
+  if (startBtn) startBtn.hidden = showLive;
+  if (stopBtnTop) stopBtnTop.hidden = !autonomyActive;
+  reviewButtons.forEach((b) => { b.hidden = !autonomyReview; });
+  if (backBtn) backBtn.hidden = !autonomyReview;
+  // Status pill content shifts by mode.
+  if (statusText) {
+    if (autonomyActive) statusText.textContent = 'Running';
+    else if (autonomyReview && autonomyReviewData) {
+      const s = autonomyReviewData.summary && autonomyReviewData.summary.summary;
+      const haltReason = (s && s.haltReason) || 'ended';
+      statusText.textContent = haltReason === 'natural' ? 'Ended' : (haltReason.charAt(0).toUpperCase() + haltReason.slice(1));
+    } else statusText.textContent = '';
+  }
+  // Re-style the status pill in review mode (no accent pulse).
+  if (status) status.classList.toggle('is-review', !autonomyActive && autonomyReview);
+  if (autonomyActive) {
+    if (!autonomyState.tickerId) {
+      autonomyState.tickerId = setInterval(updateAutonomyElapsed, 1000);
+      updateAutonomyElapsed();
+    }
+    startLiveDiffPoll();
+    startAutonomyTermSnapshotter();
+  } else {
+    if (autonomyState.tickerId) { clearInterval(autonomyState.tickerId); autonomyState.tickerId = null; }
+    stopLiveDiffPoll();
+    stopAutonomyTermSnapshotter();
+  }
+}
+function exitReviewMode() {
+  autonomyReview = false;
+  autonomyReviewData = null;
+  resetAutonomyPanel();
+  paintAutonomyBanner();
+  refreshAutonomyHistory();
+}
+function enterReviewMode({ sessionId, workspaceRoot, summary }) {
+  autonomyActive = false;
+  autonomyReview = true;
+  autonomyReviewData = { sessionId, workspaceRoot, summary };
+  resetAutonomyPanel();
+  const s = summary && summary.summary;
+  // Goal lives in the start_run row (summary.goal). The run_summary
+  // payload (s) carries final meter/diff but not the goal. Use the
+  // start_run goal as truth; fall back ONLY if even that is missing.
+  const realGoal = (summary && typeof summary.goal === 'string' && summary.goal) || (s && s.goal) || null;
+  setAutonomyGoal(realGoal || '(no goal recorded for this run)');
+  // Caps: start_run row first, then meter.caps, then current defaults.
+  const caps = (summary && summary.caps) || (s && s.meter && s.meter.caps) || autonomyState.caps;
+  setAutonomyCaps(caps);
+  // Show a frozen elapsed timer = the final duration.
+  const ms = (s && s.durationMs) || 0;
+  const elSec = Math.floor(ms / 1000);
+  const elMin = Math.floor(elSec / 60);
+  const elapsedTxt = elMin === 0 ? `${elSec}s` : `${elMin}m ${String(elSec % 60).padStart(2, '0')}s`;
+  const headEl = $('#aut-page-elapsed'); if (headEl) headEl.textContent = elapsedTxt;
+  // Paint rings with final values.
+  const finalBudget = (s && s.meter) || null;
+  if (finalBudget) {
+    autonomyState.startedAt = Date.now() - ms;
+    updateAutonomyBudget(finalBudget);
+  }
+  // Touched files = final diff from the run.
+  const diff = (summary && summary.diff) || [];
+  autonomyState.files = diff.slice();
+  renderTouchedFiles(diff);
+  // Activity placeholder: audit log records event counts but not
+  // full text; surface a short summary in the feed pane.
+  const events = Number(summary && summary.eventCount) || 0;
+  const halt = (s && s.haltReason) || 'natural';
+  const lines = [
+    `Run ${halt === 'natural' ? 'completed' : halt}.`,
+    `${events} ${events === 1 ? 'event' : 'events'} recorded in the audit log.`,
+    `${diff.length} ${diff.length === 1 ? 'file' : 'files'} touched against the pre-run snapshot.`,
+  ];
+  if (summary && summary.chain && summary.chain.valid) lines.push('Audit chain verified (tamper-evident).');
+  pushActivity(lines);
+  paintAutonomyBanner();
+}
+function setAutonomyGoal(goal) {
+  autonomyState.goal = goal || '(no goal provided)';
+  const el = $('#aut-page-goal-text');
+  if (el) el.textContent = autonomyState.goal;
+}
+function setAutonomyCaps(caps) {
+  autonomyState.caps = Object.assign({ minutes: 60, tokens: 200000, dollars: 5 }, caps || {});
+  const tc = $('#aut-page-cap-time'); if (tc) tc.textContent = `of ${autonomyState.caps.minutes}m`;
+  const ko = $('#aut-page-cap-tokens'); if (ko) ko.textContent = `of ${formatTokens(autonomyState.caps.tokens)}`;
+  const dc = $('#aut-page-cap-dollars'); if (dc) dc.textContent = `of ${formatDollars(autonomyState.caps.dollars)}`;
+}
+function formatTokens(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+function formatDollars(usd) {
+  // Always render as $X.YY so the unit is unambiguous. Under a cent
+  // we still show two decimal places ($0.00) rather than a different
+  // glyph (the cents sign rendered as a fallback square in some fonts).
+  if (!Number.isFinite(usd)) return '$0.00';
+  if (usd >= 100) return `$${usd.toFixed(0)}`;
+  return `$${usd.toFixed(2)}`;
+}
+function updateRing(id, pct, meterEl) {
+  const ring = document.getElementById(id);
+  if (!ring) return;
+  const clamped = Math.max(0, Math.min(1, pct));
+  ring.style.strokeDashoffset = String(AP_RING_C * (1 - clamped));
+  if (meterEl) meterEl.classList.toggle('is-warn', clamped >= 0.8);
+}
+function updateAutonomyBudget(b) {
+  if (!b) return;
+  autonomyState.budget = b;
+  const caps = autonomyState.caps;
+  const meters = document.querySelectorAll('.aut-page-meter');
+  const elapsedMin = (Date.now() - autonomyState.startedAt) / 60000;
+  const tv = $('#aut-page-val-time');
+  if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
+  updateRing('aut-page-ring-time', elapsedMin / caps.minutes, meters[0]);
+  const tk = Number(b.totalTokens) || 0;
+  const tv2 = $('#aut-page-val-tokens'); if (tv2) tv2.textContent = formatTokens(tk);
+  updateRing('aut-page-ring-tokens', caps.tokens > 0 ? tk / caps.tokens : 0, meters[1]);
+  const usd = Number(b.dollars) || 0;
+  const dv = $('#aut-page-val-dollars');
+  if (dv) dv.textContent = formatDollars(usd);
+  updateRing('aut-page-ring-dollars', caps.dollars > 0 ? usd / caps.dollars : 0, meters[2]);
+}
+function updateAutonomyElapsed() {
+  if (!autonomyActive) return;
+  const ms = Date.now() - autonomyState.startedAt;
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  const tag = m === 0 ? `${r}s` : `${m}m ${String(r).padStart(2, '0')}s`;
+  const headEl = $('#aut-page-elapsed'); if (headEl) headEl.textContent = tag;
+  if (autonomyState.budget) updateAutonomyBudget(autonomyState.budget);
+}
+function classifyActivityLine(line) {
+  const t = line.toLowerCase();
+  if (/^[•·→>*]/.test(line) || /^(running|using|calling) tool/.test(t)) return 'ap-row-tool';
+  if (/(edit|writ|patch|appl|chang)/i.test(t)) return 'ap-row-edit';
+  if (/(done|success|complet|ok|wrote)/i.test(t)) return 'ap-row-result';
+  return '';
+}
+// Spinner dedupe: claude cycles glyphs ("* Foo...", "+ Foo...",
+// "· Foo...") to indicate liveness. Treat lines with the same
+// semantic content (after stripping leading non-word chars) as one
+// row that flashes on each tick instead of appending duplicates.
+function normalizeForSpinnerDedupe(s) {
+  return String(s).replace(/^[^A-Za-z0-9]+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function pushActivity(lines) {
+  if (!Array.isArray(lines) || !lines.length) return;
+  const feed = $('#aut-page-feed');
+  if (!feed) return;
+  const empty = feed.querySelector('.aut-page-feed-empty');
+  if (empty) empty.remove();
+  for (const raw of lines) {
+    const text = String(raw).slice(0, 320);
+    if (!text || text.length < 3) continue;
+    const normalized = normalizeForSpinnerDedupe(text);
+    const lastRow = feed.lastElementChild;
+    if (lastRow && lastRow.dataset && lastRow.dataset.norm === normalized) {
+      // Same spinner line, just a new glyph. Update text and flash
+      // the row so the user sees the agent is still moving without
+      // a new row landing every 100ms.
+      const textEl = lastRow.querySelector('.ap-row-text');
+      if (textEl) textEl.textContent = text;
+      lastRow.classList.remove('is-spinning');
+      // Force a reflow so the animation restart applies.
+      void lastRow.offsetWidth;
+      lastRow.classList.add('is-spinning');
+      continue;
+    }
+    autonomyState.feed.push(text);
+    autonomyState.eventCount += 1;
+    autonomyLastActivityAt = Date.now();
+    const row = document.createElement('div');
+    row.className = `ap-feed-row ${classifyActivityLine(text)}`.trim();
+    row.dataset.norm = normalized;
+    const glyph = document.createElement('span');
+    glyph.className = 'ap-row-glyph';
+    glyph.setAttribute('aria-hidden', 'true');
+    const span = document.createElement('span');
+    span.className = 'ap-row-text';
+    span.textContent = text;
+    row.appendChild(glyph);
+    row.appendChild(span);
+    feed.appendChild(row);
+  }
+  while (feed.children.length > AP_FEED_MAX_ROWS) feed.removeChild(feed.firstChild);
+  feed.scrollTop = feed.scrollHeight;
+  const ec = $('#aut-page-event-count');
+  if (ec) ec.textContent = `${autonomyState.eventCount} ${autonomyState.eventCount === 1 ? 'event' : 'events'}`;
+}
+function renderTouchedFiles(changes) {
+  const pane = $('#aut-page-files');
+  const counter = $('#aut-page-files-count');
+  if (!pane) return;
+  while (pane.firstChild) pane.removeChild(pane.firstChild);
+  if (!Array.isArray(changes) || !changes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'aut-page-feed-empty';
+    empty.textContent = 'No file changes yet.';
+    pane.appendChild(empty);
+    if (counter) counter.textContent = '0';
+    return;
+  }
+  const ordered = changes.slice().sort((a, b) => String(a.path).localeCompare(String(b.path)));
+  for (const c of ordered) {
+    const row = document.createElement('div');
+    row.className = 'aut-file-row';
+    row.dataset.status = c.status || 'modified';
+    row.dataset.path = c.path || '';
+    row.title = 'Open diff';
+    const badge = document.createElement('span');
+    badge.className = 'aut-file-status';
+    badge.textContent = c.status || 'modified';
+    const p = document.createElement('span');
+    p.className = 'aut-file-path';
+    p.textContent = c.path || '';
+    row.appendChild(badge);
+    row.appendChild(p);
+    row.addEventListener('click', () => openFileDiffModal(c.path, c.status));
+    pane.appendChild(row);
+  }
+  if (counter) counter.textContent = String(changes.length);
+}
+
+// LCS line diff. Returns array of { kind: 'add' | 'remove' | 'context',
+// text, beforeNo?, afterNo? }. O(m*n) memory; main.js capped sides at
+// 6000 lines so the table stays manageable.
+function lineDiff(beforeText, afterText) {
+  const a = beforeText.split('\n');
+  const b = afterText.split('\n');
+  const m = a.length;
+  const n = b.length;
+  // Build LCS length table (m+1 by n+1). Uint16 saves memory for the
+  // common case of <= 65535 lines (our cap is 6000).
+  const rowSize = n + 1;
+  const dp = new Uint16Array((m + 1) * rowSize);
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      const idx = i * rowSize + j;
+      if (a[i] === b[j]) dp[idx] = dp[(i + 1) * rowSize + (j + 1)] + 1;
+      else dp[idx] = Math.max(dp[(i + 1) * rowSize + j], dp[i * rowSize + (j + 1)]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0, bn = 1, an = 1;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      out.push({ kind: 'context', text: a[i], beforeNo: bn++, afterNo: an++ });
+      i++; j++;
+    } else if (dp[(i + 1) * rowSize + j] >= dp[i * rowSize + (j + 1)]) {
+      out.push({ kind: 'remove', text: a[i], beforeNo: bn++ });
+      i++;
+    } else {
+      out.push({ kind: 'add', text: b[j], afterNo: an++ });
+      j++;
+    }
+  }
+  while (i < m) { out.push({ kind: 'remove', text: a[i], beforeNo: bn++ }); i++; }
+  while (j < n) { out.push({ kind: 'add', text: b[j], afterNo: an++ }); j++; }
+  return out;
+}
+
+// Collapse big runs of unchanged context into a hunk-gap row so the
+// modal is scannable on long files. Keeps CONTEXT_LINES around each
+// change.
+function compactDiff(rows, contextLines = 3) {
+  const isChange = (r) => r.kind === 'add' || r.kind === 'remove';
+  // Pre-compute distance-to-nearest-change so we can fast-cull.
+  const n = rows.length;
+  const nearChange = new Uint8Array(n);
+  let last = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (isChange(rows[i])) last = i;
+    if (i - last <= contextLines) nearChange[i] = 1;
+  }
+  last = Infinity;
+  for (let i = n - 1; i >= 0; i--) {
+    if (isChange(rows[i])) last = i;
+    if (last - i <= contextLines) nearChange[i] = 1;
+  }
+  const out = [];
+  let skipped = 0;
+  let skipStart = 0;
+  for (let i = 0; i < n; i++) {
+    if (nearChange[i]) {
+      if (skipped > 0) {
+        out.push({ kind: 'hunk-gap', text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'}`, skippedFrom: skipStart, skippedTo: i - 1 });
+        skipped = 0;
+      }
+      out.push(rows[i]);
+    } else {
+      if (skipped === 0) skipStart = i;
+      skipped++;
+    }
+  }
+  if (skipped > 0) out.push({ kind: 'hunk-gap', text: `... ${skipped} unchanged line${skipped === 1 ? '' : 's'}`, skippedFrom: skipStart, skippedTo: n - 1 });
+  return out;
+}
+
+async function openFileDiffModal(relPath, status) {
+  const modal = $('#aut-diff-modal');
+  const pathEl = $('#aut-diff-path');
+  const statusEl = $('#aut-diff-status');
+  const loading = $('#aut-diff-loading');
+  const message = $('#aut-diff-message');
+  const content = $('#aut-diff-content');
+  const added = $('#aut-diff-added-count');
+  const removed = $('#aut-diff-removed-count');
+  if (!modal) return;
+  // Resolve which session + workspace owns this diff. Live run wins;
+  // review mode uses the loaded review session.
+  let sessionId = autonomyLastSession && autonomyLastSession.sessionId;
+  let workspaceRoot = autonomyLastSession && autonomyLastSession.workspaceRoot;
+  if (autonomyReview && autonomyReviewData) {
+    sessionId = autonomyReviewData.sessionId;
+    workspaceRoot = autonomyReviewData.workspaceRoot;
+  }
+  if (!sessionId || !workspaceRoot) {
+    toast('No active session for this diff', 'error');
+    return;
+  }
+  if (pathEl) pathEl.textContent = relPath;
+  if (statusEl) {
+    statusEl.dataset.status = status || 'modified';
+    statusEl.textContent = (status || 'modified').toUpperCase();
+  }
+  if (added) added.textContent = '+0';
+  if (removed) removed.textContent = '−0';
+  while (content.firstChild) content.removeChild(content.firstChild);
+  if (message) { message.hidden = true; message.textContent = ''; }
+  if (loading) { loading.hidden = false; loading.textContent = 'Loading diff...'; }
+  modal.hidden = false;
+  let res;
+  try {
+    res = await window.husk.autonomy.fileDiff({ sessionId, workspaceRoot, path: relPath });
+  } catch (err) {
+    res = { ok: false, error: err && err.message || String(err) };
+  }
+  if (loading) loading.hidden = true;
+  if (!res || !res.ok) {
+    if (message) { message.hidden = false; message.textContent = (res && res.error) || 'Could not load diff'; }
+    return;
+  }
+  if (res.tooLarge) {
+    if (message) { message.hidden = false; message.textContent = `File is too large to diff inline (${(res.beforeBytes || 0).toLocaleString()} -> ${(res.afterBytes || 0).toLocaleString()} bytes).`; }
+    return;
+  }
+  // Compute diff client-side. Status determines if we even bother.
+  let rows;
+  if (res.status === 'added') {
+    rows = res.after.split('\n').map((t, i) => ({ kind: 'add', text: t, afterNo: i + 1 }));
+  } else if (res.status === 'deleted') {
+    rows = res.before.split('\n').map((t, i) => ({ kind: 'remove', text: t, beforeNo: i + 1 }));
+  } else {
+    rows = lineDiff(res.before, res.after);
+  }
+  let addCount = 0, removeCount = 0;
+  for (const r of rows) {
+    if (r.kind === 'add') addCount++;
+    else if (r.kind === 'remove') removeCount++;
+  }
+  if (added) added.textContent = `+${addCount}`;
+  if (removed) removed.textContent = `−${removeCount}`;
+  // Compact long unchanged runs.
+  const display = res.status === 'modified' ? compactDiff(rows, 3) : rows;
+  for (const r of display) {
+    const line = document.createElement('div');
+    line.className = `aut-diff-line ${r.kind}`;
+    const beforeLn = document.createElement('span');
+    beforeLn.className = 'aut-diff-ln';
+    beforeLn.textContent = r.beforeNo != null ? String(r.beforeNo) : '';
+    const afterLn = document.createElement('span');
+    afterLn.className = 'aut-diff-ln';
+    afterLn.textContent = r.afterNo != null ? String(r.afterNo) : '';
+    const sign = document.createElement('span');
+    sign.className = 'aut-diff-sign';
+    sign.textContent = r.kind === 'add' ? '+' : r.kind === 'remove' ? '−' : (r.kind === 'hunk-gap' ? '⋯' : ' ');
+    const text = document.createElement('span');
+    text.className = 'aut-diff-text';
+    text.textContent = r.text;
+    line.appendChild(beforeLn);
+    line.appendChild(afterLn);
+    line.appendChild(sign);
+    line.appendChild(text);
+    content.appendChild(line);
+  }
+}
+
+function closeFileDiffModal() {
+  const modal = $('#aut-diff-modal');
+  if (modal) modal.hidden = true;
+}
+// Parse an agent's "N tokens" status indicator out of a rendered
+// terminal line. claude format: "(30s · ↓ 1.5k tokens · ...)".
+// codex format: "1234 tokens used". aider: "Tokens: ... sent, ...".
+// Returns absolute cumulative token count or null.
+function parseAgentTokenStatus(line) {
+  if (!line) return null;
+  // Match a number (with optional decimal + k/m suffix) immediately
+  // before the word "tokens" (case-insensitive). Examples we WANT
+  // to match: "1.5k tokens", "↓ 1.5k tokens", "2,300 tokens used",
+  // "Tokens: 1234 sent" (handled by inverse below).
+  const after = line.match(/(\d[\d,\.]*)\s*([kKmM]?)\s*tokens?\b/);
+  if (after) return parseTokenNumber(after[1], after[2]);
+  const before = line.match(/tokens?\s*[:=]\s*(\d[\d,\.]*)\s*([kKmM]?)/i);
+  if (before) return parseTokenNumber(before[1], before[2]);
+  return null;
+}
+function parseTokenNumber(raw, suffix) {
+  if (!raw) return null;
+  const n = parseFloat(String(raw).replace(/,/g, ''));
+  if (!Number.isFinite(n)) return null;
+  const mult = suffix && /m/i.test(suffix) ? 1_000_000 : (suffix && /k/i.test(suffix) ? 1000 : 1);
+  return Math.floor(n * mult);
+}
+
+function rememberSeenLine(trimmed) {
+  if (autonomyTermSeenLines.has(trimmed)) return false;
+  autonomyTermSeenLines.add(trimmed);
+  autonomyTermSeenOrder.push(trimmed);
+  while (autonomyTermSeenOrder.length > AP_TERM_SEEN_MAX) {
+    const old = autonomyTermSeenOrder.shift();
+    autonomyTermSeenLines.delete(old);
+  }
+  return true;
+}
+
+// Snapshot xterm.js's rendered buffer and push net-new lines to the
+// activity feed. We DO NOT use a row-index baseline because:
+//   1. xterm.js scrollback eviction keeps buffer.length capped at
+//      the scrollback setting; new content evicts old, so
+//      `total > baseline` would never trigger after the cap.
+//   2. TUI agents that swap to the alternate screen buffer change
+//      what `buffer.active` points at; a baseline taken from the
+//      normal buffer is invalid against the alternate.
+// Content-based dedupe avoids both: read the LAST ~60 rows each
+// tick and push only lines we have not surfaced yet (tracked in
+// autonomyTermSeenLines, a Set of size AP_TERM_SEEN_MAX).
+function snapshotTermForAutonomy() {
+  if (!term || !term.buffer) return;
+  const b = term.buffer.active;
+  const total = b.length;
+  if (total === 0) return;
+  const start = Math.max(0, total - AP_TERM_SCAN_WINDOW);
+  const newLines = [];
+  for (let i = start; i < total; i++) {
+    const ln = b.getLine(i);
+    if (!ln) continue;
+    const text = ln.translateToString(true);
+    if (!text) continue;
+    const trimmed = text.replace(/\s+$/, '').trim();
+    if (trimmed.length < 2) continue;
+    if (rememberSeenLine(trimmed)) newLines.push(trimmed);
+  }
+  if (newLines.length) pushActivity(newLines);
+  // Token report: scan the LAST 200 rows for the agent's own status
+  // line, take the MAX value seen. The meter is monotonic so a
+  // larger number wins even if we hit older + newer rows on the
+  // same pass; that means we always converge to the highest value
+  // claude has rendered so far, surviving status-line flicker.
+  const scanFrom = Math.max(0, total - 200);
+  let maxReported = -1;
+  for (let i = scanFrom; i < total; i++) {
+    const ln = b.getLine(i);
+    if (!ln) continue;
+    const text = ln.translateToString(true);
+    const parsed = parseAgentTokenStatus(text);
+    if (parsed != null && parsed > maxReported) maxReported = parsed;
+  }
+  if (maxReported >= 0 && window.husk && window.husk.autonomy && window.husk.autonomy.reportTokens) {
+    try { window.husk.autonomy.reportTokens(maxReported); } catch (_) {}
+  }
+  // Idle watchdog. Two thresholds:
+  //   soft:  AP_IDLE_END_MS quiet  +  prompt detected in last 15 rows
+  //   hard:  AP_IDLE_END_HARD_MS quiet (no prompt detection needed)
+  // The soft threshold ends fast when we recognize the agent's
+  // prompt. The hard threshold ends eventually even if the agent's
+  // prompt does not match any pattern we know (claude wraps the
+  // prompt in a box; the last visible row is often an input hint
+  // like "← for agents", not the prompt itself).
+  if (autonomyActive && !autonomyAutoEndTriggered
+      && autonomyState.eventCount >= AP_MIN_EVENTS_BEFORE_AUTO_END
+      && autonomyLastActivityAt > 0) {
+    const idleMs = Date.now() - autonomyLastActivityAt;
+    if (idleMs >= AP_IDLE_END_MS && terminalLooksIdleAtPrompt()) {
+      autonomyAutoEndTriggered = true;
+      finalizeAutonomyOnIdle();
+    } else if (idleMs >= AP_IDLE_END_HARD_MS) {
+      autonomyAutoEndTriggered = true;
+      finalizeAutonomyOnIdle();
+    }
+  }
+}
+
+function terminalLooksIdleAtPrompt() {
+  if (!term || !term.buffer) return false;
+  const b = term.buffer.active;
+  const total = b.length;
+  if (total === 0) return false;
+  // Search the LAST 15 rows for ANY prompt-like row. Previously
+  // this required the LAST non-blank row to be the prompt, but
+  // claude renders input-area hints ("← for agents") BELOW the
+  // prompt, so the strict version never matched. Relaxed search
+  // is more forgiving and still rare to false-positive: prompt
+  // characters in agent output are usually inside other tokens
+  // (URL, code), not at the start of a short line.
+  for (let i = total - 1; i >= Math.max(0, total - 15); i--) {
+    const ln = b.getLine(i);
+    if (!ln) continue;
+    const text = ln.translateToString(true).replace(/\s+$/, '');
+    if (!text) continue;
+    const trimmed = text.trim();
+    if (/^[>›❯❱│║┃]\s*$/.test(trimmed)) return true;
+    if (/^[>›❯❱]\s/.test(trimmed) && trimmed.length < 60) return true;
+    // claude often renders its prompt inside a box-drawing frame:
+    // "│ >                                              │"
+    if (/^[│║┃].*[>›❯❱].*[│║┃]\s*$/.test(trimmed)) return true;
+  }
+  return false;
+}
+
+async function finalizeAutonomyOnIdle() {
+  if (!autonomyActive) return;
+  try {
+    await window.husk.autonomy.end({ reason: 'agent_idle' });
+    toast('Run finished automatically (agent returned to idle)', 'success');
+  } catch (err) {
+    // If the end call fails, allow another idle attempt next tick.
+    autonomyAutoEndTriggered = false;
+  }
+}
+
+function startAutonomyTermSnapshotter() {
+  if (autonomyTermInterval) return;
+  if (!term || !term.buffer) return;
+  // Seed the seen-set with EVERY line currently in the buffer. That
+  // is "what happened before this run". Only rows added afterwards
+  // (goal echo, agent response, tool calls) will fail the dedupe
+  // and surface in the feed.
+  autonomyTermSeenLines = new Set();
+  autonomyTermSeenOrder = [];
+  autonomyLastActivityAt = Date.now();
+  autonomyAutoEndTriggered = false;
+  const b = term.buffer.active;
+  const total = b.length;
+  for (let i = 0; i < total; i++) {
+    const ln = b.getLine(i);
+    if (!ln) continue;
+    const text = ln.translateToString(true);
+    if (!text) continue;
+    const trimmed = text.replace(/\s+$/, '').trim();
+    if (trimmed.length < 2) continue;
+    rememberSeenLine(trimmed);
+  }
+  autonomyTermInterval = setInterval(snapshotTermForAutonomy, AP_TERM_SNAP_MS);
+  // Fire one immediately so the goal echo (already on screen after
+  // injection delay) surfaces without waiting a full tick.
+  setTimeout(snapshotTermForAutonomy, 250);
+}
+
+function stopAutonomyTermSnapshotter() {
+  if (autonomyTermInterval) clearInterval(autonomyTermInterval);
+  autonomyTermInterval = null;
+  autonomyTermSeenLines = new Set();
+  autonomyTermSeenOrder = [];
+}
+
+async function pollLiveDiff() {
+  if (!autonomyActive) return;
+  try {
+    const r = await window.husk.autonomy.liveDiff();
+    if (!r || !r.ok) return;
+    autonomyState.files = r.changes || [];
+    renderTouchedFiles(autonomyState.files);
+  } catch (_) {}
+}
+function startLiveDiffPoll() {
+  if (autonomyState.diffPollId) return;
+  pollLiveDiff();
+  autonomyState.diffPollId = setInterval(pollLiveDiff, AP_DIFF_POLL_MS);
+}
+function stopLiveDiffPoll() {
+  if (autonomyState.diffPollId) { clearInterval(autonomyState.diffPollId); autonomyState.diffPollId = null; }
+}
+function resetAutonomyPanel() {
+  autonomyState.feed = [];
+  autonomyState.eventCount = 0;
+  autonomyState.budget = null;
+  autonomyState.files = [];
+  const feed = $('#aut-page-feed');
+  if (feed) {
+    while (feed.firstChild) feed.removeChild(feed.firstChild);
+    const empty = document.createElement('div');
+    empty.className = 'aut-page-feed-empty';
+    empty.textContent = 'Waiting for the agent to begin...';
+    feed.appendChild(empty);
+  }
+  renderTouchedFiles([]);
+  const ec = $('#aut-page-event-count'); if (ec) ec.textContent = '0 events';
+  ['aut-page-ring-time', 'aut-page-ring-tokens', 'aut-page-ring-dollars'].forEach((id) => {
+    const r = document.getElementById(id);
+    if (r) r.style.strokeDashoffset = String(AP_RING_C);
+  });
+  document.querySelectorAll('.aut-page-meter').forEach((m) => m.classList.remove('is-warn'));
+  const tv = $('#aut-page-val-time'); if (tv) tv.textContent = '0s';
+  const tv2 = $('#aut-page-val-tokens'); if (tv2) tv2.textContent = '0';
+  const dv = $('#aut-page-val-dollars'); if (dv) dv.textContent = '$0.00';
 }
 function openAutonomyEndModal(sum) {
   if (!sum || !sum.ok) { toast('Could not load run summary', 'error'); return; }
@@ -4450,6 +5386,10 @@ $('#btn-autonomy') && $('#btn-autonomy').addEventListener('click', () => {
 $('#aut-start-close') && $('#aut-start-close').addEventListener('click', closeAutonomyStart);
 $('#aut-start-cancel') && $('#aut-start-cancel').addEventListener('click', closeAutonomyStart);
 $('#aut-start-go') && $('#aut-start-go').addEventListener('click', startAutonomy);
+$('#aut-goto-projects') && $('#aut-goto-projects').addEventListener('click', () => {
+  closeAutonomyStart();
+  try { setPage('projects'); } catch (_) {}
+});
 $('#aut-end-close') && $('#aut-end-close').addEventListener('click', closeAutonomyEndModal);
 $('#aut-end-close-foot') && $('#aut-end-close-foot').addEventListener('click', closeAutonomyEndModal);
 $('#aut-end-revert') && $('#aut-end-revert').addEventListener('click', revertAutonomy);
@@ -4458,17 +5398,117 @@ $('#autonomy-end-modal') && $('#autonomy-end-modal').addEventListener('click', (
 
 try {
   if (window.husk && window.husk.autonomy) {
-    window.husk.autonomy.onStarted(() => { autonomyActive = true; paintAutonomyBanner(); });
+    window.husk.autonomy.onStarted((info) => {
+      autonomyActive = true;
+      autonomyState.startedAt = Date.now();
+      if (info && typeof info.goal === 'string' && info.goal) setAutonomyGoal(info.goal);
+      paintAutonomyBanner();
+    });
     window.husk.autonomy.onEnded((sum) => {
       autonomyActive = false;
-      paintAutonomyBanner();
-      openAutonomyEndModal(sum);
+      // Slide the active layout into review mode in place. The page
+      // already shows the goal, rings, files and feed; don't open a
+      // separate modal on top. Refreshes history so the just-ended
+      // run appears in Recent runs immediately.
+      if (sum && sum.ok) {
+        const sid = (autonomyLastSession && autonomyLastSession.sessionId) || (sum.sessionId || '');
+        const wr = (autonomyLastSession && autonomyLastSession.workspaceRoot) || '';
+        enterReviewMode({ sessionId: sid, workspaceRoot: wr, summary: sum });
+      } else {
+        paintAutonomyBanner();
+      }
+      refreshAutonomyHistory();
     });
     window.husk.autonomy.onHalt((info) => {
       toast(`Autonomy halted: ${info && info.cap ? info.cap + ' cap reached' : 'budget'}`, 'error');
     });
+    if (window.husk.autonomy.onSnapshotProgress) {
+      window.husk.autonomy.onSnapshotProgress((info) => {
+        const status = $('#aut-snapshot-status');
+        if (!status || status.hidden) return;
+        const n = Number(info && info.count) || 0;
+        status.textContent = `Capturing workspace snapshot... ${n} files`;
+      });
+    }
+    if (window.husk.autonomy.onActivity) {
+      window.husk.autonomy.onActivity((info) => {
+        // Main process is the source of truth for run liveness. The
+        // renderer must accept activity events whenever main sends
+        // them, even if a stale `autonomyActive` flag here disagrees
+        // (which has happened during page transitions and after
+        // process restarts).
+        if (info && Array.isArray(info.lines)) pushActivity(info.lines);
+      });
+    }
+    if (window.husk.autonomy.onBudget) {
+      window.husk.autonomy.onBudget((b) => {
+        if (!autonomyActive) return;
+        updateAutonomyBudget(b);
+      });
+    }
   }
 } catch (_) {}
+
+// Dedicated Autonomy page buttons. The header Start and the empty-state
+// CTA both open the existing start-run modal. The Stop button cancels
+// the active run (SIGINT into the PTY via the IPC handler).
+$('#aut-page-start') && $('#aut-page-start').addEventListener('click', () => {
+  if (autonomyActive) { toast('A run is already active', 'info'); return; }
+  openAutonomyStart();
+});
+$('#aut-page-start-2') && $('#aut-page-start-2').addEventListener('click', () => {
+  if (autonomyActive) return;
+  openAutonomyStart();
+});
+$('#aut-page-stop-top') && $('#aut-page-stop-top').addEventListener('click', () => cancelAutonomy());
+$('#aut-jump-presets') && $('#aut-jump-presets').addEventListener('click', () => {
+  const el = $('#aut-presets-section');
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+$('#aut-diff-close') && $('#aut-diff-close').addEventListener('click', closeFileDiffModal);
+$('#aut-diff-modal') && $('#aut-diff-modal').addEventListener('click', (e) => { if (e.target === $('#aut-diff-modal')) closeFileDiffModal(); });
+$('#aut-review-back') && $('#aut-review-back').addEventListener('click', exitReviewMode);
+$('#aut-review-new') && $('#aut-review-new').addEventListener('click', () => {
+  exitReviewMode();
+  openAutonomyStart();
+});
+$('#aut-review-rerun') && $('#aut-review-rerun').addEventListener('click', () => {
+  if (!autonomyReviewData) return;
+  // Pull the real goal + caps from the start_run row (now surfaced
+  // at top level on the summary payload). Do NOT fall back to
+  // autonomyState.goal: that holds the display string which may be
+  // the placeholder "(no goal recorded)" for runs missing data.
+  const summary = autonomyReviewData.summary;
+  const sumPayload = summary && summary.summary;
+  const goal = (summary && typeof summary.goal === 'string' && summary.goal) || null;
+  const caps = (summary && summary.caps) || (sumPayload && sumPayload.meter && sumPayload.meter.caps) || null;
+  if (!goal) { toast('That run has no goal text to rerun', 'error'); return; }
+  rerunFromPastRun({ goal, caps });
+});
+$('#aut-review-revert') && $('#aut-review-revert').addEventListener('click', async () => {
+  if (!autonomyReviewData) return;
+  const ok = await openConfirmDialog({
+    title: 'Revert every change from this autonomy run?',
+    bodyHtml: 'Husk will restore the workspace to the pre-run snapshot. Files the agent created will be removed. This cannot be undone from the UI.',
+    confirmLabel: 'Revert all',
+    cancelLabel: 'Keep changes',
+  });
+  if (!ok) return;
+  const r = await window.husk.autonomy.revert({
+    sessionId: autonomyReviewData.sessionId,
+    workspaceRoot: autonomyReviewData.workspaceRoot,
+  });
+  if (!r || !r.ok) { toast((r && r.error) || 'Revert failed', 'error'); return; }
+  toast(`Reverted ${(r.restored || []).length} files`, 'success');
+  // Refresh the live diff view from disk so it reflects the revert.
+  if (autonomyReviewData) {
+    const sum = await window.husk.autonomy.summary({
+      sessionId: autonomyReviewData.sessionId,
+      workspaceRoot: autonomyReviewData.workspaceRoot,
+    });
+    if (sum && sum.ok) enterReviewMode({ ...autonomyReviewData, summary: sum });
+  }
+});
 
 // Global ESC handler: closes any visible `.modal` element. This is the
 // universal "ESC dismisses the wizard" contract, applied across every
