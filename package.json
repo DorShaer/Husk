@@ -76,7 +76,7 @@
       "icon": "installer/husk-icon.png",
       "synopsis": "Desktop home for CLI AI agents",
       "description": "Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.",
-      "maintainer": "DorShaer <dor.shaer@gmail.com>",
+      "maintainer": "DorShaer <kassofer@gmail.com>",
       "artifactName": "${name}-v${version}-linux-${arch}.${ext}"
     },
     "deb": {

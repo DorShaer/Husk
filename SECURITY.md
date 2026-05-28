@@ -85,7 +85,7 @@ Out of scope:
 
 Please do not file security issues as public GitHub issues.
 
-Email: `dor.shaer@gmail.com`
+Email: `kassofer@gmail.com`
 
 Include:
 - A short description.
