@@ -125,6 +125,10 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><rect x="17" y="9" width="6" height="6" rx="1.5"/><path d="M7 12h2M15 12h2"/><path d="M4 9V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg></span>
               <span class="ri-label">Workflows</span>
             </button>
+            <button class="rail-item rail-item-autonomy" data-page="autonomy" title="Autonomy" id="rail-autonomy">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg><span class="rail-aut-pulse" id="rail-aut-pulse" hidden></span></span>
+              <span class="ri-label">Autonomy</span>
+            </button>
             <button class="rail-item" data-page="projects" title="Projects">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg></span>
               <span class="ri-label">Projects</span>
@@ -204,9 +208,14 @@
               <span class="page-sub" id="chat-sub">claude · ~</span>
             </div>
             <div class="page-head-right">
+              <button class="ghost-btn" id="btn-autonomy" title="Run autonomously with snapshot + audit + cap">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg>
+                <span id="autonomy-label">Autonomy</span>
+              </button>
               <button class="ghost-btn" id="btn-restart" title="Restart agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> Restart</button>
             </div>
           </div>
+          <div id="autonomy-banner" class="autonomy-banner" hidden></div>
           <div class="chat-stage">
             <div id="chat-empty" class="chat-empty">
               <img class="ce-logo-img" src="assets/husk-logo.png" alt="Husk" />
@@ -361,6 +370,141 @@
             </div>
           </div>
 
+        </div>
+
+        <!-- AUTONOMY PAGE -->
+        <div class="page page-autonomy" data-page="autonomy" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Autonomy</h1>
+              <span class="page-sub" id="aut-page-sub">hand the agent a goal and supervise the run</span>
+            </div>
+            <div class="page-head-right">
+              <div class="aut-page-status" id="aut-page-status" hidden>
+                <span class="ap-dot" aria-hidden="true"></span>
+                <span id="aut-page-status-text">Running</span>
+                <span class="aut-page-elapsed" id="aut-page-elapsed">0s</span>
+              </div>
+              <button class="btn-stop aut-head-stop" id="aut-page-stop-top" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                Stop run
+              </button>
+              <button class="btn-primary" id="aut-page-start">Start a run</button>
+            </div>
+          </div>
+
+          <div class="aut-page-empty" id="aut-page-empty">
+            <section class="aut-hero">
+              <div class="aut-hero-eyebrow">AUTONOMY</div>
+              <h2 class="aut-hero-title">Hand off entire tasks.<br/>Reach further while you focus.</h2>
+              <p class="aut-hero-body">Husk snapshots your workspace, audits every agent step in a hash-chained log, and caps the run on time, tokens, or dollars. Stop anytime. Revert anything.</p>
+              <div class="aut-hero-actions">
+                <button class="btn-primary aut-hero-cta" id="aut-page-start-2">Start a new run</button>
+                <button class="aut-hero-secondary" id="aut-jump-presets">Browse presets</button>
+              </div>
+              <div class="aut-hero-stats">
+                <div class="aut-hero-stat">
+                  <div class="aut-hero-stat-value" id="aut-hero-runs">0</div>
+                  <div class="aut-hero-stat-label">runs completed</div>
+                </div>
+                <div class="aut-hero-stat">
+                  <div class="aut-hero-stat-value" id="aut-hero-files">0</div>
+                  <div class="aut-hero-stat-label">files changed</div>
+                </div>
+                <div class="aut-hero-stat">
+                  <div class="aut-hero-stat-value" id="aut-hero-spend">$0</div>
+                  <div class="aut-hero-stat-label">total spend</div>
+                </div>
+              </div>
+            </section>
+
+            <section class="aut-section" id="aut-presets-section">
+              <div class="aut-section-head">
+                <h3 class="aut-section-title">Start from a preset</h3>
+                <span class="aut-section-sub">click to load the goal and caps; you can edit before running</span>
+              </div>
+              <div class="aut-preset-grid" id="aut-preset-grid"></div>
+            </section>
+
+            <section class="aut-section">
+              <div class="aut-section-head">
+                <h3 class="aut-section-title">Recent runs</h3>
+                <span class="aut-section-sub" id="aut-recent-meta">no runs yet</span>
+              </div>
+              <div class="aut-recent" id="aut-recent">
+                <div class="aut-page-feed-empty">No prior runs in this workspace.</div>
+              </div>
+            </section>
+          </div>
+
+          <div class="aut-page-live" id="aut-page-live" hidden>
+            <section class="aut-page-goal">
+              <div class="aut-page-label">Goal</div>
+              <div class="aut-page-goal-text" id="aut-page-goal-text"></div>
+            </section>
+
+            <section class="aut-page-rings">
+              <div class="aut-page-meter" data-key="time">
+                <svg class="aut-page-ring" viewBox="0 0 96 96" aria-hidden="true">
+                  <circle cx="48" cy="48" r="42" class="aut-page-ring-track"/>
+                  <circle cx="48" cy="48" r="42" class="aut-page-ring-fill" id="aut-page-ring-time"/>
+                </svg>
+                <div class="aut-page-meter-value" id="aut-page-val-time">0s</div>
+                <div class="aut-page-meter-label">time</div>
+                <div class="aut-page-meter-cap" id="aut-page-cap-time">of 60m</div>
+              </div>
+              <div class="aut-page-meter" data-key="tokens">
+                <svg class="aut-page-ring" viewBox="0 0 96 96" aria-hidden="true">
+                  <circle cx="48" cy="48" r="42" class="aut-page-ring-track"/>
+                  <circle cx="48" cy="48" r="42" class="aut-page-ring-fill" id="aut-page-ring-tokens"/>
+                </svg>
+                <div class="aut-page-meter-value" id="aut-page-val-tokens">0</div>
+                <div class="aut-page-meter-label">tokens</div>
+                <div class="aut-page-meter-cap" id="aut-page-cap-tokens">of 200k</div>
+              </div>
+              <div class="aut-page-meter" data-key="dollars">
+                <svg class="aut-page-ring" viewBox="0 0 96 96" aria-hidden="true">
+                  <circle cx="48" cy="48" r="42" class="aut-page-ring-track"/>
+                  <circle cx="48" cy="48" r="42" class="aut-page-ring-fill" id="aut-page-ring-dollars"/>
+                </svg>
+                <div class="aut-page-meter-value" id="aut-page-val-dollars">$0.00</div>
+                <div class="aut-page-meter-label">spend</div>
+                <div class="aut-page-meter-cap" id="aut-page-cap-dollars">of $5</div>
+              </div>
+            </section>
+
+            <section class="aut-page-grid">
+              <div class="aut-page-pane aut-page-feed-pane">
+                <div class="aut-page-pane-head">
+                  <span class="aut-page-label">Activity</span>
+                  <span class="aut-page-pane-meta" id="aut-page-event-count">0 events</span>
+                </div>
+                <div class="aut-page-feed" id="aut-page-feed">
+                  <div class="aut-page-feed-empty">Waiting for the agent to begin...</div>
+                </div>
+              </div>
+              <div class="aut-page-pane aut-page-files-pane">
+                <div class="aut-page-pane-head">
+                  <span class="aut-page-label">Touched files</span>
+                  <span class="aut-page-pane-meta" id="aut-page-files-count">0</span>
+                </div>
+                <div class="aut-page-files" id="aut-page-files">
+                  <div class="aut-page-feed-empty">No file changes yet.</div>
+                </div>
+              </div>
+            </section>
+
+            <footer class="aut-page-foot" id="aut-page-foot">
+              <div class="aut-page-foot-left">
+                <button class="aut-hero-secondary" id="aut-review-back" hidden>&larr; All runs</button>
+              </div>
+              <div class="aut-page-foot-right">
+                <button class="aut-hero-secondary aut-review-only" id="aut-review-revert" hidden>Revert all changes</button>
+                <button class="aut-hero-secondary aut-review-only" id="aut-review-rerun" hidden>Rerun this task</button>
+                <button class="btn-primary aut-review-only" id="aut-review-new" hidden>Start a new run</button>
+              </div>
+            </footer>
+          </div>
         </div>
 
         <!-- AGENTS PAGE -->
@@ -906,6 +1050,107 @@
     </div>
 
     <div id="toast" class="toast" hidden></div>
+
+    <!-- Autonomy: per-file diff viewer -->
+    <div id="aut-diff-modal" class="modal" hidden>
+      <div class="modal-card modal-card-wide aut-diff-card">
+        <div class="modal-head">
+          <h2 class="modal-title">
+            <span class="aut-diff-status" id="aut-diff-status" data-status="modified">MODIFIED</span>
+            <span class="aut-diff-path" id="aut-diff-path"></span>
+          </h2>
+          <div class="aut-diff-head-right">
+            <span class="aut-diff-stats">
+              <span class="aut-diff-added-count" id="aut-diff-added-count">+0</span>
+              <span class="aut-diff-removed-count" id="aut-diff-removed-count">&minus;0</span>
+            </span>
+            <button class="modal-close" id="aut-diff-close" aria-label="Close">&times;</button>
+          </div>
+        </div>
+        <div class="modal-body aut-diff-body">
+          <div class="aut-diff-loading" id="aut-diff-loading" hidden>Loading diff...</div>
+          <div class="aut-diff-message" id="aut-diff-message" hidden></div>
+          <div class="aut-diff-content" id="aut-diff-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Autonomy: start-run dialog -->
+    <div id="autonomy-start-modal" class="modal" hidden>
+      <div class="modal-card modal-card-md">
+        <div class="modal-head">
+          <h2 class="modal-title">Start an Autonomy run</h2>
+          <button class="modal-close" id="aut-start-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="aut-no-project" class="aut-empty" hidden>
+            <div class="aut-empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7.5L12 3l9 4.5"/>
+                <path d="M3 7.5v9L12 21l9-4.5v-9"/>
+                <path d="M12 12L3 7.5"/>
+                <path d="M12 12l9-4.5"/>
+                <path d="M12 12v9"/>
+              </svg>
+            </div>
+            <div class="aut-empty-title">Pick a project first</div>
+            <div class="aut-empty-body">Autonomy runs inside a single project so the snapshot, audit log, and one-click revert all stay scoped to your code. Open Projects, choose where to work, then come back.</div>
+            <div class="aut-empty-actions">
+              <button class="btn-primary" id="aut-goto-projects">Open Projects</button>
+            </div>
+          </div>
+          <div id="aut-start-body">
+          <p class="ra-hint">Hand the agent a goal and walk away. Husk snapshots the workspace, audits every event in a hash-chained log, and caps the run. When it stops, you can review the diff and revert with one click.</p>
+          <div class="mcp-input-group">
+            <label for="aut-goal">Goal</label>
+            <textarea id="aut-goal" class="aut-goal-input" rows="4" placeholder="e.g. find every TODO that mentions security, draft a fix per occurrence, do not push" spellcheck="false"></textarea>
+            <div class="mig-hint">Plain text. The model sees this as the first message.</div>
+          </div>
+          <div class="aut-caps-grid">
+            <div class="mcp-input-group">
+              <label for="aut-cap-min">Minutes cap</label>
+              <input id="aut-cap-min" type="number" min="1" step="1" value="60" />
+            </div>
+            <div class="mcp-input-group">
+              <label for="aut-cap-tok">Tokens cap</label>
+              <input id="aut-cap-tok" type="number" min="1" step="1000" value="200000" />
+            </div>
+            <div class="mcp-input-group">
+              <label for="aut-cap-usd">Dollars cap</label>
+              <input id="aut-cap-usd" type="number" min="0" step="0.5" value="5" />
+            </div>
+          </div>
+          <div class="aut-note">
+            On halt or end, Husk produces a diff against the pre-run snapshot. Revert is one click. Encryption (when the OS keychain is available) wraps every blob the audit log and snapshot store write.
+          </div>
+          <div class="aut-snapshot-status" id="aut-snapshot-status" hidden></div>
+          </div>
+        </div>
+        <div class="modal-foot" id="aut-start-foot">
+          <button class="ghost-btn" id="aut-start-cancel">Cancel</button>
+          <button class="btn-primary" id="aut-start-go">Start run</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Autonomy: end-of-run review dialog -->
+    <div id="autonomy-end-modal" class="modal" hidden>
+      <div class="modal-card modal-card-md">
+        <div class="modal-head">
+          <h2 class="modal-title" id="aut-end-title">Autonomy run finished</h2>
+          <button class="modal-close" id="aut-end-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="aut-end-meta" class="ra-status ra-status-info"></div>
+          <div class="modal-label" style="margin-top:10px;">Changes</div>
+          <div id="aut-end-diff" class="ai-list"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="ghost-btn" id="aut-end-close-foot">Close</button>
+          <button class="btn-primary ghost-btn-danger" id="aut-end-revert">Revert all changes</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
     <div id="confirm-modal" class="modal confirm-modal" hidden>

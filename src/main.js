@@ -662,7 +662,10 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
 
   ptyProc = pty.spawn(spec.exe, spec.argv, { name: 'xterm-256color', cols, rows, cwd, env });
   activePtyCwd = cwd;
-  ptyProc.onData((data) => { if (mainWindow) mainWindow.webContents.send('pty:data', data); });
+  ptyProc.onData((data) => {
+    if (mainWindow) mainWindow.webContents.send('pty:data', data);
+    autonomyTap(data);
+  });
   ptyProc.onExit(({ exitCode }) => {
     if (mainWindow) mainWindow.webContents.send('pty:exit', exitCode);
     ptyProc = null;
@@ -721,6 +724,553 @@ ipcMain.on('pty:resize', (_e, { cols, rows }) => { if (ptyProc) try { ptyProc.re
 ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
   spawnPty(cols || 100, rows || 30, command || null, cwd || null);
   return true;
+});
+
+// ─── Autonomy Mode IPC ────────────────────────────────────────────────────
+//
+// The supervisor module owns one autonomous-run lifecycle: snapshot,
+// audit log, budget meter, halt-on-cap. main.js wires it through IPC
+// and tracks the active runner so multiple windows / a runaway
+// renderer cannot start two runs at once over the same session id.
+//
+// Encryption: electron safeStorage wraps OS keychain APIs (libsecret /
+// macOS Keychain / Windows DPAPI). When available we use it on every
+// blob the snapshot store and the audit log write. The runtime
+// check (`isEncryptionAvailable`) returns false on a headless / dev
+// build, in which case blobs land in plaintext on disk inside the
+// Husk user-data dir; the supervisor still reports the run as
+// "trusted-by-rewind".
+
+const Autonomy = require('./lib/autonomy');
+const electronApp = require('electron');
+let activeRunner = null;
+function autonomyStorageRoot() {
+  return path.join(app.getPath('userData'), 'autonomy');
+}
+function autonomyCrypto() {
+  try {
+    if (electronApp.safeStorage && electronApp.safeStorage.isEncryptionAvailable()) {
+      return {
+        encrypt: (buf) => electronApp.safeStorage.encryptString(buf.toString('base64')),
+        decrypt: (buf) => Buffer.from(electronApp.safeStorage.decryptString(buf), 'base64'),
+      };
+    }
+  } catch (_) {}
+  return { encrypt: null, decrypt: null };
+}
+
+// ANSI escape stripper for the autonomy activity feed. Terminal
+// emulators interpret the CSI / OSC sequences; the activity panel
+// wants the plain text underneath. Tight ranges, no greedy regex.
+function stripAnsi(s) {
+  return String(s)
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\][^\x07]*\x07/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+}
+
+// Autonomy PTY tap: while a run is active, every chunk of agent
+// output is buffered and flushed once per quarter-second. The
+// flush appends an `agent_output` event to the hash-chained audit
+// log, feeds char count into the budget meter (cost estimate), and
+// broadcasts cleaned-up activity lines + live budget state to the
+// renderer for the activity panel. Batching keeps the audit log
+// from getting one row per stdout byte and keeps IPC traffic sane.
+let autonomyOutputBuf = '';
+let autonomyOutputFlushTimer = null;
+const AUT_OUTPUT_FLUSH_MS = 250;
+
+function autonomyTap(data) {
+  if (!activeRunner) return;
+  autonomyOutputBuf += data;
+  if (!autonomyOutputFlushTimer) {
+    autonomyOutputFlushTimer = setTimeout(flushAutonomyOutput, AUT_OUTPUT_FLUSH_MS);
+  }
+}
+
+// Tail of the last flush: any partial line (no trailing \n) is
+// carried forward so the next chunk can complete it. Without this
+// the feed shows mid-line fragments like "*ie" "*rn" "*ei" because
+// the PTY arrives byte-by-byte during agent streaming.
+let autonomyLineTail = '';
+let autonomyLastTailEmit = '';
+let autonomyLastTailEmitAt = 0;
+
+// Permissive activity-line filter. The previous strict filter
+// (require 2 word-tokens + 8 alnum) dropped real claude output that
+// did not match the expected shape, leaving the feed empty even
+// while the agent was clearly working. Now: only obvious garbage
+// gets dropped, the rest is shown.
+function isLowSignalLine(s) {
+  if (!s) return true;
+  const trimmed = s.trim();
+  if (trimmed.length < 3) return true;
+  const alnum = trimmed.replace(/[^A-Za-z0-9]/g, '').length;
+  if (alnum < 2) return true;
+  // 80%+ of one non-alpha char = separator run (___, ===, ---, ...).
+  const first = trimmed[0];
+  if (!/[A-Za-z0-9]/.test(first)) {
+    let same = 0;
+    for (const ch of trimmed) if (ch === first) same++;
+    if (same / trimmed.length > 0.8) return true;
+  }
+  // Looks like a UI-only fragment: short AND only 1 token AND no
+  // letters at all (e.g. "+12", "-5"). Real status lines have words.
+  if (trimmed.length < 6 && !/[A-Za-z]/.test(trimmed)) return true;
+  return false;
+}
+
+function flushAutonomyOutput() {
+  autonomyOutputFlushTimer = null;
+  if (!activeRunner) { autonomyOutputBuf = ''; autonomyLineTail = ''; return; }
+  const chunk = autonomyOutputBuf;
+  autonomyOutputBuf = '';
+  if (!chunk) return;
+  // Audit-only event: still record chunks for the tamper-evident
+  // log (size + timestamp), but do NOT feed chars to the budget
+  // meter. The chars/4 estimate is wildly wrong for TUI agents
+  // because PTY bytes include cursor escapes, color codes, and
+  // in-place repaints (5-10x the actual semantic content). Token
+  // counts now come exclusively from the agent's own status line
+  // (parsed in the renderer via parseAgentTokenStatus). If the
+  // agent never reports tokens, the meter stays at 0 -- honest.
+  try {
+    activeRunner.recordEvent({
+      kind: 'agent_output',
+      ts: new Date().toISOString(),
+      payload: { chars: chunk.length },
+    });
+  } catch (_) {}
+  // NOTE: we used to also parse the byte stream here to produce
+  // activity rows. That approach is fundamentally wrong for TUI
+  // agents (claude in particular): the PTY stream is a sequence of
+  // commands to a terminal emulator, not a log. Stripping ANSI and
+  // splitting on \n produces fragments because the emulator's job
+  // is to INTERPRET cursor positioning, overwrites, and alternate
+  // screen buffers into a final rendered grid.
+  //
+  // The renderer owns an xterm.js emulator that does exactly that
+  // rendering for the chat view. The activity feed now snapshots
+  // that already-rendered grid (see renderer's snapshotTermForAutonomy).
+  //
+  // This flush still does two real jobs:
+  //   1. Append one agent_output audit row per chunk so the budget
+  //      meter sees char counts (cost estimate stays accurate).
+  //   2. Broadcast the live budget state to the renderer so the
+  //      rings keep updating in lockstep with token spend.
+  if (mainWindow) {
+    mainWindow.webContents.send('autonomy:budget', activeRunner.budgetState());
+  }
+}
+
+function injectGoalToPty(goal) {
+  if (!ptyProc) return false;
+  // Bracketed paste mode: wraps the goal in CSI 200~ / CSI 201~ so the
+  // agent's TUI treats it as a single pasted block. Without this, each
+  // character is routed through the TUI's keyboard handler and special
+  // characters get intercepted by hotkeys (claude eats SPACE as a
+  // mode-toggle, "/" opens its command palette, etc.). The result was
+  // goals arriving with all spaces stripped, which is why earlier runs
+  // sat idle: the agent could not parse the smashed-together text.
+  try {
+    const body = String(goal).replace(/\r/g, ' ').replace(/\n/g, ' ');
+    ptyProc.write('\x1b[200~' + body + '\x1b[201~');
+    // Submit with a separate Enter after the TUI has finished
+    // committing the pasted block to its input buffer.
+    setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 120);
+    return true;
+  } catch (_) { return false; }
+}
+
+function sigintPty() {
+  if (!ptyProc) return;
+  try { ptyProc.write('\x03'); } catch (_) {}
+}
+
+ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
+  if (activeRunner) return { ok: false, error: 'an autonomy run is already active' };
+  // Autonomy requires an active project. The whole feature is built
+  // around "snapshot a scoped workspace, watch the agent change it,
+  // let the user revert" - none of that makes sense outside a project.
+  // Refuse here at the IPC layer; the renderer separately gates the
+  // dialog open so this is the belt-and-suspenders check.
+  const activeProj = Array.isArray(config.projects) && config.activeProjectId
+    ? config.projects.find((p) => p && p.id === config.activeProjectId)
+    : null;
+  if (!activeProj || !activeProj.path) {
+    return { ok: false, error: 'pick an active project first; autonomy runs inside a project' };
+  }
+  const workspaceRoot = activeProj.path;
+  if (!fs.existsSync(workspaceRoot)) return { ok: false, error: 'active project path no longer exists' };
+  // Belt and suspenders: never let workspaceRoot resolve to HOME.
+  if (path.resolve(workspaceRoot) === path.resolve(HOME)) {
+    return { ok: false, error: 'autonomy refuses to snapshot the entire home folder' };
+  }
+  const sessionId = 'auto-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  const { encrypt, decrypt } = autonomyCrypto();
+
+  // Snapshot off-cycle via the async path so the main process keeps
+  // painting while we walk the workspace. Progress events surface
+  // file counts into the renderer's start dialog.
+  const onProgress = (info) => {
+    if (mainWindow) mainWindow.webContents.send('autonomy:snapshot-progress', info);
+  };
+  let snap;
+  try {
+    snap = await Autonomy.snapshot.captureSnapshotAsync(workspaceRoot, autonomyStorageRoot(), sessionId, {
+      encrypt,
+      onProgress,
+    });
+  } catch (err) {
+    return { ok: false, error: `snapshot crashed: ${err && err.message || String(err)}` };
+  }
+  if (!snap.ok) return { ok: false, error: snap.error };
+
+  const r = Autonomy.supervisor.startRun({
+    sessionId,
+    workspaceRoot,
+    storageRoot: autonomyStorageRoot(),
+    goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
+    agent: payload.agent || null,
+    modelId: payload.modelId || null,
+    caps: payload.caps,
+    encrypt, decrypt,
+    skipSnapshot: true,
+    snapshotManifest: snap.manifest,
+  });
+  if (!r.ok) return { ok: false, error: r.error };
+  activeRunner = r.runner;
+  // Periodic wall-clock tick so even idle runs respect the minutes cap
+  // and the live UI keeps a fresh budget readout. Halt fires SIGINT
+  // into the PTY so the agent stops at the cap, not "eventually".
+  activeRunner._tickInterval = setInterval(() => {
+    if (!activeRunner) return;
+    const s = activeRunner.tickClock();
+    if (mainWindow) mainWindow.webContents.send('autonomy:budget', s);
+    if (s.hitCap && mainWindow) {
+      sigintPty();
+      mainWindow.webContents.send('autonomy:halt', { reason: 'budget', cap: s.hitCap });
+    }
+  }, 1000);
+  const goal = typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : '';
+  if (mainWindow) mainWindow.webContents.send('autonomy:started', { sessionId, workspaceRoot, fileCount: snap.fileCount, goal });
+  // If no PTY is running yet (user jumped straight to Autonomy
+  // without ever opening Chat), spawn one in the project's cwd and
+  // extend the inject delay so the agent's banner finishes rendering
+  // before we paste the goal as input. Without this the goal lands
+  // in a non-existent stdin and the run appears to do nothing.
+  const ptyJustBooted = !ptyProc;
+  if (ptyJustBooted) {
+    try { spawnPty(100, 30, null, workspaceRoot); } catch (_) {}
+  }
+  const injectDelayMs = ptyJustBooted ? 2500 : 400;
+  if (goal) {
+    setTimeout(() => {
+      const ok = injectGoalToPty(goal);
+      // Surface delivery to the activity feed so the user has explicit
+      // feedback that the goal reached the agent. Without this, an
+      // agent that thinks silently for a while looks identical to a
+      // run that failed to start.
+      if (mainWindow) {
+        mainWindow.webContents.send('autonomy:activity', {
+          lines: [ok ? 'Goal delivered to agent. Waiting for first response...' : 'Could not deliver goal: no agent process available.'],
+          at: Date.now(),
+        });
+      }
+    }, injectDelayMs);
+  }
+  return { ok: true, sessionId, workspaceRoot, fileCount: snap.fileCount, goal };
+});
+
+ipcMain.handle('autonomy:event', (_e, event = {}) => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  const r = activeRunner.recordEvent(event);
+  return r;
+});
+
+ipcMain.handle('autonomy:cancel', (_e, detail = {}) => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  sigintPty();
+  activeRunner.cancel(detail);
+  return finishActiveRun();
+});
+
+ipcMain.handle('autonomy:end', (_e, detail = {}) => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  return finishActiveRun(detail);
+});
+
+function finishActiveRun(detail) {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  try { activeRunner.endRun(detail || null); } catch (_) {}
+  try { clearInterval(activeRunner._tickInterval); } catch (_) {}
+  // Drain any pending PTY tap output so the final agent_output event
+  // makes it into the audit log before we null the runner.
+  try { if (autonomyOutputFlushTimer) { clearTimeout(autonomyOutputFlushTimer); autonomyOutputFlushTimer = null; } } catch (_) {}
+  try { flushAutonomyOutput(); } catch (_) {}
+  autonomyOutputBuf = '';
+  autonomyLineTail = '';
+  autonomyLastTailEmit = '';
+  autonomyLastTailEmitAt = 0;
+  const sessionId = activeRunner.sessionId;
+  const workspaceRoot = activeRunner.workspaceRoot;
+  activeRunner = null;
+  const { decrypt } = autonomyCrypto();
+  const sum = Autonomy.supervisor.summarizeRun({
+    sessionId, workspaceRoot, storageRoot: autonomyStorageRoot(), decrypt,
+  });
+  if (mainWindow) mainWindow.webContents.send('autonomy:ended', sum);
+  return { ok: true, sessionId, summary: sum };
+}
+
+ipcMain.handle('autonomy:status', () => {
+  if (!activeRunner) return { ok: true, active: false };
+  return {
+    ok: true,
+    active: true,
+    sessionId: activeRunner.sessionId,
+    state: activeRunner.getState(),
+    budget: activeRunner.budgetState(),
+  };
+});
+
+ipcMain.handle('autonomy:revert', (_e, payload = {}) => {
+  const sessionId = String(payload && payload.sessionId || '').trim();
+  if (!sessionId) return { ok: false, error: 'sessionId required' };
+  const { decrypt } = autonomyCrypto();
+  return Autonomy.supervisor.revertRun({
+    sessionId,
+    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    storageRoot: autonomyStorageRoot(),
+    decrypt,
+    preserveExtras: !!payload.preserveExtras,
+  });
+});
+
+// Renderer-side terminal snapshot parser reports the agent's own
+// cumulative token count here. claude prints "↓ 1.5k tokens" in its
+// status line; we treat that as truth and override the chars/4
+// estimate the budget meter would otherwise produce. Cap firing
+// also uses the authoritative number when present.
+ipcMain.handle('autonomy:reportTokens', (_e, payload = {}) => {
+  if (!activeRunner) return { ok: false };
+  const n = Number(payload && payload.tokens);
+  if (!Number.isFinite(n) || n < 0) return { ok: false };
+  try { activeRunner.setReportedTokens(n); } catch (_) {}
+  // Re-broadcast budget so the rings update immediately to the new
+  // authoritative number instead of waiting for the next 1s tick.
+  if (mainWindow) mainWindow.webContents.send('autonomy:budget', activeRunner.budgetState());
+  return { ok: true };
+});
+
+// History of past autonomy runs in the active project. Scans the
+// per-session manifests under the autonomy storage dir, returns
+// the most recent N. Each session manifest carries workspaceRoot;
+// we filter to the requested workspace so each project sees its
+// own history.
+ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
+  const wantWorkspace = String(payload && payload.workspaceRoot || '').trim() || null;
+  const sessionsDir = path.join(autonomyStorageRoot(), 'sessions');
+  let entries = [];
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- sessionsDir bounded to userData
+    entries = fs.readdirSync(sessionsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch (_) {
+    return { ok: true, runs: [] };
+  }
+  const runs = [];
+  for (const sid of entries) {
+    try {
+      const manifestPath = path.join(sessionsDir, sid, 'snapshot.json');
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
+      if (!fs.existsSync(manifestPath)) continue;
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (wantWorkspace && manifest.workspaceRoot && path.resolve(manifest.workspaceRoot) !== path.resolve(wantWorkspace)) continue;
+      const auditPath = path.join(sessionsDir, sid, 'audit.jsonl');
+      let goal = null;
+      let status = 'unknown';
+      let haltReason = null;
+      let fileCount = 0;
+      let endedAt = null;
+      let dollars = 0;
+      let tokens = 0;
+      let caps = null;
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
+      if (fs.existsSync(auditPath)) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
+        const raw = fs.readFileSync(auditPath, 'utf8');
+        const lines = raw.split('\n').filter(Boolean);
+        for (const ln of lines) {
+          try {
+            const row = JSON.parse(ln);
+            if (row.kind === 'start_run' && row.payload) {
+              if (typeof row.payload.goal === 'string') goal = row.payload.goal;
+              if (row.payload.caps && typeof row.payload.caps === 'object') caps = row.payload.caps;
+            }
+            if (row.kind === 'run_summary' && row.payload) {
+              status = row.payload.status || status;
+              haltReason = row.payload.haltReason || haltReason;
+              fileCount = Array.isArray(row.payload.diff) ? row.payload.diff.length : 0;
+              endedAt = row.payload.endedAt || endedAt;
+              if (row.payload.meter && typeof row.payload.meter.dollars === 'number') dollars = row.payload.meter.dollars;
+              if (row.payload.meter && typeof row.payload.meter.totalTokens === 'number') tokens = row.payload.meter.totalTokens;
+              if (!caps && row.payload.meter && row.payload.meter.caps) caps = row.payload.meter.caps;
+            }
+          } catch (_) {}
+        }
+      }
+      runs.push({
+        sessionId: sid,
+        capturedAt: manifest.capturedAt || null,
+        endedAt,
+        workspaceRoot: manifest.workspaceRoot || null,
+        goal,
+        caps,
+        status,
+        haltReason,
+        fileCount,
+        dollars,
+        tokens,
+      });
+    } catch (_) {}
+  }
+  runs.sort((a, b) => {
+    const ka = new Date(a.endedAt || a.capturedAt || 0).getTime();
+    const kb = new Date(b.endedAt || b.capturedAt || 0).getTime();
+    return kb - ka;
+  });
+  return { ok: true, runs: runs.slice(0, 24) };
+});
+
+// Per-file diff for a single touched file. Reads the pre-run blob
+// from the snapshot store (decrypts if needed) and the live
+// workspace file. Renderer computes the line-by-line diff for the
+// modal viewer. Capped at 1 MB per side and 6000 lines per side so
+// huge binary files do not blow up memory.
+const FILE_DIFF_MAX_BYTES = 1024 * 1024;
+const FILE_DIFF_MAX_LINES = 6000;
+ipcMain.handle('autonomy:fileDiff', async (_e, payload = {}) => {
+  const sessionId = String(payload && payload.sessionId || '').trim();
+  const workspaceRoot = String(payload && payload.workspaceRoot || '').trim();
+  const relPath = String(payload && payload.path || '').trim();
+  if (!sessionId || !workspaceRoot || !relPath) {
+    return { ok: false, error: 'sessionId, workspaceRoot, path required' };
+  }
+  // Path traversal guard: reuse the snapshot joinSafely contract.
+  const safeWorkspace = path.resolve(workspaceRoot);
+  const safeAbs = path.resolve(safeWorkspace, relPath);
+  if (!(safeAbs === safeWorkspace || safeAbs.startsWith(safeWorkspace + path.sep))) {
+    return { ok: false, error: 'path escapes workspace' };
+  }
+  const storageRoot = autonomyStorageRoot();
+  const sessDir = path.join(storageRoot, 'sessions', sessionId);
+  const manifestPath = path.join(sessDir, 'snapshot.json');
+  let manifest;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to storageRoot
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch (err) {
+    return { ok: false, error: `could not read manifest: ${err.message}` };
+  }
+  const entry = manifest.entries && manifest.entries[relPath];
+
+  let before = '';
+  let beforeBytes = 0;
+  let beforeTooLarge = false;
+  if (entry && entry.type === 'file' && /^[a-f0-9]{64}$/.test(entry.sha || '')) {
+    const blobPath = path.join(sessDir, 'blobs', entry.sha);
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to storageRoot
+      let buf = fs.readFileSync(blobPath);
+      const { decrypt } = autonomyCrypto();
+      if (typeof decrypt === 'function') {
+        try { buf = decrypt(buf); } catch (_) {}
+      }
+      beforeBytes = buf.length;
+      if (buf.length > FILE_DIFF_MAX_BYTES) { beforeTooLarge = true; before = ''; }
+      else before = buf.toString('utf8');
+    } catch (err) {
+      return { ok: false, error: `could not read pre-run blob: ${err.message}` };
+    }
+  }
+
+  let after = '';
+  let afterBytes = 0;
+  let afterTooLarge = false;
+  let exists = false;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- safeAbs bounded under safeWorkspace
+    if (fs.existsSync(safeAbs)) {
+      exists = true;
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safeAbs bounded
+      const buf = fs.readFileSync(safeAbs);
+      afterBytes = buf.length;
+      if (buf.length > FILE_DIFF_MAX_BYTES) { afterTooLarge = true; after = ''; }
+      else after = buf.toString('utf8');
+    }
+  } catch (err) {
+    return { ok: false, error: `could not read workspace file: ${err.message}` };
+  }
+
+  // Status: added if no pre-run entry; deleted if entry but no live file; else modified.
+  let status = 'modified';
+  if (!entry) status = 'added';
+  else if (!exists) status = 'deleted';
+
+  // Line count guard - if either side too long, signal renderer to
+  // show summary instead of inlining the diff.
+  const linesBefore = before ? before.split('\n').length : 0;
+  const linesAfter = after ? after.split('\n').length : 0;
+  const tooLarge = beforeTooLarge || afterTooLarge || linesBefore > FILE_DIFF_MAX_LINES || linesAfter > FILE_DIFF_MAX_LINES;
+
+  return {
+    ok: true,
+    path: relPath,
+    status,
+    before: tooLarge ? '' : before,
+    after: tooLarge ? '' : after,
+    beforeBytes,
+    afterBytes,
+    linesBefore,
+    linesAfter,
+    tooLarge,
+  };
+});
+
+// Live diff while a run is active. Caller polls every few seconds
+// from the Autonomy page. Uses the async walker so we never freeze
+// the main process for a multi-second diff. No sessionId required:
+// the active runner owns one.
+ipcMain.handle('autonomy:liveDiff', async () => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  try {
+    const res = await Autonomy.snapshot.diffWorkspaceAsync(
+      activeRunner.workspaceRoot,
+      autonomyStorageRoot(),
+      activeRunner.sessionId,
+    );
+    return res;
+  } catch (err) {
+    return { ok: false, error: err && err.message || String(err) };
+  }
+});
+
+ipcMain.handle('autonomy:summary', (_e, payload = {}) => {
+  const sessionId = String(payload && payload.sessionId || '').trim();
+  if (!sessionId) return { ok: false, error: 'sessionId required' };
+  const { decrypt } = autonomyCrypto();
+  return Autonomy.supervisor.summarizeRun({
+    sessionId,
+    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    storageRoot: autonomyStorageRoot(),
+    decrypt,
+  });
 });
 
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
