@@ -39,11 +39,19 @@ function startRun(opts = {}) {
   const decrypt = typeof opts.decrypt === 'function' ? opts.decrypt : null;
   const now = typeof opts.now === 'function' ? opts.now : () => Date.now();
 
-  // 1. capture pre-run snapshot
-  const snap = Snapshot.captureSnapshot(workspaceRoot, storageRoot, sessionId, {
-    encrypt,
-    ignore: opts.ignore,
-  });
+  // 1. capture pre-run snapshot. Caller may set opts.skipSnapshot when
+  // it has already produced the snapshot off the main thread (Electron
+  // main.js uses Snapshot.captureSnapshotAsync to keep the UI from
+  // freezing while a large workspace is walked).
+  let snap;
+  if (opts.skipSnapshot === true) {
+    snap = { ok: true, manifest: opts.snapshotManifest || null };
+  } else {
+    snap = Snapshot.captureSnapshot(workspaceRoot, storageRoot, sessionId, {
+      encrypt,
+      ignore: opts.ignore,
+    });
+  }
   if (!snap.ok) return { ok: false, error: `snapshot failed: ${snap.error}` };
 
   // 2. open audit log
@@ -198,6 +206,10 @@ function startRun(opts = {}) {
       getState,
       snapshotManifest: snapshotOnly,
       budgetState: () => budget.state(now()),
+      // Exposed so the supervisor can feed the agent's own reported
+      // token count (parsed from its status line by the renderer)
+      // into the meter and override the chars/4 estimate.
+      setReportedTokens: (n) => budget.setReportedTokens(n),
     },
   };
 }
@@ -238,15 +250,30 @@ function summarizeRun(opts = {}) {
     diff = Snapshot.diffWorkspace(workspaceRoot, storageRoot, sessionId);
   }
   const chain = Audit.verifyAuditChain(storageRoot, sessionId);
-  // Pull the most recent run_summary if any.
+  // Pull the most recent run_summary AND the original start_run row.
+  // run_summary carries the final meter / diff; start_run carries the
+  // goal + caps the user originally set. Both are needed for Review +
+  // Rerun (review shows the goal; rerun pre-fills the modal with goal
+  // and caps).
   let summary = null;
   for (let i = audit.records.length - 1; i >= 0; i--) {
     if (audit.records[i].kind === 'run_summary') { summary = audit.records[i].payload; break; }
+  }
+  let goal = null;
+  let caps = null;
+  for (const rec of audit.records) {
+    if (rec.kind === 'start_run' && rec.payload) {
+      if (typeof rec.payload.goal === 'string') goal = rec.payload.goal;
+      if (rec.payload.caps && typeof rec.payload.caps === 'object') caps = rec.payload.caps;
+      break;
+    }
   }
   return {
     ok: true,
     eventCount: audit.records.length,
     summary,
+    goal,
+    caps,
     diff: diff.ok ? diff.changes : [],
     chain: { valid: chain.valid, brokenAtIndex: chain.brokenAtIndex },
     warnings: audit.warnings,
