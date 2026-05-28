@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Titan+One&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Titan+One&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ─── Theme tokens ──────────────────────────────────────────────────────── */
 
@@ -9,29 +9,35 @@
    so the chrome reads as a serious tool, not a candy app. */
 :root,
 [data-theme="dark"] {
-  --bg: #0d0b09;
-  --bg-1: #14110f;
-  --bg-2: #1b1816;
-  --bg-3: #221f1c;
-  --bg-4: #2a262324;
-  --line: #221f1c;
-  --line-2: #2e2a26;
-  --line-3: #423d37;
-  --text: #f1efed;
-  --text-2: #a8a29a;
-  --text-3: #756d65;
-  --rose: #f87171;
-  --emerald: #4ade80;
-  --amber: #facc15;
-  --shadow: 0 0 0 1px var(--line-2), 0 8px 24px rgba(0,0,0,0.5);
+  /* GLASS LANGUAGE v0.2 (Linear / Arc family, pushed).
+     Tokens here propagate through every existing component because
+     the whole stylesheet references var(--bg-X), var(--line-X),
+     var(--text-X). The only thing the rest of the file does not
+     automatically inherit is the backdrop-blur treatment, which
+     lives in the GLASS OVERRIDES block at the end of this file. */
+  --bg:   #060814;
+  --bg-1: rgba(255, 255, 255, 0.035);
+  --bg-2: rgba(255, 255, 255, 0.06);
+  --bg-3: rgba(255, 255, 255, 0.10);
+  --bg-4: rgba(255, 255, 255, 0.14);
+  --line:   rgba(255, 255, 255, 0.08);
+  --line-2: rgba(255, 255, 255, 0.14);
+  --line-3: rgba(255, 255, 255, 0.22);
+  --text:   #f4f4f6;
+  --text-2: rgba(244, 244, 246, 0.72);
+  --text-3: rgba(244, 244, 246, 0.48);
+  --rose:    #ff6b7e;
+  --emerald: #5bd49a;
+  --amber:   #f6b73c;
+  --shadow:      0 30px 60px -30px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06);
   --shadow-soft: 0 1px 2px rgba(0,0,0,0.4);
-  /* Atmospheric warmth: very soft radial halo so the background reads as a
-     room with light, not a flat block. Anchored bottom-right where the eye
-     rests after scanning. Premium "calm room" rather than "black canvas". */
-  --bg-radial: radial-gradient(1100px 700px at 100% 100%,
-                rgba(217, 119, 87, 0.045) 0%,
-                rgba(217, 119, 87, 0.018) 28%,
-                transparent 62%);
+  /* Ambient gradient lighting under the chrome. Four radial pools
+     of color in the corners produce depth without painted surfaces. */
+  --bg-radial:
+    radial-gradient(900px circle at 12% 0%, rgba(122, 166, 255, 0.18), transparent 65%),
+    radial-gradient(700px circle at 90% 14%, rgba(177, 139, 255, 0.16), transparent 60%),
+    radial-gradient(800px circle at 70% 95%, rgba(255, 120, 71, 0.14), transparent 65%),
+    radial-gradient(1200px circle at 50% 50%, rgba(77, 214, 193, 0.04), transparent 70%);
   /* Inner-top hairline highlight. Used on every elevated surface so they read
      as crafted material with a tiny lip of light at the top, not painted-on
      rectangles. Single source for the entire material system. */
@@ -76,11 +82,11 @@
 /* Accent palettes. Orange is the default. */
 :root,
 [data-accent="orange"] {
-  --accent: #d97757;
-  --accent-2: #f5a36a;
-  --accent-3: #b8513a;
-  --accent-glow: rgba(217, 119, 87, 0.32);
-  --grad: linear-gradient(135deg, #d97757, #b8513a);
+  --accent: #ff7847;
+  --accent-2: #ff5a3c;
+  --accent-3: #d4471c;
+  --accent-glow: rgba(255, 120, 71, 0.32);
+  --grad: linear-gradient(135deg, #ff7847 0%, #ff5a3c 100%);
 }
 [data-accent="cyan"] {
   --accent: #67e8f9;
@@ -620,10 +626,16 @@ body[data-rail="collapsed"] .rail-agent-menu { display: none !important; }
 .rail-agent-item[data-available="0"] .rai-cmd::after { content: ' (not installed)'; color: var(--rose); }
 .rail-agent-divider { height: 1px; background: var(--line); margin: 4px 6px; }
 .rail-agent-config {
-  font-size: 11px; color: var(--text-3); padding: 6px 10px;
+  display: block; width: 100%;
+  background: transparent; border: 0;
+  font-family: inherit; font-size: 11px;
+  color: var(--text-2);
+  padding: 6px 10px;
   cursor: pointer; border-radius: 6px;
+  text-align: left;
+  transition: background 0.14s ease, color 0.14s ease;
 }
-.rail-agent-config:hover { background: var(--bg-3); color: var(--text); }
+.rail-agent-config:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
 
 /* Recent sessions list */
 .rail-section-recent { display: none; }
@@ -756,23 +768,791 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .ghost-btn-danger { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 30%, var(--line)); }
 .ghost-btn-danger:hover { color: #fff; background: var(--rose); border-color: var(--rose); }
 
-/* Autonomy mode banner: a slim strip pinned above the chat stage
-   while a run is active. State indicator, not a button row; the
-   Cancel button on the right is the only interactive control. */
-.autonomy-banner {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
-  border-radius: var(--radius-md);
-  margin: 0 0 10px 0;
+/* Old slim banner kept as no-op (full Autonomy page is the real UI). */
+.autonomy-banner { display: none; }
+
+/* ─── Autonomy Page ────────────────────────────────────────────────
+   Dedicated rail destination for live runs. Empty state pitches what
+   the feature does; live state shows goal, three big rings, an
+   activity feed and a touched-files pane side by side. No fixed
+   overlay, no covering the status panel. */
+.page-autonomy {
+  padding: 28px 36px 48px;
+  max-width: 1320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+/* Live + review modes keep the whole layout inside the viewport.
+   The activity feed and touched-files panes scroll internally so
+   incoming agent output never grows the page itself. Empty state
+   (hero + presets + recent runs) keeps page-level scroll. */
+.page-autonomy.is-live {
+  overflow: hidden;
+  padding-bottom: 20px;
+  display: flex; flex-direction: column;
+}
+.page-autonomy.is-live .aut-page-live {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  gap: 16px;
+}
+.page-autonomy.is-live .aut-page-grid {
+  flex: 1; min-height: 0;
+  height: auto;
+}
+.page-autonomy::-webkit-scrollbar { width: 8px; }
+.page-autonomy::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 4px; }
+.page-autonomy .page-head { margin-bottom: 22px; }
+.page-autonomy .page-head-right { display: flex; align-items: center; gap: 12px; }
+/* Unified button sizing inside the Autonomy page so every CTA reads
+   as part of one design system. Color/intent classes (.btn-primary,
+   .btn-stop, .aut-hero-secondary) only set palette; geometry comes
+   from this scope so nothing fights. */
+.page-autonomy .btn-primary,
+.page-autonomy .btn-stop,
+.page-autonomy .aut-hero-secondary {
+  height: 40px;
+  padding: 0 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  line-height: 1;
+  white-space: nowrap;
+  width: auto;
+  min-width: 0;
+}
+.page-autonomy .btn-stop svg,
+.page-autonomy .btn-primary svg,
+.page-autonomy .aut-hero-secondary svg { width: 14px; height: 14px; }
+/* Header buttons sit next to the status pill, so they shrink to the
+   pill's compact scale. Hero + footer CTAs keep the prominent 40px. */
+.page-autonomy .page-head-right .btn-primary,
+.page-autonomy .page-head-right .btn-stop {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+.page-autonomy .page-head-right .btn-primary svg,
+.page-autonomy .page-head-right .btn-stop svg { width: 12px; height: 12px; }
+
+.aut-page-status {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.04));
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, rgba(255, 255, 255, 0.08));
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11.5px;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.aut-page-elapsed { color: var(--text-2); margin-left: 4px; }
+.aut-page-status.is-review {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.10);
+  color: var(--text-2);
+}
+.aut-page-status.is-review .ap-dot {
+  background: rgba(255, 255, 255, 0.25);
+  animation: none;
+  box-shadow: none;
+}
+
+/* ── Diff viewer modal ──────────────────────────────────────────── */
+.aut-diff-card {
+  width: 1200px; max-width: 96vw;
+  height: 86vh; max-height: 900px;
+  display: flex; flex-direction: column;
+  text-align: left;
+}
+.aut-diff-card .modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+}
+.aut-diff-card .modal-title {
+  display: flex; align-items: center; gap: 12px;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 16px; font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.aut-diff-status {
+  display: inline-flex; align-items: center;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+.aut-diff-status[data-status="added"] {
+  background: color-mix(in srgb, #5bd994 14%, transparent);
+  color: #5bd994;
+  border: 1px solid color-mix(in srgb, #5bd994 45%, transparent);
+}
+.aut-diff-status[data-status="modified"] {
+  background: color-mix(in srgb, #6fb5ff 14%, transparent);
+  color: #6fb5ff;
+  border: 1px solid color-mix(in srgb, #6fb5ff 45%, transparent);
+}
+.aut-diff-status[data-status="deleted"] {
+  background: color-mix(in srgb, var(--rose) 14%, transparent);
+  color: var(--rose);
+  border: 1px solid color-mix(in srgb, var(--rose) 45%, transparent);
+}
+.aut-diff-path {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.aut-diff-head-right { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+.aut-diff-stats {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.aut-diff-added-count { color: #5bd994; }
+.aut-diff-removed-count { color: var(--rose); }
+.aut-diff-body {
+  flex: 1; min-height: 0;
+  padding: 0;
+  display: flex; flex-direction: column;
+}
+.aut-diff-loading,
+.aut-diff-message {
+  padding: 40px 20px;
+  text-align: center;
+  font-family: var(--font-display);
+  color: var(--text-2);
+  font-size: 14px;
+}
+.aut-diff-content {
+  flex: 1; min-height: 0;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.aut-diff-content::-webkit-scrollbar { width: 10px; height: 10px; }
+.aut-diff-content::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 5px; }
+.aut-diff-line {
+  display: grid;
+  grid-template-columns: 50px 50px 22px 1fr;
+  gap: 0;
+  align-items: stretch;
+}
+.aut-diff-line + .aut-diff-line { border-top: 0; }
+.aut-diff-ln {
+  padding: 1px 8px;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.32);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.02);
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+}
+.aut-diff-sign {
+  padding: 1px 6px;
+  font-weight: 700;
+  text-align: center;
+  user-select: none;
+}
+.aut-diff-text {
+  padding: 1px 12px;
+  white-space: pre;
+  color: var(--text);
+  overflow: hidden;
+}
+.aut-diff-line.add {
+  background: color-mix(in srgb, #5bd994 10%, transparent);
+}
+.aut-diff-line.add .aut-diff-sign { color: #5bd994; }
+.aut-diff-line.add .aut-diff-text { color: #d6f5e4; }
+.aut-diff-line.add .aut-diff-ln { background: color-mix(in srgb, #5bd994 18%, transparent); color: #5bd994; }
+.aut-diff-line.remove {
+  background: color-mix(in srgb, var(--rose) 10%, transparent);
+}
+.aut-diff-line.remove .aut-diff-sign { color: var(--rose); }
+.aut-diff-line.remove .aut-diff-text { color: #ffdde3; }
+.aut-diff-line.remove .aut-diff-ln { background: color-mix(in srgb, var(--rose) 18%, transparent); color: var(--rose); }
+.aut-diff-line.context .aut-diff-text { color: var(--text-2); }
+.aut-diff-line.hunk-gap {
+  background: rgba(255, 255, 255, 0.025);
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+  color: var(--text-3);
+}
+.aut-diff-line.hunk-gap .aut-diff-text {
+  padding: 4px 12px;
+  font-style: italic;
+  color: var(--text-3);
+}
+
+/* Touched files rows become clickable, give them an explicit cue. */
+.aut-file-row { cursor: pointer; }
+.aut-file-row:hover .aut-file-path { color: var(--accent); }
+
+/* Shared dot used by chat-page status and rail-item-autonomy badge. */
+.ap-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: ap-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ap-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); transform: scale(1); }
+  70%  { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); transform: scale(1.05); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); transform: scale(1); }
+}
+
+/* Pulse next to the rail label, vertically centered with the text
+   so it reads as a status indicator next to the word "Autonomy",
+   not as a notification badge in the icon corner. */
+.rail-item-autonomy { position: relative; }
+.rail-aut-pulse {
+  position: absolute;
+  top: 50%; transform: translateY(calc(-50% - 2px));
+  right: 14px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: ap-pulse 1.6s ease-in-out infinite;
+}
+[data-rail="collapsed"] .rail-aut-pulse { right: 8px; }
+
+/* Empty state when no run active. NOT a centered card; this is the
+   landing hub for the whole autonomy feature: hero, preset gallery,
+   recent runs. The page becomes calm and explanatory when no run
+   is in flight, dense and active when one is. */
+.aut-page-empty {
+  display: flex; flex-direction: column;
+  gap: 36px;
+}
+
+/* HERO */
+.aut-hero {
+  position: relative;
+  padding: 42px 40px 36px;
+  border-radius: 24px;
+  background:
+    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),
+    radial-gradient(80% 80% at 100% 100%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
+    rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.aut-hero::before {
+  content: "";
+  position: absolute;
+  top: -120px; right: -80px;
+  width: 360px; height: 360px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 24%, transparent), transparent 70%);
+  pointer-events: none;
+  filter: blur(8px);
+}
+.aut-hero-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 14px;
 }
-.autonomy-banner .aut-spacer { flex: 1; }
+.aut-hero-title {
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  line-height: 1.08;
+  color: var(--text);
+  margin: 0 0 18px 0;
+  max-width: 720px;
+}
+.aut-hero-body {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-2);
+  max-width: 580px;
+  margin: 0 0 24px 0;
+}
+.aut-hero-actions {
+  display: flex; gap: 12px; align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 30px;
+}
+.aut-hero-secondary {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--text);
+  font-family: var(--font-display);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.aut-hero-secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+.aut-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, max-content));
+  gap: 40px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.aut-hero-stat-value {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.aut-hero-stat-label {
+  margin-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 600;
+}
+
+/* SECTION HEADERS */
+.aut-section { display: flex; flex-direction: column; gap: 16px; }
+.aut-section-head { display: flex; flex-direction: column; gap: 4px; }
+.aut-section-title {
+  font-family: var(--font-display);
+  font-size: 20px; font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--text);
+  margin: 0;
+}
+.aut-section-sub {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+/* PRESETS GRID */
+.aut-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 1080px) {
+  .aut-preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .aut-preset-grid { grid-template-columns: 1fr; }
+}
+.aut-preset {
+  position: relative;
+  display: flex; flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  transition: border-color 180ms ease, background 180ms ease, transform 120ms ease;
+}
+.aut-preset:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--accent) 5%, rgba(255, 255, 255, 0.03));
+  transform: translateY(-2px);
+}
+.aut-preset:active { transform: translateY(0); }
+.aut-preset-icon {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.04));
+  color: var(--accent);
+}
+.aut-preset-icon svg { width: 18px; height: 18px; }
+.aut-preset-title {
+  font-family: var(--font-display);
+  font-size: 15px; font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--text);
+}
+.aut-preset-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  flex: 1;
+}
+.aut-preset-caps {
+  display: flex; gap: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.06);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.aut-preset-caps span { display: inline-flex; align-items: center; gap: 4px; }
+.aut-preset-caps svg { width: 11px; height: 11px; opacity: 0.7; }
+
+/* RECENT RUNS LIST */
+.aut-recent {
+  display: flex; flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.022);
+  overflow: hidden;
+}
+.aut-recent .aut-page-feed-empty {
+  padding: 32px 12px;
+}
+.aut-recent-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.aut-recent-row + .aut-recent-row { border-top: 1px solid rgba(255, 255, 255, 0.05); }
+.aut-recent-row:hover { background: rgba(255, 255, 255, 0.035); }
+.aut-recent-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.aut-recent-goal {
+  font-family: var(--font-display);
+  font-size: 13.5px; font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.005em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.aut-recent-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.aut-recent-files {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.aut-recent-pill {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.aut-recent-pill[data-status="ended"],
+.aut-recent-pill[data-status="natural"] {
+  background: color-mix(in srgb, #5bd994 14%, transparent);
+  color: #5bd994;
+  border: 1px solid color-mix(in srgb, #5bd994 45%, transparent);
+}
+.aut-recent-pill[data-status="halted"],
+.aut-recent-pill[data-status="budget"] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.aut-recent-pill[data-status="cancelled"],
+.aut-recent-pill[data-status="user"] {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.aut-recent-row { grid-template-columns: 1fr auto auto auto; }
+.aut-recent-rerun {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-2);
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.aut-recent-rerun:hover {
+  background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.04));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, rgba(255, 255, 255, 0.12));
+}
+.aut-recent-rerun svg { width: 12px; height: 12px; }
+
+/* Live layout */
+.aut-page-live {
+  display: flex; flex-direction: column;
+  gap: 22px;
+}
+
+.aut-page-label {
+  display: inline-block;
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--text-3); font-weight: 600;
+}
+
+.aut-page-goal {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.aut-page-goal-text {
+  font-family: var(--font-display);
+  font-size: 17px; line-height: 1.5;
+  letter-spacing: -0.008em;
+  color: var(--text);
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* Big ring trio */
+.aut-page-rings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.aut-page-meter {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  transition: border-color 200ms ease, background 200ms ease;
+}
+.aut-page-meter.is-warn {
+  border-color: color-mix(in srgb, var(--rose) 45%, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--rose) 6%, rgba(255, 255, 255, 0.025));
+}
+.aut-page-ring { width: 84px; height: 84px; transform: rotate(-90deg); }
+.aut-page-ring-track { fill: none; stroke: rgba(255, 255, 255, 0.07); stroke-width: 6; }
+.aut-page-ring-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 263.89;
+  stroke-dashoffset: 263.89;
+  transition: stroke-dashoffset 700ms cubic-bezier(0.16, 1, 0.3, 1), stroke 200ms ease;
+}
+.aut-page-meter.is-warn .aut-page-ring-fill { stroke: var(--rose); }
+.aut-page-meter-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px; font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.aut-page-meter-label {
+  margin-top: 2px;
+  font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-3); font-weight: 600;
+}
+.aut-page-meter-cap {
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two-column body. Fixed height so the activity feed scrolls
+   internally; otherwise live agent output grows the column and
+   pushes the Stop button below the fold. Cap is generous on tall
+   displays via clamp so users still see context, plus it shortens
+   on smaller windows. */
+.aut-page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 16px;
+  height: clamp(360px, 56vh, 620px);
+}
+@media (max-width: 1180px) {
+  .aut-page-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .aut-page-grid .aut-page-pane { height: clamp(280px, 42vh, 480px); }
+}
+.aut-page-pane {
+  display: flex; flex-direction: column;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.022);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.aut-page-pane-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.aut-page-pane-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.aut-page-feed,
+.aut-page-files {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 8px 10px;
+}
+.aut-page-feed::-webkit-scrollbar,
+.aut-page-files::-webkit-scrollbar { width: 6px; }
+.aut-page-feed::-webkit-scrollbar-thumb,
+.aut-page-files::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08); border-radius: 3px;
+}
+.aut-page-feed-empty {
+  color: var(--text-3); font-size: 12.5px;
+  padding: 22px 6px; text-align: center;
+  font-family: var(--font-display);
+}
+
+/* Activity row (reuses ap-row-in keyframe). */
+.ap-feed-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; line-height: 1.5;
+  color: var(--text-2);
+  animation: ap-row-in 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  word-break: break-word;
+}
+.ap-feed-row + .ap-feed-row { border-top: 1px dashed rgba(255, 255, 255, 0.04); }
+.ap-feed-row:hover { background: rgba(255, 255, 255, 0.03); }
+.ap-feed-row .ap-row-glyph {
+  flex: 0 0 10px;
+  margin-top: 7px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 6px -1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.ap-feed-row .ap-row-text { flex: 1; }
+.ap-feed-row.ap-row-tool .ap-row-glyph { background: #6fb5ff; box-shadow: 0 0 6px -1px #6fb5ff; }
+.ap-feed-row.ap-row-edit .ap-row-glyph { background: var(--accent); box-shadow: 0 0 6px -1px var(--accent); }
+.ap-feed-row.ap-row-result .ap-row-glyph { background: #5bd994; box-shadow: 0 0 6px -1px #5bd994; }
+@keyframes ap-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Spinner flash: when claude updates its in-place spinner line with
+   a new glyph, we replace the same row's text and apply this class
+   briefly so the row pulses instead of stacking duplicate entries. */
+.ap-feed-row.is-spinning {
+  animation: ap-row-flash 700ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes ap-row-flash {
+  0%   { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  60%  { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  100% { background: transparent; }
+}
+.ap-feed-row.is-spinning .ap-row-glyph {
+  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+
+/* Touched files rows */
+.aut-file-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-2);
+  animation: ap-row-in 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  word-break: break-all;
+}
+.aut-file-row + .aut-file-row { border-top: 1px dashed rgba(255, 255, 255, 0.04); }
+.aut-file-row:hover { background: rgba(255, 255, 255, 0.03); }
+.aut-file-row .aut-file-status {
+  flex: 0 0 auto;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+}
+.aut-file-row[data-status="added"] .aut-file-status {
+  background: color-mix(in srgb, #5bd994 14%, transparent);
+  color: #5bd994;
+  border: 1px solid color-mix(in srgb, #5bd994 45%, transparent);
+}
+.aut-file-row[data-status="modified"] .aut-file-status {
+  background: color-mix(in srgb, #6fb5ff 14%, transparent);
+  color: #6fb5ff;
+  border: 1px solid color-mix(in srgb, #6fb5ff 45%, transparent);
+}
+.aut-file-row[data-status="deleted"] .aut-file-status {
+  background: color-mix(in srgb, var(--rose) 14%, transparent);
+  color: var(--rose);
+  border: 1px solid color-mix(in srgb, var(--rose) 45%, transparent);
+}
+.aut-file-row .aut-file-path { flex: 1; color: var(--text); }
+
+.aut-page-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px;
+  padding-top: 4px;
+}
+.aut-page-foot-left { display: flex; align-items: center; }
+.aut-page-foot-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.aut-page-foot .btn-stop { width: auto; }
+
+.btn-stop {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 16px;
+  border-radius: 12px;
+  font-family: var(--font-display);
+  font-size: 13px; font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  background: rgba(255, 92, 122, 0.12);
+  border: 1px solid color-mix(in srgb, var(--rose) 50%, rgba(255, 255, 255, 0.08));
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 80ms ease;
+}
+.btn-stop:hover {
+  background: rgba(255, 92, 122, 0.20);
+  border-color: color-mix(in srgb, var(--rose) 70%, rgba(255, 255, 255, 0.08));
+}
+.btn-stop:active { transform: translateY(1px); }
+.btn-stop svg { width: 14px; height: 14px; }
 
 /* Autonomy start dialog: goal textarea + three cap inputs in a row
    + an info note at the bottom. All three controls reuse the
@@ -786,21 +1566,60 @@ textarea.aut-goal-input {
 }
 textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 .aut-caps-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
   margin-top: 12px;
 }
-.aut-caps-grid .mcp-input-group { margin-top: 0; }
+.aut-caps-grid .mcp-input-group { margin-top: 0; min-width: 0; }
+.aut-caps-grid .mcp-input-group input {
+  width: 100%; min-width: 0; box-sizing: border-box;
+}
 .aut-note {
   margin-top: 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  font-size: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12.5px;
   color: var(--text-2);
   line-height: 1.55;
 }
+.aut-snapshot-status {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(122, 166, 255, 0.06);
+  border: 1px solid rgba(122, 166, 255, 0.18);
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.aut-empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 24px 12px 12px;
+  gap: 14px;
+}
+.aut-empty-icon {
+  width: 56px; height: 56px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 16px;
+  background:
+    radial-gradient(80% 80% at 30% 20%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 60%),
+    rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--accent);
+}
+.aut-empty-icon svg { width: 28px; height: 28px; }
+.aut-empty-title {
+  font-family: var(--font-display);
+  font-size: 20px; font-weight: 600; letter-spacing: -0.015em;
+  color: var(--text);
+}
+.aut-empty-body {
+  max-width: 380px;
+  font-size: 13px; line-height: 1.55;
+  color: var(--text-2);
+}
+.aut-empty-actions { margin-top: 4px; }
 
 .ghost-btn-danger.is-armed {
   color: #fff;
@@ -868,7 +1687,13 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 /* ─── Chat page ─────────────────────────────────────────────────────────── */
 
 .page-chat .chat-stage {
-  flex: 1; min-height: 0; position: relative;
+  flex: 1;
+  /* Stage must always be tall enough to host the welcome layout
+     (logo + title + sub + CTA + skip + chip row). Without a min,
+     a slow xterm fit on refresh leaves the stage short and the
+     welcome content escapes below the rounded card. */
+  min-height: clamp(560px, 72vh, 880px);
+  position: relative;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   background: var(--bg-1);
@@ -879,7 +1704,11 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   position: absolute; inset: 0; z-index: 2;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 18px; padding: 40px;
-  background: var(--bg-1);
+  /* Opaque background prevents the under-layer from showing through
+     during the pre-fit flicker. Two-layer translucent stacking was
+     causing a half-tinted "rectangle" on refresh. */
+  background: #0b0d12;
+  overflow-y: auto;
   pointer-events: none;
   opacity: 0; transition: opacity var(--motion-slow) var(--ease-out);
 }
@@ -1655,8 +2484,8 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   padding: 1px 4px; border-radius: 3px;
   background: var(--bg-3); color: var(--text);
 }
-.ra-status.ra-status-info { border-left: 3px solid var(--accent); }
-.ra-status.ra-status-error { border-left: 3px solid var(--rose); color: var(--text); }
+.ra-status.ra-status-info { border-color: rgba(255, 255, 255, 0.12); }
+.ra-status.ra-status-error { border-color: rgba(255, 92, 122, 0.35); color: var(--text); }
 /* The footer of the repo-install modal has three toggles + two buttons;
    let it wrap on narrow window widths rather than stretching off-screen. */
 .modal-foot.ra-foot { flex-wrap: wrap; gap: 10px; }
@@ -1917,9 +2746,12 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   box-shadow: var(--elev-2);
 }
 .project-card.is-active {
-  border-color: var(--line-3);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2));
   background: var(--bg-2);
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow:
+    var(--elev-2),
+    0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 0 28px -8px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .project-card-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -2256,9 +3088,9 @@ input[type="checkbox"]:disabled {
 }
 .sessions-list.select-mode .session-row:hover { transform: none; }
 .session-row.selected {
-  border-color: var(--line-3);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2));
   background: var(--bg-2);
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .session-check {
   display: inline-flex; align-items: center; justify-content: center;
@@ -3257,4 +4089,346 @@ kbd {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   GLASS LANGUAGE · OVERRIDES
+   Last in the cascade so they win at equal specificity. Lives in
+   one block so it can be removed wholesale to revert.
+   ───────────────────────────────────────────────────────────── */
+
+/* Base canvas: ambient gradient lighting + Inter prose. */
+[data-theme="dark"] body {
+  background: var(--bg);
+  background-image: var(--bg-radial);
+  background-attachment: fixed;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01", "ss02", "calt";
+  letter-spacing: -0.005em;
+}
+
+/* Page titles use the same display face as "Ready when you are"
+   (Space Grotesk) so the chat empty-state and the page heads read
+   as one voice. */
+[data-theme="dark"] .page-title,
+[data-theme="dark"] h1.page-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+/* Tabular numerals where it matters. */
+[data-theme="dark"] .sp-mono,
+[data-theme="dark"] .session-effort,
+[data-theme="dark"] .session-progress,
+[data-theme="dark"] .session-slug,
+[data-theme="dark"] code,
+[data-theme="dark"] pre {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Topbar: lifted glass. */
+[data-theme="dark"] #topbar {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Rail: tinted glass column. */
+[data-theme="dark"] .rail {
+  background: rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+[data-theme="dark"] .rail::before {
+  /* original orange stripe is too loud against glass; soften it */
+  background: linear-gradient(180deg,
+    rgba(255, 120, 71, 0.55) 0%,
+    rgba(255, 120, 71, 0.18) 20%,
+    transparent 50%);
+  opacity: 0.7;
+}
+[data-theme="dark"] .rail-item.active {
+  background: rgba(255, 120, 71, 0.10);
+  color: var(--text);
+  border-radius: 10px;
+}
+[data-theme="dark"] .rail-item.active::before {
+  background: var(--grad);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+[data-theme="dark"] .rail-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+/* Status panel: same tinted glass. */
+[data-theme="dark"] #status-panel {
+  background: rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* Buttons. Default = quiet glass. Primary = brand gradient with a soft glow. */
+[data-theme="dark"] .ghost-btn,
+[data-theme="dark"] .iconbtn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  color: var(--text);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 10px;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+[data-theme="dark"] .ghost-btn:hover,
+[data-theme="dark"] .iconbtn:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
+}
+[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .iconbtn-primary {
+  background: var(--grad);
+  color: white;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 10px 30px -10px rgba(255, 120, 71, 0.55);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+[data-theme="dark"] .btn-primary:hover,
+[data-theme="dark"] .iconbtn-primary:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    0 14px 36px -12px rgba(255, 120, 71, 0.75);
+  transform: translateY(-1px);
+}
+
+/* Modal: frosted card on a backdrop. */
+[data-theme="dark"] .modal {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+[data-theme="dark"] .modal-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(40px) saturate(160%);
+  -webkit-backdrop-filter: blur(40px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 20px;
+  box-shadow:
+    0 60px 120px -40px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Inputs / textareas: dark glass fields. */
+[data-theme="dark"] input[type="text"],
+[data-theme="dark"] input[type="number"],
+[data-theme="dark"] input[type="password"],
+[data-theme="dark"] input[type="search"],
+[data-theme="dark"] textarea,
+[data-theme="dark"] select {
+  background: rgba(0, 0, 0, 0.30) !important;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 10px;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+[data-theme="dark"] input[type="text"]:focus,
+[data-theme="dark"] input[type="number"]:focus,
+[data-theme="dark"] input[type="password"]:focus,
+[data-theme="dark"] input[type="search"]:focus,
+[data-theme="dark"] textarea:focus,
+[data-theme="dark"] select:focus {
+  outline: none;
+  border-color: rgba(122, 166, 255, 0.55);
+  background: rgba(0, 0, 0, 0.45) !important;
+  box-shadow: 0 0 0 4px rgba(122, 166, 255, 0.10);
+}
+
+/* Autonomy dialog: rebuilt to match the glass preview. */
+[data-theme="dark"] .aut-goal-input {
+  background: rgba(0, 0, 0, 0.30) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 12px !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  padding: 14px 16px !important;
+  resize: vertical;
+  min-height: 110px;
+  line-height: 1.5;
+}
+[data-theme="dark"] .aut-goal-input:focus {
+  border-color: rgba(122, 166, 255, 0.55) !important;
+  background: rgba(0, 0, 0, 0.45) !important;
+  box-shadow: 0 0 0 4px rgba(122, 166, 255, 0.10);
+}
+
+/* Autonomy live banner: tinted teal glass with pulse. */
+[data-theme="dark"] .autonomy-banner {
+  background: linear-gradient(180deg, rgba(77, 214, 193, 0.10), rgba(122, 166, 255, 0.06));
+  border: 1px solid rgba(77, 214, 193, 0.28);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 14px;
+  color: #4dd6c1;
+  letter-spacing: 0.08em;
+  font-family: 'Inter', sans-serif;
+  text-transform: uppercase;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 12px 18px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 20px 50px -20px rgba(77, 214, 193, 0.30);
+}
+
+/* Cards / catalog tiles / agent cards inherit the glass treatment
+   via the existing var(--bg-1) tokens, but we need a touch more
+   blur and a subtle hover lift to feel alive. */
+[data-theme="dark"] .agent-card,
+[data-theme="dark"] .session-row,
+[data-theme="dark"] .mcp-row,
+[data-theme="dark"] .ai-row,
+[data-theme="dark"] .mcp-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 12px;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+[data-theme="dark"] .agent-card:hover,
+[data-theme="dark"] .session-row:hover,
+[data-theme="dark"] .mcp-row:hover,
+[data-theme="dark"] .ai-row:hover,
+[data-theme="dark"] .mcp-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  transform: translateY(-2px);
+}
+
+/* Toast: same glass treatment. */
+[data-theme="dark"] .toast {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 14px;
+  color: var(--text);
+}
+
+/* Page headings use the serif voice moment by default. */
+[data-theme="dark"] .modal-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+/* FLOATING SURFACES need a fully OPAQUE background. Glass tokens
+   (--bg-1, --bg-2, etc.) are intentionally translucent for chrome
+   sitting on the fixed canvas. Popovers, menus, tooltips, toasts
+   float over arbitrary content (other rail items, other panels)
+   so they must use solid hex colors, not rgba. Otherwise whatever
+   sits underneath bleeds through and the surface stops reading as
+   a discrete layer. Lesson learned the hard way.
+
+   Color choice: #0e1126 is slightly lighter than the canvas (#060814)
+   so popovers feel lifted, not embedded. Border at 0.18 alpha
+   on white defines the edge against the radial gradient. */
+[data-theme="dark"] .rail-agent-menu,
+[data-theme="dark"] #rail-agent-menu,
+[data-theme="dark"] .ctx-menu,
+[data-theme="dark"] #terminal-ctx-menu,
+[data-theme="dark"] #palette {
+  background: #0e1126;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 30px 60px -20px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  z-index: 200;
+}
+
+/* Inner items inside popovers get readable hover states. The base
+   bg is now solid, so we can use a lighter overlay tint without
+   the bleed-through risk. */
+[data-theme="dark"] .rail-agent-item {
+  background: transparent;
+  border-radius: 8px;
+}
+[data-theme="dark"] .rail-agent-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+[data-theme="dark"] .rail-agent-item.active {
+  background: rgba(255, 120, 71, 0.12);
+}
+[data-theme="dark"] .ctx-menu button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* Topbar project pill (the breadcrumb-y button) and other small
+   floating chrome surfaces use the same solid base for the same
+   reason: they overlay the chat. */
+[data-theme="dark"] .topbar-project {
+  background: #0e1126;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+[data-theme="dark"] .topbar-project:hover {
+  background: #141838;
+  border-color: rgba(255, 255, 255, 0.20);
+}
+
+/* Toast: floats over arbitrary content, must be solid for the same
+   reason as popovers. */
+[data-theme="dark"] .toast {
+  background: #0e1126;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 14px;
+  box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.85);
+}
+[data-theme="dark"] .toast.error { border-color: rgba(255, 107, 126, 0.55); }
+[data-theme="dark"] .toast.success { border-color: rgba(91, 212, 154, 0.55); }
+
+/* Rail tooltip in collapsed mode: also floats, also needs solid bg. */
+[data-theme="dark"] body[data-rail="collapsed"] .rail-item::after {
+  background: #0e1126 !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: 0 16px 32px -16px rgba(0, 0, 0, 0.7);
+  z-index: 200;
+}
+
+/* Disabled controls need to read as visibly off. With glass tokens
+   their borders are already faint; clamping opacity + a quiet
+   default color stops them from looking like default-state. */
+[data-theme="dark"] .ghost-btn:disabled,
+[data-theme="dark"] .iconbtn:disabled,
+[data-theme="dark"] .btn-primary:disabled,
+[data-theme="dark"] button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: saturate(0.5);
+}
+
+/* Selection color matches the cool gradient. */
+[data-theme="dark"] ::selection {
+  background: rgba(122, 166, 255, 0.35);
+  color: white;
 }
