@@ -29,7 +29,20 @@ const path = require('path');
 const crypto = require('crypto');
 
 const SESSION_DIR_RE = /^[A-Za-z0-9._-]+$/;
-const DEFAULT_IGNORE = ['.git', 'node_modules', 'dist', 'build', '.DS_Store', '.husk-tmp'];
+const DEFAULT_IGNORE = [
+  '.git', 'node_modules', 'dist', 'build', '.DS_Store', '.husk-tmp',
+  // Common heavy directories that explode snapshot time without
+  // contributing real "did the agent change my code" signal.
+  'libs', 'release', 'out', 'target', '.next', '.nuxt', '.cache',
+  '.vscode', '.idea', '.parcel-cache', '.turbo', 'coverage',
+  'test-results', 'playwright-report', '__pycache__', 'venv', '.venv',
+];
+// Belt and suspenders: refuse to snapshot a workspace with more
+// than this many files. Walking $HOME unguarded was the bug that
+// led to "Husk is not responding". A real project repo is well
+// under this limit; if a user hits it, they almost certainly
+// picked the wrong scope.
+const DEFAULT_MAX_ENTRIES = 50000;
 
 function isSafeSessionId(id) {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && SESSION_DIR_RE.test(id);
@@ -439,11 +452,188 @@ function walkForDiff(absRoot, rel, ignores, manifestEntries, seen, changes, warn
   }
 }
 
+// captureSnapshotAsync is the same as captureSnapshot but yields to
+// the event loop every YIELD_EVERY entries so the main process stays
+// responsive while large workspaces are walked. fs reads remain
+// synchronous; the only difference is we hand control back to the
+// event loop frequently enough that the renderer keeps painting.
+const YIELD_EVERY = 50;
+async function captureSnapshotAsync(workspaceRoot, storageRoot, sessionId, opts = {}) {
+  if (!isSafeSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
+  if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot)) {
+    return { ok: false, error: 'workspaceRoot must be an absolute path' };
+  }
+  if (typeof storageRoot !== 'string' || !path.isAbsolute(storageRoot)) {
+    return { ok: false, error: 'storageRoot must be an absolute path' };
+  }
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to workspaceRoot
+  if (!fs.existsSync(workspaceRoot)) return { ok: false, error: 'workspaceRoot does not exist' };
+
+  const ignores = DEFAULT_IGNORE.slice();
+  if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
+
+  const sdir = sessionDir(storageRoot, sessionId);
+  const bdir = blobsDir(storageRoot, sessionId);
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to storageRoot subdirs
+    fs.mkdirSync(bdir, { recursive: true });
+  } catch (err) {
+    return { ok: false, error: `could not create storage dir: ${err.message}` };
+  }
+
+  const entries = {};
+  const warnings = [];
+  const maxEntries = Number.isFinite(opts.maxEntries) && opts.maxEntries > 0 ? opts.maxEntries : DEFAULT_MAX_ENTRIES;
+  const state = { count: 0, aborted: false, maxEntries, onProgress: typeof opts.onProgress === 'function' ? opts.onProgress : null };
+  await walkAsync(workspaceRoot, '', ignores, entries, warnings, opts, bdir, state);
+  if (state.aborted) {
+    return { ok: false, error: `workspace exceeds ${maxEntries} files; pick a narrower scope` };
+  }
+
+  const manifest = { v: 1, sessionId, capturedAt: new Date().toISOString(), workspaceRoot, entries };
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- manifestPath rooted in storageRoot
+    fs.writeFileSync(manifestPath(storageRoot, sessionId), JSON.stringify(manifest, null, 2));
+  } catch (err) {
+    return { ok: false, error: `could not write manifest: ${err.message}` };
+  }
+  return { ok: true, manifest, warnings, fileCount: state.count };
+}
+
+async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, state) {
+  if (state.aborted) return;
+  const here = rel ? path.join(absRoot, rel) : absRoot;
+  let dirents;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- absRoot is the validated workspace root
+    dirents = fs.readdirSync(here, { withFileTypes: true });
+  } catch (err) {
+    warnings.push({ path: rel || '.', reason: err.message });
+    return;
+  }
+  for (const ent of dirents) {
+    if (state.aborted) return;
+    const relChild = rel ? path.join(rel, ent.name) : ent.name;
+    if (shouldIgnore(relChild, ignores)) continue;
+    const abs = path.join(here, ent.name);
+    try {
+      if (ent.isSymbolicLink()) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+        const target = fs.readlinkSync(abs);
+        entries[relChild] = { type: 'symlink', target };
+      } else if (ent.isDirectory()) {
+        await walkAsync(absRoot, relChild, ignores, entries, warnings, opts, bdir, state);
+      } else if (ent.isFile()) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+        const content = fs.readFileSync(abs);
+        const sha = sha256OfBuffer(content);
+        const blobAbs = path.join(bdir, sha);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- blobAbs bounded to bdir
+        if (!fs.existsSync(blobAbs)) {
+          const toWrite = typeof opts.encrypt === 'function' ? opts.encrypt(content) : content;
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- bdir is bounded
+          fs.writeFileSync(blobAbs, toWrite);
+        }
+        entries[relChild] = { type: 'file', sha };
+        state.count++;
+        if (state.count >= state.maxEntries) { state.aborted = true; return; }
+        if (state.count % YIELD_EVERY === 0) {
+          if (state.onProgress) {
+            try { state.onProgress({ count: state.count, currentPath: relChild }); } catch (_) {}
+          }
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      }
+    } catch (err) {
+      warnings.push({ path: relChild, reason: err.message });
+    }
+  }
+}
+
+// diffWorkspaceAsync is the same as diffWorkspace but yields to the
+// event loop every YIELD_EVERY entries so polling the live diff from
+// the autonomy page does not freeze the main process while the agent
+// is mid-edit.
+async function diffWorkspaceAsync(workspaceRoot, storageRoot, sessionId, opts = {}) {
+  if (!isSafeSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
+  if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot)) {
+    return { ok: false, error: 'workspaceRoot must be an absolute path' };
+  }
+  if (typeof storageRoot !== 'string' || !path.isAbsolute(storageRoot)) {
+    return { ok: false, error: 'storageRoot must be an absolute path' };
+  }
+  let manifest;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- manifestPath rooted
+    manifest = JSON.parse(fs.readFileSync(manifestPath(storageRoot, sessionId), 'utf8'));
+  } catch (err) {
+    return { ok: false, error: `could not read manifest: ${err.message}` };
+  }
+  const ignores = DEFAULT_IGNORE.slice();
+  if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
+  const seen = new Set();
+  const changes = [];
+  const warnings = [];
+  const state = { count: 0 };
+  await walkForDiffAsync(workspaceRoot, '', ignores, manifest.entries, seen, changes, warnings, state);
+  for (const relPath of Object.keys(manifest.entries)) {
+    if (!seen.has(relPath)) changes.push({ path: relPath, status: 'deleted' });
+  }
+  return { ok: true, changes, warnings };
+}
+
+async function walkForDiffAsync(absRoot, rel, ignores, manifestEntries, seen, changes, warnings, state) {
+  const here = rel ? path.join(absRoot, rel) : absRoot;
+  let dirents;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- absRoot bounded
+    dirents = fs.readdirSync(here, { withFileTypes: true });
+  } catch (err) {
+    warnings.push({ path: rel || '.', reason: err.message });
+    return;
+  }
+  for (const ent of dirents) {
+    const relChild = rel ? path.join(rel, ent.name) : ent.name;
+    if (shouldIgnore(relChild, ignores)) continue;
+    const abs = path.join(here, ent.name);
+    try {
+      if (ent.isSymbolicLink()) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs bounded
+        const target = fs.readlinkSync(abs);
+        const expected = manifestEntries[relChild];
+        seen.add(relChild);
+        if (!expected) { changes.push({ path: relChild, status: 'added' }); continue; }
+        if (expected.type !== 'symlink' || expected.target !== target) {
+          changes.push({ path: relChild, status: 'modified' });
+        }
+      } else if (ent.isDirectory()) {
+        await walkForDiffAsync(absRoot, relChild, ignores, manifestEntries, seen, changes, warnings, state);
+      } else if (ent.isFile()) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs bounded
+        const sha = sha256OfBuffer(fs.readFileSync(abs));
+        const expected = manifestEntries[relChild];
+        seen.add(relChild);
+        if (!expected) { changes.push({ path: relChild, status: 'added' }); }
+        else if (expected.type !== 'file' || expected.sha !== sha) {
+          changes.push({ path: relChild, status: 'modified' });
+        }
+        state.count++;
+        if (state.count % 50 === 0) await new Promise((resolve) => setImmediate(resolve));
+      }
+    } catch (err) {
+      warnings.push({ path: relChild, reason: err.message });
+    }
+  }
+}
+
 module.exports = {
   DEFAULT_IGNORE,
+  DEFAULT_MAX_ENTRIES,
   captureSnapshot,
+  captureSnapshotAsync,
   restoreFromSnapshot,
   diffWorkspace,
+  diffWorkspaceAsync,
   // exported for unit tests; not part of the public API.
   _internal: { sha256OfBuffer, isSafeSessionId, shouldIgnore, joinSafely, validateAncestorChain },
 };

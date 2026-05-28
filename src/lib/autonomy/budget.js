@@ -66,6 +66,14 @@ function createBudgetMeter(opts = {}) {
   let outputTokens = 0;
   let estimatedFlag = false;
   let lastTickAt = startedAt;
+  // Authoritative cumulative token count reported by the agent itself
+  // (e.g., claude prints "↓ 1.5k tokens" in its status line; the
+  // supervisor parses that and calls setReportedTokens). When set,
+  // this OVERRIDES the chars/4 estimate so the UI shows the same
+  // number the user sees in the agent's own status. Stays null until
+  // the parser sees a value, so non-claude agents fall back to the
+  // chars/4 estimate.
+  let reportedTotal = null;
 
   // tick({ now?, inputTokens?, outputTokens?, charsFromAgent? })
   // Returns the post-tick state. charsFromAgent is the optional
@@ -89,8 +97,24 @@ function createBudgetMeter(opts = {}) {
     const now = Number.isFinite(nowParam) ? nowParam : Date.now();
     const elapsedMs = Math.max(0, now - startedAt);
     const elapsedMinutes = elapsedMs / 60000;
-    const totalTokens = inputTokens + outputTokens;
-    const dollars = (inputTokens / 1e6) * rate.in + (outputTokens / 1e6) * rate.out;
+    // Truth hierarchy:
+    //   1. agent-reported cumulative tokens (claude/codex status line)
+    //   2. inputTokens + outputTokens from explicit reports
+    //   3. chars-from-agent / 4 fallback estimate (the worst signal,
+    //      inflated 5-10x by ANSI/cursor codes on TUI agents)
+    const accumulated = inputTokens + outputTokens;
+    const totalTokens = reportedTotal != null ? reportedTotal : accumulated;
+    // Dollars: if we have authoritative report use it with a blended
+    // rate (chat-style runs are ~70/30 output/input on average so
+    // weighting the output rate higher matches real billing closer
+    // than a flat average). Otherwise use the in/out split we tracked.
+    let dollars;
+    if (reportedTotal != null) {
+      const blended = (rate.in * 0.3) + (rate.out * 0.7);
+      dollars = (reportedTotal / 1e6) * blended;
+    } else {
+      dollars = (inputTokens / 1e6) * rate.in + (outputTokens / 1e6) * rate.out;
+    }
     return {
       caps: { ...caps },
       modelId,
@@ -100,7 +124,8 @@ function createBudgetMeter(opts = {}) {
       inputTokens,
       outputTokens,
       totalTokens,
-      tokensEstimated: estimatedFlag,
+      tokensEstimated: reportedTotal == null && estimatedFlag,
+      tokensReported: reportedTotal != null,
       dollars,
       ratios: {
         minutes: caps.minutes > 0 ? Math.min(1, elapsedMinutes / caps.minutes) : 0,
@@ -109,6 +134,15 @@ function createBudgetMeter(opts = {}) {
       },
       hitCap: firstHitCap(elapsedMinutes, totalTokens, dollars, caps),
     };
+  }
+
+  function setReportedTokens(n) {
+    if (!Number.isFinite(n) || n < 0) return;
+    // Monotonic: cumulative counters do not shrink; if the parser sees
+    // a smaller value (UI redraw glitch, regex hit a stale row),
+    // ignore it so the meter cannot regress.
+    if (reportedTotal != null && n < reportedTotal) return;
+    reportedTotal = Math.floor(n);
   }
 
   function firstHitCap(minutes, tokens, dollars, capsLocal) {
@@ -125,6 +159,7 @@ function createBudgetMeter(opts = {}) {
   return {
     tick,
     state,
+    setReportedTokens,
     startedAt() { return startedAt; },
     lastTickAt() { return lastTickAt; },
   };

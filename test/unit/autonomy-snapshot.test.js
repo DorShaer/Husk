@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const {
   DEFAULT_IGNORE,
   captureSnapshot,
+  captureSnapshotAsync,
   restoreFromSnapshot,
   diffWorkspace,
   _internal,
@@ -422,4 +423,41 @@ test('opts.preserveExtras default is false (strict-revert behavior)', () => {
   const res = restoreFromSnapshot(work, store, SID);
   assert.equal(res.ok, true);
   assert.equal(fs.existsSync(path.join(work, 'extra.txt')), false);
+});
+
+test('captureSnapshotAsync matches captureSnapshot output and reports fileCount', async () => {
+  writeFile('a.txt', 'a');
+  writeFile('nested/b.txt', 'b');
+  writeFile('nested/c.txt', 'c');
+  const res = await captureSnapshotAsync(work, store, SID);
+  assert.equal(res.ok, true);
+  assert.equal(typeof res.fileCount, 'number');
+  assert.equal(res.fileCount, 3);
+  assert.ok(res.manifest.entries['a.txt']);
+  assert.ok(res.manifest.entries[path.join('nested', 'b.txt')]);
+  assert.ok(res.manifest.entries[path.join('nested', 'c.txt')]);
+});
+
+test('captureSnapshotAsync invokes onProgress at least once on a multi-file workspace', async () => {
+  // Drop enough files past the YIELD_EVERY threshold (50) so progress
+  // fires. Keep the count modest to keep the test fast.
+  for (let i = 0; i < 110; i++) writeFile(`f${i}.txt`, `payload ${i}`);
+  const events = [];
+  const res = await captureSnapshotAsync(work, store, SID, {
+    onProgress: (info) => events.push(info),
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.fileCount, 110);
+  assert.ok(events.length >= 1, 'expected at least one onProgress callback');
+  for (const ev of events) {
+    assert.equal(typeof ev.count, 'number');
+    assert.ok(ev.count > 0);
+  }
+});
+
+test('captureSnapshotAsync aborts when workspace exceeds maxEntries', async () => {
+  for (let i = 0; i < 20; i++) writeFile(`f${i}.txt`, 'x');
+  const res = await captureSnapshotAsync(work, store, SID, { maxEntries: 5 });
+  assert.equal(res.ok, false);
+  assert.match(res.error || '', /exceeds 5 files/);
 });
