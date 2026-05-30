@@ -96,14 +96,37 @@ function graphToOrderedSteps(graph) {
   if (!g.nodes.length) return [];
   const byId = new Map(g.nodes.map((n) => [n.id, n]));
   const hasIncoming = new Set(g.edges.map((e) => e.to));
-  let cur = g.nodes.find((n) => !hasIncoming.has(n.id)) || g.nodes[0];
+  // Outgoing adjacency in edge-declaration order, so branch order is
+  // stable and follows how the user wired the graph.
+  const out = new Map();
+  for (const e of g.edges) {
+    if (!out.has(e.from)) out.set(e.from, []);
+    out.get(e.from).push(e.to);
+  }
   const order = [];
   const seen = new Set();
-  while (cur && !seen.has(cur.id)) {
-    seen.add(cur.id);
-    order.push(cur);
-    const edge = g.edges.find((e) => e.from === cur.id);
-    cur = edge ? byId.get(edge.to) : null;
+  // Breadth-first from every root (a node with no incoming edge). The
+  // previous version followed only the first outgoing edge of a single
+  // root, which silently dropped every other branch and any
+  // disconnected node. A pure-cycle graph has no root, so seed with the
+  // first node to stay terminating while still emitting every node.
+  const roots = g.nodes.filter((n) => !hasIncoming.has(n.id));
+  const queue = (roots.length ? roots : [g.nodes[0]]).map((n) => n.id);
+  while (queue.length) {
+    const id = queue.shift();
+    if (seen.has(id)) continue;
+    const node = byId.get(id);
+    if (!node) continue;
+    seen.add(id);
+    order.push(node);
+    for (const to of (out.get(id) || [])) {
+      if (!seen.has(to)) queue.push(to);
+    }
+  }
+  // Append any node not reachable from a root (a disconnected
+  // component) so no step is silently lost.
+  for (const n of g.nodes) {
+    if (!seen.has(n.id)) { seen.add(n.id); order.push(n); }
   }
   return order;
 }
