@@ -4405,13 +4405,27 @@ function openAutonomyStart() {
   if (hasProject) setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
 }
 function closeAutonomyStart() { $('#autonomy-start-modal').hidden = true; }
+// Read one cap field. Empty -> default. A typed 0 is kept as 0, which
+// the budget meter treats as "no cap for this metric". Negative or
+// non-numeric is invalid: fall back to the default and flag it so the UI
+// and the engine never disagree silently.
+function readCapField(id, def) {
+  const el = $(id);
+  const raw = el ? String(el.value || '').trim() : '';
+  if (raw === '') return { value: def };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return { value: def, invalid: true };
+  return { value: n };
+}
 async function startAutonomy() {
   const goal = ($('#aut-goal').value || '').trim();
-  const caps = {
-    minutes: Number($('#aut-cap-min').value) || 60,
-    tokens: Number($('#aut-cap-tok').value) || 200000,
-    dollars: Number($('#aut-cap-usd').value) || 5,
-  };
+  const cMin = readCapField('#aut-cap-min', 60);
+  const cTok = readCapField('#aut-cap-tok', 200000);
+  const cUsd = readCapField('#aut-cap-usd', 5);
+  if (cMin.invalid || cTok.invalid || cUsd.invalid) {
+    toast('Caps must be zero or a positive number; invalid values were reset to the default', 'error');
+  }
+  const caps = { minutes: cMin.value, tokens: cTok.value, dollars: cUsd.value };
   const goBtn = $('#aut-start-go');
   const cancelBtn = $('#aut-start-cancel');
   const status = $('#aut-snapshot-status');
@@ -4445,6 +4459,17 @@ async function startAutonomy() {
 }
 async function cancelAutonomy() {
   if (!autonomyActive) return;
+  // Stopping a run is destructive to in-flight work, so confirm first.
+  // This is the explicit Stop action; the chat autonomy button no longer
+  // routes here (it opens the run view instead) so a stray click cannot
+  // end a run by accident.
+  const ok = await openConfirmDialog({
+    title: 'Stop the autonomy run?',
+    bodyHtml: 'The agent will be interrupted and the run will end. Your workspace changes are kept; you can review or revert them afterward.',
+    confirmLabel: 'Stop run',
+    cancelLabel: 'Keep running',
+  });
+  if (!ok) return;
   const r = await window.husk.autonomy.cancel({});
   if (!r || !r.ok) { toast((r && r.error) || 'Cancel failed', 'error'); return; }
 }
@@ -4716,10 +4741,23 @@ const AP_TERM_SEEN_MAX = 400;
 const AP_IDLE_END_MS = 10000;
 const AP_IDLE_END_HARD_MS = 25000;
 const AP_MIN_EVENTS_BEFORE_AUTO_END = 3;
+// The agent's "working" indicator (claude renders "esc to interrupt" and
+// a live "(12s . N tokens . ...)" status line while generating or running
+// a tool). When it is present the agent is busy; when it has been gone
+// this long the turn is finished. Driving auto-end off this is both
+// faster (ends seconds after the agent returns to its prompt) and safer
+// (a busy-but-quiet agent still shows the indicator, so it is not ended
+// mid-flight).
+const AP_WORK_GONE_MS = 6000;
+const AP_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]/i;
 let autonomyTermInterval = null;
 let autonomyTermSeenLines = new Set();
 let autonomyTermSeenOrder = [];
 let autonomyLastActivityAt = 0;
+// Last time the agent's working indicator was visible, and whether it has
+// ever been seen this run. Both drive completion detection.
+let autonomyWorkingSeenAt = 0;
+let autonomyEverWorked = false;
 let autonomyAutoEndTriggered = false;
 let autonomyReview = false;
 let autonomyReviewData = null;
@@ -4841,9 +4879,10 @@ function setAutonomyGoal(goal) {
 }
 function setAutonomyCaps(caps) {
   autonomyState.caps = Object.assign({ minutes: 60, tokens: 200000, dollars: 5 }, caps || {});
-  const tc = $('#aut-page-cap-time'); if (tc) tc.textContent = `of ${autonomyState.caps.minutes}m`;
-  const ko = $('#aut-page-cap-tokens'); if (ko) ko.textContent = `of ${formatTokens(autonomyState.caps.tokens)}`;
-  const dc = $('#aut-page-cap-dollars'); if (dc) dc.textContent = `of ${formatDollars(autonomyState.caps.dollars)}`;
+  const c = autonomyState.caps;
+  const tc = $('#aut-page-cap-time'); if (tc) tc.textContent = c.minutes > 0 ? `of ${c.minutes}m` : 'no time limit';
+  const ko = $('#aut-page-cap-tokens'); if (ko) ko.textContent = c.tokens > 0 ? `of ${formatTokens(c.tokens)}` : 'no token limit';
+  const dc = $('#aut-page-cap-dollars'); if (dc) dc.textContent = c.dollars > 0 ? `of ${formatDollars(c.dollars)}` : 'no $ limit';
 }
 function formatTokens(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + 'M';
@@ -4873,9 +4912,17 @@ function updateAutonomyBudget(b) {
   const elapsedMin = (Date.now() - autonomyState.startedAt) / 60000;
   const tv = $('#aut-page-val-time');
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
-  updateRing('aut-page-ring-time', elapsedMin / caps.minutes, meters[0]);
+  updateRing('aut-page-ring-time', caps.minutes > 0 ? elapsedMin / caps.minutes : 0, meters[0]);
   const tk = Number(b.totalTokens) || 0;
-  const tv2 = $('#aut-page-val-tokens'); if (tv2) tv2.textContent = formatTokens(tk);
+  // The token figure is read from the agent's own status line and is an
+  // approximation (per-turn / context-relative depending on the agent),
+  // so mark it as approximate rather than presenting an exact count.
+  const approx = !!(b.tokensReported || b.tokensEstimated);
+  const tv2 = $('#aut-page-val-tokens');
+  if (tv2) {
+    tv2.textContent = (approx && tk > 0 ? '~' : '') + formatTokens(tk);
+    tv2.title = approx ? 'Approximate, read from the agent status line' : '';
+  }
   updateRing('aut-page-ring-tokens', caps.tokens > 0 ? tk / caps.tokens : 0, meters[1]);
   const usd = Number(b.dollars) || 0;
   const dv = $('#aut-page-val-dollars');
@@ -5163,6 +5210,11 @@ function parseAgentTokenStatus(line) {
   // before the word "tokens" (case-insensitive). Examples we WANT
   // to match: "1.5k tokens", "↓ 1.5k tokens", "2,300 tokens used",
   // "Tokens: 1234 sent" (handled by inverse below).
+  // "152k/200k tokens" is context-used / context-window. The number
+  // directly before "tokens" is the window SIZE, not usage, so prefer the
+  // used side (the numerator) before falling through to the generic match.
+  const ratio = line.match(/(\d[\d,\.]*)\s*([kKmM]?)\s*\/\s*\d[\d,\.]*\s*[kKmM]?\s*tokens?\b/i);
+  if (ratio) return parseTokenNumber(ratio[1], ratio[2]);
   const after = line.match(/(\d[\d,\.]*)\s*([kKmM]?)\s*tokens?\b/);
   if (after) return parseTokenNumber(after[1], after[2]);
   const before = line.match(/tokens?\s*[:=]\s*(\d[\d,\.]*)\s*([kKmM]?)/i);
@@ -5233,22 +5285,34 @@ function snapshotTermForAutonomy() {
   if (maxReported >= 0 && window.husk && window.husk.autonomy && window.husk.autonomy.reportTokens) {
     try { window.husk.autonomy.reportTokens(maxReported); } catch (_) {}
   }
-  // Idle watchdog. Two thresholds:
-  //   soft:  AP_IDLE_END_MS quiet  +  prompt detected in last 15 rows
-  //   hard:  AP_IDLE_END_HARD_MS quiet (no prompt detection needed)
-  // The soft threshold ends fast when we recognize the agent's
-  // prompt. The hard threshold ends eventually even if the agent's
-  // prompt does not match any pattern we know (claude wraps the
-  // prompt in a box; the last visible row is often an input hint
-  // like "← for agents", not the prompt itself).
+  // Working-indicator detection drives completion. Scan the last rows for
+  // the agent's "busy" marker; while it is present the agent is generating
+  // or running a tool, so the run must not be auto-ended.
+  let working = false;
+  for (let i = Math.max(0, total - AP_TERM_SCAN_WINDOW); i < total; i++) {
+    const ln = b.getLine(i);
+    if (!ln) continue;
+    if (AP_WORKING_RE.test(ln.translateToString(true))) { working = true; break; }
+  }
+  if (working) { autonomyWorkingSeenAt = Date.now(); autonomyEverWorked = true; }
+
+  // Completion watchdog. Primary signal: the agent worked, then its
+  // working indicator went away and stayed away, and the terminal looks
+  // like it is back at a prompt. This ends the run within seconds of the
+  // agent actually finishing, and cannot fire while the agent is busy.
+  // The quiet-only hard net remains as a fallback for agents that show no
+  // recognizable working indicator, but it too waits for "not working".
   if (autonomyActive && !autonomyAutoEndTriggered
       && autonomyState.eventCount >= AP_MIN_EVENTS_BEFORE_AUTO_END
       && autonomyLastActivityAt > 0) {
-    const idleMs = Date.now() - autonomyLastActivityAt;
-    if (idleMs >= AP_IDLE_END_MS && terminalLooksIdleAtPrompt()) {
-      autonomyAutoEndTriggered = true;
-      finalizeAutonomyOnIdle();
-    } else if (idleMs >= AP_IDLE_END_HARD_MS) {
+    const now = Date.now();
+    const idleMs = now - autonomyLastActivityAt;
+    const workGoneMs = autonomyWorkingSeenAt ? now - autonomyWorkingSeenAt : Infinity;
+    const notWorking = !working && workGoneMs >= AP_WORK_GONE_MS;
+    const finishedAfterWork = autonomyEverWorked && notWorking
+      && (terminalLooksIdleAtPrompt() || idleMs >= AP_IDLE_END_MS);
+    const quietFallback = notWorking && idleMs >= AP_IDLE_END_HARD_MS;
+    if (finishedAfterWork || quietFallback) {
       autonomyAutoEndTriggered = true;
       finalizeAutonomyOnIdle();
     }
@@ -5304,6 +5368,8 @@ function startAutonomyTermSnapshotter() {
   autonomyTermSeenOrder = [];
   autonomyLastActivityAt = Date.now();
   autonomyAutoEndTriggered = false;
+  autonomyWorkingSeenAt = 0;
+  autonomyEverWorked = false;
   const b = term.buffer.active;
   const total = b.length;
   for (let i = 0; i < total; i++) {
@@ -5403,6 +5469,19 @@ function openAutonomyEndModal(sum) {
   $('#autonomy-end-modal').hidden = false;
 }
 function closeAutonomyEndModal() { $('#autonomy-end-modal').hidden = true; }
+// Report a revert honestly: a non-empty warnings list means some files
+// were NOT restored (decrypt failure, blob mismatch, fs error). The old
+// unconditional "success" toast hid partial reverts, which is the exact
+// trust violation the feature exists to prevent.
+function reportRevertResult(r) {
+  const restored = (r.restored || []).length;
+  const warned = (r.warnings || []).length;
+  if (warned) {
+    toast(`Reverted ${restored} file${restored === 1 ? '' : 's'}; ${warned} could not be restored`, 'error');
+  } else {
+    toast(`Reverted ${restored} file${restored === 1 ? '' : 's'}`, 'success');
+  }
+}
 async function revertAutonomy() {
   if (!autonomyLastSession) { toast('No run to revert', 'error'); return; }
   const ok = await openConfirmDialog({
@@ -5414,11 +5493,15 @@ async function revertAutonomy() {
   if (!ok) return;
   const r = await window.husk.autonomy.revert(autonomyLastSession);
   if (!r || !r.ok) { toast((r && r.error) || 'Revert failed', 'error'); return; }
-  toast(`Reverted ${(r.restored || []).length} files`, 'success');
+  reportRevertResult(r);
   closeAutonomyEndModal();
 }
 $('#btn-autonomy') && $('#btn-autonomy').addEventListener('click', () => {
-  if (autonomyActive) { cancelAutonomy(); return; }
+  // While a run is active this button takes the user to the run view, it
+  // does NOT stop the run. Stopping is the explicit Stop button on the
+  // autonomy page (which confirms). A second click here used to silently
+  // cancel the run, which read as "open status" to users.
+  if (autonomyActive) { try { setPage('autonomy'); } catch (_) {} return; }
   openAutonomyStart();
 });
 $('#aut-start-close') && $('#aut-start-close').addEventListener('click', closeAutonomyStart);
@@ -5450,7 +5533,7 @@ try {
       // run appears in Recent runs immediately.
       if (sum && sum.ok) {
         const sid = (autonomyLastSession && autonomyLastSession.sessionId) || (sum.sessionId || '');
-        const wr = (autonomyLastSession && autonomyLastSession.workspaceRoot) || '';
+        const wr = (autonomyLastSession && autonomyLastSession.workspaceRoot) || (sum.workspaceRoot || '');
         enterReviewMode({ sessionId: sid, workspaceRoot: wr, summary: sum });
       } else {
         paintAutonomyBanner();
@@ -5458,7 +5541,14 @@ try {
       refreshAutonomyHistory();
     });
     window.husk.autonomy.onHalt((info) => {
-      toast(`Autonomy halted: ${info && info.cap ? info.cap + ' cap reached' : 'budget'}`, 'error');
+      // Report the real cause. A budget cap names the cap; an agent that
+      // exited on its own is not a budget event and must not be labelled
+      // "budget".
+      let why, level;
+      if (info && info.cap) { why = `${info.cap} cap reached`; level = 'error'; }
+      else if (info && info.reason === 'agent-exited') { why = 'agent exited'; level = 'info'; }
+      else { why = 'stopped'; level = 'error'; }
+      toast(`Autonomy halted: ${why}`, level);
     });
     if (window.husk.autonomy.onSnapshotProgress) {
       window.husk.autonomy.onSnapshotProgress((info) => {
@@ -5537,7 +5627,7 @@ $('#aut-review-revert') && $('#aut-review-revert').addEventListener('click', asy
     workspaceRoot: autonomyReviewData.workspaceRoot,
   });
   if (!r || !r.ok) { toast((r && r.error) || 'Revert failed', 'error'); return; }
-  toast(`Reverted ${(r.restored || []).length} files`, 'success');
+  reportRevertResult(r);
   // Refresh the live diff view from disk so it reflects the revert.
   if (autonomyReviewData) {
     const sum = await window.husk.autonomy.summary({
