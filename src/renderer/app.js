@@ -5,29 +5,103 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
-// ─── Toast ───────────────────────────────────────────────────────────────────────
-let toastTimer = null;
-function toast(msg, kind = '') {
-  const el = $('#toast');
-  el.textContent = msg;
-  el.className = 'toast' + (kind ? ' ' + kind : '');
-  el.hidden = false;
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2800);
+// ─── Notifications ─────────────────────────────────────────────────────────
+// A top-center stack of independent cards. Each slides in, auto-dismisses
+// (errors linger longer), pauses on hover, and can be dismissed by hand.
+// Newest sits on top; the stack is capped so a burst cannot bury the UI.
+const NOTIF_MAX = 4;
+const NOTIF_TTL = { error: 6500, warn: 5500, success: 4000, info: 4000, '': 4000 };
+// Icon path sets (stroke, 24x24 viewBox). Built with createElementNS so no
+// markup is injected as a string.
+const NOTIF_ICONS = {
+  success: [['path', 'M20 6 9 17l-5-5']],
+  error: [['circle', '12 12 9'], ['path', 'M12 8v4'], ['path', 'M12 16h.01']],
+  warn: [['path', 'M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'], ['path', 'M12 9v4'], ['path', 'M12 17h.01']],
+  info: [['circle', '12 12 9'], ['path', 'M12 11v5'], ['path', 'M12 8h.01']],
+  done: [['path', 'M22 11.08V12a10 10 0 1 1-5.93-9.14'], ['path', 'M22 4 12 14.01l-3-3']],
+};
+function notifSvg(name) {
+  const spec = NOTIF_ICONS[name] || NOTIF_ICONS.info;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [tag, data] of spec) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    if (tag === 'circle') { const [cx, cy, r] = data.split(' '); el.setAttribute('cx', cx); el.setAttribute('cy', cy); el.setAttribute('r', r); }
+    else el.setAttribute('d', data);
+    svg.appendChild(el);
+  }
+  return svg;
 }
-
-// Top-center banner for run-completion. Separate from toast() so it sits
-// where the user is looking when a run ends, and does not collide with
-// ordinary corner toasts. kind: '' (done) | 'budget' | 'stopped'.
-let runBannerTimer = null;
+function dismissNotif(card) {
+  if (!card || card._dismissing) return;
+  card._dismissing = true;
+  if (card._timer) clearTimeout(card._timer);
+  card.classList.add('is-out');
+  setTimeout(() => { try { card.remove(); } catch (_) {} }, 200);
+}
+// Core entry. opts: { title, kind, prominent, ttl }
+function notify(message, opts = {}) {
+  const stack = $('#toast-stack');
+  if (!stack) return;
+  const kind = opts.kind || '';
+  const iconName = opts.icon || (opts.prominent ? 'done' : (kind || 'info'));
+  const card = document.createElement('div');
+  card.className = 'toast is-enter' + (kind ? ' ' + kind : '') + (opts.prominent ? ' is-prominent' : '');
+  const icon = document.createElement('span');
+  icon.className = 'toast-icon';
+  icon.appendChild(notifSvg(iconName));
+  const body = document.createElement('div');
+  body.className = 'toast-body';
+  if (opts.title) {
+    const t = document.createElement('div');
+    t.className = 'toast-title';
+    t.textContent = opts.title;
+    body.appendChild(t);
+  }
+  const m = document.createElement('div');
+  m.className = 'toast-msg';
+  m.textContent = message;
+  body.appendChild(m);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-close';
+  close.setAttribute('aria-label', 'Dismiss');
+  close.textContent = '×';
+  close.addEventListener('click', () => dismissNotif(card));
+  card.appendChild(icon);
+  card.appendChild(body);
+  card.appendChild(close);
+  // Newest on top.
+  stack.insertBefore(card, stack.firstChild);
+  // Remove the entrance class so the card transitions in. rAF gives clean
+  // first-paint timing on a real display; the setTimeout is a guarantee so
+  // the card never stays stuck hidden if rAF is starved (background window).
+  const reveal = () => card.classList.remove('is-enter');
+  requestAnimationFrame(() => requestAnimationFrame(reveal));
+  setTimeout(reveal, 60);
+  // Cap the stack: drop the oldest beyond the limit.
+  while (stack.children.length > NOTIF_MAX) dismissNotif(stack.lastElementChild);
+  // Auto-dismiss with hover-to-pause.
+  const ttl = opts.ttl || NOTIF_TTL[kind] || NOTIF_TTL[''];
+  const arm = () => { card._timer = setTimeout(() => dismissNotif(card), ttl); };
+  arm();
+  card.addEventListener('mouseenter', () => { if (card._timer) clearTimeout(card._timer); });
+  card.addEventListener('mouseleave', () => { if (!card._dismissing) arm(); });
+  return card;
+}
+// Back-compatible API used across the renderer.
+function toast(msg, kind = '') { notify(msg, { kind }); }
+// Run-completion notification: a prominent card with a title.
 function runEndBanner(msg, kind = '') {
-  const el = $('#run-banner');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = 'run-banner' + (kind ? ' ' + kind : '');
-  el.hidden = false;
-  if (runBannerTimer) clearTimeout(runBannerTimer);
-  runBannerTimer = setTimeout(() => { el.hidden = true; }, 5000);
+  // Map the run outcome to a notification style.
+  const k = kind === 'budget' ? 'warn' : (kind === 'stopped' ? '' : 'success');
+  notify(msg, { kind: k, prominent: true, title: 'Autonomy run', icon: kind === 'budget' ? 'warn' : 'done', ttl: 6000 });
 }
 
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
