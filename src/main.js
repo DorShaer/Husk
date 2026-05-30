@@ -1029,13 +1029,21 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
   }
   if (!snap.ok) return { ok: false, error: snap.error };
 
+  // Derive the agent name from the configured command so the budget
+  // meter prices the run correctly. Vendor-billed agents (copilot, codex,
+  // aider, gemini) carry a $0 rate so the dollar cap does not fire on a
+  // fabricated Sonnet-priced cost; claude falls through to the default
+  // model rate.
+  const agentName = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
+    .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
+  const vendorBilled = ['copilot', 'codex', 'aider', 'gemini'].includes(agentName);
   const r = Autonomy.supervisor.startRun({
     sessionId,
     workspaceRoot,
     storageRoot: autonomyStorageRoot(),
     goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
-    agent: payload.agent || null,
-    modelId: payload.modelId || null,
+    agent: payload.agent || agentName,
+    modelId: payload.modelId || (vendorBilled ? agentName : null),
     caps: payload.caps,
     encrypt, decrypt,
     skipSnapshot: true,
@@ -1050,9 +1058,18 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
     if (!activeRunner) return;
     const s = activeRunner.tickClock();
     if (mainWindow) mainWindow.webContents.send('autonomy:budget', s);
-    if (s.hitCap && mainWindow) {
+    if (s.hitCap) {
+      // Cap reached. Stop this interval immediately so we do not inject
+      // a SIGINT and re-broadcast a halt every second (the meter keeps
+      // reporting hitCap once a cap is crossed). Interrupt the agent
+      // once, tell the renderer once, and finalize the run so it leaves
+      // the active state instead of sitting "Running" forever. The agent
+      // stays alive at its prompt; SIGINT interrupts the current turn, it
+      // does not kill the PTY.
+      try { clearInterval(activeRunner._tickInterval); } catch (_) {}
       sigintPty();
-      mainWindow.webContents.send('autonomy:halt', { reason: 'budget', cap: s.hitCap });
+      if (mainWindow) mainWindow.webContents.send('autonomy:halt', { reason: 'budget', cap: s.hitCap });
+      finishActiveRun({ reason: 'budget', cap: s.hitCap });
     }
   }, 1000);
   const goal = typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : '';
@@ -1142,6 +1159,10 @@ async function finishActiveRun(detail) {
     } catch (err) {
       sum = { ok: false, error: (err && err.message) || String(err) };
     }
+    // Carry the run identity on the payload so the renderer can enter
+    // review / revert / rerun even when its own autonomyLastSession was
+    // lost (e.g. the renderer reloaded while the run was active).
+    if (sum && typeof sum === 'object') { sum.sessionId = sessionId; sum.workspaceRoot = workspaceRoot; }
     if (mainWindow) mainWindow.webContents.send('autonomy:ended', sum);
     return { ok: true, sessionId, summary: sum };
   } finally {
@@ -1161,13 +1182,29 @@ ipcMain.handle('autonomy:status', () => {
   };
 });
 
+// The restore/diff target for a session is the directory the snapshot
+// was captured from, recorded in its manifest. Never trust a caller-
+// supplied workspaceRoot for a destructive revert: an empty value used
+// to fall back to HOME, and the restore deletes every file not in the
+// snapshot, so a wrong root would wipe an unrelated directory.
+function manifestWorkspaceRoot(sessionId) {
+  try {
+    const mp = path.join(autonomyStorageRoot(), 'sessions', sessionId, 'snapshot.json');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to autonomy storage
+    const m = JSON.parse(fs.readFileSync(mp, 'utf8'));
+    return (m && typeof m.workspaceRoot === 'string' && m.workspaceRoot) ? m.workspaceRoot : null;
+  } catch (_) { return null; }
+}
+
 ipcMain.handle('autonomy:revert', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
+  const workspaceRoot = manifestWorkspaceRoot(sessionId);
+  if (!workspaceRoot) return { ok: false, error: 'snapshot manifest has no workspace root; cannot revert safely' };
   const { decrypt } = autonomyCrypto();
   return Autonomy.supervisor.revertRun({
     sessionId,
-    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    workspaceRoot,
     storageRoot: autonomyStorageRoot(),
     decrypt,
     preserveExtras: !!payload.preserveExtras,
@@ -1385,13 +1422,16 @@ ipcMain.handle('autonomy:liveDiff', async () => {
   }
 });
 
-ipcMain.handle('autonomy:summary', (_e, payload = {}) => {
+ipcMain.handle('autonomy:summary', async (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   const { decrypt } = autonomyCrypto();
-  return Autonomy.supervisor.summarizeRun({
+  // Diff the recorded workspace, not a caller fallback. Use the async
+  // walker so loading a past run from history does not freeze the UI.
+  const workspaceRoot = manifestWorkspaceRoot(sessionId) || String(payload.workspaceRoot || '').trim() || null;
+  return Autonomy.supervisor.summarizeRunAsync({
     sessionId,
-    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    workspaceRoot,
     storageRoot: autonomyStorageRoot(),
     decrypt,
   });
