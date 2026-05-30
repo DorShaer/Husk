@@ -1049,10 +1049,8 @@
       </div>
     </div>
 
-    <div id="toast" class="toast" hidden></div>
-
-    <!-- Top-center banner used for run-completion notifications. -->
-    <div id="run-banner" class="run-banner" hidden></div>
+    <!-- Notification stack: top-center, cards stack and dismiss independently. -->
+    <div id="toast-stack" class="toast-stack" role="status" aria-live="polite"></div>
 
     <!-- Autonomy: per-file diff viewer -->
     <div id="aut-diff-modal" class="modal" hidden>
