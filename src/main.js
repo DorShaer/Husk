@@ -946,19 +946,24 @@ function flushAutonomyOutput() {
 
 function injectGoalToPty(goal) {
   if (!ptyProc) return false;
-  // Bracketed paste mode: wraps the goal in CSI 200~ / CSI 201~ so the
-  // agent's TUI treats it as a single pasted block. Without this, each
-  // character is routed through the TUI's keyboard handler and special
-  // characters get intercepted by hotkeys (claude eats SPACE as a
-  // mode-toggle, "/" opens its command palette, etc.). The result was
-  // goals arriving with all spaces stripped, which is why earlier runs
-  // sat idle: the agent could not parse the smashed-together text.
   try {
     const body = String(goal).replace(/\r/g, ' ').replace(/\n/g, ' ');
-    ptyProc.write('\x1b[200~' + body + '\x1b[201~');
-    // Submit with a separate Enter after the TUI has finished
-    // committing the pasted block to its input buffer.
-    setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 120);
+    if (getAgentKind() === 'claude') {
+      // claude routes raw keystrokes through its TUI hotkey handler (SPACE
+      // toggles a mode, "/" opens the command palette), so the goal must
+      // arrive as one bracketed-paste block (CSI 200~ / CSI 201~). A
+      // separate Enter after the paste commits submits it.
+      ptyProc.write('\x1b[200~' + body + '\x1b[201~');
+      setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 120);
+    } else {
+      // Other agents (verified with copilot) DO accept a bracketed paste
+      // but do NOT submit on the Enter that follows it: their composer
+      // treats that Enter as a newline, so the goal just sits in the input
+      // and the run does nothing. Typing the goal directly keeps the input
+      // in its normal single-line state where Enter submits.
+      ptyProc.write(body);
+      setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 150);
+    }
     return true;
   } catch (_) { return false; }
 }
