@@ -16,6 +16,20 @@ function toast(msg, kind = '') {
   toastTimer = setTimeout(() => { el.hidden = true; }, 2800);
 }
 
+// Top-center banner for run-completion. Separate from toast() so it sits
+// where the user is looking when a run ends, and does not collide with
+// ordinary corner toasts. kind: '' (done) | 'budget' | 'stopped'.
+let runBannerTimer = null;
+function runEndBanner(msg, kind = '') {
+  const el = $('#run-banner');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'run-banner' + (kind ? ' ' + kind : '');
+  el.hidden = false;
+  if (runBannerTimer) clearTimeout(runBannerTimer);
+  runBannerTimer = setTimeout(() => { el.hidden = true; }, 5000);
+}
+
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
 // Reusable destructive-action confirmation. Replaces the two-click "is-armed"
 // pattern with a proper modal that names what is about to be deleted. Returns
@@ -4605,6 +4619,26 @@ function rerunFromPastRun(run) {
   });
 }
 
+async function deleteRun(run) {
+  if (!run || !run.sessionId) return;
+  const ok = await openConfirmDialog({
+    title: 'Delete this run?',
+    bodyHtml: "This permanently removes the run's snapshot, audit log, and saved file versions. You will no longer be able to review or revert it.",
+    confirmLabel: 'Delete run',
+    cancelLabel: 'Keep',
+  });
+  if (!ok) return;
+  const r = await window.husk.autonomy.deleteRun({ sessionId: run.sessionId });
+  if (!r || !r.ok) { toast((r && r.error) || 'Could not delete run', 'error'); return; }
+  toast('Run deleted', 'success');
+  // If the deleted run is the one currently under review, leave review
+  // mode; otherwise just refresh the list in place.
+  if (autonomyReview && autonomyReviewData && autonomyReviewData.sessionId === run.sessionId) {
+    exitReviewMode();
+  } else {
+    refreshAutonomyHistory();
+  }
+}
 async function refreshAutonomyHistory() {
   const list = $('#aut-recent');
   const meta = $('#aut-recent-meta');
@@ -4687,10 +4721,31 @@ async function refreshAutonomyHistory() {
     rerun.appendChild(rerunSvg);
     rerun.appendChild(rerunLbl);
     rerun.addEventListener('click', (e) => { e.stopPropagation(); rerunFromPastRun(run); });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'aut-recent-del';
+    del.title = 'Delete this run';
+    del.setAttribute('aria-label', 'Delete run');
+    const delSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    delSvg.setAttribute('viewBox', '0 0 24 24');
+    delSvg.setAttribute('fill', 'none');
+    delSvg.setAttribute('stroke', 'currentColor');
+    delSvg.setAttribute('stroke-width', '2');
+    delSvg.setAttribute('stroke-linecap', 'round');
+    delSvg.setAttribute('stroke-linejoin', 'round');
+    delSvg.setAttribute('aria-hidden', 'true');
+    for (const d of ['M3 6h18', 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2']) {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d);
+      delSvg.appendChild(p);
+    }
+    del.appendChild(delSvg);
+    del.addEventListener('click', (e) => { e.stopPropagation(); deleteRun(run); });
     row.appendChild(main);
     row.appendChild(files);
     row.appendChild(pill);
     row.appendChild(rerun);
+    row.appendChild(del);
     row.addEventListener('click', () => openAutonomyRunReview(run.sessionId, run.workspaceRoot));
     list.appendChild(row);
   }
@@ -5352,8 +5407,9 @@ function terminalLooksIdleAtPrompt() {
 async function finalizeAutonomyOnIdle() {
   if (!autonomyActive) return;
   try {
+    // The top-center run-complete banner is shown by onEnded; no corner
+    // toast here so the two do not duplicate.
     await window.husk.autonomy.end({ reason: 'agent_idle' });
-    toast('Run finished automatically (agent returned to idle)', 'success');
   } catch (err) {
     // If the end call fails, allow another idle attempt next tick.
     autonomyAutoEndTriggered = false;
@@ -5538,6 +5594,12 @@ try {
         const sid = (autonomyLastSession && autonomyLastSession.sessionId) || (sum.sessionId || '');
         const wr = (autonomyLastSession && autonomyLastSession.workspaceRoot) || (sum.workspaceRoot || '');
         enterReviewMode({ sessionId: sid, workspaceRoot: wr, summary: sum });
+        // Announce the end top-center where the user is looking.
+        const halt = (sum.summary && sum.summary.haltReason) || 'natural';
+        if (halt === 'budget') runEndBanner('Run stopped at a budget cap', 'budget');
+        else if (halt === 'user') runEndBanner('Run stopped', 'stopped');
+        else if (halt === 'agent-exited') runEndBanner('Run ended: agent exited', 'stopped');
+        else runEndBanner('Run complete', '');
       } else {
         paintAutonomyBanner();
       }
