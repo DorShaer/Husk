@@ -2883,6 +2883,17 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 /* Card CTA: small calm primary action with a trailing arrow. Replaces the
    flex:1 orange banner button that screamed for attention. The card itself is
    the affordance; this is the explicit commit. */
+/* Secondary CTA (e.g. Leave project): neutral, not accent-colored, so the
+   primary Open/Reopen action stays visually dominant. */
+.card-cta.project-leave {
+  color: var(--text-2);
+  border-color: var(--line-2);
+}
+.card-cta.project-leave:hover {
+  color: var(--text);
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.05);
+}
 .card-cta {
   display: inline-flex; align-items: center; gap: 6px;
   background: transparent;
