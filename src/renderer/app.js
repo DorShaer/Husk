@@ -231,14 +231,39 @@ term.attachCustomKeyEventHandler((e) => {
   });
   window.addEventListener('blur', hideMenu);
 }
+// Small trailing debounce: coalesce rapid calls (search keystrokes) so
+// an expensive repaint runs once the user pauses, not per character.
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => { t = null; fn(...args); }, ms);
+  };
+}
+
+// Coalesce PTY output into one xterm write per animation frame. A
+// chatty agent emits many chunks in quick succession; writing each one
+// separately (with its own scroll callback and speech scan) burned CPU
+// and janked scrolling. Buffering to the next frame collapses a burst
+// into a single write + single scroll + single speech scan.
+let _termWriteBuf = '';
+let _termFlushScheduled = false;
+function _flushTermWrite() {
+  _termFlushScheduled = false;
+  if (!_termWriteBuf) return;
+  const data = _termWriteBuf;
+  _termWriteBuf = '';
+  term.write(data, () => term.scrollToBottom());
+  detectAndSpeak(data);
+}
 window.husk.pty.onData((d) => {
   if (!chatHasInput) {
     chatHasInput = true;
     $('#chat-empty').classList.remove('show');
   }
   if (_restartInProgress) return;
-  term.write(d, () => term.scrollToBottom());
-  detectAndSpeak(d);
+  _termWriteBuf += d;
+  if (!_termFlushScheduled) { _termFlushScheduled = true; requestAnimationFrame(_flushTermWrite); }
 });
 window.husk.pty.onExit((code) => {
   // Suppress the exit notice when we're tearing the old PTY down on purpose,
@@ -695,7 +720,7 @@ async function deleteProject(id, name) {
 // Wire Projects page controls + Add Project modal.
 {
   const search = document.getElementById('projects-search');
-  if (search) search.addEventListener('input', () => paintProjects(projectsCache, search.value));
+  if (search) search.addEventListener('input', debounce(() => paintProjects(projectsCache, search.value), 120));
 
   const newBtn = document.getElementById('btn-projects-new');
   const modal = document.getElementById('new-project-modal');
@@ -2190,7 +2215,7 @@ async function previewPrompt(mdPath) {
 // Wire prompts search + refresh + create.
 {
   const search = document.getElementById('prompts-search');
-  if (search) search.addEventListener('input', () => paintPrompts(promptsCache, search.value));
+  if (search) search.addEventListener('input', debounce(() => paintPrompts(promptsCache, search.value), 120));
   const refresh = document.getElementById('btn-prompts-refresh');
   if (refresh) refresh.addEventListener('click', renderPrompts);
 
@@ -2356,7 +2381,7 @@ function paintSkills(list, query) {
     });
   });
 }
-$('#skills-search').addEventListener('input', (e) => paintSkills(skillsCache, e.target.value));
+$('#skills-search').addEventListener('input', debounce((e) => paintSkills(skillsCache, e.target.value), 120));
 $('#btn-skills-refresh').addEventListener('click', renderSkills);
 $('#btn-skills-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.skillsDir));
 $('#btn-skills-new').addEventListener('click', openCreateSkillModal);
@@ -2514,9 +2539,22 @@ function paintSessions(list, query) {
 
 function toggleSessionSelection(p) {
   if (!p) return;
-  if (sessionsSelected.has(p)) sessionsSelected.delete(p);
+  const wasSelected = sessionsSelected.has(p);
+  if (wasSelected) sessionsSelected.delete(p);
   else sessionsSelected.add(p);
-  paintSessions(sessionsCache, $('#sessions-search').value);
+  // Update only the affected row in place. Repainting the whole list on
+  // every checkbox click was an O(n) DOM teardown and listener rebind.
+  const ul = $('#sessions-list');
+  if (ul) {
+    for (const row of ul.querySelectorAll('.session-row')) {
+      if (row.dataset.path === p) {
+        row.classList.toggle('selected', !wasSelected);
+        const cb = row.querySelector('input[type="checkbox"]');
+        if (cb) cb.checked = !wasSelected;
+        break;
+      }
+    }
+  }
   syncSelectModeUI();
 }
 
@@ -2561,7 +2599,7 @@ async function deleteSelectedSessions() {
   await renderSessions();
 }
 
-$('#sessions-search').addEventListener('input', (e) => paintSessions(sessionsCache, e.target.value));
+$('#sessions-search').addEventListener('input', debounce((e) => paintSessions(sessionsCache, e.target.value), 120));
 $('#btn-sessions-refresh').addEventListener('click', renderSessions);
 $('#btn-sessions-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.sessionsDir));
 $('#btn-sessions-select').addEventListener('click', enterSelectMode);
