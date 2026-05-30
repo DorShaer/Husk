@@ -176,6 +176,32 @@ test('graphToOrderedSteps: empty graph returns []', () => {
   assert.deepEqual(wf.graphToOrderedSteps({ nodes: [], edges: [] }), []);
 });
 
+test('graphToOrderedSteps: a branching node keeps every branch', () => {
+  // a -> b, a -> c. The old single-edge walk dropped the second branch.
+  const g = {
+    nodes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    edges: [
+      { from: 'a', to: 'b', condition: { type: 'always' } },
+      { from: 'a', to: 'c', condition: { type: 'always' } },
+    ],
+  };
+  const ids = wf.graphToOrderedSteps(g).map((n) => n.id);
+  assert.equal(ids.length, 3);
+  assert.ok(ids.includes('b') && ids.includes('c'));
+  assert.equal(ids[0], 'a');
+});
+
+test('graphToOrderedSteps: disconnected nodes are not dropped', () => {
+  // b is wired to a; c stands alone. Both must appear.
+  const g = {
+    nodes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    edges: [{ from: 'a', to: 'b', condition: { type: 'always' } }],
+  };
+  const ids = wf.graphToOrderedSteps(g).map((n) => n.id);
+  assert.equal(ids.length, 3);
+  assert.ok(ids.includes('c'));
+});
+
 // ─── wfEdgeMatches ───────────────────────────────────────────────────────────
 
 test('wfEdgeMatches: contains is case-insensitive', () => {
