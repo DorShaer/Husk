@@ -188,6 +188,37 @@ function startRun(opts = {}) {
     });
   }
 
+  // Async twin of endRun. Same audit ordering, but the end-of-run diff
+  // is computed with the async walker so the Electron main thread is
+  // never frozen hashing a large workspace at run end.
+  async function endRunAsync(detail) {
+    if (state.status === 'running') {
+      state.status = 'ended';
+      state.haltReason = 'natural';
+      state.haltDetail = detail || null;
+      state.endedAt = now();
+      auditWriter.append({ kind: 'end_run', payload: detail || null });
+    }
+    let diff = { ok: false, changes: [] };
+    try {
+      diff = await Snapshot.diffWorkspaceAsync(workspaceRoot, storageRoot, sessionId, { ignore: opts.ignore });
+    } catch (_) { diff = { ok: false, changes: [] }; }
+    auditWriter.append({
+      kind: 'run_summary',
+      payload: {
+        turnCount: state.turnCount,
+        status: state.status,
+        haltReason: state.haltReason,
+        haltDetail: state.haltDetail,
+        startedAt: state.startedAt,
+        endedAt: state.endedAt,
+        durationMs: state.endedAt ? state.endedAt - state.startedAt : 0,
+        diff: diff.ok ? diff.changes : [],
+        meter: budget.state(now()),
+      },
+    });
+  }
+
   function snapshotOnly() { return snap.manifest; }
   function getState() { return Object.assign({}, state); }
 
@@ -203,6 +234,7 @@ function startRun(opts = {}) {
       halt,
       cancel,
       endRun,
+      endRunAsync,
       getState,
       snapshotManifest: snapshotOnly,
       budgetState: () => budget.state(now()),
@@ -250,6 +282,32 @@ function summarizeRun(opts = {}) {
     diff = Snapshot.diffWorkspace(workspaceRoot, storageRoot, sessionId);
   }
   const chain = Audit.verifyAuditChain(storageRoot, sessionId);
+  return buildSummary(audit, diff, chain);
+}
+
+// Async twin of summarizeRun: identical output, but the workspace diff
+// is walked off the main thread.
+async function summarizeRunAsync(opts = {}) {
+  const sessionId = String(opts.sessionId || '').trim();
+  const workspaceRoot = String(opts.workspaceRoot || '').trim();
+  const storageRoot = String(opts.storageRoot || '').trim();
+  if (!sessionId || !storageRoot) {
+    return { ok: false, error: 'sessionId, storageRoot required' };
+  }
+  const decrypt = typeof opts.decrypt === 'function' ? opts.decrypt : null;
+  const audit = Audit.readAuditLog(storageRoot, sessionId, { decrypt });
+  if (!audit.ok) return { ok: false, error: audit.error };
+  let diff = { ok: false, changes: [] };
+  if (workspaceRoot) {
+    try { diff = await Snapshot.diffWorkspaceAsync(workspaceRoot, storageRoot, sessionId); }
+    catch (_) { diff = { ok: false, changes: [] }; }
+  }
+  const chain = Audit.verifyAuditChain(storageRoot, sessionId);
+  return buildSummary(audit, diff, chain);
+}
+
+// Shared shaping for both summarize variants.
+function buildSummary(audit, diff, chain) {
   // Pull the most recent run_summary AND the original start_run row.
   // run_summary carries the final meter / diff; start_run carries the
   // goal + caps the user originally set. Both are needed for Review +
@@ -280,4 +338,4 @@ function summarizeRun(opts = {}) {
   };
 }
 
-module.exports = { startRun, revertRun, summarizeRun };
+module.exports = { startRun, revertRun, summarizeRun, summarizeRunAsync };
