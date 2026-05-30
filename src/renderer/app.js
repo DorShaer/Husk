@@ -213,14 +213,17 @@ term.options.linkHandler = { activate: openTerminalLink };
 term.open($('#terminal'));
 
 function themeForXterm() {
-  // Use the active CSS theme tokens. Read AFTER body[data-theme] is set.
-  const root = getComputedStyle(document.body);
+  // Fixed dark console in BOTH app themes. The terminal runs a TUI agent
+  // (claude, copilot, ...) that emits light-on-dark ANSI colors, so a light
+  // background would wash its output out. The chat stage is also fixed dark
+  // (.chat-stage) to match. The accent cursor still follows the app accent.
+  const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#ff7847';
   return {
-    background: root.getPropertyValue('--bg-1').trim() || '#0b0d12',
-    foreground: root.getPropertyValue('--text').trim() || '#e6e9ef',
-    cursor: root.getPropertyValue('--accent').trim() || '#67e8f9',
-    cursorAccent: root.getPropertyValue('--bg-1').trim() || '#0b0d12',
-    selectionBackground: root.getPropertyValue('--line-2').trim() || '#2d3447',
+    background: '#0b0d12',
+    foreground: '#e6e9ef',
+    cursor: accent,
+    cursorAccent: '#0b0d12',
+    selectionBackground: '#2d3447',
     black: '#0b0d12', red: '#fb7185', green: '#4ade80', yellow: '#fbbf24',
     blue: '#818cf8', magenta: '#a78bfa', cyan: '#67e8f9', white: '#e6e9ef',
     brightBlack: '#475063', brightRed: '#fda4af', brightGreen: '#86efac',
