@@ -1711,12 +1711,10 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   position: relative;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
-  /* The chat surface hosts a terminal running a TUI agent, which emits
-     light-on-dark ANSI colors. The console therefore stays dark in BOTH
-     app themes (the welcome layer already uses this exact color) so the
-     agent's output is always readable. The xterm theme is fixed dark to
-     match (see themeForXterm). */
-  background: #0b0d12;
+  /* Theme-aware: light in light mode, dark in dark mode. The terminal
+     gets a matching light/dark ANSI palette (see themeForXterm) so its
+     output is readable on whichever background this is. */
+  background: var(--bg-1);
   overflow: hidden;
   box-shadow: none;
 }
@@ -1725,9 +1723,9 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 18px; padding: 40px;
   /* Opaque background prevents the under-layer from showing through
-     during the pre-fit flicker. Two-layer translucent stacking was
-     causing a half-tinted "rectangle" on refresh. */
-  background: #0b0d12;
+     during the pre-fit flicker. Uses --bg (the page color) because it is
+     opaque in both themes, where --bg-1 is translucent in dark mode. */
+  background: var(--bg);
   overflow-y: auto;
   pointer-events: none;
   opacity: 0; transition: opacity var(--motion-slow) var(--ease-out);
