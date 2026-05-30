@@ -1019,6 +1019,11 @@ function wfEnsureEditor() {
   if (!container || typeof Drawflow === 'undefined') return;
   wfEditor = new Drawflow(container);
   wfEditor.reroute = true;
+  // Dropping a connection anywhere on the target node's body connects it to
+  // that node's input, instead of forcing the user to land exactly on the
+  // small input dot. Each step has a single input, so first-input is the
+  // right target.
+  wfEditor.force_first_input = true;
   wfEditor.start();
   wfEditor.on('nodeSelected', (id) => { hideEdgePanel(); showNodePanel(id); });
   wfEditor.on('nodeUnselected', () => hideNodePanel());
