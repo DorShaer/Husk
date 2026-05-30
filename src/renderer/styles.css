@@ -1310,6 +1310,23 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 }
 .aut-recent-rerun svg { width: 12px; height: 12px; }
 
+.aut-recent-del {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.aut-recent-del:hover {
+  background: color-mix(in srgb, var(--rose) 14%, rgba(255, 255, 255, 0.04));
+  color: var(--rose);
+  border-color: color-mix(in srgb, var(--rose) 40%, rgba(255, 255, 255, 0.12));
+}
+.aut-recent-del svg { width: 13px; height: 13px; }
+
 /* Live layout */
 .aut-page-live {
   display: flex; flex-direction: column;
@@ -3962,6 +3979,30 @@ kbd {
 .toast.error { border-color: var(--rose); }
 .toast.success { border-color: var(--emerald); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Run-completion banner: pinned to the top center so the end of a run is
+   announced where the user is looking, not tucked into the corner. */
+.run-banner {
+  position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 20px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 13px; font-weight: 600;
+  box-shadow: var(--elev-3);
+  animation: run-banner-in var(--motion-base) var(--ease-out);
+  z-index: 300;
+  max-width: 90vw;
+}
+.run-banner::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--emerald); flex: none;
+}
+.run-banner.budget::before { background: var(--amber, #f0a020); }
+.run-banner.stopped::before { background: var(--text-3, #8a93a3); }
+@keyframes run-banner-in { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* ─── Scrollbar ─────────────────────────────────────────────────────────── */
 

@@ -1314,6 +1314,35 @@ ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
   return { ok: true, runs: runs.slice(0, 24) };
 });
 
+// Delete a past run: removes its session directory (manifest, audit log,
+// and all snapshot blobs). Refuses an active run and validates the
+// sessionId so the recursive remove can only ever touch a single session
+// folder under the autonomy storage root.
+ipcMain.handle('autonomy:deleteRun', (_e, payload = {}) => {
+  const sessionId = String(payload && payload.sessionId || '').trim();
+  if (!sessionId || !/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+    return { ok: false, error: 'invalid sessionId' };
+  }
+  if (activeRunner && activeRunner.sessionId === sessionId) {
+    return { ok: false, error: 'cannot delete the run that is still active' };
+  }
+  const dir = path.join(autonomyStorageRoot(), 'sessions', sessionId);
+  const root = path.join(autonomyStorageRoot(), 'sessions');
+  // Belt and suspenders: the resolved target must sit directly under the
+  // sessions root and not be the root itself.
+  const resolved = path.resolve(dir);
+  if (resolved === path.resolve(root) || path.dirname(resolved) !== path.resolve(root)) {
+    return { ok: false, error: 'path escapes autonomy storage' };
+  }
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolved confined to sessions root above
+    fs.rmSync(resolved, { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'delete failed' };
+  }
+});
+
 // Per-file diff for a single touched file. Reads the pre-run blob
 // from the snapshot store (decrypts if needed) and the live
 // workspace file. Renderer computes the line-by-line diff for the
