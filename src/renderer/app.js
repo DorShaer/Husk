@@ -4749,7 +4749,10 @@ const AP_MIN_EVENTS_BEFORE_AUTO_END = 3;
 // (a busy-but-quiet agent still shows the indicator, so it is not ended
 // mid-flight).
 const AP_WORK_GONE_MS = 6000;
-const AP_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]/i;
+// Busy markers across agents: claude renders "esc to interrupt" and a live
+// "(12s . N tokens)" status; copilot renders a "Working" spinner label.
+// Matching any of them keeps a run alive while the agent is generating.
+const AP_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]|\bworking\b/i;
 let autonomyTermInterval = null;
 let autonomyTermSeenLines = new Set();
 let autonomyTermSeenOrder = [];
