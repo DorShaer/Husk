@@ -637,7 +637,7 @@ body[data-rail="collapsed"] .rail-agent-menu { display: none !important; }
   text-align: left;
   transition: background 0.14s ease, color 0.14s ease;
 }
-.rail-agent-config:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.rail-agent-config:hover { background: var(--bg-3); color: var(--text); }
 
 /* Recent sessions list */
 .rail-section-recent { display: none; }
@@ -1558,13 +1558,13 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   letter-spacing: -0.005em;
   color: var(--text);
   background: rgba(255, 92, 122, 0.12);
-  border: 1px solid color-mix(in srgb, var(--rose) 50%, rgba(255, 255, 255, 0.08));
+  border: 1px solid color-mix(in srgb, var(--rose) 50%, var(--line));
   cursor: pointer;
   transition: background 160ms ease, border-color 160ms ease, transform 80ms ease;
 }
 .btn-stop:hover {
   background: rgba(255, 92, 122, 0.20);
-  border-color: color-mix(in srgb, var(--rose) 70%, rgba(255, 255, 255, 0.08));
+  border-color: color-mix(in srgb, var(--rose) 70%, var(--line));
 }
 .btn-stop:active { transform: translateY(1px); }
 .btn-stop svg { width: 14px; height: 14px; }
@@ -1592,8 +1592,8 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   margin-top: 14px;
   padding: 12px 14px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
   font-size: 12.5px;
   color: var(--text-2);
   line-height: 1.55;
@@ -1619,8 +1619,8 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   border-radius: 16px;
   background:
     radial-gradient(80% 80% at 30% 20%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 60%),
-    rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+    var(--bg-2);
+  border: 1px solid var(--line-2);
   color: var(--accent);
 }
 .aut-empty-icon svg { width: 28px; height: 28px; }
@@ -1711,7 +1711,12 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   position: relative;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
-  background: var(--bg-1);
+  /* The chat surface hosts a terminal running a TUI agent, which emits
+     light-on-dark ANSI colors. The console therefore stays dark in BOTH
+     app themes (the welcome layer already uses this exact color) so the
+     agent's output is always readable. The xterm theme is fixed dark to
+     match (see themeForXterm). */
+  background: #0b0d12;
   overflow: hidden;
   box-shadow: none;
 }
@@ -2499,7 +2504,7 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   padding: 1px 4px; border-radius: 3px;
   background: var(--bg-3); color: var(--text);
 }
-.ra-status.ra-status-info { border-color: rgba(255, 255, 255, 0.12); }
+.ra-status.ra-status-info { border-color: var(--line-2); }
 .ra-status.ra-status-error { border-color: rgba(255, 92, 122, 0.35); color: var(--text); }
 /* The footer of the repo-install modal has three toggles + two buttons;
    let it wrap on narrow window widths rather than stretching off-screen. */
@@ -2890,7 +2895,7 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 .card-cta.project-leave:hover {
   color: var(--text);
   border-color: var(--line);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-2);
 }
 .card-cta {
   display: inline-flex; align-items: center; gap: 6px;
