@@ -724,7 +724,8 @@ function paintProjects(items, filter) {
         <div class="project-card-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
         <div class="project-card-meta">last used ${escapeHtml(fmtRelTime(p.lastUsedAt))}</div>
         <div class="project-card-actions">
-          <button class="card-cta project-open" data-id="${escapeHtml(p.id)}" title="Switch to this project">${isActive ? 'Reopen' : 'Open'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+          ${isActive ? `<button class="card-cta project-leave" title="Stop using this project; the agent runs in your home folder">Leave project</button>` : ''}
+          <button class="card-cta project-open" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this project' : 'Switch to this project'}">${isActive ? 'Reopen' : 'Open'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>
     `;
@@ -732,6 +733,7 @@ function paintProjects(items, filter) {
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   grid.innerHTML = cards;
   grid.querySelectorAll('.project-open').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
+  grid.querySelectorAll('.project-leave').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); clearActiveProject(); }));
   grid.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
   grid.querySelectorAll('.project-card').forEach((card) => card.addEventListener('click', (e) => {
     if (e.target.closest('.project-card-actions') || e.target.closest('.card-delete')) return;
@@ -751,6 +753,19 @@ async function openProject(id) {
   const project = (res.project && res.project.path) ? res.project : (projectsCache.find((p) => p.id === id) || {});
   await restartPty({ cwd: project.path || null });
   setPage('chat');
+}
+
+// Leave the active project: clear the selection so the agent runs in the
+// default (home / configured) cwd again. Restarts the PTY so the change
+// takes effect, mirroring how switching projects works.
+async function clearActiveProject() {
+  if (!activeProjectId) return;
+  const res = await window.husk.projects.clearActive();
+  if (!res || !res.ok) { toast((res && res.error) || 'Could not leave project', 'error'); return; }
+  activeProjectId = null;
+  await refreshProjectsState();
+  await restartPty({ cwd: null });
+  toast('Left project; the agent runs in your home folder', 'success');
 }
 
 async function refreshProjectsState() {
