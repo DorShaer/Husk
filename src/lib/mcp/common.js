@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 
 // shapeServer takes the raw config entry (as written in the agent's
 // mcp-servers config file) and returns the renderer-friendly shape.
@@ -44,14 +45,45 @@ function readJsonFile(filePath) {
   }
 }
 
-function writeJsonFile(filePath, obj) {
+// Strict reader for the read-modify-write path. A missing file is a
+// clean empty config, but a file that exists yet does not parse is an
+// error: returning {} there would let a mutating op overwrite a config
+// it could not actually read and drop every key it holds. The config
+// file is owned and written by the agent CLI itself, so callers must
+// refuse to write when this returns ok:false.
+function readJsonFileStrict(filePath) {
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename
-    fs.writeFileSync(filePath, JSON.stringify(obj, null, 2), { mode: 0o600 });
+    if (!fs.existsSync(filePath)) return { ok: true, data: {}, missing: true };
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return { ok: true, data: JSON.parse(raw) };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'unreadable' };
+  }
+}
+
+// Atomic write: serialize to a sibling temp file then rename over the
+// target. rename is atomic on a single filesystem, so a crash or full
+// disk mid-write leaves the original config intact instead of a
+// half-written, unparseable file.
+function writeJsonFile(filePath, obj) {
+  let tmp;
+  try {
+    const dir = path.dirname(filePath);
+    tmp = path.join(dir, '.' + path.basename(filePath) + '.husk-' + process.pid + '.tmp');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: 0o600 });
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    try { fs.chmodSync(tmp, 0o600); } catch (_) {}
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    fs.renameSync(tmp, filePath);
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     try { fs.chmodSync(filePath, 0o600); } catch (_) {}
     return true;
   } catch (_) {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    if (tmp) try { fs.unlinkSync(tmp); } catch (_) {}
     return false;
   }
 }
@@ -82,4 +114,4 @@ function agentKey(agentCommand) {
   return base.replace(/\.(exe|cmd|bat|ps1)$/i, '');
 }
 
-module.exports = { shapeServer, readJsonFile, writeJsonFile, buildServerEntry, agentKey };
+module.exports = { shapeServer, readJsonFile, readJsonFileStrict, writeJsonFile, buildServerEntry, agentKey };
