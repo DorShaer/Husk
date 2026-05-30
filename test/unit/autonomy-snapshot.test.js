@@ -461,3 +461,23 @@ test('captureSnapshotAsync aborts when workspace exceeds maxEntries', async () =
   assert.equal(res.ok, false);
   assert.match(res.error || '', /exceeds 5 files/);
 });
+
+// ─── restore safety: workspaceRoot must match the manifest ────────────────
+
+test('restore refuses when the target dir differs from the captured manifest root', () => {
+  writeFile('keep.txt', 'original');
+  const cap = captureSnapshot(work, store, SID);
+  assert.equal(cap.ok, true);
+  // A second, unrelated directory that happens to hold the user's files.
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-snap-other-'));
+  try {
+    fs.writeFileSync(path.join(other, 'precious.txt'), 'do not delete me');
+    const res = restoreFromSnapshot(other, store, SID);
+    assert.equal(res.ok, false);
+    assert.match(res.error || '', /does not match the snapshot manifest/);
+    // The unrelated directory's file must be untouched.
+    assert.equal(fs.readFileSync(path.join(other, 'precious.txt'), 'utf8'), 'do not delete me');
+  } finally {
+    try { fs.rmSync(other, { recursive: true, force: true }); } catch (_) {}
+  }
+});

@@ -176,6 +176,12 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir) {
       // error mid-walk. Record a warning and move on; do NOT abort
       // the whole snapshot.
       warnings.push({ path: relChild, reason: err.message });
+      // If it was a file we simply could not read (transient lock,
+      // permission blip), still record it as a pre-existing entry so the
+      // diff does not later call it "added" and a revert does not delete
+      // a file the agent never touched. We cannot hash it, so it carries
+      // no sha and restore leaves its content alone.
+      try { if (ent.isFile()) entries[relChild] = { type: 'unreadable' }; } catch (_) {}
     }
   }
 }
@@ -203,6 +209,14 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   if (!manifest || !manifest.entries || typeof manifest.entries !== 'object') {
     return { ok: false, error: 'manifest malformed' };
   }
+  // Safety cross-check: the restore target must be the same directory the
+  // snapshot was captured from. The second pass deletes every workspace
+  // file not in the manifest, so restoring into the wrong root (e.g. a
+  // caller that fell back to HOME for an empty workspaceRoot) would wipe
+  // an unrelated directory. Refuse rather than trust the caller.
+  if (manifest.workspaceRoot && path.resolve(manifest.workspaceRoot) !== path.resolve(workspaceRoot)) {
+    return { ok: false, error: 'workspaceRoot does not match the snapshot manifest; refusing to restore' };
+  }
   const bdir = blobsDir(storageRoot, sessionId);
 
   const restored = [];
@@ -214,6 +228,10 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   // hostile or pre-existing symlink in the workspace.
   for (const relPath of Object.keys(manifest.entries)) {
     const meta = manifest.entries[relPath];
+    // Pre-existing file we could not read at capture time: we never
+    // captured its content, so leave whatever is on disk untouched. It
+    // stays in the keep-set below, so the delete pass will not remove it.
+    if (meta && meta.type === 'unreadable') continue;
     const abs = joinSafely(workspaceRoot, relPath);
     if (!abs) { warnings.push({ path: relPath, reason: 'path escapes workspaceRoot' }); continue; }
     if (!validateAncestorChain(workspaceRoot, abs)) {
@@ -546,6 +564,9 @@ async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, s
       }
     } catch (err) {
       warnings.push({ path: relChild, reason: err.message });
+      // See walk(): a momentarily-unreadable pre-existing file is recorded
+      // so the diff does not call it "added" and a revert does not delete it.
+      try { if (ent.isFile()) entries[relChild] = { type: 'unreadable' }; } catch (_) {}
     }
   }
 }
