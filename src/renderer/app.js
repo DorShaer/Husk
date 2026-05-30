@@ -724,7 +724,7 @@ function paintProjects(items, filter) {
         <div class="project-card-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
         <div class="project-card-meta">last used ${escapeHtml(fmtRelTime(p.lastUsedAt))}</div>
         <div class="project-card-actions">
-          ${isActive ? `<button class="card-cta project-leave" title="Stop using this project; the agent runs in your home folder">Leave project</button>` : ''}
+          ${isActive ? `<button class="card-cta project-leave" title="Work with no project; the agent runs in your home folder">Switch to no project</button>` : ''}
           <button class="card-cta project-open" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this project' : 'Switch to this project'}">${isActive ? 'Reopen' : 'Open'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>
