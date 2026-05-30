@@ -213,16 +213,30 @@ term.options.linkHandler = { activate: openTerminalLink };
 term.open($('#terminal'));
 
 function themeForXterm() {
-  // Fixed dark console in BOTH app themes. The terminal runs a TUI agent
-  // (claude, copilot, ...) that emits light-on-dark ANSI colors, so a light
-  // background would wash its output out. The chat stage is also fixed dark
-  // (.chat-stage) to match. The accent cursor still follows the app accent.
+  // The terminal runs a TUI agent that themes its output through the 16 ANSI
+  // colors. Each app theme gets a matching palette so the output is readable
+  // on its own background: a dark-on-light palette in light mode, a
+  // light-on-dark one in dark mode. Read after body[data-theme] is set.
   const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#ff7847';
+  const isLight = document.body.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    // Dark, saturated colors readable on a white background. The dim
+    // greys agents use for hints (brightBlack) become a mid grey, not a
+    // near-white that vanishes.
+    return {
+      background: '#ffffff', foreground: '#1f2328',
+      cursor: accent, cursorAccent: '#ffffff',
+      selectionBackground: '#cfe3ff',
+      black: '#1f2328', red: '#cf222e', green: '#116329', yellow: '#7d4e00',
+      blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+      brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37',
+      brightYellow: '#633c01', brightBlue: '#218bff', brightMagenta: '#8250df',
+      brightCyan: '#1b7c83', brightWhite: '#1f2328',
+    };
+  }
   return {
-    background: '#0b0d12',
-    foreground: '#e6e9ef',
-    cursor: accent,
-    cursorAccent: '#0b0d12',
+    background: '#0b0d12', foreground: '#e6e9ef',
+    cursor: accent, cursorAccent: '#0b0d12',
     selectionBackground: '#2d3447',
     black: '#0b0d12', red: '#fb7185', green: '#4ade80', yellow: '#fbbf24',
     blue: '#818cf8', magenta: '#a78bfa', cyan: '#67e8f9', white: '#e6e9ef',
