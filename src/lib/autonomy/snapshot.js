@@ -213,8 +213,10 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   // snapshot was captured from. The second pass deletes every workspace
   // file not in the manifest, so restoring into the wrong root (e.g. a
   // caller that fell back to HOME for an empty workspaceRoot) would wipe
-  // an unrelated directory. Refuse rather than trust the caller.
-  if (manifest.workspaceRoot && path.resolve(manifest.workspaceRoot) !== path.resolve(workspaceRoot)) {
+  // an unrelated directory. Refuse rather than trust the caller. A manifest
+  // with no recorded root is refused outright so the check can never be
+  // short-circuited by a legacy or hand-crafted manifest.
+  if (!manifest.workspaceRoot || path.resolve(manifest.workspaceRoot) !== path.resolve(workspaceRoot)) {
     return { ok: false, error: 'workspaceRoot does not match the snapshot manifest; refusing to restore' };
   }
   const bdir = blobsDir(storageRoot, sessionId);
