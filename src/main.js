@@ -15,6 +15,7 @@ const { resolveInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
+const AgentInject = require('./lib/agent-inject');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
@@ -601,25 +602,29 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   // any persona configured in the user's CLAUDE.md or memory files. Skip if
   // the user already passed --settings, or if we're on Windows (see the
   // platform switch below for why Windows uses cmd.exe /c without the inject).
+  // Deliver Husk's session directives (identity name, the speech-balloon
+  // line the desktop reads aloud, recap on/off) through each agent's own
+  // instruction channel. claude takes a --append-system-prompt flag here;
+  // copilot needs a project instructions file, written below once cwd is
+  // resolved. See src/lib/agent-inject.js.
+  //
+  // Note for claude: we deliberately no longer inject --settings
+  // <ephemeral-temp-file>. That path made claude treat the temp file as the
+  // canonical settings, wrote folder-trust changes there, and on next launch
+  // we regenerated the temp file from the user's real settings.json, blowing
+  // the trust away.
   const isWin32 = process.platform === 'win32';
-  if (!isWin32 && /^claude(\.cmd|\.exe)?$/i.test(agentExe) && !agentArgs.includes('--settings')) {
-    // We deliberately no longer inject --settings <ephemeral-temp-file>.
-    // That path made claude treat the temp file as the canonical settings,
-    // wrote folder-trust changes there, and on next launch we regenerated
-    // the temp file from the user's real settings.json, blowing the trust
-    // away. claude also hid the "Yes, and remember" trust option because
-    // it detected the ephemeral path.
-    //
-    // The price of dropping the override: claude renders its own inline
-    // statusline at the bottom of the terminal, alongside Husk's right
-    // panel. Acceptable duplication, the user gets persistent trust,
-    // skill-listing budget reverts to the claude default.
-    const huskPrompt = PaiState.buildHuskPrompt({
+  let injectionPlan = { method: 'none' };
+  if (!isWin32 && !agentArgs.includes('--settings')) {
+    injectionPlan = AgentInject.planInjection({
+      agentCommand: rawCmd,
       agentName: config.agentName,
       paiEnabled: config.paiEnabled !== false,
       recap: config.recap,
     });
-    agentArgs = ['--append-system-prompt', huskPrompt, ...agentArgs];
+    if (injectionPlan.method === 'system-prompt-arg') {
+      agentArgs = [...injectionPlan.args, ...agentArgs];
+    }
   }
 
   // Default cwd policy (priority high -> low):
@@ -679,6 +684,23 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
         // the original cwd path, so we recreate it as an empty dir to let claude find the session.
         try { fs.mkdirSync(overrideCwd, { recursive: true }); cwd = overrideCwd; } catch (_) {}
       }
+    } catch (_) {}
+  }
+
+  // Agents with no system-prompt flag (copilot) take their directives from a
+  // project instructions file. Write a marker-managed HUSK-SESSION block into
+  // it now that cwd is known. Non-destructive: only Husk's marked region is
+  // touched; the user's own instructions are preserved.
+  if (injectionPlan.method === 'instructions-file') {
+    try {
+      const fileAbs = path.join(cwd, injectionPlan.filePath);
+      const dir = path.dirname(fileAbs);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- fileAbs is cwd + a fixed relative path
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+      const existing = fs.existsSync(fileAbs) ? fs.readFileSync(fileAbs, 'utf8') : '';
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+      fs.writeFileSync(fileAbs, AgentInject.mergeSessionBlock(existing, injectionPlan.body));
     } catch (_) {}
   }
 
