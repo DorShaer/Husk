@@ -18,6 +18,7 @@ const { buildSpawnSpec } = require('./lib/pty-spawn');
 const AgentInject = require('./lib/agent-inject');
 const { createMouseModeStripper } = require('./lib/term-mouse');
 const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
+const { agentFileName, renderAgentMd } = require('./lib/agent-file');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
@@ -2314,6 +2315,56 @@ const AGENT_SOURCES = [
   { label: 'Claude Code', dir: path.join(HOME, '.claude', 'agents') },
 ];
 
+// Native agents directory per CLI. Both claude and copilot load the same
+// markdown agent format from these locations, so a Husk agent written into
+// each installed CLI's dir is usable in whichever CLI the user runs.
+const CLAUDE_AGENTS_DIR = path.join(HOME, '.claude', 'agents');
+const COPILOT_AGENTS_DIR = path.join(HOME, '.copilot', 'agents');
+function installedAgentDirs() {
+  const out = [];
+  try { if (fs.existsSync(path.join(HOME, '.claude'))) out.push(CLAUDE_AGENTS_DIR); } catch (_) {}
+  try { if (fs.existsSync(path.join(HOME, '.copilot'))) out.push(COPILOT_AGENTS_DIR); } catch (_) {}
+  return out;
+}
+// Mirror every user (non-builtin) agent profile into each installed CLI's
+// agents dir. An existing file in the claude dir (the rich import source) is
+// copied verbatim to preserve all of its frontmatter; otherwise the file is
+// reconstructed from the profile. Existing targets are not overwritten, so a
+// hand-edited agent file is never clobbered.
+function syncAgentFiles() {
+  try {
+    const dirs = installedAgentDirs();
+    if (!dirs.length) return;
+    const profiles = getProfiles().filter((p) => p && !p.builtin && (p.systemPrompt || p.name));
+    for (const p of profiles) {
+      const fname = agentFileName(p.name);
+      let content = null;
+      const claudeFile = path.join(CLAUDE_AGENTS_DIR, fname);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- fname is a slugified, traversal-free basename in a fixed dir
+      try { if (fs.existsSync(claudeFile)) content = fs.readFileSync(claudeFile, 'utf8'); } catch (_) {}
+      if (!content) content = renderAgentMd(p);
+      for (const dir of dirs) {
+        const target = path.join(dir, fname);
+        try {
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir is a fixed CLI agents dir, fname is slugified
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
+          if (!fs.existsSync(target)) fs.writeFileSync(target, content);
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+function removeAgentFiles(name) {
+  if (!name) return;
+  const fname = agentFileName(name);
+  for (const dir of installedAgentDirs()) {
+    const target = path.join(dir, fname);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
+    try { if (fs.existsSync(target)) fs.unlinkSync(target); } catch (_) {}
+  }
+}
+
 ipcMain.handle('profiles:listImportableAgents', () => {
   try {
     const existing = new Set(getProfiles().map((p) => String(p.name || '').toLowerCase()));
@@ -2379,6 +2430,7 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
   }
   config = nextConfig;
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  syncAgentFiles();
   return { ok: true, imported: importedIds.length, importedIds };
 });
 
@@ -2744,11 +2796,13 @@ ipcMain.handle('profiles:create', (_e, payload = {}) => {
   const profiles = [...getProfiles(), entry];
   config = { ...config, profiles };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  syncAgentFiles();
   return entry;
 });
 
 ipcMain.handle('profiles:update', (_e, payload = {}) => {
   if (!payload.id) return { ok: false, error: 'missing id' };
+  const prev = getProfiles().find((p) => p.id === payload.id);
   const profiles = getProfiles().map((p) => {
     if (p.id !== payload.id) return p;
     return {
@@ -2761,6 +2815,9 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
   });
   config = { ...config, profiles };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  // If the name changed, drop the stale agent file before writing the new one.
+  if (prev && payload.name !== undefined && String(payload.name).slice(0, 64) !== prev.name) removeAgentFiles(prev.name);
+  syncAgentFiles();
   return { ok: true };
 });
 
@@ -2778,10 +2835,12 @@ function writeActiveIds(ids) {
 
 ipcMain.handle('profiles:delete', (_e, id) => {
   if (!id) return { ok: false, error: 'missing id' };
+  const removed = getProfiles().find((p) => p.id === id);
   const profiles = getProfiles().filter((p) => p.id !== id);
   const active = getActiveIds().filter((a) => a !== id);
   config = { ...config, profiles, activeProfileIds: active, activeProfileId: active[0] || null };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  if (removed) removeAgentFiles(removed.name);
   return { ok: true };
 });
 
@@ -3824,6 +3883,9 @@ if (!gotLock) {
     applyPaiState(config.paiEnabled !== false);
     bootstrapPaiIfNeeded();
     bootstrapHuskPromptsIfNeeded();
+    // Make existing Husk agents available to every installed CLI (writes any
+    // missing agent files into ~/.claude/agents and ~/.copilot/agents).
+    syncAgentFiles();
     startStatuslineRefresh();
     startUsageRefresh();
     await startNullVoiceServer();
