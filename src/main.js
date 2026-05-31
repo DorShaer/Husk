@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
@@ -14,22 +14,35 @@ const { resolveInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
-const { getUserPath } = require('./lib/user-path');
+const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
 // On macOS in particular, a GUI-launched Electron app inherits a
 // minimal PATH that does not include the npm-global, homebrew, or bun
 // install directories where users keep their agent CLIs. Read the
-// user's actual shell PATH once at startup so subsequent spawns can
-// find their binaries.
-try {
-  const userPath = getUserPath({
-    platform: process.platform,
-    env: process.env,
-    runShell: (shell, args) => spawnSync(shell, args, { encoding: 'utf8', timeout: 5000 }),
-  });
-  if (userPath) process.env.PATH = userPath;
-} catch (_) {}
+// user's actual shell PATH so subsequent spawns can find their
+// binaries.
+//
+// This runs ASYNCHRONOUSLY: an interactive login shell sources the
+// user's full rc chain (nvm, pyenv, conda init), which can take
+// hundreds of ms to seconds. Doing it with spawnSync at module load
+// froze the whole process before the window appeared. Agent spawns
+// happen on user action, well after this resolves, so async is safe.
+function augmentUserPathAsync() {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
+  const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
+  try {
+    const child = spawn(shellBin, ['-ilc', `echo "${MARKER_START}$PATH${MARKER_END}"`], { timeout: 5000 });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.on('error', () => {});
+    child.on('close', () => {
+      const p = parseShellPathOutput(out);
+      if (p) process.env.PATH = p;
+    });
+  } catch (_) {}
+}
+augmentUserPathAsync();
 const {
   sanitizeGraph,
   migrateWorkflow,
@@ -62,6 +75,23 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
 let ptyProc = null;
+// node-pty listener disposables for the current process, so a respawn
+// can detach them instead of leaking emitter registrations.
+let ptyDataDisposable = null;
+let ptyExitDisposable = null;
+// PTY output coalescing buffer (see spawnPty's onData).
+let ptyDataBuf = '';
+let ptyFlushScheduled = false;
+// Timestamp of the last byte the agent emitted, used to detect when its
+// TUI has settled before we paste an autonomy goal into it.
+let ptyLastDataAt = 0;
+function flushPtyData() {
+  ptyFlushScheduled = false;
+  if (!ptyDataBuf) return;
+  const data = ptyDataBuf;
+  ptyDataBuf = '';
+  if (mainWindow) mainWindow.webContents.send('pty:data', data);
+}
 
 // ─── Config ──────────────────────────────────────────────────────────────────────
 
@@ -527,6 +557,16 @@ function killPtyTree() {
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
 
 function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null) {
+  // Dispose the previous process's data/exit listeners before we drop
+  // the reference, otherwise each restart/resume leaks a node-pty
+  // emitter registration. Also drop any buffered output from the old
+  // process so it cannot bleed into the new session.
+  try { if (ptyDataDisposable) ptyDataDisposable.dispose(); } catch (_) {}
+  try { if (ptyExitDisposable) ptyExitDisposable.dispose(); } catch (_) {}
+  ptyDataDisposable = null;
+  ptyExitDisposable = null;
+  ptyDataBuf = '';
+  ptyFlushScheduled = false;
   if (ptyProc) try { ptyProc.kill(); } catch (_) {}
   const shellBin = process.platform === 'win32'
     ? (process.env.ComSpec || 'cmd.exe')
@@ -662,13 +702,28 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
 
   ptyProc = pty.spawn(spec.exe, spec.argv, { name: 'xterm-256color', cols, rows, cwd, env });
   activePtyCwd = cwd;
-  ptyProc.onData((data) => {
-    if (mainWindow) mainWindow.webContents.send('pty:data', data);
+  // Coalesce PTY output: a chatty agent (build logs, a big cat) emits
+  // many chunks per tick. Buffer them and flush once per microtask so
+  // the renderer receives one message per burst instead of one IPC send
+  // per chunk, which otherwise floods the channel and janks the UI.
+  ptyDataDisposable = ptyProc.onData((data) => {
+    ptyLastDataAt = Date.now();
+    ptyDataBuf += data;
+    if (!ptyFlushScheduled) { ptyFlushScheduled = true; setImmediate(flushPtyData); }
     autonomyTap(data);
   });
-  ptyProc.onExit(({ exitCode }) => {
+  ptyExitDisposable = ptyProc.onExit(({ exitCode }) => {
+    flushPtyData();
     if (mainWindow) mainWindow.webContents.send('pty:exit', exitCode);
     ptyProc = null;
+    // If an autonomy run was live, the agent process just died. Close
+    // the run so its 1s meter interval stops, the budget stops ticking
+    // wall-clock against a dead process, and a new run can start (the
+    // "already active" guard would otherwise block forever).
+    if (activeRunner && !autonomyFinishing) {
+      if (mainWindow) mainWindow.webContents.send('autonomy:halt', { reason: 'agent-exited' });
+      finishActiveRun({ reason: 'agent-exited' });
+    }
   });
 }
 
@@ -691,13 +746,33 @@ function readActiveSessionStats() {
       .filter((f) => f.endsWith('.jsonl'))
       .map((f) => {
         const p = path.join(dir, f);
-        try { return { p, mtime: fs.statSync(p).mtimeMs }; } catch (_) { return null; }
+        try { const st = fs.statSync(p); return { p, mtime: st.mtimeMs, size: st.size }; } catch (_) { return null; }
       })
       .filter(Boolean)
       .sort((a, b) => b.mtime - a.mtime);
     if (!files.length) return null;
     const latest = files[0].p;
-    const raw = fs.readFileSync(latest, 'utf8').split('\n').filter(Boolean);
+    // Cap the read. A session JSONL grows for the whole conversation and
+    // can reach many megabytes; reading and parsing the entire file on
+    // every status poll stalls the main thread. Read at most the last
+    // CAP bytes (dropping the first partial line) so the cost stays
+    // bounded. For large sessions the turn/char numbers become a
+    // recent-tail estimate, which is acceptable for a coarse readout.
+    const CAP = 1024 * 1024;
+    let raw;
+    const sz = files[0].size;
+    if (Number.isFinite(sz) && sz > CAP) {
+      const fd = fs.openSync(latest, 'r');
+      try {
+        const buf = Buffer.alloc(CAP);
+        fs.readSync(fd, buf, 0, CAP, sz - CAP);
+        const tail = buf.toString('utf8');
+        const nl = tail.indexOf('\n');
+        raw = (nl >= 0 ? tail.slice(nl + 1) : tail).split('\n').filter(Boolean);
+      } finally { fs.closeSync(fd); }
+    } else {
+      raw = fs.readFileSync(latest, 'utf8').split('\n').filter(Boolean);
+    }
     let turns = 0;
     let chars = 0;
     for (const line of raw) {
@@ -744,6 +819,9 @@ ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
 const Autonomy = require('./lib/autonomy');
 const electronApp = require('electron');
 let activeRunner = null;
+// Guards finishActiveRun against re-entry: an agent crash (onExit) and a
+// user cancel can both try to close the same run at once.
+let autonomyFinishing = false;
 function autonomyStorageRoot() {
   return path.join(app.getPath('userData'), 'autonomy');
 }
@@ -868,19 +946,24 @@ function flushAutonomyOutput() {
 
 function injectGoalToPty(goal) {
   if (!ptyProc) return false;
-  // Bracketed paste mode: wraps the goal in CSI 200~ / CSI 201~ so the
-  // agent's TUI treats it as a single pasted block. Without this, each
-  // character is routed through the TUI's keyboard handler and special
-  // characters get intercepted by hotkeys (claude eats SPACE as a
-  // mode-toggle, "/" opens its command palette, etc.). The result was
-  // goals arriving with all spaces stripped, which is why earlier runs
-  // sat idle: the agent could not parse the smashed-together text.
   try {
     const body = String(goal).replace(/\r/g, ' ').replace(/\n/g, ' ');
-    ptyProc.write('\x1b[200~' + body + '\x1b[201~');
-    // Submit with a separate Enter after the TUI has finished
-    // committing the pasted block to its input buffer.
-    setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 120);
+    if (getAgentKind() === 'claude') {
+      // claude routes raw keystrokes through its TUI hotkey handler (SPACE
+      // toggles a mode, "/" opens the command palette), so the goal must
+      // arrive as one bracketed-paste block (CSI 200~ / CSI 201~). A
+      // separate Enter after the paste commits submits it.
+      ptyProc.write('\x1b[200~' + body + '\x1b[201~');
+      setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 120);
+    } else {
+      // Other agents (verified with copilot) DO accept a bracketed paste
+      // but do NOT submit on the Enter that follows it: their composer
+      // treats that Enter as a newline, so the goal just sits in the input
+      // and the run does nothing. Typing the goal directly keeps the input
+      // in its normal single-line state where Enter submits.
+      ptyProc.write(body);
+      setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 150);
+    }
     return true;
   } catch (_) { return false; }
 }
@@ -888,6 +971,28 @@ function injectGoalToPty(goal) {
 function sigintPty() {
   if (!ptyProc) return;
   try { ptyProc.write('\x03'); } catch (_) {}
+}
+
+// Resolve once the agent's TUI looks ready for input: it has emitted
+// output and then gone quiet for a short settle window, or maxMs has
+// elapsed. This replaces a fixed wall-clock guess that, on a slow cold
+// start, pasted the goal before the input field had mounted and the run
+// silently did nothing.
+function whenAgentReady(maxMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const settleMs = 350; // quiet period after last output = TUI settled
+    const minWaitMs = Math.min(250, maxMs);
+    const check = () => {
+      const now = Date.now();
+      if (now - start >= maxMs) return resolve('timeout');
+      const sawOutput = ptyLastDataAt >= start - 50;
+      const quietFor = now - ptyLastDataAt;
+      if (sawOutput && quietFor >= settleMs && (now - start) >= minWaitMs) return resolve('ready');
+      setTimeout(check, 80);
+    };
+    setTimeout(check, minWaitMs);
+  });
 }
 
 ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
@@ -929,13 +1034,21 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
   }
   if (!snap.ok) return { ok: false, error: snap.error };
 
+  // Derive the agent name from the configured command so the budget
+  // meter prices the run correctly. Vendor-billed agents (copilot, codex,
+  // aider, gemini) carry a $0 rate so the dollar cap does not fire on a
+  // fabricated Sonnet-priced cost; claude falls through to the default
+  // model rate.
+  const agentName = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
+    .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
+  const vendorBilled = ['copilot', 'codex', 'aider', 'gemini'].includes(agentName);
   const r = Autonomy.supervisor.startRun({
     sessionId,
     workspaceRoot,
     storageRoot: autonomyStorageRoot(),
     goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
-    agent: payload.agent || null,
-    modelId: payload.modelId || null,
+    agent: payload.agent || agentName,
+    modelId: payload.modelId || (vendorBilled ? agentName : null),
     caps: payload.caps,
     encrypt, decrypt,
     skipSnapshot: true,
@@ -950,9 +1063,18 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
     if (!activeRunner) return;
     const s = activeRunner.tickClock();
     if (mainWindow) mainWindow.webContents.send('autonomy:budget', s);
-    if (s.hitCap && mainWindow) {
+    if (s.hitCap) {
+      // Cap reached. Stop this interval immediately so we do not inject
+      // a SIGINT and re-broadcast a halt every second (the meter keeps
+      // reporting hitCap once a cap is crossed). Interrupt the agent
+      // once, tell the renderer once, and finalize the run so it leaves
+      // the active state instead of sitting "Running" forever. The agent
+      // stays alive at its prompt; SIGINT interrupts the current turn, it
+      // does not kill the PTY.
+      try { clearInterval(activeRunner._tickInterval); } catch (_) {}
       sigintPty();
-      mainWindow.webContents.send('autonomy:halt', { reason: 'budget', cap: s.hitCap });
+      if (mainWindow) mainWindow.webContents.send('autonomy:halt', { reason: 'budget', cap: s.hitCap });
+      finishActiveRun({ reason: 'budget', cap: s.hitCap });
     }
   }, 1000);
   const goal = typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : '';
@@ -966,9 +1088,8 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
   if (ptyJustBooted) {
     try { spawnPty(100, 30, null, workspaceRoot); } catch (_) {}
   }
-  const injectDelayMs = ptyJustBooted ? 2500 : 400;
   if (goal) {
-    setTimeout(() => {
+    const deliver = () => {
       const ok = injectGoalToPty(goal);
       // Surface delivery to the activity feed so the user has explicit
       // feedback that the goal reached the agent. Without this, an
@@ -980,7 +1101,18 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
           at: Date.now(),
         });
       }
-    }, injectDelayMs);
+    };
+    if (ptyJustBooted) {
+      // Cold start: wait for the freshly spawned agent's banner to
+      // render and settle before pasting, with a hard fallback so the
+      // goal is always delivered even if the readiness signal never
+      // arrives.
+      whenAgentReady(6000).then(deliver);
+    } else {
+      // Agent already running in Chat: a short delay is enough for the
+      // bracketed paste to land in the existing input.
+      setTimeout(deliver, 400);
+    }
   }
   return { ok: true, sessionId, workspaceRoot, fileCount: snap.fileCount, goal };
 });
@@ -1003,27 +1135,45 @@ ipcMain.handle('autonomy:end', (_e, detail = {}) => {
   return finishActiveRun(detail);
 });
 
-function finishActiveRun(detail) {
-  if (!activeRunner) return { ok: false, error: 'no active run' };
-  try { activeRunner.endRun(detail || null); } catch (_) {}
-  try { clearInterval(activeRunner._tickInterval); } catch (_) {}
-  // Drain any pending PTY tap output so the final agent_output event
-  // makes it into the audit log before we null the runner.
-  try { if (autonomyOutputFlushTimer) { clearTimeout(autonomyOutputFlushTimer); autonomyOutputFlushTimer = null; } } catch (_) {}
-  try { flushAutonomyOutput(); } catch (_) {}
-  autonomyOutputBuf = '';
-  autonomyLineTail = '';
-  autonomyLastTailEmit = '';
-  autonomyLastTailEmitAt = 0;
-  const sessionId = activeRunner.sessionId;
-  const workspaceRoot = activeRunner.workspaceRoot;
-  activeRunner = null;
-  const { decrypt } = autonomyCrypto();
-  const sum = Autonomy.supervisor.summarizeRun({
-    sessionId, workspaceRoot, storageRoot: autonomyStorageRoot(), decrypt,
-  });
-  if (mainWindow) mainWindow.webContents.send('autonomy:ended', sum);
-  return { ok: true, sessionId, summary: sum };
+async function finishActiveRun(detail) {
+  if (!activeRunner || autonomyFinishing) return { ok: false, error: 'no active run' };
+  autonomyFinishing = true;
+  const runner = activeRunner;
+  try {
+    try { clearInterval(runner._tickInterval); } catch (_) {}
+    // Drain any pending PTY tap output so the final agent_output event
+    // makes it into the audit log before we close the runner.
+    try { if (autonomyOutputFlushTimer) { clearTimeout(autonomyOutputFlushTimer); autonomyOutputFlushTimer = null; } } catch (_) {}
+    try { flushAutonomyOutput(); } catch (_) {}
+    autonomyOutputBuf = '';
+    autonomyLineTail = '';
+    autonomyLastTailEmit = '';
+    autonomyLastTailEmitAt = 0;
+    // endRunAsync walks the end-of-run diff off the main thread so the
+    // UI does not freeze hashing the workspace at run end.
+    try { await runner.endRunAsync(detail || null); } catch (_) {}
+    const sessionId = runner.sessionId;
+    const workspaceRoot = runner.workspaceRoot;
+    activeRunner = null;
+    const { decrypt } = autonomyCrypto();
+    let sum;
+    try {
+      sum = await Autonomy.supervisor.summarizeRunAsync({
+        sessionId, workspaceRoot, storageRoot: autonomyStorageRoot(), decrypt,
+      });
+    } catch (err) {
+      sum = { ok: false, error: (err && err.message) || String(err) };
+    }
+    // Carry the run identity on the payload so the renderer can enter
+    // review / revert / rerun even when its own autonomyLastSession was
+    // lost (e.g. the renderer reloaded while the run was active).
+    if (sum && typeof sum === 'object') { sum.sessionId = sessionId; sum.workspaceRoot = workspaceRoot; }
+    if (mainWindow) mainWindow.webContents.send('autonomy:ended', sum);
+    return { ok: true, sessionId, summary: sum };
+  } finally {
+    activeRunner = null;
+    autonomyFinishing = false;
+  }
 }
 
 ipcMain.handle('autonomy:status', () => {
@@ -1037,13 +1187,29 @@ ipcMain.handle('autonomy:status', () => {
   };
 });
 
+// The restore/diff target for a session is the directory the snapshot
+// was captured from, recorded in its manifest. Never trust a caller-
+// supplied workspaceRoot for a destructive revert: an empty value used
+// to fall back to HOME, and the restore deletes every file not in the
+// snapshot, so a wrong root would wipe an unrelated directory.
+function manifestWorkspaceRoot(sessionId) {
+  try {
+    const mp = path.join(autonomyStorageRoot(), 'sessions', sessionId, 'snapshot.json');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to autonomy storage
+    const m = JSON.parse(fs.readFileSync(mp, 'utf8'));
+    return (m && typeof m.workspaceRoot === 'string' && m.workspaceRoot) ? m.workspaceRoot : null;
+  } catch (_) { return null; }
+}
+
 ipcMain.handle('autonomy:revert', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
+  const workspaceRoot = manifestWorkspaceRoot(sessionId);
+  if (!workspaceRoot) return { ok: false, error: 'snapshot manifest has no workspace root; cannot revert safely' };
   const { decrypt } = autonomyCrypto();
   return Autonomy.supervisor.revertRun({
     sessionId,
-    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    workspaceRoot,
     storageRoot: autonomyStorageRoot(),
     decrypt,
     preserveExtras: !!payload.preserveExtras,
@@ -1146,6 +1312,35 @@ ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
     return kb - ka;
   });
   return { ok: true, runs: runs.slice(0, 24) };
+});
+
+// Delete a past run: removes its session directory (manifest, audit log,
+// and all snapshot blobs). Refuses an active run and validates the
+// sessionId so the recursive remove can only ever touch a single session
+// folder under the autonomy storage root.
+ipcMain.handle('autonomy:deleteRun', (_e, payload = {}) => {
+  const sessionId = String(payload && payload.sessionId || '').trim();
+  if (!sessionId || !/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+    return { ok: false, error: 'invalid sessionId' };
+  }
+  if (activeRunner && activeRunner.sessionId === sessionId) {
+    return { ok: false, error: 'cannot delete the run that is still active' };
+  }
+  const dir = path.join(autonomyStorageRoot(), 'sessions', sessionId);
+  const root = path.join(autonomyStorageRoot(), 'sessions');
+  // Belt and suspenders: the resolved target must sit directly under the
+  // sessions root and not be the root itself.
+  const resolved = path.resolve(dir);
+  if (resolved === path.resolve(root) || path.dirname(resolved) !== path.resolve(root)) {
+    return { ok: false, error: 'path escapes autonomy storage' };
+  }
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolved confined to sessions root above
+    fs.rmSync(resolved, { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'delete failed' };
+  }
 });
 
 // Per-file diff for a single touched file. Reads the pre-run blob
@@ -1261,13 +1456,17 @@ ipcMain.handle('autonomy:liveDiff', async () => {
   }
 });
 
-ipcMain.handle('autonomy:summary', (_e, payload = {}) => {
+ipcMain.handle('autonomy:summary', async (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   const { decrypt } = autonomyCrypto();
-  return Autonomy.supervisor.summarizeRun({
+  // Diff the recorded workspace only, never a caller-supplied path, so this
+  // read cannot be used to enumerate an arbitrary directory tree. Use the
+  // async walker so loading a past run from history does not freeze the UI.
+  const workspaceRoot = manifestWorkspaceRoot(sessionId);
+  return Autonomy.supervisor.summarizeRunAsync({
     sessionId,
-    workspaceRoot: String(payload.workspaceRoot || activePtyCwd || HOME),
+    workspaceRoot,
     storageRoot: autonomyStorageRoot(),
     decrypt,
   });

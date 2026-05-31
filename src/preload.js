@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('husk', {
     summary: (opts) => ipcRenderer.invoke('autonomy:summary', opts || {}),
     liveDiff: () => ipcRenderer.invoke('autonomy:liveDiff'),
     history: (opts) => ipcRenderer.invoke('autonomy:history', opts || {}),
+    deleteRun: (opts) => ipcRenderer.invoke('autonomy:deleteRun', opts || {}),
     fileDiff: (opts) => ipcRenderer.invoke('autonomy:fileDiff', opts || {}),
     reportTokens: (n) => ipcRenderer.invoke('autonomy:reportTokens', { tokens: n }),
     onStarted: (cb) => ipcRenderer.on('autonomy:started', (_e, payload) => cb(payload)),

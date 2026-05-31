@@ -5,15 +5,103 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
-// ─── Toast ───────────────────────────────────────────────────────────────────────
-let toastTimer = null;
-function toast(msg, kind = '') {
-  const el = $('#toast');
-  el.textContent = msg;
-  el.className = 'toast' + (kind ? ' ' + kind : '');
-  el.hidden = false;
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2800);
+// ─── Notifications ─────────────────────────────────────────────────────────
+// A top-center stack of independent cards. Each slides in, auto-dismisses
+// (errors linger longer), pauses on hover, and can be dismissed by hand.
+// Newest sits on top; the stack is capped so a burst cannot bury the UI.
+const NOTIF_MAX = 4;
+const NOTIF_TTL = { error: 6500, warn: 5500, success: 4000, info: 4000, '': 4000 };
+// Icon path sets (stroke, 24x24 viewBox). Built with createElementNS so no
+// markup is injected as a string.
+const NOTIF_ICONS = {
+  success: [['path', 'M20 6 9 17l-5-5']],
+  error: [['circle', '12 12 9'], ['path', 'M12 8v4'], ['path', 'M12 16h.01']],
+  warn: [['path', 'M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'], ['path', 'M12 9v4'], ['path', 'M12 17h.01']],
+  info: [['circle', '12 12 9'], ['path', 'M12 11v5'], ['path', 'M12 8h.01']],
+  done: [['path', 'M22 11.08V12a10 10 0 1 1-5.93-9.14'], ['path', 'M22 4 12 14.01l-3-3']],
+};
+function notifSvg(name) {
+  const spec = NOTIF_ICONS[name] || NOTIF_ICONS.info;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [tag, data] of spec) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    if (tag === 'circle') { const [cx, cy, r] = data.split(' '); el.setAttribute('cx', cx); el.setAttribute('cy', cy); el.setAttribute('r', r); }
+    else el.setAttribute('d', data);
+    svg.appendChild(el);
+  }
+  return svg;
+}
+function dismissNotif(card) {
+  if (!card || card._dismissing) return;
+  card._dismissing = true;
+  if (card._timer) clearTimeout(card._timer);
+  card.classList.add('is-out');
+  setTimeout(() => { try { card.remove(); } catch (_) {} }, 200);
+}
+// Core entry. opts: { title, kind, prominent, ttl }
+function notify(message, opts = {}) {
+  const stack = $('#toast-stack');
+  if (!stack) return;
+  const kind = opts.kind || '';
+  const iconName = opts.icon || (opts.prominent ? 'done' : (kind || 'info'));
+  const card = document.createElement('div');
+  card.className = 'toast is-enter' + (kind ? ' ' + kind : '') + (opts.prominent ? ' is-prominent' : '');
+  const icon = document.createElement('span');
+  icon.className = 'toast-icon';
+  icon.appendChild(notifSvg(iconName));
+  const body = document.createElement('div');
+  body.className = 'toast-body';
+  if (opts.title) {
+    const t = document.createElement('div');
+    t.className = 'toast-title';
+    t.textContent = opts.title;
+    body.appendChild(t);
+  }
+  const m = document.createElement('div');
+  m.className = 'toast-msg';
+  m.textContent = message;
+  body.appendChild(m);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-close';
+  close.setAttribute('aria-label', 'Dismiss');
+  close.textContent = '×';
+  close.addEventListener('click', () => dismissNotif(card));
+  card.appendChild(icon);
+  card.appendChild(body);
+  card.appendChild(close);
+  // Newest on top.
+  stack.insertBefore(card, stack.firstChild);
+  // Remove the entrance class so the card transitions in. rAF gives clean
+  // first-paint timing on a real display; the setTimeout is a guarantee so
+  // the card never stays stuck hidden if rAF is starved (background window).
+  const reveal = () => card.classList.remove('is-enter');
+  requestAnimationFrame(() => requestAnimationFrame(reveal));
+  setTimeout(reveal, 60);
+  // Cap the stack: drop the oldest beyond the limit.
+  while (stack.children.length > NOTIF_MAX) dismissNotif(stack.lastElementChild);
+  // Auto-dismiss with hover-to-pause.
+  const ttl = opts.ttl || NOTIF_TTL[kind] || NOTIF_TTL[''];
+  const arm = () => { card._timer = setTimeout(() => dismissNotif(card), ttl); };
+  arm();
+  card.addEventListener('mouseenter', () => { if (card._timer) clearTimeout(card._timer); });
+  card.addEventListener('mouseleave', () => { if (!card._dismissing) arm(); });
+  return card;
+}
+// Back-compatible API used across the renderer.
+function toast(msg, kind = '') { notify(msg, { kind }); }
+// Run-completion notification: a prominent card with a title.
+function runEndBanner(msg, kind = '') {
+  // Map the run outcome to a notification style.
+  const k = kind === 'budget' ? 'warn' : (kind === 'stopped' ? '' : 'success');
+  notify(msg, { kind: k, prominent: true, title: 'Autonomy run', icon: kind === 'budget' ? 'warn' : 'done', ttl: 6000 });
 }
 
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
@@ -125,14 +213,31 @@ term.options.linkHandler = { activate: openTerminalLink };
 term.open($('#terminal'));
 
 function themeForXterm() {
-  // Use the active CSS theme tokens. Read AFTER body[data-theme] is set.
-  const root = getComputedStyle(document.body);
+  // The terminal runs a TUI agent that themes its output through the 16 ANSI
+  // colors. Each app theme gets a matching palette so the output is readable
+  // on its own background: a dark-on-light palette in light mode, a
+  // light-on-dark one in dark mode. Read after body[data-theme] is set.
+  const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#ff7847';
+  const isLight = document.body.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    // Dark, saturated colors readable on a white background. The dim
+    // greys agents use for hints (brightBlack) become a mid grey, not a
+    // near-white that vanishes.
+    return {
+      background: '#ffffff', foreground: '#1f2328',
+      cursor: accent, cursorAccent: '#ffffff',
+      selectionBackground: '#cfe3ff',
+      black: '#1f2328', red: '#cf222e', green: '#116329', yellow: '#7d4e00',
+      blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+      brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37',
+      brightYellow: '#633c01', brightBlue: '#218bff', brightMagenta: '#8250df',
+      brightCyan: '#1b7c83', brightWhite: '#1f2328',
+    };
+  }
   return {
-    background: root.getPropertyValue('--bg-1').trim() || '#0b0d12',
-    foreground: root.getPropertyValue('--text').trim() || '#e6e9ef',
-    cursor: root.getPropertyValue('--accent').trim() || '#67e8f9',
-    cursorAccent: root.getPropertyValue('--bg-1').trim() || '#0b0d12',
-    selectionBackground: root.getPropertyValue('--line-2').trim() || '#2d3447',
+    background: '#0b0d12', foreground: '#e6e9ef',
+    cursor: accent, cursorAccent: '#0b0d12',
+    selectionBackground: '#2d3447',
     black: '#0b0d12', red: '#fb7185', green: '#4ade80', yellow: '#fbbf24',
     blue: '#818cf8', magenta: '#a78bfa', cyan: '#67e8f9', white: '#e6e9ef',
     brightBlack: '#475063', brightRed: '#fda4af', brightGreen: '#86efac',
@@ -231,14 +336,39 @@ term.attachCustomKeyEventHandler((e) => {
   });
   window.addEventListener('blur', hideMenu);
 }
+// Small trailing debounce: coalesce rapid calls (search keystrokes) so
+// an expensive repaint runs once the user pauses, not per character.
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => { t = null; fn(...args); }, ms);
+  };
+}
+
+// Coalesce PTY output into one xterm write per animation frame. A
+// chatty agent emits many chunks in quick succession; writing each one
+// separately (with its own scroll callback and speech scan) burned CPU
+// and janked scrolling. Buffering to the next frame collapses a burst
+// into a single write + single scroll + single speech scan.
+let _termWriteBuf = '';
+let _termFlushScheduled = false;
+function _flushTermWrite() {
+  _termFlushScheduled = false;
+  if (!_termWriteBuf) return;
+  const data = _termWriteBuf;
+  _termWriteBuf = '';
+  term.write(data, () => term.scrollToBottom());
+  detectAndSpeak(data);
+}
 window.husk.pty.onData((d) => {
   if (!chatHasInput) {
     chatHasInput = true;
     $('#chat-empty').classList.remove('show');
   }
   if (_restartInProgress) return;
-  term.write(d, () => term.scrollToBottom());
-  detectAndSpeak(d);
+  _termWriteBuf += d;
+  if (!_termFlushScheduled) { _termFlushScheduled = true; requestAnimationFrame(_flushTermWrite); }
 });
 window.husk.pty.onExit((code) => {
   // Suppress the exit notice when we're tearing the old PTY down on purpose,
@@ -611,7 +741,8 @@ function paintProjects(items, filter) {
         <div class="project-card-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
         <div class="project-card-meta">last used ${escapeHtml(fmtRelTime(p.lastUsedAt))}</div>
         <div class="project-card-actions">
-          <button class="card-cta project-open" data-id="${escapeHtml(p.id)}" title="Switch to this project">${isActive ? 'Reopen' : 'Open'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+          ${isActive ? `<button class="card-cta project-leave" title="Work with no project; the agent runs in your home folder">Switch to no project</button>` : ''}
+          <button class="card-cta project-open" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this project' : 'Switch to this project'}">${isActive ? 'Reopen' : 'Open'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>
     `;
@@ -619,6 +750,7 @@ function paintProjects(items, filter) {
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   grid.innerHTML = cards;
   grid.querySelectorAll('.project-open').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
+  grid.querySelectorAll('.project-leave').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); clearActiveProject(); }));
   grid.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
   grid.querySelectorAll('.project-card').forEach((card) => card.addEventListener('click', (e) => {
     if (e.target.closest('.project-card-actions') || e.target.closest('.card-delete')) return;
@@ -638,6 +770,19 @@ async function openProject(id) {
   const project = (res.project && res.project.path) ? res.project : (projectsCache.find((p) => p.id === id) || {});
   await restartPty({ cwd: project.path || null });
   setPage('chat');
+}
+
+// Leave the active project: clear the selection so the agent runs in the
+// default (home / configured) cwd again. Restarts the PTY so the change
+// takes effect, mirroring how switching projects works.
+async function clearActiveProject() {
+  if (!activeProjectId) return;
+  const res = await window.husk.projects.clearActive();
+  if (!res || !res.ok) { toast((res && res.error) || 'Could not leave project', 'error'); return; }
+  activeProjectId = null;
+  await refreshProjectsState();
+  await restartPty({ cwd: null });
+  toast('Left project; the agent runs in your home folder', 'success');
 }
 
 async function refreshProjectsState() {
@@ -695,7 +840,7 @@ async function deleteProject(id, name) {
 // Wire Projects page controls + Add Project modal.
 {
   const search = document.getElementById('projects-search');
-  if (search) search.addEventListener('input', () => paintProjects(projectsCache, search.value));
+  if (search) search.addEventListener('input', debounce(() => paintProjects(projectsCache, search.value), 120));
 
   const newBtn = document.getElementById('btn-projects-new');
   const modal = document.getElementById('new-project-modal');
@@ -874,6 +1019,11 @@ function wfEnsureEditor() {
   if (!container || typeof Drawflow === 'undefined') return;
   wfEditor = new Drawflow(container);
   wfEditor.reroute = true;
+  // Dropping a connection anywhere on the target node's body connects it to
+  // that node's input, instead of forcing the user to land exactly on the
+  // small input dot. Each step has a single input, so first-input is the
+  // right target.
+  wfEditor.force_first_input = true;
   wfEditor.start();
   wfEditor.on('nodeSelected', (id) => { hideEdgePanel(); showNodePanel(id); });
   wfEditor.on('nodeUnselected', () => hideNodePanel());
@@ -2190,7 +2340,7 @@ async function previewPrompt(mdPath) {
 // Wire prompts search + refresh + create.
 {
   const search = document.getElementById('prompts-search');
-  if (search) search.addEventListener('input', () => paintPrompts(promptsCache, search.value));
+  if (search) search.addEventListener('input', debounce(() => paintPrompts(promptsCache, search.value), 120));
   const refresh = document.getElementById('btn-prompts-refresh');
   if (refresh) refresh.addEventListener('click', renderPrompts);
 
@@ -2356,7 +2506,7 @@ function paintSkills(list, query) {
     });
   });
 }
-$('#skills-search').addEventListener('input', (e) => paintSkills(skillsCache, e.target.value));
+$('#skills-search').addEventListener('input', debounce((e) => paintSkills(skillsCache, e.target.value), 120));
 $('#btn-skills-refresh').addEventListener('click', renderSkills);
 $('#btn-skills-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.skillsDir));
 $('#btn-skills-new').addEventListener('click', openCreateSkillModal);
@@ -2514,9 +2664,22 @@ function paintSessions(list, query) {
 
 function toggleSessionSelection(p) {
   if (!p) return;
-  if (sessionsSelected.has(p)) sessionsSelected.delete(p);
+  const wasSelected = sessionsSelected.has(p);
+  if (wasSelected) sessionsSelected.delete(p);
   else sessionsSelected.add(p);
-  paintSessions(sessionsCache, $('#sessions-search').value);
+  // Update only the affected row in place. Repainting the whole list on
+  // every checkbox click was an O(n) DOM teardown and listener rebind.
+  const ul = $('#sessions-list');
+  if (ul) {
+    for (const row of ul.querySelectorAll('.session-row')) {
+      if (row.dataset.path === p) {
+        row.classList.toggle('selected', !wasSelected);
+        const cb = row.querySelector('input[type="checkbox"]');
+        if (cb) cb.checked = !wasSelected;
+        break;
+      }
+    }
+  }
   syncSelectModeUI();
 }
 
@@ -2561,7 +2724,7 @@ async function deleteSelectedSessions() {
   await renderSessions();
 }
 
-$('#sessions-search').addEventListener('input', (e) => paintSessions(sessionsCache, e.target.value));
+$('#sessions-search').addEventListener('input', debounce((e) => paintSessions(sessionsCache, e.target.value), 120));
 $('#btn-sessions-refresh').addEventListener('click', renderSessions);
 $('#btn-sessions-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.sessionsDir));
 $('#btn-sessions-select').addEventListener('click', enterSelectMode);
@@ -4367,13 +4530,27 @@ function openAutonomyStart() {
   if (hasProject) setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
 }
 function closeAutonomyStart() { $('#autonomy-start-modal').hidden = true; }
+// Read one cap field. Empty -> default. A typed 0 is kept as 0, which
+// the budget meter treats as "no cap for this metric". Negative or
+// non-numeric is invalid: fall back to the default and flag it so the UI
+// and the engine never disagree silently.
+function readCapField(id, def) {
+  const el = $(id);
+  const raw = el ? String(el.value || '').trim() : '';
+  if (raw === '') return { value: def };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return { value: def, invalid: true };
+  return { value: n };
+}
 async function startAutonomy() {
   const goal = ($('#aut-goal').value || '').trim();
-  const caps = {
-    minutes: Number($('#aut-cap-min').value) || 60,
-    tokens: Number($('#aut-cap-tok').value) || 200000,
-    dollars: Number($('#aut-cap-usd').value) || 5,
-  };
+  const cMin = readCapField('#aut-cap-min', 60);
+  const cTok = readCapField('#aut-cap-tok', 200000);
+  const cUsd = readCapField('#aut-cap-usd', 5);
+  if (cMin.invalid || cTok.invalid || cUsd.invalid) {
+    toast('Caps must be zero or a positive number; invalid values were reset to the default', 'error');
+  }
+  const caps = { minutes: cMin.value, tokens: cTok.value, dollars: cUsd.value };
   const goBtn = $('#aut-start-go');
   const cancelBtn = $('#aut-start-cancel');
   const status = $('#aut-snapshot-status');
@@ -4407,6 +4584,17 @@ async function startAutonomy() {
 }
 async function cancelAutonomy() {
   if (!autonomyActive) return;
+  // Stopping a run is destructive to in-flight work, so confirm first.
+  // This is the explicit Stop action; the chat autonomy button no longer
+  // routes here (it opens the run view instead) so a stray click cannot
+  // end a run by accident.
+  const ok = await openConfirmDialog({
+    title: 'Stop the autonomy run?',
+    bodyHtml: 'The agent will be interrupted and the run will end. Your workspace changes are kept; you can review or revert them afterward.',
+    confirmLabel: 'Stop run',
+    cancelLabel: 'Keep running',
+  });
+  if (!ok) return;
   const r = await window.husk.autonomy.cancel({});
   if (!r || !r.ok) { toast((r && r.error) || 'Cancel failed', 'error'); return; }
 }
@@ -4542,6 +4730,26 @@ function rerunFromPastRun(run) {
   });
 }
 
+async function deleteRun(run) {
+  if (!run || !run.sessionId) return;
+  const ok = await openConfirmDialog({
+    title: 'Delete this run?',
+    bodyHtml: "This permanently removes the run's snapshot, audit log, and saved file versions. You will no longer be able to review or revert it.",
+    confirmLabel: 'Delete run',
+    cancelLabel: 'Keep',
+  });
+  if (!ok) return;
+  const r = await window.husk.autonomy.deleteRun({ sessionId: run.sessionId });
+  if (!r || !r.ok) { toast((r && r.error) || 'Could not delete run', 'error'); return; }
+  toast('Run deleted', 'success');
+  // If the deleted run is the one currently under review, leave review
+  // mode; otherwise just refresh the list in place.
+  if (autonomyReview && autonomyReviewData && autonomyReviewData.sessionId === run.sessionId) {
+    exitReviewMode();
+  } else {
+    refreshAutonomyHistory();
+  }
+}
 async function refreshAutonomyHistory() {
   const list = $('#aut-recent');
   const meta = $('#aut-recent-meta');
@@ -4624,10 +4832,31 @@ async function refreshAutonomyHistory() {
     rerun.appendChild(rerunSvg);
     rerun.appendChild(rerunLbl);
     rerun.addEventListener('click', (e) => { e.stopPropagation(); rerunFromPastRun(run); });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'aut-recent-del';
+    del.title = 'Delete this run';
+    del.setAttribute('aria-label', 'Delete run');
+    const delSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    delSvg.setAttribute('viewBox', '0 0 24 24');
+    delSvg.setAttribute('fill', 'none');
+    delSvg.setAttribute('stroke', 'currentColor');
+    delSvg.setAttribute('stroke-width', '2');
+    delSvg.setAttribute('stroke-linecap', 'round');
+    delSvg.setAttribute('stroke-linejoin', 'round');
+    delSvg.setAttribute('aria-hidden', 'true');
+    for (const d of ['M3 6h18', 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2']) {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d);
+      delSvg.appendChild(p);
+    }
+    del.appendChild(delSvg);
+    del.addEventListener('click', (e) => { e.stopPropagation(); deleteRun(run); });
     row.appendChild(main);
     row.appendChild(files);
     row.appendChild(pill);
     row.appendChild(rerun);
+    row.appendChild(del);
     row.addEventListener('click', () => openAutonomyRunReview(run.sessionId, run.workspaceRoot));
     list.appendChild(row);
   }
@@ -4678,10 +4907,26 @@ const AP_TERM_SEEN_MAX = 400;
 const AP_IDLE_END_MS = 10000;
 const AP_IDLE_END_HARD_MS = 25000;
 const AP_MIN_EVENTS_BEFORE_AUTO_END = 3;
+// The agent's "working" indicator (claude renders "esc to interrupt" and
+// a live "(12s . N tokens . ...)" status line while generating or running
+// a tool). When it is present the agent is busy; when it has been gone
+// this long the turn is finished. Driving auto-end off this is both
+// faster (ends seconds after the agent returns to its prompt) and safer
+// (a busy-but-quiet agent still shows the indicator, so it is not ended
+// mid-flight).
+const AP_WORK_GONE_MS = 6000;
+// Busy markers across agents: claude renders "esc to interrupt" and a live
+// "(12s . N tokens)" status; copilot renders a "Working" spinner label.
+// Matching any of them keeps a run alive while the agent is generating.
+const AP_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]|\bworking\b/i;
 let autonomyTermInterval = null;
 let autonomyTermSeenLines = new Set();
 let autonomyTermSeenOrder = [];
 let autonomyLastActivityAt = 0;
+// Last time the agent's working indicator was visible, and whether it has
+// ever been seen this run. Both drive completion detection.
+let autonomyWorkingSeenAt = 0;
+let autonomyEverWorked = false;
 let autonomyAutoEndTriggered = false;
 let autonomyReview = false;
 let autonomyReviewData = null;
@@ -4803,9 +5048,10 @@ function setAutonomyGoal(goal) {
 }
 function setAutonomyCaps(caps) {
   autonomyState.caps = Object.assign({ minutes: 60, tokens: 200000, dollars: 5 }, caps || {});
-  const tc = $('#aut-page-cap-time'); if (tc) tc.textContent = `of ${autonomyState.caps.minutes}m`;
-  const ko = $('#aut-page-cap-tokens'); if (ko) ko.textContent = `of ${formatTokens(autonomyState.caps.tokens)}`;
-  const dc = $('#aut-page-cap-dollars'); if (dc) dc.textContent = `of ${formatDollars(autonomyState.caps.dollars)}`;
+  const c = autonomyState.caps;
+  const tc = $('#aut-page-cap-time'); if (tc) tc.textContent = c.minutes > 0 ? `of ${c.minutes}m` : 'no time limit';
+  const ko = $('#aut-page-cap-tokens'); if (ko) ko.textContent = c.tokens > 0 ? `of ${formatTokens(c.tokens)}` : 'no token limit';
+  const dc = $('#aut-page-cap-dollars'); if (dc) dc.textContent = c.dollars > 0 ? `of ${formatDollars(c.dollars)}` : 'no $ limit';
 }
 function formatTokens(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + 'M';
@@ -4835,9 +5081,17 @@ function updateAutonomyBudget(b) {
   const elapsedMin = (Date.now() - autonomyState.startedAt) / 60000;
   const tv = $('#aut-page-val-time');
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
-  updateRing('aut-page-ring-time', elapsedMin / caps.minutes, meters[0]);
+  updateRing('aut-page-ring-time', caps.minutes > 0 ? elapsedMin / caps.minutes : 0, meters[0]);
   const tk = Number(b.totalTokens) || 0;
-  const tv2 = $('#aut-page-val-tokens'); if (tv2) tv2.textContent = formatTokens(tk);
+  // The token figure is read from the agent's own status line and is an
+  // approximation (per-turn / context-relative depending on the agent),
+  // so mark it as approximate rather than presenting an exact count.
+  const approx = !!(b.tokensReported || b.tokensEstimated);
+  const tv2 = $('#aut-page-val-tokens');
+  if (tv2) {
+    tv2.textContent = (approx && tk > 0 ? '~' : '') + formatTokens(tk);
+    tv2.title = approx ? 'Approximate, read from the agent status line' : '';
+  }
   updateRing('aut-page-ring-tokens', caps.tokens > 0 ? tk / caps.tokens : 0, meters[1]);
   const usd = Number(b.dollars) || 0;
   const dv = $('#aut-page-val-dollars');
@@ -5125,6 +5379,11 @@ function parseAgentTokenStatus(line) {
   // before the word "tokens" (case-insensitive). Examples we WANT
   // to match: "1.5k tokens", "↓ 1.5k tokens", "2,300 tokens used",
   // "Tokens: 1234 sent" (handled by inverse below).
+  // "152k/200k tokens" is context-used / context-window. The number
+  // directly before "tokens" is the window SIZE, not usage, so prefer the
+  // used side (the numerator) before falling through to the generic match.
+  const ratio = line.match(/(\d[\d,\.]*)\s*([kKmM]?)\s*\/\s*\d[\d,\.]*\s*[kKmM]?\s*tokens?\b/i);
+  if (ratio) return parseTokenNumber(ratio[1], ratio[2]);
   const after = line.match(/(\d[\d,\.]*)\s*([kKmM]?)\s*tokens?\b/);
   if (after) return parseTokenNumber(after[1], after[2]);
   const before = line.match(/tokens?\s*[:=]\s*(\d[\d,\.]*)\s*([kKmM]?)/i);
@@ -5195,22 +5454,34 @@ function snapshotTermForAutonomy() {
   if (maxReported >= 0 && window.husk && window.husk.autonomy && window.husk.autonomy.reportTokens) {
     try { window.husk.autonomy.reportTokens(maxReported); } catch (_) {}
   }
-  // Idle watchdog. Two thresholds:
-  //   soft:  AP_IDLE_END_MS quiet  +  prompt detected in last 15 rows
-  //   hard:  AP_IDLE_END_HARD_MS quiet (no prompt detection needed)
-  // The soft threshold ends fast when we recognize the agent's
-  // prompt. The hard threshold ends eventually even if the agent's
-  // prompt does not match any pattern we know (claude wraps the
-  // prompt in a box; the last visible row is often an input hint
-  // like "← for agents", not the prompt itself).
+  // Working-indicator detection drives completion. Scan the last rows for
+  // the agent's "busy" marker; while it is present the agent is generating
+  // or running a tool, so the run must not be auto-ended.
+  let working = false;
+  for (let i = Math.max(0, total - AP_TERM_SCAN_WINDOW); i < total; i++) {
+    const ln = b.getLine(i);
+    if (!ln) continue;
+    if (AP_WORKING_RE.test(ln.translateToString(true))) { working = true; break; }
+  }
+  if (working) { autonomyWorkingSeenAt = Date.now(); autonomyEverWorked = true; }
+
+  // Completion watchdog. Primary signal: the agent worked, then its
+  // working indicator went away and stayed away, and the terminal looks
+  // like it is back at a prompt. This ends the run within seconds of the
+  // agent actually finishing, and cannot fire while the agent is busy.
+  // The quiet-only hard net remains as a fallback for agents that show no
+  // recognizable working indicator, but it too waits for "not working".
   if (autonomyActive && !autonomyAutoEndTriggered
       && autonomyState.eventCount >= AP_MIN_EVENTS_BEFORE_AUTO_END
       && autonomyLastActivityAt > 0) {
-    const idleMs = Date.now() - autonomyLastActivityAt;
-    if (idleMs >= AP_IDLE_END_MS && terminalLooksIdleAtPrompt()) {
-      autonomyAutoEndTriggered = true;
-      finalizeAutonomyOnIdle();
-    } else if (idleMs >= AP_IDLE_END_HARD_MS) {
+    const now = Date.now();
+    const idleMs = now - autonomyLastActivityAt;
+    const workGoneMs = autonomyWorkingSeenAt ? now - autonomyWorkingSeenAt : Infinity;
+    const notWorking = !working && workGoneMs >= AP_WORK_GONE_MS;
+    const finishedAfterWork = autonomyEverWorked && notWorking
+      && (terminalLooksIdleAtPrompt() || idleMs >= AP_IDLE_END_MS);
+    const quietFallback = notWorking && idleMs >= AP_IDLE_END_HARD_MS;
+    if (finishedAfterWork || quietFallback) {
       autonomyAutoEndTriggered = true;
       finalizeAutonomyOnIdle();
     }
@@ -5247,8 +5518,9 @@ function terminalLooksIdleAtPrompt() {
 async function finalizeAutonomyOnIdle() {
   if (!autonomyActive) return;
   try {
+    // The top-center run-complete banner is shown by onEnded; no corner
+    // toast here so the two do not duplicate.
     await window.husk.autonomy.end({ reason: 'agent_idle' });
-    toast('Run finished automatically (agent returned to idle)', 'success');
   } catch (err) {
     // If the end call fails, allow another idle attempt next tick.
     autonomyAutoEndTriggered = false;
@@ -5266,6 +5538,8 @@ function startAutonomyTermSnapshotter() {
   autonomyTermSeenOrder = [];
   autonomyLastActivityAt = Date.now();
   autonomyAutoEndTriggered = false;
+  autonomyWorkingSeenAt = 0;
+  autonomyEverWorked = false;
   const b = term.buffer.active;
   const total = b.length;
   for (let i = 0; i < total; i++) {
@@ -5365,6 +5639,19 @@ function openAutonomyEndModal(sum) {
   $('#autonomy-end-modal').hidden = false;
 }
 function closeAutonomyEndModal() { $('#autonomy-end-modal').hidden = true; }
+// Report a revert honestly: a non-empty warnings list means some files
+// were NOT restored (decrypt failure, blob mismatch, fs error). The old
+// unconditional "success" toast hid partial reverts, which is the exact
+// trust violation the feature exists to prevent.
+function reportRevertResult(r) {
+  const restored = (r.restored || []).length;
+  const warned = (r.warnings || []).length;
+  if (warned) {
+    toast(`Reverted ${restored} file${restored === 1 ? '' : 's'}; ${warned} could not be restored`, 'error');
+  } else {
+    toast(`Reverted ${restored} file${restored === 1 ? '' : 's'}`, 'success');
+  }
+}
 async function revertAutonomy() {
   if (!autonomyLastSession) { toast('No run to revert', 'error'); return; }
   const ok = await openConfirmDialog({
@@ -5376,11 +5663,15 @@ async function revertAutonomy() {
   if (!ok) return;
   const r = await window.husk.autonomy.revert(autonomyLastSession);
   if (!r || !r.ok) { toast((r && r.error) || 'Revert failed', 'error'); return; }
-  toast(`Reverted ${(r.restored || []).length} files`, 'success');
+  reportRevertResult(r);
   closeAutonomyEndModal();
 }
 $('#btn-autonomy') && $('#btn-autonomy').addEventListener('click', () => {
-  if (autonomyActive) { cancelAutonomy(); return; }
+  // While a run is active this button takes the user to the run view, it
+  // does NOT stop the run. Stopping is the explicit Stop button on the
+  // autonomy page (which confirms). A second click here used to silently
+  // cancel the run, which read as "open status" to users.
+  if (autonomyActive) { try { setPage('autonomy'); } catch (_) {} return; }
   openAutonomyStart();
 });
 $('#aut-start-close') && $('#aut-start-close').addEventListener('click', closeAutonomyStart);
@@ -5412,15 +5703,28 @@ try {
       // run appears in Recent runs immediately.
       if (sum && sum.ok) {
         const sid = (autonomyLastSession && autonomyLastSession.sessionId) || (sum.sessionId || '');
-        const wr = (autonomyLastSession && autonomyLastSession.workspaceRoot) || '';
+        const wr = (autonomyLastSession && autonomyLastSession.workspaceRoot) || (sum.workspaceRoot || '');
         enterReviewMode({ sessionId: sid, workspaceRoot: wr, summary: sum });
+        // Announce the end top-center where the user is looking.
+        const halt = (sum.summary && sum.summary.haltReason) || 'natural';
+        if (halt === 'budget') runEndBanner('Run stopped at a budget cap', 'budget');
+        else if (halt === 'user') runEndBanner('Run stopped', 'stopped');
+        else if (halt === 'agent-exited') runEndBanner('Run ended: agent exited', 'stopped');
+        else runEndBanner('Run complete', '');
       } else {
         paintAutonomyBanner();
       }
       refreshAutonomyHistory();
     });
     window.husk.autonomy.onHalt((info) => {
-      toast(`Autonomy halted: ${info && info.cap ? info.cap + ' cap reached' : 'budget'}`, 'error');
+      // Report the real cause. A budget cap names the cap; an agent that
+      // exited on its own is not a budget event and must not be labelled
+      // "budget".
+      let why, level;
+      if (info && info.cap) { why = `${info.cap} cap reached`; level = 'error'; }
+      else if (info && info.reason === 'agent-exited') { why = 'agent exited'; level = 'info'; }
+      else { why = 'stopped'; level = 'error'; }
+      toast(`Autonomy halted: ${why}`, level);
     });
     if (window.husk.autonomy.onSnapshotProgress) {
       window.husk.autonomy.onSnapshotProgress((info) => {
@@ -5499,7 +5803,7 @@ $('#aut-review-revert') && $('#aut-review-revert').addEventListener('click', asy
     workspaceRoot: autonomyReviewData.workspaceRoot,
   });
   if (!r || !r.ok) { toast((r && r.error) || 'Revert failed', 'error'); return; }
-  toast(`Reverted ${(r.restored || []).length} files`, 'success');
+  reportRevertResult(r);
   // Refresh the live diff view from disk so it reflects the revert.
   if (autonomyReviewData) {
     const sum = await window.husk.autonomy.summary({

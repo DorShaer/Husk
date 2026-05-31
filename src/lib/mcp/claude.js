@@ -3,13 +3,22 @@
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { shapeServer, readJsonFile, writeJsonFile, buildServerEntry } = require('./common');
+const { shapeServer, readJsonFile, readJsonFileStrict, writeJsonFile, buildServerEntry } = require('./common');
 const { parseMcpListOutput } = require('../mcp-status');
 
 const CONFIG_PATH = path.join(os.homedir(), '.claude.json');
 
 function readConfig() { return readJsonFile(CONFIG_PATH); }
 function writeConfig(obj) { return writeJsonFile(CONFIG_PATH, obj); }
+
+// Read for the write path. Returns the parsed config, or an error
+// string when the file exists but cannot be parsed so the caller can
+// refuse to overwrite it.
+function readConfigForWrite() {
+  const r = readJsonFileStrict(CONFIG_PATH);
+  if (!r.ok) return { error: 'Refusing to write: ~/.claude.json exists but could not be read' };
+  return { cfg: r.data };
+}
 
 function list() {
   const cfg = readConfig();
@@ -25,7 +34,9 @@ function list() {
 function add(payload = {}) {
   const { id } = payload;
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return { ok: false, error: 'Invalid server id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   cfg.mcpServers = cfg.mcpServers || {};
   if (cfg.mcpServers[id] || (cfg._huskMcpDisabled && cfg._huskMcpDisabled[id])) {
     return { ok: false, error: `MCP server "${id}" already exists` };
@@ -39,7 +50,9 @@ function add(payload = {}) {
 
 function remove(id) {
   if (!id) return { ok: false, error: 'No id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   if (cfg.mcpServers && cfg.mcpServers[id]) delete cfg.mcpServers[id];
   if (cfg._huskMcpDisabled && cfg._huskMcpDisabled[id]) delete cfg._huskMcpDisabled[id];
   writeConfig(cfg);
@@ -52,7 +65,9 @@ function remove(id) {
 // is not present in either bucket.
 function update(id, payload = {}) {
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return { ok: false, error: 'Invalid server id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   const inEnabled = !!(cfg.mcpServers && cfg.mcpServers[id]);
   const inDisabled = !!(cfg._huskMcpDisabled && cfg._huskMcpDisabled[id]);
   if (!inEnabled && !inDisabled) {
@@ -73,7 +88,9 @@ function update(id, payload = {}) {
 
 function toggle(id) {
   if (!id) return { ok: false, error: 'No id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   cfg.mcpServers = cfg.mcpServers || {};
   cfg._huskMcpDisabled = cfg._huskMcpDisabled || {};
   if (cfg.mcpServers[id]) {
@@ -91,7 +108,15 @@ function toggle(id) {
 
 // Live probe via `claude mcp list`. The command takes 25-40 seconds in
 // practice because it actually round-trips every configured server.
-function health() {
+// Because it is slow, a fresh result is cached for a short window and
+// concurrent callers share a single in-flight probe: opening the MCP
+// panel or re-rendering must not stack a new 30s+ child process each
+// time.
+const HEALTH_TTL_MS = 20000;
+let healthCache = null;       // { at, result }
+let healthInflight = null;    // Promise while a probe is running
+
+function runHealthProbe() {
   return new Promise((resolve) => {
     let proc;
     try {
@@ -106,6 +131,25 @@ function health() {
     proc.on('error', (err) => resolve({ ok: false, error: err.message, status: {} }));
     proc.on('close', () => resolve({ ok: true, status: parseMcpListOutput(buf) }));
   });
+}
+
+function health(opts = {}) {
+  const now = Date.now();
+  if (!opts.force && healthCache && (now - healthCache.at) < HEALTH_TTL_MS) {
+    return Promise.resolve(healthCache.result);
+  }
+  if (healthInflight) return healthInflight;
+  healthInflight = runHealthProbe().then((result) => {
+    // Only cache a successful probe; a transient spawn error should not
+    // suppress the next real attempt for the whole TTL window.
+    if (result && result.ok) healthCache = { at: Date.now(), result };
+    healthInflight = null;
+    return result;
+  }).catch((err) => {
+    healthInflight = null;
+    return { ok: false, error: (err && err.message) || 'probe failed', status: {} };
+  });
+  return healthInflight;
 }
 
 module.exports = {
