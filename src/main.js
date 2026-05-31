@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const pty = require('node-pty');
 
@@ -837,19 +838,6 @@ function autonomyCrypto() {
   return { encrypt: null, decrypt: null };
 }
 
-// ANSI escape stripper for the autonomy activity feed. Terminal
-// emulators interpret the CSI / OSC sequences; the activity panel
-// wants the plain text underneath. Tight ranges, no greedy regex.
-function stripAnsi(s) {
-  return String(s)
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\][^\x07]*\x07/g, '')
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
-}
-
 // Autonomy PTY tap: while a run is active, every chunk of agent
 // output is buffered and flushed once per quarter-second. The
 // flush appends an `agent_output` event to the hash-chained audit
@@ -876,30 +864,6 @@ function autonomyTap(data) {
 let autonomyLineTail = '';
 let autonomyLastTailEmit = '';
 let autonomyLastTailEmitAt = 0;
-
-// Permissive activity-line filter. The previous strict filter
-// (require 2 word-tokens + 8 alnum) dropped real claude output that
-// did not match the expected shape, leaving the feed empty even
-// while the agent was clearly working. Now: only obvious garbage
-// gets dropped, the rest is shown.
-function isLowSignalLine(s) {
-  if (!s) return true;
-  const trimmed = s.trim();
-  if (trimmed.length < 3) return true;
-  const alnum = trimmed.replace(/[^A-Za-z0-9]/g, '').length;
-  if (alnum < 2) return true;
-  // 80%+ of one non-alpha char = separator run (___, ===, ---, ...).
-  const first = trimmed[0];
-  if (!/[A-Za-z0-9]/.test(first)) {
-    let same = 0;
-    for (const ch of trimmed) if (ch === first) same++;
-    if (same / trimmed.length > 0.8) return true;
-  }
-  // Looks like a UI-only fragment: short AND only 1 token AND no
-  // letters at all (e.g. "+12", "-5"). Real status lines have words.
-  if (trimmed.length < 6 && !/[A-Za-z]/.test(trimmed)) return true;
-  return false;
-}
 
 function flushAutonomyOutput() {
   autonomyOutputFlushTimer = null;
@@ -1014,7 +978,7 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
   if (path.resolve(workspaceRoot) === path.resolve(HOME)) {
     return { ok: false, error: 'autonomy refuses to snapshot the entire home folder' };
   }
-  const sessionId = 'auto-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  const sessionId = 'auto-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
   const { encrypt, decrypt } = autonomyCrypto();
 
   // Snapshot off-cycle via the async path so the main process keeps
@@ -2453,8 +2417,6 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
     };
   } catch (err) { return { ok: false, error: err.message }; }
 });
-
-const renderHuskAgentsBlock = PaiState.renderHuskAgentsBlock;
 
 ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const root = String((payload && payload.root) || '').trim();
