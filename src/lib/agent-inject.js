@@ -91,12 +91,21 @@ function planInjection({ agentCommand, agentName, paiEnabled, recap } = {}) {
     const prompt = buildHuskPrompt({ agentName, paiEnabled: paiEnabled !== false, recap });
     return { method: 'system-prompt-arg', args: ['--append-system-prompt', prompt] };
   }
+  const body = buildGenericDirectives({ agentName, recap });
   if (key === 'copilot') {
-    return {
-      method: 'instructions-file',
-      filePath: '.github/copilot-instructions.md',
-      body: buildGenericDirectives({ agentName, recap }),
-    };
+    // copilot auto-reads .github/copilot-instructions.md in the project.
+    return { method: 'instructions-file', filePath: '.github/copilot-instructions.md', body };
+  }
+  if (key === 'codex') {
+    // codex auto-reads AGENTS.md from the project root. Merge non-destructively
+    // so the user's own AGENTS.md content is preserved.
+    return { method: 'instructions-file', filePath: 'AGENTS.md', body };
+  }
+  if (key === 'aider') {
+    // aider loads read-only context via --read <file>. Write a Husk-owned file
+    // and point aider at it (relative to the agent's cwd).
+    const filePath = '.husk-aider.md';
+    return { method: 'read-file', filePath, body, args: ['--read', filePath] };
   }
   return { method: 'none' };
 }

@@ -653,7 +653,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
       paiEnabled: config.paiEnabled !== false,
       recap: config.recap,
     });
-    if (injectionPlan.method === 'system-prompt-arg') {
+    if (Array.isArray(injectionPlan.args) && injectionPlan.args.length) {
       agentArgs = [...injectionPlan.args, ...agentArgs];
     }
   }
@@ -722,16 +722,25 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   // project instructions file. Write a marker-managed HUSK-SESSION block into
   // it now that cwd is known. Non-destructive: only Husk's marked region is
   // touched; the user's own instructions are preserved.
-  if (injectionPlan.method === 'instructions-file') {
+  if (injectionPlan.filePath) {
     try {
       const fileAbs = path.join(cwd, injectionPlan.filePath);
       const dir = path.dirname(fileAbs);
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- fileAbs is cwd + a fixed relative path
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
-      const existing = fs.existsSync(fileAbs) ? fs.readFileSync(fileAbs, 'utf8') : '';
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
-      fs.writeFileSync(fileAbs, AgentInject.mergeSessionBlock(existing, injectionPlan.body));
+      if (injectionPlan.method === 'read-file') {
+        // A Husk-owned file passed explicitly via --read; rewrite it fresh each
+        // session (no user content to preserve).
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+        fs.writeFileSync(fileAbs, `${String(injectionPlan.body || '').trim()}\n`);
+      } else {
+        // A file the agent auto-reads (copilot, codex) that the user may also
+        // own; merge Husk's marked block in non-destructively.
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+        const existing = fs.existsSync(fileAbs) ? fs.readFileSync(fileAbs, 'utf8') : '';
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+        fs.writeFileSync(fileAbs, AgentInject.mergeSessionBlock(existing, injectionPlan.body));
+      }
     } catch (_) {}
   }
 
