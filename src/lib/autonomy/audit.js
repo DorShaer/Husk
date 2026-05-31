@@ -63,16 +63,16 @@ function sha256Hex(data) {
 // filePath, or null if the file is empty or missing. Used to resume
 // the hash chain when re-opening an existing audit log.
 function readLastLineSync(filePath) {
-  let stat;
+  // Read directly in a single call rather than stat-then-read, so there is
+  // no check-then-use window. A missing or empty file yields null.
+  let buf;
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under sessionDir
-    stat = fs.statSync(filePath);
+    buf = fs.readFileSync(filePath);
   } catch (_) {
     return null;
   }
-  if (!stat || !stat.size) return null;
-  // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under sessionDir
-  const buf = fs.readFileSync(filePath);
+  if (!buf || !buf.length) return null;
   let end = buf.length;
   // Strip any trailing newlines.
   while (end > 0 && (buf[end - 1] === 0x0a || buf[end - 1] === 0x0d)) end--;
@@ -91,7 +91,6 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
   if (typeof storageRoot !== 'string' || !path.isAbsolute(storageRoot)) {
     return { ok: false, error: 'storageRoot must be an absolute path' };
   }
-  const sdir = sessionDir(storageRoot, sessionId);
   const bdir = blobsDir(storageRoot, sessionId);
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under storageRoot
@@ -133,10 +132,15 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
         const blobAbs = path.join(bdir, sha);
         try {
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under bdir
-          if (!fs.existsSync(blobAbs)) {
-            const toWrite = encrypt ? encrypt(buf) : buf;
+          const toWrite = encrypt ? encrypt(buf) : buf;
+          try {
+            // wx (O_CREAT|O_EXCL) creates the blob only if absent in one
+            // syscall, so there is no check-then-write race. EEXIST means
+            // the identical content is already stored (keyed by its sha).
             // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under bdir
-            fs.writeFileSync(blobAbs, toWrite);
+            fs.writeFileSync(blobAbs, toWrite, { flag: 'wx' });
+          } catch (e) {
+            if (e.code !== 'EEXIST') throw e;
           }
           blobRef = sha;
           payload = null;
