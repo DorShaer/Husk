@@ -3021,6 +3021,12 @@ let speechAbsBase = 0;
 let lastSpokenAbsIdx = -1;
 const spokenSet = new Set();
 const spokenOrder = [];
+// The recap line streams in token by token. Rather than speak the first word
+// that arrives, we hold the candidate and speak it only once it has stopped
+// growing for RECAP_SETTLE_MS, so the whole line is read.
+let pendingSpeak = null;
+let speakSettleTimer = null;
+const RECAP_SETTLE_MS = 400;
 
 // Dedup key is a fixed-length prefix of the normalised line. Without the slice,
 // a SIGWINCH-triggered redraw (terminal resize / zoom) makes claude re-emit the
@@ -3046,6 +3052,8 @@ function resetSpeechState() {
   lastSpokenAbsIdx = -1;
   spokenSet.clear();
   spokenOrder.length = 0;
+  if (speakSettleTimer) { clearTimeout(speakSettleTimer); speakSettleTimer = null; }
+  pendingSpeak = null;
 }
 function detectAndSpeak(chunk) {
   if (!cfg || !cfg.voice || !cfg.voice.enabled) return;
@@ -3076,10 +3084,26 @@ function detectAndSpeak(chunk) {
   // Already spoken from a position at or before this one (handles redraws
   // after SIGWINCH from terminal resize / zoom).
   if (latestAbs <= lastSpokenAbsIdx) return;
-  const key = normalizeForDedup(latest);
-  if (!recordSpoken(key)) return;
-  lastSpokenAbsIdx = latestAbs;
-  speak(latest);
+  // The recap line streams in token by token, so the buffer can hold a half
+  // written line ("Ready" before "Ready to help with..."). Speaking now would
+  // read only the first word. Hold the candidate and (re)arm the settle timer
+  // only while the line is still GROWING; once it stops changing, let the
+  // timer fire and read the whole line, even if other output keeps streaming.
+  if (pendingSpeak && pendingSpeak.abs === latestAbs && pendingSpeak.text === latest) return;
+  pendingSpeak = { abs: latestAbs, text: latest };
+  if (speakSettleTimer) clearTimeout(speakSettleTimer);
+  speakSettleTimer = setTimeout(flushPendingSpeak, RECAP_SETTLE_MS);
+}
+function flushPendingSpeak() {
+  speakSettleTimer = null;
+  const pending = pendingSpeak;
+  pendingSpeak = null;
+  if (!pending || pending.abs <= lastSpokenAbsIdx) return;
+  lastSpokenAbsIdx = pending.abs;
+  // Content dedup still guards a later redraw of the same line (a new position
+  // but identical text), so each recap is read exactly once.
+  if (!recordSpoken(normalizeForDedup(pending.text))) return;
+  speak(pending.text);
 }
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
