@@ -3903,11 +3903,12 @@ if (!gotLock) {
   });
   app.on('window-all-closed', () => {
     killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();
-    app.quit();
-    // Belt-and-suspenders: if some handle still pins the loop, force exit so
-    // the main process never lingers after its window is gone (which is how
-    // closed-but-alive instances used to stack up).
-    setTimeout(() => { try { app.exit(0); } catch (_) {} }, 1500).unref();
+    // Exit HARD. app.quit()'s graceful teardown can hang on a real compositor
+    // (it waits for the GPU and renderer processes to exit), leaving the main
+    // process alive with no window, the exact stacking we are preventing. An
+    // unref'd timer fallback is not reliably serviced while that quit is stuck.
+    // app.exit() terminates immediately and does not wait on the teardown.
+    app.exit(0);
   });
   app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater(); });
   app.on('will-quit', () => { killPtyTree(); stopNullVoiceServer(); });
