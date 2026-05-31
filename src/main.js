@@ -1460,9 +1460,10 @@ ipcMain.handle('autonomy:summary', async (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   const { decrypt } = autonomyCrypto();
-  // Diff the recorded workspace, not a caller fallback. Use the async
-  // walker so loading a past run from history does not freeze the UI.
-  const workspaceRoot = manifestWorkspaceRoot(sessionId) || String(payload.workspaceRoot || '').trim() || null;
+  // Diff the recorded workspace only, never a caller-supplied path, so this
+  // read cannot be used to enumerate an arbitrary directory tree. Use the
+  // async walker so loading a past run from history does not freeze the UI.
+  const workspaceRoot = manifestWorkspaceRoot(sessionId);
   return Autonomy.supervisor.summarizeRunAsync({
     sessionId,
     workspaceRoot,
