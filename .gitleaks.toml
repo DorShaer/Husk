@@ -2,7 +2,8 @@
 useDefault = true
 
 [allowlist]
-description = "Ignore vendored PAI docs with placeholder/example tokens"
+description = "Ignore vendored PAI docs with placeholder/example tokens (current libs/pai path and the pre-move pai/ history path)"
 paths = [
-  '''libs/pai/.*'''
+  '''libs/pai/.*''',
+  '''^pai/.*''',
 ]

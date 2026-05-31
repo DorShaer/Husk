@@ -15,6 +15,10 @@ const { resolveInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
+const AgentInject = require('./lib/agent-inject');
+const { createMouseModeStripper } = require('./lib/term-mouse');
+const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
+const { agentFileName, renderAgentMd } = require('./lib/agent-file');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
@@ -76,6 +80,11 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
 let ptyProc = null;
+// The most recent PTY child's pid, kept even after `ptyProc` is nulled (the
+// onExit handler nulls ptyProc on a clean agent exit / resume). killPtyTree
+// falls back to this so an orphaned agent process group is still reaped at
+// quit, even when there is no live handle.
+let lastPtyPid = 0;
 // node-pty listener disposables for the current process, so a respawn
 // can detach them instead of leaking emitter registrations.
 let ptyDataDisposable = null;
@@ -86,12 +95,25 @@ let ptyFlushScheduled = false;
 // Timestamp of the last byte the agent emitted, used to detect when its
 // TUI has settled before we paste an autonomy goal into it.
 let ptyLastDataAt = 0;
+// Neutralize a TUI's mouse-tracking modes so the terminal stays locally
+// selectable (select + copy work) and the agent does not receive mouse
+// drags/clicks. See src/lib/term-mouse.js.
+const ptyMouseStripper = createMouseModeStripper();
+// Mirror of the stripper's mouse-reporting state, pushed to the renderer on
+// change so it knows whether to forward the wheel to the agent.
+let lastMouseOn = false;
 function flushPtyData() {
   ptyFlushScheduled = false;
   if (!ptyDataBuf) return;
   const data = ptyDataBuf;
   ptyDataBuf = '';
-  if (mainWindow) mainWindow.webContents.send('pty:data', data);
+  const clean = ptyMouseStripper.strip(data);
+  const mouseOn = ptyMouseStripper.isMouseOn();
+  if (mouseOn !== lastMouseOn) {
+    lastMouseOn = mouseOn;
+    if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', mouseOn);
+  }
+  if (mainWindow && clean) mainWindow.webContents.send('pty:data', clean);
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────────
@@ -207,6 +229,8 @@ function startStatuslineRefresh() {
   // Kick off once on startup, then every 30s.
   refreshStatuslineCacheOnce();
   statuslineTimer = setInterval(refreshStatuslineCacheOnce, 30000);
+  // unref so this tick alone never keeps the process alive past quit.
+  statuslineTimer.unref();
 }
 function stopStatuslineRefresh() {
   if (statuslineTimer) { clearInterval(statuslineTimer); statuslineTimer = null; }
@@ -337,6 +361,8 @@ function startUsageRefresh() {
   if (usageTimer) return;
   refreshAnthropicUsageCache();
   usageTimer = setInterval(refreshAnthropicUsageCache, 30000);
+  // unref so this tick alone never keeps the process alive past quit.
+  usageTimer.unref();
 }
 function stopUsageRefresh() {
   if (usageTimer) { clearInterval(usageTimer); usageTimer = null; }
@@ -542,17 +568,21 @@ function createWindow() {
 // `script` + `claude` (and any of its children) all die together. Without this,
 // closing the Husk window leaves orphan claude/script processes around.
 function killPtyTree() {
-  if (!ptyProc) return;
-  const pid = ptyProc.pid;
+  // Use the live handle when present, else fall back to the last spawned pid
+  // so an orphaned agent group (ptyProc already nulled by onExit/resume) is
+  // still signaled. Killing an already-dead group is a harmless no-op.
+  const pid = (ptyProc && ptyProc.pid) || lastPtyPid;
+  if (!pid) return;
   try { process.kill(-pid, 'SIGTERM'); } catch (_) {}
   try { process.kill(pid, 'SIGTERM'); } catch (_) {}
   // Escalate to SIGKILL after a short grace period
   setTimeout(() => {
     try { process.kill(-pid, 'SIGKILL'); } catch (_) {}
     try { process.kill(pid, 'SIGKILL'); } catch (_) {}
-  }, 250);
-  try { ptyProc.kill('SIGKILL'); } catch (_) {}
+  }, 250).unref();
+  if (ptyProc) { try { ptyProc.kill('SIGKILL'); } catch (_) {} }
   ptyProc = null;
+  lastPtyPid = 0;
 }
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
@@ -568,6 +598,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   ptyExitDisposable = null;
   ptyDataBuf = '';
   ptyFlushScheduled = false;
+  ptyMouseStripper.reset();
+  if (lastMouseOn) { lastMouseOn = false; if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', false); }
   if (ptyProc) try { ptyProc.kill(); } catch (_) {}
   const shellBin = process.platform === 'win32'
     ? (process.env.ComSpec || 'cmd.exe')
@@ -601,25 +633,29 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   // any persona configured in the user's CLAUDE.md or memory files. Skip if
   // the user already passed --settings, or if we're on Windows (see the
   // platform switch below for why Windows uses cmd.exe /c without the inject).
+  // Deliver Husk's session directives (identity name, the speech-balloon
+  // line the desktop reads aloud, recap on/off) through each agent's own
+  // instruction channel. claude takes a --append-system-prompt flag here;
+  // copilot needs a project instructions file, written below once cwd is
+  // resolved. See src/lib/agent-inject.js.
+  //
+  // Note for claude: we deliberately no longer inject --settings
+  // <ephemeral-temp-file>. That path made claude treat the temp file as the
+  // canonical settings, wrote folder-trust changes there, and on next launch
+  // we regenerated the temp file from the user's real settings.json, blowing
+  // the trust away.
   const isWin32 = process.platform === 'win32';
-  if (!isWin32 && /^claude(\.cmd|\.exe)?$/i.test(agentExe) && !agentArgs.includes('--settings')) {
-    // We deliberately no longer inject --settings <ephemeral-temp-file>.
-    // That path made claude treat the temp file as the canonical settings,
-    // wrote folder-trust changes there, and on next launch we regenerated
-    // the temp file from the user's real settings.json, blowing the trust
-    // away. claude also hid the "Yes, and remember" trust option because
-    // it detected the ephemeral path.
-    //
-    // The price of dropping the override: claude renders its own inline
-    // statusline at the bottom of the terminal, alongside Husk's right
-    // panel. Acceptable duplication, the user gets persistent trust,
-    // skill-listing budget reverts to the claude default.
-    const huskPrompt = PaiState.buildHuskPrompt({
+  let injectionPlan = { method: 'none' };
+  if (!isWin32 && !agentArgs.includes('--settings')) {
+    injectionPlan = AgentInject.planInjection({
+      agentCommand: rawCmd,
       agentName: config.agentName,
       paiEnabled: config.paiEnabled !== false,
       recap: config.recap,
     });
-    agentArgs = ['--append-system-prompt', huskPrompt, ...agentArgs];
+    if (Array.isArray(injectionPlan.args) && injectionPlan.args.length) {
+      agentArgs = [...injectionPlan.args, ...agentArgs];
+    }
   }
 
   // Default cwd policy (priority high -> low):
@@ -682,6 +718,32 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     } catch (_) {}
   }
 
+  // Agents with no system-prompt flag (copilot) take their directives from a
+  // project instructions file. Write a marker-managed HUSK-SESSION block into
+  // it now that cwd is known. Non-destructive: only Husk's marked region is
+  // touched; the user's own instructions are preserved.
+  if (injectionPlan.filePath) {
+    try {
+      const fileAbs = path.join(cwd, injectionPlan.filePath);
+      const dir = path.dirname(fileAbs);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- fileAbs is cwd + a fixed relative path
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      if (injectionPlan.method === 'read-file') {
+        // A Husk-owned file passed explicitly via --read; rewrite it fresh each
+        // session (no user content to preserve).
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+        fs.writeFileSync(fileAbs, `${String(injectionPlan.body || '').trim()}\n`);
+      } else {
+        // A file the agent auto-reads (copilot, codex) that the user may also
+        // own; merge Husk's marked block in non-destructively.
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+        const existing = fs.existsSync(fileAbs) ? fs.readFileSync(fileAbs, 'utf8') : '';
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+        fs.writeFileSync(fileAbs, AgentInject.mergeSessionBlock(existing, injectionPlan.body));
+      }
+    } catch (_) {}
+  }
+
   // Per-platform argv assembly (see src/lib/pty-spawn.js for the rules):
   //   darwin   pty.spawn(agentExe, agentArgs); no shell parser involved
   //   linux    pty.spawn('/usr/bin/script', ['-q', '-c', shJoin(...), '/dev/null'])
@@ -702,6 +764,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   });
 
   ptyProc = pty.spawn(spec.exe, spec.argv, { name: 'xterm-256color', cols, rows, cwd, env });
+  lastPtyPid = ptyProc.pid;
   activePtyCwd = cwd;
   // Coalesce PTY output: a chatty agent (build logs, a big cat) emits
   // many chunks per tick. Buffer them and flush once per microtask so
@@ -797,6 +860,16 @@ function readActiveSessionStats() {
 ipcMain.handle('pty:start', (_e, { cols, rows }) => { spawnPty(cols, rows); return true; });
 ipcMain.on('pty:write', (_e, data) => { if (ptyProc) ptyProc.write(data); });
 ipcMain.on('pty:resize', (_e, { cols, rows }) => { if (ptyProc) try { ptyProc.resize(cols, rows); } catch (_) {} });
+// Forward the mouse wheel to a full-screen agent that has mouse reporting on,
+// so the wheel scrolls the agent's transcript. Only the wheel is forwarded;
+// click/drag tracking is stripped so drag-to-select stays local in xterm.
+ipcMain.on('pty:wheel', (_e, { deltaY, deltaMode, col, row } = {}) => {
+  if (!ptyProc || !lastMouseOn) return;
+  const steps = wheelSteps(deltaY, deltaMode);
+  if (!steps) return;
+  const seq = wheelSequence(deltaY < 0, col, row);
+  for (let i = 0; i < steps; i++) ptyProc.write(seq);
+});
 ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
   spawnPty(cols || 100, rows || 30, command || null, cwd || null);
   return true;
@@ -2251,6 +2324,56 @@ const AGENT_SOURCES = [
   { label: 'Claude Code', dir: path.join(HOME, '.claude', 'agents') },
 ];
 
+// Native agents directory per CLI. Both claude and copilot load the same
+// markdown agent format from these locations, so a Husk agent written into
+// each installed CLI's dir is usable in whichever CLI the user runs.
+const CLAUDE_AGENTS_DIR = path.join(HOME, '.claude', 'agents');
+const COPILOT_AGENTS_DIR = path.join(HOME, '.copilot', 'agents');
+function installedAgentDirs() {
+  const out = [];
+  try { if (fs.existsSync(path.join(HOME, '.claude'))) out.push(CLAUDE_AGENTS_DIR); } catch (_) {}
+  try { if (fs.existsSync(path.join(HOME, '.copilot'))) out.push(COPILOT_AGENTS_DIR); } catch (_) {}
+  return out;
+}
+// Mirror every user (non-builtin) agent profile into each installed CLI's
+// agents dir. An existing file in the claude dir (the rich import source) is
+// copied verbatim to preserve all of its frontmatter; otherwise the file is
+// reconstructed from the profile. Existing targets are not overwritten, so a
+// hand-edited agent file is never clobbered.
+function syncAgentFiles() {
+  try {
+    const dirs = installedAgentDirs();
+    if (!dirs.length) return;
+    const profiles = getProfiles().filter((p) => p && !p.builtin && (p.systemPrompt || p.name));
+    for (const p of profiles) {
+      const fname = agentFileName(p.name);
+      let content = null;
+      const claudeFile = path.join(CLAUDE_AGENTS_DIR, fname);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- fname is a slugified, traversal-free basename in a fixed dir
+      try { if (fs.existsSync(claudeFile)) content = fs.readFileSync(claudeFile, 'utf8'); } catch (_) {}
+      if (!content) content = renderAgentMd(p);
+      for (const dir of dirs) {
+        const target = path.join(dir, fname);
+        try {
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir is a fixed CLI agents dir, fname is slugified
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
+          if (!fs.existsSync(target)) fs.writeFileSync(target, content);
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+function removeAgentFiles(name) {
+  if (!name) return;
+  const fname = agentFileName(name);
+  for (const dir of installedAgentDirs()) {
+    const target = path.join(dir, fname);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
+    try { if (fs.existsSync(target)) fs.unlinkSync(target); } catch (_) {}
+  }
+}
+
 ipcMain.handle('profiles:listImportableAgents', () => {
   try {
     const existing = new Set(getProfiles().map((p) => String(p.name || '').toLowerCase()));
@@ -2316,6 +2439,7 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
   }
   config = nextConfig;
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  syncAgentFiles();
   return { ok: true, imported: importedIds.length, importedIds };
 });
 
@@ -2681,11 +2805,13 @@ ipcMain.handle('profiles:create', (_e, payload = {}) => {
   const profiles = [...getProfiles(), entry];
   config = { ...config, profiles };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  syncAgentFiles();
   return entry;
 });
 
 ipcMain.handle('profiles:update', (_e, payload = {}) => {
   if (!payload.id) return { ok: false, error: 'missing id' };
+  const prev = getProfiles().find((p) => p.id === payload.id);
   const profiles = getProfiles().map((p) => {
     if (p.id !== payload.id) return p;
     return {
@@ -2698,6 +2824,9 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
   });
   config = { ...config, profiles };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  // If the name changed, drop the stale agent file before writing the new one.
+  if (prev && payload.name !== undefined && String(payload.name).slice(0, 64) !== prev.name) removeAgentFiles(prev.name);
+  syncAgentFiles();
   return { ok: true };
 });
 
@@ -2715,10 +2844,12 @@ function writeActiveIds(ids) {
 
 ipcMain.handle('profiles:delete', (_e, id) => {
   if (!id) return { ok: false, error: 'missing id' };
+  const removed = getProfiles().find((p) => p.id === id);
   const profiles = getProfiles().filter((p) => p.id !== id);
   const active = getActiveIds().filter((a) => a !== id);
   config = { ...config, profiles, activeProfileIds: active, activeProfileId: active[0] || null };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  if (removed) removeAgentFiles(removed.name);
   return { ok: true };
 });
 
@@ -3632,6 +3763,12 @@ function stopNullVoiceServer() {
 // on which state we are in.
 
 let updaterInstance = null;
+let updaterInitialTimer = null;
+let updaterPeriodicTimer = null;
+function stopAutoUpdater() {
+  if (updaterInitialTimer) { clearTimeout(updaterInitialTimer); updaterInitialTimer = null; }
+  if (updaterPeriodicTimer) { clearInterval(updaterPeriodicTimer); updaterPeriodicTimer = null; }
+}
 let updateState = { status: 'idle', current: app.getVersion() };
 
 function sendUpdateStatus(extra = {}) {
@@ -3676,9 +3813,13 @@ function setupAutoUpdater() {
     error: (err && err.message) || String(err),
   }));
 
-  // Fire one check shortly after launch and again every 6 hours.
-  setTimeout(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 4000);
-  setInterval(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 6 * 60 * 60 * 1000);
+  // Fire one check shortly after launch and again every 6 hours. Both are
+  // stored and unref'd so they can be cleared at quit and never pin the event
+  // loop open after the window closes (which left the main process alive).
+  updaterInitialTimer = setTimeout(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 4000);
+  updaterInitialTimer.unref();
+  updaterPeriodicTimer = setInterval(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 6 * 60 * 60 * 1000);
+  updaterPeriodicTimer.unref();
 }
 
 ipcMain.handle('update:get', () => updateState);
@@ -3751,14 +3892,24 @@ if (!gotLock) {
     applyPaiState(config.paiEnabled !== false);
     bootstrapPaiIfNeeded();
     bootstrapHuskPromptsIfNeeded();
+    // Make existing Husk agents available to every installed CLI (writes any
+    // missing agent files into ~/.claude/agents and ~/.copilot/agents).
+    syncAgentFiles();
     startStatuslineRefresh();
     startUsageRefresh();
     await startNullVoiceServer();
     createWindow();
     setupAutoUpdater();
   });
-  app.on('window-all-closed', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); app.quit(); });
-  app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); });
+  app.on('window-all-closed', () => {
+    killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();
+    app.quit();
+    // Belt-and-suspenders: if some handle still pins the loop, force exit so
+    // the main process never lingers after its window is gone (which is how
+    // closed-but-alive instances used to stack up).
+    setTimeout(() => { try { app.exit(0); } catch (_) {} }, 1500).unref();
+  });
+  app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater(); });
   app.on('will-quit', () => { killPtyTree(); stopNullVoiceServer(); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   process.on('SIGINT',  () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });
