@@ -17,6 +17,7 @@ const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
 const AgentInject = require('./lib/agent-inject');
 const { createMouseModeStripper } = require('./lib/term-mouse');
+const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
@@ -78,6 +79,11 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
 let ptyProc = null;
+// The most recent PTY child's pid, kept even after `ptyProc` is nulled (the
+// onExit handler nulls ptyProc on a clean agent exit / resume). killPtyTree
+// falls back to this so an orphaned agent process group is still reaped at
+// quit, even when there is no live handle.
+let lastPtyPid = 0;
 // node-pty listener disposables for the current process, so a respawn
 // can detach them instead of leaking emitter registrations.
 let ptyDataDisposable = null;
@@ -92,12 +98,20 @@ let ptyLastDataAt = 0;
 // selectable (select + copy work) and the agent does not receive mouse
 // drags/clicks. See src/lib/term-mouse.js.
 const ptyMouseStripper = createMouseModeStripper();
+// Mirror of the stripper's mouse-reporting state, pushed to the renderer on
+// change so it knows whether to forward the wheel to the agent.
+let lastMouseOn = false;
 function flushPtyData() {
   ptyFlushScheduled = false;
   if (!ptyDataBuf) return;
   const data = ptyDataBuf;
   ptyDataBuf = '';
   const clean = ptyMouseStripper.strip(data);
+  const mouseOn = ptyMouseStripper.isMouseOn();
+  if (mouseOn !== lastMouseOn) {
+    lastMouseOn = mouseOn;
+    if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', mouseOn);
+  }
   if (mainWindow && clean) mainWindow.webContents.send('pty:data', clean);
 }
 
@@ -214,6 +228,8 @@ function startStatuslineRefresh() {
   // Kick off once on startup, then every 30s.
   refreshStatuslineCacheOnce();
   statuslineTimer = setInterval(refreshStatuslineCacheOnce, 30000);
+  // unref so this tick alone never keeps the process alive past quit.
+  statuslineTimer.unref();
 }
 function stopStatuslineRefresh() {
   if (statuslineTimer) { clearInterval(statuslineTimer); statuslineTimer = null; }
@@ -344,6 +360,8 @@ function startUsageRefresh() {
   if (usageTimer) return;
   refreshAnthropicUsageCache();
   usageTimer = setInterval(refreshAnthropicUsageCache, 30000);
+  // unref so this tick alone never keeps the process alive past quit.
+  usageTimer.unref();
 }
 function stopUsageRefresh() {
   if (usageTimer) { clearInterval(usageTimer); usageTimer = null; }
@@ -549,17 +567,21 @@ function createWindow() {
 // `script` + `claude` (and any of its children) all die together. Without this,
 // closing the Husk window leaves orphan claude/script processes around.
 function killPtyTree() {
-  if (!ptyProc) return;
-  const pid = ptyProc.pid;
+  // Use the live handle when present, else fall back to the last spawned pid
+  // so an orphaned agent group (ptyProc already nulled by onExit/resume) is
+  // still signaled. Killing an already-dead group is a harmless no-op.
+  const pid = (ptyProc && ptyProc.pid) || lastPtyPid;
+  if (!pid) return;
   try { process.kill(-pid, 'SIGTERM'); } catch (_) {}
   try { process.kill(pid, 'SIGTERM'); } catch (_) {}
   // Escalate to SIGKILL after a short grace period
   setTimeout(() => {
     try { process.kill(-pid, 'SIGKILL'); } catch (_) {}
     try { process.kill(pid, 'SIGKILL'); } catch (_) {}
-  }, 250);
-  try { ptyProc.kill('SIGKILL'); } catch (_) {}
+  }, 250).unref();
+  if (ptyProc) { try { ptyProc.kill('SIGKILL'); } catch (_) {} }
   ptyProc = null;
+  lastPtyPid = 0;
 }
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
@@ -576,6 +598,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   ptyDataBuf = '';
   ptyFlushScheduled = false;
   ptyMouseStripper.reset();
+  if (lastMouseOn) { lastMouseOn = false; if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', false); }
   if (ptyProc) try { ptyProc.kill(); } catch (_) {}
   const shellBin = process.platform === 'win32'
     ? (process.env.ComSpec || 'cmd.exe')
@@ -731,6 +754,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   });
 
   ptyProc = pty.spawn(spec.exe, spec.argv, { name: 'xterm-256color', cols, rows, cwd, env });
+  lastPtyPid = ptyProc.pid;
   activePtyCwd = cwd;
   // Coalesce PTY output: a chatty agent (build logs, a big cat) emits
   // many chunks per tick. Buffer them and flush once per microtask so
@@ -826,6 +850,16 @@ function readActiveSessionStats() {
 ipcMain.handle('pty:start', (_e, { cols, rows }) => { spawnPty(cols, rows); return true; });
 ipcMain.on('pty:write', (_e, data) => { if (ptyProc) ptyProc.write(data); });
 ipcMain.on('pty:resize', (_e, { cols, rows }) => { if (ptyProc) try { ptyProc.resize(cols, rows); } catch (_) {} });
+// Forward the mouse wheel to a full-screen agent that has mouse reporting on,
+// so the wheel scrolls the agent's transcript. Only the wheel is forwarded;
+// click/drag tracking is stripped so drag-to-select stays local in xterm.
+ipcMain.on('pty:wheel', (_e, { deltaY, deltaMode, col, row } = {}) => {
+  if (!ptyProc || !lastMouseOn) return;
+  const steps = wheelSteps(deltaY, deltaMode);
+  if (!steps) return;
+  const seq = wheelSequence(deltaY < 0, col, row);
+  for (let i = 0; i < steps; i++) ptyProc.write(seq);
+});
 ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
   spawnPty(cols || 100, rows || 30, command || null, cwd || null);
   return true;
@@ -3661,6 +3695,12 @@ function stopNullVoiceServer() {
 // on which state we are in.
 
 let updaterInstance = null;
+let updaterInitialTimer = null;
+let updaterPeriodicTimer = null;
+function stopAutoUpdater() {
+  if (updaterInitialTimer) { clearTimeout(updaterInitialTimer); updaterInitialTimer = null; }
+  if (updaterPeriodicTimer) { clearInterval(updaterPeriodicTimer); updaterPeriodicTimer = null; }
+}
 let updateState = { status: 'idle', current: app.getVersion() };
 
 function sendUpdateStatus(extra = {}) {
@@ -3705,9 +3745,13 @@ function setupAutoUpdater() {
     error: (err && err.message) || String(err),
   }));
 
-  // Fire one check shortly after launch and again every 6 hours.
-  setTimeout(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 4000);
-  setInterval(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 6 * 60 * 60 * 1000);
+  // Fire one check shortly after launch and again every 6 hours. Both are
+  // stored and unref'd so they can be cleared at quit and never pin the event
+  // loop open after the window closes (which left the main process alive).
+  updaterInitialTimer = setTimeout(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 4000);
+  updaterInitialTimer.unref();
+  updaterPeriodicTimer = setInterval(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 6 * 60 * 60 * 1000);
+  updaterPeriodicTimer.unref();
 }
 
 ipcMain.handle('update:get', () => updateState);
@@ -3786,8 +3830,15 @@ if (!gotLock) {
     createWindow();
     setupAutoUpdater();
   });
-  app.on('window-all-closed', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); app.quit(); });
-  app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); });
+  app.on('window-all-closed', () => {
+    killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();
+    app.quit();
+    // Belt-and-suspenders: if some handle still pins the loop, force exit so
+    // the main process never lingers after its window is gone (which is how
+    // closed-but-alive instances used to stack up).
+    setTimeout(() => { try { app.exit(0); } catch (_) {} }, 1500).unref();
+  });
+  app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater(); });
   app.on('will-quit', () => { killPtyTree(); stopNullVoiceServer(); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   process.on('SIGINT',  () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });

@@ -17,6 +17,12 @@
 // ESC [ ? <num> (h|l) for the mouse-tracking modes only.
 // eslint-disable-next-line no-control-regex
 const MOUSE_MODE_RE = /\x1b\[\?(?:1000|1001|1002|1003|1005|1006|1015|1016)[hl]/g;
+// The reporting-enable modes (1000 normal, 1002 button-event, 1003 any-event);
+// 1005/1006/1015/1016 are only encodings. An 'h' on any of these means the app
+// wants mouse reporting on, an 'l' turns it off. Tracked so the renderer can
+// forward the wheel to the app while still stripping the reporting from xterm.
+// eslint-disable-next-line no-control-regex
+const MOUSE_TRACK_RE = /\x1b\[\?(?:1000|1002|1003)([hl])/g;
 // An incomplete CSI at the very end of a chunk: ESC [ then digits/;/? with no
 // final byte yet. Held back so a split sequence is reassembled next chunk.
 // eslint-disable-next-line no-control-regex
@@ -25,6 +31,7 @@ const MAX_CARRY = 32;
 
 function createMouseModeStripper() {
   let carry = '';
+  let mouseOn = false;
   return {
     strip(data) {
       let s = carry + (data == null ? '' : String(data));
@@ -34,9 +41,14 @@ function createMouseModeStripper() {
         carry = m[0];
         s = s.slice(0, s.length - m[0].length);
       }
+      // Track the latest mouse-reporting toggle in this chunk before stripping.
+      let tm;
+      MOUSE_TRACK_RE.lastIndex = 0;
+      while ((tm = MOUSE_TRACK_RE.exec(s)) !== null) mouseOn = tm[1] === 'h';
       return s.replace(MOUSE_MODE_RE, '');
     },
-    reset() { carry = ''; },
+    isMouseOn() { return mouseOn; },
+    reset() { carry = ''; mouseOn = false; },
   };
 }
 
