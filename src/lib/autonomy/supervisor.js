@@ -36,7 +36,6 @@ function startRun(opts = {}) {
   if (!path.isAbsolute(storageRoot)) return { ok: false, error: 'storageRoot must be absolute' };
 
   const encrypt = typeof opts.encrypt === 'function' ? opts.encrypt : null;
-  const decrypt = typeof opts.decrypt === 'function' ? opts.decrypt : null;
   const now = typeof opts.now === 'function' ? opts.now : () => Date.now();
 
   // 1. capture pre-run snapshot. Caller may set opts.skipSnapshot when
@@ -199,7 +198,7 @@ function startRun(opts = {}) {
       state.endedAt = now();
       auditWriter.append({ kind: 'end_run', payload: detail || null });
     }
-    let diff = { ok: false, changes: [] };
+    let diff;
     try {
       diff = await Snapshot.diffWorkspaceAsync(workspaceRoot, storageRoot, sessionId, { ignore: opts.ignore });
     } catch (_) { diff = { ok: false, changes: [] }; }

@@ -66,6 +66,30 @@ function sha256OfBuffer(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
+// Write a content-addressed blob atomically. The `wx` flag is
+// O_CREAT|O_EXCL: it creates the file only if it does not already exist,
+// in a single syscall, so there is no check-then-write race. An EEXIST
+// just means the identical content is already stored (blobs are keyed by
+// their own sha256), so it is ignored.
+//
+// `seen` is an in-memory Set of shas already handled this run. It dedupes
+// the (potentially expensive) encrypt + write so identical content is
+// encrypted once per run, without an fs existence check.
+function writeBlobAtomic(bdir, sha, content, encrypt, seen) {
+  if (seen) {
+    if (seen.has(sha)) return;
+    seen.add(sha);
+  }
+  const blobAbs = path.join(bdir, sha);
+  const toWrite = typeof encrypt === 'function' ? encrypt(content) : content;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- blobAbs is path.join(bdir, sha) bounded to bdir
+    fs.writeFileSync(blobAbs, toWrite, { flag: 'wx' });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+  }
+}
+
 // shouldIgnore returns true when the relative path (as walked) starts
 // with any of the ignore entries. Match is "starts with the entry as
 // a full path segment", so an ignore entry of 'dist' matches 'dist'
@@ -102,7 +126,6 @@ function captureSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   const ignores = DEFAULT_IGNORE.slice();
   if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
 
-  const sdir = sessionDir(storageRoot, sessionId);
   const bdir = blobsDir(storageRoot, sessionId);
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to storageRoot subdirs
@@ -113,7 +136,8 @@ function captureSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
 
   const entries = {};
   const warnings = [];
-  walk(workspaceRoot, '', ignores, entries, warnings, opts, bdir);
+  const seen = new Set();
+  walk(workspaceRoot, '', ignores, entries, warnings, opts, bdir, seen);
 
   const manifest = {
     v: 1,
@@ -131,7 +155,7 @@ function captureSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   return { ok: true, manifest, warnings };
 }
 
-function walk(absRoot, rel, ignores, entries, warnings, opts, bdir) {
+function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
   const here = rel ? path.join(absRoot, rel) : absRoot;
   let dirents;
   try {
@@ -153,18 +177,12 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir) {
         const target = fs.readlinkSync(abs);
         entries[relChild] = { type: 'symlink', target };
       } else if (ent.isDirectory()) {
-        walk(absRoot, relChild, ignores, entries, warnings, opts, bdir);
+        walk(absRoot, relChild, ignores, entries, warnings, opts, bdir, seen);
       } else if (ent.isFile()) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
         const content = fs.readFileSync(abs);
         const sha = sha256OfBuffer(content);
-        const blobAbs = path.join(bdir, sha);
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- blobAbs is bounded to bdir
-        if (!fs.existsSync(blobAbs)) {
-          const toWrite = typeof opts.encrypt === 'function' ? opts.encrypt(content) : content;
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- bdir is bounded
-          fs.writeFileSync(blobAbs, toWrite);
-        }
+        writeBlobAtomic(bdir, sha, content, opts.encrypt, seen);
         entries[relChild] = { type: 'file', sha };
       } else {
         // Sockets, devices, fifos. Ignore: not meaningful for the
@@ -492,7 +510,6 @@ async function captureSnapshotAsync(workspaceRoot, storageRoot, sessionId, opts 
   const ignores = DEFAULT_IGNORE.slice();
   if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
 
-  const sdir = sessionDir(storageRoot, sessionId);
   const bdir = blobsDir(storageRoot, sessionId);
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to storageRoot subdirs
@@ -504,7 +521,7 @@ async function captureSnapshotAsync(workspaceRoot, storageRoot, sessionId, opts 
   const entries = {};
   const warnings = [];
   const maxEntries = Number.isFinite(opts.maxEntries) && opts.maxEntries > 0 ? opts.maxEntries : DEFAULT_MAX_ENTRIES;
-  const state = { count: 0, aborted: false, maxEntries, onProgress: typeof opts.onProgress === 'function' ? opts.onProgress : null };
+  const state = { count: 0, aborted: false, maxEntries, seen: new Set(), onProgress: typeof opts.onProgress === 'function' ? opts.onProgress : null };
   await walkAsync(workspaceRoot, '', ignores, entries, warnings, opts, bdir, state);
   if (state.aborted) {
     return { ok: false, error: `workspace exceeds ${maxEntries} files; pick a narrower scope` };
@@ -547,13 +564,7 @@ async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, s
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
         const content = fs.readFileSync(abs);
         const sha = sha256OfBuffer(content);
-        const blobAbs = path.join(bdir, sha);
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- blobAbs bounded to bdir
-        if (!fs.existsSync(blobAbs)) {
-          const toWrite = typeof opts.encrypt === 'function' ? opts.encrypt(content) : content;
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- bdir is bounded
-          fs.writeFileSync(blobAbs, toWrite);
-        }
+        writeBlobAtomic(bdir, sha, content, opts.encrypt, state.seen);
         entries[relChild] = { type: 'file', sha };
         state.count++;
         if (state.count >= state.maxEntries) { state.aborted = true; return; }
