@@ -2,7 +2,7 @@
 
 const os = require('os');
 const path = require('path');
-const { shapeServer, readJsonFile, writeJsonFile, buildServerEntry } = require('./common');
+const { shapeServer, readJsonFile, readJsonFileStrict, writeJsonFile, buildServerEntry } = require('./common');
 
 // Copilot's MCP config lives at ~/.copilot/mcp-config.json. Schema is
 // compatible with claude's (mcpServers map, transport+url for remote,
@@ -13,6 +13,15 @@ const CONFIG_PATH = path.join(os.homedir(), '.copilot', 'mcp-config.json');
 
 function readConfig() { return readJsonFile(CONFIG_PATH); }
 function writeConfig(obj) { return writeJsonFile(CONFIG_PATH, obj); }
+
+// Read for the write path. Refuses to proceed when the file exists but
+// cannot be parsed so a mutating op never overwrites a config it could
+// not read.
+function readConfigForWrite() {
+  const r = readJsonFileStrict(CONFIG_PATH);
+  if (!r.ok) return { error: 'Refusing to write: ~/.copilot/mcp-config.json exists but could not be read' };
+  return { cfg: r.data };
+}
 
 function list() {
   const cfg = readConfig();
@@ -28,7 +37,9 @@ function list() {
 function add(payload = {}) {
   const { id } = payload;
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return { ok: false, error: 'Invalid server id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   cfg.mcpServers = cfg.mcpServers || {};
   if (cfg.mcpServers[id] || (cfg._huskMcpDisabled && cfg._huskMcpDisabled[id])) {
     return { ok: false, error: `MCP server "${id}" already exists` };
@@ -42,7 +53,9 @@ function add(payload = {}) {
 
 function remove(id) {
   if (!id) return { ok: false, error: 'No id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   if (cfg.mcpServers && cfg.mcpServers[id]) delete cfg.mcpServers[id];
   if (cfg._huskMcpDisabled && cfg._huskMcpDisabled[id]) delete cfg._huskMcpDisabled[id];
   writeConfig(cfg);
@@ -53,7 +66,9 @@ function remove(id) {
 // enabled/disabled status. Same contract as the claude adapter.
 function update(id, payload = {}) {
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return { ok: false, error: 'Invalid server id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   const inEnabled = !!(cfg.mcpServers && cfg.mcpServers[id]);
   const inDisabled = !!(cfg._huskMcpDisabled && cfg._huskMcpDisabled[id]);
   if (!inEnabled && !inDisabled) {
@@ -74,7 +89,9 @@ function update(id, payload = {}) {
 
 function toggle(id) {
   if (!id) return { ok: false, error: 'No id' };
-  const cfg = readConfig();
+  const read = readConfigForWrite();
+  if (read.error) return { ok: false, error: read.error };
+  const cfg = read.cfg;
   cfg.mcpServers = cfg.mcpServers || {};
   cfg._huskMcpDisabled = cfg._huskMcpDisabled || {};
   if (cfg.mcpServers[id]) {
