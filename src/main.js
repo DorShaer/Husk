@@ -16,6 +16,7 @@ const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
 const AgentInject = require('./lib/agent-inject');
+const { createMouseModeStripper } = require('./lib/term-mouse');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
@@ -87,12 +88,17 @@ let ptyFlushScheduled = false;
 // Timestamp of the last byte the agent emitted, used to detect when its
 // TUI has settled before we paste an autonomy goal into it.
 let ptyLastDataAt = 0;
+// Neutralize a TUI's mouse-tracking modes so the terminal stays locally
+// selectable (select + copy work) and the agent does not receive mouse
+// drags/clicks. See src/lib/term-mouse.js.
+const ptyMouseStripper = createMouseModeStripper();
 function flushPtyData() {
   ptyFlushScheduled = false;
   if (!ptyDataBuf) return;
   const data = ptyDataBuf;
   ptyDataBuf = '';
-  if (mainWindow) mainWindow.webContents.send('pty:data', data);
+  const clean = ptyMouseStripper.strip(data);
+  if (mainWindow && clean) mainWindow.webContents.send('pty:data', clean);
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────────
@@ -569,6 +575,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
   ptyExitDisposable = null;
   ptyDataBuf = '';
   ptyFlushScheduled = false;
+  ptyMouseStripper.reset();
   if (ptyProc) try { ptyProc.kill(); } catch (_) {}
   const shellBin = process.platform === 'win32'
     ? (process.env.ComSpec || 'cmd.exe')
