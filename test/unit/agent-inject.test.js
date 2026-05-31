@@ -34,9 +34,26 @@ test('copilot.exe / full path resolves to the copilot plan', () => {
   assert.equal(planInjection({ agentCommand: '/usr/local/bin/copilot --foo' }).method, 'instructions-file');
 });
 
-test('an unknown agent gets no injection', () => {
-  assert.equal(planInjection({ agentCommand: 'aider' }).method, 'none');
-  assert.equal(planInjection({ agentCommand: 'codex' }).method, 'none');
+test('codex gets an AGENTS.md instructions-file plan', () => {
+  const plan = planInjection({ agentCommand: 'codex', agentName: 'Husk', recap: true });
+  assert.equal(plan.method, 'instructions-file');
+  assert.equal(plan.filePath, 'AGENTS.md');
+  assert.ok(plan.body.includes('Husk'));
+  assert.ok(plan.body.includes('\u{1F5E3}'));
+});
+
+test('aider gets a --read plan pointing at a Husk-owned file', () => {
+  const plan = planInjection({ agentCommand: 'aider', agentName: 'Husk', recap: true });
+  assert.equal(plan.method, 'read-file');
+  assert.equal(plan.filePath, '.husk-aider.md');
+  assert.deepEqual(plan.args, ['--read', '.husk-aider.md']);
+  assert.ok(plan.body.includes('Husk'));
+  assert.ok(plan.body.includes('\u{1F5E3}'));
+});
+
+test('a truly unknown agent gets no injection', () => {
+  assert.equal(planInjection({ agentCommand: 'mysteryagent' }).method, 'none');
+  assert.ok(!planInjection({ agentCommand: 'mysteryagent' }).args);
 });
 
 // ─── buildGenericDirectives ──────────────────────────────────────────────────
