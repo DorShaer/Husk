@@ -42,3 +42,32 @@ test('plain text is unchanged', () => {
   const s = createMouseModeStripper();
   assert.equal(s.strip('just some output\n'), 'just some output\n');
 });
+
+test('tracks mouse-reporting on/off across enable and disable', () => {
+  const s = createMouseModeStripper();
+  assert.equal(s.isMouseOn(), false);
+  s.strip(`${ESC}[?1002h${ESC}[?1006h`);
+  assert.equal(s.isMouseOn(), true);
+  s.strip(`${ESC}[?1002l${ESC}[?1000l`);
+  assert.equal(s.isMouseOn(), false);
+});
+
+test('the latest toggle in a chunk wins', () => {
+  const s = createMouseModeStripper();
+  s.strip(`${ESC}[?1002h text ${ESC}[?1002l`);
+  assert.equal(s.isMouseOn(), false);
+});
+
+test('reset clears the mouse-reporting state', () => {
+  const s = createMouseModeStripper();
+  s.strip(`${ESC}[?1002h`);
+  assert.equal(s.isMouseOn(), true);
+  s.reset();
+  assert.equal(s.isMouseOn(), false);
+});
+
+test('encoding-only modes (1006) do not flip reporting on', () => {
+  const s = createMouseModeStripper();
+  s.strip(`${ESC}[?1006h`);
+  assert.equal(s.isMouseOn(), false);
+});

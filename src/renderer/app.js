@@ -212,6 +212,31 @@ term.loadAddon(linksAddon);
 term.options.linkHandler = { activate: openTerminalLink };
 term.open($('#terminal'));
 
+// Wheel forwarding for full-screen agents. A TUI like copilot runs in the
+// alternate screen (no terminal scrollback) and turns mouse reporting on so it
+// can scroll its OWN transcript. Husk strips that reporting upstream so
+// drag-to-select stays local, which also stops the agent from receiving the
+// wheel. So when the agent has reporting on, forward only the wheel to it as
+// scroll input; otherwise let xterm scroll its scrollback normally. Capture
+// phase + passive:false so we intercept before xterm and can preventDefault.
+let agentMouseOn = false;
+window.husk.pty.onMouseMode((on) => { agentMouseOn = !!on; });
+$('#terminal').addEventListener('wheel', (e) => {
+  if (!agentMouseOn) return;
+  const screen = $('#terminal').querySelector('.xterm-screen');
+  if (!screen) return;
+  const rect = screen.getBoundingClientRect();
+  const cw = rect.width / term.cols || 1;
+  const ch = rect.height / term.rows || 1;
+  let col = Math.floor((e.clientX - rect.left) / cw) + 1;
+  let row = Math.floor((e.clientY - rect.top) / ch) + 1;
+  col = Math.min(Math.max(col, 1), term.cols);
+  row = Math.min(Math.max(row, 1), term.rows);
+  window.husk.pty.wheel({ deltaY: e.deltaY, deltaMode: e.deltaMode, col, row });
+  e.preventDefault();
+  e.stopPropagation();
+}, { capture: true, passive: false });
+
 function themeForXterm() {
   // The terminal runs a TUI agent that themes its output through the 16 ANSI
   // colors. Each app theme gets a matching palette so the output is readable
@@ -258,6 +283,8 @@ window.addEventListener('resize', fitNow);
 term.onData((d) => {
   chatHasInput = true;
   $('#chat-empty').classList.remove('show');
+  // Enter (or pasted newline) ends a user turn; allow that turn's recap.
+  if (/[\r\n]/.test(d)) armRecap();
   window.husk.pty.write(d);
   term.scrollToBottom();
 });
@@ -2317,7 +2344,7 @@ async function runPrompt(mdPath) {
   setPage('chat');
   // Send the prompt body to the agent's PTY. Append a newline so the agent
   // treats it as a complete user turn. setPage('chat') focuses the terminal.
-  setTimeout(() => { try { window.husk.pty.write(body + '\n'); } catch (_) {} }, 60);
+  setTimeout(() => { try { armRecap(); window.husk.pty.write(body + '\n'); } catch (_) {} }, 60);
 }
 
 async function previewPrompt(mdPath) {
@@ -2998,41 +3025,33 @@ async function speak(text) {
   await window.husk.voice.speak({ text, voice: cfg.voice.name, rate: cfg.voice.rate || 1.0 });
 }
 
-// Watch the PTY output for any of the agent's spoken-summary lines:
+// Read the agent's spoken-summary line and pipe it into local TTS:
 //   🗣️ <Name>: <one-line summary>     (PAI NATIVE/MINIMAL trailing line)
 //   * recap: <one-line summary>        (Claude Code recap)
-// and pipe whichever appears latest into local TTS. Each unique line is spoken
-// at most once per session, TUIs redraw, so a time-based dedup misses.
-const SPEECH_BALLOON_RE = /\u{1F5E3}\u{FE0F}?\s*[^\r\n:]{0,40}?:\s*([^\r\n]+)/gu;
-const RECAP_RE = /(?:^|\n)\s*\*\s+recap:\s*([^\r\n]+)/gi;
-const ANSI_RE = /\x1B\[[\d;?]*[A-Za-z]|\x1B\][^\x07]*\x07/g;
+//
+// The text is read from xterm's RENDERED GRID, not the raw byte stream. A
+// full-screen agent (e.g. copilot in the alternate screen) streams its reply
+// while redrawing the screen with cursor positioning, which interleaves UI
+// chrome (status bar, spinner, prompt) into the byte stream; only the final
+// grid has each line cleanly on its own row. So we wait for output to settle
+// (the reply has stopped streaming), then scan the grid for the recap row.
+// Spoken at most once per user turn, and each unique line at most once.
 const SPOKEN_HISTORY_MAX = 32;
-let speechBuf = '';
-// Total bytes of speechBuf that have been written across the lifetime of
-// this session (speechBuf itself is a sliding window of the tail of that
-// stream). Match indexes are translated into this absolute coordinate
-// so we can compare positions across windowed shrinks.
-let speechAbsBase = 0;
-// The absolute position of the last spoken match. detectAndSpeak only
-// considers matches strictly after this position. TUI redraws emitted
-// after a SIGWINCH (terminal resize, including zoom) re-paint the same
-// speech-balloon line at a buffer position that is older in absolute
-// terms, so the cursor guards against re-firing the same line.
-let lastSpokenAbsIdx = -1;
+const RECAP_SCAN_ROWS = 80;
 const spokenSet = new Set();
 const spokenOrder = [];
-// The recap line streams in token by token. Rather than speak the first word
-// that arrives, we hold the candidate and speak it only once it has stopped
-// growing for RECAP_SETTLE_MS, so the whole line is read.
-let pendingSpeak = null;
+// Speak at most one recap per user turn. Armed when the user submits input;
+// disarmed once a recap is read. A terminal redraw (zoom / SIGWINCH re-paint)
+// is not a new turn, so the recap is never re-read on a redraw.
+let recapArmed = false;
+function armRecap() { recapArmed = true; }
+// After output stops streaming, wait this long with no further output before
+// reading the grid, so the whole recap line is rendered, not a half line.
 let speakSettleTimer = null;
-const RECAP_SETTLE_MS = 400;
+const RECAP_SETTLE_MS = 1500;
 
-// Dedup key is a fixed-length prefix of the normalised line. Without the slice,
-// a SIGWINCH-triggered redraw (terminal resize / zoom) makes claude re-emit the
-// same 🗣️ line soft-wrapped at the new column width; the captured text differs
-// by a few trailing chars and spokenSet treats it as a fresh line. Comparing on
-// a fixed prefix collapses every redraw of the same line onto one key.
+// Dedup key is a fixed-length prefix of the normalised line, so a redraw that
+// re-wraps the same line onto different columns still collapses onto one key.
 function normalizeForDedup(text) {
   return text.trim().replace(/\s+/g, ' ').toLowerCase().slice(0, 60);
 }
@@ -3047,63 +3066,44 @@ function recordSpoken(key) {
   return true;
 }
 function resetSpeechState() {
-  speechBuf = '';
-  speechAbsBase = 0;
-  lastSpokenAbsIdx = -1;
   spokenSet.clear();
   spokenOrder.length = 0;
   if (speakSettleTimer) { clearTimeout(speakSettleTimer); speakSettleTimer = null; }
-  pendingSpeak = null;
+  recapArmed = false;
 }
-function detectAndSpeak(chunk) {
+// Called on every PTY data chunk. While a turn is armed, (re)arm a short settle
+// so the recap is read only after the reply stops streaming.
+function detectAndSpeak() {
   if (!cfg || !cfg.voice || !cfg.voice.enabled) return;
   if (cfg.recap === false) return;
-  speechBuf += chunk;
-  if (speechBuf.length > 16384) {
-    const dropped = speechBuf.length - 8192;
-    speechBuf = speechBuf.slice(-8192);
-    speechAbsBase += dropped;
-  }
-  const clean = speechBuf.replace(ANSI_RE, '');
-  // Pick whichever match appears latest in the buffer (by index of the
-  // match). Translate to an absolute position so windowed shrinks and
-  // TUI redraws (which re-emit older content) cannot move the cursor
-  // backward.
-  let latest = null;
-  let latestAbs = -1;
-  for (const re of [SPEECH_BALLOON_RE, RECAP_RE]) {
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(clean)) !== null) {
-      const abs = speechAbsBase + m.index;
-      if (abs > latestAbs) { latestAbs = abs; latest = (m[1] || '').trim(); }
-      if (m.index === re.lastIndex) re.lastIndex++;
-    }
-  }
-  if (!latest) return;
-  // Already spoken from a position at or before this one (handles redraws
-  // after SIGWINCH from terminal resize / zoom).
-  if (latestAbs <= lastSpokenAbsIdx) return;
-  // The recap line streams in token by token, so the buffer can hold a half
-  // written line ("Ready" before "Ready to help with..."). Speaking now would
-  // read only the first word. Hold the candidate and (re)arm the settle timer
-  // only while the line is still GROWING; once it stops changing, let the
-  // timer fire and read the whole line, even if other output keeps streaming.
-  if (pendingSpeak && pendingSpeak.abs === latestAbs && pendingSpeak.text === latest) return;
-  pendingSpeak = { abs: latestAbs, text: latest };
+  if (!recapArmed) return;
   if (speakSettleTimer) clearTimeout(speakSettleTimer);
-  speakSettleTimer = setTimeout(flushPendingSpeak, RECAP_SETTLE_MS);
+  speakSettleTimer = setTimeout(flushRecap, RECAP_SETTLE_MS);
 }
-function flushPendingSpeak() {
+async function flushRecap() {
   speakSettleTimer = null;
-  const pending = pendingSpeak;
-  pendingSpeak = null;
-  if (!pending || pending.abs <= lastSpokenAbsIdx) return;
-  lastSpokenAbsIdx = pending.abs;
-  // Content dedup still guards a later redraw of the same line (a new position
-  // but identical text), so each recap is read exactly once.
-  if (!recordSpoken(normalizeForDedup(pending.text))) return;
-  speak(pending.text);
+  if (!recapArmed) return;
+  // Snapshot the last rows of the rendered grid (same approach as the autonomy
+  // feed). translateToString(true) trims trailing cells; isWrapped marks a
+  // soft-wrap continuation that the extractor joins back into one line.
+  const rows = [];
+  try {
+    const b = term.buffer.active;
+    const start = Math.max(0, b.length - RECAP_SCAN_ROWS);
+    for (let y = start; y < b.length; y++) {
+      const line = b.getLine(y);
+      rows.push({ text: line ? line.translateToString(true) : '', wrapped: !!(line && line.isWrapped) });
+    }
+  } catch (_) { return; }
+  let text = null;
+  try { text = await window.husk.recap.extract(rows); } catch (_) { return; }
+  if (!text) return;
+  // Already-spoken line (e.g. the previous turn's recap still on screen before
+  // this turn's reply renders): leave the turn armed so the new recap is read
+  // once it appears.
+  if (!recordSpoken(normalizeForDedup(text))) return;
+  recapArmed = false;
+  speak(text);
 }
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
@@ -4526,6 +4526,7 @@ async function launchAgent({ initialPrompt = null } = {}) {
   await startPty();
   if (initialPrompt) {
     setTimeout(() => {
+      armRecap();
       window.husk.pty.write(initialPrompt);
       term.focus();
     }, 250);

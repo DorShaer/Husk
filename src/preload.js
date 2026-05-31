@@ -1,5 +1,6 @@
 // Renderer-safe API surface.
 const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
+const { extractRecap } = require('./lib/recap-extract');
 
 // Default UI scale Husk mounts at, so the renderer comes up comfortable on
 // every platform. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
@@ -14,6 +15,12 @@ contextBridge.exposeInMainWorld('husk', {
     restart: (opts) => ipcRenderer.invoke('pty:restart', opts || {}),
     onData: (cb) => ipcRenderer.on('pty:data', (_e, d) => cb(d)),
     onExit: (cb) => ipcRenderer.on('pty:exit', (_e, code) => cb(code)),
+    onMouseMode: (cb) => ipcRenderer.on('pty:mouse-mode', (_e, on) => cb(on)),
+    wheel: (payload) => ipcRenderer.send('pty:wheel', payload),
+  },
+  // Extract the agent's recap line from rendered grid rows (pure, in-process).
+  recap: {
+    extract: (rows) => { try { return extractRecap(rows); } catch (_) { return null; } },
   },
   config: {
     get: () => ipcRenderer.invoke('config:get'),
