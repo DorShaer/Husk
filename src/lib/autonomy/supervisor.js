@@ -281,7 +281,7 @@ function summarizeRun(opts = {}) {
     diff = Snapshot.diffWorkspace(workspaceRoot, storageRoot, sessionId);
   }
   const chain = Audit.verifyAuditChain(storageRoot, sessionId);
-  return buildSummary(audit, diff, chain);
+  return buildSummary(audit, diff, chain, Snapshot.hasSnapshot(storageRoot, sessionId));
 }
 
 // Async twin of summarizeRun: identical output, but the workspace diff
@@ -302,11 +302,11 @@ async function summarizeRunAsync(opts = {}) {
     catch (_) { diff = { ok: false, changes: [] }; }
   }
   const chain = Audit.verifyAuditChain(storageRoot, sessionId);
-  return buildSummary(audit, diff, chain);
+  return buildSummary(audit, diff, chain, Snapshot.hasSnapshot(storageRoot, sessionId));
 }
 
 // Shared shaping for both summarize variants.
-function buildSummary(audit, diff, chain) {
+function buildSummary(audit, diff, chain, hasSnapshot) {
   // Pull the most recent run_summary AND the original start_run row.
   // run_summary carries the final meter / diff; start_run carries the
   // goal + caps the user originally set. Both are needed for Review +
@@ -332,6 +332,7 @@ function buildSummary(audit, diff, chain) {
     goal,
     caps,
     diff: diff.ok ? diff.changes : [],
+    hasSnapshot: !!hasSnapshot,
     chain: { valid: chain.valid, brokenAtIndex: chain.brokenAtIndex },
     warnings: audit.warnings,
   };

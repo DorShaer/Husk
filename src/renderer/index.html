@@ -100,16 +100,6 @@
           </button>
         </div>
 
-        <!-- Tool selector: which CLI is active. No section label to avoid confusing with LLM "agents". -->
-        <div class="rail-section rail-section-tool">
-          <button class="rail-agent" id="rail-agent-pill" title="Switch AI tool">
-            <span class="ra-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="12" cy="3.2" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/><path d="M2.5 12.5h2M19.5 12.5h2"/></svg></span>
-            <span class="ra-name" id="ra-name">claude</span>
-            <span class="ra-chev">▾</span>
-          </button>
-          <div class="rail-agent-menu" id="rail-agent-menu" hidden></div>
-        </div>
-
         <div class="rail-section">
           <div class="rail-section-head">Workspace</div>
           <nav class="rail-nav">
@@ -187,6 +177,16 @@
         </div>
 
         <div class="rail-spacer"></div>
+
+        <!-- Tool selector: which CLI is active. No section label to avoid confusing with LLM "agents". -->
+        <div class="rail-section rail-section-tool">
+          <button class="rail-agent" id="rail-agent-pill" title="Switch AI tool">
+            <span class="ra-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="12" cy="3.2" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/><path d="M2.5 12.5h2M19.5 12.5h2"/></svg></span>
+            <span class="ra-name" id="ra-name">claude</span>
+            <span class="ra-chev">▾</span>
+          </button>
+          <div class="rail-agent-menu" id="rail-agent-menu" hidden></div>
+        </div>
 
         <div class="rail-section">
           <nav class="rail-nav">
@@ -1110,19 +1110,25 @@
           <div class="aut-caps-grid">
             <div class="mcp-input-group">
               <label for="aut-cap-min">Minutes cap</label>
-              <input id="aut-cap-min" type="number" min="1" step="1" value="60" />
+              <input id="aut-cap-min" type="number" min="0" step="1" value="60" />
             </div>
             <div class="mcp-input-group">
               <label for="aut-cap-tok">Tokens cap</label>
-              <input id="aut-cap-tok" type="number" min="1" step="1000" value="200000" />
+              <input id="aut-cap-tok" type="number" min="0" step="1000" value="200000" />
             </div>
             <div class="mcp-input-group">
               <label for="aut-cap-usd">Dollars cap</label>
               <input id="aut-cap-usd" type="number" min="0" step="0.5" value="5" />
             </div>
           </div>
+          <div class="mig-hint">All caps are optional. Leave a field as is for the default, or enter 0 for unlimited.</div>
+          <label class="ai-foot-toggle aut-snapshot-opt" title="Capture a pre-run snapshot so you can review the diff and revert in one click. Turn off if you manage state with git.">
+            <input type="checkbox" id="aut-snapshot-toggle" class="ai-check" checked />
+            <span class="ai-check-box" aria-hidden="true"></span>
+            Take a workspace snapshot (enables one-click revert)
+          </label>
           <div class="aut-note">
-            On halt or end, Husk produces a diff against the pre-run snapshot. Revert is one click. Encryption (when the OS keychain is available) wraps every blob the audit log and snapshot store write.
+            With a snapshot, Husk produces a diff against the pre-run state on halt or end and revert is one click. Without it, the agent still runs under the audit log and caps, but review and revert are unavailable (use git). Encryption (when the OS keychain is available) wraps every blob the audit log and snapshot store write.
           </div>
           <div class="aut-snapshot-status" id="aut-snapshot-status" hidden></div>
           </div>
