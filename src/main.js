@@ -839,10 +839,16 @@ function readActiveSessionStats() {
     }
     let turns = 0;
     let chars = 0;
+    let model = '';
     for (const line of raw) {
       try {
         const obj = JSON.parse(line);
         if (obj.type === 'user' || obj.type === 'assistant') turns++;
+        // The agent records the model on each assistant turn. Keep the most
+        // recent one so a mid-session model switch is reflected. Agents that
+        // do not write a session log simply never set this, and the UI hides
+        // the row.
+        if (obj.message && typeof obj.message.model === 'string' && obj.message.model) model = obj.message.model;
         const content = obj.message && obj.message.content;
         if (typeof content === 'string') chars += content.length;
         else if (Array.isArray(content)) {
@@ -853,7 +859,7 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    return { turns, chars, tokens: Math.round(chars / 4), file: latest };
+    return { turns, chars, tokens: Math.round(chars / 4), file: latest, model };
   } catch (_) { return null; }
 }
 
