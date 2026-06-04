@@ -100,6 +100,9 @@
           </button>
         </div>
 
+        <!-- Scrollable middle. The nav and lists scroll here on a short window
+             so the tool selector and Preferences below stay pinned and visible. -->
+        <div class="rail-scroll">
         <div class="rail-section">
           <div class="rail-section-head">Workspace</div>
           <nav class="rail-nav">
@@ -175,8 +178,8 @@
             <div class="rail-sub-empty">Nothing shared yet. Drop a file or click +.</div>
           </div>
         </div>
-
-        <div class="rail-spacer"></div>
+        </div>
+        <!-- /rail-scroll -->
 
         <!-- Tool selector: which CLI is active. No section label to avoid confusing with LLM "agents". -->
         <div class="rail-section rail-section-tool">

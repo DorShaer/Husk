@@ -330,6 +330,12 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
 #main {
   display: grid;
   grid-template-columns: 72px 1fr 380px;
+  /* Pin the row to the container height. Without an explicit row the grid
+     uses an auto row that grows to the tallest column's content, pushing the
+     rail's bottom group and the status footer past the viewport (the body
+     clips the overflow, so they vanish). minmax(0, 1fr) keeps the row exactly
+     the viewport height and lets each column scroll its own overflow. */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   position: relative;
 }
@@ -362,6 +368,9 @@ body[data-status="collapsed"] .sp-toggle { transform: rotate(180deg); }
      tool-selector dropdown, which overflow the rail into the pages area,
      paint on top of the terminal instead of behind it. */
   z-index: 40;
+  /* Allow the rail to be constrained to its grid cell so .rail-scroll can
+     scroll instead of the whole rail growing past the viewport. */
+  min-height: 0;
   width: 72px;
   transition: width var(--motion-base) var(--ease);
   overflow: visible;
@@ -408,6 +417,22 @@ body[data-rail="collapsed"] .rail-top { justify-content: center; padding: 0 0 8p
 body[data-rail="collapsed"] .rail-toggle-btn svg { transform: rotate(180deg); }
 .rail-nav { display: flex; flex-direction: column; gap: 2px; }
 .rail-spacer { flex: 1; }
+/* Scrollable middle of the rail. Takes the free vertical space and scrolls
+   its own content on a short window, so the tool selector and Preferences
+   pinned below it never get pushed off-screen. */
+.rail-scroll {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0;
+}
+/* Keep the original spacing above the pinned bottom group. */
+.rail-scroll + .rail-section { margin-top: 12px; }
+/* Only scroll in the expanded rail. The collapsed rail relies on overflow
+   staying visible so the icon hover tooltips (which extend to the right of
+   the rail) are not clipped; it has no labels or lists to overflow anyway. */
+body[data-rail="expanded"] .rail-scroll { overflow-y: auto; }
+.rail-scroll::-webkit-scrollbar { width: 8px; }
+.rail-scroll::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+.rail-scroll::-webkit-scrollbar-track { background: transparent; }
 .rail-item {
   display: flex; align-items: center; gap: 12px;
   padding: 7px 10px;
