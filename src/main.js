@@ -500,8 +500,11 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1500,
     height: 950,
-    minWidth: 1000,
-    minHeight: 600,
+    // Low enough that the responsive breakpoints (which collapse the rail and
+    // drop the side panels) actually engage, so the app stays fully usable in
+    // a small window instead of clipping its chrome.
+    minWidth: 720,
+    minHeight: 520,
     backgroundColor: '#0b0d12',
     title: 'Husk',
     titleBarStyle: 'hiddenInset',
@@ -1066,16 +1069,24 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
   const onProgress = (info) => {
     if (mainWindow) mainWindow.webContents.send('autonomy:snapshot-progress', info);
   };
+  // Snapshot is opt-in. When the user turns it off (they manage state with
+  // git), skip the workspace walk entirely: the run still gets an audit log
+  // and budget caps, but diff/revert are unavailable for it.
+  const wantSnapshot = payload.snapshot !== false;
   let snap;
-  try {
-    snap = await Autonomy.snapshot.captureSnapshotAsync(workspaceRoot, autonomyStorageRoot(), sessionId, {
-      encrypt,
-      onProgress,
-    });
-  } catch (err) {
-    return { ok: false, error: `snapshot crashed: ${err && err.message || String(err)}` };
+  if (wantSnapshot) {
+    try {
+      snap = await Autonomy.snapshot.captureSnapshotAsync(workspaceRoot, autonomyStorageRoot(), sessionId, {
+        encrypt,
+        onProgress,
+      });
+    } catch (err) {
+      return { ok: false, error: `snapshot crashed: ${err && err.message || String(err)}` };
+    }
+    if (!snap.ok) return { ok: false, error: snap.error };
+  } else {
+    snap = { ok: true, manifest: null, fileCount: 0 };
   }
-  if (!snap.ok) return { ok: false, error: snap.error };
 
   // Derive the agent name from the configured command so the budget
   // meter prices the run correctly. Vendor-billed agents (copilot, codex,
