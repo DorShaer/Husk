@@ -608,6 +608,10 @@ async function refreshStatusline() {
     : '';
   const u = s.usage || {};
   const L = s.learning || {};
+  // The active agent's model, sourced from its session log. Trim a leading
+  // vendor prefix so the readout stays compact (e.g. "opus-4-8"). Empty when
+  // no model is known, which hides the row.
+  const modelLabel = ((u.session && u.session.model) || '').replace(/^claude-/, '');
 
   const html = `
     <div class="sp-section">
@@ -623,6 +627,7 @@ async function refreshStatusline() {
       <div class="sp-section-head"><span class="sp-h-icon">▣</span><span>Build</span></div>
       <div class="sp-section-body">
         <div class="sp-row"><span class="sp-muted">Claude</span><span class="sp-mono">2.1.129</span></div>
+        ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model</span><span class="sp-mono sp-accent" title="${escapeHtml((u.session && u.session.model) || '')}">${escapeHtml(modelLabel)}</span></div>` : ''}
         <div class="sp-row"><span class="sp-muted">Husk</span><span class="sp-mono">${escapeHtml(s.huskVer || '0.2')}</span></div>
       </div>
     </div>
