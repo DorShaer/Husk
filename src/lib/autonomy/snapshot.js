@@ -60,6 +60,16 @@ function manifestPath(storageRoot, sessionId) {
   return path.join(sessionDir(storageRoot, sessionId), 'snapshot.json');
 }
 
+// Whether a run captured a pre-run snapshot. Runs started with the snapshot
+// toggle off write no manifest, so revert has nothing to restore.
+function hasSnapshot(storageRoot, sessionId) {
+  if (!isSafeSessionId(sessionId)) return false;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- manifestPath rooted in storageRoot
+    return fs.existsSync(manifestPath(storageRoot, sessionId));
+  } catch (_) { return false; }
+}
+
 // sha256OfBuffer is a tiny helper kept separate so the test suite
 // can synthesize expected hashes without rebuilding the whole module.
 function sha256OfBuffer(buf) {
@@ -668,6 +678,7 @@ module.exports = {
   restoreFromSnapshot,
   diffWorkspace,
   diffWorkspaceAsync,
+  hasSnapshot,
   // exported for unit tests; not part of the public API.
   _internal: { sha256OfBuffer, isSafeSessionId, shouldIgnore, joinSafely, validateAncestorChain },
 };
