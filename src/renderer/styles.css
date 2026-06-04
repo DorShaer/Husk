@@ -358,6 +358,10 @@ body[data-status="collapsed"] .sp-toggle { transform: rotate(180deg); }
   background: var(--bg);
   padding: 12px 8px 16px;
   position: relative;
+  /* Sit above the pages column so the icon-only hover tooltips and the
+     tool-selector dropdown, which overflow the rail into the pages area,
+     paint on top of the terminal instead of behind it. */
+  z-index: 40;
   width: 72px;
   transition: width var(--motion-base) var(--ease);
   overflow: visible;
@@ -606,8 +610,10 @@ body[data-rail="expanded"] .rail-agent .ra-name { opacity: 1; transform: transla
 body[data-rail="expanded"] .rail-agent .ra-chev { opacity: 1; }
 
 .rail-agent-menu {
-  position: absolute; top: 100%; left: 0; right: 0;
-  margin-top: 6px;
+  /* The tool selector lives at the bottom of the rail (above Preferences),
+     so the menu opens upward to avoid clipping at the window edge. */
+  position: absolute; bottom: 100%; top: auto; left: 0; right: 0;
+  margin-bottom: 6px;
   background: var(--bg-2);
   border: 1px solid var(--line); border-radius: 10px;
   padding: 6px;
@@ -1593,6 +1599,7 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 .aut-caps-grid .mcp-input-group input {
   width: 100%; min-width: 0; box-sizing: border-box;
 }
+.aut-snapshot-opt { margin-top: 14px; }
 .aut-note {
   margin-top: 14px;
   padding: 12px 14px;

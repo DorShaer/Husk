@@ -279,7 +279,9 @@ function fitNow() {
     window.husk.pty.resize({ cols, rows });
   } catch (_) {}
 }
-window.addEventListener('resize', fitNow);
+// Refit on resize. A trailing debounce coalesces the rapid resize burst
+// from a window drag into one fit so the terminal reflow stays smooth.
+window.addEventListener('resize', debounce(fitNow, 80));
 term.onData((d) => {
   chatHasInput = true;
   $('#chat-empty').classList.remove('show');
@@ -352,6 +354,9 @@ term.attachCustomKeyEventHandler((e) => {
     if (btn.dataset.action === 'copy') await copyTerminalSelection();
     else if (btn.dataset.action === 'paste') await pasteIntoTerminal();
     else if (btn.dataset.action === 'select-all') term.selectAll();
+    // Clicking a menu button pulled focus out of the terminal. Return it so
+    // the user can keep typing without clicking back into the chat.
+    try { term.focus(); } catch (_) {}
   });
   window.addEventListener('click', (e) => {
     if (menu.hidden) return;
@@ -371,6 +376,23 @@ function debounce(fn, ms) {
     if (t) clearTimeout(t);
     t = setTimeout(() => { t = null; fn(...args); }, ms);
   };
+}
+
+// Coalesce rapid preference writes. Each window.husk.config.set is a
+// synchronous disk write in the main process; spamming it (e.g. clicking
+// the theme toggle or accent swatches fast) floods the main thread and
+// freezes the UI. Apply the change optimistically to the local cfg and the
+// DOM, then write once the clicks settle. The final merged patch wins.
+let _pendingCfgPatch = null;
+const _flushCfgPatch = debounce(async () => {
+  const patch = _pendingCfgPatch; _pendingCfgPatch = null;
+  if (!patch) return;
+  try { cfg = await window.husk.config.set(patch); } catch (_) {}
+}, 180);
+function persistConfig(patch) {
+  _pendingCfgPatch = Object.assign(_pendingCfgPatch || {}, patch);
+  cfg = Object.assign({}, cfg, patch);
+  _flushCfgPatch();
 }
 
 // Coalesce PTY output into one xterm write per animation frame. A
@@ -3139,15 +3161,14 @@ $('#pref-save').addEventListener('click', async () => {
     });
   }
 }
-$('#pref-theme').addEventListener('change', async (e) => {
-  cfg = await window.husk.config.set({ theme: e.target.value });
-  applyTheme(cfg.theme);
-  toast(`Theme: ${cfg.theme} · saved`, 'success');
+$('#pref-theme').addEventListener('change', (e) => {
+  const theme = e.target.value;
+  applyTheme(theme);
+  persistConfig({ theme });
 });
-$$('.accent-swatch').forEach((sw) => sw.addEventListener('click', async () => {
-  cfg = await window.husk.config.set({ accent: sw.dataset.c });
-  applyAccent(cfg.accent);
-  toast(`Accent: ${cfg.accent} · saved`, 'success');
+$$('.accent-swatch').forEach((sw) => sw.addEventListener('click', () => {
+  applyAccent(sw.dataset.c);
+  persistConfig({ accent: sw.dataset.c });
 }));
 $('#pref-rail').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ railExpanded: e.target.checked });
@@ -3320,11 +3341,14 @@ window.husk.updates.onStatus((s) => {
 
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
 $('#btn-restart').addEventListener('click', restartPty);
-$('#btn-theme').addEventListener('click', async () => {
-  const next = (cfg.theme === 'dark') ? 'light' : 'dark';
-  cfg = await window.husk.config.set({ theme: next });
+$('#btn-theme').addEventListener('click', () => {
+  // Read the live DOM, not cfg: rapid clicks fire before the debounced
+  // write resolves, so cfg.theme can be stale. The body attribute is the
+  // source of truth for what is currently shown.
+  const next = (document.body.dataset.theme === 'dark') ? 'light' : 'dark';
   applyTheme(next);
-  $('#pref-theme').value = next;
+  const sel = $('#pref-theme'); if (sel) sel.value = next;
+  persistConfig({ theme: next });
 });
 // Send a "please read this file" message to the agent so it actually
 // ingests the dropped file. Both claude and copilot/codex/aider have a
@@ -4548,6 +4572,10 @@ async function launchAgent({ initialPrompt = null } = {}) {
 // modal with the diff and a one-click Revert.
 let autonomyActive = false;
 let autonomyLastSession = null;
+// True while a run is being started (snapshot capture + spawn). During this
+// window the wizard must not be dismissable: a stray backdrop click or Esc
+// used to hide it mid-capture and leave the user unsure if the run survived.
+let autonomyStarting = false;
 function openAutonomyStart() {
   const hasProject = !!(activeProjectId && projectsCache.some((p) => p && p.id === activeProjectId));
   const noProj = $('#aut-no-project');
@@ -4559,7 +4587,11 @@ function openAutonomyStart() {
   $('#autonomy-start-modal').hidden = false;
   if (hasProject) setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
 }
-function closeAutonomyStart() { $('#autonomy-start-modal').hidden = true; }
+function closeAutonomyStart() {
+  // Never tear down the wizard while a run is mid-launch.
+  if (autonomyStarting) return;
+  $('#autonomy-start-modal').hidden = true;
+}
 // Read one cap field. Empty -> default. A typed 0 is kept as 0, which
 // the budget meter treats as "no cap for this metric". Negative or
 // non-numeric is invalid: fall back to the default and flag it so the UI
@@ -4581,15 +4613,20 @@ async function startAutonomy() {
     toast('Caps must be zero or a positive number; invalid values were reset to the default', 'error');
   }
   const caps = { minutes: cMin.value, tokens: cTok.value, dollars: cUsd.value };
+  // Snapshot is opt-in via the wizard toggle. Users who manage state with
+  // git can skip it; revert/diff are then unavailable for the run.
+  const snapEl = $('#aut-snapshot-toggle');
+  const snapshot = snapEl ? !!snapEl.checked : true;
   const goBtn = $('#aut-start-go');
   const cancelBtn = $('#aut-start-cancel');
   const status = $('#aut-snapshot-status');
   const goLabelBefore = goBtn ? goBtn.textContent : 'Start run';
-  if (goBtn) { goBtn.disabled = true; goBtn.textContent = 'Capturing snapshot...'; }
+  autonomyStarting = true;
+  if (goBtn) { goBtn.disabled = true; goBtn.textContent = snapshot ? 'Capturing snapshot...' : 'Starting run...'; }
   if (cancelBtn) cancelBtn.disabled = true;
-  if (status) { status.hidden = false; status.textContent = 'Capturing workspace snapshot...'; }
+  if (status) { status.hidden = false; status.textContent = snapshot ? 'Capturing workspace snapshot...' : 'Starting run...'; }
   try {
-    const r = await window.husk.autonomy.start({ goal, caps });
+    const r = await window.husk.autonomy.start({ goal, caps, snapshot });
     if (!r || !r.ok) {
       toast((r && r.error) || 'Could not start autonomy', 'error');
       if (status) { status.hidden = true; status.textContent = ''; }
@@ -4601,12 +4638,15 @@ async function startAutonomy() {
     resetAutonomyPanel();
     setAutonomyGoal(goal);
     setAutonomyCaps(caps);
+    // Release the close guard before dismissing the wizard.
+    autonomyStarting = false;
     closeAutonomyStart();
     try { setPage('autonomy'); } catch (_) {}
     paintAutonomyBanner();
     const fc = Number(r.fileCount) || 0;
-    toast(`Autonomy running, snapshot of ${fc} files captured`, 'success');
+    toast(snapshot ? `Autonomy running, snapshot of ${fc} files captured` : 'Autonomy running (no snapshot)', 'success');
   } finally {
+    autonomyStarting = false;
     if (goBtn) { goBtn.disabled = false; goBtn.textContent = goLabelBefore; }
     if (cancelBtn) cancelBtn.disabled = false;
     if (status) { status.hidden = true; status.textContent = ''; }
@@ -4717,6 +4757,9 @@ function renderAutonomyPage() {
   }
   // Dynamic: recent runs + hero stats fetched from backend.
   refreshAutonomyHistory();
+  // Restore the live/running (or review) view on every visit so a run
+  // started earlier is never hidden behind the empty/presets state.
+  paintAutonomyBanner();
 }
 
 function loadPresetIntoStartModal(p) {
@@ -4995,7 +5038,15 @@ function paintAutonomyBanner() {
   // contradictory.
   if (startBtn) startBtn.hidden = showLive;
   if (stopBtnTop) stopBtnTop.hidden = !autonomyActive;
-  reviewButtons.forEach((b) => { b.hidden = !autonomyReview; });
+  // Revert needs a pre-run snapshot. Runs started with the snapshot toggle
+  // off carry hasSnapshot === false, so the Revert button stays hidden even
+  // in review (older runs without the field are treated as snapshotted).
+  const reviewHasSnapshot = !(autonomyReviewData && autonomyReviewData.summary
+    && autonomyReviewData.summary.hasSnapshot === false);
+  reviewButtons.forEach((b) => {
+    const isRevert = b.id === 'aut-review-revert';
+    b.hidden = !autonomyReview || (isRevert && !reviewHasSnapshot);
+  });
   if (backBtn) backBtn.hidden = !autonomyReview;
   // Status pill content shifts by mode.
   if (statusText) {
@@ -5666,6 +5717,10 @@ function openAutonomyEndModal(sum) {
       </div>
     `).join('');
   }
+  // Revert restores the pre-run snapshot; hide it for runs that had none
+  // (snapshot toggle off). Older runs without the field keep the button.
+  const revertBtn = $('#aut-end-revert');
+  if (revertBtn) revertBtn.hidden = sum.hasSnapshot === false;
   $('#autonomy-end-modal').hidden = false;
 }
 function closeAutonomyEndModal() { $('#autonomy-end-modal').hidden = true; }
@@ -5858,7 +5913,10 @@ $('#aut-review-revert') && $('#aut-review-revert').addEventListener('click', asy
 // keeps working without closing the surrounding modal.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.isComposing) return;
-  const open = $$('.modal:not([hidden])');
+  let open = $$('.modal:not([hidden])');
+  // The autonomy wizard is locked while a run is launching; Esc must not
+  // tear it down mid-capture.
+  if (autonomyStarting) open = open.filter((m) => m.id !== 'autonomy-start-modal');
   if (!open.length) return;
   // DOM order is install-order for these dialogs; the LAST visible
   // one is the most recently opened (e.g. a confirm-modal layered on
