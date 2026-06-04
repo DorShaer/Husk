@@ -339,6 +339,11 @@ body[data-detail="open"][data-rail="expanded"] #main { grid-template-columns: 22
 body[data-detail="open"] #status-panel { display: none; }
 body[data-status="collapsed"] #main { grid-template-columns: 72px 1fr 28px; }
 body[data-status="collapsed"][data-rail="expanded"] #main { grid-template-columns: 220px 1fr 28px; }
+/* An open detail panel owns the third column even when the status panel is
+   collapsed. These combined selectors outrank the collapsed-status rules
+   above, so the 28px status sliver never squeezes the detail panel shut. */
+body[data-detail="open"][data-status="collapsed"] #main { grid-template-columns: 72px 1fr 460px; }
+body[data-detail="open"][data-status="collapsed"][data-rail="expanded"] #main { grid-template-columns: 220px 1fr 460px; }
 body[data-status="collapsed"] #status-panel .sp-head,
 body[data-status="collapsed"] #status-panel #sp-content,
 body[data-status="collapsed"] #status-panel .sp-foot { display: none; }
