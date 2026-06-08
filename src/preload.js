@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('husk', {
     update: (payload) => ipcRenderer.invoke('profiles:update', payload),
     delete: (id) => ipcRenderer.invoke('profiles:delete', id),
     activate: (id) => ipcRenderer.invoke('profiles:activate', id),
+    activateAll: () => ipcRenderer.invoke('profiles:activateAll'),
     deactivate: (id) => ipcRenderer.invoke('profiles:deactivate', id),
     deactivateAll: () => ipcRenderer.invoke('profiles:deactivateAll'),
     generate: (description) => ipcRenderer.invoke('profiles:generate', description),

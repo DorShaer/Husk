@@ -2614,7 +2614,17 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 .ra-status.ra-status-error { border-color: rgba(255, 92, 122, 0.35); color: var(--text); }
 /* The footer of the repo-install modal has three toggles + two buttons;
    let it wrap on narrow window widths rather than stretching off-screen. */
-.modal-foot.ra-foot { flex-wrap: wrap; gap: 10px; }
+.modal-foot.ra-foot { flex-direction: column; align-items: stretch; gap: 12px; }
+.ra-foot-toggles { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.ra-foot-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* Bulk select/deselect toolbar above the agent grid. */
+.agents-bulk {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-bottom: 12px;
+}
+.agents-bulk-label { font-size: 12px; color: var(--text-3); }
+.agents-bulk-actions { display: inline-flex; gap: 14px; flex: 0 0 auto; }
 
 /* Active-for-next-session banner with one chip per active agent. */
 .agents-active-banner {
@@ -3339,7 +3349,7 @@ input[type="checkbox"]:disabled {
   flex: 1; background: transparent; color: var(--text);
   border: 0; outline: 0;
   font-family: 'JetBrains Mono', monospace; font-size: 13px;
-  text-align: right; min-width: 0;
+  text-align: left; min-width: 0;
 }
 .pref-row select { font-family: inherit; }
 .pref-row select option { color: #111; background: #ffffff; }

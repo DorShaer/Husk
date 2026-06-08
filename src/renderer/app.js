@@ -1836,7 +1836,7 @@ function paintAgents() {
   const cards = sorted.map((p) => {
     const isActive = activeIds.has(p.id);
     return `
-    <div class="agent-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}" role="button" aria-pressed="${isActive}" tabindex="0" title="${isActive ? 'Click to deactivate' : 'Click to activate'}">
+    <div class="agent-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}" role="button" aria-pressed="${isActive}" tabindex="0" title="${isActive ? 'Selected. Click to deselect.' : 'Click to select.'}">
       ${!p.builtin ? `
         <div class="agent-card-corner">
           <button class="agent-card-icon agent-edit" data-id="${escapeHtml(p.id)}" title="Edit agent" aria-label="Edit agent">${editIcon}</button>
@@ -1844,11 +1844,11 @@ function paintAgents() {
         </div>` : ''}
       <div class="agent-card-head">
         <div class="agent-card-title">${escapeHtml(p.name)}</div>
-        ${isActive ? '<span class="agent-card-pill">Active</span>' : ''}
+        ${isActive ? '<span class="agent-card-pill">Selected</span>' : ''}
         ${p.builtin ? '<span class="agent-card-builtin">Built-in</span>' : ''}
       </div>
       ${p.description ? `<div class="agent-card-desc">${escapeHtml(p.description)}</div>` : ''}
-      ${p.repoRoot ? `<div class="agent-card-repo" title="${escapeAttr(p.repoRoot)}">cwd: ${escapeHtml(p.repoRoot.replace(/^\/home\/[^/]+/, '~'))}</div>` : ''}
+      ${p.repoRoot ? `<div class="agent-card-repo" title="Installed from ${escapeAttr(p.repoRoot)}">repo: ${escapeHtml(p.repoRoot.replace(/^\/home\/[^/]+/, '~'))}</div>` : ''}
       ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
     </div>
   `;
@@ -1856,7 +1856,7 @@ function paintAgents() {
   // eslint-disable-next-line no-unsanitized/property
   grid.innerHTML = cards;
 
-  // Whole-card click toggles activation; clicks on inner buttons fall through.
+  // Whole-card click toggles selection; clicks on inner buttons fall through.
   grid.querySelectorAll('.agent-card').forEach((card) => {
     const id = card.dataset.id;
     const toggle = () => {
@@ -1865,7 +1865,6 @@ function paintAgents() {
     };
     card.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
-      // Skip toggle when the user just selected text inside the card.
       if (window.getSelection && window.getSelection().toString().length > 0) return;
       toggle();
     });
@@ -1897,6 +1896,15 @@ async function deactivateProfile(id) {
 
 async function deactivateAllProfiles() {
   const res = await window.husk.profiles.deactivateAll();
+  if (!res || !res.ok) return;
+  cfg = await window.husk.config.get();
+  paintAgents();
+  updateAgentBanner();
+  updateActiveChatProfile();
+}
+
+async function activateAllProfiles() {
+  const res = await window.husk.profiles.activateAll();
   if (!res || !res.ok) return;
   cfg = await window.husk.config.get();
   paintAgents();
@@ -2104,6 +2112,14 @@ async function openAgentsImportModal() {
     if (confirmBtn) { confirmBtn.disabled = n === 0; confirmBtn.textContent = `Import ${n} agent${n !== 1 ? 's' : ''}`; }
   };
   listEl.querySelectorAll('.ai-check').forEach((el) => el.addEventListener('change', updateCount));
+  const setAll = (checked) => {
+    listEl.querySelectorAll('.ai-check').forEach((el) => { el.checked = checked; });
+    updateCount();
+  };
+  const selAll = $('#ai-select-all');
+  const deselAll = $('#ai-deselect-all');
+  if (selAll) selAll.onclick = () => setAll(true);
+  if (deselAll) deselAll.onclick = () => setAll(false);
   updateCount();
 }
 
@@ -2252,6 +2268,14 @@ async function scanRepoRoot(root) {
     confirmBtn.textContent = `Install ${n} agent${n !== 1 ? 's' : ''}`;
   };
   listEl.querySelectorAll('.ra-pick').forEach((el) => el.addEventListener('change', updateCount));
+  const tools = $('#ra-list-tools');
+  if (tools) tools.hidden = !listEl.querySelector('.ra-pick');
+  const setAll = (checked) => {
+    listEl.querySelectorAll('.ra-pick').forEach((el) => { el.checked = checked; });
+    updateCount();
+  };
+  if ($('#ra-select-all')) $('#ra-select-all').onclick = () => setAll(true);
+  if ($('#ra-deselect-all')) $('#ra-deselect-all').onclick = () => setAll(false);
   updateCount();
 }
 async function confirmRepoAgentsInstall() {
@@ -2526,6 +2550,8 @@ $('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', clo
 $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
 $('#btn-deactivate-all') && $('#btn-deactivate-all').addEventListener('click', () => deactivateAllProfiles());
+$('#btn-select-all-agents') && $('#btn-select-all-agents').addEventListener('click', () => activateAllProfiles());
+$('#btn-deselect-all-agents') && $('#btn-deselect-all-agents').addEventListener('click', () => deactivateAllProfiles());
 $('#agent-modal') && $('#agent-modal').addEventListener('click', (e) => { if (e.target === $('#agent-modal')) closeAgentModal(); });
 $('#btn-generate-agent') && $('#btn-generate-agent').addEventListener('click', generateAgentWithAI);
 $('#btn-manual-agent') && $('#btn-manual-agent').addEventListener('click', () => {

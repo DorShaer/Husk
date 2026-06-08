@@ -516,7 +516,7 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Agents</h1>
-              <span class="page-sub">saved configurations that shape how the AI works for a task</span>
+              <span class="page-sub">all agents here are available to whichever AI you run · select agents to feature them in your chat header</span>
             </div>
             <div class="page-head-right">
               <button class="ghost-btn" id="btn-install-from-repo" title="Install an agent pack from a cloned repo">
@@ -531,10 +531,17 @@
             </div>
           </div>
           <div class="page-body">
+            <div class="agents-bulk">
+              <span class="agents-bulk-label">Selected agents are shown in your chat header. All agents are available to the AI regardless.</span>
+              <span class="agents-bulk-actions">
+                <button class="ghost-link" id="btn-select-all-agents">Select all</button>
+                <button class="ghost-link" id="btn-deselect-all-agents">Deselect all</button>
+              </span>
+            </div>
             <div id="agents-active-banner" class="agents-active-banner" hidden>
               <div class="aab-meta">
                 <span class="aab-dot"></span>
-                <span class="aab-meta-text">Active for next session</span>
+                <span class="aab-meta-text">Selected</span>
               </div>
               <div class="aab-chips" id="aab-chips"></div>
               <button class="ghost-link aab-clear" id="btn-deactivate-all">Clear all</button>
@@ -552,6 +559,10 @@
             </div>
             <div class="modal-body">
               <p class="ai-hint" id="ai-hint">Husk found these agents on your machine. Pick the ones to bring in as Husk profiles.</p>
+              <div class="ai-list-tools">
+                <button class="ghost-link" id="ai-select-all" type="button">Select all</button>
+                <button class="ghost-link" id="ai-deselect-all" type="button">Deselect all</button>
+              </div>
               <div id="ai-list" class="ai-list"></div>
             </div>
             <div class="modal-foot">
@@ -599,27 +610,35 @@
               <button class="modal-close" id="ra-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">Point Husk at a cloned repo that ships an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are installed into every AI tool you have (Claude, Copilot, ...) using each tool's native agents folder. Each Husk profile is stamped with the repo path so the active CLI launches there, which is what makes the agent's relative <code>skills/&lt;id&gt;/SKILL.md</code> reads resolve.</p>
+              <p class="ra-hint">Point Husk at a cloned repo that ships an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are installed into every AI tool you have (Claude, Copilot, ...) using each tool's native agents folder. Your working directory is unchanged; if an agent reads a relative <code>skills/&lt;id&gt;/SKILL.md</code>, point Preferences &rsaquo; Working directory at that repo.</p>
               <div class="ra-pathrow">
                 <input type="text" id="ra-root" class="ra-root" placeholder="/path/to/agent-pack-repo" autocomplete="off" spellcheck="false" />
                 <button class="ghost-btn" id="ra-browse">Browse…</button>
               </div>
               <div id="ra-status" class="ra-status" hidden></div>
+              <div class="ai-list-tools" id="ra-list-tools" hidden>
+                <button class="ghost-link" id="ra-select-all" type="button">Select all</button>
+                <button class="ghost-link" id="ra-deselect-all" type="button">Deselect all</button>
+              </div>
               <div id="ra-list" class="ai-list"></div>
             </div>
             <div class="modal-foot ra-foot">
-              <label class="ai-foot-toggle" title="Install each picked agent into every detected AI tool's native agents folder (Claude, Copilot, ...)">
-                <input type="checkbox" id="ra-claude" class="ai-check" checked />
-                <span class="ai-check-box" aria-hidden="true"></span>
-                Install into all AI tools
-              </label>
-              <label class="ai-foot-toggle" title="Activate imported agents for the next chat session">
-                <input type="checkbox" id="ra-activate" class="ai-check" checked />
-                <span class="ai-check-box" aria-hidden="true"></span>
-                Activate after install
-              </label>
-              <button class="ghost-btn" id="ra-cancel">Cancel</button>
-              <button class="btn-primary" id="ra-confirm" disabled>Install 0 agents</button>
+              <div class="ra-foot-toggles">
+                <label class="ai-foot-toggle" title="Install each picked agent into every detected AI tool's native agents folder (Claude, Copilot, ...)">
+                  <input type="checkbox" id="ra-claude" class="ai-check" checked />
+                  <span class="ai-check-box" aria-hidden="true"></span>
+                  Install into all AI tools
+                </label>
+                <label class="ai-foot-toggle" title="Activate imported agents for the next chat session">
+                  <input type="checkbox" id="ra-activate" class="ai-check" checked />
+                  <span class="ai-check-box" aria-hidden="true"></span>
+                  Activate after install
+                </label>
+              </div>
+              <div class="ra-foot-actions">
+                <button class="ghost-btn" id="ra-cancel">Cancel</button>
+                <button class="btn-primary" id="ra-confirm" disabled>Install 0 agents</button>
+              </div>
             </div>
           </div>
         </div>
