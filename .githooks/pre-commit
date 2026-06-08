@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# Pre-commit secret scan. Blocks a commit before it can introduce a secret
+# into history. This runs locally, on the staged diff, BEFORE the commit
+# object exists, so a caught secret never leaves the machine.
+#
+# It complements two other layers:
+#   - GitHub Push Protection (server rejects the push itself)
+#   - the CI gitleaks job in .github/workflows/security.yml (post-push alarm)
+#
+# Enable in any clone with:
+#   git config core.hooksPath .githooks
+#
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not found on PATH." >&2
+  echo "Install it, then retry. The commit is blocked until the scan can run." >&2
+  echo "  https://github.com/gitleaks/gitleaks#installing" >&2
+  exit 1
+fi
+
+# Scan only what is staged, using the repo allowlist. --redact keeps any
+# matched secret out of the terminal output.
+if ! gitleaks protect --staged --config .gitleaks.toml --redact --no-banner; then
+  echo "" >&2
+  echo "pre-commit: gitleaks found a potential secret in the staged changes." >&2
+  echo "The commit was blocked. Remove the secret and, if it was ever real," >&2
+  echo "rotate it. To override for a confirmed false positive only:" >&2
+  echo "  git commit --no-verify" >&2
+  exit 1
+fi
