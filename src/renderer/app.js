@@ -407,7 +407,14 @@ function _flushTermWrite() {
   if (!_termWriteBuf) return;
   const data = _termWriteBuf;
   _termWriteBuf = '';
-  term.write(data, () => term.scrollToBottom());
+  // Follow the tail only when the user is already pinned to the bottom. If they
+  // scrolled up to read while the agent is still streaming, leave the viewport
+  // where it is instead of yanking it back down on every chunk. (In the alt
+  // screen there is no scrollback, so viewportY/baseY are both 0 and this stays
+  // pinned -- copilot's own wheel-forwarded scrolling is unaffected.)
+  const buf = term.buffer.active;
+  const wasAtBottom = buf.viewportY >= buf.baseY;
+  term.write(data, () => { if (wasAtBottom) term.scrollToBottom(); });
   detectAndSpeak(data);
 }
 window.husk.pty.onData((d) => {

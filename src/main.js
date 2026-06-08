@@ -2463,9 +2463,12 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
 // ─── Install-from-repo flow ───────────────────────────────────────────────
 //
 // Lets a user point Husk at a cloned "agent pack" repo (e.g. agent-pack)
-// whose layout is:
-//   <repoRoot>/agents/<agent>.md      Claude-style subagent definitions
-//   <repoRoot>/skills/<test_id>.md    skill library the agents reference
+// whose agents live in one of two layouts:
+//   <repoRoot>/.github/agents/<agent>.agent.md   VSCode/Copilot-native layout
+//   <repoRoot>/agents/<agent>.md                 legacy flat layout
+// Companion skills live under <repoRoot>/.github/skills/ or <repoRoot>/skills/.
+// The .github layout lets VSCode and Copilot consume the agents natively
+// without Husk, so it is preferred; the legacy layout stays supported.
 //
 // Install does three things, each individually toggleable from the renderer:
 //   1) Copy each picked agent .md into ~/.claude/agents/ so Claude Code can
@@ -2488,6 +2491,40 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
 const HUSK_AGENTS_START = PaiState.HUSK_AGENTS_START;
 const HUSK_AGENTS_END = PaiState.HUSK_AGENTS_END;
 
+// Resolve where importable agents live inside a pointed-at repo. The current
+// VSCode/Copilot-native layout keeps them in <root>/.github/agents/*.agent.md;
+// older packs use a flat <root>/agents/*.md. First existing match wins.
+// Returns { dir, ext } or null when neither directory exists.
+function resolveRepoAgentsDir(root) {
+  const candidates = [
+    { dir: path.join(root, '.github', 'agents'), ext: '.agent.md' },
+    { dir: path.join(root, 'agents'), ext: '.md' },
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c.dir) && fs.statSync(c.dir).isDirectory()) return c;
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Resolve the companion skills directory across both repo layouts.
+function resolveRepoSkillsDir(root) {
+  const candidates = [path.join(root, '.github', 'skills'), path.join(root, 'skills')];
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) return dir;
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Strip the agent-file extension (.agent.md or .md) to derive a fallback name
+// when the file has no `name:` frontmatter field.
+function stripAgentExt(filename) {
+  return filename.replace(/\.agent\.md$/, '').replace(/\.md$/, '');
+}
+
 ipcMain.handle('repoAgents:pickDir', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
     title: 'Select an agent-pack repository',
@@ -2505,21 +2542,21 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
     if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
       return { ok: false, error: 'directory does not exist' };
     }
-    const agentsDir = path.join(root, 'agents');
-    const skillsDir = path.join(root, 'skills');
+    const resolved = resolveRepoAgentsDir(root);
+    const skillsDir = resolveRepoSkillsDir(root);
     const copilotPath = path.join(root, '.github', 'copilot-instructions.md');
     const existingProfileNames = new Set(
       getProfiles().map((p) => String(p.name || '').toLowerCase())
     );
     const agents = [];
-    if (fs.existsSync(agentsDir) && fs.statSync(agentsDir).isDirectory()) {
-      for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    if (resolved) {
+      for (const entry of fs.readdirSync(resolved.dir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(resolved.ext)) continue;
         try {
-          const fp = path.join(agentsDir, entry.name);
+          const fp = path.join(resolved.dir, entry.name);
           const text = fs.readFileSync(fp, 'utf8');
           const parsed = parseAgentMd(text);
-          const name = (parsed.name || entry.name.replace(/\.md$/, '')).slice(0, 64);
+          const name = (parsed.name || stripAgentExt(entry.name)).slice(0, 64);
           agents.push({
             filename: entry.name,
             name,
@@ -2550,7 +2587,7 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
       ok: true,
       root,
       agents,
-      hasSkillsDir: fs.existsSync(skillsDir) && fs.statSync(skillsDir).isDirectory(),
+      hasSkillsDir: !!skillsDir,
       copilotInstructionsPath: copilotPath,
       copilotInstructionsExists: fs.existsSync(copilotPath),
       copilotHasUserContent,
@@ -2570,7 +2607,9 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
     return { ok: false, error: 'directory does not exist' };
   }
   if (!picks.length) return { ok: false, error: 'nothing selected' };
-  const agentsDir = path.join(root, 'agents');
+  const resolved = resolveRepoAgentsDir(root);
+  if (!resolved) return { ok: false, error: 'no agents directory found in repo' };
+  const agentsDir = resolved.dir;
   const claudeAgentsDir = path.join(CLAUDE_DIR, 'agents');
   try { fs.mkdirSync(claudeAgentsDir, { recursive: true }); } catch (_) {}
   const list = getProfiles().slice();
@@ -2585,7 +2624,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
     try {
       const text = fs.readFileSync(src, 'utf8');
       const parsed = parseAgentMd(text);
-      const name = (parsed.name || fname.replace(/\.md$/, '')).slice(0, 64);
+      const name = (parsed.name || stripAgentExt(fname)).slice(0, 64);
       if (installToClaudeAgents) {
         const dest = path.join(claudeAgentsDir, fname);
         try { fs.copyFileSync(src, dest); copiedToClaude.push(dest); } catch (_) {}
