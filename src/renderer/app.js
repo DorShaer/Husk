@@ -777,7 +777,7 @@ function setPage(name) {
   document.body.dataset.page = name;
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === name));
-  if (name === 'chat') { setTimeout(fitNow, 30); term.focus(); }
+  if (name === 'chat') { setTimeout(fitNow, 30); if (term) term.focus(); }
   if (name === 'agents') renderAgents();
   if (name === 'workflows') renderWorkflows();
   if (name === 'autonomy') renderAutonomyPage();
@@ -4527,7 +4527,7 @@ function openPalette() {
   renderPalette('');
   $('#palette-input').focus();
 }
-function closePalette() { $('#palette').hidden = true; term.focus(); }
+function closePalette() { $('#palette').hidden = true; if (term) term.focus(); }
 function renderPalette(query) {
   const q = query.toLowerCase().trim();
   const matches = PALETTE_ACTIONS.filter((a) => !q || a.label.toLowerCase().includes(q));
@@ -4858,7 +4858,7 @@ async function launchAgent({ initialPrompt = null } = {}) {
     setTimeout(() => {
       armRecap();
       window.husk.pty.write(initialPrompt);
-      term.focus();
+      if (term) term.focus();
     }, 250);
   }
 }
