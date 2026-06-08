@@ -2200,21 +2200,16 @@ async function scanRepoRoot(root) {
   }
   lastRepoScan = res;
   const skillsNote = res.hasSkillsDir
-    ? `Found <code>${escapeHtml(root.replace(/\/+$/, ''))}/skills/</code>. Agents that read <code>skills/&lt;id&gt;.md</code> will work after install.`
-    : `No <code>skills/</code> directory at this root. Agents will install but any <code>skills/&lt;id&gt;.md</code> read will fail until you add one.`;
-  const copilotNote = res.copilotInstructionsExists
-    ? (res.copilotHasUserContent
-        ? `<code>.github/copilot-instructions.md</code> already exists with content. Husk only modifies the HUSK-AGENTS block; everything outside is preserved.`
-        : `<code>.github/copilot-instructions.md</code> already exists but is effectively empty. Husk will rewrite the HUSK-AGENTS block.`)
-    : `<code>.github/copilot-instructions.md</code> will be created.`;
-  // eslint-disable-next-line no-unsanitized/property -- both branches use escapeHtml on dynamic parts
+    ? `Found a <code>skills/</code> directory. Agents that read <code>skills/&lt;id&gt;/SKILL.md</code> will work after install.`
+    : `No <code>skills/</code> directory at this root. Agents will install but any <code>skills/</code> read will fail until you add one.`;
+  const installNote = `Imported agents install into every detected AI tool's agent folder (Claude, Copilot, ...). No tool-specific files are written.`;
   setRepoStatus('');
   const statusEl = $('#ra-status');
   if (statusEl) {
     statusEl.hidden = false;
     statusEl.className = 'ra-status ra-status-info';
     // eslint-disable-next-line no-unsanitized/property -- static + escapeHtml above
-    statusEl.innerHTML = `<div>${skillsNote}</div><div>${copilotNote}</div>`;
+    statusEl.innerHTML = `<div>${skillsNote}</div><div>${installNote}</div>`;
   }
   if (!res.agents.length) {
     // eslint-disable-next-line no-unsanitized/property -- static html
@@ -2269,22 +2264,18 @@ async function confirmRepoAgentsInstall() {
   const btn = $('#ra-confirm');
   if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
   const installToClaudeAgents = !!($('#ra-claude') && $('#ra-claude').checked);
-  const writeCopilotInstructions = !!($('#ra-copilot') && $('#ra-copilot').checked);
   const activate = !!($('#ra-activate') && $('#ra-activate').checked);
   const res = await window.husk.repoAgents.install({
-    root, picks, installToClaudeAgents, writeCopilotInstructions, activate,
+    root, picks, installToClaudeAgents, activate,
   });
   if (!res || !res.ok) {
     toast((res && res.error) || 'Install failed', 'error');
     if (btn) btn.disabled = false;
     return;
   }
-  if (res.copilotWriteError) {
-    toast(`Imported ${res.imported}, but Copilot instructions write failed: ${res.copilotWriteError}`, 'error');
-  } else {
+  {
     const parts = [`Installed ${res.imported} agent${res.imported !== 1 ? 's' : ''}`];
-    if (installToClaudeAgents && res.copiedToClaude && res.copiedToClaude.length) parts.push(`copied to ~/.claude/agents/`);
-    if (writeCopilotInstructions && res.copilotInstructionsPath) parts.push(`Copilot instructions written`);
+    if (installToClaudeAgents && res.distributedTo && res.distributedTo.length) parts.push(`synced to all AI tools`);
     if (activate) parts.push('activated');
     toast(parts.join(' · '), 'success');
   }
@@ -3120,7 +3111,10 @@ function resumeCommandFor(agent, id) {
 async function resumeSessionInChat(d) {
   closeDetail();
   setPage('chat');
-  const agent = sessionsAgent || 'claude';
+  // Derive the agent from the active config, not sessionsAgent, so resuming
+  // from the rail "Recent" list (before the Sessions page has rendered) still
+  // builds the correct per-agent resume command.
+  const agent = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0].toLowerCase();
   const cmd = resumeCommandFor(agent, d.id);
   const cmdShort = resumeCommandFor(agent, d.id.slice(0, 8));
   const cwd = d.project || null;

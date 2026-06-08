@@ -57,10 +57,10 @@ test('creating an agent writes it into both claude and copilot agent dirs', asyn
 
 test('startup mirrors an existing claude agent file to copilot, verbatim', async () => {
   const homeDir = makeHome({
-    profiles: [{ id: 'p1', name: 'Reviewer', description: 'sec agent', systemPrompt: 'body', builtin: false }],
+    profiles: [{ id: 'p1', name: 'Reviewer', description: 'review agent', systemPrompt: 'body', builtin: false }],
   });
   // A rich, hand-authored claude agent file (extra frontmatter) already exists.
-  const rich = '---\nname: Reviewer\ndescription: sec agent\ncolor: red\n---\n\nYou are a senior security engineer.\n';
+  const rich = '---\nname: Reviewer\ndescription: review agent\ncolor: red\n---\n\nYou are a senior reviewer.\n';
   fs.writeFileSync(path.join(homeDir, '.claude', 'agents', 'reviewer.md'), rich);
 
   const { app } = await boot(homeDir);

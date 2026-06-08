@@ -944,7 +944,7 @@ function readActiveSessionStats() {
 function targetSession(sessionId) {
   return (sessionId && sessions.get(sessionId)) || activeSession();
 }
-ipcMain.handle('pty:start', (_e, { cols, rows, sessionId } = {}) => spawnPty(cols, rows, null, null, sessionId || null));
+ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null));
 ipcMain.on('pty:write', (_e, { data, sessionId } = {}) => {
   const s = targetSession(sessionId);
   if (s && s.pty) s.pty.write(data);
@@ -2566,7 +2566,7 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
 
 // ─── Install-from-repo flow ───────────────────────────────────────────────
 //
-// Lets a user point Husk at a cloned "agent pack" repo (e.g. agent-pack)
+// Lets a user point Husk at a cloned "agent pack" repo
 // whose agents live in one of two layouts:
 //   <repoRoot>/.github/agents/<agent>.agent.md   VSCode/Copilot-native layout
 //   <repoRoot>/agents/<agent>.md                 legacy flat layout
@@ -2574,26 +2574,21 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
 // The .github layout lets VSCode and Copilot consume the agents natively
 // without Husk, so it is preferred; the legacy layout stays supported.
 //
-// Install does three things, each individually toggleable from the renderer:
-//   1) Copy each picked agent .md into ~/.claude/agents/ so Claude Code can
-//      invoke it natively via the Task tool.
-//   2) Inject each picked agent body into <repoRoot>/.github/copilot-
-//      instructions.md inside HUSK-AGENTS markers so GitHub Copilot CLI
-//      picks it up natively when launched in that directory.
-//   3) Create a Husk profile per picked agent stamped with repoRoot. The
+// Install is agent-agnostic. It does not write any per-CLI instructions file;
+// instead it relies on each CLI's own native agent loading:
+//   1) Copy each picked agent into ~/.claude/agents/, then mirror every
+//      imported agent into all installed CLIs' native agents dirs via
+//      syncAgentFiles (claude ~/.claude/agents, copilot ~/.copilot/agents, ...).
+//      Copilot also reads the repo's own .github/agents/ when launched there,
+//      so no copilot-instructions injection is needed.
+//   2) Create a Husk profile per picked agent stamped with repoRoot. The
 //      spawnPty cwd resolver consumes that field so the active CLI runs
-//      inside the repo, which makes the agent's relative `skills/<id>.md`
+//      inside the repo, which makes the agent's relative `skills/<id>/SKILL.md`
 //      reads resolve.
 //
 // The renderer is expected to call repoAgents:pickDir first (or pass an
 // already-known root), then repoAgents:scan to populate the picker, then
 // repoAgents:install with the user's selection.
-
-// Marker constants + the block renderer + the merger live in
-// src/lib/pai-state.js so the test suite can hit every branch without
-// loading Electron. Re-bind the names locally for readability.
-const HUSK_AGENTS_START = PaiState.HUSK_AGENTS_START;
-const HUSK_AGENTS_END = PaiState.HUSK_AGENTS_END;
 
 // Resolve where importable agents live inside a pointed-at repo. The current
 // VSCode/Copilot-native layout keeps them in <root>/.github/agents/*.agent.md;
@@ -2648,7 +2643,6 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
     }
     const resolved = resolveRepoAgentsDir(root);
     const skillsDir = resolveRepoSkillsDir(root);
-    const copilotPath = path.join(root, '.github', 'copilot-instructions.md');
     const existingProfileNames = new Set(
       getProfiles().map((p) => String(p.name || '').toLowerCase())
     );
@@ -2673,29 +2667,11 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
       }
       agents.sort((a, b) => a.name.localeCompare(b.name));
     }
-    let copilotPreview = null;
-    let copilotHasUserContent = false;
-    if (fs.existsSync(copilotPath)) {
-      try {
-        const existing = fs.readFileSync(copilotPath, 'utf8');
-        const startIdx = existing.indexOf(HUSK_AGENTS_START);
-        const endIdx = existing.indexOf(HUSK_AGENTS_END);
-        const userPart = startIdx >= 0 && endIdx > startIdx
-          ? (existing.slice(0, startIdx) + existing.slice(endIdx + HUSK_AGENTS_END.length))
-          : existing;
-        copilotHasUserContent = userPart.trim().length > 0;
-        copilotPreview = existing.slice(0, 400);
-      } catch (_) {}
-    }
     return {
       ok: true,
       root,
       agents,
       hasSkillsDir: !!skillsDir,
-      copilotInstructionsPath: copilotPath,
-      copilotInstructionsExists: fs.existsSync(copilotPath),
-      copilotHasUserContent,
-      copilotPreview,
     };
   } catch (err) { return { ok: false, error: err.message }; }
 });
@@ -2704,7 +2680,6 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const root = String((payload && payload.root) || '').trim();
   const picks = Array.isArray(payload && payload.picks) ? payload.picks : [];
   const installToClaudeAgents = payload.installToClaudeAgents !== false;
-  const writeCopilotInstructions = payload.writeCopilotInstructions !== false;
   const activate = !!payload.activate;
   if (!root || !path.isAbsolute(root)) return { ok: false, error: 'absolute path required' };
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
@@ -2719,7 +2694,6 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const list = getProfiles().slice();
   const importedIds = [];
   const copiedToClaude = [];
-  const copilotBlocks = [];
   for (const pick of picks) {
     const fname = String((pick && pick.filename) || '');
     if (!fname.endsWith('.md') || fname.includes('/') || fname.includes('\\') || fname.includes('..')) continue;
@@ -2732,9 +2706,6 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       if (installToClaudeAgents) {
         const dest = path.join(claudeAgentsDir, fname);
         try { fs.copyFileSync(src, dest); copiedToClaude.push(dest); } catch (_) {}
-      }
-      if (writeCopilotInstructions) {
-        copilotBlocks.push({ name, body: parsed.body || '' });
       }
       const id = `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       list.push({
@@ -2750,31 +2721,6 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       importedIds.push(id);
     } catch (_) {}
   }
-  let copilotInstructionsPath = null;
-  if (writeCopilotInstructions && copilotBlocks.length) {
-    try {
-      const dotGithub = path.join(root, '.github');
-      fs.mkdirSync(dotGithub, { recursive: true });
-      copilotInstructionsPath = path.join(dotGithub, 'copilot-instructions.md');
-      let existing = '';
-      try { existing = fs.readFileSync(copilotInstructionsPath, 'utf8'); } catch (_) {}
-      const merged = PaiState.mergeHuskAgentsBlock(existing, copilotBlocks);
-      fs.writeFileSync(copilotInstructionsPath, merged, { mode: 0o644 });
-    } catch (err) {
-      // Surface the failure but do not abort the import: the Claude side
-      // and the Husk profiles still landed; the user can retry the Copilot
-      // write or paste the snippet manually.
-      return {
-        ok: true,
-        imported: importedIds.length,
-        importedIds,
-        copiedToClaude,
-        copilotInstructionsPath,
-        copilotWriteError: err.message,
-        partial: true,
-      };
-    }
-  }
   let nextConfig = { ...config, profiles: list };
   if (activate && importedIds.length) {
     const prevActive = Array.isArray(config.activeProfileIds)
@@ -2786,12 +2732,20 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   }
   config = nextConfig;
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  // Agent-agnostic distribution: mirror the imported agents into every
+  // installed CLI's native agents dir (claude, copilot, ...). Copilot also
+  // reads the repo's own .github/agents/ when run there, so no per-CLI
+  // instructions file is written.
+  const distributedTo = [];
+  if (installToClaudeAgents) {
+    try { syncAgentFiles(); distributedTo.push(...installedAgentDirs()); } catch (_) {}
+  }
   return {
     ok: true,
     imported: importedIds.length,
     importedIds,
     copiedToClaude,
-    copilotInstructionsPath,
+    distributedTo,
   };
 });
 
