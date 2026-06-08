@@ -79,41 +79,78 @@ app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
+
+// ─── Multi-session registry ────────────────────────────────────────────────
+// Each chat tab owns its own PTY child, output buffer, mouse-mode stripper,
+// and listener disposables, so several agents run in parallel. `sessions`
+// maps the renderer's sessionId to that state; `activeSessionId` is the
+// focused tab. The `ptyProc` / `activePtyCwd` / `ptyLastDataAt` mirrors below
+// always track the active session, so the autonomy + stats code (which
+// operates on "the current agent") needs no per-call session plumbing.
+const sessions = new Map();
+let activeSessionId = null;
+let sessionSeq = 0;
+// Mirrors of the active session. setActiveSession() and the active session's
+// onData keep these in sync; autonomy/stats read them directly.
 let ptyProc = null;
-// The most recent PTY child's pid, kept even after `ptyProc` is nulled (the
-// onExit handler nulls ptyProc on a clean agent exit / resume). killPtyTree
-// falls back to this so an orphaned agent process group is still reaped at
-// quit, even when there is no live handle.
-let lastPtyPid = 0;
-// node-pty listener disposables for the current process, so a respawn
-// can detach them instead of leaking emitter registrations.
-let ptyDataDisposable = null;
-let ptyExitDisposable = null;
-// PTY output coalescing buffer (see spawnPty's onData).
-let ptyDataBuf = '';
-let ptyFlushScheduled = false;
-// Timestamp of the last byte the agent emitted, used to detect when its
-// TUI has settled before we paste an autonomy goal into it.
+let activePtyCwd = null;
+// Timestamp of the last byte the active agent emitted, used to detect when
+// its TUI has settled before we paste an autonomy goal into it.
 let ptyLastDataAt = 0;
-// Neutralize a TUI's mouse-tracking modes so the terminal stays locally
-// selectable (select + copy work) and the agent does not receive mouse
-// drags/clicks. See src/lib/term-mouse.js.
-const ptyMouseStripper = createMouseModeStripper();
-// Mirror of the stripper's mouse-reporting state, pushed to the renderer on
-// change so it knows whether to forward the wheel to the agent.
-let lastMouseOn = false;
-function flushPtyData() {
-  ptyFlushScheduled = false;
-  if (!ptyDataBuf) return;
-  const data = ptyDataBuf;
-  ptyDataBuf = '';
-  const clean = ptyMouseStripper.strip(data);
-  const mouseOn = ptyMouseStripper.isMouseOn();
-  if (mouseOn !== lastMouseOn) {
-    lastMouseOn = mouseOn;
-    if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', mouseOn);
+// The most recent PTY child's pid across all sessions, kept even after a
+// session's pty is nulled, so killPtyTree can still reap an orphaned group.
+let lastPtyPid = 0;
+
+function newSession(id) {
+  const s = {
+    id,
+    pty: null,
+    pid: 0,
+    cwd: null,
+    dataBuf: '',
+    flushScheduled: false,
+    dataDisposable: null,
+    exitDisposable: null,
+    // Neutralize a TUI's mouse-tracking modes per session so the terminal
+    // stays locally selectable. See src/lib/term-mouse.js.
+    mouseStripper: createMouseModeStripper(),
+    // Mirror of the stripper's mouse-reporting state, pushed to the renderer
+    // so it knows whether to forward the wheel to this session's agent.
+    lastMouseOn: false,
+    lastDataAt: 0,
+  };
+  sessions.set(id, s);
+  return s;
+}
+
+function activeSession() { return activeSessionId ? sessions.get(activeSessionId) : null; }
+
+function setActiveSession(id) {
+  const s = sessions.get(id);
+  if (!s) return;
+  activeSessionId = id;
+  ptyProc = s.pty || null;
+  activePtyCwd = s.cwd || null;
+  ptyLastDataAt = s.lastDataAt || 0;
+  // Re-sync the renderer's wheel-forward gate to this session's mouse mode.
+  if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', { sessionId: id, on: !!s.lastMouseOn });
+}
+
+// Per-session output coalescing: buffer the chatty PTY stream and flush once
+// per microtask so the renderer gets one tagged message per burst instead of
+// one IPC send per chunk.
+function flushSessionData(s) {
+  s.flushScheduled = false;
+  if (!s.dataBuf) return;
+  const data = s.dataBuf;
+  s.dataBuf = '';
+  const clean = s.mouseStripper.strip(data);
+  const mouseOn = s.mouseStripper.isMouseOn();
+  if (mouseOn !== s.lastMouseOn) {
+    s.lastMouseOn = mouseOn;
+    if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', { sessionId: s.id, on: mouseOn });
   }
-  if (mainWindow && clean) mainWindow.webContents.send('pty:data', clean);
+  if (mainWindow && clean) mainWindow.webContents.send('pty:data', { sessionId: s.id, data: clean });
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────────
@@ -570,40 +607,66 @@ function createWindow() {
 // Aggressive cleanup: SIGKILL the whole process group of the PTY child so
 // `script` + `claude` (and any of its children) all die together. Without this,
 // closing the Husk window leaves orphan claude/script processes around.
-function killPtyTree() {
-  // Use the live handle when present, else fall back to the last spawned pid
-  // so an orphaned agent group (ptyProc already nulled by onExit/resume) is
-  // still signaled. Killing an already-dead group is a harmless no-op.
-  const pid = (ptyProc && ptyProc.pid) || lastPtyPid;
+// SIGKILL one session's whole process group. `script` + agent (and any
+// children) all die together; killing an already-dead group is a no-op.
+function reapPid(pid) {
   if (!pid) return;
   try { process.kill(-pid, 'SIGTERM'); } catch (_) {}
   try { process.kill(pid, 'SIGTERM'); } catch (_) {}
-  // Escalate to SIGKILL after a short grace period
   setTimeout(() => {
     try { process.kill(-pid, 'SIGKILL'); } catch (_) {}
     try { process.kill(pid, 'SIGKILL'); } catch (_) {}
   }, 250).unref();
-  if (ptyProc) { try { ptyProc.kill('SIGKILL'); } catch (_) {} }
+}
+
+function killSession(s) {
+  if (!s) return;
+  try { if (s.dataDisposable) s.dataDisposable.dispose(); } catch (_) {}
+  try { if (s.exitDisposable) s.exitDisposable.dispose(); } catch (_) {}
+  s.dataDisposable = null;
+  s.exitDisposable = null;
+  reapPid((s.pty && s.pty.pid) || s.pid);
+  if (s.pty) { try { s.pty.kill('SIGKILL'); } catch (_) {} }
+  s.pty = null;
+}
+
+// Reap every live session. Used on window close / app quit so closing Husk
+// leaves no orphan agent processes behind.
+function killPtyTree() {
+  for (const s of sessions.values()) killSession(s);
+  // Fallback: reap a last-known orphan group even if the map is already empty
+  // (e.g. every session's pty was nulled by onExit).
+  if (!sessions.size && lastPtyPid) reapPid(lastPtyPid);
+  sessions.clear();
   ptyProc = null;
+  activeSessionId = null;
   lastPtyPid = 0;
 }
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
 
-function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null) {
-  // Dispose the previous process's data/exit listeners before we drop
-  // the reference, otherwise each restart/resume leaks a node-pty
-  // emitter registration. Also drop any buffered output from the old
-  // process so it cannot bleed into the new session.
-  try { if (ptyDataDisposable) ptyDataDisposable.dispose(); } catch (_) {}
-  try { if (ptyExitDisposable) ptyExitDisposable.dispose(); } catch (_) {}
-  ptyDataDisposable = null;
-  ptyExitDisposable = null;
-  ptyDataBuf = '';
-  ptyFlushScheduled = false;
-  ptyMouseStripper.reset();
-  if (lastMouseOn) { lastMouseOn = false; if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', false); }
-  if (ptyProc) try { ptyProc.kill(); } catch (_) {}
+function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null) {
+  // Target an existing session (Restart replaces just that tab's child) or
+  // create a new one (New Chat passes a fresh id so the running agents keep
+  // going). Falls back to the active session, then a generated id.
+  const id = sessionId || activeSessionId || ('s' + (++sessionSeq));
+  let s = sessions.get(id);
+  if (!s) {
+    s = newSession(id);
+  } else {
+    // Restart-in-place: dispose the previous child's listeners before we drop
+    // the reference (otherwise each restart leaks a node-pty emitter
+    // registration), drop any buffered output, and kill the old child.
+    try { if (s.dataDisposable) s.dataDisposable.dispose(); } catch (_) {}
+    try { if (s.exitDisposable) s.exitDisposable.dispose(); } catch (_) {}
+    s.dataDisposable = null;
+    s.exitDisposable = null;
+    s.dataBuf = '';
+    s.flushScheduled = false;
+    s.mouseStripper.reset();
+    if (s.lastMouseOn) { s.lastMouseOn = false; if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', { sessionId: id, on: false }); }
+    if (s.pty) try { s.pty.kill(); } catch (_) {}
+  }
   const shellBin = process.platform === 'win32'
     ? (process.env.ComSpec || 'cmd.exe')
     : (process.env.SHELL || '/bin/bash');
@@ -738,9 +801,11 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
         fs.writeFileSync(fileAbs, `${String(injectionPlan.body || '').trim()}\n`);
       } else {
         // A file the agent auto-reads (copilot, codex) that the user may also
-        // own; merge Husk's marked block in non-destructively.
+        // own; merge Husk's marked block in non-destructively. Read directly and
+        // treat a missing file as empty, rather than check-then-read (which races).
+        let existing = '';
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
-        const existing = fs.existsSync(fileAbs) ? fs.readFileSync(fileAbs, 'utf8') : '';
+        try { existing = fs.readFileSync(fileAbs, 'utf8'); } catch (_) {}
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
         fs.writeFileSync(fileAbs, AgentInject.mergeSessionBlock(existing, injectionPlan.body));
       }
@@ -766,35 +831,42 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null)
     scriptExists: process.platform === 'linux' && fs.existsSync('/usr/bin/script'),
   });
 
-  ptyProc = pty.spawn(spec.exe, spec.argv, { name: 'xterm-256color', cols, rows, cwd, env });
-  lastPtyPid = ptyProc.pid;
-  activePtyCwd = cwd;
+  s.pty = pty.spawn(spec.exe, spec.argv, { name: 'xterm-256color', cols, rows, cwd, env });
+  s.pid = s.pty.pid;
+  s.cwd = cwd;
+  // First-launch time of this tab's session, used to match it to the claude
+  // session file it creates (so the tab can show that session's title). A
+  // restart-in-place keeps the original launch time.
+  if (!s.startedAt) s.startedAt = Date.now();
+  lastPtyPid = s.pty.pid;
   // Coalesce PTY output: a chatty agent (build logs, a big cat) emits
   // many chunks per tick. Buffer them and flush once per microtask so
   // the renderer receives one message per burst instead of one IPC send
   // per chunk, which otherwise floods the channel and janks the UI.
-  ptyDataDisposable = ptyProc.onData((data) => {
-    ptyLastDataAt = Date.now();
-    ptyDataBuf += data;
-    if (!ptyFlushScheduled) { ptyFlushScheduled = true; setImmediate(flushPtyData); }
-    autonomyTap(data);
+  s.dataDisposable = s.pty.onData((data) => {
+    s.lastDataAt = Date.now();
+    s.dataBuf += data;
+    if (!s.flushScheduled) { s.flushScheduled = true; setImmediate(() => flushSessionData(s)); }
+    // Autonomy + the TUI-settle detector operate on the focused agent only.
+    if (id === activeSessionId) { ptyLastDataAt = s.lastDataAt; autonomyTap(data); }
   });
-  ptyExitDisposable = ptyProc.onExit(({ exitCode }) => {
-    flushPtyData();
-    if (mainWindow) mainWindow.webContents.send('pty:exit', exitCode);
-    ptyProc = null;
-    // If an autonomy run was live, the agent process just died. Close
-    // the run so its 1s meter interval stops, the budget stops ticking
-    // wall-clock against a dead process, and a new run can start (the
+  s.exitDisposable = s.pty.onExit(({ exitCode }) => {
+    flushSessionData(s);
+    if (mainWindow) mainWindow.webContents.send('pty:exit', { sessionId: id, code: exitCode });
+    s.pty = null;
+    if (id === activeSessionId) ptyProc = null;
+    // If an autonomy run was live on the focused agent, the process just
+    // died. Close the run so its 1s meter interval stops, the budget stops
+    // ticking wall-clock against a dead process, and a new run can start (the
     // "already active" guard would otherwise block forever).
-    if (activeRunner && !autonomyFinishing) {
+    if (activeRunner && !autonomyFinishing && id === activeSessionId) {
       if (mainWindow) mainWindow.webContents.send('autonomy:halt', { reason: 'agent-exited' });
       finishActiveRun({ reason: 'agent-exited' });
     }
   });
+  setActiveSession(id);
+  return id;
 }
-
-let activePtyCwd = null;
 
 // Read the most-recent claude session JSONL for the active PTY cwd and
 // return a coarse usage estimate: turn count + a token estimate based on
@@ -866,21 +938,51 @@ function readActiveSessionStats() {
   } catch (_) { return null; }
 }
 
-ipcMain.handle('pty:start', (_e, { cols, rows }) => { spawnPty(cols, rows); return true; });
-ipcMain.on('pty:write', (_e, data) => { if (ptyProc) ptyProc.write(data); });
-ipcMain.on('pty:resize', (_e, { cols, rows }) => { if (ptyProc) try { ptyProc.resize(cols, rows); } catch (_) {} });
+// Resolve the target session for a channel: the named session when it
+// exists, else the focused one. Keeps single-arg callers (write/resize with
+// no sessionId) working against the active agent.
+function targetSession(sessionId) {
+  return (sessionId && sessions.get(sessionId)) || activeSession();
+}
+ipcMain.handle('pty:start', (_e, { cols, rows, sessionId } = {}) => spawnPty(cols, rows, null, null, sessionId || null));
+ipcMain.on('pty:write', (_e, { data, sessionId } = {}) => {
+  const s = targetSession(sessionId);
+  if (s && s.pty) s.pty.write(data);
+});
+ipcMain.on('pty:resize', (_e, { cols, rows, sessionId } = {}) => {
+  const s = targetSession(sessionId);
+  if (s && s.pty) try { s.pty.resize(cols, rows); } catch (_) {}
+});
 // Forward the mouse wheel to a full-screen agent that has mouse reporting on,
 // so the wheel scrolls the agent's transcript. Only the wheel is forwarded;
 // click/drag tracking is stripped so drag-to-select stays local in xterm.
-ipcMain.on('pty:wheel', (_e, { deltaY, deltaMode, col, row } = {}) => {
-  if (!ptyProc || !lastMouseOn) return;
+ipcMain.on('pty:wheel', (_e, { deltaY, deltaMode, col, row, sessionId } = {}) => {
+  const s = targetSession(sessionId);
+  if (!s || !s.pty || !s.lastMouseOn) return;
   const steps = wheelSteps(deltaY, deltaMode);
   if (!steps) return;
   const seq = wheelSequence(deltaY < 0, col, row);
-  for (let i = 0; i < steps; i++) ptyProc.write(seq);
+  for (let i = 0; i < steps; i++) s.pty.write(seq);
 });
-ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd }) => {
-  spawnPty(cols || 100, rows || 30, command || null, cwd || null);
+ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd, sessionId } = {}) => {
+  spawnPty(cols || 100, rows || 30, command || null, cwd || null, sessionId || activeSessionId || null);
+  return true;
+});
+ipcMain.on('pty:setActive', (_e, sessionId) => { if (sessions.has(sessionId)) setActiveSession(sessionId); });
+// Close exactly one session, leaving the others running. Promotes the next
+// remaining session to active if the closed one was focused.
+ipcMain.handle('pty:close', (_e, sessionId) => {
+  const s = sessions.get(sessionId);
+  if (!s) return false;
+  killSession(s);
+  sessions.delete(sessionId);
+  if (activeSessionId === sessionId) {
+    activeSessionId = null;
+    ptyProc = null;
+    activePtyCwd = null;
+    const next = sessions.keys().next();
+    if (!next.done) setActiveSession(next.value);
+  }
   return true;
 });
 
@@ -2372,10 +2474,12 @@ function syncAgentFiles() {
       for (const dir of dirs) {
         const target = path.join(dir, fname);
         try {
+          // mkdir recursive is idempotent, and the 'wx' flag fails if the file
+          // already exists. Both avoid a check-then-act race on the target.
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir is a fixed CLI agents dir, fname is slugified
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.mkdirSync(dir, { recursive: true });
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
-          if (!fs.existsSync(target)) fs.writeFileSync(target, content);
+          fs.writeFileSync(target, content, { flag: 'wx' });
         } catch (_) {}
       }
     }
@@ -3249,12 +3353,123 @@ function readHead(filePath, bytes) {
   return buf.toString('utf8', 0, n);
 }
 
-// Walk all claude session JSONL files at ~/.claude/projects/*/*.jsonl
+// Parse the head of a claude session JSONL for the fields Husk titles a
+// session by: claude's own ai-title, the first user message, a queued prompt,
+// the start timestamp, and the original working directory. Returns null if the
+// file cannot be read.
+function parseSessionHead(fullPath) {
+  let aiTitle = ''; let userMessage = ''; let queueContent = '';
+  let startedISO = ''; let originalCwd = '';
+  try {
+    const text = readHead(fullPath, 32768);
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch (_) { continue; }
+      if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
+      if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
+      if (!aiTitle && obj.type === 'ai-title' && typeof obj.aiTitle === 'string') aiTitle = obj.aiTitle.trim();
+      if (!userMessage && obj.type === 'user' && obj.message) {
+        const c = obj.message.content;
+        if (typeof c === 'string') userMessage = c.trim();
+        else if (Array.isArray(c)) {
+          const tp = c.find((p) => p && p.type === 'text' && typeof p.text === 'string');
+          if (tp) userMessage = tp.text.trim();
+        }
+      }
+      if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') queueContent = obj.content.trim();
+      if (aiTitle && startedISO && userMessage && originalCwd) break;
+    }
+  } catch (_) { return null; }
+  return { aiTitle, userMessage, queueContent, startedISO, originalCwd };
+}
+
+// The display title a session would show, given its parsed head fields. Same
+// priority the Sessions list uses: ai-title, else first user message, else a
+// queued prompt.
+function sessionTitleFrom(info) {
+  if (!info) return '';
+  return (info.aiTitle || info.userMessage || info.queueContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+// The active agent program name (first token of the configured command,
+// lowercased): 'claude', 'copilot', 'codex', 'aider', etc. Husk is
+// tool-agnostic, so anything that reads agent-specific state keys off this.
+function activeAgentName() {
+  return (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
+}
+
+// Parse a copilot session's workspace.yaml (a flat key: value file) into an
+// object. Returns null if it cannot be read.
+function readCopilotWorkspace(dir) {
+  try {
+    const text = fs.readFileSync(path.join(dir, 'workspace.yaml'), 'utf8');
+    const o = {};
+    for (const line of text.split('\n')) {
+      const m = line.match(/^([A-Za-z_]+):\s*(.*)$/);
+      if (m) o[m[1]] = m[2].trim();
+    }
+    return o;
+  } catch (_) { return null; }
+}
+
+// List copilot sessions from ~/.copilot/session-state/<uuid>/, normalized to
+// the same shape the renderer consumes for claude sessions. Copilot stores the
+// session name, cwd, and timestamps in each session's workspace.yaml.
+function listCopilotSessions() {
+  const root = path.join(HOME, '.copilot', 'session-state');
+  let dirs = [];
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
+  catch (_) { return []; }
+  const out = [];
+  for (const d of dirs) {
+    const full = path.join(root, d.name);
+    const ws = readCopilotWorkspace(full);
+    if (!ws || !ws.id) continue;
+    let mtime = Date.parse(ws.updated_at) || 0;
+    let sizeBytes = 0;
+    try { const st = fs.statSync(path.join(full, 'events.jsonl')); sizeBytes = st.size; if (!mtime) mtime = st.mtimeMs; }
+    catch (_) { if (!mtime) { try { mtime = fs.statSync(full).mtimeMs; } catch (_e) {} } }
+    const startedMs = Date.parse(ws.created_at) || mtime;
+    const name = (ws.name && ws.name !== 'null') ? ws.name.slice(0, 120) : '';
+    out.push({
+      id: ws.id,
+      project: ws.cwd || '',
+      projectPath: ws.cwd || '',
+      originalCwd: ws.cwd || '',
+      path: full,
+      title: name || '(unnamed session)',
+      firstMessage: name,
+      prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
+      startedISO: ws.created_at || new Date(mtime || 0).toISOString(),
+      startedMs,
+      sizeBytes,
+      mtime,
+    });
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+// List the active agent's saved sessions. Husk is tool-agnostic: the source
+// (and on-disk format) depends on which CLI is active. claude keeps JSONL
+// transcripts under ~/.claude/projects; copilot keeps per-session folders under
+// ~/.copilot/session-state. Agents we do not yet read return an empty list with
+// supported:false so the UI can say so instead of erroring.
 ipcMain.handle('sessions:list', () => {
+  const agent = activeAgentName();
+  if (agent === 'copilot') {
+    return { ok: true, agent, supported: true, sessionsDir: path.join(HOME, '.copilot', 'session-state'), sessions: listCopilotSessions() };
+  }
+  if (agent !== 'claude') {
+    return { ok: true, agent, supported: false, sessionsDir: '', sessions: [] };
+  }
   const projectsDir = path.join(CLAUDE_DIR, 'projects');
   let projects = [];
+  // A missing projects dir just means no sessions yet (e.g. a fresh install or
+  // a machine that has never run claude). Return empty, not an error.
   try { projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((e) => e.isDirectory()); }
-  catch (err) { return { ok: false, error: err.message, sessions: [] }; }
+  catch (_) { return { ok: true, agent: 'claude', supported: true, sessionsDir: projectsDir, sessions: [] }; }
 
   // Pre-load PRDs for matching by timestamp
   let prds = [];
@@ -3382,7 +3597,116 @@ ipcMain.handle('sessions:list', () => {
     }
   }
   const deduped = [...dedup.values()].sort((a, b) => b.mtime - a.mtime);
-  return { ok: true, sessions: deduped };
+  return { ok: true, agent: 'claude', supported: true, sessionsDir: projectsDir, sessions: deduped };
+});
+
+// Resolve the agent-session title for a LIVE chat tab so the tab can show the
+// same name the Sessions list shows instead of a generic "Chat N". Two modes:
+//   knownAgentId  -> refresh the title for an already-linked session, and
+//                    return a user-set custom name when one is saved.
+//   huskSessionId -> discover which agent session this tab spawned, by matching
+//                    the tab's resolved cwd and launch time against the claude
+//                    session files, skipping ids that other tabs already own.
+ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
+  const projectsDir = path.join(CLAUDE_DIR, 'projects');
+  const names = (config.sessionNames && typeof config.sessionNames === 'object') ? config.sessionNames : {};
+  const customFor = (id) => (Object.prototype.hasOwnProperty.call(names, id) ? names[id] : null);
+  const agent = activeAgentName();
+
+  if (agent === 'copilot') {
+    const list = listCopilotSessions();
+    const known = String((payload && payload.knownAgentId) || '');
+    if (known) {
+      const hit = list.find((x) => x.id === known);
+      const custom = customFor(known);
+      if (hit || custom != null) {
+        return { ok: true, agentId: known, custom: custom != null, title: custom != null ? custom : (hit ? hit.title : '') };
+      }
+      return { ok: false };
+    }
+    const s = sessions.get(String((payload && payload.huskSessionId) || ''));
+    if (!s || !s.cwd) return { ok: false };
+    const startedAt = s.startedAt || 0;
+    const exclude = new Set(Array.isArray(payload && payload.excludeAgentIds) ? payload.excludeAgentIds : []);
+    let best = null;
+    for (const x of list) {
+      if (exclude.has(x.id)) continue;
+      if (x.originalCwd && x.originalCwd !== s.cwd) continue;
+      if (isFinite(x.startedMs) && x.startedMs < startedAt - 60_000) continue;
+      if (!best || x.startedMs < best.startedMs) best = x;
+    }
+    if (!best) return { ok: false };
+    const custom = customFor(best.id);
+    return { ok: true, agentId: best.id, custom: custom != null, title: custom != null ? custom : best.title };
+  }
+  if (agent !== 'claude') return { ok: false };
+
+  const known = String((payload && payload.knownAgentId) || '');
+  if (known) {
+    let projects = [];
+    try { projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((e) => e.isDirectory()); } catch (_) { projects = []; }
+    for (const proj of projects) {
+      const full = path.join(projectsDir, proj.name, known + '.jsonl');
+      let st; try { st = fs.statSync(full); } catch (_) { continue; }
+      if (!st.isFile()) continue;
+      const custom = customFor(known);
+      return { ok: true, agentId: known, custom: custom != null, title: custom != null ? custom : sessionTitleFrom(parseSessionHead(full)) };
+    }
+    const custom = customFor(known);
+    return custom != null ? { ok: true, agentId: known, custom: true, title: custom } : { ok: false };
+  }
+
+  const huskId = String((payload && payload.huskSessionId) || '');
+  const s = sessions.get(huskId);
+  if (!s || !s.cwd) return { ok: false };
+  const startedAt = s.startedAt || 0;
+  const exclude = new Set(Array.isArray(payload && payload.excludeAgentIds) ? payload.excludeAgentIds : []);
+
+  let projects = [];
+  try { projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((e) => e.isDirectory()); } catch (_) { return { ok: false }; }
+  let best = null;
+  for (const proj of projects) {
+    const projPath = path.join(projectsDir, proj.name);
+    let files = [];
+    try { files = fs.readdirSync(projPath); } catch (_) { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      const id = f.slice(0, -6);
+      if (exclude.has(id)) continue;
+      const full = path.join(projPath, f);
+      let st; try { st = fs.statSync(full); } catch (_) { continue; }
+      if (st.size === 0) continue;
+      // Cheap window filter: the file this tab created was last written at or
+      // after the tab launched. 10s slack absorbs clock skew.
+      if (st.mtimeMs < startedAt - 10_000) continue;
+      const info = parseSessionHead(full);
+      if (!info) continue;
+      if (info.originalCwd && info.originalCwd !== s.cwd) continue;
+      const startedMs = info.startedISO ? Date.parse(info.startedISO) : st.mtimeMs;
+      // Must have begun around or after this tab launched (not a resumed older
+      // session, which keeps its original earlier start timestamp).
+      if (isFinite(startedMs) && startedMs < startedAt - 60_000) continue;
+      // The tab spawned exactly one session; among unclaimed sessions in this
+      // cwd, pick the earliest one that began after launch.
+      if (!best || startedMs < best.startedMs) best = { id, startedMs, info };
+    }
+  }
+  if (!best) return { ok: false };
+  const custom = customFor(best.id);
+  return { ok: true, agentId: best.id, custom: custom != null, title: custom != null ? custom : sessionTitleFrom(best.info) };
+});
+
+// Save (or clear, when name is empty) a user's custom name for an agent
+// session, keyed by the stable claude session id so it survives restarts.
+ipcMain.handle('sessions:rename', (_e, payload = {}) => {
+  const agentId = String((payload && payload.agentId) || '');
+  if (!agentId) return { ok: false };
+  const name = String((payload && payload.name) || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const names = (config.sessionNames && typeof config.sessionNames === 'object') ? { ...config.sessionNames } : {};
+  if (name) names[agentId] = name; else delete names[agentId];
+  config = { ...config, sessionNames: names };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true, name };
 });
 
 ipcMain.handle('sessions:read', (_e, prdPath) => {

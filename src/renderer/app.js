@@ -175,14 +175,18 @@ let lastStats = null;
 let currentPage = 'chat';
 let chatHasInput = false;
 
-// ─── Terminal (persistent across page switches) ──────────────────────────────────
-const term = new Terminal({
-  cursorBlink: true,
-  fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace',
-  fontSize: 13,
-  theme: themeForXterm(),
-});
-const fitAddon = new FitAddon.FitAddon();
+// ─── Tabs: one PTY-backed terminal per chat tab, all live in parallel ────────
+// Each tab owns its own xterm instance + FitAddon + DOM pane, keyed by the
+// sessionId shared with the main process. Only the active pane is shown; the
+// rest keep running and retain full scrollback. `term` / `fitAddon` are
+// re-pointed to the active tab so every terminal-bound handler below (input,
+// copy/paste, wheel, recap, speech, fit) keeps working unchanged.
+const TABS = new Map();
+let activeTabId = null;
+let tabSeq = 0;
+let term = null;
+let fitAddon = null;
+
 // Route every URL click through the OS browser via shell.openExternal,
 // gated by Husk's own confirm dialog so the user sees the destination
 // before leaving the app. Two paths need to be covered:
@@ -206,11 +210,76 @@ function openTerminalLink(_event, uri) {
   }
   return true;
 }
-const linksAddon = new WebLinksAddon.WebLinksAddon(openTerminalLink);
-term.loadAddon(fitAddon);
-term.loadAddon(linksAddon);
-term.options.linkHandler = { activate: openTerminalLink };
-term.open($('#terminal'));
+
+function newTabId() { return 't' + (++tabSeq) + '_' + Date.now().toString(36); }
+
+// Spin up a fresh terminal pane + xterm instance for a new chat tab. Does not
+// start the PTY (caller does) or activate it (caller does).
+function createTab() {
+  const id = newTabId();
+  const el = document.createElement('div');
+  el.className = 'term-pane';
+  el.dataset.sessionId = id;
+  $('#terminal').appendChild(el);
+  const t = new Terminal({
+    cursorBlink: true,
+    fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace',
+    fontSize: 13,
+    theme: themeForXterm(),
+  });
+  const fa = new FitAddon.FitAddon();
+  t.loadAddon(fa);
+  t.loadAddon(new WebLinksAddon.WebLinksAddon(openTerminalLink));
+  t.options.linkHandler = { activate: openTerminalLink };
+  t.open(el);
+  const tab = {
+    id, term: t, fitAddon: fa, el,
+    mouseOn: false, chatHasInput: false, restarting: false,
+    // title is the auto-derived name (agent session title, else this default).
+    // customTitle, when set, is the user's rename and wins over title.
+    // agentId links this tab to its claude session once resolved.
+    title: `Chat ${TABS.size + 1}`,
+    customTitle: null,
+    agentId: null,
+    writeBuf: '', flushScheduled: false,
+  };
+  // Keystrokes typed in this tab go to its own session.
+  t.onData((d) => {
+    tab.chatHasInput = true;
+    chatHasInput = true;
+    $('#chat-empty').classList.remove('show');
+    if (/[\r\n]/.test(d)) armRecap();
+    window.husk.pty.write(d, id);
+    t.scrollToBottom();
+  });
+  t.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
+    if (meta && (e.key === 'c' || e.key === 'C')) {
+      if (t.hasSelection()) { copyTerminalSelection(); return false; }
+    }
+    return true;
+  });
+  TABS.set(id, tab);
+  return tab;
+}
+
+// Show one tab, hide the rest, and re-point the active-tab pointers so the
+// shared handlers operate on it.
+function activateTab(id) {
+  const tab = TABS.get(id);
+  if (!tab) return;
+  activeTabId = id;
+  term = tab.term;
+  fitAddon = tab.fitAddon;
+  agentMouseOn = !!tab.mouseOn;
+  chatHasInput = tab.chatHasInput;
+  for (const t of TABS.values()) t.el.classList.toggle('show', t.id === id);
+  try { window.husk.pty.setActive(id); } catch (_) {}
+  renderTabStrip();
+  fitNow();
+  try { term.focus(); } catch (_) {}
+}
 
 // Wheel forwarding for full-screen agents. A TUI like copilot runs in the
 // alternate screen (no terminal scrollback) and turns mouse reporting on so it
@@ -220,10 +289,15 @@ term.open($('#terminal'));
 // scroll input; otherwise let xterm scroll its scrollback normally. Capture
 // phase + passive:false so we intercept before xterm and can preventDefault.
 let agentMouseOn = false;
-window.husk.pty.onMouseMode((on) => { agentMouseOn = !!on; });
+window.husk.pty.onMouseMode((sessionId, on) => {
+  const tab = TABS.get(sessionId);
+  if (tab) tab.mouseOn = !!on;
+  if (sessionId === activeTabId) agentMouseOn = !!on;
+});
 $('#terminal').addEventListener('wheel', (e) => {
-  if (!agentMouseOn) return;
-  const screen = $('#terminal').querySelector('.xterm-screen');
+  if (!agentMouseOn || !term) return;
+  const tab = TABS.get(activeTabId);
+  const screen = tab && tab.el.querySelector('.xterm-screen');
   if (!screen) return;
   const rect = screen.getBoundingClientRect();
   const cw = rect.width / term.cols || 1;
@@ -232,7 +306,7 @@ $('#terminal').addEventListener('wheel', (e) => {
   let row = Math.floor((e.clientY - rect.top) / ch) + 1;
   col = Math.min(Math.max(col, 1), term.cols);
   row = Math.min(Math.max(row, 1), term.rows);
-  window.husk.pty.wheel({ deltaY: e.deltaY, deltaMode: e.deltaMode, col, row });
+  window.husk.pty.wheel({ deltaY: e.deltaY, deltaMode: e.deltaMode, col, row }, activeTabId);
   e.preventDefault();
   e.stopPropagation();
 }, { capture: true, passive: false });
@@ -273,23 +347,16 @@ function themeForXterm() {
 
 function fitNow() {
   if (currentPage !== 'chat') return;
+  if (!fitAddon || !term) return;
   try {
     fitAddon.fit();
     const { cols, rows } = term;
-    window.husk.pty.resize({ cols, rows });
+    window.husk.pty.resize({ cols, rows }, activeTabId);
   } catch (_) {}
 }
 // Refit on resize. A trailing debounce coalesces the rapid resize burst
 // from a window drag into one fit so the terminal reflow stays smooth.
 window.addEventListener('resize', debounce(fitNow, 80));
-term.onData((d) => {
-  chatHasInput = true;
-  $('#chat-empty').classList.remove('show');
-  // Enter (or pasted newline) ends a user turn; allow that turn's recap.
-  if (/[\r\n]/.test(d)) armRecap();
-  window.husk.pty.write(d);
-  term.scrollToBottom();
-});
 
 // Copy / paste affordances for the embedded terminal.
 //   - Right-click on the terminal opens a small Copy / Paste / Select all menu.
@@ -313,14 +380,6 @@ async function pasteIntoTerminal() {
     return true;
   } catch (_) { return false; }
 }
-term.attachCustomKeyEventHandler((e) => {
-  if (e.type !== 'keydown') return true;
-  const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
-  if (meta && (e.key === 'c' || e.key === 'C')) {
-    if (term.hasSelection()) { copyTerminalSelection(); return false; }
-  }
-  return true;
-});
 {
   const terminalEl = $('#terminal');
   const menu = document.createElement('div');
@@ -395,55 +454,56 @@ function persistConfig(patch) {
   _flushCfgPatch();
 }
 
-// Coalesce PTY output into one xterm write per animation frame. A
+// Coalesce a tab's PTY output into one xterm write per animation frame. A
 // chatty agent emits many chunks in quick succession; writing each one
 // separately (with its own scroll callback and speech scan) burned CPU
 // and janked scrolling. Buffering to the next frame collapses a burst
-// into a single write + single scroll + single speech scan.
-let _termWriteBuf = '';
-let _termFlushScheduled = false;
-function _flushTermWrite() {
-  _termFlushScheduled = false;
-  if (!_termWriteBuf) return;
-  const data = _termWriteBuf;
-  _termWriteBuf = '';
+// into a single write + single scroll + single speech scan. Each tab owns
+// its own buffer so a background agent's output never bleeds into another.
+function _flushTabWrite(tab) {
+  tab.flushScheduled = false;
+  if (!tab.writeBuf) return;
+  const data = tab.writeBuf;
+  tab.writeBuf = '';
+  const t = tab.term;
   // Follow the tail only when the user is already pinned to the bottom. If they
   // scrolled up to read while the agent is still streaming, leave the viewport
   // where it is instead of yanking it back down on every chunk. (In the alt
   // screen there is no scrollback, so viewportY/baseY are both 0 and this stays
   // pinned -- copilot's own wheel-forwarded scrolling is unaffected.)
-  const buf = term.buffer.active;
+  const buf = t.buffer.active;
   const wasAtBottom = buf.viewportY >= buf.baseY;
-  term.write(data, () => { if (wasAtBottom) term.scrollToBottom(); });
-  detectAndSpeak(data);
+  t.write(data, () => { if (wasAtBottom) t.scrollToBottom(); });
+  // Only the focused tab drives voice, so background agents stay silent.
+  if (tab.id === activeTabId) detectAndSpeak();
 }
-window.husk.pty.onData((d) => {
-  if (!chatHasInput) {
+window.husk.pty.onData((sessionId, d) => {
+  const tab = TABS.get(sessionId) || TABS.get(activeTabId);
+  if (!tab || tab.restarting) return;
+  if (tab.id === activeTabId && !chatHasInput) {
     chatHasInput = true;
     $('#chat-empty').classList.remove('show');
   }
-  if (_restartInProgress) return;
-  _termWriteBuf += d;
-  if (!_termFlushScheduled) { _termFlushScheduled = true; requestAnimationFrame(_flushTermWrite); }
+  tab.chatHasInput = true;
+  tab.writeBuf += d;
+  if (!tab.flushScheduled) { tab.flushScheduled = true; requestAnimationFrame(() => _flushTabWrite(tab)); }
 });
-window.husk.pty.onExit((code) => {
-  // Suppress the exit notice when we're tearing the old PTY down on purpose,
-  // otherwise the line stitches into the new PTY's welcome banner.
-  if (_restartInProgress) return;
-  term.writeln(`\r\n\x1b[38;2;106;115;133m[agent exited code ${code}; click ↻ Restart]\x1b[0m`);
+window.husk.pty.onExit((sessionId, code) => {
+  const tab = TABS.get(sessionId);
+  // Suppress the exit notice when we're tearing this tab's PTY down on
+  // purpose, otherwise the line stitches into the new PTY's welcome banner.
+  if (!tab || tab.restarting) return;
+  tab.term.writeln(`\r\n\x1b[38;2;106;115;133m[agent exited code ${code}; click ↻ Restart]\x1b[0m`);
 });
-
-// Set true while we are killing the old PTY and spawning a new one. Renderer
-// ignores all PTY output and exit events during this window so the dying
-// PTY's tail output ("killing shell... killed", "[agent exited code 0]") and
-// the new PTY's welcome banner do not interleave in xterm's single buffer.
-let _restartInProgress = false;
 
 function announceInTerminal(msg) {
-  term.writeln(`\r\n\x1b[38;2;103;232;249m▸ ${msg}\x1b[0m`);
+  if (term) term.writeln(`\r\n\x1b[38;2;103;232;249m▸ ${msg}\x1b[0m`);
 }
 
 async function startPty() {
+  // First tab + its session.
+  const tab = createTab();
+  activateTab(tab.id);
   fitAddon.fit();
   const { cols, rows } = term;
   // Auto-select: if nothing is active and a profile has autoSelect enabled, activate it.
@@ -454,14 +514,14 @@ async function startPty() {
       toast(`Agent auto-selected: ${autoProfile.name}`, '');
     }
   }
-  await window.husk.pty.start({ cols, rows });
+  await window.husk.pty.start({ cols, rows, sessionId: tab.id });
   term.focus();
   // Inject ai-suggested workflow context so the AI knows what workflows exist
   try {
     const wfCtx = await window.husk.workflows.getSessionContext();
     if (wfCtx) {
       setTimeout(() => {
-        try { window.husk.pty.write(wfCtx + '\n'); } catch (_) {}
+        try { window.husk.pty.write(wfCtx + '\n', tab.id); } catch (_) {}
       }, 800);
     }
   } catch (_) {}
@@ -469,16 +529,43 @@ async function startPty() {
   // them into Loaded vs Pending, and the welcome screen can show what's live.
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
 }
-async function restartPty(opts = {}) {
-  _restartInProgress = true;
+
+// Open a brand-new chat in its own tab, leaving every existing tab's agent
+// running. This is what "+ New Chat" now does instead of restarting.
+async function openNewChatTab(opts = {}) {
+  const tab = createTab();
+  activateTab(tab.id);
   fitAddon.fit();
-  const { cols, rows } = term;
+  const { cols, rows } = tab.term;
   chatHasInput = false;
   resetSpeechState();
   clearSessionContext();
+  await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
+  tab.term.focus();
+  if (!cfg.skipWelcome) $('#chat-empty').classList.add('show');
+  try {
+    const wfCtx = await window.husk.workflows.getSessionContext();
+    if (wfCtx) setTimeout(() => { try { window.husk.pty.write(wfCtx + '\n', tab.id); } catch (_) {} }, 800);
+  } catch (_) {}
+  try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
+  renderTabStrip();
+  return tab;
+}
+
+// Restart the agent in the ACTIVE tab, in place (same tab, same session id).
+async function restartPty(opts = {}) {
+  const tab = TABS.get(activeTabId);
+  if (!tab) return;
+  tab.restarting = true;
+  fitAddon.fit();
+  const { cols, rows } = tab.term;
+  chatHasInput = false;
+  tab.chatHasInput = false;
+  resetSpeechState();
+  clearSessionContext();
   // First wipe so any earlier scrollback is gone before kill output starts.
-  try { term.reset(); } catch (_) { try { term.clear(); } catch (_) {} }
-  await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null });
+  try { tab.term.reset(); } catch (_) { try { tab.term.clear(); } catch (_) {} }
+  await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   // Let the dying PTY drain its tail notice into the (suppressed) handlers
   // before we re-enable output. Claude's welcome banner takes >300ms to
   // produce, so a 200ms quiet window does not cut into it.
@@ -486,22 +573,191 @@ async function restartPty(opts = {}) {
   // Second wipe: clears anything that wrote to the buffer despite suppression
   // (e.g. xterm internal sequences from the kill), so the new PTY's banner
   // starts on a clean canvas.
-  try { term.reset(); } catch (_) {}
-  _restartInProgress = false;
+  try { tab.term.reset(); } catch (_) {}
+  tab.restarting = false;
   // Respect the "Don't show this on next launch" toggle on restart too;
   // otherwise the welcome briefly flashes in (added here) and out again
   // (stripped by the first pty.onData tick once the new agent banner
   // arrives), which reads as a layout glitch.
   if (!cfg.skipWelcome) $('#chat-empty').classList.add('show');
-  term.focus();
+  tab.term.focus();
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
   if (!opts.silent) toast('New session', 'success');
 }
 
+// Close one chat tab and reap its agent. Never drops to zero tabs: closing the
+// last remaining tab restarts it instead.
+async function closeTab(id) {
+  const tab = TABS.get(id);
+  if (!tab) return;
+  if (TABS.size <= 1) { await restartPty(); return; }
+  try { await window.husk.pty.close(id); } catch (_) {}
+  try { tab.term.dispose(); } catch (_) {}
+  try { tab.el.remove(); } catch (_) {}
+  TABS.delete(id);
+  if (activeTabId === id) {
+    const next = TABS.keys().next();
+    if (!next.done) activateTab(next.value);
+  } else {
+    renderTabStrip();
+  }
+}
+
+// The name shown for a tab: the user's rename if set, else the generic
+// per-tab default ("Chat 1", "Chat 2", ...).
+function displayTitle(tab) {
+  return (tab.customTitle || tab.title || '').trim() || 'Chat';
+}
+
+// Swap a tab's label for an inline input so the user can rename the chat.
+// Commit on Enter or blur; cancel on Escape. A custom name is persisted by
+// agent session id (once the tab is linked) so it survives restarts.
+function beginRename(tab, labelEl) {
+  if (!tab || !labelEl || labelEl.querySelector('input')) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'chat-tab-rename';
+  input.value = displayTitle(tab);
+  input.maxLength = 80;
+  labelEl.textContent = '';
+  labelEl.appendChild(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    if (commit) {
+      const name = input.value.replace(/\s+/g, ' ').trim();
+      tab.customTitle = name || null;
+      if (tab.agentId) {
+        try { window.husk.sessions.rename({ agentId: tab.agentId, name: name || '' }); } catch (_) {}
+      }
+    }
+    renderTabStrip();
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+}
+
+// Confirm, then close a chat tab. Closing the only remaining chat starts a
+// fresh one (closeTab never drops to zero), so the prompt reflects that.
+async function confirmCloseTab(id) {
+  const tab = TABS.get(id);
+  if (!tab) return;
+  const ok = await openConfirmDialog({
+    title: 'Close this chat?',
+    bodyHtml: `Are you sure you want to close <strong>${escapeHtml(displayTitle(tab))}</strong>? Its agent will be stopped.`,
+    confirmLabel: 'Close chat',
+    cancelLabel: 'Cancel',
+  });
+  if (ok) closeTab(id);
+}
+
+// SVG glyphs for the tab controls. Block-level SVGs (not emoji) so they sit on
+// the same line as the label and align consistently across platforms.
+const TAB_EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+const TAB_CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+// Render the tab strip. One pill per chat, always visible so every chat (even
+// the first) has a clickable label, a hover rename icon, and a close button.
+function renderTabStrip() {
+  const strip = document.getElementById('tab-strip');
+  if (!strip) return;
+  const tabs = [...TABS.values()];
+  strip.innerHTML = '';
+  for (const t of tabs) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '');
+    btn.dataset.tab = t.id;
+    const name = displayTitle(t);
+    btn.title = name;
+    const label = document.createElement('span');
+    label.className = 'chat-tab-label';
+    label.textContent = name;
+    btn.appendChild(label);
+    const edit = document.createElement('span');
+    edit.className = 'chat-tab-edit';
+    edit.dataset.edit = t.id;
+    edit.title = 'Rename chat';
+    // eslint-disable-next-line no-unsanitized/property -- static SVG markup
+    edit.innerHTML = TAB_EDIT_SVG;
+    btn.appendChild(edit);
+    const x = document.createElement('span');
+    x.className = 'chat-tab-close';
+    x.dataset.close = t.id;
+    x.title = 'Close chat';
+    // eslint-disable-next-line no-unsanitized/property -- static SVG markup
+    x.innerHTML = TAB_CLOSE_SVG;
+    btn.appendChild(x);
+    strip.appendChild(btn);
+  }
+  strip.classList.toggle('multi', tabs.length >= 1);
+}
+
+// Link each new tab to the agent session it spawned, once, so a saved custom
+// name can be restored and future renames persisted. We do NOT derive the tab
+// label from the session: the label stays "Chat N" unless the user renames it.
+// Only unlinked tabs are probed, so once every tab is linked this does no work.
+async function linkTabs() {
+  const unlinked = [...TABS.values()].filter((t) => !t.agentId);
+  if (!unlinked.length) return;
+  const claimed = [...TABS.values()].map((t) => t.agentId).filter(Boolean);
+  let changed = false;
+  for (const tab of unlinked) {
+    try {
+      const res = await window.husk.sessions.resolveLiveTitle({ huskSessionId: tab.id, excludeAgentIds: claimed });
+      if (!res || !res.ok || !res.agentId) continue;
+      tab.agentId = res.agentId;
+      claimed.push(res.agentId);
+      if (tab.customTitle) {
+        // A rename made before linking had nowhere to persist; save it now.
+        try { window.husk.sessions.rename({ agentId: res.agentId, name: tab.customTitle }); } catch (_) {}
+      } else if (res.custom && res.title) {
+        tab.customTitle = res.title; changed = true;
+      }
+    } catch (_) {}
+  }
+  if (changed) renderTabStrip();
+}
+setInterval(linkTabs, 3000);
+
+// Delegated handling for the tab strip: rename on the pencil, close (with
+// confirm) on the ×, otherwise switch focus to the clicked tab.
+{
+  const strip = document.getElementById('tab-strip');
+  if (strip) {
+    strip.addEventListener('click', (e) => {
+      const editEl = e.target.closest('[data-edit]');
+      if (editEl) {
+        e.stopPropagation();
+        const btn = editEl.closest('[data-tab]');
+        const labelEl = btn && btn.querySelector('.chat-tab-label');
+        if (labelEl) beginRename(TABS.get(editEl.dataset.edit), labelEl);
+        return;
+      }
+      const closeEl = e.target.closest('[data-close]');
+      if (closeEl) { e.stopPropagation(); confirmCloseTab(closeEl.dataset.close); return; }
+      const tabEl = e.target.closest('[data-tab]');
+      if (tabEl && tabEl.dataset.tab !== activeTabId) activateTab(tabEl.dataset.tab);
+    });
+  }
+}
+
 // ─── Theme + accent ─────────────────────────────────────────────────────────────
+function retintAllTabs() {
+  const theme = themeForXterm();
+  for (const t of TABS.values()) { try { t.term.options.theme = theme; } catch (_) {} }
+}
 function applyTheme(theme) {
   document.body.dataset.theme = theme;
-  try { term.options.theme = themeForXterm(); } catch (_) {}
+  retintAllTabs();
   // Theme icon swap is now handled via CSS based on body[data-theme]; the
   // legacy #theme-icon span is gone. This function intentionally only sets
   // the dataset attribute, the moon/sun SVGs are toggled by selectors.
@@ -510,7 +766,7 @@ function applyAccent(accent) {
   const valid = ['orange', 'cyan', 'indigo', 'emerald', 'rose'];
   const a = valid.includes(accent) ? accent : 'orange';
   document.body.dataset.accent = a;
-  try { term.options.theme = themeForXterm(); } catch (_) {}
+  retintAllTabs();
   $$('.accent-swatch').forEach((sw) => sw.classList.toggle('selected', sw.dataset.c === a));
 }
 
@@ -574,7 +830,10 @@ async function refreshStats() {
     const s = await window.husk.stats.get();
     lastStats = s;
     $('#skills-sub').textContent = `${s.skills} skills installed at ~/.claude/skills/`;
-    $('#sessions-sub').textContent = `claude sessions at ~/.claude/projects/ · click to preview, Resume to continue`;
+    // Sessions subheader is refined by renderSessions once the active agent's
+    // sessions are read; show an agent-appropriate hint until then.
+    const agentNow = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0];
+    $('#sessions-sub').textContent = `${agentNow} sessions · click to preview, Resume to continue`;
   } catch (err) { console.warn('stats error', err); }
 }
 
@@ -2638,6 +2897,8 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
 
 // ─── Sessions page ───────────────────────────────────────────────────────────────
 let sessionsCache = [];
+let sessionsAgent = 'claude';
+let sessionsDir = '';
 let sessionsSelectMode = false;
 const sessionsSelected = new Set();
 async function renderSessions() {
@@ -2650,6 +2911,20 @@ async function renderSessions() {
     return;
   }
   sessionsCache = res.sessions;
+  sessionsAgent = res.agent || 'claude';
+  sessionsDir = res.sessionsDir || '';
+  // Reflect which agent's sessions are shown, and where they live.
+  const subEl = $('#sessions-sub');
+  if (subEl) {
+    subEl.textContent = res.supported === false
+      ? `Session history for ${sessionsAgent} is not available yet`
+      : `${sessionsAgent} sessions at ${sessionsDir || ''} · click to preview, Resume to continue`;
+  }
+  if (res.supported === false) {
+    // eslint-disable-next-line no-unsanitized/property -- Static, agent name escaped.
+    $('#sessions-list').innerHTML = `<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">Husk does not read ${escapeHtml(sessionsAgent)} sessions yet. Switch the active agent to claude or copilot to browse sessions.</div></div>`;
+    return;
+  }
   // Drop selections that no longer exist (e.g. after delete + refresh).
   const live = new Set(sessionsCache.map((s) => s.path));
   for (const p of sessionsSelected) if (!live.has(p)) sessionsSelected.delete(p);
@@ -2787,7 +3062,10 @@ async function deleteSelectedSessions() {
 
 $('#sessions-search').addEventListener('input', debounce((e) => paintSessions(sessionsCache, e.target.value), 120));
 $('#btn-sessions-refresh').addEventListener('click', renderSessions);
-$('#btn-sessions-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.sessionsDir));
+$('#btn-sessions-open').addEventListener('click', () => {
+  const dir = sessionsDir || (lastStats && lastStats.sessionsDir);
+  if (dir) window.husk.fs.open(dir);
+});
 $('#btn-sessions-select').addEventListener('click', enterSelectMode);
 $('#btn-sessions-cancel').addEventListener('click', exitSelectMode);
 $('#btn-sessions-delete').addEventListener('click', deleteSelectedSessions);
@@ -2818,7 +3096,7 @@ async function openSessionDetail(d) {
   if (d.prdpath) meta.push(['PRD', d.prdpath]);
 
   showDetail({
-    eyebrow: 'Claude session',
+    eyebrow: `${sessionsAgent} session`,
     title: d.title,
     sub: d.id,
     meta,
@@ -2826,28 +3104,44 @@ async function openSessionDetail(d) {
     actions: [
       { label: '↻ Resume this session', kind: 'primary', onClick: () => resumeSessionInChat(d) },
       d.prdpath ? { label: 'Open PRD', kind: 'ghost', onClick: () => window.husk.fs.open(d.prdpath) } : null,
-      { label: 'Open JSONL', kind: 'ghost', onClick: () => window.husk.fs.open(d.path) },
+      { label: 'Open files', kind: 'ghost', onClick: () => window.husk.fs.open(d.path) },
     ].filter(Boolean),
   });
+}
+
+// Build the active agent's "resume session" command. claude takes a positional
+// id (claude --resume <id>); copilot takes an attached value (copilot
+// --resume=<id>). Anything else falls back to the claude form.
+function resumeCommandFor(agent, id) {
+  if (agent === 'copilot') return `copilot --resume=${id}`;
+  return `claude --resume ${id}`;
 }
 
 async function resumeSessionInChat(d) {
   closeDetail();
   setPage('chat');
-  try { term.clear(); term.reset(); } catch (_) {}
-  const cmd = `claude --resume ${d.id}`;
+  const agent = sessionsAgent || 'claude';
+  const cmd = resumeCommandFor(agent, d.id);
+  const cmdShort = resumeCommandFor(agent, d.id.slice(0, 8));
   const cwd = d.project || null;
   toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
-  $('#chat-sub').textContent = `claude --resume ${d.id.slice(0, 8)} · ${cwd || huskHome}`;
-  if ($('#sp-agent')) $('#sp-agent').textContent = `claude --resume ${d.id.slice(0, 8)}`;
+  $('#chat-sub').textContent = `${cmdShort} · ${cwd || huskHome}`;
+  if ($('#sp-agent')) $('#sp-agent').textContent = cmdShort;
   if ($('#sp-session-id')) $('#sp-session-id').textContent = `${d.id.slice(0, 8)} · ${cwd || huskHome}`;
-  fitAddon.fit();
-  const { cols, rows } = term;
-  chatHasInput = false;
-  $('#chat-empty').classList.add('show');
-  await window.husk.pty.restart({ cols, rows, command: cmd, cwd });
-  term.focus();
-  term.scrollToBottom();
+  // Resume in a fresh tab so the current chat keeps running alongside it.
+  const tab = await openNewChatTab({ command: cmd, cwd });
+  // Link the tab to the resumed session so future renames persist, and restore
+  // a custom name if this session was renamed before. The default label stays
+  // "Chat N" otherwise; the header title stays "Chat".
+  if (tab) {
+    tab.agentId = d.id;
+    try {
+      const res = await window.husk.sessions.resolveLiveTitle({ knownAgentId: d.id });
+      if (res && res.ok && res.custom && res.title) tab.customTitle = res.title;
+    } catch (_) {}
+    renderTabStrip();
+  }
+  if (term) term.scrollToBottom();
 }
 
 // ─── Files page (tree) ───────────────────────────────────────────────────────────
@@ -4123,7 +4417,7 @@ window.addEventListener('click', (e) => {
   if (e.target.closest('#rail-agent-pill') || e.target.closest('#rail-agent-menu')) return;
   closeAgentMenu();
 });
-$('#btn-new-session').addEventListener('click', () => restartPty());
+$('#btn-new-session').addEventListener('click', () => openNewChatTab());
 function reportZoom(lvl) {
   const pct = Math.round(Math.pow(1.2, lvl) * 100);
   toast(`Zoom: ${pct}%`, 'success');
@@ -4218,7 +4512,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('preferences'), shortcut: ',' },
   { icon: ICONS.restart,     label: 'Restart Agent',                  run: restartPty },
   { icon: ICONS.plus,        label: 'Share file (picker)',            run: shareFilesViaPicker },
-  { icon: ICONS.plus,        label: 'New chat session',               run: () => restartPty() },
+  { icon: ICONS.plus,        label: 'New chat session',               run: () => openNewChatTab() },
   { icon: ICONS.theme,       label: 'Toggle theme',                   run: () => $('#btn-theme').click() },
   { icon: ICONS.folder,      label: 'Open ~/.claude/MEMORY/WORK/',    run: () => lastStats && window.husk.fs.open(lastStats.sessionsDir) },
   { icon: ICONS.skills,      label: 'Open ~/.claude/skills/',         run: () => lastStats && window.husk.fs.open(lastStats.skillsDir) },
