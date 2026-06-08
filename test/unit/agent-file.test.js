@@ -6,7 +6,7 @@ const { agentFileName, renderAgentMd } = require('../../src/lib/agent-file');
 
 test('agentFileName slugifies and stays traversal-free', () => {
   assert.equal(agentFileName('Security Auditor'), 'security-auditor.md');
-  assert.equal(agentFileName('reviewer-agent'), 'reviewer-agent.md');
+  assert.equal(agentFileName('review-agent'), 'review-agent.md');
   assert.equal(agentFileName('../../etc/passwd'), 'etc-passwd.md');
   assert.equal(agentFileName(''), 'agent.md');
   assert.equal(agentFileName('  weird  /\\ name '), 'weird-name.md');

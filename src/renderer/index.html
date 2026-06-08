@@ -599,7 +599,7 @@
               <button class="modal-close" id="ra-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">Point Husk at a cloned repo (e.g. <code>agent-pack</code>) that ships an <code>agents/</code> directory. Picked agents are copied to <code>~/.claude/agents/</code> for Claude Code and written into <code>.github/copilot-instructions.md</code> for GitHub Copilot. Each Husk profile is stamped with the repo path so the active CLI launches there, which is what makes the agent's relative <code>skills/&lt;test_id&gt;.md</code> reads resolve.</p>
+              <p class="ra-hint">Point Husk at a cloned repo that ships an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are installed into every AI tool you have (Claude, Copilot, ...) using each tool's native agents folder. Each Husk profile is stamped with the repo path so the active CLI launches there, which is what makes the agent's relative <code>skills/&lt;id&gt;/SKILL.md</code> reads resolve.</p>
               <div class="ra-pathrow">
                 <input type="text" id="ra-root" class="ra-root" placeholder="/path/to/agent-pack-repo" autocomplete="off" spellcheck="false" />
                 <button class="ghost-btn" id="ra-browse">Browse…</button>
@@ -608,15 +608,10 @@
               <div id="ra-list" class="ai-list"></div>
             </div>
             <div class="modal-foot ra-foot">
-              <label class="ai-foot-toggle" title="Copy each picked agent file to ~/.claude/agents/ so Claude Code picks them up natively">
+              <label class="ai-foot-toggle" title="Install each picked agent into every detected AI tool's native agents folder (Claude, Copilot, ...)">
                 <input type="checkbox" id="ra-claude" class="ai-check" checked />
                 <span class="ai-check-box" aria-hidden="true"></span>
-                Copy to ~/.claude/agents/
-              </label>
-              <label class="ai-foot-toggle" title="Write the agent bodies into .github/copilot-instructions.md inside HUSK-AGENTS markers (existing content outside the markers is preserved)">
-                <input type="checkbox" id="ra-copilot" class="ai-check" checked />
-                <span class="ai-check-box" aria-hidden="true"></span>
-                Write Copilot instructions
+                Install into all AI tools
               </label>
               <label class="ai-foot-toggle" title="Activate imported agents for the next chat session">
                 <input type="checkbox" id="ra-activate" class="ai-check" checked />
