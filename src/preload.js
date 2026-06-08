@@ -9,14 +9,18 @@ try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
 
 contextBridge.exposeInMainWorld('husk', {
   pty: {
-    start: (size) => ipcRenderer.invoke('pty:start', size),
-    write: (data) => ipcRenderer.send('pty:write', data),
-    resize: (size) => ipcRenderer.send('pty:resize', size),
+    // sessionId threads through every channel so multiple PTYs run in
+    // parallel; when omitted the main process targets the active session.
+    start: (opts) => ipcRenderer.invoke('pty:start', opts || {}),
+    write: (data, sessionId) => ipcRenderer.send('pty:write', { data, sessionId }),
+    resize: (size, sessionId) => ipcRenderer.send('pty:resize', Object.assign({ sessionId }, size)),
     restart: (opts) => ipcRenderer.invoke('pty:restart', opts || {}),
-    onData: (cb) => ipcRenderer.on('pty:data', (_e, d) => cb(d)),
-    onExit: (cb) => ipcRenderer.on('pty:exit', (_e, code) => cb(code)),
-    onMouseMode: (cb) => ipcRenderer.on('pty:mouse-mode', (_e, on) => cb(on)),
-    wheel: (payload) => ipcRenderer.send('pty:wheel', payload),
+    close: (sessionId) => ipcRenderer.invoke('pty:close', sessionId),
+    setActive: (sessionId) => ipcRenderer.send('pty:setActive', sessionId),
+    onData: (cb) => ipcRenderer.on('pty:data', (_e, p) => cb(p.sessionId, p.data)),
+    onExit: (cb) => ipcRenderer.on('pty:exit', (_e, p) => cb(p.sessionId, p.code)),
+    onMouseMode: (cb) => ipcRenderer.on('pty:mouse-mode', (_e, p) => cb(p.sessionId, p.on)),
+    wheel: (payload, sessionId) => ipcRenderer.send('pty:wheel', Object.assign({ sessionId }, payload)),
   },
   // Extract the agent's recap line from rendered grid rows (pure, in-process).
   recap: {
@@ -37,6 +41,8 @@ contextBridge.exposeInMainWorld('husk', {
     list: () => ipcRenderer.invoke('sessions:list'),
     read: (prdPath) => ipcRenderer.invoke('sessions:read', prdPath),
     findClaudeId: (payload) => ipcRenderer.invoke('sessions:findClaudeId', payload),
+    resolveLiveTitle: (payload) => ipcRenderer.invoke('sessions:resolveLiveTitle', payload),
+    rename: (payload) => ipcRenderer.invoke('sessions:rename', payload),
     delete: (paths) => ipcRenderer.invoke('sessions:delete', { paths }),
   },
   prds: { list: () => ipcRenderer.invoke('prds:list') },
