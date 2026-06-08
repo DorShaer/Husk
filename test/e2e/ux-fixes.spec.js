@@ -105,6 +105,10 @@ test('copy from the terminal context menu keeps focus in the terminal (issue 5)'
   const win = await ready(app);
   const focused = await win.evaluate(async () => {
     setPage('chat');
+    // Cold boot shows the welcome screen with no terminal yet; start the agent
+    // so a tab (and its terminal) exists before exercising copy.
+    try { await startPty(); } catch (_) {}
+    for (let i = 0; i < 100 && !term; i++) await new Promise((r) => setTimeout(r, 20));
     try { term.write('hello selection'); } catch (_) {}
     await new Promise((r) => setTimeout(r, 50));
     try { term.selectAll(); } catch (_) {}
