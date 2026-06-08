@@ -751,27 +751,12 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
       } catch (_) {}
     }
   }
-  // Active-profile repoRoot wins over agentCwd / activeProject, but loses to
-  // an explicit overrideCwd (e.g. Resume re-entering a session). This is what
-  // makes agents installed from a repo land in the right working directory:
-  // relative paths inside the agent's prompt (e.g. `skills/<test_id>.md`)
-  // resolve against the cloned repo, regardless of which CLI is active.
-  try {
-    const activeIds = Array.isArray(config.activeProfileIds)
-      ? config.activeProfileIds
-      : (config.activeProfileId ? [config.activeProfileId] : []);
-    if (activeIds.length && Array.isArray(config.profiles)) {
-      for (const id of activeIds) {
-        const prof = config.profiles.find((p) => p && p.id === id);
-        if (prof && prof.repoRoot && typeof prof.repoRoot === 'string') {
-          if (fs.existsSync(prof.repoRoot) && fs.statSync(prof.repoRoot).isDirectory()) {
-            cwd = prof.repoRoot;
-            break;
-          }
-        }
-      }
-    }
-  } catch (_) {}
+  // Note: selecting a repo-installed agent does NOT change the working
+  // directory. The agent is loaded by its CLI natively (Husk mirrors it into
+  // each CLI's agents dir), and the cwd stays whatever the user configured
+  // (agentCwd / active project / home). If a user wants the agent's relative
+  // `skills/<id>/SKILL.md` reads to resolve, they point Working directory at
+  // that repo themselves in Preferences.
   if (overrideCwd) {
     try {
       if (fs.existsSync(overrideCwd) && fs.statSync(overrideCwd).isDirectory()) {
@@ -2499,6 +2484,10 @@ ipcMain.handle('profiles:listImportableAgents', () => {
   try {
     const existing = new Set(getProfiles().map((p) => String(p.name || '').toLowerCase()));
     const out = [];
+    // Dedupe by agent name (case-insensitive). The same agent can appear as
+    // more than one file in a dir (e.g. an original `Algorithm.md` plus a
+    // slug-mirrored `algorithm.md`); list it once.
+    const seen = new Set();
     for (const src of AGENT_SOURCES) {
       if (!fs.existsSync(src.dir)) continue;
       for (const entry of fs.readdirSync(src.dir, { withFileTypes: true })) {
@@ -2507,13 +2496,16 @@ ipcMain.handle('profiles:listImportableAgents', () => {
           const text = fs.readFileSync(path.join(src.dir, entry.name), 'utf8');
           const parsed = parseAgentMd(text);
           const name = (parsed.name || entry.name.replace(/\.md$/, '')).slice(0, 64);
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
           out.push({
             source: src.label,
             filename: entry.name,
             name,
             description: (parsed.description || '').slice(0, 256),
             systemPrompt: (parsed.body || '').slice(0, 4096),
-            alreadyImported: existing.has(name.toLowerCase()),
+            alreadyImported: existing.has(key),
           });
         } catch (_) {}
       }
@@ -2988,6 +2980,13 @@ ipcMain.handle('profiles:deactivate', (_e, id) => {
 ipcMain.handle('profiles:deactivateAll', () => {
   writeActiveIds([]);
   return { ok: true, activeIds: [] };
+});
+
+// Select every profile (bulk).
+ipcMain.handle('profiles:activateAll', () => {
+  const ids = getProfiles().map((p) => p.id).filter(Boolean);
+  writeActiveIds(ids);
+  return { ok: true, activeIds: ids };
 });
 
 // Returns just the curated Husk prompts (the markdown files seeded from
