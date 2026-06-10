@@ -144,6 +144,10 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg></span>
               <span class="ri-label">MCP</span>
             </button>
+            <button class="rail-item" data-page="plugins" title="Plugins">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg></span>
+              <span class="ri-label">Plugins</span>
+            </button>
             <button class="rail-item" data-page="files" title="Files">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
               <span class="ri-label">Files</span>
@@ -856,6 +860,54 @@
           </div>
         </div>
 
+        <div class="page page-plugins" data-page="plugins" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Plugins</h1>
+              <span class="page-sub" id="plugins-sub">extend the agent with installable plugins</span>
+            </div>
+            <div class="page-head-right">
+              <input type="search" id="plugins-search" class="ghost-input" placeholder="Filter plugins…" />
+              <button class="ghost-btn" id="btn-plugins-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+            </div>
+          </div>
+          <div class="plugins-body" id="plugins-body">
+            <section class="mcp-section">
+              <div class="mcp-section-head">Installed</div>
+              <div class="plugins-installed" id="plugins-installed"></div>
+            </section>
+            <section class="mcp-section">
+              <div class="mcp-section-head" id="plugins-browse-head">Browse marketplaces</div>
+              <div class="plugins-grid" id="plugins-catalog"></div>
+            </section>
+          </div>
+          <div class="plugins-unsupported" id="plugins-unsupported" hidden>
+            <div class="empty-state"><div class="es-icon">⊟</div><div class="es-msg">The active agent does not expose a plugin system. Switch to an agent with plugin support to manage plugins here.</div></div>
+          </div>
+        </div>
+
+        <!-- Plugin editor modal -->
+        <div id="plugin-editor" class="modal" hidden>
+          <div class="modal-card plugin-editor-card">
+            <div class="modal-title" id="pe-title">Edit plugin</div>
+            <div class="modal-sub" id="pe-sub">edits live in the plugin cache and may be overwritten when the plugin updates</div>
+            <div class="pe-layout">
+              <div class="pe-files" id="pe-files"></div>
+              <div class="pe-editor">
+                <div class="pe-editor-path" id="pe-path">select a file</div>
+                <textarea id="pe-content" class="pe-content" spellcheck="false" disabled></textarea>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:14px; align-items:center;">
+              <span class="pe-status" id="pe-status"></span>
+              <span style="flex:1;"></span>
+              <button class="ghost-btn" id="pe-open-folder">Open folder</button>
+              <button class="ghost-btn" id="pe-close">Close</button>
+              <button class="btn-primary" id="pe-save" disabled>Save file</button>
+            </div>
+          </div>
+        </div>
+
         <div class="page page-files" data-page="files" hidden>
           <div class="page-head">
             <div class="page-head-left">
@@ -994,10 +1046,13 @@
       </section>
 
       <aside id="status-panel">
-        <button class="sp-toggle" id="sp-toggle" title="Collapse status panel">›</button>
+        <button class="sp-toggle" id="sp-toggle" title="Collapse status panel" aria-label="Toggle status panel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </button>
         <div class="sp-head">
           <span class="sp-head-label">STATUS</span>
-          <span class="sp-live-dot" title="Auto-refreshing"></span>
         </div>
         <div id="sp-content" class="sp-content"></div>
         <div class="sp-foot" id="sp-foot">

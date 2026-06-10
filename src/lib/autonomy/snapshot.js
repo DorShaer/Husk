@@ -38,8 +38,8 @@ const DEFAULT_IGNORE = [
   'test-results', 'playwright-report', '__pycache__', 'venv', '.venv',
 ];
 // Belt and suspenders: refuse to snapshot a workspace with more
-// than this many files. Walking $HOME unguarded was the bug that
-// led to "Husk is not responding". A real project repo is well
+// than this many files. An unguarded walk of $HOME would hang the
+// app ("Husk is not responding"). A real project repo is well
 // under this limit; if a user hits it, they almost certainly
 // picked the wrong scope.
 const DEFAULT_MAX_ENTRIES = 50000;

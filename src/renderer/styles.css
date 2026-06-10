@@ -354,7 +354,7 @@ body[data-status="collapsed"] #status-panel .sp-head,
 body[data-status="collapsed"] #status-panel #sp-content,
 body[data-status="collapsed"] #status-panel .sp-foot { display: none; }
 body[data-status="collapsed"] #status-panel { background: var(--bg-2); }
-body[data-status="collapsed"] .sp-toggle { transform: rotate(180deg); }
+body[data-status="collapsed"] .sp-toggle svg { transform: rotate(180deg); }
 
 /* ─── Rail ──────────────────────────────────────────────────────────────── */
 
@@ -1768,6 +1768,7 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   opacity: 0; transition: opacity var(--motion-slow) var(--ease-out);
 }
 .chat-empty.show { opacity: 1; pointer-events: auto; }
+[data-theme="dark"] .chat-empty { background: #1C1A1A; }
 .ce-logo-img {
   width: 64px; height: 64px;
   display: block;
@@ -3490,6 +3491,93 @@ input[type="checkbox"]:disabled {
 .mcp-card[data-installed="1"] .mc-add { color: var(--text-3); }
 .mcp-card .mc-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; }
 
+/* ─── Plugins page ─────────────────────────────────────────────────────── */
+.plugins-body { display: flex; flex-direction: column; gap: 22px; padding: 14px 24px 22px; overflow: auto; }
+.plugins-installed { display: flex; flex-direction: column; gap: 8px; }
+.plugins-unsupported { padding: 40px 24px; }
+.plugin-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: 10px;
+}
+.plugin-row.disabled { opacity: 0.55; }
+.plugin-row-main { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.plugin-row-name { font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.plugin-row-meta { color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.plugin-row-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.plugin-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--text-3);
+}
+.plugins-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.plugin-card {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 14px;
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: 10px;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.plugin-card:hover {
+  background: var(--bg-2);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+}
+.plugin-card-top { display: flex; align-items: center; gap: 10px; }
+.plugin-card-name { font-weight: 600; font-size: 14px; color: var(--text); flex: 1; }
+.plugin-card-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; flex: 1; }
+.plugin-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.plugin-card-mp { color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.plugin-install { padding: 4px 12px; font-size: 12px; }
+
+/* Plugin editor modal. Double class to outrank the base .modal-card rule,
+   which is declared later in this sheet and would otherwise shrink the
+   editor to 460px and center-align it. */
+.modal-card.plugin-editor-card {
+  width: min(920px, 92vw);
+  max-width: 92vw;
+  text-align: left;
+}
+/* Footer buttons stay natural width; the base modal rule stretches
+   .btn-primary to 100% which is wrong next to Open folder / Close. */
+.modal-card.plugin-editor-card .btn-primary { width: auto; padding: 0 18px; }
+.pe-layout {
+  display: flex; gap: 12px; margin-top: 12px;
+  height: min(520px, 60vh);
+}
+.pe-files {
+  flex: 0 0 240px; overflow: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-1); padding: 6px;
+}
+.pe-file {
+  background: transparent; border: 0; cursor: pointer;
+  text-align: left; padding: 6px 8px; border-radius: 6px;
+  color: var(--text-2);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pe-file:hover { background: var(--bg-2); color: var(--text); }
+.pe-file.active { background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); color: var(--text); }
+.pe-file-locked { opacity: 0.45; cursor: not-allowed; }
+.pe-editor { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pe-editor-path { color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.pe-content {
+  flex: 1; resize: none;
+  background: var(--bg-3); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.55;
+}
+.pe-content:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+.pe-status { color: var(--text-3); font-size: 11px; }
+
 .mcp-input-group { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 .mcp-input-group label { font-size: 12px; color: var(--text-2); font-weight: 500; }
 .mcp-input-group input {
@@ -3567,26 +3655,40 @@ input[type="checkbox"]:disabled {
   background: var(--bg);
   box-shadow: var(--hl-top);
   min-height: 0;
+  /* Drop the panel so its STATUS header sits a little below the very top,
+     roughly aligned with the chat area. */
+  padding-top: var(--sp-top-offset, 64px);
 }
 .sp-toggle {
-  position: absolute; top: 12px; left: -10px; z-index: 6;
-  width: 20px; height: 20px; border-radius: 50%;
-  background: var(--bg-1); color: var(--text-3);
+  /* A clean rounded handle on the panel's left edge. It uses the sidebar's
+     chevron icon, but with a subtle chip background + border + shadow so it
+     reads as a control attached to the panel, not a stray arrow floating over
+     the chat. Vertically centered on the STATUS header; straddles the border
+     so it stays usable when the panel collapses to a sliver. */
+  position: absolute; top: calc(var(--sp-top-offset, 64px) + 6px); left: -14px; z-index: 6;
+  width: 28px; height: 28px;
+  background: var(--bg-1);
   border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--text-3); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
-  cursor: pointer; font-size: 11px; line-height: 1;
-  transition: color 0.14s var(--ease), border-color 0.14s var(--ease), background 0.14s var(--ease), transform 0.18s var(--ease);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
-.sp-toggle:hover { color: var(--text); border-color: var(--line-3); background: var(--bg-2); }
-.sp-tiny { font-size: 10px; line-height: 1.4; padding-top: 4px; }
+.sp-toggle:hover { background: var(--bg-2); color: var(--text); border-color: var(--line-3); }
+.sp-toggle svg {
+  width: 16px; height: 16px; display: block;
+  transition: transform var(--motion-base) var(--ease);
+}
+.sp-tiny { font-size: 12px; line-height: 1.4; padding-top: 4px; }
 .sp-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: center;
   padding: 12px 16px 10px;
   border-bottom: 1px solid var(--line);
 }
 .sp-head-label {
-  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--text-3); font-weight: 600;
+  font-size: 18px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-2); font-weight: 700;
 }
 .sp-live-dot {
   width: 6px; height: 6px; border-radius: 50%;
@@ -3609,18 +3711,18 @@ input[type="checkbox"]:disabled {
 }
 .sp-section-head {
   display: flex; align-items: center; gap: 6px;
-  font-size: 10px; font-weight: 600;
+  font-size: 12px; font-weight: 600;
   letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--text-3);
 }
 .sp-section-head .sp-h-icon {
-  color: var(--text-3); font-size: 10px;
+  color: var(--text-3); font-size: 12px;
   width: 12px; text-align: center;
 }
 .sp-section-body {
-  font-size: 12px; color: var(--text-2);
+  font-size: 14px; color: var(--text-2);
   line-height: 1.5;
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: 6px;
   padding-left: 18px;
 }
 .sp-section-body strong { color: var(--text); font-weight: 600; }
@@ -3630,7 +3732,7 @@ input[type="checkbox"]:disabled {
 }
 .sp-section-body .sp-mono {
   color: var(--text);
-  font-size: 12px;
+  font-size: 14px;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
   font-weight: 500;
@@ -3648,22 +3750,44 @@ input[type="checkbox"]:disabled {
   border-radius: 999px;
   transition: width 0.3s var(--ease);
 }
+/* PAI-style context meter: a row of discrete gradient blocks. */
+.sp-ctx-head { margin-top: 1px; }
+.sp-ctxbar {
+  display: flex; align-items: stretch;
+  gap: 2px; height: 12px;
+  margin: 4px 0 2px;
+}
+.sp-ctxbar-cell {
+  flex: 1 1 0; min-width: 0;
+  border-radius: 1.5px;
+}
+.sp-ctxbar-empty { background: rgb(75, 82, 95); opacity: 0.5; }
 .sp-divider {
   height: 1px; background: var(--line); margin: 2px -14px;
 }
 .sp-spark {
   display: flex; align-items: flex-end;
-  gap: 1px; height: 22px;
-  padding: 4px 0 0;
+  gap: 2px; height: 34px;
+  padding: 6px 0 0;
 }
 .sp-spark-bar {
   flex: 1;
   background: var(--accent);
-  border-radius: 1px;
-  min-height: 2px;
-  opacity: 0.85;
+  border-radius: 2px 2px 0 0;
+  min-height: 3px;
+  opacity: 0.9;
 }
 .sp-spark-bar.muted { background: var(--bg-4); opacity: 1; }
+/* Stocks-style date axis under the learning chart: a baseline rule with the
+   oldest / middle / newest dates beneath it. */
+.sp-spark-dates {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px; padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+.sp-spark-dates-single { justify-content: center; }
 .sp-clickable { cursor: pointer; transition: background 0.14s ease; margin: -4px -8px; padding: 4px 8px; border-radius: 6px; }
 .sp-clickable:hover { background: var(--bg-3); }
 .sp-foot {
@@ -4194,7 +4318,7 @@ kbd {
   body:not([data-status="expanded"]) #status-panel #sp-content,
   body:not([data-status="expanded"]) #status-panel .sp-foot { display: none; }
   body:not([data-status="expanded"]) #status-panel { background: var(--bg-2); }
-  body:not([data-status="expanded"]) .sp-toggle { transform: rotate(180deg); }
+  body:not([data-status="expanded"]) .sp-toggle svg { transform: rotate(180deg); }
 }
 
 /* Narrow window: force the rail to its icon-only width. The labels remain in
@@ -4492,6 +4616,8 @@ kbd {
 [data-theme="dark"] .session-row,
 [data-theme="dark"] .mcp-row,
 [data-theme="dark"] .ai-row,
+[data-theme="dark"] .plugin-row,
+[data-theme="dark"] .plugin-card,
 [data-theme="dark"] .mcp-card {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -4504,6 +4630,8 @@ kbd {
 [data-theme="dark"] .session-row:hover,
 [data-theme="dark"] .mcp-row:hover,
 [data-theme="dark"] .ai-row:hover,
+[data-theme="dark"] .plugin-row:hover,
+[data-theme="dark"] .plugin-card:hover,
 [data-theme="dark"] .mcp-card:hover {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.14);

@@ -58,8 +58,8 @@ function applyPaiState(claudeDir, active) {
       }
     }
   } catch (_) {
-    // Swallow: same behavior the inline version had. Surfacing an
-    // exception here would crash startup; the caller logs separately.
+    // Swallow: surfacing an exception here would crash startup;
+    // the caller logs separately.
   }
 }
 
