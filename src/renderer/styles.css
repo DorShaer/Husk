@@ -1760,10 +1760,9 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 18px; padding: 40px;
   /* Opaque background prevents the under-layer from showing through
-     during the pre-fit flicker. Layering --bg-1 over --bg composites the
-     same color as the stage card in both themes while staying opaque
-     (--bg-1 alone is translucent in dark mode). */
-  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+     during the pre-fit flicker. Matches the status panel's background
+     (var(--bg)), which is opaque in both themes. */
+  background: var(--bg);
   overflow-y: auto;
   pointer-events: none;
   opacity: 0; transition: opacity var(--motion-slow) var(--ease-out);
@@ -3546,6 +3545,10 @@ input[type="checkbox"]:disabled {
 /* Footer buttons stay natural width; the base modal rule stretches
    .btn-primary to 100% which is wrong next to Open folder / Close. */
 .modal-card.plugin-editor-card .btn-primary { width: auto; padding: 0 18px; }
+.modal-card.plugin-editor-card .modal-head { margin-bottom: 4px; }
+/* The base .modal-card textarea rule re-enables the vertical resize grip
+   and a 160px floor; the editor pane scrolls instead. */
+.modal-card.plugin-editor-card .pe-content { resize: none; min-height: 0; }
 .pe-layout {
   display: flex; gap: 12px; margin-top: 12px;
   height: clamp(420px, 72vh, 820px);
