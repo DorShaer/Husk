@@ -14,6 +14,9 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 function makeIsolatedHome() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(dir, '.config', 'husk'), { recursive: true });
+  // Without firstRunDone, boot() blocks on the welcome wizard (no agent CLI
+  // on CI runners) and its modal intercepts the edit-button click.
+  fs.writeFileSync(path.join(dir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
   const pluginsRoot = path.join(dir, '.claude', 'plugins');
   const installPath = path.join(pluginsRoot, 'cache', 'caveman');
   fs.mkdirSync(path.join(installPath, 'skills'), { recursive: true });
