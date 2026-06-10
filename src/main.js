@@ -11,7 +11,7 @@ const { spawn } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
-const { resolveInside } = require('./lib/path-confine');
+const { resolveInside, isInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec } = require('./lib/pty-spawn');
@@ -477,12 +477,10 @@ function bootstrapPaiIfNeeded() {
     }
 
     // Framework subdirs: merge missing children into existing dirs (cp -Rn
-    // semantics). This is the key fix: previously the whole bootstrap was
-    // gated on CLAUDE.md absence, which meant users who had ever installed
-    // claude code (which creates ~/.claude/CLAUDE.md) got NONE of the
-    // bundled skills, agents, or hooks. Now each subdir is checked
-    // independently and missing entries are added without ever overwriting
-    // a file the user already has.
+    // semantics). Each subdir is checked independently of CLAUDE.md, so a
+    // user who already has ~/.claude/CLAUDE.md (claude code creates it) still
+    // receives the bundled skills, agents, and hooks. Missing entries are
+    // added without ever overwriting a file the user already has.
     for (const sub of ['PAI', 'agents', 'hooks', 'lib', 'skills']) {
       const src = path.join(bundle, sub);
       const dst = path.join(claudeDir, sub);
@@ -705,11 +703,11 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // copilot needs a project instructions file, written below once cwd is
   // resolved. See src/lib/agent-inject.js.
   //
-  // Note for claude: we deliberately no longer inject --settings
-  // <ephemeral-temp-file>. That path made claude treat the temp file as the
-  // canonical settings, wrote folder-trust changes there, and on next launch
-  // we regenerated the temp file from the user's real settings.json, blowing
-  // the trust away.
+  // Note for claude: Husk deliberately does not inject --settings
+  // <ephemeral-temp-file>. claude treats that temp file as the canonical
+  // settings and writes folder-trust changes into it; regenerating the temp
+  // file from the user's real settings.json on the next launch would blow the
+  // trust away.
   const isWin32 = process.platform === 'win32';
   let injectionPlan = { method: 'none' };
   if (!isWin32 && !agentArgs.includes('--settings')) {
@@ -859,6 +857,106 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
 // only honest "session usage" Husk can show, since the agent process owns
 // the real token counter and only writes it to usage-cache.json if PAI's
 // statusline is wired up. No statusline → 0% forever.
+let _claudeJsonCache = { mtime: 0, data: null };
+function readClaudeJson() {
+  try {
+    const p = path.join(HOME, '.claude.json');
+    const st = fs.statSync(p);
+    if (st.mtimeMs !== _claudeJsonCache.mtime) {
+      _claudeJsonCache = { mtime: st.mtimeMs, data: JSON.parse(fs.readFileSync(p, 'utf8')) };
+    }
+    return _claudeJsonCache.data;
+  } catch (_) { return null; }
+}
+
+// ~/.claude/settings.json holds the configured model (e.g. "claude-fable-5[1m]")
+// (the same source Claude Code shows in its startup banner). Reading it gives a
+// never-stale, auto-updating model id without hardcoding anything. Cached by
+// mtime so the status poll only reparses when the file actually changes.
+let _claudeSettingsCache = { mtime: 0, data: null };
+function readClaudeSettings() {
+  try {
+    const p = path.join(CLAUDE_DIR, 'settings.json');
+    const st = fs.statSync(p);
+    if (st.mtimeMs !== _claudeSettingsCache.mtime) {
+      _claudeSettingsCache = { mtime: st.mtimeMs, data: JSON.parse(fs.readFileSync(p, 'utf8')) };
+    }
+    return _claudeSettingsCache.data;
+  } catch (_) { return null; }
+}
+
+// Base context-window capacity (tokens) per model family, across the agents
+// Husk can launch (claude, copilot, codex, gemini). The id is matched with its
+// tier suffix already stripped. Returns null for an unknown family so the
+// caller can fall back. Claude models report their 200K *default* tier here;
+// the 1M tier is opt-in (a "[1m]" suffix) and handled by resolveContextWindow,
+// not this table. Sources verified 2026-06: Anthropic models reference
+// (Opus/Sonnet/Haiku 200K default, 1M tier); OpenAI Codex docs (GPT-5.x-Codex
+// 400K product cap, GPT-4.1 1M, GPT-4o 128K, o-series 200K); Google Gemini docs
+// (Gemini 2.x/3 = 1M); GitHub Copilot CLI docs (128K default, 1M extended).
+const MODEL_CONTEXT_WINDOWS = [
+  // Anthropic / Claude: 200K default; 1M only when the [1m] tier is selected.
+  [/^claude-/, 200000],
+  // OpenAI / Codex CLI.
+  [/^gpt-5.*codex/, 400000],
+  [/^gpt-5/, 400000],
+  [/^gpt-4\.1/, 1000000],
+  [/^gpt-4o/, 128000],
+  [/^gpt-4/, 128000],
+  [/^o[1-9]/, 200000],          // o1 / o3 / o4 reasoning models
+  [/codex/, 192000],
+  // Google / Gemini CLI.
+  [/^gemini-/, 1000000],
+  // GitHub Copilot CLI: default tier (extended 1M is opt-in per request).
+  [/copilot/, 128000],
+];
+function baseContextWindow(model) {
+  const m = String(model || '').toLowerCase();
+  for (const [re, size] of MODEL_CONTEXT_WINDOWS) if (re.test(m)) return size;
+  return null;
+}
+
+// Resolve the live context-window size for the active model. The transcript
+// records only the bare model id (e.g. "claude-opus-4-8"); the 1M tier is
+// signalled by a "[1m]" suffix that Claude Code persists in ~/.claude.json
+// under projects[cwd].lastModelUsage. So: prefer an explicit 1M tier (from the
+// id or that usage record), else look up the family's base size, else infer.
+function resolveContextWindow(cwd, model, ctxTokens) {
+  const stripTier = (id) => id.replace(/\[[^\]]*\]/g, '');
+  const is1m = (id) => /\[1m\]/i.test(id);
+  const bare = stripTier(model || '');
+  try {
+    // Explicit 1M tier on the id itself.
+    if (is1m(model || '')) return 1000000;
+    // Recover the tier from Claude Code's usage record. lastModelUsage is only
+    // written on session end, so the active project is empty mid-session: check
+    // it first, then the user's full history. If this model was ever run on the
+    // 1M tier, honor 1M; that reflects the user's actual model and license.
+    const projects = (readClaudeJson() || {}).projects || {};
+    if (bare) {
+      const tierFor = (usage) => {
+        const matches = Object.keys(usage || {}).filter((k) => stripTier(k) === bare);
+        if (!matches.length) return null;
+        return matches.some(is1m) ? '1m' : 'base';
+      };
+      let tier = cwd && projects[cwd] ? tierFor(projects[cwd].lastModelUsage) : null;
+      if (!tier) {
+        for (const p of Object.values(projects)) {
+          const t = tierFor(p.lastModelUsage);
+          if (t === '1m') { tier = '1m'; break; }
+          if (t === 'base') tier = 'base';
+        }
+      }
+      if (tier === '1m') return 1000000;
+    }
+    // Known model family → its base context window.
+    const base = baseContextWindow(bare);
+    if (base) return base;
+  } catch (_) {}
+  // Unknown model: anything past the 200K base must be a 1M window.
+  return ctxTokens > 200000 ? 1000000 : 200000;
+}
+
 function readActiveSessionStats() {
   try {
     if (!activePtyCwd) return null;
@@ -900,6 +998,12 @@ function readActiveSessionStats() {
     let turns = 0;
     let chars = 0;
     let model = '';
+    // Live context-window occupancy. Claude Code records per-turn token usage
+    // on each assistant message; the current context is the most recent
+    // assistant turn's input + cache-creation + cache-read tokens (the output
+    // of that turn becomes input on the next). This mirrors the number the PAI
+    // statusline shows from Claude Code's own context_window meter.
+    let ctxTokens = 0;
     for (const line of raw) {
       try {
         const obj = JSON.parse(line);
@@ -908,7 +1012,16 @@ function readActiveSessionStats() {
         // recent one so a mid-session model switch is reflected. Agents that
         // do not write a session log simply never set this, and the UI hides
         // the row.
-        if (obj.message && typeof obj.message.model === 'string' && obj.message.model) model = obj.message.model;
+        // Skip Claude Code's "<synthetic>" placeholder model (used on
+        // resume-injected turns) so the real model id is what survives.
+        if (obj.message && typeof obj.message.model === 'string' && obj.message.model && obj.message.model !== '<synthetic>') model = obj.message.model;
+        const usage = obj.message && obj.message.usage;
+        if (usage) {
+          const used = (usage.input_tokens || 0)
+            + (usage.cache_creation_input_tokens || 0)
+            + (usage.cache_read_input_tokens || 0);
+          if (used > 0) ctxTokens = used;
+        }
         const content = obj.message && obj.message.content;
         if (typeof content === 'string') chars += content.length;
         else if (Array.isArray(content)) {
@@ -919,7 +1032,18 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    return { turns, chars, tokens: Math.round(chars / 4), file: latest, model };
+    // Prefer the configured model from settings.json (what Claude Code shows in
+    // its banner) over the transcript model. The transcript lags (no model
+    // until the first assistant turn) and the newest-by-mtime file can belong
+    // to a different/older session, which would make the panel show a stale model.
+    // settings.json is authoritative, never stale, and auto-updates on change.
+    const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
+    const effModel = settingsModel || model;
+    // The model id carries the context tier (e.g. "[1m]"); resolve the window
+    // from it plus the user's actual model/license selection.
+    const ctxWindow = resolveContextWindow(activePtyCwd, effModel, ctxTokens);
+    const ctxPct = ctxWindow ? Math.round((ctxTokens / ctxWindow) * 1000) / 10 : 0;
+    return { turns, chars, tokens: Math.round(chars / 4), file: latest, model: effModel, ctxTokens, ctxWindow, ctxPct };
   } catch (_) { return null; }
 }
 
@@ -1055,8 +1179,8 @@ function flushAutonomyOutput() {
       payload: { chars: chunk.length },
     });
   } catch (_) {}
-  // NOTE: we used to also parse the byte stream here to produce
-  // activity rows. That approach is fundamentally wrong for TUI
+  // NOTE: this flush does not parse the byte stream into activity rows.
+  // That approach is fundamentally wrong for TUI
   // agents (claude in particular): the PTY stream is a sequence of
   // commands to a terminal emulator, not a log. Stripping ANSI and
   // splitting on \n produces fragments because the emulator's job
@@ -1064,10 +1188,10 @@ function flushAutonomyOutput() {
   // screen buffers into a final rendered grid.
   //
   // The renderer owns an xterm.js emulator that does exactly that
-  // rendering for the chat view. The activity feed now snapshots
+  // rendering for the chat view. The activity feed snapshots
   // that already-rendered grid (see renderer's snapshotTermForAutonomy).
   //
-  // This flush still does two real jobs:
+  // This flush does two real jobs:
   //   1. Append one agent_output audit row per chunk so the budget
   //      meter sees char counts (cost estimate stays accurate).
   //   2. Broadcast the live budget state to the renderer so the
@@ -1075,6 +1199,31 @@ function flushAutonomyOutput() {
   if (mainWindow) {
     mainWindow.webContents.send('autonomy:budget', activeRunner.budgetState());
   }
+}
+
+// Printed by the agent (per the autonomy directive) when the goal is fully
+// done. The renderer watches for this exact marker on its own line so a real
+// finish is detected positively, instead of guessing from terminal idle,
+// which previously mistook "waiting for the user's answer" for "complete".
+const AUTONOMY_COMPLETE_SENTINEL = '<<HUSK_AUTONOMY_COMPLETE>>';
+
+// Wrap a user goal in an autonomous-operator preamble. An autonomy run is
+// unattended: the agent must make its own decisions and never block on input.
+// Without this the agent behaves like an interactive session, asks a
+// clarifying question (e.g. "which tech stack?"), and stalls, which the
+// watchdog then reads as a finished run.
+function buildAutonomyGoal(goal) {
+  return [
+    '[AUTONOMOUS MODE] You are running unattended. No human is available to answer questions.',
+    'Operate fully autonomously from start to finish:',
+    '1. NEVER ask the user questions and never wait for input, confirmation, or approval. There is nobody to respond; assume a sensible "yes" and continue.',
+    '2. Make every decision yourself (tech stack, architecture, libraries, file layout, naming). When a choice is ambiguous, pick the most sensible mainstream default, state the assumption in one line, and proceed immediately.',
+    '3. Do not hand back a plan and stop. Plan if useful, then implement every part end to end.',
+    '4. Keep working continuously until the goal is fully achieved and verified.',
+    '5. ONLY when the goal is completely finished, print this exact marker alone on its own line: ' + AUTONOMY_COMPLETE_SENTINEL,
+    '',
+    'GOAL: ' + String(goal),
+  ].join('\n');
 }
 
 function injectGoalToPty(goal) {
@@ -1108,9 +1257,9 @@ function sigintPty() {
 
 // Resolve once the agent's TUI looks ready for input: it has emitted
 // output and then gone quiet for a short settle window, or maxMs has
-// elapsed. This replaces a fixed wall-clock guess that, on a slow cold
-// start, pasted the goal before the input field had mounted and the run
-// silently did nothing.
+// elapsed. Pasting the goal before the input field has mounted makes the
+// run silently do nothing, so a fixed wall-clock guess is not safe on a
+// slow cold start.
 function whenAgentReady(maxMs) {
   return new Promise((resolve) => {
     const start = Date.now();
@@ -1231,7 +1380,7 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
   }
   if (goal) {
     const deliver = () => {
-      const ok = injectGoalToPty(goal);
+      const ok = injectGoalToPty(buildAutonomyGoal(goal));
       // Surface delivery to the activity feed so the user has explicit
       // feedback that the goal reached the agent. Without this, an
       // agent that thinks silently for a while looks identical to a
@@ -1262,6 +1411,20 @@ ipcMain.handle('autonomy:event', (_e, event = {}) => {
   if (!activeRunner) return { ok: false, error: 'no active run' };
   const r = activeRunner.recordEvent(event);
   return r;
+});
+
+// Push a stalled autonomous agent to keep going on its own. Called by the
+// renderer watchdog when the agent goes quiet without printing the completion
+// marker (the classic "it asked a question and is waiting" stall). Capped on
+// the renderer side so a genuinely stuck run still ends.
+ipcMain.handle('autonomy:nudge', () => {
+  if (!activeRunner) return { ok: false, error: 'no active run' };
+  const ok = injectGoalToPty(
+    'Continue autonomously. Do not ask questions or wait for input. Pick a sensible default for any open decision, '
+    + 'state it in one line, and keep working until the goal is complete. When fully done, print '
+    + AUTONOMY_COMPLETE_SENTINEL + ' alone on its own line.'
+  );
+  return { ok };
 });
 
 ipcMain.handle('autonomy:cancel', (_e, detail = {}) => {
@@ -1912,7 +2075,7 @@ ipcMain.handle('stats:get', () => {
 
   // Recent ratings: parse last N lines of ratings.jsonl, compute averages by window
   const ratingsPath = path.join(CLAUDE_DIR, 'MEMORY', 'LEARNING', 'SIGNALS', 'ratings.jsonl');
-  const learning = { latest: null, latestSource: '', avg1h: null, avg1d: null, avg1w: null, avg1mo: null, recent: [] };
+  const learning = { latest: null, latestSource: '', avg1h: null, avg1d: null, avg1w: null, avg1mo: null, recent: [], recentTs: [] };
   try {
     const raw = fs.readFileSync(ratingsPath, 'utf8').split('\n').filter(Boolean);
     const now = Date.now();
@@ -1940,6 +2103,8 @@ ipcMain.handle('stats:get', () => {
       learning.avg1mo = avg(30 * 24 * 60 * 60 * 1000);
       // Recent 30 ratings for sparkline
       learning.recent = samples.slice(-30).map((s) => s.rating);
+      // Timestamps for the chart's date axis (stocks-style x labels).
+      learning.recentTs = samples.slice(-30).map((s) => s.ts);
     }
   } catch (_) {}
 
@@ -2799,7 +2964,13 @@ ipcMain.handle('repoMcp:build', async (_e, payload = {}) => {
 
   const cap = Date.now() + 5 * 60 * 1000;
   const runOnce = (script) => new Promise((resolve) => {
-    const args = script === 'install' ? ['install', '--no-audit', '--no-fund'] : ['run', script];
+    // --ignore-scripts blocks preinstall/install/postinstall lifecycle hooks,
+    // which would otherwise run arbitrary code from a repo the user merely
+    // pointed at. MCP servers that genuinely need a native build run their
+    // build via the explicit `build` script below, not install hooks.
+    const args = script === 'install'
+      ? ['install', '--ignore-scripts', '--no-audit', '--no-fund']
+      : ['run', script];
     let proc;
     try {
       proc = spawn('npm', args, { cwd: dir, env: process.env, windowsHide: true });
@@ -2936,8 +3107,8 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
   return { ok: true };
 });
 
-// Returns the active profile ids, falling back to the legacy single-active
-// field for configs written before multi-active landed.
+// Returns the active profile ids, falling back to the single-active
+// field for configs that only set activeProfileId.
 function getActiveIds() {
   const arr = Array.isArray(config.activeProfileIds) ? config.activeProfileIds : null;
   if (arr) return arr;
@@ -3138,6 +3309,13 @@ ipcMain.handle('skills:list', () => {
 });
 
 ipcMain.handle('skills:read', (_e, mdPath) => {
+  // Confine reads to the two roots skills/prompts actually live under, so a
+  // crafted mdPath cannot exfiltrate arbitrary files via the renderer bridge.
+  if (typeof mdPath !== 'string' || !mdPath) return { ok: false, error: 'Missing path' };
+  const skillsDir = path.join(CLAUDE_DIR, 'skills');
+  if (!isInside(skillsDir, mdPath) && !isInside(HUSK_PROMPTS_DIR, mdPath)) {
+    return { ok: false, error: 'Refusing to read outside skills/prompts directories' };
+  }
   try { return { ok: true, content: fs.readFileSync(mdPath, 'utf8') }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
@@ -3223,6 +3401,133 @@ ipcMain.handle('skills:toggle', (_e, payload = {}) => {
     fs.renameSync(oldPath, newPath);
     return { ok: true, source: 'claude', id: newDirName, dirName: newDirName, disabled: !isDisabled };
   } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// ─── Plugins (agent-CLI plugin registry) ────────────────────────────────────
+//
+// Reads come straight from the registry files on disk (instant, no
+// subprocess). Mutations shell out to the agent CLI so it remains the
+// single writer of its own registry. Only agents with a plugin system
+// are supported; everything else gets a graceful supported:false,
+// mirroring sessions:list.
+
+const Plugins = require('./lib/plugins');
+
+const PLUGIN_CLI_TIMEOUT_MS = 180000; // installs may git-clone
+const PLUGIN_CLI_OUTPUT_CAP = 65536;
+
+function pluginsSupported() { return getAgentKind() === 'claude'; }
+
+// Resolve a validated installed plugin's install path, confined to the
+// plugins root. Returns null when unknown or outside the root (a
+// tampered registry must not turn the editor into an arbitrary-fs API).
+function pluginInstallPath(id) {
+  if (!Plugins.isSafePluginId(id)) return null;
+  const inst = Plugins.readInstalled(CLAUDE_DIR).find((p) => p.id === id);
+  if (!inst || !inst.installPath) return null;
+  if (!Plugins.isInsidePluginsRoot(CLAUDE_DIR, inst.installPath)) return null;
+  return inst.installPath;
+}
+
+ipcMain.handle('plugins:list', () => {
+  if (!pluginsSupported()) return { ok: true, supported: false, plugins: [] };
+  return { ok: true, supported: true, plugins: Plugins.readInstalled(CLAUDE_DIR) };
+});
+
+ipcMain.handle('plugins:catalog', () => {
+  if (!pluginsSupported()) return { ok: true, supported: false, catalog: [] };
+  return { ok: true, supported: true, catalog: Plugins.readCatalog(CLAUDE_DIR) };
+});
+
+ipcMain.handle('plugins:run', (_e, payload = {}) => {
+  if (!pluginsSupported()) return { ok: false, error: 'the active agent has no plugin system' };
+  const verb = String(payload.action || '');
+  // buildPluginCliArgs owns the verb allowlist AND the id validation
+  // (isSafePluginId): null means one of them failed. The id rides as a
+  // single argv element with no shell, so neither flags nor
+  // metacharacters can ride along.
+  const argv = Plugins.buildPluginCliArgs(verb, String(payload.id || ''));
+  if (!argv) return { ok: false, error: 'invalid plugin action or identifier' };
+  const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  if (!isAllowedAgentCommand(cmd)) return { ok: false, error: `agent command "${cmd}" is not allowlisted` };
+  return new Promise((resolve) => {
+    let out = '';
+    let done = false;
+    const finish = (res) => { if (!done) { done = true; resolve(res); } };
+    let child;
+    try {
+      child = spawn(cmd, argv, { cwd: HOME, env: process.env, shell: false });
+    } catch (err) {
+      return finish({ ok: false, error: err.message });
+    }
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (_) {}
+      finish({ ok: false, error: `plugin ${verb} timed out`, output: out });
+    }, PLUGIN_CLI_TIMEOUT_MS);
+    const collect = (d) => { if (out.length < PLUGIN_CLI_OUTPUT_CAP) out += String(d); };
+    if (child.stdout) child.stdout.on('data', collect);
+    if (child.stderr) child.stderr.on('data', collect);
+    child.on('error', (err) => { clearTimeout(timer); finish({ ok: false, error: err.message, output: out }); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      finish(code === 0
+        ? { ok: true, output: out }
+        : { ok: false, error: `plugin ${verb} exited with code ${code}`, output: out });
+    });
+  });
+});
+
+ipcMain.handle('plugins:files', (_e, payload = {}) => {
+  const installPath = pluginInstallPath(String(payload.id || ''));
+  if (!installPath) return { ok: false, error: 'plugin not found' };
+  return { ok: true, files: Plugins.listPluginFiles(installPath) };
+});
+
+ipcMain.handle('plugins:readFile', (_e, payload = {}) => {
+  const installPath = pluginInstallPath(String(payload.id || ''));
+  if (!installPath) return { ok: false, error: 'plugin not found' };
+  let abs;
+  try { abs = resolveInside(installPath, String(payload.relPath || '')); }
+  catch (_) { return { ok: false, error: 'invalid file path' }; }
+  // lstat, not stat: a marketplace plugin can ship a symlink pointing
+  // outside its own dir; following it would turn the editor into a
+  // read-anything API. Refuse links outright.
+  let st;
+  try { st = fs.lstatSync(abs); } catch (_) { return { ok: false, error: 'file not found' }; }
+  if (!st.isFile()) return { ok: false, error: 'not a regular file' };
+  if (!Plugins.isEditableFile(abs, st.size)) return { ok: false, error: 'file is binary or too large to edit' };
+  try { return { ok: true, content: fs.readFileSync(abs, 'utf8') }; }
+  catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('plugins:writeFile', (_e, payload = {}) => {
+  const installPath = pluginInstallPath(String(payload.id || ''));
+  if (!installPath) return { ok: false, error: 'plugin not found' };
+  const content = typeof payload.content === 'string' ? payload.content : null;
+  if (content == null) return { ok: false, error: 'content required' };
+  if (Buffer.byteLength(content, 'utf8') > Plugins.MAX_FILE_BYTES) {
+    return { ok: false, error: 'content too large' };
+  }
+  let abs;
+  try { abs = resolveInside(installPath, String(payload.relPath || '')); }
+  catch (_) { return { ok: false, error: 'invalid file path' }; }
+  if (!Plugins.isEditableName(abs)) return { ok: false, error: 'file type is not editable' };
+  // Same symlink refusal as readFile: only ever write through a path
+  // that is currently a regular file inside the plugin dir.
+  let st;
+  try { st = fs.lstatSync(abs); } catch (_) { return { ok: false, error: 'file not found' }; }
+  if (!st.isFile()) return { ok: false, error: 'not a regular file' };
+  try {
+    fs.writeFileSync(abs, content);
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('plugins:openFolder', (_e, payload = {}) => {
+  const installPath = pluginInstallPath(String(payload.id || ''));
+  if (!installPath) return { ok: false, error: 'plugin not found' };
+  shell.openPath(installPath);
+  return { ok: true };
 });
 
 // ─── Sessions reader (MEMORY/WORK/<slug>/PRD.md) ────────────────────────────────
@@ -3440,14 +3745,18 @@ ipcMain.handle('sessions:list', () => {
     }
   } catch (_) {}
 
-  function matchPrd(sessionStartMs, sessionEndMs) {
+  // A PRD is created moments after the session that runs it starts, so
+  // match only near the session START. Matching anywhere in the session
+  // lifetime stamped one PRD's task onto every long-lived session whose
+  // window happened to span it (including sessions of other projects),
+  // making unrelated rows look like duplicates of one conversation.
+  const PRD_MATCH_WINDOW_MS = 5 * 60_000;
+  function matchPrd(sessionStartMs) {
     let best = null; let bestDiff = Infinity;
     for (const p of prds) {
       if (!isFinite(p.startedMs)) continue;
-      // PRD started should fall within session lifetime, OR be within 5 min
-      const within = p.startedMs >= sessionStartMs - 60_000 && p.startedMs <= sessionEndMs + 60_000;
       const diff = Math.abs(p.startedMs - sessionStartMs);
-      if (within && diff < bestDiff) { bestDiff = diff; best = p; }
+      if (diff <= PRD_MATCH_WINDOW_MS && diff < bestDiff) { bestDiff = diff; best = p; }
     }
     return best;
   }
@@ -3482,13 +3791,17 @@ ipcMain.handle('sessions:list', () => {
       let userMessage = '';
       let queueContent = '';
       let originalCwd = '';
+      let sawAssistant = false;
+      let headComplete = false;
       try {
         const text = readHead(fullPath, 32768);
+        headComplete = st.size <= 32768;
         const lines = text.split('\n');
         for (const line of lines) {
           if (!line.trim()) continue;
           let obj;
           try { obj = JSON.parse(line); } catch (_) { continue; }
+          if (!sawAssistant && obj.type === 'assistant') sawAssistant = true;
           if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
           if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
           if (!aiTitle && obj.type === 'ai-title' && typeof obj.aiTitle === 'string') {
@@ -3505,13 +3818,26 @@ ipcMain.handle('sessions:list', () => {
           if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') {
             queueContent = obj.content.trim();
           }
-          if (aiTitle && startedISO && userMessage && originalCwd) break;
+          // Only short-circuit when the head is partial (a big file): we
+          // already have the title fields and need not read the rest. For a
+          // small file that fits entirely in the window, keep scanning so
+          // sawAssistant is decided over the whole file (the receipt-skip
+          // below depends on it).
+          if (!headComplete && aiTitle && startedISO && userMessage && originalCwd) break;
         }
       } catch (_) {}
+      // Husk drives claude over the SDK; every enqueued prompt also writes a
+      // tiny queue-operation receipt file with no assistant turn. Those are
+      // shadows of prompts that actually ran in the real session file, so
+      // listing them produces a duplicate row per prompt. A file whose whole
+      // head fits in the read window AND carries no assistant turn is such a
+      // receipt: skip it. Real conversations always have assistant output.
+      if (headComplete && !sawAssistant) continue;
+
       const firstMessage = (aiTitle || userMessage || queueContent || '').slice(0, 220);
 
       const sessionStartMs = startedISO ? Date.parse(startedISO) : st.mtimeMs;
-      const matchedPrd = matchPrd(sessionStartMs, st.mtimeMs);
+      const matchedPrd = matchPrd(sessionStartMs);
 
       // Authoritative cwd is what the JSONL recorded; fall back to decoded project name
       const cwdAuthoritative = originalCwd || decodeProjectPath(projName);
@@ -3542,7 +3868,7 @@ ipcMain.handle('sessions:list', () => {
   // and keep only the largest file, the canonical session always grows past its shadows.
   const dedup = new Map();
   for (const s of out) {
-    const key = `${s.project}${(s.title || '').toLowerCase()}${(s.firstMessage || '').slice(0, 200)}`;
+    const key = `${s.project}${(s.title || '').toLowerCase()}${(s.firstMessage || '').slice(0, 200).toLowerCase()}`;
     const cur = dedup.get(key);
     if (!cur || s.sizeBytes > cur.sizeBytes
         || (s.sizeBytes === cur.sizeBytes && s.mtime > cur.mtime)) {
@@ -3854,9 +4180,9 @@ ipcMain.handle('fs:home', () => HOME);
 // Two backends:
 //   - Linux: Piper (downloaded into ~/.local/share/husk/piper, ~50 MB)
 //   - macOS: built-in `say` command. No install needed, no download. The Linux
-//     Piper binary is x86_64 ELF and won't run on Darwin anyway, so attempting
-//     to install Piper there used to throw 'spawn Unknown system error -8' from
-//     the running-not-runnable binary. The darwin branch sidesteps that.
+//     Piper binary is x86_64 ELF and won't run on Darwin anyway, so the darwin
+//     branch uses `say` and never attempts to install Piper, which would throw
+//     'spawn Unknown system error -8' from the running-not-runnable binary.
 
 const IS_MAC = process.platform === 'darwin';
 

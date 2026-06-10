@@ -2,9 +2,9 @@
 const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 const { extractRecap } = require('./lib/recap-extract');
 
-// Default UI scale Husk mounts at, so the renderer comes up comfortable on
-// every platform. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
-const HUSK_BASE_ZOOM = 0;
+// Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
+// -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
+const HUSK_BASE_ZOOM = -0.5;
 try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
 
 contextBridge.exposeInMainWorld('husk', {
@@ -46,6 +46,15 @@ contextBridge.exposeInMainWorld('husk', {
     delete: (paths) => ipcRenderer.invoke('sessions:delete', { paths }),
   },
   prds: { list: () => ipcRenderer.invoke('prds:list') },
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    catalog: () => ipcRenderer.invoke('plugins:catalog'),
+    run: (action, id) => ipcRenderer.invoke('plugins:run', { action, id }),
+    files: (id) => ipcRenderer.invoke('plugins:files', { id }),
+    readFile: (id, relPath) => ipcRenderer.invoke('plugins:readFile', { id, relPath }),
+    writeFile: (id, relPath, content) => ipcRenderer.invoke('plugins:writeFile', { id, relPath, content }),
+    openFolder: (id) => ipcRenderer.invoke('plugins:openFolder', { id }),
+  },
   prompts: {
     list: () => ipcRenderer.invoke('prompts:list'),
     create: (payload) => ipcRenderer.invoke('prompts:create', payload),
@@ -115,6 +124,7 @@ contextBridge.exposeInMainWorld('husk', {
   autonomy: {
     start: (opts) => ipcRenderer.invoke('autonomy:start', opts || {}),
     event: (event) => ipcRenderer.invoke('autonomy:event', event || {}),
+    nudge: () => ipcRenderer.invoke('autonomy:nudge'),
     cancel: (detail) => ipcRenderer.invoke('autonomy:cancel', detail || {}),
     end: (detail) => ipcRenderer.invoke('autonomy:end', detail || {}),
     status: () => ipcRenderer.invoke('autonomy:status'),
@@ -173,6 +183,8 @@ contextBridge.exposeInMainWorld('husk', {
     // Reset returns to Husk's default UI scale, not the browser default.
     zoomReset: () => { webFrame.setZoomLevel(HUSK_BASE_ZOOM); return HUSK_BASE_ZOOM; },
     zoomGet: () => webFrame.getZoomLevel(),
+    // Husk's base zoom level, so the renderer can label it as 100%.
+    zoomBase: HUSK_BASE_ZOOM,
   },
 });
 
