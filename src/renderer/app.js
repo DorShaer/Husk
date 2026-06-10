@@ -772,7 +772,7 @@ function applyAccent(accent) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
 function setPage(name) {
-  if (!['chat', 'agents', 'workflows', 'autonomy', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'preferences'].includes(name)) name = 'chat';
+  if (!['chat', 'agents', 'workflows', 'autonomy', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins', 'preferences'].includes(name)) name = 'chat';
   currentPage = name;
   document.body.dataset.page = name;
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
@@ -787,6 +787,7 @@ function setPage(name) {
   if (name === 'sessions') renderSessions();
   if (name === 'files') { $('#files-root').value = cfg.treeRoot; $('#files-hidden').checked = !!cfg.showHidden; renderTree(cfg.treeRoot); }
   if (name === 'mcp') renderMcp();
+  if (name === 'plugins') renderPlugins();
 }
 
 $$('.rail-item').forEach((b) => b.addEventListener('click', () => setPage(b.dataset.page)));
@@ -867,14 +868,71 @@ function fmtThousands(n) {
   if (v >= 1000) return (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
   return String(v);
 }
-function sparkHTML(values) {
+// Compact token count for the context readout: 330K, 1M, 1.5M.
+function fmtCtx(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000000) { const m = v / 1000000; return (Number.isInteger(m) ? m : m.toFixed(1)) + 'M'; }
+  if (v >= 1000) return Math.round(v / 1000) + 'K';
+  return String(v);
+}
+function sparkHTML(values, timestamps) {
   if (!values || !values.length) return '<div class="sp-spark"></div>';
   const max = 10;
-  return `<div class="sp-spark">${values.map((v) => {
+  const bars = values.map((v) => {
     const h = Math.max(8, Math.min(100, Math.round((v / max) * 100)));
-    const color = ratingColor(v);
-    return `<div class="sp-spark-bar" style="height:${h}%; background:${color};"></div>`;
-  }).join('')}</div>`;
+    return `<div class="sp-spark-bar" style="height:${h}%; background:${ratingColor(v)};"></div>`;
+  }).join('');
+  // Stocks-style x-axis: oldest, middle, newest dates under the bars. Dedupe
+  // so a same-day batch shows one date centered, not "6/9 6/9 6/9".
+  let axis = '';
+  if (timestamps && timestamps.length) {
+    const fmtD = (ts) => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()}`; };
+    const first = fmtD(timestamps[0]);
+    const last = fmtD(timestamps[timestamps.length - 1]);
+    const mid = fmtD(timestamps[Math.floor(timestamps.length / 2)]);
+    const labels = [first];
+    if (mid !== first && mid !== last) labels.push(mid);
+    if (last !== first) labels.push(last);
+    const single = labels.length === 1 ? ' sp-spark-dates-single' : '';
+    axis = `<div class="sp-spark-dates${single}">${labels.map((l) => `<span>${l}</span>`).join('')}</div>`;
+  }
+  return `<div class="sp-spark">${bars}</div>${axis}`;
+}
+// Info icons removed per preference; helper kept as a no-op so call sites stay intact.
+function spInfo(_tip) { return ''; }
+
+// ─── PAI-style context meter ───────────────────────────────────────────────────
+// Port of statusline-command.sh get_bucket_color: a 4-stop linear gradient
+// green(74,222,128) -> yellow(250,204,21) -> orange(251,146,60) -> red(239,68,68).
+// `pos` is a 0-100 position ALONG the bar, so the bar itself reads green->red.
+function ctxBucketColor(pos) {
+  const p = Math.max(0, Math.min(100, pos));
+  let r, g, b;
+  if (p <= 33) { r = 74 + (250 - 74) * p / 33; g = 222 + (204 - 222) * p / 33; b = 128 + (21 - 128) * p / 33; }
+  else if (p <= 66) { const t = p - 33; r = 250 + (251 - 250) * t / 33; g = 204 + (146 - 204) * t / 33; b = 21 + (60 - 21) * t / 33; }
+  else { const t = p - 66; r = 251 + (239 - 251) * t / 34; g = 146 + (68 - 146) * t / 34; b = 60 + (68 - 60) * t / 34; }
+  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+}
+// Build the discrete block meter. Filled cells take their gradient color from
+// their own position along the bar; trailing cells are the dim empty marker.
+function ctxBarHTML(pct, buckets = 26) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  const filled = Math.round(p / 100 * buckets);
+  let cells = '';
+  for (let i = 1; i <= buckets; i++) {
+    cells += i <= filled
+      ? `<div class="sp-ctxbar-cell" style="background:${ctxBucketColor(i / buckets * 100)};"></div>`
+      : '<div class="sp-ctxbar-cell sp-ctxbar-empty"></div>';
+  }
+  return `<div class="sp-ctxbar">${cells}</div>`;
+}
+// Percentage label color, matching the statusline thresholds.
+function ctxPctColor(pct) {
+  const p = Number(pct) || 0;
+  if (p >= 80) return 'var(--rose)';
+  if (p >= 60) return 'rgb(251,146,60)';
+  if (p >= 40) return 'rgb(251,191,36)';
+  return 'var(--emerald)';
 }
 
 async function refreshStatusline() {
@@ -896,63 +954,72 @@ async function refreshStatusline() {
     : '';
   const u = s.usage || {};
   const L = s.learning || {};
-  // The active agent's model, sourced from its session log. Trim a leading
-  // vendor prefix so the readout stays compact (e.g. "opus-4-8"). Empty when
-  // no model is known, which hides the row.
-  const modelLabel = ((u.session && u.session.model) || '').replace(/^claude-/, '');
+  // The active model. Trim the vendor prefix and the context-tier suffix so the
+  // readout stays compact and matches the banner (e.g. "fable-5", not
+  // "claude-fable-5[1m]"). Empty when no model is known, which hides the row.
+  const modelLabel = ((u.session && u.session.model) || '').replace(/^claude-/, '').replace(/\[[^\]]*\]/g, '');
 
   const html = `
     <div class="sp-section">
-      <div class="sp-section-head"><span class="sp-h-icon">◷</span><span>Where</span></div>
+      <div class="sp-section-head"><span class="sp-h-icon">◷</span><span>Location &amp; Time</span></div>
       <div class="sp-section-body">
         ${headline ? `<div><strong>${escapeHtml(headline)}</strong></div>` : ''}
-        <div class="sp-row"><span class="sp-muted">Time</span><span class="sp-mono">${time}</span></div>
-        ${weatherStr ? `<div class="sp-row"><span class="sp-muted">Weather</span><span class="sp-mono">${escapeHtml(weatherStr)}</span></div>` : ''}
+        <div class="sp-row"><span class="sp-muted">Time ${spInfo('Your current local time.')}</span><span class="sp-mono">${time}</span></div>
+        ${weatherStr ? `<div class="sp-row"><span class="sp-muted">Weather ${spInfo('Current weather at your detected location.')}</span><span class="sp-mono">${escapeHtml(weatherStr)}</span></div>` : ''}
       </div>
     </div>
 
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">▣</span><span>Build</span></div>
       <div class="sp-section-body">
-        <div class="sp-row"><span class="sp-muted">Claude</span><span class="sp-mono">2.1.129</span></div>
-        ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model</span><span class="sp-mono sp-accent" title="${escapeHtml((u.session && u.session.model) || '')}">${escapeHtml(modelLabel)}</span></div>` : ''}
-        <div class="sp-row"><span class="sp-muted">Husk</span><span class="sp-mono">${escapeHtml(s.huskVer || '0.2')}</span></div>
+        <div class="sp-row"><span class="sp-muted">Claude ${spInfo('Installed Claude Code CLI version.')}</span><span class="sp-mono">2.1.129</span></div>
+        ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model ${spInfo('The AI model the active session is running.')}</span><span class="sp-mono sp-accent" title="${escapeHtml((u.session && u.session.model) || '')}">${escapeHtml(modelLabel)}</span></div>` : ''}
+        <div class="sp-row"><span class="sp-muted">Husk ${spInfo('Installed Husk app version.')}</span><span class="sp-mono">${escapeHtml(s.huskVer || '0.2')}</span></div>
       </div>
     </div>
 
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⌬</span><span>Tools</span></div>
       <div class="sp-section-body">
-        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
-        <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows</span><span class="sp-mono sp-accent">${escapeHtml(s.workflows)}</span></div>
-        <div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>
+        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo('Skills installed in ~/.claude/skills. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
+        <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows ${spInfo('Saved Husk workflows. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.workflows)}</span></div>
+        <div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks ${spInfo('Hooks installed in ~/.claude/hooks. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>
       </div>
     </div>
 
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⏱</span><span>Usage</span></div>
       <div class="sp-section-body">
+        ${(u.session && u.session.ctxTokens > 0) ? `
+        <div class="sp-row"><span class="sp-muted">Context Window ${spInfo('Tokens currently held in the model context window versus the model capacity. This is what fills up during a conversation and triggers compaction.')}</span></div>
+        <div class="sp-row sp-ctx-head" title="Context window used">
+          <span class="sp-mono" style="color:${ctxPctColor(u.session.ctxPct)}; font-weight:600;">${fmtPct(u.session.ctxPct)}</span>
+          <span class="sp-mono sp-muted">${escapeHtml(fmtCtx(u.session.ctxTokens))} / ${escapeHtml(fmtCtx(u.session.ctxWindow))}</span>
+        </div>
+        ${ctxBarHTML(u.session.ctxPct)}
+        <div class="sp-divider"></div>
+        ` : ''}
         ${u.cache_present ? `
-        <div class="sp-row"><span class="sp-muted">5h</span><span class="sp-mono">${fmtPct(u.h5_pct)}</span></div>
+        <div class="sp-row"><span class="sp-muted">5 Hours Limit ${spInfo('Share of your rolling 5-hour usage allowance consumed.')}</span><span class="sp-mono">${fmtPct(u.h5_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.h5_pct||0)}%"></div></div>
-        ${u.h5_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono" title="${escapeHtml(u.h5_reset)}">${escapeHtml(fmtUntil(u.h5_reset))}</span></div>` : ''}
-        <div class="sp-row" style="margin-top:6px;"><span class="sp-muted">Weekly</span><span class="sp-mono">${fmtPct(u.week_pct)}</span></div>
+        ${u.h5_reset ? `<div class="sp-row"><span class="sp-muted">Resets ${spInfo('When the 5-hour usage window resets.')}</span><span class="sp-mono" title="${escapeHtml(u.h5_reset)}">${escapeHtml(fmtUntil(u.h5_reset))}</span></div>` : ''}
+        <div class="sp-row" style="margin-top:6px;"><span class="sp-muted">Weekly Limit ${spInfo('Share of your weekly usage allowance consumed.')}</span><span class="sp-mono">${fmtPct(u.week_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.week_pct||0)}%"></div></div>
-        ${u.week_reset ? `<div class="sp-row"><span class="sp-muted">Resets</span><span class="sp-mono" title="${escapeHtml(u.week_reset)}">${escapeHtml(fmtUntil(u.week_reset))}</span></div>` : ''}
+        ${u.week_reset ? `<div class="sp-row"><span class="sp-muted">Resets ${spInfo('When the weekly usage window resets.')}</span><span class="sp-mono" title="${escapeHtml(u.week_reset)}">${escapeHtml(fmtUntil(u.week_reset))}</span></div>` : ''}
         ` : `
         <div class="sp-row"><span class="sp-muted">5h / Weekly</span><span class="sp-mono sp-muted">warming up…</span></div>
         <div class="sp-row sp-tiny sp-muted">Refreshing every 30s from your Anthropic OAuth token; first sample takes a few seconds after launch.</div>
         `}
         ${u.session ? `
         <div class="sp-divider"></div>
-        <div class="sp-row"><span class="sp-muted">Session turns</span><span class="sp-mono sp-accent">${escapeHtml(u.session.turns)}</span></div>
-        <div class="sp-row"><span class="sp-muted">Session tokens</span><span class="sp-mono sp-accent">~${escapeHtml(fmtThousands(u.session.tokens))}</span></div>
+        <div class="sp-row"><span class="sp-muted">Session turns ${spInfo('Number of user and assistant messages exchanged in this session.')}</span><span class="sp-mono sp-accent">${escapeHtml(u.session.turns)}</span></div>
+        <div class="sp-row"><span class="sp-muted">Session tokens ${spInfo('Estimated total tokens processed across this whole session (cumulative odometer, not the current context window).')}</span><span class="sp-mono sp-accent">~${escapeHtml(fmtThousands(u.session.tokens))}</span></div>
         ` : ''}
         ${(u.api_cost || u.extra_used || u.session_cost) ? `
         <div class="sp-divider"></div>
-        ${u.api_cost ? `<div class="sp-row"><span class="sp-muted">API</span><span class="sp-mono">$${escapeHtml(u.api_cost)}</span></div>` : ''}
-        ${u.extra_limit ? `<div class="sp-row"><span class="sp-muted">Extra</span><span class="sp-mono">$${escapeHtml(u.extra_used)}/$${escapeHtml(u.extra_limit)}</span></div>` : ''}
-        ${u.session_cost ? `<div class="sp-row"><span class="sp-muted">Session $</span><span class="sp-mono">${escapeHtml(String(u.session_cost))}</span></div>` : ''}
+        ${u.api_cost ? `<div class="sp-row"><span class="sp-muted">API ${spInfo('API dollars spent this session.')}</span><span class="sp-mono">$${escapeHtml(u.api_cost)}</span></div>` : ''}
+        ${u.extra_limit ? `<div class="sp-row"><span class="sp-muted">Extra ${spInfo('Extra usage dollars used versus your limit.')}</span><span class="sp-mono">$${escapeHtml(u.extra_used)}/$${escapeHtml(u.extra_limit)}</span></div>` : ''}
+        ${u.session_cost ? `<div class="sp-row"><span class="sp-muted">Session $ ${spInfo('Estimated cost of this session.')}</span><span class="sp-mono">${escapeHtml(String(u.session_cost))}</span></div>` : ''}
         ` : ''}
       </div>
     </div>
@@ -960,22 +1027,22 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">◎</span><span>Memory</span></div>
       <div class="sp-section-body">
-        <div class="sp-row sp-clickable" data-open="sessions"><span class="sp-muted">Sessions</span><span class="sp-mono sp-accent">${s.sessions}</span></div>
-        <div class="sp-row sp-clickable" data-open="ratings"><span class="sp-muted">Ratings</span><span class="sp-mono sp-accent">${s.ratings}</span></div>
-        <div class="sp-row sp-clickable" data-open="work"><span class="sp-muted">Work</span><span class="sp-mono sp-accent">${s.sessions}</span></div>
-        <div class="sp-row sp-clickable" data-open="research"><span class="sp-muted">Research</span><span class="sp-mono sp-accent">${s.research}</span></div>
+        <div class="sp-row sp-clickable" data-open="sessions"><span class="sp-muted">Sessions ${spInfo('Work sessions recorded in memory. Click to view.')}</span><span class="sp-mono sp-accent">${s.sessions}</span></div>
+        <div class="sp-row sp-clickable" data-open="ratings"><span class="sp-muted">Ratings ${spInfo('Session ratings you have given. Click to open.')}</span><span class="sp-mono sp-accent">${s.ratings}</span></div>
+        <div class="sp-row sp-clickable" data-open="work"><span class="sp-muted">Work ${spInfo('Active work projects tracked in memory. Click to open.')}</span><span class="sp-mono sp-accent">${s.sessions}</span></div>
+        <div class="sp-row sp-clickable" data-open="research"><span class="sp-muted">Research ${spInfo('Research entries stored in memory. Click to open.')}</span><span class="sp-mono sp-accent">${s.research}</span></div>
       </div>
     </div>
 
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">✿</span><span>Learning</span></div>
       <div class="sp-section-body">
-        ${L.latest != null ? `<div class="sp-row"><span class="sp-muted">Latest</span><span class="sp-mono" style="color:${ratingColor(L.latest)}; font-weight:600;">${L.latest} · ${escapeHtml(L.latestSource||'auto')}</span></div>` : ''}
-        ${L.avg1h != null ? `<div class="sp-row"><span class="sp-muted">1h</span><span class="sp-mono" style="color:${ratingColor(L.avg1h)};">${L.avg1h}</span></div>` : ''}
-        ${L.avg1d != null ? `<div class="sp-row"><span class="sp-muted">1d</span><span class="sp-mono" style="color:${ratingColor(L.avg1d)};">${L.avg1d}</span></div>` : ''}
-        ${L.avg1w != null ? `<div class="sp-row"><span class="sp-muted">1w</span><span class="sp-mono" style="color:${ratingColor(L.avg1w)};">${L.avg1w}</span></div>` : ''}
-        ${L.avg1mo != null ? `<div class="sp-row"><span class="sp-muted">1mo</span><span class="sp-mono" style="color:${ratingColor(L.avg1mo)};">${L.avg1mo}</span></div>` : ''}
-        ${L.recent && L.recent.length ? sparkHTML(L.recent) : ''}
+        ${L.latest != null ? `<div class="sp-row"><span class="sp-muted">Latest ${spInfo('Your most recent session rating (and its source).')}</span><span class="sp-mono" style="color:${ratingColor(L.latest)}; font-weight:600;">${L.latest} · ${escapeHtml(L.latestSource||'auto')}</span></div>` : ''}
+        ${L.avg1h != null ? `<div class="sp-row"><span class="sp-muted">1h ${spInfo('Average rating over the last hour.')}</span><span class="sp-mono" style="color:${ratingColor(L.avg1h)};">${L.avg1h}</span></div>` : ''}
+        ${L.avg1d != null ? `<div class="sp-row"><span class="sp-muted">1d ${spInfo('Average rating over the last day.')}</span><span class="sp-mono" style="color:${ratingColor(L.avg1d)};">${L.avg1d}</span></div>` : ''}
+        ${L.avg1w != null ? `<div class="sp-row"><span class="sp-muted">1w ${spInfo('Average rating over the last week.')}</span><span class="sp-mono" style="color:${ratingColor(L.avg1w)};">${L.avg1w}</span></div>` : ''}
+        ${L.avg1mo != null ? `<div class="sp-row"><span class="sp-muted">1mo ${spInfo('Average rating over the last month.')}</span><span class="sp-mono" style="color:${ratingColor(L.avg1mo)};">${L.avg1mo}</span></div>` : ''}
+        ${L.recent && L.recent.length ? sparkHTML(L.recent, L.recentTs) : ''}
         ${(L.latest == null && L.avg1h == null && L.avg1d == null && L.avg1w == null && L.avg1mo == null) ? `<div class="sp-row sp-tiny sp-muted">No ratings yet · sessions you rate will land here.</div>` : ''}
       </div>
     </div>
@@ -4364,6 +4431,233 @@ async function submitMcpInstall(cat) {
 $('#btn-mcp-refresh').addEventListener('click', renderMcp);
 $('#btn-mcp-add-custom').addEventListener('click', openMcpCustomModal);
 
+// ─── Plugins page ───────────────────────────────────────────────────────────────
+//
+// Installed plugins come from the agent CLI's registry; the browse grid
+// unions every known marketplace catalog. Mutations (install, uninstall,
+// enable, disable) run through the CLI via plugins:run, then the page
+// refreshes from disk so the UI never invents state.
+let pluginsInstalledCache = [];
+let pluginsCatalogCache = [];
+// Set of in-flight plugin ids so a slow install cannot be double-clicked.
+const pluginsBusy = new Set();
+
+async function renderPlugins() {
+  const body = $('#plugins-body');
+  const unsupported = $('#plugins-unsupported');
+  const installedEl = $('#plugins-installed');
+  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
+  installedEl.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading…</div></div>';
+  const [li, cat] = await Promise.all([window.husk.plugins.list(), window.husk.plugins.catalog()]);
+  if (!li.supported) {
+    body.hidden = true;
+    unsupported.hidden = false;
+    return;
+  }
+  body.hidden = false;
+  unsupported.hidden = true;
+  pluginsInstalledCache = li.plugins || [];
+  pluginsCatalogCache = (cat.catalog || []);
+  paintPlugins($('#plugins-search').value);
+}
+
+function paintPlugins(query) {
+  const q = (query || '').toLowerCase().trim();
+  const installedEl = $('#plugins-installed');
+  const catalogEl = $('#plugins-catalog');
+  const installedIds = new Set(pluginsInstalledCache.map((p) => p.id));
+
+  const inst = q
+    ? pluginsInstalledCache.filter((p) => (p.name + ' ' + p.marketplace).toLowerCase().includes(q))
+    : pluginsInstalledCache;
+  if (!inst.length) {
+    const msg = pluginsInstalledCache.length ? `No installed plugins match "${escapeHtml(query)}"` : 'No plugins installed yet. Pick one below.';
+    // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
+    installedEl.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
+  } else {
+    // eslint-disable-next-line no-unsanitized/property -- Plugin fields are escaped via escapeHtml/escapeAttr.
+    installedEl.innerHTML = inst.map((p) => `
+      <div class="plugin-row${p.enabled ? '' : ' disabled'}" data-id="${escapeAttr(p.id)}">
+        <div class="plugin-row-main">
+          <div class="plugin-row-name">${escapeHtml(p.name)}<span class="plugin-badge">${escapeHtml(p.marketplace)}</span></div>
+          <div class="plugin-row-meta">v${escapeHtml(p.version || '?')}${p.lastUpdated ? ' · updated ' + escapeHtml(fmtRelTime(p.lastUpdated)) : ''}</div>
+        </div>
+        <div class="plugin-row-actions">
+          <button class="ghost-btn" data-act="edit" title="Browse and edit this plugin's files">Edit</button>
+          <button class="ghost-btn" data-act="update" title="Update to the latest version">Update</button>
+          <button class="ghost-btn ghost-btn-danger" data-act="uninstall" title="Uninstall">Remove</button>
+          <button class="toggle ${p.enabled ? 'on' : ''}" data-act="toggle" title="${p.enabled ? 'Disable' : 'Enable'}"></button>
+        </div>
+      </div>`).join('');
+  }
+
+  const avail = pluginsCatalogCache.filter((c) => !installedIds.has(c.id));
+  const found = q
+    ? avail.filter((c) => (c.name + ' ' + c.description + ' ' + c.category).toLowerCase().includes(q))
+    : avail;
+  const head = $('#plugins-browse-head');
+  if (head) head.textContent = `Browse marketplaces · ${found.length} available`;
+  if (!found.length) {
+    // eslint-disable-next-line no-unsanitized/property -- Static empty-state template.
+    catalogEl.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Nothing matches.</div></div>';
+  } else {
+    // Grid renders at most 120 cards to keep the DOM light; the trailing
+    // hint makes the cut explicit and search reaches everything.
+    const overflow = found.length > 120
+      ? `<div class="empty-state"><div class="es-msg">${found.length - 120} more match · narrow the search to see them</div></div>`
+      : '';
+    // eslint-disable-next-line no-unsanitized/property -- Catalog fields are escaped via escapeHtml/escapeAttr.
+    catalogEl.innerHTML = found.slice(0, 120).map((c) => `
+      <div class="plugin-card" data-id="${escapeAttr(c.id)}">
+        <div class="plugin-card-top">
+          <span class="plugin-card-name">${escapeHtml(c.name)}</span>
+          ${c.category ? `<span class="plugin-badge">${escapeHtml(c.category)}</span>` : ''}
+        </div>
+        <div class="plugin-card-desc">${escapeHtml((c.description || '').slice(0, 180))}</div>
+        <div class="plugin-card-foot">
+          <span class="plugin-card-mp">${escapeHtml(c.marketplace)}</span>
+          <button class="btn-primary plugin-install" data-act="install">Install</button>
+        </div>
+      </div>`).join('') + overflow;
+  }
+}
+
+// One CLI mutation with busy handling. Afterwards only the installed
+// list is re-fetched: enable/disable/uninstall/update cannot change the
+// marketplace catalogs, so the cached catalog repaints as-is (no
+// redundant IPC, no loading flash).
+async function runPluginAction(action, id, btn) {
+  if (pluginsBusy.has(id)) return;
+  pluginsBusy.add(id);
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const r = await window.husk.plugins.run(action, id);
+    if (!r.ok) {
+      toast(r.error || `plugin ${action} failed`, 'error');
+      return;
+    }
+    const verbed = { install: 'installed', uninstall: 'removed', enable: 'enabled', disable: 'disabled', update: 'updated' }[action] || action;
+    toast(`${id.split('@')[0]} ${verbed} · restart agent to apply`, 'success');
+    const li = await window.husk.plugins.list();
+    if (li.supported) pluginsInstalledCache = li.plugins || [];
+    paintPlugins($('#plugins-search').value);
+  } finally {
+    pluginsBusy.delete(id);
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
+// Delegated click handling, wired once: repaints swap innerHTML freely
+// without rebinding a listener per row and button.
+$('#plugins-installed').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const row = btn.closest('.plugin-row');
+  if (!row) return;
+  const id = row.dataset.id;
+  const act = btn.dataset.act;
+  if (act === 'edit') { openPluginEditor(id); return; }
+  if (act === 'toggle') {
+    await runPluginAction(btn.classList.contains('on') ? 'disable' : 'enable', id, null);
+    return;
+  }
+  if (act === 'update') { await runPluginAction('update', id, btn); return; }
+  if (act === 'uninstall') {
+    const ok = await openConfirmDialog({
+      title: `Remove ${id.split('@')[0]}?`,
+      bodyHtml: 'The plugin is uninstalled from the agent. You can reinstall it from the marketplace at any time.',
+      confirmLabel: 'Remove plugin',
+      cancelLabel: 'Keep',
+    });
+    if (ok) await runPluginAction('uninstall', id, btn);
+  }
+});
+$('#plugins-catalog').addEventListener('click', (e) => {
+  const btn = e.target.closest('.plugin-install');
+  if (!btn) return;
+  const card = btn.closest('.plugin-card');
+  if (card) runPluginAction('install', card.dataset.id, btn);
+});
+
+// ─── Plugin editor modal ────────────────────────────────────────────────────────
+let peCurrent = { id: null, relPath: null, dirty: false };
+
+async function openPluginEditor(id) {
+  peCurrent = { id, relPath: null, dirty: false };
+  $('#pe-title').textContent = `Edit ${id.split('@')[0]}`;
+  $('#pe-path').textContent = 'select a file';
+  const ta = $('#pe-content');
+  ta.value = '';
+  ta.disabled = true;
+  $('#pe-save').disabled = true;
+  $('#pe-status').textContent = '';
+  $('#plugin-editor').hidden = false;
+  const r = await window.husk.plugins.files(id);
+  const list = $('#pe-files');
+  if (!r.ok) {
+    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
+    list.innerHTML = `<div class="empty-state"><div class="es-msg">${escapeHtml(r.error || 'Could not list files')}</div></div>`;
+    return;
+  }
+  // eslint-disable-next-line no-unsanitized/property -- File paths are escaped via escapeHtml/escapeAttr.
+  list.innerHTML = r.files.map((f) => `
+    <button class="pe-file${f.editable ? '' : ' pe-file-locked'}" data-rel="${escapeAttr(f.path)}" ${f.editable ? '' : 'disabled title="binary or too large"'}>
+      ${escapeHtml(f.path)}
+    </button>`).join('');
+  list.querySelectorAll('.pe-file').forEach((btn) => {
+    btn.addEventListener('click', () => loadPluginFile(btn.dataset.rel, btn));
+  });
+}
+
+async function loadPluginFile(relPath, btn) {
+  if (peCurrent.dirty && !(await openConfirmDialog({
+    title: 'Discard unsaved changes?',
+    bodyHtml: 'The current file has edits that are not saved.',
+    confirmLabel: 'Discard',
+    cancelLabel: 'Stay',
+  }))) return;
+  const r = await window.husk.plugins.readFile(peCurrent.id, relPath);
+  if (!r.ok) { toast(r.error || 'Could not read file', 'error'); return; }
+  peCurrent.relPath = relPath;
+  peCurrent.dirty = false;
+  $$('#pe-files .pe-file').forEach((b) => b.classList.toggle('active', b === btn));
+  $('#pe-path').textContent = relPath;
+  const ta = $('#pe-content');
+  ta.value = r.content;
+  ta.disabled = false;
+  $('#pe-save').disabled = true;
+  $('#pe-status').textContent = '';
+}
+
+async function savePluginFile() {
+  if (!peCurrent.id || !peCurrent.relPath) return;
+  const r = await window.husk.plugins.writeFile(peCurrent.id, peCurrent.relPath, $('#pe-content').value);
+  if (!r.ok) { toast(r.error || 'Save failed', 'error'); return; }
+  peCurrent.dirty = false;
+  $('#pe-save').disabled = true;
+  $('#pe-status').textContent = 'saved';
+  toast(`${peCurrent.relPath} saved · restart agent to apply`, 'success');
+}
+
+function closePluginEditor() {
+  $('#plugin-editor').hidden = true;
+  peCurrent = { id: null, relPath: null, dirty: false };
+}
+
+$('#pe-content').addEventListener('input', () => {
+  if (!peCurrent.relPath) return;
+  peCurrent.dirty = true;
+  $('#pe-save').disabled = false;
+  $('#pe-status').textContent = 'unsaved changes';
+});
+$('#pe-save').addEventListener('click', savePluginFile);
+$('#pe-close').addEventListener('click', closePluginEditor);
+$('#pe-open-folder').addEventListener('click', () => { if (peCurrent.id) window.husk.plugins.openFolder(peCurrent.id); });
+$('#plugin-editor').addEventListener('click', (e) => { if (e.target.id === 'plugin-editor') closePluginEditor(); });
+$('#plugins-search').addEventListener('input', debounce((e) => paintPlugins(e.target.value), 120));
+$('#btn-plugins-refresh').addEventListener('click', renderPlugins);
+
 // ─── Agent quick-switch (rail pill + dropdown) ──────────────────────────────────
 let agentMenuOpen = false;
 let agentsCache = [];
@@ -4439,7 +4733,10 @@ window.addEventListener('click', (e) => {
 });
 $('#btn-new-session').addEventListener('click', () => openNewChatTab());
 function reportZoom(lvl) {
-  const pct = Math.round(Math.pow(1.2, lvl) * 100);
+  // Show percent relative to Husk's base scale, so the default reads as 100%
+  // even though it renders at ~0.91 actual zoom.
+  const base = (window.husk.ui && typeof window.husk.ui.zoomBase === 'number') ? window.husk.ui.zoomBase : 0;
+  const pct = Math.round(Math.pow(1.2, lvl - base) * 100);
   toast(`Zoom: ${pct}%`, 'success');
   setTimeout(fitNow, 30);
 }
@@ -4521,6 +4818,7 @@ const ICONS = {
   plus:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
   theme:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>',
   folder:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
+  plugins:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg>',
 };
 
 const PALETTE_ACTIONS = [
@@ -4529,6 +4827,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: '3' },
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: '4' },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: '5' },
+  { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins'),     shortcut: '6' },
   { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('preferences'), shortcut: ',' },
   { icon: ICONS.restart,     label: 'Restart Agent',                  run: restartPty },
   { icon: ICONS.plus,        label: 'Share file (picker)',            run: shareFilesViaPicker },
@@ -5290,15 +5589,11 @@ const AP_DIFF_POLL_MS = 4000;
 const AP_TERM_SNAP_MS = 1200;
 const AP_TERM_SCAN_WINDOW = 60;
 const AP_TERM_SEEN_MAX = 400;
-// Auto-finalize a run when the agent appears idle. Two paths:
-//   AP_IDLE_END_MS:      quiet + prompt detected -> end
-//   AP_IDLE_END_HARD_MS: quiet for much longer -> end regardless of
-//                        prompt detection (different agents render
-//                        the prompt differently; this is the safety
-//                        net so we never miss a finished run)
-// Both gated by AP_MIN_EVENTS_BEFORE_AUTO_END so we never end a run
-// that never started.
-const AP_IDLE_END_MS = 10000;
+// Hard quiet net: when the agent has been silent this long after nudges are
+// exhausted (or it never produced anything), end the run regardless of how the
+// agent renders its prompt. Gated by AP_MIN_EVENTS_BEFORE_AUTO_END so we never
+// end a run that never started. A real finish is detected positively via the
+// completion marker; this is only the give-up fallback.
 const AP_IDLE_END_HARD_MS = 25000;
 const AP_MIN_EVENTS_BEFORE_AUTO_END = 3;
 // The agent's "working" indicator (claude renders "esc to interrupt" and
@@ -5313,6 +5608,15 @@ const AP_WORK_GONE_MS = 6000;
 // "(12s . N tokens)" status; copilot renders a "Working" spinner label.
 // Matching any of them keeps a run alive while the agent is generating.
 const AP_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]|\bworking\b/i;
+// Printed by the agent (per the autonomy directive in main.js) when the goal
+// is fully done. Matched as a standalone line so the directive's own mention
+// of the marker (delivered as one pasted line) never trips it.
+const AP_COMPLETE_SENTINEL = '<<HUSK_AUTONOMY_COMPLETE>>';
+// When the agent goes quiet without the completion marker it is most likely
+// waiting for input (it asked something). Rather than end the run, nudge it to
+// keep deciding for itself. Capped so a truly stuck run still terminates.
+const AP_NUDGE_PAUSE_MS = 12000;
+const AP_MAX_NUDGES = 5;
 let autonomyTermInterval = null;
 let autonomyTermSeenLines = new Set();
 let autonomyTermSeenOrder = [];
@@ -5322,6 +5626,7 @@ let autonomyLastActivityAt = 0;
 let autonomyWorkingSeenAt = 0;
 let autonomyEverWorked = false;
 let autonomyAutoEndTriggered = false;
+let autonomyNudgeCount = 0;
 let autonomyReview = false;
 let autonomyReviewData = null;
 let autonomyState = {
@@ -5860,19 +6165,26 @@ function snapshotTermForAutonomy() {
   // the agent's "busy" marker; while it is present the agent is generating
   // or running a tool, so the run must not be auto-ended.
   let working = false;
+  let sawCompletionSentinel = false;
   for (let i = Math.max(0, total - AP_TERM_SCAN_WINDOW); i < total; i++) {
     const ln = b.getLine(i);
     if (!ln) continue;
-    if (AP_WORKING_RE.test(ln.translateToString(true))) { working = true; break; }
+    const rowText = ln.translateToString(true);
+    if (!working && AP_WORKING_RE.test(rowText)) working = true;
+    // Standalone-line match so the directive's own inline mention of the
+    // marker (delivered as one pasted line) cannot count as completion.
+    if (!sawCompletionSentinel && rowText.trim() === AP_COMPLETE_SENTINEL) sawCompletionSentinel = true;
   }
   if (working) { autonomyWorkingSeenAt = Date.now(); autonomyEverWorked = true; }
 
-  // Completion watchdog. Primary signal: the agent worked, then its
-  // working indicator went away and stayed away, and the terminal looks
-  // like it is back at a prompt. This ends the run within seconds of the
-  // agent actually finishing, and cannot fire while the agent is busy.
-  // The quiet-only hard net remains as a fallback for agents that show no
-  // recognizable working indicator, but it too waits for "not working".
+  // Completion watchdog. Once the agent has stopped generating, three paths:
+  //   (1) it printed the completion marker -> real finish, end the run.
+  //   (2) it went quiet WITHOUT the marker -> most likely waiting for input
+  //       (it asked a question). Nudge it to keep deciding for itself, capped
+  //       at AP_MAX_NUDGES so a genuinely stuck run still terminates. This is
+  //       the fix for runs that quit the moment the agent paused to ask.
+  //   (3) nudges exhausted (or the agent never produced anything) and still
+  //       quiet past the hard window -> give up and end.
   if (autonomyActive && !autonomyAutoEndTriggered
       && autonomyState.eventCount >= AP_MIN_EVENTS_BEFORE_AUTO_END
       && autonomyLastActivityAt > 0) {
@@ -5880,12 +6192,19 @@ function snapshotTermForAutonomy() {
     const idleMs = now - autonomyLastActivityAt;
     const workGoneMs = autonomyWorkingSeenAt ? now - autonomyWorkingSeenAt : Infinity;
     const notWorking = !working && workGoneMs >= AP_WORK_GONE_MS;
-    const finishedAfterWork = autonomyEverWorked && notWorking
-      && (terminalLooksIdleAtPrompt() || idleMs >= AP_IDLE_END_MS);
-    const quietFallback = notWorking && idleMs >= AP_IDLE_END_HARD_MS;
-    if (finishedAfterWork || quietFallback) {
+    if (sawCompletionSentinel) {
       autonomyAutoEndTriggered = true;
-      finalizeAutonomyOnIdle();
+      finalizeAutonomyOnIdle('agent_complete');
+    } else if (autonomyEverWorked && notWorking && autonomyNudgeCount < AP_MAX_NUDGES
+               && (terminalLooksIdleAtPrompt() || idleMs >= AP_NUDGE_PAUSE_MS)) {
+      autonomyNudgeCount += 1;
+      autonomyLastActivityAt = now;   // reset the idle clock for the nudge to land
+      pushActivity([`Agent paused without finishing; nudging to continue autonomously (${autonomyNudgeCount}/${AP_MAX_NUDGES}).`]);
+      try { window.husk.autonomy.nudge(); } catch (_) {}
+    } else if (notWorking && idleMs >= AP_IDLE_END_HARD_MS
+               && (autonomyNudgeCount >= AP_MAX_NUDGES || !autonomyEverWorked)) {
+      autonomyAutoEndTriggered = true;
+      finalizeAutonomyOnIdle('agent_idle');
     }
   }
 }
@@ -5917,12 +6236,12 @@ function terminalLooksIdleAtPrompt() {
   return false;
 }
 
-async function finalizeAutonomyOnIdle() {
+async function finalizeAutonomyOnIdle(reason = 'agent_idle') {
   if (!autonomyActive) return;
   try {
     // The top-center run-complete banner is shown by onEnded; no corner
     // toast here so the two do not duplicate.
-    await window.husk.autonomy.end({ reason: 'agent_idle' });
+    await window.husk.autonomy.end({ reason });
   } catch (err) {
     // If the end call fails, allow another idle attempt next tick.
     autonomyAutoEndTriggered = false;
@@ -5942,6 +6261,7 @@ function startAutonomyTermSnapshotter() {
   autonomyAutoEndTriggered = false;
   autonomyWorkingSeenAt = 0;
   autonomyEverWorked = false;
+  autonomyNudgeCount = 0;
   const b = term.buffer.active;
   const total = b.length;
   for (let i = 0; i < total; i++) {
