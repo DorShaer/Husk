@@ -1760,14 +1760,30 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 18px; padding: 40px;
   /* Opaque background prevents the under-layer from showing through
-     during the pre-fit flicker. Matches the status panel's background
-     (var(--bg)), which is opaque in both themes. */
+     during the pre-fit flicker. Matches the status panel: flat var(--bg)
+     in light mode; the dark glass variant is below. */
   background: var(--bg);
   overflow-y: auto;
   pointer-events: none;
   opacity: 0; transition: opacity var(--motion-slow) var(--ease-out);
 }
 .chat-empty.show { opacity: 1; pointer-events: auto; }
+/* Dark mode: the status panel is glass (a 2.5% white tint over the body's
+   radial-gradient backdrop, blurred and saturated 140%). The welcome overlay
+   must stay opaque (it hides the terminal beneath), so instead of real
+   translucency a ::before layer repaints the same stack: body gradient,
+   fixed-attached so the color blobs land where the backdrop's would, under
+   the same tint, with the same saturation boost. */
+[data-theme="dark"] .chat-empty::before {
+  content: '';
+  position: absolute; inset: 0; z-index: -1;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.025)),
+    var(--bg-radial);
+  background-attachment: fixed;
+  filter: saturate(140%);
+}
 .ce-logo-img {
   width: 64px; height: 64px;
   display: block;
