@@ -75,5 +75,19 @@ test('plugin editor modal opens wide with a usable file list and editor', async 
   expect(editorState.disabled).toBe(false);
   expect(editorState.hasContent).toBe(true);
 
+  // The header X closes, but dirty edits demand confirmation first.
+  await win.fill('#pe-content', '# edited');
+  await win.click('#pe-close-x');
+  await win.waitForSelector('#confirm-modal:not([hidden])', { timeout: 5_000 });
+  await win.click('#confirm-cancel');
+  let state = await win.evaluate(() => document.getElementById('plugin-editor').hidden);
+  expect(state).toBe(false); // stayed open after "Stay"
+  await win.click('#pe-close-x');
+  await win.waitForSelector('#confirm-modal:not([hidden])', { timeout: 5_000 });
+  await win.click('#confirm-ok');
+  await win.waitForSelector('#plugin-editor', { state: 'hidden', timeout: 5_000 });
+  state = await win.evaluate(() => document.getElementById('plugin-editor').hidden);
+  expect(state).toBe(true); // discarded and closed
+
   await app.close();
 });
