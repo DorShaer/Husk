@@ -568,6 +568,18 @@ function createWindow() {
     }
     return { action: 'deny' };
   });
+  // A bare Alt press moves focus to the application menu bar, which
+  // silently swallows every keystroke after it until the user hits
+  // Escape; in a terminal-first app that reads as "typing broke".
+  // Swallow bare Alt before the menu sees it. Alt+key combos still
+  // arrive as their own events (input.key is the combo key), so
+  // terminal Alt-sequences keep working.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Alt' && !input.control && !input.shift && !input.meta) {
+      event.preventDefault();
+    }
+  });
+
   // Belt-and-suspenders: also catch top-level navigation attempts so
   // the main window cannot be hijacked away from its loaded index.html.
   mainWindow.webContents.on('will-navigate', (event, url) => {

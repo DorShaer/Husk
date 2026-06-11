@@ -4640,7 +4640,13 @@ async function savePluginFile() {
   toast(`${peCurrent.relPath} saved · restart agent to apply`, 'success');
 }
 
-function closePluginEditor() {
+async function closePluginEditor() {
+  if (peCurrent.dirty && !(await openConfirmDialog({
+    title: 'Discard unsaved changes?',
+    bodyHtml: 'The current file has edits that are not saved.',
+    confirmLabel: 'Discard',
+    cancelLabel: 'Stay',
+  }))) return;
   $('#plugin-editor').hidden = true;
   peCurrent = { id: null, relPath: null, dirty: false };
 }
@@ -4653,6 +4659,7 @@ $('#pe-content').addEventListener('input', () => {
 });
 $('#pe-save').addEventListener('click', savePluginFile);
 $('#pe-close').addEventListener('click', closePluginEditor);
+$('#pe-close-x').addEventListener('click', closePluginEditor);
 $('#pe-open-folder').addEventListener('click', () => { if (peCurrent.id) window.husk.plugins.openFolder(peCurrent.id); });
 $('#plugin-editor').addEventListener('click', (e) => { if (e.target.id === 'plugin-editor') closePluginEditor(); });
 $('#plugins-search').addEventListener('input', debounce((e) => paintPlugins(e.target.value), 120));
