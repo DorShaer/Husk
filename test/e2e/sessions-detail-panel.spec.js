@@ -15,11 +15,19 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 function makeIsolatedHome() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(dir, '.config', 'husk'), { recursive: true });
+  // Without firstRunDone, boot() blocks on the welcome wizard (no agent CLI
+  // on CI runners) and its modal intercepts the session-row click.
+  fs.writeFileSync(path.join(dir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   const proj = path.join(dir, '.claude', 'projects', '-home-test-proj');
   fs.mkdirSync(proj, { recursive: true });
-  const line = JSON.stringify({ timestamp: new Date().toISOString(), cwd: '/home/test/proj', type: 'user', message: { content: 'hello world first message' } });
-  fs.writeFileSync(path.join(proj, '11111111-2222-3333-4444-555555555555.jsonl'), line + '\n');
+  // sessions:list skips user-only files as queue-operation receipts, so the
+  // fixture needs an assistant turn to count as a real conversation.
+  const lines = [
+    JSON.stringify({ timestamp: new Date().toISOString(), cwd: '/home/test/proj', type: 'user', message: { content: 'hello world first message' } }),
+    JSON.stringify({ timestamp: new Date().toISOString(), type: 'assistant', message: { content: [{ type: 'text', text: 'hello back' }] } }),
+  ];
+  fs.writeFileSync(path.join(proj, '11111111-2222-3333-4444-555555555555.jsonl'), lines.join('\n') + '\n');
   return dir;
 }
 

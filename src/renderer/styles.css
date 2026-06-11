@@ -1760,15 +1760,30 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 18px; padding: 40px;
   /* Opaque background prevents the under-layer from showing through
-     during the pre-fit flicker. Uses --bg (the page color) because it is
-     opaque in both themes, where --bg-1 is translucent in dark mode. */
+     during the pre-fit flicker. Matches the status panel: flat var(--bg)
+     in light mode; the dark glass variant is below. */
   background: var(--bg);
   overflow-y: auto;
   pointer-events: none;
   opacity: 0; transition: opacity var(--motion-slow) var(--ease-out);
 }
 .chat-empty.show { opacity: 1; pointer-events: auto; }
-[data-theme="dark"] .chat-empty { background: #1C1A1A; }
+/* Dark mode: the status panel is glass (a 2.5% white tint over the body's
+   radial-gradient backdrop, blurred and saturated 140%). The welcome overlay
+   must stay opaque (it hides the terminal beneath), so instead of real
+   translucency a ::before layer repaints the same stack: body gradient,
+   fixed-attached so the color blobs land where the backdrop's would, under
+   the same tint, with the same saturation boost. */
+[data-theme="dark"] .chat-empty::before {
+  content: '';
+  position: absolute; inset: 0; z-index: -1;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.025)),
+    var(--bg-radial);
+  background-attachment: fixed;
+  filter: saturate(140%);
+}
 .ce-logo-img {
   width: 64px; height: 64px;
   display: block;
@@ -3539,29 +3554,34 @@ input[type="checkbox"]:disabled {
    which is declared later in this sheet and would otherwise shrink the
    editor to 460px and center-align it. */
 .modal-card.plugin-editor-card {
-  width: min(920px, 92vw);
-  max-width: 92vw;
+  width: min(1180px, 94vw);
+  max-width: 94vw;
   text-align: left;
 }
 /* Footer buttons stay natural width; the base modal rule stretches
    .btn-primary to 100% which is wrong next to Open folder / Close. */
 .modal-card.plugin-editor-card .btn-primary { width: auto; padding: 0 18px; }
+.modal-card.plugin-editor-card .modal-head { margin-bottom: 4px; }
+/* The base .modal-card textarea rule re-enables the vertical resize grip
+   and a 160px floor; the editor pane scrolls instead. */
+.modal-card.plugin-editor-card .pe-content { resize: none; min-height: 0; }
 .pe-layout {
   display: flex; gap: 12px; margin-top: 12px;
-  height: min(520px, 60vh);
+  height: clamp(420px, 72vh, 820px);
 }
 .pe-files {
-  flex: 0 0 240px; overflow: auto;
+  flex: 0 0 300px; overflow: auto;
   display: flex; flex-direction: column; gap: 2px;
   border: 1px solid var(--line); border-radius: 8px;
   background: var(--bg-1); padding: 6px;
 }
 .pe-file {
   background: transparent; border: 0; cursor: pointer;
-  text-align: left; padding: 6px 8px; border-radius: 6px;
+  text-align: left; padding: 7px 10px; border-radius: 6px;
   color: var(--text-2);
-  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.4;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 .pe-file:hover { background: var(--bg-2); color: var(--text); }
 .pe-file.active { background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); color: var(--text); }

@@ -16,6 +16,9 @@ test('short window keeps the rail bottom and status footer visible (issue 4)', a
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
+  // Without firstRunDone, boot() blocks on the welcome wizard (no agent CLI
+  // on CI runners), leaving the status panel empty and stealing clicks.
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,

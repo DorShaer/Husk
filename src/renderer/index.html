@@ -889,7 +889,10 @@
         <!-- Plugin editor modal -->
         <div id="plugin-editor" class="modal" hidden>
           <div class="modal-card plugin-editor-card">
-            <div class="modal-title" id="pe-title">Edit plugin</div>
+            <div class="modal-head">
+              <div class="modal-title" id="pe-title">Edit plugin</div>
+              <button class="modal-close" id="pe-close-x" aria-label="Close">&times;</button>
+            </div>
             <div class="modal-sub" id="pe-sub">edits live in the plugin cache and may be overwritten when the plugin updates</div>
             <div class="pe-layout">
               <div class="pe-files" id="pe-files"></div>
