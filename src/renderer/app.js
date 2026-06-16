@@ -172,6 +172,9 @@ if (typeof Terminal === 'undefined' || typeof window.husk === 'undefined') {
 let cfg = null;
 let huskHome = '~';
 let lastStats = null;
+// Last non-empty context-window reading, kept so the Usage panel never flickers
+// the block out on a transient poll (see refreshStatusline).
+let lastGoodCtx = null;
 let currentPage = 'chat';
 let chatHasInput = false;
 
@@ -269,6 +272,9 @@ function createTab() {
 function activateTab(id) {
   const tab = TABS.get(id);
   if (!tab) return;
+  // Drop the cached context reading so the next poll shows the newly-focused
+  // session's window, never the previous tab's stale number.
+  if (activeTabId !== id) lastGoodCtx = null;
   activeTabId = id;
   term = tab.term;
   fitAddon = tab.fitAddon;
@@ -954,10 +960,19 @@ async function refreshStatusline() {
     : '';
   const u = s.usage || {};
   const L = s.learning || {};
+  // Stabilize the context reading. A poll taken while the agent is mid-turn can
+  // transiently return no session or ctxTokens===0 (the newest-by-mtime
+  // transcript momentarily being a sidechain/fresh file, or a tail read landing
+  // before the next usage record). Without this the whole Context Window block
+  // flickers out and back. Cache the last good reading and fall back to it; a
+  // real change overwrites it on the next good poll, and activateTab() clears it
+  // on a session switch so we never show a stale cross-session number.
+  if (u.session && u.session.ctxTokens > 0) lastGoodCtx = u.session;
+  const ctx = (u.session && u.session.ctxTokens > 0) ? u.session : lastGoodCtx;
   // The active model. Trim the vendor prefix and the context-tier suffix so the
   // readout stays compact and matches the banner (e.g. "fable-5", not
   // "claude-fable-5[1m]"). Empty when no model is known, which hides the row.
-  const modelLabel = ((u.session && u.session.model) || '').replace(/^claude-/, '').replace(/\[[^\]]*\]/g, '');
+  const modelLabel = ((u.session && u.session.model) || (ctx && ctx.model) || '').replace(/^claude-/, '').replace(/\[[^\]]*\]/g, '');
 
   const html = `
     <div class="sp-section">
@@ -973,7 +988,7 @@ async function refreshStatusline() {
       <div class="sp-section-head"><span class="sp-h-icon">▣</span><span>Build</span></div>
       <div class="sp-section-body">
         <div class="sp-row"><span class="sp-muted">Claude ${spInfo('Installed Claude Code CLI version.')}</span><span class="sp-mono">2.1.129</span></div>
-        ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model ${spInfo('The AI model the active session is running.')}</span><span class="sp-mono sp-accent" title="${escapeHtml((u.session && u.session.model) || '')}">${escapeHtml(modelLabel)}</span></div>` : ''}
+        ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model ${spInfo('The AI model the active session is running.')}</span><span class="sp-mono sp-accent" title="${escapeHtml((u.session && u.session.model) || (ctx && ctx.model) || '')}">${escapeHtml(modelLabel)}</span></div>` : ''}
         <div class="sp-row"><span class="sp-muted">Husk ${spInfo('Installed Husk app version.')}</span><span class="sp-mono">${escapeHtml(s.huskVer || '0.2')}</span></div>
       </div>
     </div>
@@ -990,13 +1005,13 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⏱</span><span>Usage</span></div>
       <div class="sp-section-body">
-        ${(u.session && u.session.ctxTokens > 0) ? `
+        ${(ctx && ctx.ctxTokens > 0) ? `
         <div class="sp-row"><span class="sp-muted">Context Window ${spInfo('Tokens currently held in the model context window versus the model capacity. This is what fills up during a conversation and triggers compaction.')}</span></div>
         <div class="sp-row sp-ctx-head" title="Context window used">
-          <span class="sp-mono" style="color:${ctxPctColor(u.session.ctxPct)}; font-weight:600;">${fmtPct(u.session.ctxPct)}</span>
-          <span class="sp-mono sp-muted">${escapeHtml(fmtCtx(u.session.ctxTokens))} / ${escapeHtml(fmtCtx(u.session.ctxWindow))}</span>
+          <span class="sp-mono" style="color:${ctxPctColor(ctx.ctxPct)}; font-weight:600;">${fmtPct(ctx.ctxPct)}</span>
+          <span class="sp-mono sp-muted">${escapeHtml(fmtCtx(ctx.ctxTokens))} / ${escapeHtml(fmtCtx(ctx.ctxWindow))}</span>
         </div>
-        ${ctxBarHTML(u.session.ctxPct)}
+        ${ctxBarHTML(ctx.ctxPct)}
         <div class="sp-divider"></div>
         ` : ''}
         ${u.cache_present ? `
