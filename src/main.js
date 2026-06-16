@@ -48,6 +48,61 @@ function augmentUserPathAsync() {
   } catch (_) {}
 }
 augmentUserPathAsync();
+
+// resolveAgentExe(exe, envPath) turns a bare program name (e.g. 'claude') into
+// an absolute path so the spawn never depends on the child's PATH being right.
+// A GUI/desktop launch inherits a systemd PATH that omits ~/.local/bin etc, so
+// a bare 'claude' would not resolve even though it is installed. Strategy:
+//   1. walk envPath ourselves (cheap, no subprocess)
+//   2. fall back to asking a login shell `command -v` (POSIX) / `where` (win32),
+//      which sources the user's full rc chain and finds CLIs the inherited PATH
+//      misses -- this is the `which claude` / `where claude` lookup.
+// Returns exe unchanged when it is already a path, already resolvable, or when
+// the lookup fails (let the spawn surface the real error). The subprocess only
+// runs in the failure path, so a healthy PATH pays nothing.
+function resolveAgentExe(exe, envPath) {
+  if (typeof exe !== 'string' || !exe) return exe;
+  if (path.isAbsolute(exe) || exe.includes('/') || exe.includes('\\')) return exe;
+  const isWin = process.platform === 'win32';
+  const exts = isWin
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : [''];
+
+  const asExecFile = (p) => {
+    try {
+      const st = fs.statSync(p);
+      return st.isFile() && (isWin || (st.mode & 0o111)) ? p : null;
+    } catch (_) { return null; }
+  };
+
+  // 1. Walk the PATH we are about to hand the child.
+  for (const dir of (envPath || '').split(path.delimiter).filter(Boolean)) {
+    for (const ext of exts) {
+      const hit = asExecFile(path.join(dir, exe + ext));
+      if (hit) return hit;
+    }
+  }
+
+  // 2. Ask a login shell where it lives (which/where through the user's rc chain).
+  try {
+    const { spawnSync } = require('child_process');
+    let res;
+    if (isWin) {
+      res = spawnSync('where', [exe], { encoding: 'utf8', timeout: 4000, windowsHide: true });
+    } else {
+      const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/bash';
+      res = spawnSync(shellBin, ['-ilc', `command -v ${exe}`], { encoding: 'utf8', timeout: 4000 });
+    }
+    const lines = ((res && res.stdout) || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      const hit = asExecFile(line);
+      if (hit) return hit;
+    }
+  } catch (_) {}
+
+  return exe;
+}
+
 const {
   sanitizeGraph,
   migrateWorkflow,
@@ -692,6 +747,12 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   });
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
+  // ~/.local/bin is where the native claude installer (and other user CLIs)
+  // land, but a GUI/desktop launch inherits a systemd PATH that omits it.
+  // augmentUserPathAsync recovers it from a login shell, but that's async and
+  // racy against the first agent spawn. Force-prepend it the same way as bun.
+  const localBin = path.join(HOME, '.local', 'bin');
+  if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
 
   const rawCmd = (overrideCmd || config.agentCommand || 'claude').trim();
 
@@ -702,6 +763,11 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   const userTokens = rawCmd.split(/\s+/).filter(Boolean);
   let agentExe = userTokens.shift() || 'claude';
   let agentArgs = userTokens;
+
+  // Resolve a bare program name to an absolute path up front (which/where via a
+  // login shell if needed) so the spawn does not depend on the child PATH being
+  // correct. No-op when already a path or already on env.PATH.
+  agentExe = resolveAgentExe(agentExe, env.PATH);
 
   // For claude commands, inject the Husk runtime context: a settings override
   // that silences the inline statusline, and an appended system prompt that
@@ -907,6 +973,9 @@ function readClaudeSettings() {
 // 400K product cap, GPT-4.1 1M, GPT-4o 128K, o-series 200K); Google Gemini docs
 // (Gemini 2.x/3 = 1M); GitHub Copilot CLI docs (128K default, 1M extended).
 const MODEL_CONTEXT_WINDOWS = [
+  // Anthropic / Claude Opus: 1M context window (the Opus tier ships with the
+  // long-context window, so it is the base here, not an opt-in [1m] tier).
+  [/^claude-opus/, 1000000],
   // Anthropic / Claude: 200K default; 1M only when the [1m] tier is selected.
   [/^claude-/, 200000],
   // OpenAI / Codex CLI.
@@ -933,13 +1002,31 @@ function baseContextWindow(model) {
 // signalled by a "[1m]" suffix that Claude Code persists in ~/.claude.json
 // under projects[cwd].lastModelUsage. So: prefer an explicit 1M tier (from the
 // id or that usage record), else look up the family's base size, else infer.
+// Claude Code accepts short model aliases in settings.json ("opus", "sonnet",
+// "haiku", "opusplan"). We prefer settings.json over the transcript for the
+// active model, but a bare alias matches none of the claude-* family regexes,
+// so the window wrongly falls back to the 200K default -- e.g. "opus" never hit
+// the [/^claude-opus/, 1000000] rule and showed 200K instead of 1M. Expand
+// known aliases to a canonical family id before matching; any tier suffix
+// ("opus[1m]") is preserved. Full ids ("claude-opus-4-8", "gpt-5-codex") and
+// unknown values pass through untouched.
+function normalizeModelId(id) {
+  const s = String(id || '').toLowerCase().trim();
+  if (!s || s.includes('-')) return s; // full ids already contain a hyphen
+  const tier = (s.match(/\[[^\]]*\]/) || [''])[0];
+  const base = s.replace(/\[[^\]]*\]/g, '');
+  const ALIAS = { opus: 'claude-opus', opusplan: 'claude-opus', sonnet: 'claude-sonnet', haiku: 'claude-haiku' };
+  return ALIAS[base] ? ALIAS[base] + tier : s;
+}
+
 function resolveContextWindow(cwd, model, ctxTokens) {
+  const norm = normalizeModelId(model);
   const stripTier = (id) => id.replace(/\[[^\]]*\]/g, '');
   const is1m = (id) => /\[1m\]/i.test(id);
-  const bare = stripTier(model || '');
+  const bare = stripTier(norm);
   try {
     // Explicit 1M tier on the id itself.
-    if (is1m(model || '')) return 1000000;
+    if (is1m(norm)) return 1000000;
     // Recover the tier from Claude Code's usage record. lastModelUsage is only
     // written on session end, so the active project is empty mid-session: check
     // it first, then the user's full history. If this model was ever run on the
@@ -1842,9 +1929,48 @@ const KNOWN_AGENTS = [
   },
 ];
 
+// loginShellPath() returns the PATH a login+interactive shell produces (which
+// sources .profile/.bashrc and so includes ~/.local/bin, nvm, etc). A
+// GUI/desktop launch inherits a stripped systemd PATH, so a bare process.env
+// .PATH check misreports CLIs like claude (installed in ~/.local/bin) as
+// missing -- which is exactly what the first-launch wizard showed when Husk was
+// started from the taskbar instead of a terminal. Cached: one subprocess for
+// the whole session. Returns '' on win32 or on failure.
+let _loginShellPathCache;
+function loginShellPath() {
+  if (_loginShellPathCache !== undefined) return _loginShellPathCache;
+  _loginShellPathCache = '';
+  if (process.platform === 'win32') return _loginShellPathCache;
+  try {
+    const { spawnSync } = require('child_process');
+    const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/bash';
+    const res = spawnSync(shellBin, ['-ilc', `echo "${MARKER_START}$PATH${MARKER_END}"`], { encoding: 'utf8', timeout: 5000 });
+    const p = parseShellPathOutput((res && res.stdout) || '');
+    if (p) _loginShellPathCache = p;
+  } catch (_) {}
+  return _loginShellPathCache;
+}
+
+// extraAgentBinDirs() are user-install locations that a GUI/desktop launch's
+// PATH omits and that even a login shell does not reliably restore (bash login
+// shells read .bash_profile, not .profile/.bashrc, so ~/.local/bin can be
+// missing). These are the SAME dirs the agent spawn force-prepends, so that
+// "FOUND" in the wizard always implies the spawn will actually resolve the CLI.
+function extraAgentBinDirs() {
+  if (process.platform === 'win32') return [];
+  return [path.join(HOME, '.local', 'bin'), path.join(HOME, '.bun', 'bin')];
+}
+
 function isOnPath(binName) {
-  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   const isWin = process.platform === 'win32';
+  // Union of: the inherited PATH, the login-shell PATH (nvm/pyenv/etc), and the
+  // known user-install dirs. Deduped in order, so detection is correct whether
+  // Husk was launched from a terminal or the GUI.
+  const seen = new Set();
+  const dirs = [process.env.PATH || '', isWin ? '' : loginShellPath()]
+    .flatMap((p) => p.split(path.delimiter))
+    .concat(extraAgentBinDirs())
+    .filter((d) => d && !seen.has(d) && seen.add(d));
   const candidates = isWin
     ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => binName + e)
     : [binName];
@@ -2252,6 +2378,8 @@ function buildAgentEnv() {
   const env = Object.assign({}, process.env, { CLAUDE_DIR, HUSK_HOST: '1' });
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
+  const localBin = path.join(HOME, '.local', 'bin');
+  if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
   return env;
 }
 
