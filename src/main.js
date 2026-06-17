@@ -91,7 +91,8 @@ function resolveAgentExe(exe, envPath) {
       res = spawnSync('where', [exe], { encoding: 'utf8', timeout: 4000, windowsHide: true });
     } else {
       const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/bash';
-      res = spawnSync(shellBin, ['-ilc', `command -v ${exe}`], { encoding: 'utf8', timeout: 4000 });
+      const quotedExe = shJoin(exe, []);
+      res = spawnSync(shellBin, ['-ilc', `command -v -- ${quotedExe}`], { encoding: 'utf8', timeout: 4000 });
     }
     const lines = ((res && res.stdout) || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     for (const line of lines) {
