@@ -29,10 +29,11 @@ const DEFAULT_PRINCIPAL = {
 
 export interface VoiceProsody {
   stability: number;
-  similarity_boost: number;
+  similarityBoost: number;
   style: number;
   speed: number;
-  use_speaker_boost: boolean;
+  useSpeakerBoost: boolean;
+  volume?: number;
 }
 
 export interface VoicePersonality {
@@ -67,10 +68,23 @@ export interface Principal {
   timezone: string;
 }
 
+export interface ObservabilityTarget {
+  name: string;
+  type: 'http' | 'cloudflare-kv';
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+export interface ObservabilityConfig {
+  targets: ObservabilityTarget[];
+  server?: { port: number; enabled: boolean };
+}
+
 export interface Settings {
   daidentity?: Partial<Identity>;
   principal?: Partial<Principal>;
   env?: Record<string, string>;
+  observability?: ObservabilityConfig;
   [key: string]: unknown;
 }
 
@@ -154,6 +168,25 @@ export function getDAName(): string {
 }
 
 /**
+ * Get the user-customized startup catchphrase the install wizard collected,
+ * with `{name}` placeholder substitution against the active DA name.
+ *
+ * Read order:
+ *   1. settings.daidentity.startupCatchphrase (set by PAI-Install wizard)
+ *   2. fallback default: `<name> here, ready to go.`
+ *
+ * Callers should prefer this over hand-rolling `${getDAName()} here, ready
+ * to go.` so the install's collected catchphrase is actually honored.
+ */
+export function getStartupCatchphrase(): string {
+  const settings = loadSettings();
+  const stored = (settings.daidentity as any)?.startupCatchphrase as string | undefined;
+  const name = getDAName();
+  const template = (stored && stored.trim()) || "{name} here, ready to go.";
+  return template.replace(/\{name\}/gi, name);
+}
+
+/**
  * Get just the Principal name (convenience function)
  */
 export function getPrincipalName(): string {
@@ -175,6 +208,18 @@ export function getSettings(): Settings {
 }
 
 /**
+ * Get observability config from settings.json.
+ * Defaults to local-only target if not configured.
+ */
+export function getObservabilityConfig(): ObservabilityConfig {
+  const settings = loadSettings();
+  return {
+    targets: settings.observability?.targets ?? [{ type: 'http' as const, url: 'http://localhost:31337', name: 'local' }],
+    server: settings.observability?.server ?? { port: 31337, enabled: true },
+  };
+}
+
+/**
  * Get the default identity (for documentation/testing)
  */
 export function getDefaultIdentity(): Identity {
@@ -193,7 +238,7 @@ export function getDefaultPrincipal(): Principal {
  * Returns { voiceId, voiceName, stability, similarity_boost, style, speed, use_speaker_boost, volume }
  * or null if not configured.
  */
-export function getAlgorithmVoice(): { voiceId: string; voiceName: string; stability: number; similarity_boost: number; style: number; speed: number; use_speaker_boost: boolean; volume?: number } | null {
+export function getAlgorithmVoice(): { voiceId: string; voiceName: string; stability: number; similarityBoost: number; style: number; speed: number; useSpeakerBoost: boolean; volume?: number } | null {
   const settings = loadSettings();
   const voices = (settings.daidentity as any)?.voices;
   if (!voices?.algorithm?.voiceId) return null;

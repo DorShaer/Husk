@@ -12,7 +12,7 @@
  *
  * INPUT:
  * - stdin: Hook input JSON (session_id, transcript_path)
- * - Files: MEMORY/STATE/current-work.json, MEMORY/WORK/<dir>/META.yaml
+ * - Files: MEMORY/STATE/current-work.json, MEMORY/WORK/<dir>/ISA.md (or legacy PRD.md / META.yaml)
  *
  * OUTPUT:
  * - stdout: None
@@ -53,8 +53,9 @@ import { writeFileSync, existsSync, readFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { getISOTimestamp, getPSTDate } from './lib/time';
 import { getLearningCategory } from './lib/learning-utils';
+import { findArtifactPath } from './lib/isa-utils';
 
-const BASE_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude');
+const BASE_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude', 'PAI');
 const MEMORY_DIR = join(BASE_DIR, 'MEMORY');
 const STATE_DIR = join(MEMORY_DIR, 'STATE');
 const WORK_DIR = join(MEMORY_DIR, 'WORK');
@@ -75,6 +76,9 @@ interface CurrentWork {
   session_id: string;
   session_dir: string;
   created_at: string;
+  /** Path to the session's Ideal State Artifact (ISA.md, or legacy PRD.md). */
+  isa_path?: string;
+  /** @deprecated use isa_path. Kept so older state files still parse. */
   prd_path?: string;
   // Legacy fields (backward compat)
   current_task?: string;
@@ -291,16 +295,17 @@ async function main() {
       process.exit(0);
     }
 
-    // Read work directory metadata — from PRD.md frontmatter (v4.0) or META.yaml (legacy)
+    // Read work directory metadata — from ISA.md frontmatter (v4.1+),
+    // legacy PRD.md frontmatter (v4.0), or META.yaml (pre-v4.0)
     const workPath = join(WORK_DIR, currentWork.session_dir);
-    const prdPath = join(workPath, 'PRD.md');
+    const isaPath = findArtifactPath(currentWork.session_dir);
     const metaPath = join(workPath, 'META.yaml');
 
     let workMeta: any = {};
-    if (existsSync(prdPath)) {
-      // v4.0: Read from PRD.md frontmatter
-      const prdContent = readFileSync(prdPath, 'utf-8');
-      const fmMatch = prdContent.match(/^---\n([\s\S]*?)\n---/);
+    if (isaPath) {
+      // v4.0+: Read from ISA.md / PRD.md frontmatter
+      const isaContent = readFileSync(isaPath, 'utf-8');
+      const fmMatch = isaContent.match(/^---\n([\s\S]*?)\n---/);
       if (fmMatch) {
         workMeta = parseYaml(fmMatch[1]);
       }
@@ -309,7 +314,7 @@ async function main() {
       const metaContent = readFileSync(metaPath, 'utf-8');
       workMeta = parseYaml(metaContent);
     } else {
-      console.error('[WorkCompletionLearning] No PRD.md or META.yaml found');
+      console.error('[WorkCompletionLearning] No ISA.md / PRD.md / META.yaml found');
       process.exit(0);
     }
 
@@ -318,12 +323,12 @@ async function main() {
       workMeta.completed_at = getISOTimestamp();
     }
 
-    // Extract ISC from PRD.md ISC section (v4.0) or ISC.json (legacy)
+    // Extract ISC from ISA.md / PRD.md ISC section (v4.0+) or ISC.json (legacy)
     let idealContent = '';
-    if (existsSync(prdPath)) {
+    if (isaPath) {
       try {
-        const prdContent = readFileSync(prdPath, 'utf-8');
-        const iscMatch = prdContent.match(/## IDEAL STATE CRITERIA[\s\S]*?(?=\n## |$)/);
+        const isaContent = readFileSync(isaPath, 'utf-8');
+        const iscMatch = isaContent.match(/## IDEAL STATE CRITERIA[\s\S]*?(?=\n## |$)/);
         if (iscMatch) {
           const checked = (iscMatch[0].match(/- \[x\]/g) || []).length;
           const unchecked = (iscMatch[0].match(/- \[ \]/g) || []).length;
