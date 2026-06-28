@@ -1,12 +1,12 @@
 /**
  * Centralized Path Resolution
  *
- * Handles environment variable expansion for portable PAI configuration.
- * Claude Code doesn't expand $HOME in settings.json env values, so we do it here.
+ * Two root directories:
+ * - PAI_DIR (~/.claude/PAI) — PAI data: MEMORY, Algorithm, Tools, USER
+ * - Claude home (~/.claude) — Claude Code: settings, skills, hooks, commands, agents
  *
  * Usage:
- *   import { getPaiDir, getSettingsPath } from './lib/paths';
- *   const paiDir = getPaiDir(); // Always returns expanded absolute path
+ *   import { getPaiDir, getClaudeDir, paiPath } from '';
  */
 
 import { homedir } from 'os';
@@ -26,8 +26,8 @@ export function expandPath(path: string): string {
 }
 
 /**
- * Get the PAI directory (expanded)
- * Priority: PAI_DIR env var (expanded) → ~/.claude
+ * Get the PAI data directory (expanded)
+ * Priority: PAI_DIR env var (expanded) → ~/.claude/PAI
  */
 export function getPaiDir(): string {
   const envPaiDir = process.env.PAI_DIR;
@@ -36,14 +36,29 @@ export function getPaiDir(): string {
     return expandPath(envPaiDir);
   }
 
+  return join(homedir(), '.claude', 'PAI');
+}
+
+/**
+ * Get the Claude Code home directory (~/.claude)
+ */
+export function getClaudeDir(): string {
   return join(homedir(), '.claude');
 }
 
 /**
- * Get the settings.json path
+ * Get the settings.json path (lives in Claude home)
  */
 export function getSettingsPath(): string {
-  return join(getPaiDir(), 'settings.json');
+  return join(getClaudeDir(), 'settings.json');
+}
+
+/**
+ * Get the authoritative .env path (~/.claude/.env).
+ * All credentials live here; PAI/.env is deprecated.
+ */
+export function getEnvPath(): string {
+  return join(getClaudeDir(), '.env');
 }
 
 /**
@@ -54,17 +69,17 @@ export function paiPath(...segments: string[]): string {
 }
 
 /**
- * Get the hooks directory
+ * Get the hooks directory (lives in Claude home)
  */
 export function getHooksDir(): string {
-  return paiPath('hooks');
+  return join(getClaudeDir(), 'hooks');
 }
 
 /**
- * Get the skills directory
+ * Get the skills directory (lives in Claude home)
  */
 export function getSkillsDir(): string {
-  return paiPath('skills');
+  return join(getClaudeDir(), 'skills');
 }
 
 /**

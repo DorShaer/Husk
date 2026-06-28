@@ -6,7 +6,7 @@
  * parseTranscriptFromInput() if it needs the full transcript.
  */
 
-import { parseTranscript, type ParsedTranscript } from '../../PAI/Tools/TranscriptParser';
+import { parseTranscript, type ParsedTranscript } from '../../PAI/TOOLS/TranscriptParser';
 
 export interface HookInput {
   session_id: string;

@@ -222,7 +222,7 @@ export function categorizeChange(path: string): ChangeCategory | null {
     const skillMatch = path.match(/skills\/(_[^/]+)/);
     if (skillMatch) return null;
     if (path.includes('/Workflows/')) return 'workflow';
-    if (path.match(/PAI\/(?:PAISYSTEM|THEHOOKSYSTEM|THEDELEGATION|MEMORYSYSTEM|AISTEERINGRULES)/)) return 'core-system';
+    if (path.match(/PAI\/(?:DOCUMENTATION\/)?(?:PAISYSTEM|THEHOOKSYSTEM|THEDELEGATION|MEMORYSYSTEM)/)) return 'core-system';
     return 'skill';
   }
 
@@ -509,7 +509,7 @@ export function generateDescriptiveTitle(changes: FileChange[]): string {
   const hasTools = paths.some(p => p.includes('/Tools/') && p.endsWith('.ts'));
   const hasHooks = paths.some(p => p.includes('hooks/'));
   const hasConfig = paths.some(p => p.endsWith('settings.json'));
-  const hasCoreSystem = paths.some(p => p.match(/PAI\/(?:PAISYSTEM|THEHOOKSYSTEM|THEDELEGATION|MEMORYSYSTEM|AISTEERINGRULES)/));
+  const hasCoreSystem = paths.some(p => p.match(/PAI\/(?:DOCUMENTATION\/)?(?:PAISYSTEM|THEHOOKSYSTEM|THEDELEGATION|MEMORYSYSTEM)/));
   const hasCoreUser = paths.some(p => p.includes('PAI/USER/'));
 
   let title = '';
@@ -566,7 +566,7 @@ export function generateDescriptiveTitle(changes: FileChange[]): string {
   // Core system changes
   else if (hasCoreSystem) {
     const docNames = paths
-      .filter(p => p.match(/PAI\/(?:PAISYSTEM|THEHOOKSYSTEM|THEDELEGATION|MEMORYSYSTEM|AISTEERINGRULES)/))
+      .filter(p => p.match(/PAI\/(?:DOCUMENTATION\/)?(?:PAISYSTEM|THEHOOKSYSTEM|THEDELEGATION|MEMORYSYSTEM)/))
       .map(p => basename(p, '.md'));
     if (docNames.length === 1) {
       title = `${docNames[0]} Documentation Updated`;

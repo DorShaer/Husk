@@ -8,10 +8,11 @@
  * knowledge back into the model's context.
  *
  * FUNCTIONS:
- * - loadLearningDigest()  — Recent learning signals (ALGORITHM + SYSTEM)
- * - loadWisdomFrames()    — Crystallized behavioral patterns (WISDOM/FRAMES)
- * - loadFailurePatterns() — Recent failure insights (FAILURES)
- * - loadSignalTrends()    — Performance metrics from learning-cache.sh
+ * - loadLearningDigest()    — Recent learning signals (ALGORITHM + SYSTEM)
+ * - loadWisdomFrames()      — Crystallized behavioral patterns (WISDOM/FRAMES)
+ * - loadFailurePatterns()   — Recent failure insights (FAILURES)
+ * - loadSignalTrends()      — Performance metrics from learning-cache.sh
+ * - loadSynthesisPatterns() — Most recent weekly complaint synthesis (SYNTHESIS)
  *
  * PERFORMANCE:
  * Each function reads a small number of pre-existing files (<10).
@@ -186,6 +187,64 @@ export function loadFailurePatterns(paiDir: string): string | null {
   if (patterns.length === 0) return null;
 
   return `**Recent Failure Patterns (avoid these):**\n${patterns.map(p => `  ${p}`).join('\n')}`;
+}
+
+/**
+ * Load the most recent weekly complaint synthesis.
+ * Reads MEMORY/LEARNING/SYNTHESIS/YYYY-MM/YYYY-MM-DD_weekly-patterns.md
+ * (written by LearningPatternSynthesis.ts) and extracts the average rating
+ * plus the top issue clusters so every session is primed with current themes.
+ */
+export function loadSynthesisPatterns(paiDir: string): string | null {
+  const synthesisDir = join(paiDir, 'MEMORY', 'LEARNING', 'SYNTHESIS');
+  if (!existsSync(synthesisDir)) return null;
+
+  try {
+    // Get month dirs sorted descending (newest first)
+    const months = readdirSync(synthesisDir, { withFileTypes: true })
+      .filter(d => d.isDirectory() && /^\d{4}-\d{2}$/.test(d.name))
+      .map(d => d.name)
+      .sort()
+      .reverse();
+
+    for (const month of months) {
+      const monthPath = join(synthesisDir, month);
+
+      try {
+        const files = readdirSync(monthPath)
+          .filter(f => f.endsWith('_weekly-patterns.md'))
+          .sort()
+          .reverse();
+
+        for (const file of files) {
+          try {
+            const content = readFileSync(join(monthPath, file), 'utf-8');
+
+            const avgMatch = content.match(/\*\*Average Rating:\*\*\s*([\d.]+\/10)/);
+            if (!avgMatch) continue;
+
+            // Extract numbered items under "## Top Issues"
+            const topIssuesMatch = content.match(/## Top Issues\s*\n([\s\S]*?)(?:\n##|\n---|$)/);
+            if (!topIssuesMatch) continue;
+
+            const issues: string[] = [];
+            const itemRegex = /^\s*(\d+)\.\s+(.+)$/gm;
+            let m: RegExpExecArray | null;
+            while ((m = itemRegex.exec(topIssuesMatch[1])) !== null) {
+              if (issues.length >= 5) break;
+              issues.push(`  ${m[1]}. ${m[2].trim()}`);
+            }
+
+            if (issues.length === 0) return null;
+
+            return `**Current Complaint Clusters (from weekly synthesis):** Avg rating ${avgMatch[1]}\n${issues.join('\n')}`;
+          } catch { /* skip unreadable files */ }
+        }
+      } catch { /* skip unreadable months */ }
+    }
+  } catch { /* skip if dir scan fails */ }
+
+  return null;
 }
 
 /**

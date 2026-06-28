@@ -2,11 +2,17 @@
 /**
  * LoadContext.hook.ts - Inject PAI dynamic context into Claude's Context (SessionStart)
  *
- * PAI v4.0: Core context (identity, rules, format) is now in CLAUDE.md and loaded
- * natively by Claude Code. This hook injects DYNAMIC context only:
- * - Relationship context (recent opinions + notes)
- * - Learning readback (signals, wisdom, failure patterns)
- * - Active work summary (last 48h sessions + tracked projects)
+ * PAI v5.0 Context Architecture:
+ * - Constitutional rules     → PAI/PAI_SYSTEM_PROMPT.md (system prompt via --append-system-prompt-file)
+ * - Operational procedures   → CLAUDE.md (loaded natively by Claude Code)
+ * - Contextual knowledge     → @imports in CLAUDE.md (native Claude Code mechanism, v5.0)
+ * - Dynamic context          → this hook (relationship, learning, work)
+ *
+ * This hook handles dynamic context only (v5.0 — static files moved to @imports):
+ * - Injects dynamic, session-specific context:
+ *   - Relationship context (recent opinions + notes)
+ *   - Learning readback (signals, wisdom, failure patterns)
+ *   - Active work summary (last 48h sessions + tracked projects)
  *
  * TRIGGER: SessionStart
  *
@@ -21,10 +27,10 @@
  * - stderr: Status messages and errors
  * - exit(0): Normal completion
  *
- * DESIGN (v4.0):
- * CLAUDE.md handles static identity/format (loaded natively by Claude Code).
- * This hook force-loads startup files (settings.json → loadAtStartup) and
- * injects dynamic, session-specific context (relationship, learning, work).
+ * DESIGN (v5.0):
+ * Constitutional rules live in the system prompt (PAI/PAI_SYSTEM_PROMPT.md).
+ * Operational procedures + contextual knowledge live in CLAUDE.md (@imports, native).
+ * This hook injects dynamic, session-specific context only (relationship, learning, work).
  *
  * PERFORMANCE:
  * - Blocking: Yes (context is essential)
@@ -34,9 +40,10 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { getPaiDir } from './lib/paths';
+import { getPaiDir, getSettingsPath } from './lib/paths';
 import { recordSessionStart } from './lib/notifications';
-import { loadLearningDigest, loadWisdomFrames, loadFailurePatterns, loadSignalTrends } from './lib/learning-readback';
+import { loadLearningDigest, loadWisdomFrames, loadFailurePatterns, loadSignalTrends, loadSynthesisPatterns } from './lib/learning-readback';
+import { findArtifactPath } from './lib/isa-utils';
 
 interface DynamicContextConfig {
   relationshipContext?: boolean;
@@ -44,14 +51,8 @@ interface DynamicContextConfig {
   activeWorkSummary?: boolean;
 }
 
-interface LoadAtStartupConfig {
-  _docs?: string;
-  files?: string[];
-}
-
 interface Settings {
   dynamicContext?: DynamicContextConfig;
-  loadAtStartup?: LoadAtStartupConfig;
   [key: string]: unknown;
 }
 
@@ -68,8 +69,8 @@ function isDynamicEnabled(settings: Settings, key: keyof DynamicContextConfig): 
 /**
  * Load settings.json and return the settings object.
  */
-function loadSettings(paiDir: string): Settings {
-  const settingsPath = join(paiDir, 'settings.json');
+function loadSettings(): Settings {
+  const settingsPath = getSettingsPath();
   if (existsSync(settingsPath)) {
     try {
       return JSON.parse(readFileSync(settingsPath, 'utf-8'));
@@ -80,33 +81,7 @@ function loadSettings(paiDir: string): Settings {
   return {};
 }
 
-/**
- * Load files listed in settings.json → loadAtStartup.files
- * Reads each file and injects as a system-reminder block.
- */
-function loadStartupFiles(paiDir: string, settings: Settings): string | null {
-  const config = settings.loadAtStartup;
-  if (!config?.files || config.files.length === 0) return null;
-
-  const parts: string[] = [];
-  for (const relPath of config.files) {
-    const fullPath = join(paiDir, relPath);
-    if (!existsSync(fullPath)) {
-      console.error(`⚠️ loadAtStartup: file not found: ${relPath}`);
-      continue;
-    }
-    try {
-      const content = readFileSync(fullPath, 'utf-8').trim();
-      parts.push(content);
-      console.error(`📄 Force-loaded: ${relPath} (${content.length} chars)`);
-    } catch (err) {
-      console.error(`⚠️ loadAtStartup: failed to read ${relPath}: ${err}`);
-    }
-  }
-
-  if (parts.length === 0) return null;
-  return parts.join('\n\n---\n\n');
-}
+// v5.0: loadStartupFiles removed — static files now loaded via @imports in CLAUDE.md.template
 
 /**
  * Load relationship context for session startup.
@@ -116,7 +91,7 @@ function loadRelationshipContext(paiDir: string): string | null {
   const parts: string[] = [];
 
   // Load high-confidence opinions (>0.85) from OPINIONS.md
-  const opinionsPath = join(paiDir, 'PAI/USER/OPINIONS.md');
+  const opinionsPath = join(paiDir, 'USER/OPINIONS.md');
   if (existsSync(opinionsPath)) {
     try {
       const content = readFileSync(opinionsPath, 'utf-8');
@@ -201,7 +176,7 @@ interface WorkSession {
   objectives?: string[];
   handoff_notes?: string;
   next_steps?: string[];
-  prd?: { id: string; status: string; progress: string } | null;
+  isa?: { id: string; status: string; progress: string } | null;
 }
 
 /**
@@ -243,20 +218,21 @@ function getRecentWorkSessions(paiDir: string): WorkSession[] {
 
       const dirPath = join(workDir, dirName);
 
-      // Read metadata from PRD.md frontmatter (v4.0 consolidated) or META.yaml (legacy)
+      // Read metadata from ISA.md frontmatter (v4.1 canonical), legacy PRD.md
+      // (v4.0 consolidated, pre-rename), or META.yaml (pre-v4.0 layout).
       let status = 'UNKNOWN';
       let rawTitle = slug.replace(/-/g, ' ');
       let sessionId: string | undefined;
-      const prdPath = join(dirPath, 'PRD.md');
+      const isaPath = findArtifactPath(dirName);
       const metaPath = join(dirPath, 'META.yaml');
 
-      if (existsSync(prdPath)) {
-        // v4.0: Read from PRD.md frontmatter
+      if (isaPath) {
+        // v4.0+: Read from ISA.md / PRD.md frontmatter
         try {
-          const prdHead = readFileSync(prdPath, 'utf-8').substring(0, 600);
-          const statusMatch = prdHead.match(/^status:\s*"?(\w+)"?/m);
-          const titleMatch = prdHead.match(/^title:\s*"?(.+?)"?\s*$/m);
-          const sessionIdMatch = prdHead.match(/^session_id:\s*"?(.+?)"?\s*$/m);
+          const head = readFileSync(isaPath, 'utf-8').substring(0, 600);
+          const statusMatch = head.match(/^status:\s*"?(\w+)"?/m);
+          const titleMatch = head.match(/^title:\s*"?(.+?)"?\s*$/m);
+          const sessionIdMatch = head.match(/^session_id:\s*"?(.+?)"?\s*$/m);
           if (statusMatch) status = statusMatch[1];
           if (titleMatch) rawTitle = titleMatch[1];
           if (sessionIdMatch) sessionId = sessionIdMatch[1]?.trim();
@@ -273,7 +249,7 @@ function getRecentWorkSessions(paiDir: string): WorkSession[] {
           if (sessionIdMatch) sessionId = sessionIdMatch[1]?.trim();
         } catch { /* skip */ }
       } else {
-        continue; // No PRD.md or META.yaml — skip
+        continue; // No ISA.md / PRD.md / META.yaml — skip
       }
 
       try {
@@ -287,28 +263,30 @@ function getRecentWorkSessions(paiDir: string): WorkSession[] {
 
         if (sessions.length >= 8) break;
 
-        let prd: WorkSession['prd'] = null;
+        let isa: WorkSession['isa'] = null;
         try {
-          // v4.0: PRD.md at root; legacy: PRD-*.md
-          let prdFile: string | null = null;
-          if (existsSync(join(dirPath, 'PRD.md'))) {
-            prdFile = join(dirPath, 'PRD.md');
-          } else {
-            const files = readdirSync(dirPath).filter(f => f.startsWith('PRD-') && f.endsWith('.md'));
-            if (files.length > 0) prdFile = join(dirPath, files[0]);
+          // v4.1: ISA.md at root; v4.0: PRD.md at root; pre-v4.0: PRD-*.md.
+          // findArtifactPath already covers v4.0/v4.1; fall back to date-stamped
+          // PRD-*.md files only when neither ISA.md nor PRD.md is present.
+          let artifactFile: string | null = isaPath;
+          if (!artifactFile) {
+            const files = readdirSync(dirPath).filter(f =>
+              (f.startsWith('ISA-') || f.startsWith('PRD-')) && f.endsWith('.md')
+            );
+            if (files.length > 0) artifactFile = join(dirPath, files[0]);
           }
-          if (prdFile) {
-            const prdContent = readFileSync(prdFile, 'utf-8');
-            const prdIdMatch = prdContent.match(/^id:\s*(.+)$/m);
-            const prdStatusMatch = prdContent.match(/^status:\s*(.+)$/m);
-            const prdVerifyMatch = prdContent.match(/^verification_summary:\s*"?(.+?)"?$/m);
-            prd = {
-              id: prdIdMatch?.[1]?.trim() || 'PRD',
-              status: prdStatusMatch?.[1]?.trim() || 'UNKNOWN',
-              progress: prdVerifyMatch?.[1]?.trim() || '0/0'
+          if (artifactFile) {
+            const isaContent = readFileSync(artifactFile, 'utf-8');
+            const idMatch = isaContent.match(/^id:\s*(.+)$/m);
+            const statusMatch2 = isaContent.match(/^status:\s*(.+)$/m);
+            const verifyMatch = isaContent.match(/^verification_summary:\s*"?(.+?)"?$/m);
+            isa = {
+              id: idMatch?.[1]?.trim() || 'ISA',
+              status: statusMatch2?.[1]?.trim() || 'UNKNOWN',
+              progress: verifyMatch?.[1]?.trim() || '0/0'
             };
           }
-        } catch { /* no PRDs */ }
+        } catch { /* no artifacts */ }
 
         sessions.push({
           type: 'recent',
@@ -317,7 +295,7 @@ function getRecentWorkSessions(paiDir: string): WorkSession[] {
           status,
           timestamp: `${y}-${mo}-${d} ${h}:${mi}`,
           stale: false,
-          prd
+          isa
         });
       } catch { /* skip malformed */ }
     }
@@ -399,8 +377,8 @@ async function checkActiveProgress(paiDir: string): Promise<string | null> {
     for (const s of recentSessions) {
       summary += `\n  ⚡ ${s.title}\n`;
       summary += `     ${s.timestamp} | Status: ${s.status}\n`;
-      if (s.prd) {
-        summary += `     PRD: ${s.prd.id} (${s.prd.status}, ${s.prd.progress})\n`;
+      if (s.isa) {
+        summary += `     ISA: ${s.isa.id} (${s.isa.status}, ${s.isa.progress})\n`;
       }
     }
   }
@@ -427,8 +405,9 @@ async function checkActiveProgress(paiDir: string): Promise<string | null> {
     }
   }
 
-  summary += '\n💡 To resume project: `bun run ~/.claude/PAI/Tools/SessionProgress.ts resume <project>`\n';
-  summary += '💡 To complete project: `bun run ~/.claude/PAI/Tools/SessionProgress.ts complete <project>`\n';
+  const toolsDir = paiDir + '/Tools';
+  summary += `\n💡 To resume project: \`bun run ${toolsDir}/SessionProgress.ts resume <project>\`\n`;
+  summary += `💡 To complete project: \`bun run ${toolsDir}/SessionProgress.ts complete <project>\`\n`;
 
   return summary;
 }
@@ -454,14 +433,10 @@ async function main() {
     console.error('⏱️ Session start time recorded');
 
     // Load settings for dynamic context controls
-    const settings = loadSettings(paiDir);
+    const settings = loadSettings();
     console.error('✅ Loaded settings.json');
 
-    // Force-load startup files from settings.json → loadAtStartup
-    const startupContent = loadStartupFiles(paiDir, settings);
-    if (startupContent) {
-      console.log(`<system-reminder>\n${startupContent}\n</system-reminder>`);
-    }
+    // v5.0: Static startup files now loaded via @imports in CLAUDE.md (native Claude Code mechanism)
 
     // Load relationship context (lightweight summary)
     let relationshipContext: string | null = null;
@@ -481,9 +456,14 @@ async function main() {
       const wisdomFrames = loadWisdomFrames(paiDir);
       const failurePatterns = loadFailurePatterns(paiDir);
       const signalTrends = loadSignalTrends(paiDir);
+      const synthesisPatterns = loadSynthesisPatterns(paiDir);
+      if (synthesisPatterns) {
+        console.error(`🧭 Loaded synthesis patterns (${synthesisPatterns.length} chars)`);
+      }
 
       const learningParts: string[] = [];
       if (signalTrends) learningParts.push(signalTrends);
+      if (synthesisPatterns) learningParts.push(synthesisPatterns);
       if (wisdomFrames) learningParts.push(wisdomFrames);
       if (learningDigest) learningParts.push(learningDigest);
       if (failurePatterns) learningParts.push(failurePatterns);
@@ -505,7 +485,7 @@ async function main() {
 PAI Dynamic Context (Auto-loaded at Session Start)
 ${relationshipContext ?? ''}${learningContext ? '\n---\n' + learningContext : ''}
 ---
-Dynamic context loaded. Core identity, rules, and format are in CLAUDE.md.
+Dynamic context loaded. Constitutional rules are in the system prompt (PAI/PAI_SYSTEM_PROMPT.md). Operational procedures are in CLAUDE.md.
 </system-reminder>`;
 
       console.log(message);
@@ -525,7 +505,7 @@ Dynamic context loaded. Core identity, rules, and format are in CLAUDE.md.
       console.error('⏭️ Skipped active work summary (disabled)');
     }
 
-    console.error('✅ PAI session initialization complete (v4.0)');
+    console.error('✅ PAI session initialization complete (v5.0 — static context via @imports)');
     process.exit(0);
   } catch (error) {
     console.error('❌ Error in LoadContext hook:', error);

@@ -941,55 +941,113 @@
             <section class="pref-card">
               <div class="pref-card-title">Agent</div>
               <label class="pref-row">
-                <span class="pref-label">Name</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Name</span>
+                  <span class="pref-desc">What the agent calls itself when you ask who it is.</span>
+                </span>
                 <input type="text" id="pref-agent-name" placeholder="Husk" maxlength="40" />
               </label>
               <label class="pref-row">
-                <span class="pref-label">Command</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Command</span>
+                  <span class="pref-desc">The CLI Husk launches, such as claude or copilot.</span>
+                </span>
                 <input type="text" id="pref-agent" placeholder="claude" />
               </label>
               <label class="pref-row">
-                <span class="pref-label">Working directory</span>
-                <span style="display:inline-flex; gap:6px; flex:1;">
-                  <input type="text" id="pref-agent-cwd" placeholder="e.g. /path/to/project" style="flex:1; min-width:0;" />
+                <span class="pref-row-text">
+                  <span class="pref-label">Working directory</span>
+                  <span class="pref-desc">Where the agent starts. Empty uses your home directory; a project folder restores its remembered trust.</span>
+                </span>
+                <span class="pref-field-group">
+                  <input type="text" id="pref-agent-cwd" placeholder="e.g. /path/to/project" />
                   <button class="ghost-btn" id="btn-pref-cwd-pick" type="button">Pick&hellip;</button>
                 </span>
               </label>
-              <div class="pref-hint">Where the agent launches. Leave empty for your home directory (claude refuses permanent trust there and asks every launch). A project subdirectory restores the "remember this folder" option.</div>
               <button class="btn-primary" id="pref-save">Save &amp; Restart Agent</button>
+            </section>
+
+            <section class="pref-card">
+              <div class="pref-card-title">Voice</div>
+              <div class="pref-row">
+                <span class="pref-row-text">
+                  <span class="pref-label">Status</span>
+                  <span class="pref-desc">Local neural TTS via Piper. No API key, offline after install.</span>
+                </span>
+                <span class="pref-status" id="voice-status">Not installed</span>
+              </div>
+              <label class="pref-row">
+                <span class="pref-row-text">
+                  <span class="pref-label">Enable voice</span>
+                  <span class="pref-desc">Read recap lines aloud.</span>
+                </span>
+                <input type="checkbox" id="pref-voice-enabled" />
+              </label>
+              <label class="pref-row">
+                <span class="pref-row-text">
+                  <span class="pref-label">Voice</span>
+                  <span class="pref-desc">Which installed voice to speak with.</span>
+                </span>
+                <select id="pref-voice-name">
+                  <option value="en_US-amy-medium">Amy (en-US, medium)</option>
+                </select>
+              </label>
+              <label class="pref-row">
+                <span class="pref-row-text">
+                  <span class="pref-label">Rate</span>
+                  <span class="pref-desc">Speaking speed.</span>
+                </span>
+                <span class="pref-rate-group">
+                  <span id="pref-voice-rate-display">1.0&times;</span>
+                  <input type="range" id="pref-voice-rate" min="0.5" max="1.6" step="0.1" value="1.0" />
+                </span>
+              </label>
+              <div class="pref-btn-row">
+                <button class="ghost-btn" id="btn-voice-install">Install voice (~50 MB)</button>
+                <button class="ghost-btn" id="btn-voice-test">Test</button>
+                <button class="ghost-btn" id="btn-voice-uninstall">Uninstall</button>
+              </div>
             </section>
 
             <section class="pref-card">
               <div class="pref-card-title">Behavior</div>
               <label class="pref-row">
-                <span class="pref-label">Show recap line after each response</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Show recap line after each response</span>
+                  <span class="pref-desc">Emits a one-line <code>* recap:</code> after substantive replies; the voice reads it aloud when enabled. Restart the agent after changing.</span>
+                </span>
                 <input type="checkbox" id="pref-recap" />
               </label>
-              <div class="pref-hint">When on, the agent emits a one-line <code>* recap:</code> after substantive replies and the voice (if enabled) reads it aloud. Restart the agent after changing.</div>
             </section>
 
             <section class="pref-card">
               <div class="pref-card-title">PAI</div>
               <label class="pref-row">
-                <span class="pref-label">Enable PAI (Personal AI Infrastructure)</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Enable PAI (Personal AI Infrastructure)</span>
+                  <span class="pref-desc">Bundles Claude Code skills, agents, hooks, statusline, and the Algorithm flow into <code>~/.claude/</code> (only Claude Code reads it). Off skips the bootstrap and statusline tick and drops the PAI nudge; existing files are left untouched. Restart the agent after changing.</span>
+                </span>
                 <input type="checkbox" id="pref-pai" />
               </label>
-              <div class="pref-hint">
-                PAI is the Claude Code framework Husk bundles in <code>libs/pai/</code>: skills, agents, hooks, statusline, and the Algorithm flow. Only Claude Code reads it (Copilot does not). With this off, Husk skips the bootstrap into <code>~/.claude/</code>, stops the statusline tick, and drops the PAI/Algorithm nudge from the Husk identity prompt. Pre-existing files in <code>~/.claude/</code> are left untouched; remove them by hand if you want a clean slate. Restart the agent after changing.
-              </div>
             </section>
 
             <section class="pref-card">
               <div class="pref-card-title">Appearance</div>
               <label class="pref-row">
-                <span class="pref-label">Theme</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Theme</span>
+                  <span class="pref-desc">Light or dark interface.</span>
+                </span>
                 <select id="pref-theme">
                   <option value="dark">Dark</option>
                   <option value="light">Light</option>
                 </select>
               </label>
-              <div class="pref-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-                <span class="pref-label">Accent color</span>
+              <div class="pref-row">
+                <span class="pref-row-text">
+                  <span class="pref-label">Accent color</span>
+                  <span class="pref-desc">Highlight color used across the interface.</span>
+                </span>
                 <div class="accent-picker" id="accent-picker">
                   <div class="accent-swatch" data-c="orange" title="Orange (Claude)"></div>
                   <div class="accent-swatch" data-c="cyan" title="Cyan"></div>
@@ -999,47 +1057,28 @@
                 </div>
               </div>
               <label class="pref-row">
-                <span class="pref-label">Sidebar expanded by default</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Sidebar expanded by default</span>
+                  <span class="pref-desc">Start each launch with the left rail open.</span>
+                </span>
                 <input type="checkbox" id="pref-rail" />
               </label>
             </section>
 
             <section class="pref-card">
-              <div class="pref-card-title">Voice</div>
-              <div class="pref-row">
-                <span class="pref-label">Status</span>
-                <span class="pref-status" id="voice-status">Not installed</span>
-              </div>
-              <label class="pref-row">
-                <span class="pref-label">Enable voice</span>
-                <input type="checkbox" id="pref-voice-enabled" />
-              </label>
-              <label class="pref-row">
-                <span class="pref-label">Voice</span>
-                <select id="pref-voice-name">
-                  <option value="en_US-amy-medium">Amy (en-US, medium)</option>
-                </select>
-              </label>
-              <label class="pref-row">
-                <span class="pref-label">Rate <span id="pref-voice-rate-display" style="color:var(--accent); margin-left:6px;">1.0×</span></span>
-                <input type="range" id="pref-voice-rate" min="0.5" max="1.6" step="0.1" value="1.0" />
-              </label>
-              <div style="display:flex; gap:8px; margin-top:4px;">
-                <button class="ghost-btn" id="btn-voice-install" style="flex:1;">Install voice (~50 MB)</button>
-                <button class="ghost-btn" id="btn-voice-test" style="flex:1;">Test</button>
-                <button class="ghost-btn" id="btn-voice-uninstall" style="flex:1;">Uninstall</button>
-              </div>
-              <div class="pref-hint" id="voice-hint">Local neural TTS via Piper. No API key, no network at runtime, fully offline after install.</div>
-            </section>
-
-            <section class="pref-card">
               <div class="pref-card-title">File Browser</div>
               <label class="pref-row">
-                <span class="pref-label">Tree root</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Tree root</span>
+                  <span class="pref-desc">Root folder shown in the file browser.</span>
+                </span>
                 <input type="text" id="pref-root" />
               </label>
               <label class="pref-row">
-                <span class="pref-label">Show hidden files</span>
+                <span class="pref-row-text">
+                  <span class="pref-label">Show hidden files</span>
+                  <span class="pref-desc">Include dotfiles and hidden folders.</span>
+                </span>
                 <input type="checkbox" id="pref-hidden" />
               </label>
             </section>

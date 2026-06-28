@@ -133,9 +133,9 @@ test('ISC-8: PAI-off prompt includes the explicit "do NOT emit" override', () =>
   assert.doesNotMatch(out, /follow your normal CLAUDE\.md, PAI\/Algorithm/);
 });
 
-test('ISC-9: PAI-on prompt names PAI/Algorithm and the TASK/CHANGE/VERIFY structure', () => {
+test('ISC-9: PAI-on prompt names PAI/ALGORITHM and the TASK/CHANGE/VERIFY structure', () => {
   const out = buildHuskPrompt({ agentName: 'Husk', paiEnabled: true, recap: true });
-  assert.match(out, /PAI\/Algorithm/);
+  assert.match(out, /PAI\/ALGORITHM/);
   assert.match(out, /TASK\/CHANGE\/VERIFY/);
   assert.doesNotMatch(out, /do NOT emit PAI mode banners/);
 });

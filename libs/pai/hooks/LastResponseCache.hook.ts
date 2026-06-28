@@ -14,7 +14,6 @@
 import { readHookInput, parseTranscriptFromInput } from './lib/hook-io';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 
 async function main() {
   const input = await readHookInput();
@@ -29,7 +28,7 @@ async function main() {
 
   if (lastResponse) {
     try {
-      const paiDir = process.env.PAI_DIR || join(homedir(), '.claude');
+      const paiDir = process.env.PAI_DIR || join(process.env.HOME!, '.claude', 'PAI');
       const cachePath = join(paiDir, 'MEMORY', 'STATE', 'last-response.txt');
       writeFileSync(cachePath, lastResponse.slice(0, 2000), 'utf-8');
     } catch (err) {

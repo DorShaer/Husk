@@ -32,7 +32,7 @@ import {
   generateDescriptiveTitle,
   type FileChange,
 } from '../lib/change-detection';
-import type { ParsedTranscript } from '../../PAI/Tools/TranscriptParser';
+import type { ParsedTranscript } from '../../PAI/TOOLS/TranscriptParser';
 
 interface HookInput {
   session_id: string;
@@ -42,7 +42,7 @@ interface HookInput {
 
 const STATE_DIR = paiPath('MEMORY', 'STATE');
 const STATE_FILE = join(STATE_DIR, 'integrity-state.json');
-const INTEGRITY_SCRIPT = paiPath('PAI', 'Tools', 'IntegrityMaintenance.ts');
+const INTEGRITY_SCRIPT = paiPath("TOOLS", 'IntegrityMaintenance.ts');
 
 
 /**
