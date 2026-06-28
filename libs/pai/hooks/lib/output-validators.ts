@@ -62,16 +62,10 @@ export function getVoiceFallback(): string {
 
 // ─── Tab Title Validation ───────────────────────────────────────
 
-// Incomplete endings — dangling articles, prepositions, conjunctions, adverbs
+// Incomplete endings — dangling articles, prepositions, conjunctions
 const INCOMPLETE_ENDINGS = new Set([
-  // Articles & prepositions
   'the', 'a', 'an', 'to', 'for', 'with', 'of',
-  'in', 'on', 'at', 'by', 'from', 'into', 'about',
-  // Conjunctions
-  'and', 'or', 'but', 'that', 'which',
-  // Temporal/filler adverbs — always dangle when ending a 2-4 word title
-  'now', 'then', 'still', 'also', 'just', 'only', 'even',
-  'very', 'quite', 'rather', 'really', 'here', 'there',
+  'in', 'on', 'at', 'by', 'from', 'and', 'or', 'but',
 ]);
 
 /**
@@ -104,10 +98,6 @@ function isValidTitleBase(text: string): { valid: boolean; firstWord: string } {
 
   // Reject single-character last words — always a truncation artifact (e.g., "V" from "V 3.0.4")
   if (lastWord.length <= 1) return { valid: false, firstWord };
-
-  // Reject long adverbs ending in "-ly" — truncation artifacts (e.g., "progressively" from a longer phrase)
-  // Short "-ly" words (≤5 chars like "early", "daily") are often adjectives/nouns, so exempt.
-  if (lastWord.endsWith('ly') && lastWord.length > 5) return { valid: false, firstWord };
 
   return { valid: true, firstWord };
 }
@@ -206,6 +196,12 @@ export function gerundToPastTense(gerund: string): string {
 
   if (!lower.endsWith('ing') || lower.length < 5) return gerund;
   const stem = lower.slice(0, -3);
+
+  // "modifying" → stem "modify" → "modified" (y→ied)
+  if (stem.endsWith('y') && stem.length > 1 && !'aeiou'.includes(stem[stem.length - 2])) {
+    const result = stem.slice(0, -1) + 'ied';
+    return result.charAt(0).toUpperCase() + result.slice(1);
+  }
 
   // Regular: stem + "ed" handles all cases correctly:
   // - "fixing" → stem "fix" → "fixed"

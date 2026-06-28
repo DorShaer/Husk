@@ -19,7 +19,7 @@
  * - exit(0): Always (non-blocking)
  *
  * SIDE EFFECTS:
- * - Updates: MEMORY/WORK/<dir>/PRD.md or META.yaml (status: COMPLETED)
+ * - Updates: MEMORY/WORK/<dir>/ISA.md (or legacy PRD.md) or META.yaml (status: COMPLETED)
  * - Deletes: MEMORY/STATE/current-work.json (clears session state)
  * - Resets: Kitty tab title and color to defaults
  * - Cleans: session-names.json entry (prevents ghost entries)
@@ -37,8 +37,9 @@ import { writeFileSync, existsSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { getISOTimestamp } from './lib/time';
 import { setTabState, cleanupKittySession } from './lib/tab-setter';
+import { readRegistry, writeRegistry, findArtifactPath } from './lib/isa-utils';
 
-const BASE_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude');
+const BASE_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude', 'PAI');
 const MEMORY_DIR = join(BASE_DIR, 'MEMORY');
 const STATE_DIR = join(MEMORY_DIR, 'STATE');
 const WORK_DIR = join(MEMORY_DIR, 'WORK');
@@ -58,6 +59,9 @@ interface CurrentWork {
   session_id: string;
   session_dir: string;
   created_at: string;
+  /** Path to the session's Ideal State Artifact (ISA.md, or legacy PRD.md). */
+  isa_path?: string;
+  /** @deprecated use isa_path. Kept so older state files still parse. */
   prd_path?: string;
   // Legacy fields (backward compat)
   current_task?: string;
@@ -86,19 +90,24 @@ function clearSessionWork(sessionId?: string): void {
       return;
     }
 
-    // Mark work directory as COMPLETED — update PRD.md frontmatter (primary) or META.yaml (legacy)
+    // Mark work directory as COMPLETED — update ISA.md frontmatter (primary,
+    // with legacy PRD.md fallback) or META.yaml (legacy)
     if (currentWork.session_dir) {
       const workPath = join(WORK_DIR, currentWork.session_dir);
-      const prdPath = join(workPath, 'PRD.md');
+      const isaPath = findArtifactPath(currentWork.session_dir);
       const metaPath = join(workPath, 'META.yaml');
       let marked = false;
 
-      // Primary: update PRD.md frontmatter (consolidated format)
-      if (existsSync(prdPath)) {
-        let prdContent = readFileSync(prdPath, 'utf-8');
-        prdContent = prdContent.replace(/^status: ACTIVE$/m, 'status: COMPLETED');
-        prdContent = prdContent.replace(/^completed_at: null$/m, `completed_at: "${getISOTimestamp()}"`);
-        writeFileSync(prdPath, prdContent, 'utf-8');
+      // Primary: update the ISA frontmatter — set phase: complete (modern format)
+      // and status: COMPLETED (legacy compat for any old artifacts still around).
+      // findArtifactPath prefers ISA.md and falls back to legacy PRD.md.
+      if (isaPath && existsSync(isaPath)) {
+        let isaContent = readFileSync(isaPath, 'utf-8');
+        isaContent = isaContent.replace(/^phase:.*$/m, 'phase: complete');
+        isaContent = isaContent.replace(/^updated:.*$/m, `updated: ${getISOTimestamp()}`);
+        isaContent = isaContent.replace(/^status: ACTIVE$/m, 'status: COMPLETED');
+        isaContent = isaContent.replace(/^completed_at: null$/m, `completed_at: "${getISOTimestamp()}"`);
+        writeFileSync(isaPath, isaContent, 'utf-8');
         marked = true;
       }
 
@@ -113,6 +122,31 @@ function clearSessionWork(sessionId?: string): void {
 
       if (marked) {
         console.error(`[SessionCleanup] Marked work directory as COMPLETED: ${currentWork.session_dir}`);
+      }
+    }
+
+    // Mark every work.json entry owned by this session UUID as complete.
+    // Without this, native tabs and interrupted algorithms linger as "live"
+    // on the agents dashboard until their stale window elapses.
+    const endingUUID = sessionId || currentWork.session_id;
+    if (endingUUID) {
+      try {
+        const registry = readRegistry();
+        const ts = getISOTimestamp();
+        let touched = 0;
+        for (const [, session] of Object.entries(registry.sessions) as [string, any][]) {
+          if (session.sessionUUID !== endingUUID) continue;
+          if (session.phase === 'complete') continue;
+          session.phase = 'complete';
+          session.updatedAt = ts;
+          touched++;
+        }
+        if (touched > 0) {
+          writeRegistry(registry);
+          console.error(`[SessionCleanup] Marked ${touched} work.json session(s) complete for UUID ${endingUUID}`);
+        }
+      } catch (e) {
+        console.error(`[SessionCleanup] Failed to mark work.json sessions complete: ${e}`);
       }
     }
 

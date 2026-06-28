@@ -3338,35 +3338,69 @@ input[type="checkbox"]:disabled {
 
 .prefs-body {
   flex: 1; min-height: 0; overflow-y: auto;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-  gap: 14px; align-content: start;
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 18px; align-items: stretch; align-content: start;
   padding-right: 4px;
 }
+/* align-items: stretch makes the two cards in each grid row share a height, so
+   the rows line up across columns (Agent/Voice, Behavior/PAI, Appearance/Files).
+   Card order in the markup sets the pairing. Collapses to one column when narrow. */
+@media (max-width: 900px) { .prefs-body { grid-template-columns: 1fr; } }
+/* Preferences read as grouped settings lists: one flat surface per section,
+   rows divided by inset hairlines, the control sitting on the right. */
 .pref-card {
   background: var(--bg-1);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 18px;
-  display: flex; flex-direction: column; gap: 11px;
+  border-radius: 16px;
+  padding: 4px 24px 18px;
+  display: flex; flex-direction: column;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 .pref-card-title {
   font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.16em;
+  text-transform: uppercase; letter-spacing: 0.13em;
   color: var(--text-3);
-  margin-bottom: 4px;
+  padding: 18px 0 8px;
 }
 .pref-row {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; padding: 9px 12px;
-  background: var(--bg-3); border: 1px solid var(--line); border-radius: 9px;
+  gap: 28px; padding: 16px 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
 }
-.pref-label { font-size: 13px; color: var(--text-2); font-weight: 500; }
-.pref-row input[type="text"], .pref-row select {
-  flex: 1; background: transparent; color: var(--text);
-  border: 0; outline: 0;
+/* Left column: setting name over a muted one-line description. The control
+   lives on the right. This label-and-description pairing is what makes each
+   row read as a deliberate setting rather than a bare form field. */
+.pref-row-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.pref-label { font-size: 13.5px; color: var(--text); font-weight: 550; line-height: 1.3; }
+.pref-desc { font-size: 12.5px; color: var(--text-3); line-height: 1.5; }
+.pref-desc code {
+  background: var(--bg-3); padding: 1px 5px; border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace; font-size: 0.92em; color: var(--text-2);
+}
+/* Text fields and dropdowns form the right-hand control column. */
+.pref-row > input[type="text"], .pref-row select {
+  flex: 0 0 auto; width: 260px; max-width: 46%;
+  text-align: left;
   font-family: 'JetBrains Mono', monospace; font-size: 13px;
-  text-align: left; min-width: 0;
+  padding: 7px 11px; color: var(--text); outline: 0;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px;
 }
+.pref-row input[type="text"]:focus, .pref-row select:focus { border-color: var(--accent); }
+/* Working directory: field plus its Pick button share the control column. */
+.pref-field-group { flex: 0 0 auto; width: 300px; max-width: 48%; display: inline-flex; gap: 8px; }
+.pref-field-group > input[type="text"] {
+  flex: 1; min-width: 0;
+  font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  padding: 7px 11px; color: var(--text); outline: 0;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px;
+}
+.pref-field-group > input[type="text"]:focus { border-color: var(--accent); }
+.pref-rate-group { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 12px; }
+#pref-voice-rate-display { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 12px; min-width: 34px; text-align: right; }
+.pref-btn-row { display: flex; gap: 8px; margin-top: 14px; }
+.pref-btn-row .ghost-btn { flex: 1; }
+#pref-save { margin-top: 16px; }
 .pref-row select { font-family: inherit; }
 .pref-row select option { color: #111; background: #ffffff; }
 #pref-theme { flex: 0 0 auto; min-width: 110px; max-width: 140px; }
@@ -3376,13 +3410,17 @@ input[type="checkbox"]:disabled {
 .pref-status.ok { color: var(--emerald); }
 .pref-status.err { color: var(--rose); }
 .pref-status.busy { color: var(--accent); }
-.pref-hint { font-size: 12px; color: var(--text-3); }
-.pref-hint code { background: var(--bg-3); padding: 1px 5px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; color: var(--accent); }
+.pref-hint { font-size: 12.5px; color: var(--text-3); line-height: 1.6; padding: 11px 0 2px; max-width: 60ch; }
+/* Inline code in descriptions stays calm: monospace, faint surface, no loud
+   accent color so help text reads as prose, not a terminal dump. */
+.pref-hint code {
+  background: var(--bg-3); padding: 1px 5px; border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace; font-size: 0.92em; color: var(--text-2);
+}
 
-/* Accent picker swatches */
+/* Accent picker swatches: inline on the right of the row, no surrounding pill. */
 .accent-picker {
-  display: flex; gap: 8px; padding: 9px 12px;
-  background: var(--bg-3); border: 1px solid var(--line); border-radius: 9px;
+  display: flex; gap: 10px; margin-left: auto;
 }
 .accent-swatch {
   width: 26px; height: 26px; border-radius: 50%;
@@ -3676,7 +3714,9 @@ input[type="checkbox"]:disabled {
   box-shadow: var(--hl-top);
   min-height: 0;
   /* Drop the panel so its STATUS header sits a little below the very top,
-     roughly aligned with the chat area. */
+     roughly aligned with the chat area. The offset drives both this padding
+     and the toggle's top, so they move together. */
+  --sp-top-offset: 60px;
   padding-top: var(--sp-top-offset, 64px);
 }
 .sp-toggle {

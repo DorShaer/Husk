@@ -16,6 +16,7 @@
 
 import { readHookInput, parseTranscriptFromInput } from './lib/hook-io';
 import { handleDocCrossRefIntegrity } from './handlers/DocCrossRefIntegrity';
+import { handleRebuildArchSummary } from './handlers/RebuildArchSummary';
 
 async function main() {
   const input = await readHookInput();
@@ -26,7 +27,13 @@ async function main() {
   try {
     await handleDocCrossRefIntegrity(parsed, input);
   } catch (err) {
-    console.error('[DocIntegrity] Handler failed:', err);
+    console.error('[DocIntegrity] Cross-ref handler failed:', err);
+  }
+
+  try {
+    await handleRebuildArchSummary();
+  } catch (err) {
+    console.error('[DocIntegrity] Arch-summary handler failed:', err);
   }
 
   process.exit(0);

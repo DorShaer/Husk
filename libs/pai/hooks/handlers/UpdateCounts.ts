@@ -19,11 +19,13 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
-import { getPaiDir, getSettingsPath } from '../lib/paths';
+import { getPaiDir, getSettingsPath, getClaudeDir } from '../lib/paths';
 
 
 interface Counts {
   skills: number;
+  skillsPublic: number;
+  skillsPrivate: number;
   workflows: number;
   hooks: number;
   signals: number;
@@ -81,44 +83,56 @@ function countWorkflowFiles(dir: string): number {
 
 /**
  * Count skills (directories with SKILL.md file)
+ * Returns total, public (no _ prefix), and private (_ prefix)
  */
-function countSkills(paiDir: string): number {
-  let count = 0;
-  const skillsDir = join(paiDir, 'skills');
+function countSkills(_paiDir: string): { total: number; pub: number; priv: number } {
+  let pub = 0;
+  let priv = 0;
+  const skillsDir = join(getClaudeDir(), 'skills');
   try {
     for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-      // Handle both real directories and symlinks to directories
       const isDir = entry.isDirectory() ||
         (entry.isSymbolicLink() && statSync(join(skillsDir, entry.name)).isDirectory());
       if (isDir) {
         const skillFile = join(skillsDir, entry.name, 'SKILL.md');
         if (existsSync(skillFile)) {
-          count++;
+          if (entry.name.startsWith('_')) priv++;
+          else pub++;
         }
       }
     }
   } catch {
     // skills directory doesn't exist
   }
-  return count;
+  return { total: pub + priv, pub, priv };
 }
 
 /**
- * Count hooks (.ts files in hooks/ at depth 1)
+ * Count active hooks: unique commands registered under `hooks.<event>[].hooks[].command`
+ * in settings.json. Dormant `.hook.ts` files on disk that aren't wired to any event do
+ * NOT count — only what Claude Code will actually fire.
  */
-function countHooks(paiDir: string): number {
-  let count = 0;
-  const hooksDir = join(paiDir, 'hooks');
+function countHooks(_paiDir: string): number {
+  const settingsPath = getSettingsPath();
   try {
-    for (const entry of readdirSync(hooksDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.ts')) {
-        count++;
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const events = settings.hooks ?? {};
+    const unique = new Set<string>();
+    for (const matchers of Object.values(events)) {
+      if (!Array.isArray(matchers)) continue;
+      for (const matcher of matchers) {
+        const list = (matcher as { hooks?: unknown }).hooks;
+        if (!Array.isArray(list)) continue;
+        for (const h of list) {
+          const cmd = (h as { command?: unknown }).command;
+          if (typeof cmd === 'string' && cmd.length > 0) unique.add(cmd);
+        }
       }
     }
+    return unique.size;
   } catch {
-    // hooks directory doesn't exist
+    return 0;
   }
-  return count;
 }
 
 /**
@@ -149,9 +163,12 @@ function countSubdirs(dir: string): number {
  */
 function getCounts(paiDir: string): Counts {
   const ratingsPath = join(paiDir, 'MEMORY/LEARNING/SIGNALS/ratings.jsonl');
+  const sk = countSkills(paiDir);
   return {
-    skills: countSkills(paiDir),
-    workflows: countWorkflowFiles(join(paiDir, 'skills')),
+    skills: sk.total,
+    skillsPublic: sk.pub,
+    skillsPrivate: sk.priv,
+    workflows: countWorkflowFiles(join(getClaudeDir(), 'skills')),
     hooks: countHooks(paiDir),
     signals: countFilesRecursive(join(paiDir, 'MEMORY/LEARNING'), '.md'),
     files: countFilesRecursive(join(paiDir, 'PAI/USER')),
@@ -268,19 +285,13 @@ export async function handleUpdateCounts(): Promise<void> {
     // Update counts section
     settings.counts = counts;
 
-    // Extract and write Algorithm version from CLAUDE.md
-    try {
-      const claudeMd = readFileSync(join(paiDir, 'CLAUDE.md'), 'utf-8');
-      const algoMatch = claudeMd.match(/Algorithm\/v([\d.]+)\.md/);
-      if (algoMatch) {
-        settings.pai = settings.pai || {};
-        settings.pai.algorithmVersion = algoMatch[1];
-      }
-    } catch {}
+    // v6.2.0+: settings.pai.algorithmVersion was removed; LATEST is the single source
+    // of truth and Banner / statusline / ArchitectureSummaryGenerator read it directly.
+    // The CLAUDE.md → settings.json sync that lived here is no longer needed.
 
     // Write back
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-    console.error(`[UpdateCounts] Updated: SK:${counts.skills} WF:${counts.workflows} HK:${counts.hooks} SIG:${counts.signals} F:${counts.files} W:${counts.work} SESS:${counts.sessions} RES:${counts.research} RAT:${counts.ratings}`);
+    console.error(`[UpdateCounts] Updated: SK:${counts.skillsPublic}pu/${counts.skillsPrivate}pv WF:${counts.workflows} HK:${counts.hooks} SIG:${counts.signals} F:${counts.files} W:${counts.work} SESS:${counts.sessions} RES:${counts.research} RAT:${counts.ratings}`);
   } catch (error) {
     console.error('[UpdateCounts] Failed to update counts:', error);
     // Non-fatal - don't throw, let other handlers continue
