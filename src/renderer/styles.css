@@ -214,6 +214,9 @@ body {
   box-shadow: var(--hl-top);
   -webkit-app-region: drag;
 }
+/* macOS hiddenInset title bar places the close/minimize/zoom controls over the
+   top-left, so shift the topbar content right to keep the logo clear of them. */
+[data-platform="mac"] #topbar { padding-left: 78px; }
 .brand { display: flex; align-items: center; -webkit-app-region: no-drag; }
 .logo-img {
   width: 40px; height: 40px;
