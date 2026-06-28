@@ -391,6 +391,9 @@ try {
 //     every paste. Ctrl+C is intentionally left as SIGINT.
 const isMac = (navigator.userAgentData && navigator.userAgentData.platform === 'macOS') ||
               /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+// Mark the platform so CSS can clear the macOS traffic-light controls, which
+// overlay the top-left of the window under the hiddenInset title bar.
+if (isMac) document.documentElement.setAttribute('data-platform', 'mac');
 async function copyTerminalSelection() {
   const text = term.getSelection();
   if (!text) return false;
@@ -990,6 +993,9 @@ async function refreshStatusline() {
   // readout stays compact and matches the banner (e.g. "fable-5", not
   // "claude-fable-5[1m]"). Empty when no model is known, which hides the row.
   const modelLabel = ((u.session && u.session.model) || (ctx && ctx.model) || '').replace(/^claude-/, '').replace(/\[[^\]]*\]/g, '');
+  // The active agent CLI (claude, codex, copilot, ...) and its version, so the
+  // Build section reflects whichever agent is selected, not a fixed one.
+  const agentLabel = (s.agent || 'claude').replace(/^\w/, (c) => c.toUpperCase());
 
   const html = `
     <div class="sp-section">
@@ -1004,7 +1010,7 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">▣</span><span>Build</span></div>
       <div class="sp-section-body">
-        <div class="sp-row"><span class="sp-muted">Claude ${spInfo('Installed Claude Code CLI version.')}</span><span class="sp-mono">2.1.129</span></div>
+        <div class="sp-row"><span class="sp-muted">${escapeHtml(agentLabel)} ${spInfo('Installed CLI version of the active agent.')}</span><span class="sp-mono">${escapeHtml(s.agentVersion || 'unknown')}</span></div>
         ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model ${spInfo('The AI model the active session is running.')}</span><span class="sp-mono sp-accent" title="${escapeHtml((u.session && u.session.model) || (ctx && ctx.model) || '')}">${escapeHtml(modelLabel)}</span></div>` : ''}
         <div class="sp-row"><span class="sp-muted">Husk ${spInfo('Installed Husk app version.')}</span><span class="sp-mono">${escapeHtml(s.huskVer || '0.2')}</span></div>
       </div>
@@ -3693,7 +3699,7 @@ function openUpdatePop() {
     };
   } else if (s.status === 'ready') {
     title.textContent = `Husk ${next} is ready`;
-    body.innerHTML = `Click below to relaunch Husk with the new version. Your current chat will end.`;
+    body.textContent = `Husk will close and reopen to finish installing. Your current chat will end.`;
     cta.textContent = 'Restart and install';
     cta.onclick = () => window.husk.updates.install();
   } else if (s.status === 'downloading') {
