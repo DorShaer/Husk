@@ -32,8 +32,8 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.0",
     "@playwright/test": "^1.60.0",
-    "electron": "^41.7.1",
-    "electron-builder": "^26.15.2",
+    "electron": "^41.7.2",
+    "electron-builder": "^26.15.3",
     "playwright": "^1.60.0"
   },
   "build": {
