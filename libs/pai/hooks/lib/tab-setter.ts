@@ -2,20 +2,113 @@
  * tab-setter.ts - Unified tab state setter.
  *
  * Single function that:
- * 1. Sets Kitty tab title and color via remote control
- * 2. Persists per-window state for daemon recovery
+ * 1. Sets Kitty tab title and color via remote control, OR
+ * 2. Sets cmux sidebar status/progress/log via CLI
+ * 3. Persists per-window state for daemon recovery
  *
- * All hooks call setTabState() instead of directly running kitten commands.
+ * Auto-detects terminal: cmux (CMUX_WORKSPACE_ID) vs Kitty (KITTY_LISTEN_ON).
+ * All hooks call setTabState() instead of directly running terminal commands.
  */
 
 import { existsSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { TAB_COLORS, PHASE_TAB_CONFIG, ACTIVE_TAB_BG, ACTIVE_TAB_FG, INACTIVE_TAB_FG, type TabState, type AlgorithmTabPhase } from './tab-constants';
+
+/** Detect if we're running inside cmux */
+function isCmux(): boolean {
+  return !!(process.env.CMUX_WORKSPACE_ID || process.env.CMUX_SOCKET_PATH);
+}
+
+/** Map TabState to cmux log level for visual differentiation */
+function stateToCmuxLogLevel(state: TabState): string {
+  switch (state) {
+    case 'thinking':  return 'progress';
+    case 'working':   return 'info';
+    case 'question':  return 'warning';
+    case 'completed': return 'success';
+    case 'error':     return 'error';
+    case 'idle':      return 'info';
+    default:          return 'info';
+  }
+}
+
+/** Map Algorithm phase to cmux log level */
+function phaseToCmuxLogLevel(phase: string): string {
+  switch (phase) {
+    case 'OBSERVE':  return 'info';
+    case 'THINK':    return 'progress';
+    case 'PLAN':     return 'progress';
+    case 'BUILD':    return 'info';
+    case 'EXECUTE':  return 'warning';
+    case 'VERIFY':   return 'success';
+    case 'LEARN':    return 'success';
+    case 'COMPLETE': return 'success';
+    case 'IDLE':     return 'info';
+    default:         return 'info';
+  }
+}
+
+/**
+ * Set cmux sidebar metadata for the current workspace.
+ * Uses status pills for phase/session, log for activity, progress for ISC completion.
+ */
+function setCmuxState(title: string, state: TabState, phase?: string): void {
+  try {
+    const logLevel = phase ? phaseToCmuxLogLevel(phase) : stateToCmuxLogLevel(state);
+    const config = phase ? PHASE_TAB_CONFIG[phase] : null;
+    const phaseLabel = config ? `${config.symbol} ${phase}` : state.toUpperCase();
+
+    // Status pill: shows current phase/state at a glance
+    execSync(`cmux set-status phase "${phaseLabel}"`, { stdio: 'ignore', timeout: 2000 });
+
+    // Log entry: shows what's happening with color-coded level
+    const escaped = title.replace(/"/g, '\\"');
+    execSync(`cmux log ${logLevel} "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
+
+    // Clear on idle/complete
+    if (state === 'idle') {
+      execSync(`cmux clear-status phase`, { stdio: 'ignore', timeout: 2000 });
+      execSync(`cmux clear-progress`, { stdio: 'ignore', timeout: 2000 });
+      execSync(`cmux clear-log`, { stdio: 'ignore', timeout: 2000 });
+    }
+
+    console.error(`[tab-setter] cmux sidebar: "${phaseLabel}" — ${escaped}`);
+  } catch (err) {
+    console.error(`[tab-setter] cmux error:`, err);
+  }
+}
+
+// Generic phase gerunds that must never carry over between phases.
+// Includes both current short gerunds AND legacy long-form ones that may persist in stale state files.
+const GENERIC_PHASE_GERUNDS = new Set([
+  ...Object.values(PHASE_TAB_CONFIG).map(c => c.gerund).filter(g => g.length > 0),
+  'Observing the user request.', 'Analyzing the problem space.',
+  'Planning the execution approach.', 'Building the solution artifacts.',
+  'Executing the planned work.', 'Verifying ideal state criteria.',
+  'Recording the session learnings.',
+]);
 import { paiPath } from './paths';
 
 const TAB_TITLES_DIR = paiPath('MEMORY', 'STATE', 'tab-titles');
 const KITTY_SESSIONS_DIR = paiPath('MEMORY', 'STATE', 'kitty-sessions');
+
+/**
+ * Resolve the `kitten` binary path. When tab-setter runs from the Claude Code
+ * process (inherits user PATH) `kitten` is on PATH. When it runs from the Pulse
+ * daemon (launchd-restricted PATH) `kitten` is not on PATH and execSync fails
+ * with "command not found". Fall back to the kitty.app location.
+ */
+let kittenBinCached: string | null = null;
+function kittenBin(): string {
+  if (kittenBinCached) return kittenBinCached;
+  try {
+    const path = execSync('command -v kitten', { encoding: 'utf-8', timeout: 1000 }).trim();
+    if (path) { kittenBinCached = path; return path; }
+  } catch { /* fall through */ }
+  kittenBinCached = '/Applications/kitty.app/Contents/MacOS/kitten';
+  return kittenBinCached;
+}
 
 /**
  * Get Kitty environment from env vars or persisted per-session file.
@@ -140,6 +233,13 @@ function cleanupStaleStateFiles(): void {
 export function setTabState(opts: SetTabOptions): void {
   const { title, state, previousTitle, sessionId } = opts;
   const colors = TAB_COLORS[state];
+
+  // cmux path: use sidebar metadata instead of Kitty remote control
+  if (isCmux()) {
+    setCmuxState(title, state);
+    return;
+  }
+
   const kittyEnv = getKittyEnv(sessionId);
 
   try {
@@ -162,19 +262,26 @@ export function setTabState(opts: SetTabOptions): void {
     // reset set-tab-title overrides, so the template falls back to window title.
     // By setting both, our title survives OSC resets.
     const toFlag = `--to="${kittyEnv.listenOn}"`;
-    console.error(`[tab-setter] Setting tab: "${escaped}" with toFlag: ${toFlag}`);
-    execSync(`kitten @ ${toFlag} set-tab-title "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
-    execSync(`kitten @ ${toFlag} set-window-title "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
+    // When called from a process without a focused kitty window (e.g. the Pulse
+    // daemon) we must target by window id — otherwise kitten defaults to the
+    // currently focused window, which may belong to a different session.
+    const matchFlag = kittyEnv.windowId ? `--match="id:${kittyEnv.windowId}"` : '';
+    const kitten = kittenBin();
+    console.error(`[tab-setter] Setting tab: "${escaped}" with toFlag: ${toFlag} matchFlag: ${matchFlag}`);
+    execSync(`"${kitten}" @ ${toFlag} set-tab-title ${matchFlag} "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
+    execSync(`"${kitten}" @ ${toFlag} set-window-title ${matchFlag} "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
 
-    // For idle state, reset ALL colors to Kitty defaults (no lingering backgrounds)
+    // set-tab-color targets the current tab (--self) or a matched tab. Keep --self
+    // when called from the tab's own process; add --match when called externally.
+    const colorTarget = matchFlag || '--self';
     if (state === 'idle') {
       execSync(
-        `kitten @ ${toFlag} set-tab-color --self active_bg=none active_fg=none inactive_bg=none inactive_fg=none`,
+        `"${kitten}" @ ${toFlag} set-tab-color ${colorTarget} active_bg=none active_fg=none inactive_bg=none inactive_fg=none`,
         { stdio: 'ignore', timeout: 2000 }
       );
     } else {
       execSync(
-        `kitten @ ${toFlag} set-tab-color --self active_bg=${ACTIVE_TAB_BG} active_fg=${ACTIVE_TAB_FG} inactive_bg=${colors.inactiveBg} inactive_fg=${INACTIVE_TAB_FG}`,
+        `"${kitten}" @ ${toFlag} set-tab-color ${colorTarget} active_bg=${ACTIVE_TAB_BG} active_fg=${ACTIVE_TAB_FG} inactive_bg=${colors.inactiveBg} inactive_fg=${INACTIVE_TAB_FG}`,
         { stdio: 'ignore', timeout: 2000 }
       );
     }
@@ -307,10 +414,35 @@ export function setPhaseTab(phase: AlgorithmTabPhase, sessionId: string, summary
     const currentState = readTabState(sessionId);
     if (currentState?.title) {
       const pipeIdx = currentState.title.indexOf('|');
-      if (pipeIdx !== -1) existingDesc = currentState.title.slice(pipeIdx + 1).trim();
+      if (pipeIdx !== -1) {
+        existingDesc = currentState.title.slice(pipeIdx + 1).trim();
+      } else {
+        // No pipe — strip emoji prefix to get raw description (e.g., "🧠 Fixing auth bug." → "Fixing auth bug.")
+        existingDesc = stripPrefix(currentState.title);
+      }
     }
+    // Never carry over generic phase gerunds — they're not real task descriptions
+    if (GENERIC_PHASE_GERUNDS.has(existingDesc)) existingDesc = '';
     const desc = existingDesc || config.gerund;
     title = `${config.symbol} ${oneWord} | ${desc}`;
+  }
+
+  // cmux path: use sidebar metadata for phase display
+  if (isCmux()) {
+    setCmuxState(title, phase === 'COMPLETE' ? 'completed' : phase === 'IDLE' ? 'idle' : 'working', phase);
+    // Also set progress based on phase number (1-7 scale)
+    const phaseProgress: Record<string, number> = {
+      OBSERVE: 0.14, THINK: 0.28, PLAN: 0.42, BUILD: 0.57, EXECUTE: 0.71, VERIFY: 0.85, LEARN: 1.0, COMPLETE: 1.0, IDLE: 0,
+    };
+    try {
+      const progress = phaseProgress[phase] ?? 0;
+      if (progress > 0) {
+        execSync(`cmux set-progress ${progress}`, { stdio: 'ignore', timeout: 2000 });
+      } else {
+        execSync(`cmux clear-progress`, { stdio: 'ignore', timeout: 2000 });
+      }
+    } catch { /* silent */ }
+    return;
   }
 
   try {
@@ -325,18 +457,21 @@ export function setPhaseTab(phase: AlgorithmTabPhase, sessionId: string, summary
 
     const escaped = title.replace(/"/g, '\\"');
     const toFlag = `--to="${kittyEnv.listenOn}"`;
+    const matchFlag = kittyEnv.windowId ? `--match="id:${kittyEnv.windowId}"` : '';
+    const colorTarget = matchFlag || '--self';
+    const kitten = kittenBin();
 
-    execSync(`kitten @ ${toFlag} set-tab-title "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
-    execSync(`kitten @ ${toFlag} set-window-title "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
+    execSync(`"${kitten}" @ ${toFlag} set-tab-title ${matchFlag} "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
+    execSync(`"${kitten}" @ ${toFlag} set-window-title ${matchFlag} "${escaped}"`, { stdio: 'ignore', timeout: 2000 });
 
     if (phase === 'IDLE') {
       execSync(
-        `kitten @ ${toFlag} set-tab-color --self active_bg=none active_fg=none inactive_bg=none inactive_fg=none`,
+        `"${kitten}" @ ${toFlag} set-tab-color ${colorTarget} active_bg=none active_fg=none inactive_bg=none inactive_fg=none`,
         { stdio: 'ignore', timeout: 2000 }
       );
     } else {
       execSync(
-        `kitten @ ${toFlag} set-tab-color --self active_bg=${ACTIVE_TAB_BG} active_fg=${ACTIVE_TAB_FG} inactive_bg=${config.inactiveBg} inactive_fg=${INACTIVE_TAB_FG}`,
+        `"${kitten}" @ ${toFlag} set-tab-color ${colorTarget} active_bg=${ACTIVE_TAB_BG} active_fg=${ACTIVE_TAB_FG} inactive_bg=${config.inactiveBg} inactive_fg=${INACTIVE_TAB_FG}`,
         { stdio: 'ignore', timeout: 2000 }
       );
     }

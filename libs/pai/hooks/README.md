@@ -38,43 +38,56 @@ Hooks are TypeScript scripts that execute at specific lifecycle events in Claude
 
 ### Execution Model
 
-```mermaid
-flowchart LR
-  subgraph S["Claude Code Session"]
-    direction TB
-    SS["SessionStart"]
-    UP["UserPromptSubmit"]
-    PRE["PreToolUse"]
-    POST["PostToolUse"]
-    STOP["Stop"]
-    SE["SessionEnd"]
-  end
-
-  SS --> KEP["KittyEnvPersist (terminal env + tab reset)"]
-  SS --> LC["LoadContext (dynamic context injection)"]
-
-  UP --> RC["RatingCapture (explicit + implicit ratings)"]
-  UP --> UTT["UpdateTabTitle (tab + voice announcement)"]
-  UP --> SAN["SessionAutoName"]
-
-  PRE --> SV["SecurityValidator (Bash/Edit/Write/Read)"]
-  PRE --> SQT["SetQuestionTab (AskUserQuestion)"]
-  PRE --> AEG["AgentExecutionGuard (Task)"]
-  PRE --> SG["SkillGuard (Skill)"]
-
-  POST --> QA["QuestionAnswered"]
-  POST --> PS["PRDSync (PRD -> work.json)"]
-
-  STOP --> LRC["LastResponseCache"]
-  STOP --> RTR["ResponseTabReset"]
-  STOP --> DI["DocIntegrity"]
-  STOP --> AT["AlgorithmTab"]
-
-  SE --> WCL["WorkCompletionLearning"]
-  SE --> SCL["SessionCleanup"]
-  SE --> RM["RelationshipMemory"]
-  SE --> UC["UpdateCounts"]
-  SE --> IC["IntegrityCheck"]
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Claude Code Session                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  SessionStart ──┬──► KittyEnvPersist (terminal env + tab reset)     │
+│                 ├──► LoadContext (dynamic context injection)         │
+│                 └──► KVSync (push work.json to CF KV)              │
+│                                                                     │
+│  UserPromptSubmit ──► SessionAnalysis (rating + tab + session name) │
+│                                                                     │
+│  UserPromptSubmit ──┬──► PromptGuard (PromptInspector — no LLM)     │
+│                     ├──► SessionAnalysis (rating + tab + name)      │
+│                     └──► SatisfactionCapture                        │
+│                                                                     │
+│  PreToolUse ──┬──► SecurityPipeline (Bash/Edit/Write/MultiEdit)     │
+│               │     └─► [PatternInspector → EgressInspector]        │
+│               ├──► Context Reduction (Bash → compressed commands)   │
+│               ├──► SetQuestionTab (AskUserQuestion)                 │
+│               ├──► AgentGuard (Pulse HTTP: localhost:31337)          │
+│               └──► SkillGuard (Pulse HTTP: localhost:31337)          │
+│                                                                     │
+│  PostToolUse ──┬──► QuestionAnswered (AskUserQuestion)              │
+│                ├──► ISASync (ISA → work.json + KV sync)             │
+│                └──► ContentScanner (injection detection)            │
+│                                                                     │
+│  PermissionRequest ──► SmartApprover (trusted/read=approve)         │
+│                                                                     │
+│  PostToolUseFailure ──► ToolFailureTracker (error logging)          │
+│                                                                     │
+│  Stop ──┬──► LastResponseCache (cache response for ratings)         │
+│         ├──► ResponseTabReset (tab title/color reset)              │
+│         ├──► VoiceCompletion (TTS voice line)                      │
+│         ├──► DocIntegrity (cross-refs + arch summary regen)        │
+│         └──► StopNotify (push notification)                        │
+│                                                                     │
+│  PreToolUse:Agent  ──► AgentInvocation (subagent_start, capture type)│
+│  PostToolUse:Agent ──► AgentInvocation (subagent_stop, duration)    │
+│  TeammateIdle ───► TeammateIdle (idle event logging)                │
+│                                                                     │
+│  ConfigChange ──► ConfigAudit (security audit trail)                │
+│                                                                     │
+│  SessionEnd ──┬──► WorkCompletionLearning (insight extraction)      │
+│               ├──► SessionCleanup (work completion + state clear)   │
+│               ├──► RelationshipMemory (relationship notes)          │
+│               ├──► UpdateCounts (system counts + usage cache)       │
+│               ├──► IntegrityCheck (PAI + doc drift detection)       │
+│               └──► KVSync (push work.json to CF KV)                │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -83,11 +96,16 @@ flowchart LR
 
 | Event | When It Fires | Typical Use Cases |
 |-------|---------------|-------------------|
-| `SessionStart` | Session begins | Context loading, banner display, version check |
-| `UserPromptSubmit` | User sends a message | Format injection, work tracking, sentiment analysis |
-| `PreToolUse` | Before a tool executes | Security validation, UI state changes |
-| `PostToolUse` | After a tool executes | Phase tracking, tab state reset |
-| `Stop` | Claude responds | Voice feedback, tab updates, skill rebuild |
+| `SessionStart` | Session begins | Context loading, banner display, CLAUDE.md build |
+| `UserPromptSubmit` | User sends a message | Sentiment analysis, tab title, session naming |
+| `PreToolUse` | Before a tool executes | Security validation, context reduction, UI state |
+| `PostToolUse` | After a tool executes | ISA sync, tab state reset |
+| `PostToolUseFailure` | Tool execution fails | Error tracking, debugging observability |
+| `Stop` | Claude responds | Voice feedback, tab updates, doc integrity |
+| `SubagentStart` | Subagent spawned | Agent start tracking, timing |
+| `SubagentStop` | Subagent finishes | Duration calculation, hung agent detection |
+| `TeammateIdle` | Teammate goes idle | Idle event logging |
+| `ConfigChange` | Settings modified | Security audit trail |
 | `SessionEnd` | Session terminates | Summary, learning, counts, integrity checks |
 
 ### Event Payload Structure
@@ -129,39 +147,75 @@ interface StopPayload extends BasePayload {
 |------|---------|----------|--------------|
 | `KittyEnvPersist.hook.ts` | Persist Kitty env vars + tab reset | No | None |
 | `LoadContext.hook.ts` | Inject dynamic context (relationship, learning, work) | Yes (stdout) | `settings.json`, `MEMORY/` |
+| `KVSync.hook.ts` | Push work.json to Cloudflare KV | No | `CLOUDFLARE_API_TOKEN_WORKERS_EDIT` or `CLOUDFLARE_API_TOKEN` in `~/.claude/.env` |
 
 ### UserPromptSubmit Hooks
 
 | Hook | Purpose | Blocking | Dependencies |
 |------|---------|----------|--------------|
-| `RatingCapture.hook.ts` | Explicit/implicit rating capture + sentiment analysis | Yes (stdout) | Inference API, `ratings.jsonl` |
-| `UpdateTabTitle.hook.ts` | Set tab title + voice announcement | No | Inference API, Voice Server |
-| `SessionAutoName.hook.ts` | Name session on first prompt | No | Inference API, `session-names.json` |
+| `SessionAnalysis.hook.ts` | Unified analysis: rating capture + tab title + session naming | No | Inference API, `ratings.jsonl`, `session-names.json`, Voice Server |
+
+> **Consolidation note:** SessionAnalysis replaces the former RatingCapture + UpdateTabTitle + SessionAutoName (3 hooks → 1, single Haiku call). The old hooks remain on disk as reference.
 
 ### PreToolUse Hooks
 
 | Hook | Purpose | Blocking | Dependencies |
 |------|---------|----------|--------------|
-| `SecurityValidator.hook.ts` | Validate Bash/Edit/Write/Read | Yes (decision) | `patterns.yaml`, `MEMORY/SECURITY/` |
+| `SecurityPipeline.hook.ts` | Inspector pipeline: Pattern(100) → Egress(90) → Rules(50) | Yes (decision) | `patterns.yaml`, `SECURITY_RULES.md`, `MEMORY/SECURITY/` |
+| `ContextReduction.hook.sh` | Context reduction — compresses Bash command output via RTK | Yes (updatedInput) | `rtk` binary, `jq` |
 | `SetQuestionTab.hook.ts` | Set teal tab for questions | No | Kitty terminal |
-| `AgentExecutionGuard.hook.ts` | Guard agent spawning (Task tool) | Yes (decision) | None |
-| `SkillGuard.hook.ts` | Prevent erroneous skill invocations | Yes (decision) | None |
+| *(Pulse HTTP route)* AgentGuard | Guard agent spawning — `localhost:31337/hooks/agent-guard` | Yes (decision) | Pulse server |
+| *(Pulse HTTP route)* SkillGuard | Prevent erroneous skill invocations — `localhost:31337/hooks/skill-guard` | Yes (decision) | Pulse server |
+
+> **Note:** AgentGuard and SkillGuard were migrated from standalone hook files (`AgentExecutionGuard.hook.ts`, `SkillGuard.hook.ts`) to Pulse HTTP routes at `localhost:31337`. They are no longer files on disk — they run as routes within the Pulse server.
 
 ### PostToolUse Hooks
 
 | Hook | Purpose | Blocking | Dependencies |
 |------|---------|----------|--------------|
 | `QuestionAnswered.hook.ts` | Reset tab state after question answered | No | Kitty terminal |
-| `PRDSync.hook.ts` | Sync PRD frontmatter → work.json | No | `MEMORY/WORK/`, `work.json` |
+| `ISASync.hook.ts` | Sync ISA frontmatter → work.json + KV push | No | `MEMORY/WORK/`, `work.json`, `CLOUDFLARE_API_TOKEN_WORKERS_EDIT` or `CLOUDFLARE_API_TOKEN` in `~/.claude/.env` |
+
+### PostToolUseFailure Hooks
+
+| Hook | Purpose | Blocking | Dependencies |
+|------|---------|----------|--------------|
+| `ToolFailureTracker.hook.ts` | Log tool failures for debugging observability | No | `MEMORY/OBSERVABILITY/` |
 
 ### Stop Hooks
 
 | Hook | Purpose | Blocking | Dependencies |
 |------|---------|----------|--------------|
-| `LastResponseCache.hook.ts` | Cache last response for RatingCapture bridge | No | None |
+| `LastResponseCache.hook.ts` | Cache last response for SessionAnalysis bridge | No | None |
 | `ResponseTabReset.hook.ts` | Reset Kitty tab title/color after response | No | Kitty terminal |
-| `AlgorithmTab.hook.ts` | Show Algorithm phase + progress in tab | No | `work.json` |
-| `DocIntegrity.hook.ts` | Cross-ref + semantic drift checks | No | Inference API |
+| `VoiceCompletion.hook.ts` | Send voice line to TTS server | No | Voice Server |
+| `DocIntegrity.hook.ts` | Cross-ref + semantic drift checks + arch summary regen | No | Inference API |
+| `StopNotify.hook.ts` | Push notification on completion | No | ntfy/Discord |
+
+### Subagent Lifecycle Hooks
+
+Subagent lifecycle is tracked via `AgentInvocation.hook.ts` on `PreToolUse:Agent` and `PostToolUse:Agent` — Claude Code's built-in `SubagentStart`/`SubagentStop` payloads omit `subagent_type` / `description` / `prompt`, so we capture at the tool-use boundary where that data is reliably present.
+
+| Hook | Event | Purpose | Blocking | Dependencies |
+|------|-------|---------|----------|--------------|
+| `AgentInvocation.hook.ts` | PreToolUse:Agent | Log subagent_start with real subagent_type | No | `MEMORY/OBSERVABILITY/` |
+| `AgentInvocation.hook.ts` | PostToolUse:Agent | Log subagent_stop with duration, warn if hung | No | `MEMORY/OBSERVABILITY/` |
+
+Outputs: `subagent-events.jsonl` (start + stop events), correlated by `session_id + description`.
+
+### TeammateIdle Hooks
+
+| Hook | Purpose | Blocking | Dependencies |
+|------|---------|----------|--------------|
+| `TeammateIdle.hook.ts` | Log teammate idle events for observability | No | `MEMORY/OBSERVABILITY/` |
+
+Outputs: `teammate-events.jsonl`.
+
+### ConfigChange Hooks
+
+| Hook | Purpose | Blocking | Dependencies |
+|------|---------|----------|--------------|
+| `ConfigAudit.hook.ts` | Security audit trail for config changes | No | `MEMORY/OBSERVABILITY/` |
 
 ### SessionEnd Hooks
 
@@ -172,31 +226,37 @@ interface StopPayload extends BasePayload {
 | `RelationshipMemory.hook.ts` | Capture relationship notes | No | `MEMORY/RELATIONSHIP/` |
 | `UpdateCounts.hook.ts` | Update system counts + usage cache | No | `settings.json`, Anthropic API |
 | `IntegrityCheck.hook.ts` | PAI change detection + doc drift detection | No | `MEMORY/STATE/integrity-state.json`, handlers/ |
+| `KVSync.hook.ts` | Push work.json to Cloudflare KV | No | `CLOUDFLARE_API_TOKEN_WORKERS_EDIT` or `CLOUDFLARE_API_TOKEN` in `~/.claude/.env` |
 
 ---
 
 ## Inter-Hook Dependencies
 
-### Rating System Flow
+### Rating + Tab + Naming Flow (SessionAnalysis)
 
 ```
 User Message
     │
     ▼
-RatingCapture ─── explicit "8 - great work"? ──► write + exit
+SessionAnalysis ─── explicit rating "8 - great"? ──► write rating + exit
     │ (no explicit match)
+    ├── positive praise "great job"? ──► write rating 8 + exit
+    │ (no fast path)
     ▼
-    └── implicit sentiment (Haiku) ──────────► write
-                                                │
-                                                ▼
-                                        ratings.jsonl
-                                              │
-                                              ▼
-                                      Status Line Display
-                                      (statusline-command.sh)
+    ├── Set purple/thinking tab title (deterministic)
+    ├── Deterministic session name (first prompt only)
+    │
+    ▼
+    Single Haiku inference → sentiment + tab title + session name
+    │
+    ├── Write rating → ratings.jsonl
+    ├── Set orange/working tab title
+    ├── Voice announce via localhost:31337
+    ├── Store session name → session-names.json
+    └── Background Sonnet upgrade (first prompt only)
 ```
 
-**Design**: Single hook handles both paths. Explicit pattern checked first (no inference). If no match, Haiku inference runs for implicit sentiment. Both paths write to `ratings.jsonl`.
+**Design**: Single consolidated hook. Three fast paths checked first (no inference). Single Haiku call returns all three outputs. Background Sonnet upgrade for session name quality on first prompt only.
 
 ### Work Tracking Flow
 
@@ -204,7 +264,7 @@ RatingCapture ─── explicit "8 - great work"? ──► write + exit
 SessionStart
     │
     ▼
-Algorithm (AI) ─► Creates WORK/<slug>/PRD.md directly
+Algorithm (AI) ─► Creates WORK/<slug>/ISA.md directly
     │                                          │
     │                                          ▼
     │                               current-work.json (state)
@@ -217,21 +277,28 @@ SessionEnd ─┬─► WorkCompletionLearning ────────┤
 
 **Coordination**: `current-work.json` is the shared state file. The AI creates it during Algorithm execution, SessionCleanup clears it.
 
-### Security Validation Flow
+### Security Inspector Pipeline Flow
 
 ```
 PreToolUse (Bash/Edit/Write/Read)
     │
     ▼
-SecurityValidator ─► patterns.yaml
+SecurityPipeline ─► InspectorPipeline
     │
-    ├─► {continue: true} ──────────────► Tool executes
+    ├─► PatternInspector (100) ─► patterns.yaml
+    ├─► EgressInspector (90) ─── outbound monitoring
+    └─► RulesInspector (50) ──── DISABLED (empty SECURITY_RULES.md)
     │
-    ├─► {decision: "ask", message} ────► User prompted
-    │
-    └─► exit(2) ───────────────────────► Hard block
+    ├─► allow ────────────────► Tool executes
+    ├─► require_approval ─────► User prompted
+    ├─► alert ────────────────► Logged, tool executes
+    └─► deny ─────────────────► Hard block (exit 2)
 
-All events logged to: MEMORY/SECURITY/security-events.jsonl
+PostToolUse ─► ContentScanner ─► InjectionInspector (WebFetch/WebSearch only)
+PermissionRequest ─► SmartApprover ─► trusted/read=approve
+UserPromptSubmit ─► PromptGuard ─► PromptInspector (95) heuristic-only
+
+All events logged to: MEMORY/SECURITY/YYYY/MM/
 ```
 
 ### Voice + Tab State Flow
@@ -240,12 +307,12 @@ All events logged to: MEMORY/SECURITY/security-events.jsonl
 UserPromptSubmit
     │
     ▼
-UpdateTabTitle
-    ├─► Sets tab to PURPLE (#5B21B6) ─► "Processing..."
+SessionAnalysis
+    ├─► Sets tab to PURPLE (#5B21B6) ─► "🧠 Processing..."
     │
-    ├─► Inference summarizes prompt
+    ├─► Single Haiku inference (sentiment + title + name)
     │
-    ├─► Sets tab to ORANGE (#B35A00) ─► "Fixing auth..."
+    ├─► Sets tab to ORANGE (#B35A00) ─► "⚙️ Fixing auth..."
     │
     └─► Voice announces: "Fixing auth bug"
 
@@ -258,7 +325,8 @@ Stop
     │
     ▼
 Stop hooks:
-    ├─► ResponseTabReset → DEFAULT (brand color)
+    ├─► ResponseTabReset → DEFAULT (UL blue)
+    └─► VoiceCompletion → Voice announces completion
 ```
 
 ---
@@ -267,27 +335,35 @@ Stop hooks:
 
 ### Memory System Integration
 
-```mermaid
-flowchart TB
-  subgraph MEMORY["~/.claude/MEMORY/"]
-    direction LR
-    WORK["WORK/<br/>session directories<br/>PRD.md per work item"]
-    LEARNING["LEARNING/<br/>SIGNALS/ratings.jsonl<br/>SYNTHESIS/<br/>FAILURES/"]
-    STATE["STATE/<br/>current-work.json<br/>trending-cache.json<br/>model-cache.txt"]
-  end
-
-  subgraph HOOKS["Hooks (write side)"]
-    direction LR
-    PRDSync["PRDSync"]
-    RatingCapture["RatingCapture"]
-    WCL["WorkCompletionLearning"]
-    SC["SessionCleanup"]
-  end
-
-  PRDSync -->|"work.json"| STATE
-  RatingCapture -->|"ratings.jsonl"| LEARNING
-  WCL -->|"LEARNING/"| LEARNING
-  SC -->|"PRD status + clears state"| WORK
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         MEMORY/                                  │
+├────────────────┬─────────────────┬───────────────────────────────┤
+│    WORK/       │   LEARNING/     │   STATE/                      │
+│                │                 │                               │
+│ ┌────────────┐ │ ┌─────────────┐ │ ┌───────────────────────────┐ │
+│ │ Session    │ │ │ SIGNALS/    │ │ │ current-work.json         │ │
+│ │ Directories│ │ │ ratings.jsonl│ │ │ trending-cache.json       │ │
+│ │            │ │ │             │ │ │ model-cache.txt           │ │
+│ └─────▲──────┘ │ └──────▲──────┘ │ └───────────▲───────────────┘ │
+│       │        │        │        │             │                 │
+└───────┼────────┴────────┼────────┴─────────────┼─────────────────┘
+        │                 │                      │
+        │                 │                      │
+┌───────┴─────────────────┴──────────────────────┴─────────────────┐
+│                        HOOKS                                     │
+│                                                                  │
+│  ISASync ──────────────────────────────────► work.json + KV     │
+│  KVSync ───────────────────────────────────► KV (session sync) │
+│  SessionAnalysis ─────────────────────────► ratings.jsonl      │
+│  SessionAnalysis ─────────────────────────► session-names.json │
+│  ToolFailureTracker ──────────────────────► OBSERVABILITY/     │
+│  AgentInvocation ─────────────────────────► OBSERVABILITY/     │
+│  ConfigAudit ─────────────────────────────► OBSERVABILITY/     │
+│  WorkCompletionLearning ────────────────────► LEARNING/          │
+│  SessionCleanup ────────────────────────────► WORK/ + state      │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -301,7 +377,10 @@ Located in `hooks/lib/`:
 | `identity.ts` | Get DA name, principal from settings | Most hooks |
 | `time.ts` | PST timestamps, ISO formatting | Rating hooks, work hooks |
 | `paths.ts` | Canonical path construction | Work hooks, security |
-| `notifications.ts` | ntfy push notifications | SessionEnd hooks, UpdateTabTitle |
+| `notifications.ts` | ntfy push notifications | SessionEnd hooks, StopNotify |
+| `output-validators.ts` | Tab title + voice output validation | SessionAnalysis, TabState, VoiceNotification, SetQuestionTab |
+| `isa-utils.ts` | ISA/work.json manipulation | SessionAnalysis, ISASync, KVSync |
+| `isa-template.ts` | ISA markdown template | Algorithm |
 | `hook-io.ts` | Shared stdin reader + transcript parser | All Stop hooks |
 | `learning-utils.ts` | Learning categorization | Rating hooks, WorkCompletion |
 | `change-detection.ts` | Detect file/code changes | IntegrityCheck |
@@ -329,7 +408,7 @@ Hooks are configured in `settings.json` under the `hooks` key:
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "${PAI_DIR}/hooks/SecurityValidator.hook.ts" }
+          { "type": "command", "command": "$HOME/.claude/hooks/SecurityPipeline.hook.ts" }
         ]
       }
     ]
@@ -460,9 +539,10 @@ Use this checklist when adding or modifying hooks:
 ### Hook Not Executing
 
 1. Verify hook is in `settings.json` under correct event
-2. Check file is executable: `chmod +x hook.ts`
+2. Check file is executable: `chmod +x hook.ts` (not needed when using `bun` prefix — all PAI hooks use `bun` prefix)
 3. Check shebang: `#!/usr/bin/env bun`
 4. Run manually: `echo '{"session_id":"test"}' | bun hooks/HookName.hook.ts`
+5. For Pulse HTTP routes (AgentGuard, SkillGuard): verify Pulse is running at `localhost:31337/health`
 
 ### Hook Blocking Session
 
@@ -470,13 +550,15 @@ Use this checklist when adding or modifying hooks:
 2. Verify timeouts are set for external calls
 3. Check for infinite loops or blocking I/O
 
-### Security Validation Issues
+### Security Pipeline Issues
 
 1. Check `patterns.yaml` for matching patterns
-2. Review `MEMORY/SECURITY/security-events.jsonl` for logs
-3. Test pattern matching: `bun hooks/SecurityValidator.hook.ts < test-input.json`
+2. Check `SECURITY_RULES.md` for user-defined rules
+3. Review `MEMORY/SECURITY/YYYY/MM/` for event logs
+4. Test pipeline: `echo '{"session_id":"t","tool_name":"Bash","tool_input":{"command":"ls"}}' | bun hooks/SecurityPipeline.hook.ts`
+5. Test content scan: `echo '{"session_id":"t","tool_name":"WebFetch","tool_input":{},"tool_result":"test content"}' | bun hooks/ContentScanner.hook.ts`
 
 ---
 
-*Last updated: 2026-02-25*
-*Hooks count: 22 | Events: 6 | Shared libs: 13*
+*Last updated: 2026-04-04*
+*Events: 9 | Shared libs: 15 | Hook count: auto-computed by UpdateCounts.ts*

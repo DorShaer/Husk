@@ -15,10 +15,10 @@
  *
  * OUTPUT:
  * - Writes to: MEMORY/RELATIONSHIP/YYYY-MM/YYYY-MM-DD.md
- * - May update: PAI/USER/ABOUT_DANIEL.md (significant learnings)
+ * - May update: PAI/USER/PRINCIPAL_IDENTITY.md (significant learnings)
  *
  * RELATIONSHIP NOTE TYPES:
- * - W (World): Objective facts about {PRINCIPAL.NAME}'s situation
+ * - W (World): Objective facts about the principal's situation
  * - B (Biographical): What happened this session (first-person DA)
  * - O (Opinion): Preference/belief with confidence
  *
@@ -33,7 +33,7 @@ import { join } from 'path';
 import { getPaiDir } from './lib/paths';
 import { getPSTComponents } from './lib/time';
 import { getDAName, getPrincipalName } from './lib/identity';
-import { parseTranscript } from '../PAI/Tools/TranscriptParser';
+import { parseTranscript } from '../PAI/TOOLS/TranscriptParser';
 
 interface HookInput {
   session_id: string;
@@ -74,13 +74,9 @@ function readTranscriptEntries(path: string): TranscriptEntry[] {
 
   try {
     const parsed = parseTranscript(path);
-    // Combine user prompts and assistant completions into entry pairs
     const entries: TranscriptEntry[] = [];
-    if (parsed.userPrompt) {
-      entries.push({ type: 'user', text: parsed.userPrompt });
-    }
-    if (parsed.plainCompletion) {
-      entries.push({ type: 'assistant', text: parsed.plainCompletion });
+    if (parsed.lastMessage) {
+      entries.push({ type: 'assistant', text: parsed.lastMessage });
     }
     return entries;
   } catch {
@@ -105,7 +101,7 @@ function analyzeForRelationship(entries: TranscriptEntry[]): RelationshipNote[] 
 
   // Track what happened this session
   let sessionSummary: string[] = [];
-  let danielPreferences: string[] = [];
+  let userPreferences: string[] = [];
   let frustrations: string[] = [];
   let positives: string[] = [];
 
@@ -118,7 +114,7 @@ function analyzeForRelationship(entries: TranscriptEntry[]): RelationshipNote[] 
       if (patterns.preference.test(text)) {
         // Extract preference (simplified - would benefit from LLM analysis)
         const snippet = text.slice(0, 200);
-        danielPreferences.push(snippet);
+        userPreferences.push(snippet);
       }
 
       if (patterns.frustration.test(text)) {

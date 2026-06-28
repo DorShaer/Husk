@@ -255,7 +255,7 @@ const DEFAULT_CONFIG = {
   // PAI is the bundled Claude-Code-only assistant framework Husk drops into
   // ~/.claude/. Defaults to enabled so existing Claude users get it on
   // first run, but Copilot-only users can switch it off to skip the
-  // bootstrap, kill the statusline tick, and drop the PAI/Algorithm
+  // bootstrap, kill the statusline tick, and drop the PAI/ALGORITHM
   // reference from the Husk identity prompt.
   paiEnabled: true,
   profiles: DEFAULT_PROFILES,
@@ -298,8 +298,12 @@ let config = loadConfig();
 let statuslineTimer = null;
 function refreshStatuslineCacheOnce() {
   try {
-    const slPath = path.join(CLAUDE_DIR, 'statusline-command.sh');
-    if (!fs.existsSync(slPath)) return;
+    // v5 ships the statusline inside PAI/; older layouts kept it at the root.
+    const slPath = [
+      path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
+      path.join(CLAUDE_DIR, 'statusline-command.sh'),
+    ].find((p) => fs.existsSync(p));
+    if (!slPath) return;
     const cwd = activePtyCwd || HOME;
     // Stub session JSON for the claude-statusline contract; missing fields
     // fall back to env defaults inside the script.
@@ -537,7 +541,7 @@ function bootstrapPaiIfNeeded() {
     // user who already has ~/.claude/CLAUDE.md (claude code creates it) still
     // receives the bundled skills, agents, and hooks. Missing entries are
     // added without ever overwriting a file the user already has.
-    for (const sub of ['PAI', 'agents', 'hooks', 'lib', 'skills']) {
+    for (const sub of ['PAI', 'agents', 'hooks', 'skills']) {
       const src = path.join(bundle, sub);
       const dst = path.join(claudeDir, sub);
       if (!fs.existsSync(src)) continue;
@@ -568,6 +572,10 @@ function copyMissingChildrenSync(src, dst) {
     const s = path.join(src, entry.name);
     const d = path.join(dst, entry.name);
     if (fs.existsSync(d)) continue;
+    // A skill the user disabled is renamed to _disabled_<name>. Treat that as
+    // already present so the original is not re-added alongside the disabled
+    // copy.
+    if (fs.existsSync(path.join(dst, DISABLED_PREFIX + entry.name))) continue;
     if (entry.isDirectory()) copyDirRecursiveSync(s, d);
     else if (entry.isFile()) fs.copyFileSync(s, d);
     // ignore symlinks/devices
@@ -652,7 +660,13 @@ function createWindow() {
   const viewSubmenu = [
     { role: 'reload' },
     ...(app.isPackaged ? [] : [{ role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }]),
-    { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+    // The renderer owns the Ctrl/Cmd +/-/0 keys (applies zoom, refits the
+    // terminal, shows the percent). `registerAccelerator: false` keeps the menu
+    // roles from binding the same accelerators, so the keys fire one path only.
+    // Menu clicks still work.
+    { role: 'resetZoom', registerAccelerator: false },
+    { role: 'zoomIn', registerAccelerator: false },
+    { role: 'zoomOut', registerAccelerator: false },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
@@ -733,6 +747,13 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     if (s.lastMouseOn) { s.lastMouseOn = false; if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', { sessionId: id, on: false }); }
     if (s.pty) try { s.pty.kill(); } catch (_) {}
   }
+  // Reset this session's transcript lock so it re-resolves its own session
+  // file instead of inheriting the previous child's or a background agent's.
+  // startedAt gates the lock (see readActiveSessionStats): only a file written
+  // at or after this spawn gets pinned, so a fresh chat never sticks to a
+  // stale or background transcript before its own file exists.
+  s.startedAt = Date.now();
+  s.transcript = null;
   const shellBin = process.platform === 'win32'
     ? (process.env.ComSpec || 'cmd.exe')
     : (process.env.SHELL || '/bin/bash');
@@ -846,6 +867,32 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     } catch (_) {}
   }
 
+  // Bind this tab to a definite claude session id so stats/recent/resume read
+  // exactly this tab's transcript. On resume the id comes from --resume; for a
+  // new claude chat we generate one and pass --session-id so claude writes a
+  // known file, keeping each tab's transcript distinct even when several share
+  // a cwd. Windows is skipped because its spawn may fall back to
+  // `cmd.exe /c <rawCmd>`, which ignores agentArgs.
+  const encodedCwd = cwd.replace(/[/\\:]/g, '-');
+  const resumeMatch = (rawCmd || '').match(/--resume[=\s]+([A-Za-z0-9][A-Za-z0-9-]{6,})/);
+  const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
+  if (resumeMatch) {
+    s.claudeSessionId = resumeMatch[1];
+  } else if (isClaudeAgent && !isWin32 && !agentArgs.includes('--session-id')) {
+    s.claudeSessionId = crypto.randomUUID();
+    agentArgs = [...agentArgs, '--session-id', s.claudeSessionId];
+  } else {
+    s.claudeSessionId = null;
+  }
+  if (s.claudeSessionId) {
+    try {
+      const pinned = path.join(CLAUDE_DIR, 'projects', encodedCwd, `${s.claudeSessionId}.jsonl`);
+      // Resume: the file exists already. New chat: it appears once claude starts
+      // writing, so until then the session has no transcript and reads 0 context.
+      s.transcript = fs.existsSync(pinned) ? pinned : null;
+    } catch (_) { s.transcript = null; }
+  }
+
   // Agents with no system-prompt flag (copilot) take their directives from a
   // project instructions file. Write a marker-managed HUSK-SESSION block into
   // it now that cwd is known. Non-destructive: only Husk's marked region is
@@ -940,11 +987,16 @@ let _claudeJsonCache = { mtime: 0, data: null };
 function readClaudeJson() {
   try {
     const p = path.join(HOME, '.claude.json');
-    const st = fs.statSync(p);
-    if (st.mtimeMs !== _claudeJsonCache.mtime) {
-      _claudeJsonCache = { mtime: st.mtimeMs, data: JSON.parse(fs.readFileSync(p, 'utf8')) };
-    }
-    return _claudeJsonCache.data;
+    // Stat and read through one open descriptor so both operate on the same
+    // file even if the path is replaced between calls.
+    const fd = fs.openSync(p, 'r');
+    try {
+      const st = fs.fstatSync(fd);
+      if (st.mtimeMs !== _claudeJsonCache.mtime) {
+        _claudeJsonCache = { mtime: st.mtimeMs, data: JSON.parse(fs.readFileSync(fd, 'utf8')) };
+      }
+      return _claudeJsonCache.data;
+    } finally { fs.closeSync(fd); }
   } catch (_) { return null; }
 }
 
@@ -956,11 +1008,16 @@ let _claudeSettingsCache = { mtime: 0, data: null };
 function readClaudeSettings() {
   try {
     const p = path.join(CLAUDE_DIR, 'settings.json');
-    const st = fs.statSync(p);
-    if (st.mtimeMs !== _claudeSettingsCache.mtime) {
-      _claudeSettingsCache = { mtime: st.mtimeMs, data: JSON.parse(fs.readFileSync(p, 'utf8')) };
-    }
-    return _claudeSettingsCache.data;
+    // Stat and read through one open descriptor so both operate on the same
+    // file even if the path is replaced between calls.
+    const fd = fs.openSync(p, 'r');
+    try {
+      const st = fs.fstatSync(fd);
+      if (st.mtimeMs !== _claudeSettingsCache.mtime) {
+        _claudeSettingsCache = { mtime: st.mtimeMs, data: JSON.parse(fs.readFileSync(fd, 'utf8')) };
+      }
+      return _claudeSettingsCache.data;
+    } finally { fs.closeSync(fd); }
   } catch (_) { return null; }
 }
 
@@ -1073,7 +1130,32 @@ function readActiveSessionStats() {
       .filter(Boolean)
       .sort((a, b) => b.mtime - a.mtime);
     if (!files.length) return null;
-    const latest = files[0].p;
+    // Resolve which transcript this tab reads. Several `claude` processes can
+    // write into one project dir at once (the foreground chat plus background
+    // agents), so each tab is bound to its own file. Once a tab's file is
+    // resolved it keeps reading that one so the readout stays stable and grows
+    // with the conversation; it re-resolves only when that file disappears.
+    const sess = activeSessionId ? sessions.get(activeSessionId) : null;
+    let latest = null;
+    if (sess && sess.claudeSessionId) {
+      // This tab owns exactly <claudeSessionId>.jsonl in its cwd, so tabs that
+      // share a cwd stay distinct. The file appears on the chat's first turn;
+      // until then there is nothing to read and the context reads 0.
+      const pinned = path.join(dir, `${sess.claudeSessionId}.jsonl`);
+      if (fs.existsSync(pinned)) { latest = pinned; sess.transcript = pinned; }
+    } else if (sess && sess.transcript && fs.existsSync(sess.transcript)) {
+      latest = sess.transcript;
+    } else if (sess) {
+      // Fallback for tabs with no pinned id (copilot, or claude on Windows):
+      // adopt the newest transcript not already held by another live tab and
+      // written at/after this tab spawned, so each tab keeps its own file.
+      const claimed = new Set();
+      for (const o of sessions.values()) if (o !== sess && o.transcript) claimed.add(o.transcript);
+      const own = files.find((f) => f.mtime >= (sess.startedAt || 0) && !claimed.has(f.p));
+      if (own) { latest = own.p; sess.transcript = own.p; }
+    } else if (files[0]) {
+      latest = files[0].p;
+    }
     // Cap the read. A session JSONL grows for the whole conversation and
     // can reach many megabytes; reading and parsing the entire file on
     // every status poll stalls the main thread. Read at most the last
@@ -1081,9 +1163,14 @@ function readActiveSessionStats() {
     // bounded. For large sessions the turn/char numbers become a
     // recent-tail estimate, which is acceptable for a coarse readout.
     const CAP = 1024 * 1024;
-    let raw;
-    const sz = files[0].size;
-    if (Number.isFinite(sz) && sz > CAP) {
+    // Defaults to empty: a brand-new session with no owned transcript yet
+    // reports 0 context/turns rather than another session's numbers.
+    let raw = [];
+    // Size of the file we actually settled on (the locked transcript may not be
+    // the newest entry), so the tail-read slices the right byte range.
+    let sz = 0;
+    if (latest) try { sz = fs.statSync(latest).size; } catch (_) {}
+    if (latest && Number.isFinite(sz) && sz > CAP) {
       const fd = fs.openSync(latest, 'r');
       try {
         const buf = Buffer.alloc(CAP);
@@ -1092,7 +1179,7 @@ function readActiveSessionStats() {
         const nl = tail.indexOf('\n');
         raw = (nl >= 0 ? tail.slice(nl + 1) : tail).split('\n').filter(Boolean);
       } finally { fs.closeSync(fd); }
-    } else {
+    } else if (latest) {
       raw = fs.readFileSync(latest, 'utf8').split('\n').filter(Boolean);
     }
     let turns = 0;
@@ -1140,7 +1227,11 @@ function readActiveSessionStats() {
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
     const effModel = settingsModel || model;
     // The model id carries the context tier (e.g. "[1m]"); resolve the window
-    // from it plus the user's actual model/license selection.
+    // from it plus the user's actual model/license selection. ctxTokens is the
+    // real occupancy from claude's own per-turn usage (input + cache_read +
+    // cache_creation): the same figure the PAI statusline shows. This counts
+    // the cached PAI base plus the conversation, read from the latest usage
+    // record in the file's tail, so it stays correct even for huge transcripts.
     const ctxWindow = resolveContextWindow(activePtyCwd, effModel, ctxTokens);
     const ctxPct = ctxWindow ? Math.round((ctxTokens / ctxWindow) * 1000) / 10 : 0;
     return { turns, chars, tokens: Math.round(chars / 4), file: latest, model: effModel, ctxTokens, ctxWindow, ctxPct };
@@ -3537,7 +3628,14 @@ ipcMain.handle('skills:toggle', (_e, payload = {}) => {
     newPath = resolveInside(skillsDir, newDirName);
   } catch (_) { return { ok: false, error: 'Invalid skill name' }; }
   if (!fs.existsSync(oldPath)) return { ok: false, error: 'Skill not found' };
-  if (fs.existsSync(newPath)) return { ok: false, error: 'Target already exists' };
+  if (fs.existsSync(newPath)) {
+    // Both the enabled and disabled copies are present. The target name is
+    // already in the desired state, so drop the redundant source instead of
+    // failing.
+    try { fs.rmSync(oldPath, { recursive: true, force: true }); }
+    catch (err) { return { ok: false, error: err.message }; }
+    return { ok: true, source: 'claude', id: newDirName, dirName: newDirName, disabled: !isDisabled };
+  }
   try {
     fs.renameSync(oldPath, newPath);
     return { ok: true, source: 'claude', id: newDirName, dirName: newDirName, disabled: !isDisabled };
@@ -3630,15 +3728,19 @@ ipcMain.handle('plugins:readFile', (_e, payload = {}) => {
   let abs;
   try { abs = resolveInside(installPath, String(payload.relPath || '')); }
   catch (_) { return { ok: false, error: 'invalid file path' }; }
-  // lstat, not stat: a marketplace plugin can ship a symlink pointing
-  // outside its own dir; following it would turn the editor into a
-  // read-anything API. Refuse links outright.
-  let st;
-  try { st = fs.lstatSync(abs); } catch (_) { return { ok: false, error: 'file not found' }; }
-  if (!st.isFile()) return { ok: false, error: 'not a regular file' };
-  if (!Plugins.isEditableFile(abs, st.size)) return { ok: false, error: 'file is binary or too large to edit' };
-  try { return { ok: true, content: fs.readFileSync(abs, 'utf8') }; }
-  catch (err) { return { ok: false, error: err.message }; }
+  // Open with O_NOFOLLOW so a symlink (a marketplace plugin could ship one
+  // pointing outside its own dir) is refused, and stat + read through the one
+  // descriptor so the regular-file check and the read see the same inode.
+  let fd;
+  try { fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
+  catch (_) { return { ok: false, error: 'file not found' }; }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return { ok: false, error: 'not a regular file' };
+    if (!Plugins.isEditableFile(abs, st.size)) return { ok: false, error: 'file is binary or too large to edit' };
+    return { ok: true, content: fs.readFileSync(fd, 'utf8') };
+  } catch (err) { return { ok: false, error: err.message }; }
+  finally { fs.closeSync(fd); }
 });
 
 ipcMain.handle('plugins:writeFile', (_e, payload = {}) => {
@@ -3653,15 +3755,18 @@ ipcMain.handle('plugins:writeFile', (_e, payload = {}) => {
   try { abs = resolveInside(installPath, String(payload.relPath || '')); }
   catch (_) { return { ok: false, error: 'invalid file path' }; }
   if (!Plugins.isEditableName(abs)) return { ok: false, error: 'file type is not editable' };
-  // Same symlink refusal as readFile: only ever write through a path
-  // that is currently a regular file inside the plugin dir.
-  let st;
-  try { st = fs.lstatSync(abs); } catch (_) { return { ok: false, error: 'file not found' }; }
-  if (!st.isFile()) return { ok: false, error: 'not a regular file' };
+  // Open the existing file with O_NOFOLLOW (no create, no symlink follow) and
+  // write through that descriptor, so the regular-file guarantee and the write
+  // target are the same inode even if the path is swapped after validation.
+  let fd;
+  try { fd = fs.openSync(abs, fs.constants.O_WRONLY | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0)); }
+  catch (_) { return { ok: false, error: 'file not found' }; }
   try {
-    fs.writeFileSync(abs, content);
+    if (!fs.fstatSync(fd).isFile()) return { ok: false, error: 'not a regular file' };
+    fs.writeFileSync(fd, content);
     return { ok: true };
   } catch (err) { return { ok: false, error: err.message }; }
+  finally { fs.closeSync(fd); }
 });
 
 ipcMain.handle('plugins:openFolder', (_e, payload = {}) => {
@@ -3750,6 +3855,30 @@ function readHead(filePath, bytes) {
   const n = fs.readSync(fd, buf, 0, bytes, 0);
   fs.closeSync(fd);
   return buf.toString('utf8', 0, n);
+}
+
+// Read the last `bytes` of a file. Used to take a transcript's last-activity
+// timestamp from its final entry, which reflects real activity more reliably
+// than the file mtime (opening or scanning a session updates mtime).
+function readTail(filePath, bytes, fileSize) {
+  const len = Math.min(bytes, fileSize);
+  if (len <= 0) return '';
+  const buf = Buffer.alloc(len);
+  const fd = fs.openSync(filePath, 'r');
+  const n = fs.readSync(fd, buf, 0, len, fileSize - len);
+  fs.closeSync(fd);
+  return buf.toString('utf8', 0, n);
+}
+function lastActivityMs(filePath, fileSize, fallbackMs) {
+  try {
+    const tail = readTail(filePath, 8192, fileSize);
+    let last = null;
+    const re = /"timestamp":"([^"]+)"/g;
+    let m;
+    while ((m = re.exec(tail)) !== null) last = m[1];
+    if (last) { const t = Date.parse(last); if (isFinite(t)) return t; }
+  } catch (_) {}
+  return fallbackMs;
 }
 
 // Parse the head of a claude session JSONL for the fields Husk titles a
@@ -3858,7 +3987,7 @@ function listCopilotSessions() {
 ipcMain.handle('sessions:list', () => {
   const agent = activeAgentName();
   if (agent === 'copilot') {
-    return { ok: true, agent, supported: true, sessionsDir: path.join(HOME, '.copilot', 'session-state'), sessions: listCopilotSessions() };
+    return { ok: true, agent, supported: true, sessionsDir: path.join(HOME, '.copilot', 'session-state'), currentCwd: activePtyCwd || '', sessions: listCopilotSessions() };
   }
   if (agent !== 'claude') {
     return { ok: true, agent, supported: false, sessionsDir: '', sessions: [] };
@@ -3998,7 +4127,9 @@ ipcMain.handle('sessions:list', () => {
         startedISO: startedISO || new Date(st.mtimeMs).toISOString(),
         startedMs: sessionStartMs,
         sizeBytes: st.size,
-        mtime: st.mtimeMs,
+        // Last-activity from the transcript's final entry; tracks real activity
+        // more reliably than the file mtime.
+        mtime: lastActivityMs(fullPath, st.size, st.mtimeMs),
       });
     }
   }
@@ -4017,7 +4148,10 @@ ipcMain.handle('sessions:list', () => {
     }
   }
   const deduped = [...dedup.values()].sort((a, b) => b.mtime - a.mtime);
-  return { ok: true, agent: 'claude', supported: true, sessionsDir: projectsDir, sessions: deduped };
+  // currentCwd is the live working directory of the active chat. The renderer
+  // uses it to scope the rail's Recent list to this project, so only this
+  // project's sessions appear there.
+  return { ok: true, agent: 'claude', supported: true, sessionsDir: projectsDir, currentCwd: activePtyCwd || '', sessions: deduped };
 });
 
 // Resolve the agent-session title for a LIVE chat tab so the tab can show the
@@ -4326,6 +4460,7 @@ ipcMain.handle('fs:home', () => HOME);
 //     'spawn Unknown system error -8' from the running-not-runnable binary.
 
 const IS_MAC = process.platform === 'darwin';
+const IS_WIN = process.platform === 'win32';
 
 // Detect WSL: /proc/version on WSL kernels contains "microsoft" or "wsl".
 // Result is cached so /proc/version is only read once.
@@ -4356,10 +4491,12 @@ function getHuskDataDir() {
 
 const HUSK_DATA = getHuskDataDir();
 const PIPER_DIR = path.join(HUSK_DATA, 'piper');
-const PIPER_BIN = path.join(PIPER_DIR, 'piper');
+const PIPER_BIN = path.join(PIPER_DIR, IS_WIN ? 'piper.exe' : 'piper');
 const VOICES_DIR = path.join(PIPER_DIR, 'voices');
 
-const PIPER_RELEASE = 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
+const PIPER_RELEASE = IS_WIN
+  ? 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip'
+  : 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
 const VOICE_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
 const MAC_SAY_BIN = '/usr/bin/say';
 const MAC_DEFAULT_VOICE = 'Samantha';
@@ -4419,11 +4556,13 @@ ipcMain.handle('voice:install', async (_e, { voice = 'en_US-amy-medium' } = {}) 
     fs.mkdirSync(VOICES_DIR, { recursive: true });
 
     if (!fs.existsSync(PIPER_BIN)) {
-      const tarPath = path.join(os.tmpdir(), 'piper-husk.tar.gz');
-      await runStep('curl', ['-fsSL', '-o', tarPath, PIPER_RELEASE], 'Downloading Piper binary');
-      await runStep('tar', ['-xzf', tarPath, '-C', HUSK_DATA], 'Extracting Piper');
-      try { fs.unlinkSync(tarPath); } catch (_) {}
-      try { fs.chmodSync(PIPER_BIN, 0o755); } catch (_) {}
+      // Windows ships a .zip (piper.exe + DLLs + espeak-ng-data); Linux a
+      // .tar.gz. `tar -xf` auto-detects both on Win10+ (bsdtar) and Linux.
+      const archivePath = path.join(os.tmpdir(), IS_WIN ? 'piper-husk.zip' : 'piper-husk.tar.gz');
+      await runStep('curl', ['-fsSL', '-o', archivePath, PIPER_RELEASE], 'Downloading Piper binary');
+      await runStep('tar', ['-xf', archivePath, '-C', HUSK_DATA], 'Extracting Piper');
+      try { fs.unlinkSync(archivePath); } catch (_) {}
+      if (!IS_WIN) { try { fs.chmodSync(PIPER_BIN, 0o755); } catch (_) {} }
     }
 
     const onnxPath = path.join(VOICES_DIR, voice + '.onnx');
@@ -4477,6 +4616,30 @@ ipcMain.handle('voice:speak', async (_e, { text, voice, rate = 1.0 }) => {
   // Stop any in-flight speech so we don't queue forever.
   if (speakProc) { try { speakProc.kill(); } catch (_) {} speakProc = null; }
 
+  if (IS_WIN) {
+    // Windows has no aplay/ffplay. Render to a temp WAV, then play it with the
+    // built-in .NET SoundPlayer via PowerShell and delete it afterward. cwd is
+    // PIPER_DIR so piper.exe finds its DLLs and espeak-ng-data.
+    const wavPath = path.join(os.tmpdir(), `husk-voice-${Date.now()}.wav`);
+    const winArgs = ['--model', onnxPath, '--output_file', wavPath];
+    if (rate && rate !== 1.0) winArgs.push('--length-scale', String(1.0 / rate));
+    const piper = spawn(PIPER_BIN, winArgs, { cwd: PIPER_DIR, stdio: ['pipe', 'ignore', 'ignore'] });
+    speakProc = piper;
+    try { piper.stdin.write(text); piper.stdin.end(); } catch (_) {}
+    piper.on('error', () => { if (speakProc === piper) speakProc = null; });
+    piper.on('close', (code) => {
+      if (speakProc === piper) speakProc = null;
+      if (code !== 0) { try { fs.unlinkSync(wavPath); } catch (_) {} return; }
+      const ps = spawn('powershell', ['-NoProfile', '-Command',
+        `(New-Object Media.SoundPlayer -ArgumentList '${wavPath}').PlaySync(); Remove-Item -LiteralPath '${wavPath}'`],
+        { stdio: 'ignore' });
+      speakProc = ps;
+      ps.on('close', () => { if (speakProc === ps) speakProc = null; });
+      ps.on('error', () => { if (speakProc === ps) speakProc = null; });
+    });
+    return { ok: true };
+  }
+
   const piperArgs = ['--model', onnxPath, '--output-raw'];
   if (rate && rate !== 1.0) piperArgs.push('--length-scale', String(1.0 / rate));
 
@@ -4517,13 +4680,15 @@ ipcMain.handle('voice:uninstall', async () => {
   }
 });
 
-// Listen on 127.0.0.1:8888 with a silent sink so external TTS POSTs do
-// not produce sound while Husk is running. If the port is already held
-// by another process we leave it alone and continue without the sink.
+// Listen on the loopback voice-notification ports with a silent sink so the
+// bundled PAI's TTS POSTs do not produce sound while Husk is running; Husk
+// drives its own Piper/say voice instead. 8888 is the legacy port; 31337 is
+// the port PAI v5 posts to. Ports already held by another process are skipped.
 // Released cleanly on quit.
-let nullVoiceServer = null;
+const VOICE_SINK_PORTS = [8888, 31337];
+let nullVoiceServers = [];
 function startNullVoiceServer() {
-  return new Promise((resolve) => {
+  const openSink = (port) => new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       if (req.method === 'POST') {
         req.resume();
@@ -4537,14 +4702,16 @@ function startNullVoiceServer() {
       }
     });
     server.on('error', () => resolve());
-    server.listen(8888, '127.0.0.1', () => {
-      nullVoiceServer = server;
+    server.listen(port, '127.0.0.1', () => {
+      nullVoiceServers.push(server);
       resolve();
     });
   });
+  return Promise.all(VOICE_SINK_PORTS.map(openSink));
 }
 function stopNullVoiceServer() {
-  if (nullVoiceServer) { try { nullVoiceServer.close(); } catch (_) {} nullVoiceServer = null; }
+  for (const server of nullVoiceServers) { try { server.close(); } catch (_) {} }
+  nullVoiceServers = [];
 }
 
 

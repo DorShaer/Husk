@@ -14,7 +14,7 @@ import { setTabState, readTabState, stripPrefix, setPhaseTab } from '../lib/tab-
 import { isValidCompletionTitle, gerundToPastTense, getWorkingFallback, trimToValidTitle } from '../lib/output-validators';
 import { getDAName } from '../lib/identity';
 
-import type { ParsedTranscript } from '../../PAI/Tools/TranscriptParser';
+import type { ParsedTranscript } from '../../PAI/TOOLS/TranscriptParser';
 
 /**
  * Extract tab title from voice line. Takes first sentence, caps at 4 words.
@@ -28,7 +28,6 @@ function extractTabTitle(voiceLine: string): string | null {
     .replace(/^🗣️\s*/, '')
     .replace(new RegExp(`^${getDAName()}:\\s*`, 'i'), '')
     .replace(/^(Done\.?\s*)/i, '')
-    .replace(/^(I've\s+|I\s+)/i, '')
     .trim();
 
   if (!cleaned || cleaned.length < 3) return null;
@@ -52,6 +51,26 @@ function extractTabTitle(voiceLine: string): string | null {
 }
 
 /**
+ * Convert imperative verb to gerund: "Fix" → "Fixing", "Set" → "Setting", "Create" → "Creating".
+ */
+function toGerund(verb: string): string {
+  const lower = verb.toLowerCase();
+  if (lower.endsWith('ing')) return verb; // already a gerund
+  if (lower.endsWith('ie')) return lower.slice(0, -2) + 'ying'; // "die" → "dying"
+  if (lower.endsWith('e') && !lower.endsWith('ee')) return lower.slice(0, -1) + 'ing';
+  if (lower.endsWith('y')) return lower + 'ing'; // "modify" → "modifying"
+  // Double final consonant for stressed CVC pattern (set→setting, run→running, stop→stopping, debug→debugging)
+  // but NOT for words ending in w, x, y and NOT when preceded by vowel digraph (clean→cleaning)
+  const match = lower.match(/([aeiou])([bcdfghjklmnpqrstvz])$/);
+  if (match && lower.length <= 6) {
+    const beforeVowel = lower.length >= 3 ? lower[lower.length - 3] : '';
+    const isDigraph = 'aeiou'.includes(beforeVowel); // "ea" in clean, "ou" in pour — don't double
+    if (!isDigraph) return lower + match[2] + 'ing';
+  }
+  return lower + 'ing';
+}
+
+/**
  * Extract a completion title from the response content.
  * Tries TASK line, then SUMMARY section as fallback when voice line is absent.
  * Returns null if no valid title can be extracted.
@@ -64,28 +83,13 @@ function extractFromResponseContent(responseText: string): string | null {
   if (taskMatch && taskMatch[1]) {
     const taskDesc = taskMatch[1].trim();
     const words = taskDesc.split(/\s+/);
-    // Convert imperative to past tense for first word
     if (words.length >= 2) {
-      const firstLower = words[0].toLowerCase();
-      const pastMap: Record<string, string> = {
-        fix: 'Fixed', update: 'Updated', add: 'Added', remove: 'Removed',
-        create: 'Created', build: 'Built', deploy: 'Deployed', debug: 'Debugged',
-        test: 'Tested', review: 'Reviewed', refactor: 'Refactored', implement: 'Implemented',
-        write: 'Wrote', find: 'Found', install: 'Installed', configure: 'Configured',
-        run: 'Ran', check: 'Checked', clean: 'Cleaned', merge: 'Merged',
-        change: 'Changed', improve: 'Improved', optimize: 'Optimized', analyze: 'Analyzed',
-        research: 'Researched', investigate: 'Investigated', design: 'Designed',
-        push: 'Pushed', pull: 'Pulled', commit: 'Committed', move: 'Moved',
-        rename: 'Renamed', delete: 'Deleted', start: 'Started', stop: 'Stopped',
-        restart: 'Restarted', set: 'Set', get: 'Got', make: 'Made', show: 'Showed',
-        list: 'Listed', search: 'Searched', explain: 'Explained', modify: 'Modified',
-      };
-      const past = pastMap[firstLower];
-      if (past) {
-        const rest = words.slice(1, 3).join(' ');
-        const candidate = `${past} ${rest}.`;
-        if (isValidCompletionTitle(candidate)) return candidate;
-      }
+      // Convert imperative verb to past tense via gerund: "Fix" → "Fixing" → "Fixed"
+      const verb = words[0];
+      const gerund = toGerund(verb);
+      const past = gerundToPastTense(gerund);
+      const titleWords = [past, ...words.slice(1, 4)];
+      return trimToValidTitle(titleWords, isValidCompletionTitle);
     }
   }
 

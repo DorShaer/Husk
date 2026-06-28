@@ -85,8 +85,13 @@ function notify(message, opts = {}) {
   const reveal = () => card.classList.remove('is-enter');
   requestAnimationFrame(() => requestAnimationFrame(reveal));
   setTimeout(reveal, 60);
-  // Cap the stack: drop the oldest beyond the limit.
-  while (stack.children.length > NOTIF_MAX) dismissNotif(stack.lastElementChild);
+  // Cap the stack: drop the oldest beyond the limit. dismissNotif animates the
+  // card out and removes it asynchronously, so it does not shrink
+  // stack.children synchronously. Iterate a snapshot of live (not-already-
+  // dismissing) cards, oldest first, so each pass acts on a distinct card and
+  // the loop always terminates.
+  const live = Array.from(stack.children).filter((c) => !c._dismissing);
+  for (let i = NOTIF_MAX; i < live.length; i++) dismissNotif(live[i]);
   // Auto-dismiss with hover-to-pause.
   const ttl = opts.ttl || NOTIF_TTL[kind] || NOTIF_TTL[''];
   const arm = () => { card._timer = setTimeout(() => dismissNotif(card), ttl); };
@@ -285,6 +290,9 @@ function activateTab(id) {
   renderTabStrip();
   fitNow();
   try { term.focus(); } catch (_) {}
+  // Refresh the status panel now so the Context Window and session figures
+  // reflect this tab immediately, instead of waiting up to 8s for the next poll.
+  try { refreshStatusline(); } catch (_) {}
 }
 
 // Wheel forwarding for full-screen agents. A TUI like copilot runs in the
@@ -363,6 +371,15 @@ function fitNow() {
 // Refit on resize. A trailing debounce coalesces the rapid resize burst
 // from a window drag into one fit so the terminal reflow stays smooth.
 window.addEventListener('resize', debounce(fitNow, 80));
+// Refit whenever the terminal container changes size, not only on a window
+// 'resize'. The container can reach its final height after the first paint
+// (fonts/layout settling) and on sidebar/status-panel toggles, so observing it
+// keeps the terminal sized to its container, including the initial render.
+try {
+  const _termFitObserver = new ResizeObserver(debounce(fitNow, 80));
+  const _termEl = $('#terminal');
+  if (_termEl) _termFitObserver.observe(_termEl);
+} catch (_) {}
 
 // Copy / paste affordances for the embedded terminal.
 //   - Right-click on the terminal opens a small Copy / Paste / Select all menu.
@@ -1005,7 +1022,7 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⏱</span><span>Usage</span></div>
       <div class="sp-section-body">
-        ${(ctx && ctx.ctxTokens > 0) ? `
+        ${(ctx && ctx.ctxWindow > 0) ? `
         <div class="sp-row"><span class="sp-muted">Context Window ${spInfo('Tokens currently held in the model context window versus the model capacity. This is what fills up during a conversation and triggers compaction.')}</span></div>
         <div class="sp-row sp-ctx-head" title="Context window used">
           <span class="sp-mono" style="color:${ctxPctColor(ctx.ctxPct)}; font-weight:600;">${fmtPct(ctx.ctxPct)}</span>
@@ -3852,7 +3869,19 @@ async function refreshRecentList() {
     section.hidden = true;
     return;
   }
-  const top = r.sessions.slice(0, RAIL_RECENT_MAX);
+  // Scope Recent to the active chat's project. The full Sessions page still
+  // lists every project; the rail should only surface this project's chats, so
+  // a session from another cwd (e.g. a "Hi" chat in $HOME) never shows here.
+  const norm = (p) => (p || '').replace(/\/+$/, '');
+  const here = norm(r.currentCwd);
+  const scoped = here
+    ? r.sessions.filter((s) => norm(s.originalCwd || s.projectPath || s.cwd) === here)
+    : r.sessions;
+  if (!scoped.length) {
+    section.hidden = true;
+    return;
+  }
+  const top = scoped.slice(0, RAIL_RECENT_MAX);
   section.hidden = false;
   // eslint-disable-next-line no-unsanitized/property -- Recent session fields are escaped via escapeHtml/escapeAttr.
   wrap.innerHTML = top.map((s) => `
@@ -4754,14 +4783,16 @@ window.addEventListener('click', (e) => {
   closeAgentMenu();
 });
 $('#btn-new-session').addEventListener('click', () => openNewChatTab());
-function reportZoom(lvl) {
-  // Show percent relative to Husk's base scale, so the default reads as 100%
-  // even though it renders at ~0.91 actual zoom.
+// The zoom level is applied immediately in the keydown handler; the toast and
+// the terminal refit are debounced so a rapid burst settles to one fit (and
+// one pty.resize / SIGWINCH) instead of one per keypress.
+const settleZoom = debounce((lvl) => {
   const base = (window.husk.ui && typeof window.husk.ui.zoomBase === 'number') ? window.husk.ui.zoomBase : 0;
   const pct = Math.round(Math.pow(1.2, lvl - base) * 100);
   toast(`Zoom: ${pct}%`, 'success');
-  setTimeout(fitNow, 30);
-}
+  fitNow();
+}, 120);
+function reportZoom(lvl) { settleZoom(lvl); }
 // Zoom controls live in the View menu (Ctrl/Cmd +/-/0). The Electron menu
 // handles them via webContents zoom. We keep the renderer-side keyboard
 // shortcuts as a fallback for when the menu is hidden.
@@ -4904,6 +4935,18 @@ $('#palette-input').addEventListener('keydown', (e) => {
 });
 $('#palette').addEventListener('click', (e) => { if (e.target.id === 'palette') closePalette(); });
 $('#btn-palette').addEventListener('click', openPalette);
+// On the chat page, if focus is on the page body (nothing focused) and a
+// printable/edit key is pressed, focus the active terminal first so the
+// keystroke goes to it. Capture phase runs before the character is committed,
+// so the keystroke reaches the terminal.
+document.addEventListener('keydown', (e) => {
+  if (currentPage !== 'chat' || !term) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target !== document.body) return;
+  if (e.key.length === 1 || e.key === 'Enter' || e.key === 'Backspace') {
+    try { term.focus(); } catch (_) {}
+  }
+}, true);
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)

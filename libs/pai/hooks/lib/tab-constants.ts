@@ -30,13 +30,13 @@ export type TabState = keyof typeof TAB_COLORS;
  * optimized for readability with light text on Kitty tab bar.
  */
 export const PHASE_TAB_CONFIG: Record<string, { symbol: string; inactiveBg: string; label: string; gerund: string }> = {
-  OBSERVE:  { symbol: '👁️', inactiveBg: '#0C2D48', label: 'observe',  gerund: 'Observing the user request.' },
-  THINK:    { symbol: '🧠', inactiveBg: '#2D1B69', label: 'think',    gerund: 'Analyzing the problem space.' },
-  PLAN:     { symbol: '📋', inactiveBg: '#1E1B4B', label: 'plan',     gerund: 'Planning the execution approach.' },
-  BUILD:    { symbol: '🔨', inactiveBg: '#78350F', label: 'build',    gerund: 'Building the solution artifacts.' },
-  EXECUTE:  { symbol: '⚡', inactiveBg: '#713F12', label: 'execute',  gerund: 'Executing the planned work.' },
-  VERIFY:   { symbol: '✅', inactiveBg: '#14532D', label: 'verify',   gerund: 'Verifying ideal state criteria.' },
-  LEARN:    { symbol: '📚', inactiveBg: '#134E4A', label: 'learn',    gerund: 'Recording the session learnings.' },
+  OBSERVE:  { symbol: '👁️', inactiveBg: '#0C2D48', label: 'observe',  gerund: 'Observing.' },
+  THINK:    { symbol: '🧠', inactiveBg: '#2D1B69', label: 'think',    gerund: 'Thinking.' },
+  PLAN:     { symbol: '📋', inactiveBg: '#1E1B4B', label: 'plan',     gerund: 'Planning.' },
+  BUILD:    { symbol: '🔨', inactiveBg: '#78350F', label: 'build',    gerund: 'Building.' },
+  EXECUTE:  { symbol: '⚡', inactiveBg: '#713F12', label: 'execute',  gerund: 'Executing.' },
+  VERIFY:   { symbol: '✅', inactiveBg: '#14532D', label: 'verify',   gerund: 'Verifying.' },
+  LEARN:    { symbol: '📚', inactiveBg: '#134E4A', label: 'learn',    gerund: 'Learning.' },
   COMPLETE: { symbol: '✅', inactiveBg: '#022800', label: 'complete', gerund: 'Complete.' },
   IDLE:     { symbol: '',   inactiveBg: 'none',    label: 'idle',     gerund: '' },
 };
