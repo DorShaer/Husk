@@ -2283,7 +2283,26 @@ function safeCount(dir, predicate) {
 function readJSON(p, fb) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (_) { return fb; } }
 function countLines(p) { try { return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).length; } catch (_) { return 0; } }
 
+// Resolve the active agent CLI's version by running `<cmd> --version`. Uses the
+// agent spawn env so the command resolves against the user's real PATH (a macOS
+// GUI app starts with a minimal PATH that augmentUserPathAsync fills in shortly
+// after launch). Only a successful lookup is cached, so an early poll that runs
+// before the PATH is ready retries on the next poll instead of sticking.
+const _agentVersionCache = {};
+function getAgentVersion(cmd) {
+  if (_agentVersionCache[cmd]) return _agentVersionCache[cmd];
+  let v = '';
+  try {
+    const out = require('child_process').execFileSync(cmd, ['--version'], { timeout: 4000, encoding: 'utf8', env: buildAgentEnv() });
+    const m = String(out).match(/\d+\.\d+(?:\.\d+)?/);
+    v = m ? m[0] : String(out).trim().split('\n')[0].slice(0, 40);
+  } catch (_) { v = ''; }
+  if (v) _agentVersionCache[cmd] = v;
+  return v;
+}
+
 ipcMain.handle('stats:get', () => {
+  const agentCmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   const skills = safeCount(skillsDir, (d) => d.isDirectory());
   const workflowsDir = path.join(CLAUDE_DIR, 'workflows');
@@ -2340,6 +2359,7 @@ ipcMain.handle('stats:get', () => {
 
   return {
     skills, workflows, hooks, sessions, ratings, research,
+    agent: agentCmd, agentVersion: getAgentVersion(agentCmd),
     huskVer: app.getVersion(),
     claudeDir: CLAUDE_DIR, skillsDir, hooksDir,
     memoryDir: path.join(CLAUDE_DIR, 'MEMORY'),
@@ -2673,9 +2693,17 @@ async function executeWorkflow(event, workflow, run) {
         .map((n) => n.name);
       if (targets.length >= 2) wfSystem += wfRouteInstruction(targets);
     }
-    const args = useStreamJson
-      ? ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose']
-      : ['-p', prompt, '--append-system-prompt', wfSystem];
+    // Only claude takes --append-system-prompt and stream-json output. Other
+    // CLIs reject those flags, so fold the workflow directive into the prompt
+    // and use each tool's own non-interactive form (codex takes a positional
+    // prompt via its exec subcommand).
+    let args;
+    if (cmd === 'claude') {
+      args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
+    } else {
+      const merged = `${wfSystem}\n\n${prompt}`;
+      args = cmd === 'codex' ? ['exec', merged] : ['-p', merged];
+    }
 
     const nid = node.id;
     const activity = (kind, text) => {
