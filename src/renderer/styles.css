@@ -265,7 +265,10 @@ body {
 .update-pop {
   position: absolute; top: 60px; right: 18px; z-index: 50;
   width: 320px;
-  background: var(--bg-2);
+  /* The popover floats over the topbar with no scrim behind it, so it needs an
+     opaque surface. The bg-* tokens are translucent overlays meant to sit on
+     the solid base, so composite the overlay over --bg to keep it readable. */
+  background: linear-gradient(var(--bg-2), var(--bg-2)), var(--bg);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--elev-3);
