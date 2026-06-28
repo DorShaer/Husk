@@ -146,7 +146,7 @@ test('isInsidePluginsRoot confines to the plugins dir', () => {
 
 // ─── main.js wiring assertions (same convention as the workflow spawn-gate test) ──
 
-test('plugins editor IPC refuses symlinks via lstat and gates exec behind the allowlist', () => {
+test('plugins editor IPC refuses symlinks via O_NOFOLLOW and gates exec behind the allowlist', () => {
   const src = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
   const block = src.slice(src.indexOf("ipcMain.handle('plugins:run'"), src.indexOf("ipcMain.handle('plugins:openFolder'"));
   assert.ok(block.includes('isAllowedAgentCommand'), 'plugins:run must gate the spawn');
@@ -154,8 +154,10 @@ test('plugins editor IPC refuses symlinks via lstat and gates exec behind the al
   assert.ok(!block.includes('shell: true'), 'plugins:run must never use a shell');
   const readBlock = src.slice(src.indexOf("ipcMain.handle('plugins:readFile'"), src.indexOf("ipcMain.handle('plugins:writeFile'"));
   const writeBlock = src.slice(src.indexOf("ipcMain.handle('plugins:writeFile'"), src.indexOf("ipcMain.handle('plugins:openFolder'"));
-  assert.ok(readBlock.includes('lstatSync'), 'readFile must lstat, not stat');
-  assert.ok(writeBlock.includes('lstatSync'), 'writeFile must lstat, not stat');
+  assert.ok(readBlock.includes('O_NOFOLLOW'), 'readFile must open with O_NOFOLLOW to refuse symlinks');
+  assert.ok(writeBlock.includes('O_NOFOLLOW'), 'writeFile must open with O_NOFOLLOW to refuse symlinks');
+  assert.ok(readBlock.includes('fstatSync') && readBlock.includes('isFile'), 'readFile must verify a regular file on the open descriptor');
+  assert.ok(writeBlock.includes('fstatSync') && writeBlock.includes('isFile'), 'writeFile must verify a regular file on the open descriptor');
   assert.ok(readBlock.includes('resolveInside'), 'readFile must confine the path');
   assert.ok(writeBlock.includes('resolveInside'), 'writeFile must confine the path');
 });
