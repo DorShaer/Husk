@@ -2725,7 +2725,13 @@ async function executeWorkflow(event, workflow, run) {
     let lineBuf = '';
     let sawAnyEvent = false;
 
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
+    // Run the step in the user's working directory, not Husk's process cwd.
+    // A packaged app launches from a read-only bundle dir (notably the macOS
+    // .app), which is not a writable or trusted location: codex then refuses
+    // with a git-repo trust error and other CLIs have nowhere sensible to
+    // work. Fall back to the configured tree root, then the home directory.
+    const wfCwd = activePtyCwd || (config && config.treeRoot) || HOME;
+    const child = spawn(cmd, args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
     run.currentChild = child;
     activity('status', 'Starting the CLI agent...');
 
