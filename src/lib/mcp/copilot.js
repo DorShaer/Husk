@@ -74,14 +74,27 @@ function update(id, payload = {}) {
   if (!inEnabled && !inDisabled) {
     return { ok: false, error: `MCP server "${id}" not found` };
   }
+  // Optional rename. A JSON object key can't be mutated in place, so a
+  // rename means writing the entry under the new key and dropping the old
+  // one. Reject names that collide with an existing server in either bucket.
+  const newId = payload.newId && payload.newId !== id ? payload.newId : null;
+  if (newId) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(newId)) return { ok: false, error: 'Invalid server name' };
+    if ((cfg.mcpServers && cfg.mcpServers[newId]) || (cfg._huskMcpDisabled && cfg._huskMcpDisabled[newId])) {
+      return { ok: false, error: `MCP server "${newId}" already exists` };
+    }
+  }
   const built = buildServerEntry(payload);
   if (built.error) return { ok: false, error: built.error };
+  const targetId = newId || id;
   if (inEnabled) {
     cfg.mcpServers = cfg.mcpServers || {};
-    cfg.mcpServers[id] = built.entry;
+    if (newId) delete cfg.mcpServers[id];
+    cfg.mcpServers[targetId] = built.entry;
   } else {
     cfg._huskMcpDisabled = cfg._huskMcpDisabled || {};
-    cfg._huskMcpDisabled[id] = built.entry;
+    if (newId) delete cfg._huskMcpDisabled[id];
+    cfg._huskMcpDisabled[targetId] = built.entry;
   }
   if (!writeConfig(cfg)) return { ok: false, error: 'Could not write ~/.copilot/mcp-config.json' };
   return { ok: true };
