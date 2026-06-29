@@ -89,7 +89,15 @@ function planInjection({ agentCommand, agentName, paiEnabled, recap } = {}) {
   const key = agentKey(agentCommand);
   if (key === 'claude') {
     const prompt = buildHuskPrompt({ agentName, paiEnabled: paiEnabled !== false, recap });
-    return { method: 'system-prompt-arg', args: ['--append-system-prompt', prompt] };
+    // Silence the agent's own inline statusline inside Husk; Husk's right-side
+    // STATUS panel is the visual statusline. Delivered as an inline --settings
+    // JSON string, which claude MERGES over the user's settings.json (so every
+    // other user setting still applies) and, being a string rather than a temp
+    // file, is never written back to, so folder-trust in ~/.claude.json is left
+    // intact. statusLine cannot be null per the schema, so a no-op command that
+    // prints nothing blanks it.
+    const settingsOverride = JSON.stringify({ statusLine: { type: 'command', command: '/bin/true' } });
+    return { method: 'system-prompt-arg', args: ['--settings', settingsOverride, '--append-system-prompt', prompt] };
   }
   const body = buildGenericDirectives({ agentName, recap });
   if (key === 'copilot') {

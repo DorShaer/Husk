@@ -15,7 +15,7 @@
      var(--text-X). The only thing the rest of the file does not
      automatically inherit is the backdrop-blur treatment, which
      lives in the GLASS OVERRIDES block at the end of this file. */
-  --bg:   #060814;
+  --bg:   #0c0a09;
   --bg-1: rgba(255, 255, 255, 0.035);
   --bg-2: rgba(255, 255, 255, 0.06);
   --bg-3: rgba(255, 255, 255, 0.10);
@@ -29,16 +29,16 @@
   --rose:    #ff6b7e;
   --emerald: #5bd49a;
   --amber:   #f6b73c;
-  --notif-bg: #12162e;
+  --notif-bg: #1a1411;
   --shadow:      0 30px 60px -30px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06);
   --shadow-soft: 0 1px 2px rgba(0,0,0,0.4);
   /* Ambient gradient lighting under the chrome. Four radial pools
      of color in the corners produce depth without painted surfaces. */
   --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(122, 166, 255, 0.18), transparent 65%),
-    radial-gradient(700px circle at 90% 14%, rgba(177, 139, 255, 0.16), transparent 60%),
-    radial-gradient(800px circle at 70% 95%, rgba(255, 120, 71, 0.14), transparent 65%),
-    radial-gradient(1200px circle at 50% 50%, rgba(77, 214, 193, 0.04), transparent 70%);
+    radial-gradient(900px circle at 12% 0%, rgba(255, 140, 84, 0.10), transparent 65%),
+    radial-gradient(700px circle at 90% 14%, rgba(255, 96, 60, 0.08), transparent 60%),
+    radial-gradient(800px circle at 70% 95%, rgba(255, 120, 71, 0.10), transparent 65%),
+    radial-gradient(1200px circle at 50% 50%, rgba(246, 183, 60, 0.03), transparent 70%);
   /* Inner-top hairline highlight. Used on every elevated surface so they read
      as crafted material with a tiny lip of light at the top, not painted-on
      rectangles. Single source for the entire material system. */
@@ -185,7 +185,13 @@ textarea:focus-visible {
 }
 
 body {
-  background: var(--bg) var(--bg-radial) no-repeat;
+  /* Longhands, not the `background` shorthand: --bg-radial is multi-layer,
+     and a background-color is only legal in the final layer, so the
+     shorthand form silently dropped (body rendered transparent and the
+     Electron window backgroundColor showed through instead). */
+  background-color: var(--bg);
+  background-image: var(--bg-radial);
+  background-repeat: no-repeat;
   background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-body);
@@ -1920,7 +1926,25 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 .chat-tab:hover .chat-tab-close { opacity: 1; }
 .chat-tab-edit:hover { background: var(--bg-3); color: var(--text); }
 .chat-tab-close:hover { background: var(--bg-3); color: var(--text); }
-#terminal { flex: 1; min-height: 0; position: relative; }
+/* The conversation surface. Framed as an elevated card (rounded, bordered,
+   clipped) so it reads as a crafted panel floating on the ambient background
+   instead of a raw edge-to-edge terminal. Background matches the xterm theme
+   bg exactly so the corner clip stays seamless. Focus-within lifts the border
+   to the accent so it's clear where keystrokes land. */
+#terminal {
+  flex: 1; min-height: 0; position: relative;
+  background: #0c0a09;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--elev-2);
+  transition: border-color var(--motion-base) var(--ease), box-shadow var(--motion-base) var(--ease);
+}
+[data-theme="light"] #terminal { background: #fff; }
+#terminal:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2));
+  box-shadow: var(--elev-2), 0 0 0 3px var(--accent-glow);
+}
 /* One pane per tab, stacked; only the active pane is shown. Background panes
    keep their xterm buffer (scrollback) alive while hidden. */
 .term-pane { position: absolute; inset: 0; display: none; }
@@ -3650,6 +3674,10 @@ input[type="checkbox"]:disabled {
   padding: 10px 12px; font-size: 13px; font-family: inherit;
 }
 .mcp-input-group input:focus { outline: none; border-color: var(--accent); }
+/* Validation ring on a field the user must fix before saving. Pairs with
+   the inline #mcp-form-status banner that explains the reason. */
+#mcp-install .input-error,
+#mcp-install .input-error:focus { border-color: rgba(255, 92, 122, 0.7); }
 .mcp-input-group .mig-hint { font-size: 11px; color: var(--text-3); }
 .mcp-input-group .mig-row { display: flex; gap: 6px; align-items: center; }
 .mcp-input-group .mig-row input { flex: 1; }
@@ -3719,10 +3747,11 @@ input[type="checkbox"]:disabled {
   background: var(--bg);
   box-shadow: var(--hl-top);
   min-height: 0;
-  /* Drop the panel so its STATUS header sits a little below the very top,
-     roughly aligned with the chat area. The offset drives both this padding
-     and the toggle's top, so they move together. */
-  --sp-top-offset: 60px;
+  /* Keep the STATUS header near the top so every section below it stays
+     visible. The offset drives both this padding and the toggle's top, so
+     they move together; a small value gives breathing room without clipping
+     the lower sections (USAGE, MEMORY, LEARNING). */
+  --sp-top-offset: 14px;
   padding-top: var(--sp-top-offset, 64px);
 }
 .sp-toggle {
@@ -4037,6 +4066,192 @@ input[type="checkbox"]:disabled {
 
 .fr-actions { display: flex; gap: 10px; margin-top: 14px; }
 .fr-actions .btn-primary { flex: 1; }
+
+/* ─── First-run onboarding ──────────────────────────────────────────────────
+   A full-window takeover shown once on first launch (re-openable from
+   Preferences). Same visual language as the rest of Husk: it paints the body
+   background + ambient radial so it reads as the app, not a stray dialog.
+   Three steps (welcome / pick CLI / preferences) navigated with the top
+   Back/Skip nav and per-step primary CTA. */
+.onboarding {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; flex-direction: column;
+  background-color: var(--bg);
+  background-image: var(--bg-radial);
+  background-repeat: no-repeat;
+  animation: ob-fade 0.28s var(--ease-out);
+}
+@keyframes ob-fade { from { opacity: 0; } to { opacity: 1; } }
+.ob-topbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 52px; padding: 0 16px;
+}
+.ob-nav {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--text-3); font-size: 13px; font-weight: 500;
+  padding: 6px 8px; border-radius: var(--radius-md);
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.ob-nav:hover { color: var(--text); background: var(--bg-2); }
+.ob-nav-skip { margin-left: auto; }
+.ob-nav-arrow { font-size: 14px; line-height: 1; }
+.ob-stage {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px 24px 32px;
+}
+.ob-step {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  width: 100%; max-width: 560px; margin: auto;
+  animation: ob-rise 0.34s var(--ease-out);
+}
+@keyframes ob-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ob-logo {
+  width: 72px; height: 72px; display: block;
+  user-select: none; -webkit-user-drag: none;
+  filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4));
+}
+.ob-logo-sm { width: 48px; height: 48px; margin-bottom: 4px; filter: none; }
+.ob-wordmark {
+  margin-top: 12px;
+  font-family: var(--font-display);
+  font-size: 18px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--text-2);
+}
+.ob-title {
+  font-family: var(--font-display);
+  font-weight: 600; font-size: 42px; line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 22px 0 0;
+}
+.ob-title-sm { font-size: 30px; margin-top: 14px; }
+.ob-sub {
+  color: var(--text-2); font-size: 15px; line-height: 1.55;
+  max-width: 440px; margin: 14px 0 0;
+}
+.ob-cta {
+  margin-top: 32px;
+  height: 44px !important; min-width: 200px;
+  padding: 0 22px !important; font-size: 14px !important;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.ob-version { margin-top: 18px; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Left-aligned card that holds the agent list / preference rows on steps 2-3. */
+.ob-panel {
+  width: 100%; max-width: 520px; margin: 28px auto 0;
+  text-align: left;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  box-shadow: var(--elev-3);
+  padding: 18px;
+}
+/* CLI picker: one calm list, equal-height rows that are transparent until
+   hovered/selected (no per-row grey boxes), a single accent for the chosen
+   row, monochrome status, and uniform controls. */
+.ob-cli-list { display: flex; flex-direction: column; gap: 4px; }
+.ob-cli {
+  display: flex; align-items: center; gap: 14px;
+  min-height: 58px; padding: 10px 12px;
+  border: 1px solid transparent; border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.ob-cli:hover { background: var(--bg-2); }
+.ob-cli:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.ob-cli-missing, .ob-cli-missing:hover { cursor: default; background: transparent; }
+.ob-cli-main { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.ob-cli-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.ob-cli-cmd { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: var(--text-3); }
+.ob-cli-end { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.ob-cli-meta {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.ob-cli-meta-off { color: var(--text-3); opacity: 0.7; }
+/* Native radio hidden; the ring is the visible affordance. */
+.ob-cli input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.ob-cli-radio {
+  position: relative; flex: 0 0 auto;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--line-3);
+  transition: border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.ob-cli:has(input:checked) .ob-cli-radio { border-color: var(--accent); background: var(--accent); }
+.ob-cli:has(input:checked) .ob-cli-radio::after {
+  content: ''; position: absolute; inset: 4px; border-radius: 50%; background: #fff;
+}
+.ob-cli-btn {
+  height: 30px; padding: 0 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line-2); border-radius: var(--radius-md);
+  background: var(--bg-3); color: var(--text-2);
+  font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.ob-cli-btn:hover { color: var(--text); border-color: var(--line-3); background: var(--bg-4); }
+.ob-cli-btn:disabled { opacity: 0.5; cursor: default; }
+.ob-field { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ob-field-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.ob-field input[type="text"] {
+  width: 100%; padding: 9px 11px; font-size: 13px;
+  background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line-2); border-radius: var(--radius-md);
+  font-family: 'JetBrains Mono', ui-monospace, monospace; outline: 0;
+  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+.ob-field input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.ob-field-hint { margin-top: 6px; color: var(--text-3); font-size: 12px; }
+
+/* Preference rows on step 3, mirroring the Preferences page row anatomy. */
+.ob-prefs { display: flex; flex-direction: column; }
+.ob-pref-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 0;
+}
+.ob-pref-row + .ob-pref-row { border-top: 1px solid var(--line); }
+.ob-pref-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ob-pref-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.ob-pref-desc { font-size: 12px; color: var(--text-3); }
+/* The rail toggle inherits the global iOS switch styling (input[type=checkbox]);
+   no size override here, or the track shrinks while the knob does not. */
+.ob-seg {
+  display: inline-flex; flex: 0 0 auto;
+  background: var(--bg-3); border: 1px solid var(--line-2);
+  border-radius: var(--radius-md); padding: 2px; gap: 2px;
+}
+.ob-seg-btn {
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--text); font-size: 12px; font-weight: 600;
+  padding: 5px 14px; border-radius: 4px;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.ob-seg-btn:not(.active):hover { background: var(--bg-2); }
+.ob-seg-btn:hover { color: var(--text); }
+.ob-seg-btn.active { color: #fff; background: var(--accent); }
+.ob-prefs .accent-picker { gap: 10px; flex: 0 0 auto; }
+
+.ob-dots {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding-bottom: 28px;
+}
+.ob-dot {
+  width: 7px; height: 7px; border-radius: var(--radius-pill);
+  background: var(--line-3);
+  transition: width var(--motion-base) var(--ease), background var(--motion-base) var(--ease);
+}
+.ob-dot.active { width: 22px; background: var(--accent); }
 .modal-card textarea {
   width: 100%; min-height: 160px; padding: 12px 14px;
   background: var(--bg-3); color: var(--text);
@@ -4175,14 +4390,16 @@ input[type="checkbox"]:disabled {
 
 .palette {
   position: fixed; inset: 0; z-index: 220;
-  background: rgba(20,17,15,0.7);
+  background: rgba(0,0,0,0.62);
   backdrop-filter: blur(6px);
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 14vh;
 }
 .palette-card {
   width: 600px;
-  background: var(--bg-2);
+  /* Opaque warm surface (not a glass token): the palette floats over the
+     terminal, so a translucent card would let content bleed through. */
+  background: #17130f;
   border: 1px solid var(--line-2);
   border-radius: 14px;
   box-shadow: var(--elev-4);
@@ -4721,15 +4938,15 @@ kbd {
    sits underneath bleeds through and the surface stops reading as
    a discrete layer. Lesson learned the hard way.
 
-   Color choice: #0e1126 is slightly lighter than the canvas (#060814)
-   so popovers feel lifted, not embedded. Border at 0.18 alpha
-   on white defines the edge against the radial gradient. */
+   Color choice: #17130f is a warm dark, slightly lifted above the canvas
+   (#0c0a09) so popovers feel raised, not embedded, and stay in the warm
+   family with the orange accent rather than reading cool. Border at 0.16
+   alpha on white defines the edge against the radial gradient. */
 [data-theme="dark"] .rail-agent-menu,
 [data-theme="dark"] #rail-agent-menu,
 [data-theme="dark"] .ctx-menu,
-[data-theme="dark"] #terminal-ctx-menu,
-[data-theme="dark"] #palette {
-  background: #0e1126;
+[data-theme="dark"] #terminal-ctx-menu {
+  background: #17130f;
   border: 1px solid rgba(255, 255, 255, 0.16);
   box-shadow:
     0 30px 60px -20px rgba(0, 0, 0, 0.85),
@@ -4760,17 +4977,17 @@ kbd {
    floating chrome surfaces use the same solid base for the same
    reason: they overlay the chat. */
 [data-theme="dark"] .topbar-project {
-  background: #0e1126;
+  background: #17130f;
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 [data-theme="dark"] .topbar-project:hover {
-  background: #141838;
+  background: #221b14;
   border-color: rgba(255, 255, 255, 0.20);
 }
 
 /* Rail tooltip in collapsed mode: also floats, also needs solid bg. */
 [data-theme="dark"] body[data-rail="collapsed"] .rail-item::after {
-  background: #0e1126 !important;
+  background: #17130f !important;
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
   box-shadow: 0 16px 32px -16px rgba(0, 0, 0, 0.7);
   z-index: 200;
