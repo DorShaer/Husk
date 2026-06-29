@@ -1157,6 +1157,11 @@ function readActiveSessionStats() {
     } else if (files[0]) {
       latest = files[0].p;
     }
+    // If nothing resolved above (a non-claude tab, or a tab whose own file
+    // predates its spawn), fall back to the newest transcript in the project
+    // dir so the readout reflects the latest known session instead of going
+    // blank.
+    if (!latest && files[0]) latest = files[0].p;
     // Cap the read. A session JSONL grows for the whole conversation and
     // can reach many megabytes; reading and parsing the entire file on
     // every status poll stalls the main thread. Read at most the last
