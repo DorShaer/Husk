@@ -14,29 +14,92 @@
   </head>
   <body data-theme="dark" data-accent="orange" data-page="chat" data-rail="expanded">
 
-    <!-- First-run wizard -->
-    <div id="first-run" class="modal" hidden>
-      <div class="modal-card modal-card-wide">
-        <img class="modal-icon-img" src="assets/husk-logo.png" alt="Husk" />
-        <div class="modal-title">Welcome to Husk</div>
-        <div class="modal-sub">Pick the AI agent you want to use. We'll detect what's already on your machine and install whatever's missing.</div>
+    <!-- First-run onboarding -->
+    <div id="onboarding" class="onboarding" hidden>
+      <header class="ob-topbar">
+        <button class="ob-nav" id="ob-back" type="button" hidden>
+          <span class="ob-nav-arrow">←</span> Back
+        </button>
+        <button class="ob-nav ob-nav-skip" id="ob-skip" type="button">
+          Skip <span class="ob-nav-arrow">→</span>
+        </button>
+      </header>
 
-        <div class="fr-agents" id="fr-agents">
-          <div class="fr-loading">Scanning your system…</div>
-        </div>
+      <div class="ob-stage">
+        <!-- Step 1: Welcome -->
+        <section class="ob-step" data-step="welcome">
+          <img class="ob-logo" src="assets/husk-logo.png" alt="Husk" />
+          <div class="ob-wordmark">Husk</div>
+          <h1 class="ob-title">Your terminal,<br />now an AI workspace.</h1>
+          <p class="ob-sub">A clean, fast desktop home for your favorite AI coding CLI. Let's get you set up.</p>
+          <button class="btn-primary ob-cta" id="ob-start" type="button">Get Started <span class="ob-nav-arrow">→</span></button>
+          <div class="ob-version" id="ob-version"></div>
+        </section>
 
-        <div class="fr-log" id="fr-log" hidden></div>
+        <!-- Step 2: AI CLI -->
+        <section class="ob-step" data-step="cli" hidden>
+          <img class="ob-logo ob-logo-sm" src="assets/husk-logo.png" alt="" aria-hidden="true" />
+          <h1 class="ob-title ob-title-sm">Your AI CLI</h1>
+          <p class="ob-sub">Husk scanned your machine. Pick the assistant to launch by default, and install anything that's missing right here.</p>
+          <div class="ob-panel">
+            <div class="ob-cli-list" id="ob-agents">
+              <div class="fr-loading">Scanning your system…</div>
+            </div>
+            <div class="fr-log" id="ob-log" hidden></div>
+            <div class="ob-field">
+              <label class="ob-field-label" for="ob-name">What should we call it?</label>
+              <input type="text" id="ob-name" value="Husk" autocomplete="off" spellcheck="false" maxlength="40" />
+              <div class="ob-field-hint">The name the agent uses for itself. Change it later in Preferences.</div>
+            </div>
+          </div>
+          <button class="btn-primary ob-cta" id="ob-cli-next" type="button" disabled>Continue <span class="ob-nav-arrow">→</span></button>
+        </section>
 
-        <div class="modal-section">
-          <div class="modal-label">What should we call the agent?</div>
-          <input type="text" id="fr-name" value="Husk" autocomplete="off" spellcheck="false" maxlength="40" />
-          <div class="modal-hint">The name the agent uses for itself when you ask. Pick anything; you can change it later in Preferences.</div>
-        </div>
+        <!-- Step 3: Preferences -->
+        <section class="ob-step" data-step="prefs" hidden>
+          <img class="ob-logo ob-logo-sm" src="assets/husk-logo.png" alt="" aria-hidden="true" />
+          <h1 class="ob-title ob-title-sm">Make it yours</h1>
+          <p class="ob-sub">Set the look. You can change all of this later in Preferences.</p>
+          <div class="ob-panel ob-prefs">
+            <div class="ob-pref-row">
+              <span class="ob-pref-text">
+                <span class="ob-pref-label">Theme</span>
+                <span class="ob-pref-desc">Light or dark interface.</span>
+              </span>
+              <div class="ob-seg" id="ob-theme">
+                <button type="button" class="ob-seg-btn" data-mode="dark">Dark</button>
+                <button type="button" class="ob-seg-btn" data-mode="light">Light</button>
+              </div>
+            </div>
+            <div class="ob-pref-row">
+              <span class="ob-pref-text">
+                <span class="ob-pref-label">Accent color</span>
+                <span class="ob-pref-desc">Highlight color across the interface.</span>
+              </span>
+              <div class="accent-picker" id="ob-accent">
+                <div class="accent-swatch" data-c="orange" title="Orange"></div>
+                <div class="accent-swatch" data-c="cyan" title="Cyan"></div>
+                <div class="accent-swatch" data-c="indigo" title="Indigo"></div>
+                <div class="accent-swatch" data-c="emerald" title="Emerald"></div>
+                <div class="accent-swatch" data-c="rose" title="Rose"></div>
+              </div>
+            </div>
+            <label class="ob-pref-row">
+              <span class="ob-pref-text">
+                <span class="ob-pref-label">Sidebar expanded by default</span>
+                <span class="ob-pref-desc">Start each launch with the left rail open.</span>
+              </span>
+              <input type="checkbox" id="ob-rail" checked />
+            </label>
+          </div>
+          <button class="btn-primary ob-cta" id="ob-finish" type="button">Continue to Husk <span class="ob-nav-arrow">→</span></button>
+        </section>
+      </div>
 
-        <div class="fr-actions">
-          <button id="fr-skip" class="ghost-btn" type="button">I'll do this later</button>
-          <button id="fr-go" class="btn-primary" disabled>Continue</button>
-        </div>
+      <div class="ob-dots" id="ob-dots" aria-hidden="true">
+        <span class="ob-dot"></span>
+        <span class="ob-dot"></span>
+        <span class="ob-dot"></span>
       </div>
     </div>
 
@@ -71,9 +134,6 @@
 
     <!-- Topbar -->
     <header id="topbar">
-      <div class="brand">
-        <img class="logo-img" src="assets/husk-logo.png" alt="Husk" />
-      </div>
       <button class="topbar-project" id="topbar-project" title="Active project (click to switch)" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
         <span class="tp-name" id="topbar-project-name"></span>
@@ -1063,6 +1123,13 @@
                 </span>
                 <input type="checkbox" id="pref-rail" />
               </label>
+              <div class="pref-row">
+                <span class="pref-row-text">
+                  <span class="pref-label">Welcome tour</span>
+                  <span class="pref-desc">Replay the first-run setup screens.</span>
+                </span>
+                <button class="ghost-btn" id="pref-replay-onboarding" type="button">Replay</button>
+              </div>
             </section>
 
             <section class="pref-card">
