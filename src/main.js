@@ -604,7 +604,7 @@ function createWindow() {
     // a small window instead of clipping its chrome.
     minWidth: 720,
     minHeight: 520,
-    backgroundColor: '#0b0d12',
+    backgroundColor: '#0c0a09',
     title: 'Husk',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
@@ -803,11 +803,12 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // copilot needs a project instructions file, written below once cwd is
   // resolved. See src/lib/agent-inject.js.
   //
-  // Note for claude: Husk deliberately does not inject --settings
-  // <ephemeral-temp-file>. claude treats that temp file as the canonical
-  // settings and writes folder-trust changes into it; regenerating the temp
-  // file from the user's real settings.json on the next launch would blow the
-  // trust away.
+  // Note for claude: the statusline override goes through --settings as an
+  // INLINE JSON string, not a temp file. claude merges it over the user's
+  // settings.json and, because there is no file, never writes folder-trust
+  // back into it (trust lives in ~/.claude.json). An earlier temp-file
+  // approach was dropped because claude wrote trust into that file and Husk
+  // regenerated it each launch, wiping the trust.
   const isWin32 = process.platform === 'win32';
   let injectionPlan = { method: 'none' };
   if (!isWin32 && !agentArgs.includes('--settings')) {
@@ -2224,8 +2225,11 @@ ipcMain.handle('mcp:add', (_e, payload = {}) => activeMcpAdapter().add(payload))
 ipcMain.handle('mcp:update', (_e, payload = {}) => {
   const adapter = activeMcpAdapter();
   if (typeof adapter.update !== 'function') return { ok: false, error: 'Edit not supported for this CLI' };
-  const { id, ...rest } = payload || {};
-  return adapter.update(id, rest);
+  // `id` is the (possibly edited) name from the form; `oldId` is the
+  // original key. Locate by oldId, pass the new name as `newId` so the
+  // adapter can rewrite the JSON key when the two differ.
+  const { id, oldId, ...rest } = payload || {};
+  return adapter.update(oldId || id, { ...rest, newId: id });
 });
 ipcMain.handle('mcp:remove', (_e, id) => activeMcpAdapter().remove(id));
 ipcMain.handle('mcp:toggle', (_e, id) => activeMcpAdapter().toggle(id));
@@ -2702,7 +2706,9 @@ async function executeWorkflow(event, workflow, run) {
       args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
     } else {
       const merged = `${wfSystem}\n\n${prompt}`;
-      args = cmd === 'codex' ? ['exec', merged] : ['-p', merged];
+      // codex exec refuses to run outside a trusted git directory unless told to
+      // skip that check, so pass it for the non-interactive workflow step.
+      args = cmd === 'codex' ? ['exec', '--skip-git-repo-check', merged] : ['-p', merged];
     }
 
     const nid = node.id;
