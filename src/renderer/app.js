@@ -169,7 +169,7 @@ window.addEventListener('error', (e) => {
 
 if (typeof Terminal === 'undefined' || typeof window.husk === 'undefined') {
   document.body.insertAdjacentHTML('afterbegin',
-    '<div style="position:fixed;inset:0;background:#0b0d12;color:#fb7185;padding:24px;font-family:monospace;z-index:9999">Init failure: xterm or husk API not loaded.</div>');
+    '<div style="position:fixed;inset:0;background:#0c0a09;color:#fb7185;padding:24px;font-family:monospace;z-index:9999">Init failure: xterm or husk API not loaded.</div>');
   throw new Error('init failure');
 }
 
@@ -348,10 +348,12 @@ function themeForXterm() {
     };
   }
   return {
-    background: '#0b0d12', foreground: '#e6e9ef',
-    cursor: accent, cursorAccent: '#0b0d12',
-    selectionBackground: '#2d3447',
-    black: '#0b0d12', red: '#fb7185', green: '#4ade80', yellow: '#fbbf24',
+    // Match the warm canvas (--bg #0c0a09) so the terminal sits in the same
+    // warm family as the chrome instead of reading as a cool navy panel.
+    background: '#0c0a09', foreground: '#e6e9ef',
+    cursor: accent, cursorAccent: '#0c0a09',
+    selectionBackground: '#3a342c',
+    black: '#0c0a09', red: '#fb7185', green: '#4ade80', yellow: '#fbbf24',
     blue: '#818cf8', magenta: '#a78bfa', cyan: '#67e8f9', white: '#e6e9ef',
     brightBlack: '#475063', brightRed: '#fda4af', brightGreen: '#86efac',
     brightYellow: '#fcd34d', brightBlue: '#93c5fd', brightMagenta: '#c4b5fd',
@@ -362,9 +364,22 @@ function themeForXterm() {
 function fitNow() {
   if (currentPage !== 'chat') return;
   if (!fitAddon || !term) return;
+  // Skip while the terminal is not actually laid out (e.g. the chat page was
+  // just revealed and the container has not been sized yet). Fitting against a
+  // zero-size box yields a degenerate resize.
+  const host = term.element;
+  if (host && (host.clientWidth === 0 || host.clientHeight === 0)) return;
   try {
     fitAddon.fit();
     const { cols, rows } = term;
+    if (!cols || !rows) return;
+    const tab = TABS.get(activeTabId);
+    // Only resize the PTY when the geometry actually changed. A redundant
+    // resize makes the agent's TUI redraw and drop any unsent text in its
+    // input line, which otherwise happens every time you leave the chat page
+    // and come back at the same window size.
+    if (tab && tab._cols === cols && tab._rows === rows) return;
+    if (tab) { tab._cols = cols; tab._rows = rows; }
     window.husk.pty.resize({ cols, rows }, activeTabId);
   } catch (_) {}
 }
@@ -3602,6 +3617,7 @@ $('#pref-rail').addEventListener('change', async (e) => {
   setTimeout(fitNow, 200);
   toast('Saved', 'success');
 });
+$('#pref-replay-onboarding')?.addEventListener('click', () => runOnboarding({ replay: true }));
 $('#pref-root').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ treeRoot: e.target.value.trim() || cfg.treeRoot });
   toast('Tree root saved', 'success');
@@ -4131,9 +4147,9 @@ function openMcpEditModal(server) {
 //      reachable via a small toggle button. Foot primary button shows
 //      `Install N server(s)` while paste view holds a valid JSON, or
 //      `Install` while form view is active.
-// Edit: starts in form view, pre-filled, server-name input read-only,
-//      no paste view (you cannot rename via edit). Foot primary button
-//      is `Save changes`.
+// Edit: starts in form view, pre-filled, no paste view. The server-name
+//      input is editable; changing it renames the entry (the adapter
+//      rewrites the JSON key). Foot primary button is `Save changes`.
 function renderMcpModal({ mode, server }) {
   mcpModalState = {
     mode,
@@ -4148,7 +4164,7 @@ function renderMcpModal({ mode, server }) {
     ? `Edit MCP server: ${server.id}`
     : 'Install a custom MCP server';
   $('#mcp-install-sub').textContent = isEdit
-    ? 'Update the fields below and save. The server name is fixed.'
+    ? 'Update the fields below and save.'
     : 'Paste a JSON snippet (one or many servers), or fill in the form.';
   const fields = $('#mcp-install-fields');
   const codeStyle = "background:var(--bg-3); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-family:'JetBrains Mono', monospace; font-size:12px; resize:vertical;";
@@ -4174,6 +4190,7 @@ function renderMcpModal({ mode, server }) {
           <button type="button" class="ghost-btn" id="mcp-view-toggle">Paste JSON instead</button>
         </div>
       `}
+      <div id="mcp-form-status" class="ra-status ra-status-error" hidden></div>
       <div class="mcp-input-group">
         <label>Transport</label>
         <div class="mcp-tabs">
@@ -4183,7 +4200,7 @@ function renderMcpModal({ mode, server }) {
       </div>
       <div class="mcp-input-group">
         <label for="mig-custom-id">Server name</label>
-        <input id="mig-custom-id" type="text" placeholder="my-server" autocomplete="off" ${isEdit ? 'readonly' : ''} />
+        <input id="mig-custom-id" type="text" placeholder="my-server" autocomplete="off" />
         <div class="mig-hint">Letters, numbers, dashes. Used as the key in the CLI's MCP config.</div>
       </div>
       <div data-tab-pane="stdio">
@@ -4228,8 +4245,9 @@ function renderMcpModal({ mode, server }) {
   });
 
   if (isEdit) {
-    // Pre-fill the form from the existing server. Editing the name is
-    // disallowed so the underlying adapter's update() can find the entry.
+    // Pre-fill the form from the existing server. The original id is held
+    // in mcpModalState.editingId so update() can still locate the entry
+    // even when the name field is changed (a rename).
     $('#mig-custom-id').value = server.id;
     if (server.transport === 'http' || server.transport === 'sse') {
       setMcpActiveTab('http');
@@ -4257,6 +4275,7 @@ function renderMcpModal({ mode, server }) {
 
 function setMcpActiveTab(tab) {
   mcpModalState.activeTab = tab;
+  clearMcpFormError();
   const fields = $('#mcp-install-fields'); if (!fields) return;
   fields.querySelectorAll('.mcp-tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
   fields.querySelectorAll('[data-tab-pane]').forEach((p) => { p.hidden = p.dataset.tabPane !== tab; });
@@ -4316,6 +4335,22 @@ function setMcpPasteStatus(text, kind) {
   if (!text) { el.hidden = true; el.textContent = ''; el.className = 'ra-status'; return; }
   el.hidden = false; el.textContent = text; el.className = 'ra-status' + (kind ? ' ra-status-' + kind : '');
 }
+// Inline validation banner for the form view (add + edit). Shows a specific
+// reason a save was blocked, focuses the offending field, and rings it red.
+// Returns false so callers can `return setMcpFormError(...)` in one line.
+function setMcpFormError(text, fieldId) {
+  const el = $('#mcp-form-status');
+  if (el) { el.hidden = false; el.textContent = text; }
+  $$('#mcp-install .input-error').forEach((n) => n.classList.remove('input-error'));
+  const field = fieldId ? $(`#${fieldId}`) : null;
+  if (field) { field.classList.add('input-error'); try { field.focus(); } catch (_) {} }
+  return false;
+}
+function clearMcpFormError() {
+  const el = $('#mcp-form-status');
+  if (el) { el.hidden = true; el.textContent = ''; }
+  $$('#mcp-install .input-error').forEach((n) => n.classList.remove('input-error'));
+}
 function updateMcpFootButton() {
   const btn = $('#mcp-install-confirm'); if (!btn) return;
   if (mcpModalState.mode === 'edit') {
@@ -4359,20 +4394,28 @@ async function submitMcpModal() {
   }
   // Form-view path (add or edit). Build the payload from the current
   // form fields, then call add() or update() based on mode.
-  const id = ($('#mig-custom-id').value || '').trim();
-  if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) { toast('Invalid server name', 'error'); return; }
+  clearMcpFormError();
+  const idRaw = $('#mig-custom-id').value || '';
+  const id = idRaw.trim();
+  // Name validation, most-specific reason first so the user knows exactly
+  // what to change rather than a blanket "invalid".
+  if (!id) return setMcpFormError('Server name is required.', 'mig-custom-id');
+  if (/\s/.test(idRaw)) return setMcpFormError('Server name cannot contain spaces. Use a dash (-) or underscore (_) instead.', 'mig-custom-id');
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) return setMcpFormError('Server name can only use letters, numbers, dashes (-) and underscores (_).', 'mig-custom-id');
   const tab = mcpModalState.activeTab;
   let payload;
   if (tab === 'http') {
     const url = ($('#mig-custom-url').value || '').trim();
     const transport = $('#mig-custom-type').value || 'http';
     const headersText = ($('#mig-custom-headers').value || '').trim();
-    if (!url) { toast('URL required', 'error'); return; }
+    if (!url) return setMcpFormError('URL is required for an HTTP/SSE server.', 'mig-custom-url');
+    if (!/^https?:\/\//i.test(url)) return setMcpFormError('URL must start with http:// or https://.', 'mig-custom-url');
     const headers = {};
     if (headersText) {
       for (const line of headersText.split('\n')) {
+        if (!line.trim()) continue;
         const idx = line.indexOf(':');
-        if (idx <= 0) continue;
+        if (idx <= 0) return setMcpFormError(`Header line "${line.trim()}" is missing a colon. Use the form Header-Name: value.`, 'mig-custom-headers');
         headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
       }
     }
@@ -4381,22 +4424,32 @@ async function submitMcpModal() {
     const command = ($('#mig-custom-cmd').value || '').trim();
     const argsText = ($('#mig-custom-args').value || '').trim();
     const envText = ($('#mig-custom-env').value || '').trim();
-    if (!command) { toast('Command required', 'error'); return; }
+    if (!command) return setMcpFormError('Command is required for a local (stdio) server.', 'mig-custom-cmd');
     const args = argsText ? argsText.split('\n').map((s) => s.trim()).filter(Boolean) : [];
     const env = {};
     if (envText) {
       for (const line of envText.split('\n')) {
+        if (!line.trim()) continue;
         const idx = line.indexOf('=');
-        if (idx <= 0) continue;
+        if (idx <= 0) return setMcpFormError(`Env line "${line.trim()}" is missing an equals sign. Use the form KEY=value.`, 'mig-custom-env');
         env[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
       }
     }
     payload = { id, command, args, env };
   }
+  // In edit mode, carry the original id so the adapter can locate the
+  // entry even when `id` (the name field) has been changed to rename it.
+  if (mcpModalState.mode === 'edit') payload.oldId = mcpModalState.editingId;
   const op = mcpModalState.mode === 'edit'
     ? await window.husk.mcp.update(payload)
     : await window.husk.mcp.add(payload);
-  if (!op || !op.ok) { toast((op && op.error) || 'Save failed', 'error'); return; }
+  // Surface adapter-side failures (name collision, unreadable config, write
+  // error) inline on the form rather than as a transient toast that's easy
+  // to miss. Collisions point at the name field since that's the fixable bit.
+  if (!op || !op.ok) {
+    const err = (op && op.error) || 'Save failed';
+    return setMcpFormError(err, /exists|server name|server id/i.test(err) ? 'mig-custom-id' : null);
+  }
   $('#mcp-install').hidden = true;
   toast(mcpModalState.mode === 'edit' ? `Updated ${id}` : `Installed ${id}`, 'success');
   await renderMcp();
@@ -4878,19 +4931,37 @@ const ICONS = {
   theme:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>',
   folder:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
   plugins:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg>',
+  agents:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
+  workflows:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><rect x="17" y="9" width="6" height="6" rx="1.5"/><path d="M7 12h2M15 12h2"/><path d="M4 9V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg>',
+  autonomy:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg>',
+  projects:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg>',
+  prompts:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M16 4v3h3"/><path d="M8 12h8M8 16h8M8 8h4"/></svg>',
 };
 
+// Order mirrors the rail so muscle memory carries over. Shortcut hints show
+// the real bindings, which are Alt+digit (see the digit map in the global
+// keydown handler): Alt+1 chat, Alt+2 skills, Alt+3 sessions, Alt+4 files,
+// Alt+5 mcp, Alt+6 preferences. The Alt modifier is shown explicitly so a
+// user does not press a bare digit on the chat page, where it falls through
+// to the focused terminal as literal input instead of switching pages.
 const PALETTE_ACTIONS = [
-  { icon: ICONS.chat,        label: 'Switch to Chat',                 run: () => setPage('chat'),        shortcut: '1' },
-  { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: '2' },
-  { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: '3' },
-  { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: '4' },
-  { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: '5' },
-  { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins'),     shortcut: '6' },
-  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('preferences'), shortcut: ',' },
+  { icon: ICONS.chat,        label: 'Switch to Chat',                 run: () => setPage('chat'),        shortcut: 'Alt 1' },
+  { icon: ICONS.agents,      label: 'Switch to Agents',               run: () => setPage('agents') },
+  { icon: ICONS.workflows,   label: 'Switch to Workflows',            run: () => setPage('workflows') },
+  { icon: ICONS.autonomy,    label: 'Switch to Autonomy',             run: () => setPage('autonomy') },
+  { icon: ICONS.projects,    label: 'Switch to Projects',             run: () => setPage('projects') },
+  { icon: ICONS.prompts,     label: 'Switch to Prompts',              run: () => setPage('prompts') },
+  { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: 'Alt 2' },
+  { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: 'Alt 3' },
+  { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
+  { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
+  { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins') },
+  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('preferences'), shortcut: 'Alt 6' },
   { icon: ICONS.restart,     label: 'Restart Agent',                  run: restartPty },
-  { icon: ICONS.plus,        label: 'Share file (picker)',            run: shareFilesViaPicker },
   { icon: ICONS.plus,        label: 'New chat session',               run: () => openNewChatTab() },
+  { icon: ICONS.plus,        label: 'Add custom MCP server',          run: () => openMcpCustomModal() },
+  { icon: ICONS.mcp,         label: 'Install MCP servers from repo',  run: () => openRepoMcpModal() },
+  { icon: ICONS.plus,        label: 'Share file (picker)',            run: shareFilesViaPicker },
   { icon: ICONS.theme,       label: 'Toggle theme',                   run: () => $('#btn-theme').click() },
   { icon: ICONS.folder,      label: 'Open ~/.claude/MEMORY/WORK/',    run: () => lastStats && window.husk.fs.open(lastStats.sessionsDir) },
   { icon: ICONS.skills,      label: 'Open ~/.claude/skills/',         run: () => lastStats && window.husk.fs.open(lastStats.skillsDir) },
@@ -5062,22 +5133,96 @@ function stripPaiNoise(text) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
-// ─── First-run modal + boot ──────────────────────────────────────────────────────
-// First-launch wizard: detect installed CLI agents on PATH (claude, copilot,
-// codex, aider, gemini), let the user pick one to use, install missing ones
-// inline via npm / pipx, or open the docs page for manual install. Selecting
-// an agent persists agentCommand + agentName + firstRunDone.
-async function runFirstRunWizard() {
-  const modal = $('#first-run');
-  const list = $('#fr-agents');
-  const log = $('#fr-log');
-  const goBtn = $('#fr-go');
-  const skipBtn = $('#fr-skip');
-  const nameInput = $('#fr-name');
-  modal.hidden = false;
+// ─── First-run onboarding + boot ──────────────────────────────────────────────────────
+// First-launch onboarding: a three-step full-window flow (welcome → pick CLI →
+// preferences). Step 2 detects installed CLI agents on PATH (claude, copilot,
+// codex, aider, gemini), lets the user pick one and install missing ones inline
+// via npm / pipx. Step 3 sets theme / accent / rail. Finishing persists
+// agentCommand, agentName, theme, accent, railExpanded, and firstRunDone.
+// Re-openable from Preferences with { replay: true } (does not touch
+// firstRunDone). Resolves when the flow is dismissed.
+async function runOnboarding({ replay = false } = {}) {
+  const overlay = $('#onboarding');
+  const backBtn = $('#ob-back');
+  const skipBtn = $('#ob-skip');
+  const steps = $$('.ob-step', overlay);
+  const dots = $$('.ob-dot', overlay);
+  const list = $('#ob-agents');
+  const log = $('#ob-log');
+  const nameInput = $('#ob-name');
+  const cliNext = $('#ob-cli-next');
+  // Per-open listener scope so re-opening (replay) never stacks handlers.
+  const ac = new AbortController();
+  const on = (el, ev, fn) => el && el.addEventListener(ev, fn, { signal: ac.signal });
 
+  // Working selections seed from the current config so Skip commits sane values.
+  let step = 0;
   let detection = null;
-  let selected = null;
+  let selectedCmd = null;
+  let theme = cfg.theme || 'dark';
+  let accent = cfg.accent || 'orange';
+  let rail = cfg.railExpanded !== false;
+
+  function showStep(i) {
+    step = Math.max(0, Math.min(steps.length - 1, i));
+    steps.forEach((s, idx) => { s.hidden = idx !== step; });
+    dots.forEach((d, idx) => d.classList.toggle('active', idx === step));
+    backBtn.hidden = step === 0;
+    // Skip stays available on the lead-in steps; the final step's primary CTA
+    // is itself the finish action, so Skip would be redundant there.
+    skipBtn.hidden = step === steps.length - 1;
+    if (step === 1 && nameInput) setTimeout(() => nameInput.focus(), 60);
+  }
+
+  function paintAgents() {
+    if (!detection || !detection.agents) {
+      list.innerHTML = '<div class="fr-loading">No agents probed.</div>';
+      return;
+    }
+    const available = detection.agents.filter((a) => a.available);
+    if (!selectedCmd && available.length >= 1) selectedCmd = available[0].command;
+    // eslint-disable-next-line no-unsanitized/property -- Agent fields are escaped via escapeHtml/escapeAttr.
+    list.innerHTML = detection.agents.map((a) => {
+      const main = `
+        <span class="ob-cli-main">
+          <span class="ob-cli-name">${escapeHtml(a.label)}</span>
+          <span class="ob-cli-cmd">${escapeHtml(a.command)}</span>
+        </span>`;
+      if (a.available) {
+        const isSelected = selectedCmd === a.command;
+        return `
+          <label class="ob-cli" data-id="${escapeAttr(a.id)}">
+            ${main}
+            <span class="ob-cli-end">
+              <span class="ob-cli-meta">Installed</span>
+              <input type="radio" name="ob-agent" value="${escapeAttr(a.command)}" ${isSelected ? 'checked' : ''} />
+              <span class="ob-cli-radio" aria-hidden="true"></span>
+            </span>
+          </label>`;
+      }
+      const btn = a.installable
+        ? `<button type="button" class="ob-cli-btn ob-cli-install" data-id="${escapeAttr(a.id)}">Install</button>`
+        : `<button type="button" class="ob-cli-btn" data-docs="${escapeAttr(a.docs || '')}">Install page</button>`;
+      return `
+        <div class="ob-cli ob-cli-missing" data-id="${escapeAttr(a.id)}">
+          ${main}
+          <span class="ob-cli-end">
+            <span class="ob-cli-meta ob-cli-meta-off">Not installed</span>
+            ${btn}
+          </span>
+        </div>`;
+    }).join('');
+    list.querySelectorAll('input[name="ob-agent"]').forEach((r) => {
+      on(r, 'change', () => { selectedCmd = r.value; updateCliNext(); });
+    });
+    list.querySelectorAll('[data-docs]').forEach((b) => {
+      on(b, 'click', () => { const url = b.getAttribute('data-docs'); if (url) window.open(url, '_blank'); });
+    });
+    list.querySelectorAll('.ob-cli-install').forEach((b) => {
+      on(b, 'click', (e) => { e.preventDefault(); installAgent(b.dataset.id, b); });
+    });
+    updateCliNext();
+  }
 
   async function refreshDetection() {
     list.innerHTML = '<div class="fr-loading">Scanning your system…</div>';
@@ -5089,50 +5234,6 @@ async function runFirstRunWizard() {
       return;
     }
     paintAgents();
-  }
-
-  function paintAgents() {
-    if (!detection || !detection.agents) {
-      list.innerHTML = '<div class="fr-loading">No agents probed.</div>';
-      return;
-    }
-    // If exactly one is available and nothing is selected, auto-pick it.
-    const available = detection.agents.filter((a) => a.available);
-    if (!selected && available.length >= 1) selected = available[0].command;
-    // eslint-disable-next-line no-unsanitized/property -- Agent fields are escaped via escapeHtml/escapeAttr.
-    list.innerHTML = detection.agents.map((a) => {
-      const isSelected = selected === a.command;
-      const action = a.available
-        ? `<label class="fr-radio"><input type="radio" name="fr-agent" value="${escapeAttr(a.command)}" ${isSelected ? 'checked' : ''} /> use this</label>`
-        : (a.installable
-            ? `<button type="button" class="ghost-btn fr-install" data-id="${escapeAttr(a.id)}">Install</button>`
-            : `<button type="button" class="ghost-btn" data-docs="${escapeAttr(a.docs || '')}">Open install page</button>`);
-      const status = a.available
-        ? '<span class="fr-status fr-status-ok">found</span>'
-        : '<span class="fr-status fr-status-missing">not installed</span>';
-      return `
-        <div class="fr-agent" data-id="${escapeAttr(a.id)}">
-          <div class="fr-agent-info">
-            <span class="fr-agent-name">${escapeHtml(a.label)}</span>
-            <span class="fr-agent-cmd">${escapeHtml(a.command)}</span>
-          </div>
-          ${status}
-          <div class="fr-agent-action">${action}</div>
-        </div>`;
-    }).join('');
-    list.querySelectorAll('input[name="fr-agent"]').forEach((r) => {
-      r.addEventListener('change', () => { selected = r.value; updateGoBtn(); });
-    });
-    list.querySelectorAll('[data-docs]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const url = b.getAttribute('data-docs');
-        if (url) window.open(url, '_blank');
-      });
-    });
-    list.querySelectorAll('.fr-install').forEach((b) => {
-      b.addEventListener('click', () => installAgent(b.dataset.id, b));
-    });
-    updateGoBtn();
   }
 
   async function installAgent(id, btn) {
@@ -5148,10 +5249,8 @@ async function runFirstRunWizard() {
     btn.disabled = false;
     if (r && r.ok) {
       btn.textContent = 'Installed';
-      // Re-probe and re-render so the radio appears for this agent.
       await refreshDetection();
-      // If no agent was previously selected, auto-pick the just-installed one.
-      if (!selected) selected = def.command;
+      if (!selectedCmd) selectedCmd = def.command;
       paintAgents();
     } else {
       btn.textContent = 'Retry';
@@ -5159,29 +5258,55 @@ async function runFirstRunWizard() {
     }
   }
 
-  function updateGoBtn() {
-    goBtn.disabled = !selected;
+  function updateCliNext() { cliNext.disabled = !selectedCmd; }
+
+  function syncPrefControls() {
+    $$('.ob-seg-btn', overlay).forEach((b) => b.classList.toggle('active', b.dataset.mode === theme));
+    $$('#ob-accent .accent-swatch', overlay).forEach((sw) => sw.classList.toggle('selected', sw.dataset.c === accent));
+    const railBox = $('#ob-rail'); if (railBox) railBox.checked = rail;
   }
 
-  async function commit() {
+  async function finish() {
     const name = (nameInput.value || '').trim().slice(0, 40) || 'Husk';
-    const cmd = (selected || 'claude').trim();
-    cfg = await window.husk.config.set({ agentCommand: cmd, agentName: name, firstRunDone: true });
-    modal.hidden = true;
+    const cmd = (selectedCmd || cfg.agentCommand || 'claude').trim();
+    const patch = { agentCommand: cmd, agentName: name, theme, accent, railExpanded: rail };
+    if (!replay) patch.firstRunDone = true;
+    cfg = await window.husk.config.set(patch);
+    document.body.dataset.rail = rail ? 'expanded' : 'collapsed';
+    syncRailToggleTitle();
+    overlay.hidden = true;
+    ac.abort();
   }
 
-  goBtn.addEventListener('click', commit);
-  skipBtn.addEventListener('click', async () => {
-    const name = (nameInput.value || '').trim().slice(0, 40) || 'Husk';
-    cfg = await window.husk.config.set({ agentCommand: cfg.agentCommand || 'claude', agentName: name, firstRunDone: true });
-    modal.hidden = true;
-  });
+  // Navigation.
+  on($('#ob-start'), 'click', () => showStep(1));
+  on(cliNext, 'click', () => showStep(2));
+  on(backBtn, 'click', () => showStep(step - 1));
+  on(skipBtn, 'click', finish);
+  on($('#ob-finish'), 'click', finish);
 
-  await refreshDetection();
-  // Block boot until the modal is dismissed by Continue or Skip.
-  await new Promise((resolve) => {
-    const i = setInterval(() => { if (modal.hidden) { clearInterval(i); resolve(); } }, 100);
-  });
+  // Step 3 controls apply live so the user sees the change behind the panel.
+  $$('.ob-seg-btn', overlay).forEach((b) => on(b, 'click', () => {
+    theme = b.dataset.mode; applyTheme(theme); syncPrefControls();
+  }));
+  $$('#ob-accent .accent-swatch', overlay).forEach((sw) => on(sw, 'click', () => {
+    accent = sw.dataset.c; applyAccent(accent); syncPrefControls();
+  }));
+  on($('#ob-rail'), 'change', (e) => { rail = e.target.checked; });
+
+  // Open.
+  if (nameInput) nameInput.value = cfg.agentName || 'Husk';
+  syncPrefControls();
+  try {
+    const u = await window.husk.updates.get();
+    const ver = u && u.version ? ('Version ' + u.version) : '';
+    const vEl = $('#ob-version'); if (vEl) vEl.textContent = ver;
+  } catch (_) {}
+  overlay.hidden = false;
+  showStep(0);
+  refreshDetection();
+
+  await new Promise((resolve) => { ac.signal.addEventListener('abort', resolve, { once: true }); });
 }
 
 async function boot() {
@@ -5196,7 +5321,7 @@ async function boot() {
   syncStatusToggleTitle();
 
   if (!cfg.firstRunDone) {
-    await runFirstRunWizard();
+    await runOnboarding();
   }
 
   bindPrefs();

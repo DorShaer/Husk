@@ -16,9 +16,22 @@ const {
 test('claude gets a --append-system-prompt arg, no file', () => {
   const plan = planInjection({ agentCommand: 'claude', agentName: 'Husk', recap: true });
   assert.equal(plan.method, 'system-prompt-arg');
-  assert.equal(plan.args[0], '--append-system-prompt');
-  assert.equal(typeof plan.args[1], 'string');
-  assert.ok(plan.args[1].includes('Husk'));
+  const sp = plan.args.indexOf('--append-system-prompt');
+  assert.ok(sp !== -1);
+  assert.equal(typeof plan.args[sp + 1], 'string');
+  assert.ok(plan.args[sp + 1].includes('Husk'));
+});
+
+test('claude injection silences the inline statusline via merged --settings', () => {
+  const plan = planInjection({ agentCommand: 'claude', agentName: 'Husk', recap: true });
+  const si = plan.args.indexOf('--settings');
+  assert.ok(si !== -1, 'expected a --settings arg');
+  const override = JSON.parse(plan.args[si + 1]);
+  // A no-op command blanks the statusline; null is rejected by the schema.
+  assert.equal(override.statusLine.type, 'command');
+  assert.ok(override.statusLine.command);
+  // Only statusLine is overridden so the merge leaves other user settings intact.
+  assert.deepEqual(Object.keys(override), ['statusLine']);
 });
 
 test('copilot gets an instructions-file plan at .github/copilot-instructions.md', () => {
