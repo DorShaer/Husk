@@ -30,9 +30,9 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.0.0",
-    "@playwright/test": "^1.60.0",
-    "electron": "^41.7.2",
+    "@electron/rebuild": "^4.0.6",
+    "@playwright/test": "^1.61.1",
+    "electron": "^41.9.0",
     "electron-builder": "^26.15.3",
     "playwright": "^1.60.0"
   },
