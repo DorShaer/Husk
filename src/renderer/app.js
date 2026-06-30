@@ -434,9 +434,10 @@ const WHATS_NEW = {
   },
 };
 function whatsNewFor(version) {
-  if (WHATS_NEW[version]) return WHATS_NEW[version];
-  const keys = Object.keys(WHATS_NEW).sort();
-  return keys.length ? WHATS_NEW[keys[keys.length - 1]] : null;
+  // Exact match only. A packaged release reports its real version (e.g. 2.8.4)
+  // and matches; running from source reports Electron's version, which has no
+  // entry, so the page never shows in dev or e2e and cannot cover the UI.
+  return WHATS_NEW[version] || null;
 }
 function showWhatsNew(version) {
   return new Promise((resolve) => {
