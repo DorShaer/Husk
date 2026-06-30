@@ -231,6 +231,9 @@ function createTab() {
   $('#terminal').appendChild(el);
   const t = new Terminal({
     cursorBlink: true,
+    // When the terminal is not focused, draw no cursor instead of xterm's
+    // default hollow outline block, which reads as a stray artifact.
+    cursorInactiveStyle: 'none',
     fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace',
     fontSize: 13,
     theme: themeForXterm(),
@@ -286,13 +289,18 @@ function activateTab(id) {
   agentMouseOn = !!tab.mouseOn;
   chatHasInput = tab.chatHasInput;
   for (const t of TABS.values()) t.el.classList.toggle('show', t.id === id);
-  try { window.husk.pty.setActive(id); } catch (_) {}
   renderTabStrip();
   fitNow();
   try { term.focus(); } catch (_) {}
-  // Refresh the status panel now so the Context Window and session figures
-  // reflect this tab immediately, instead of waiting up to 8s for the next poll.
-  try { refreshStatusline(); } catch (_) {}
+  // Refresh the status panel for the newly focused tab. The main process must
+  // switch the active session FIRST so stats:get resolves THIS tab's
+  // transcript, then we fetch fresh stats (not the previous tab's cached
+  // numbers) and render. Without the re-fetch the panel kept showing the prior
+  // chat's context until the next poll.
+  Promise.resolve(window.husk.pty.setActive(id))
+    .then(() => refreshStats())
+    .then(() => refreshStatusline())
+    .catch(() => {});
 }
 
 // Wheel forwarding for full-screen agents. A TUI like copilot runs in the
@@ -327,38 +335,35 @@ $('#terminal').addEventListener('wheel', (e) => {
 
 function themeForXterm() {
   // The terminal runs a TUI agent that themes its output through the 16 ANSI
-  // colors. Each app theme gets a matching palette so the output is readable
-  // on its own background: a dark-on-light palette in light mode, a
-  // light-on-dark one in dark mode. Read after body[data-theme] is set.
-  const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#ff7847';
-  const isLight = document.body.getAttribute('data-theme') === 'light';
-  if (isLight) {
-    // Dark, saturated colors readable on a white background. The dim
-    // greys agents use for hints (brightBlack) become a mid grey, not a
-    // near-white that vanishes.
-    return {
-      background: '#ffffff', foreground: '#1f2328',
-      cursor: accent, cursorAccent: '#ffffff',
-      selectionBackground: '#cfe3ff',
-      black: '#1f2328', red: '#cf222e', green: '#116329', yellow: '#7d4e00',
-      blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
-      brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37',
-      brightYellow: '#633c01', brightBlue: '#218bff', brightMagenta: '#8250df',
-      brightCyan: '#1b7c83', brightWhite: '#1f2328',
-    };
-  }
-  return {
-    // Match the warm canvas (--bg #0c0a09) so the terminal sits in the same
-    // warm family as the chrome instead of reading as a cool navy panel.
-    background: '#0c0a09', foreground: '#e6e9ef',
-    cursor: accent, cursorAccent: '#0c0a09',
-    selectionBackground: '#3a342c',
-    black: '#0c0a09', red: '#fb7185', green: '#4ade80', yellow: '#fbbf24',
-    blue: '#818cf8', magenta: '#a78bfa', cyan: '#67e8f9', white: '#e6e9ef',
-    brightBlack: '#475063', brightRed: '#fda4af', brightGreen: '#86efac',
-    brightYellow: '#fcd34d', brightBlue: '#93c5fd', brightMagenta: '#c4b5fd',
-    brightCyan: '#a5f3fc', brightWhite: '#f1f5f9',
-  };
+  // colors. The canvas background/foreground come from the active theme's
+  // --term-bg / --term-fg tokens (so any theme's terminal matches the chrome),
+  // and the ANSI set is the light or dark one depending on --term-light. Read
+  // after body[data-theme] is set.
+  const cs = getComputedStyle(document.body);
+  const accent = cs.getPropertyValue('--accent').trim() || '#ff7847';
+  const isLight = cs.getPropertyValue('--term-light').trim() === '1';
+  const bg = cs.getPropertyValue('--term-bg').trim() || (isLight ? '#ffffff' : '#0c0a09');
+  const fg = cs.getPropertyValue('--term-fg').trim() || (isLight ? '#1f2328' : '#e6e9ef');
+  const ansi = isLight
+    ? {
+        // Dark, saturated colors readable on a light background. The dim greys
+        // agents use for hints (brightBlack) become a mid grey, not near-white.
+        selectionBackground: '#cfe3ff',
+        black: '#1f2328', red: '#cf222e', green: '#116329', yellow: '#7d4e00',
+        blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+        brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37',
+        brightYellow: '#633c01', brightBlue: '#218bff', brightMagenta: '#8250df',
+        brightCyan: '#1b7c83', brightWhite: '#1f2328',
+      }
+    : {
+        selectionBackground: '#3a342c',
+        black: '#0c0a09', red: '#fb7185', green: '#4ade80', yellow: '#fbbf24',
+        blue: '#818cf8', magenta: '#a78bfa', cyan: '#67e8f9', white: '#e6e9ef',
+        brightBlack: '#475063', brightRed: '#fda4af', brightGreen: '#86efac',
+        brightYellow: '#fcd34d', brightBlue: '#93c5fd', brightMagenta: '#c4b5fd',
+        brightCyan: '#a5f3fc', brightWhite: '#f1f5f9',
+      };
+  return { background: bg, foreground: fg, cursor: accent, cursorAccent: bg, ...ansi };
 }
 
 function fitNow() {
@@ -409,6 +414,44 @@ const isMac = (navigator.userAgentData && navigator.userAgentData.platform === '
 // Mark the platform so CSS can clear the macOS traffic-light controls, which
 // overlay the top-left of the window under the hiddenInset title bar.
 if (isMac) document.documentElement.setAttribute('data-platform', 'mac');
+
+// The command macOS users run to clear the quarantine flag on the unsigned app
+// so Gatekeeper will open it (we have no Apple Developer ID yet).
+const MAC_TRUST_CMD = 'xattr -dr com.apple.quarantine /Applications/Husk.app';
+
+// What's new highlights, keyed by version. Shown once per version (after an
+// update, and at the end of the first-run flow). Bullets are trusted static
+// strings; the <strong> lead-ins are intentional markup.
+const WHATS_NEW = {
+  '2.8.4': {
+    items: [
+      "<strong>A redesigned workspace.</strong> Collapsible labeled sidebar, a framed chat surface, and a calmer overall layout.",
+      "<strong>Six themes.</strong> Dark, Light, Midnight, Nord, Dracula and Sepia, each with a matching terminal.",
+      "<strong>A guided first run.</strong> Pick your CLI and your look in a quick welcome tour.",
+      "<strong>One session per conversation.</strong> Continuing a chat no longer splits it into many entries.",
+      "<strong>Trust this folder.</strong> One click lets the agent apply your saved permissions.",
+    ],
+  },
+};
+function whatsNewFor(version) {
+  if (WHATS_NEW[version]) return WHATS_NEW[version];
+  const keys = Object.keys(WHATS_NEW).sort();
+  return keys.length ? WHATS_NEW[keys[keys.length - 1]] : null;
+}
+function showWhatsNew(version) {
+  return new Promise((resolve) => {
+    const entry = whatsNewFor(version);
+    const modal = $('#whatsnew');
+    if (!entry || !modal) { resolve(); return; }
+    const v = $('#wn-version'); if (v) v.textContent = version ? `Version ${version}` : 'Latest update';
+    // eslint-disable-next-line no-unsanitized/property -- Items are trusted static strings.
+    $('#wn-list').innerHTML = entry.items.map((t) => `<li>${t}</li>`).join('');
+    modal.hidden = false;
+    const cta = $('#wn-cta');
+    const done = () => { modal.hidden = true; resolve(); };
+    if (cta) cta.onclick = done;
+  });
+}
 async function copyTerminalSelection() {
   const text = term.getSelection();
   if (!text) return false;
@@ -557,6 +600,7 @@ async function startPty() {
   }
   await window.husk.pty.start({ cols, rows, sessionId: tab.id });
   term.focus();
+  maybeShowTrustBanner();
   // Inject ai-suggested workflow context so the AI knows what workflows exist
   try {
     const wfCtx = await window.husk.workflows.getSessionContext();
@@ -583,6 +627,7 @@ async function openNewChatTab(opts = {}) {
   clearSessionContext();
   await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   tab.term.focus();
+  maybeShowTrustBanner();
   if (!cfg.skipWelcome) $('#chat-empty').classList.add('show');
   try {
     const wfCtx = await window.husk.workflows.getSessionContext();
@@ -798,10 +843,14 @@ function retintAllTabs() {
 }
 function applyTheme(theme) {
   document.body.dataset.theme = theme;
+  // Light/dark FAMILY flag, derived from the theme's --term-light token. The
+  // chrome glass treatment (frosted topbar/rail/status/modals) is gated on
+  // data-mode, not data-theme, so every dark-family theme (dark, midnight,
+  // nord, dracula) gets it and every light-family theme (light, sepia) gets
+  // the solid treatment. New themes are handled automatically by their token.
+  const isLight = getComputedStyle(document.body).getPropertyValue('--term-light').trim() === '1';
+  document.body.dataset.mode = isLight ? 'light' : 'dark';
   retintAllTabs();
-  // Theme icon swap is now handled via CSS based on body[data-theme]; the
-  // legacy #theme-icon span is gone. This function intentionally only sets
-  // the dataset attribute, the moon/sun SVGs are toggled by selectors.
 }
 function applyAccent(accent) {
   const valid = ['orange', 'cyan', 'indigo', 'emerald', 'rose'];
@@ -813,12 +862,12 @@ function applyAccent(accent) {
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
 function setPage(name) {
-  if (!['chat', 'agents', 'workflows', 'autonomy', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins', 'preferences'].includes(name)) name = 'chat';
+  if (!['chat', 'agents', 'workflows', 'autonomy', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins'].includes(name)) name = 'chat';
   currentPage = name;
   document.body.dataset.page = name;
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === name));
-  if (name === 'chat') { setTimeout(fitNow, 30); if (term) term.focus(); }
+  if (name === 'chat') { renderChatsPanelSessions(); setTimeout(fitNow, 30); if (term) term.focus(); }
   if (name === 'agents') renderAgents();
   if (name === 'workflows') renderWorkflows();
   if (name === 'autonomy') renderAutonomyPage();
@@ -832,6 +881,46 @@ function setPage(name) {
 }
 
 $$('.rail-item').forEach((b) => b.addEventListener('click', () => setPage(b.dataset.page)));
+// Sidebar collapse/expand toggle: switches between the labeled rail (names) and
+// the icon-only rail. Persists the choice and refits the terminal.
+$('#rail-toggle')?.addEventListener('click', async () => {
+  const expanded = document.body.dataset.rail !== 'expanded';
+  document.body.dataset.rail = expanded ? 'expanded' : 'collapsed';
+  syncRailToggleTitle();
+  try { cfg = await window.husk.config.set({ railExpanded: expanded }); } catch (_) {}
+  setTimeout(fitNow, 120);
+});
+
+// Untrusted-folder banner. Claude ignores a workspace's saved permissions until
+// the folder is trusted, warning on every launch. Show an explicit, one-click
+// "Trust this folder" action (Claude only); never set trust silently.
+async function maybeShowTrustBanner() {
+  const banner = $('#trust-banner');
+  if (!banner) return;
+  if (agentKindCache !== 'claude') { banner.hidden = true; return; }
+  try {
+    const r = await window.husk.claudeTrust.status();
+    banner.hidden = !!(r && r.trusted);
+  } catch (_) { banner.hidden = true; }
+}
+$('#btn-trust-folder')?.addEventListener('click', async () => {
+  const r = await window.husk.claudeTrust.accept();
+  if (r && r.ok) {
+    $('#trust-banner').hidden = true;
+    toast('Folder trusted · reloading agent', 'success');
+    await restartPty({ silent: true });
+  } else {
+    toast(`Could not trust folder: ${(r && r.error) || 'unknown error'}`, 'error');
+  }
+});
+$('#btn-trust-dismiss')?.addEventListener('click', () => { const b = $('#trust-banner'); if (b) b.hidden = true; });
+// The collapsed rail draws its own styled tooltip (.rail-item::after, fed by
+// aria-label). Move each item's `title` to `aria-label` and drop the title so
+// the native OS tooltip does not render a second, duplicate label on hover.
+$$('.rail-item').forEach((b) => {
+  const t = b.getAttribute('title');
+  if (t) { if (!b.getAttribute('aria-label')) b.setAttribute('aria-label', t); b.removeAttribute('title'); }
+});
 
 // Rail expand/collapse
 function syncRailToggleTitle() {
@@ -844,16 +933,7 @@ function syncStatusToggleTitle() {
   if (!t) return;
   t.title = document.body.dataset.status === 'collapsed' ? 'Expand status panel' : 'Collapse status panel';
 }
-$('#rail-toggle').addEventListener('click', async () => {
-  const expanded = document.body.dataset.rail === 'expanded';
-  document.body.dataset.rail = expanded ? 'collapsed' : 'expanded';
-  // Force-close the agent dropdown so it can never strand-open inside the
-  // narrow collapsed rail (would render as a wrapping text column overlay).
-  if (typeof closeAgentMenu === 'function') closeAgentMenu();
-  syncRailToggleTitle();
-  cfg = await window.husk.config.set({ railExpanded: !expanded });
-  setTimeout(fitNow, 200);
-});
+// Rail is permanently icon-only; toggle button removed from HTML.
 
 const spToggle = $('#sp-toggle');
 if (spToggle) {
@@ -2861,7 +2941,10 @@ function applyPromptsLabels() {
   // generic CLIs only see Husk-managed skills via the Use button.
   const railItem = document.querySelector('.rail-item[data-page="skills"]');
   if (railItem) {
-    railItem.title = 'Skills';
+    // Use aria-label, not title: the collapsed rail draws its own tooltip from
+    // aria-label, and a title attribute would add a duplicate native tooltip.
+    railItem.setAttribute('aria-label', 'Skills');
+    railItem.removeAttribute('title');
     const lbl = railItem.querySelector('.ri-label');
     if (lbl) lbl.textContent = 'Skills';
   }
@@ -3573,6 +3656,54 @@ async function flushRecap() {
   recapArmed = false;
   speak(text);
 }
+// Preferences modal — open/close + nav switching
+function openPrefsModal() {
+  const modal = $('#prefs-modal');
+  const backdrop = $('#prefs-backdrop');
+  if (!modal) return;
+  modal.hidden = false;
+  backdrop.hidden = false;
+  bindPrefs(); // refresh form values each open
+}
+function closePrefsModal() {
+  const modal = $('#prefs-modal');
+  const backdrop = $('#prefs-backdrop');
+  if (!modal) return;
+  modal.hidden = true;
+  backdrop.hidden = true;
+}
+(function wirePrefsModal() {
+  // Gear icon in rail opens modal
+  const btnOpen = $('#btn-open-prefs');
+  if (btnOpen) btnOpen.addEventListener('click', openPrefsModal);
+
+  // Close button inside modal
+  const btnClose = $('#prefs-close');
+  if (btnClose) btnClose.addEventListener('click', closePrefsModal);
+
+  // Backdrop click closes
+  const backdrop = $('#prefs-backdrop');
+  if (backdrop) backdrop.addEventListener('click', closePrefsModal);
+
+  // ESC key closes
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#prefs-modal')?.hidden) closePrefsModal();
+  });
+
+  // Nav switching
+  const nav = $('#prefs-nav');
+  if (nav) {
+    nav.addEventListener('click', (e) => {
+      const item = e.target.closest('.prefs-nav-item');
+      if (!item) return;
+      const section = item.dataset.prefsSection;
+      $$('.prefs-nav-item').forEach((el) => el.classList.remove('active'));
+      item.classList.add('active');
+      $$('.pref-section').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
+    });
+  }
+})();
+
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
   const cwdInput = $('#pref-agent-cwd');
@@ -3700,19 +3831,33 @@ function openUpdatePop() {
   }
   if (s.status === 'available') {
     title.textContent = `Husk ${next} is available`;
-    // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.
-    body.innerHTML = `You're on <strong>${escapeHtml(cur)}</strong>. The new version is ready to install.`;
-    cta.textContent = 'Install update';
-    cta.onclick = async () => {
-      cta.disabled = true; cta.textContent = 'Downloading…';
-      const r = await window.husk.updates.download();
-      if (!r.ok) {
-        // Auto-download not supported here (likely unsigned macOS or .deb / .rpm).
-        cta.textContent = 'Open releases page';
-        cta.disabled = false;
-        cta.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
-      }
-    };
+    if (isMac) {
+      // macOS can't auto-install: the app is unsigned (no Apple Developer ID),
+      // so Squirrel.Mac would download the dmg and then quitAndInstall would
+      // fail silently. Send the user to the dmg download and show the command
+      // that lets Gatekeeper open the unsigned build.
+      // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, the command is a static constant.
+      body.innerHTML = `You're on <strong>${escapeHtml(cur)}</strong>. Husk for macOS isn't code-signed yet, so update manually: download the new build, replace the app, then run this once so macOS will open it:`
+        + `<div class="up-cmd"><code>${escapeHtml(MAC_TRUST_CMD)}</code><button class="ghost-btn up-copy" id="up-trust-copy" type="button">Copy</button></div>`;
+      const copyBtn = $('#up-trust-copy');
+      if (copyBtn) copyBtn.onclick = () => { try { navigator.clipboard.writeText(MAC_TRUST_CMD); copyBtn.textContent = 'Copied'; } catch (_) {} };
+      cta.textContent = 'Download for Mac';
+      cta.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
+    } else {
+      // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.
+      body.innerHTML = `You're on <strong>${escapeHtml(cur)}</strong>. The new version is ready to install.`;
+      cta.textContent = 'Install update';
+      cta.onclick = async () => {
+        cta.disabled = true; cta.textContent = 'Downloading…';
+        const r = await window.husk.updates.download();
+        if (!r.ok) {
+          // Auto-download not supported here (e.g. .deb / .rpm).
+          cta.textContent = 'Open releases page';
+          cta.disabled = false;
+          cta.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
+        }
+      };
+    }
   } else if (s.status === 'ready') {
     title.textContent = `Husk ${next} is ready`;
     body.textContent = `Husk will close and reopen to finish installing. Your current chat will end.`;
@@ -3783,30 +3928,24 @@ window.husk.updates.onStatus((s) => {
 
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
 $('#btn-restart').addEventListener('click', restartPty);
-$('#btn-theme').addEventListener('click', () => {
-  // Read the live DOM, not cfg: rapid clicks fire before the debounced
-  // write resolves, so cfg.theme can be stale. The body attribute is the
-  // source of truth for what is currently shown.
-  const next = (document.body.dataset.theme === 'dark') ? 'light' : 'dark';
-  applyTheme(next);
-  const sel = $('#pref-theme'); if (sel) sel.value = next;
-  persistConfig({ theme: next });
-});
-// Send a "please read this file" message to the agent so it actually
-// ingests the dropped file. Both claude and copilot/codex/aider have a
-// file-read tool, they will pick it up automatically. We send the
-// message + newline so the agent receives it as a submitted prompt.
+// The topbar dark/light quick-toggle was removed: it overrode the user's
+// chosen theme. Theme selection now lives only in Preferences (full picker).
+// Attach the file to the user's PENDING message rather than firing a separate
+// "please read this" turn. We drop the (quoted) path into the agent's input
+// with NO trailing newline, so it is not submitted: the user adds their own
+// question and sends both together, and the agent reads the referenced path on
+// send. The path is quoted so names with spaces stay one token. (A true visual
+// attachment chip is not possible inside the agent's own terminal input.)
 async function tellAgentAboutFile(filePath, displayName) {
-  // If the welcome screen is still up, start the PTY first.
+  const ref = `"${filePath}" `;
   const welcomeUp = $('#chat-empty')?.classList.contains('show');
-  const message = `Please read the file I just shared: ${filePath}\n`;
   if (welcomeUp) {
-    await launchAgent({ initialPrompt: message });
+    await launchAgent({ initialPrompt: ref });
     return;
   }
   setPage('chat');
   setTimeout(() => {
-    try { window.husk.pty.write(message); } catch (_) {}
+    try { window.husk.pty.write(ref); } catch (_) {}
     try { term.focus(); } catch (_) {}
   }, 60);
 }
@@ -3871,8 +4010,7 @@ async function shareFilesViaPicker() {
     const name = p.split('/').pop();
     const result = await window.husk.fs.dropFile({ sourcePath: p, kind: 'context' });
     if (result.ok) {
-      toast(`Shared with agent: ${name}`, 'success');
-      announceInTerminal(`Shared file with agent: ${name}\r\n  → ${result.dest}`);
+      toast(`Attached: ${name}`, 'success');
       addToSessionContext({ name, path: result.dest });
       await tellAgentAboutFile(result.dest, name);
     } else toast(`Failed: ${result.error}`, 'error');
@@ -3919,6 +4057,62 @@ async function refreshRecentList() {
   });
 }
 $('#btn-recent-all').addEventListener('click', () => setPage('sessions'));
+
+// ─── Chats panel (sessions list in sidebar on chat page) ─────────────────────────
+async function renderChatsPanelSessions() {
+  const container = $('#cp-sessions');
+  if (!container) return;
+  const r = await window.husk.sessions.list();
+  if (!r.ok || !r.sessions || !r.sessions.length) {
+    container.innerHTML = '<div class="cp-empty">No sessions yet.<br/>Start a chat to see history here.</div>';
+    return;
+  }
+  const top = r.sessions.slice(0, 40);
+  // eslint-disable-next-line no-unsanitized/property -- Session fields are escaped.
+  container.innerHTML = top.map((s) => `
+    <div class="cp-session-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath || '')}">
+      <span class="cp-si-title">${escapeHtml(s.title || 'Untitled chat')}</span>
+      <span class="cp-si-meta">${escapeHtml(timeAgo(s.mtime))}</span>
+    </div>
+  `).join('');
+  container.querySelectorAll('.cp-session-item').forEach((el) => {
+    el.addEventListener('click', () => {
+      resumeSessionInChat({ id: el.dataset.id, project: el.dataset.project });
+    });
+  });
+}
+(function wireChatsPanelButtons() {
+  const btnNew = $('#btn-cp-new');
+  if (btnNew) btnNew.addEventListener('click', () => openNewChatTab());
+
+  const searchInput = $('#cp-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', debounce(async (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      const items = $('#cp-sessions')?.querySelectorAll('.cp-session-item');
+      if (!items) return;
+      items.forEach((el) => {
+        const title = el.querySelector('.cp-si-title')?.textContent || '';
+        el.style.display = title.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }, 100));
+  }
+
+  const btnAddCtx = $('#ce-btn-add-context');
+  if (btnAddCtx) btnAddCtx.addEventListener('click', () => { $('#btn-context-add')?.click(); });
+  // Add-context from the chat header button (top-right, left of Autonomy).
+  $('#btn-head-add-context')?.addEventListener('click', () => { $('#btn-context-add')?.click(); });
+
+  const btnPickTool = $('#ce-btn-pick-tool');
+  if (btnPickTool) {
+    btnPickTool.addEventListener('click', () => {
+      const pill = $('.rail-agent');
+      if (pill) pill.click();
+    });
+    // Sync tool name label with current agent
+    // Initial sync happens in boot() after cfg loads.
+  }
+})();
 
 // ─── MCP page ───────────────────────────────────────────────────────────────────
 let mcpCatalog = [];
@@ -4023,21 +4217,21 @@ function mcpRowHTML(s) {
 // repaints the MCP page so the user sees Pending → Loaded without lifting a
 // finger. Skipped if no PTY has ever started (welcome screen still up).
 async function applyMcpChange(label) {
+  const inv = await reloadMcpInventory();
   const welcomeUp = $('#chat-empty')?.classList.contains('show');
   if (welcomeUp) {
-    // No live agent yet. Just refresh inventory and snapshot lazily; whenever
-    // the user clicks Launch / Start building, the new MCPs load on first start.
-    const inv = await reloadMcpInventory();
+    // No live agent yet. Snapshot lazily; whenever the user clicks Launch /
+    // Start building, the new MCPs load on first start (shown as Loaded).
     snapshotLoadedMcps(inv);
     if (currentPage === 'mcp') paintMcpSections();
     return;
   }
-  // PTY is live. Restart silently so the new MCP loads. The snapshot is
-  // captured inside restartPty and repaints the MCP page on the way out.
-  toast(`Reloading agent to apply ${label || 'MCP change'}…`, 'success');
-  await restartPty({ silent: true });
-  // Re-probe so the badge flips from "checking…" to connected/failed/auth.
-  setTimeout(reloadMcpHealth, 1500);
+  // PTY is live. Do NOT restart automatically: a restart kills any unsent draft
+  // in the chat input. Leave the running agent untouched so the draft survives;
+  // the change shows as Pending (snapshot is unchanged) and applies on the next
+  // agent restart (Restart button), which is when the snapshot is recaptured.
+  if (currentPage === 'mcp') paintMcpSections();
+  toast(`${label || 'MCP change'} saved · restart the agent to apply`, 'success');
 }
 
 function bindMcpRows(scope) {
@@ -4774,6 +4968,8 @@ let agentsCache = [];
 function updateAgentPill() {
   const cmd = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'claude';
   $('#ra-name').textContent = cmd || 'agent';
+  const ceToolName = $('#ce-tool-name');
+  if (ceToolName) ceToolName.textContent = cmd || 'agent';
 }
 async function refreshAgentMenu() {
   const r = await window.husk.agents.detect();
@@ -4815,7 +5011,7 @@ function paintAgentMenu() {
     });
   });
   const cfgBtn = menu.querySelector('#rai-config');
-  if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); setPage('preferences'); });
+  if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefsModal(); });
 }
 function openAgentMenu() {
   paintAgentMenu();
@@ -4956,13 +5152,12 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
   { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins') },
-  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('preferences'), shortcut: 'Alt 6' },
+  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => openPrefsModal(), shortcut: 'Alt 6' },
   { icon: ICONS.restart,     label: 'Restart Agent',                  run: restartPty },
   { icon: ICONS.plus,        label: 'New chat session',               run: () => openNewChatTab() },
   { icon: ICONS.plus,        label: 'Add custom MCP server',          run: () => openMcpCustomModal() },
   { icon: ICONS.mcp,         label: 'Install MCP servers from repo',  run: () => openRepoMcpModal() },
   { icon: ICONS.plus,        label: 'Share file (picker)',            run: shareFilesViaPicker },
-  { icon: ICONS.theme,       label: 'Toggle theme',                   run: () => $('#btn-theme').click() },
   { icon: ICONS.folder,      label: 'Open ~/.claude/MEMORY/WORK/',    run: () => lastStats && window.husk.fs.open(lastStats.sessionsDir) },
   { icon: ICONS.skills,      label: 'Open ~/.claude/skills/',         run: () => lastStats && window.husk.fs.open(lastStats.skillsDir) },
   { icon: ICONS.folder,      label: 'Open ~/.claude/hooks/',          run: () => lastStats && window.husk.fs.open(lastStats.hooksDir) },
@@ -4991,6 +5186,9 @@ function renderPalette(query) {
   $('#palette-list').querySelectorAll('li').forEach((li, i) =>
     li.addEventListener('click', () => { paletteSel = i; runPaletteAction(matches); })
   );
+  // Keep the highlighted row in view as the user arrows past the visible area.
+  const active = $('#palette-list li.active');
+  if (active) active.scrollIntoView({ block: 'nearest' });
 }
 function runPaletteAction(matches) {
   const a = matches[paletteSel];
@@ -5028,8 +5226,9 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
-    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '6': 'preferences' };
+    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp' };
     if (map[e.key]) { e.preventDefault(); setPage(map[e.key]); }
+    if (e.key === '6') { e.preventDefault(); openPrefsModal(); }
   }
   // Ctrl/Cmd +/-/0 for renderer zoom
   if (e.ctrlKey || e.metaKey) {
@@ -5261,7 +5460,7 @@ async function runOnboarding({ replay = false } = {}) {
   function updateCliNext() { cliNext.disabled = !selectedCmd; }
 
   function syncPrefControls() {
-    $$('.ob-seg-btn', overlay).forEach((b) => b.classList.toggle('active', b.dataset.mode === theme));
+    $$('.ob-theme-sw', overlay).forEach((b) => b.classList.toggle('active', b.dataset.mode === theme));
     $$('#ob-accent .accent-swatch', overlay).forEach((sw) => sw.classList.toggle('selected', sw.dataset.c === accent));
     const railBox = $('#ob-rail'); if (railBox) railBox.checked = rail;
   }
@@ -5286,7 +5485,7 @@ async function runOnboarding({ replay = false } = {}) {
   on($('#ob-finish'), 'click', finish);
 
   // Step 3 controls apply live so the user sees the change behind the panel.
-  $$('.ob-seg-btn', overlay).forEach((b) => on(b, 'click', () => {
+  $$('.ob-theme-sw', overlay).forEach((b) => on(b, 'click', () => {
     theme = b.dataset.mode; applyTheme(theme); syncPrefControls();
   }));
   $$('#ob-accent .accent-swatch', overlay).forEach((sw) => on(sw, 'click', () => {
@@ -5315,13 +5514,26 @@ async function boot() {
   profilesCache = await window.husk.profiles.list();
   applyTheme(cfg.theme || 'dark');
   applyAccent(cfg.accent || 'orange');
-  document.body.dataset.rail = cfg.railExpanded ? 'expanded' : 'collapsed';
+  document.body.dataset.rail = cfg.railExpanded === false ? 'collapsed' : 'expanded';
   document.body.dataset.status = cfg.statusCollapsed ? 'collapsed' : 'expanded';
   syncRailToggleTitle();
   syncStatusToggleTitle();
 
+  // What's new. First run shows the welcome tour and then the What's new page;
+  // an existing user who just updated (version changed) sees only the What's
+  // new page, never the tour again. Either way we record the version so it is
+  // shown at most once per version.
+  let curVer = '';
+  try { curVer = ((await window.husk.updates.get()) || {}).current || ''; } catch (_) {}
   if (!cfg.firstRunDone) {
     await runOnboarding();
+    // Non-blocking: float the What's new page on top while the app renders.
+    if (curVer) showWhatsNew(curVer);
+  } else if (curVer && cfg.lastSeenVersion !== curVer) {
+    showWhatsNew(curVer);
+  }
+  if (curVer && cfg.lastSeenVersion !== curVer) {
+    try { cfg = await window.husk.config.set({ lastSeenVersion: curVer }); } catch (_) {}
   }
 
   bindPrefs();

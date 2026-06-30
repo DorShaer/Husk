@@ -240,6 +240,10 @@ const DEFAULT_PROFILES = [
 
 const DEFAULT_CONFIG = {
   firstRunDone: false,
+  // The app version the user last saw the "What's new" page for. When it
+  // differs from the running version (e.g. after an update), the What's new
+  // page is shown once, then this is updated.
+  lastSeenVersion: null,
   agentCommand: 'claude',
   agentName: 'Husk',
   showSystemView: false,
@@ -879,9 +883,18 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
   if (resumeMatch) {
     s.claudeSessionId = resumeMatch[1];
-  } else if (isClaudeAgent && !isWin32 && !agentArgs.includes('--session-id')) {
-    s.claudeSessionId = crypto.randomUUID();
-    agentArgs = [...agentArgs, '--session-id', s.claudeSessionId];
+  } else if (isClaudeAgent && !isWin32 && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
+    // Keep one discussion in one transcript across restarts (project switch, MCP
+    // reload, manual restart). Mint an id only on a tab's first spawn. If this
+    // tab's transcript already exists, RESUME it so claude appends to the same
+    // file; passing --session-id again would let claude start a fresh session
+    // and split one conversation into many "sessions" in the list.
+    if (!s.claudeSessionId) s.claudeSessionId = crypto.randomUUID();
+    let pinnedExists = false;
+    try { pinnedExists = fs.existsSync(path.join(CLAUDE_DIR, 'projects', encodedCwd, `${s.claudeSessionId}.jsonl`)); } catch (_) {}
+    agentArgs = pinnedExists
+      ? [...agentArgs, '--resume', s.claudeSessionId]
+      : [...agentArgs, '--session-id', s.claudeSessionId];
   } else {
     s.claudeSessionId = null;
   }
@@ -1000,6 +1013,36 @@ function readClaudeJson() {
     } finally { fs.closeSync(fd); }
   } catch (_) { return null; }
 }
+
+// Per-project trust. Claude Code ignores a workspace's saved permissions until
+// the folder is trusted (projects[cwd].hasTrustDialogAccepted in ~/.claude.json),
+// printing a warning on every start. Husk surfaces this as an explicit,
+// user-initiated "trust this folder" action; it never sets trust silently.
+function isCwdTrusted(cwd) {
+  if (!cwd) return true;
+  const j = readClaudeJson();
+  if (!j || !j.projects || !j.projects[cwd]) return false;
+  return !!j.projects[cwd].hasTrustDialogAccepted;
+}
+function acceptCwdTrust(cwd) {
+  if (!cwd) return { ok: false, error: 'No working directory.' };
+  try {
+    const p = path.join(HOME, '.claude.json');
+    let j = {};
+    try { j = JSON.parse(fs.readFileSync(p, 'utf8')) || {}; } catch (_) {}
+    j.projects = j.projects || {};
+    j.projects[cwd] = j.projects[cwd] || {};
+    j.projects[cwd].hasTrustDialogAccepted = true;
+    fs.writeFileSync(p, JSON.stringify(j, null, 2), { mode: 0o600 });
+    _claudeJsonCache = { mtime: 0, data: null };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+ipcMain.handle('claude:trust:status', (_e, cwd) => {
+  const dir = cwd || activePtyCwd || HOME;
+  return { cwd: dir, trusted: isCwdTrusted(dir) };
+});
+ipcMain.handle('claude:trust:accept', (_e, cwd) => acceptCwdTrust(cwd || activePtyCwd || HOME));
 
 // ~/.claude/settings.json holds the configured model (e.g. "claude-fable-5[1m]")
 // (the same source Claude Code shows in its startup banner). Reading it gives a
@@ -1157,11 +1200,6 @@ function readActiveSessionStats() {
     } else if (files[0]) {
       latest = files[0].p;
     }
-    // If nothing resolved above (a non-claude tab, or a tab whose own file
-    // predates its spawn), fall back to the newest transcript in the project
-    // dir so the readout reflects the latest known session instead of going
-    // blank.
-    if (!latest && files[0]) latest = files[0].p;
     // Cap the read. A session JSONL grows for the whole conversation and
     // can reach many megabytes; reading and parsing the entire file on
     // every status poll stalls the main thread. Read at most the last
@@ -1231,7 +1269,35 @@ function readActiveSessionStats() {
     // to a different/older session, which would make the panel show a stale model.
     // settings.json is authoritative, never stale, and auto-updates on change.
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
-    const effModel = settingsModel || model;
+    let effModel = settingsModel || model;
+    // Model label fallback, DISPLAY ONLY. If neither settings.json nor this
+    // tab's own transcript yielded a model (a brand-new tab before its first
+    // turn, or a non-claude tab), borrow the model from the newest transcript
+    // in the project dir just for the label. Occupancy and turn counts above
+    // stay tied to this tab's own transcript, so a fresh chat never inherits
+    // another session's context figures (e.g. a 381K window from a sibling).
+    if (!effModel && files[0]) {
+      try {
+        const fsz = files[0].size;
+        const MCAP = 64 * 1024;
+        let mbuf;
+        if (Number.isFinite(fsz) && fsz > MCAP) {
+          const fd = fs.openSync(files[0].p, 'r');
+          try { const b = Buffer.alloc(MCAP); fs.readSync(fd, b, 0, MCAP, fsz - MCAP); mbuf = b.toString('utf8'); } finally { fs.closeSync(fd); }
+        } else {
+          mbuf = fs.readFileSync(files[0].p, 'utf8');
+        }
+        const mlines = mbuf.split('\n');
+        for (let i = mlines.length - 1; i >= 0 && !effModel; i--) {
+          if (!mlines[i]) continue;
+          try {
+            const o = JSON.parse(mlines[i]);
+            const m = o.message && o.message.model;
+            if (typeof m === 'string' && m && m !== '<synthetic>') effModel = m;
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
     // The model id carries the context tier (e.g. "[1m]"); resolve the window
     // from it plus the user's actual model/license selection. ctxTokens is the
     // real occupancy from claude's own per-turn usage (input + cache_read +
@@ -1274,7 +1340,7 @@ ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd, sessionId } = {})
   spawnPty(cols || 100, rows || 30, command || null, cwd || null, sessionId || activeSessionId || null);
   return true;
 });
-ipcMain.on('pty:setActive', (_e, sessionId) => { if (sessions.has(sessionId)) setActiveSession(sessionId); });
+ipcMain.handle('pty:setActive', (_e, sessionId) => { if (sessions.has(sessionId)) setActiveSession(sessionId); return true; });
 // Close exactly one session, leaving the others running. Promotes the next
 // remaining session to active if the closed one was focused.
 ipcMain.handle('pty:close', (_e, sessionId) => {
