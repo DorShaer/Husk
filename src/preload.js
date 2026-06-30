@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld('husk', {
     resize: (size, sessionId) => ipcRenderer.send('pty:resize', Object.assign({ sessionId }, size)),
     restart: (opts) => ipcRenderer.invoke('pty:restart', opts || {}),
     close: (sessionId) => ipcRenderer.invoke('pty:close', sessionId),
-    setActive: (sessionId) => ipcRenderer.send('pty:setActive', sessionId),
+    setActive: (sessionId) => ipcRenderer.invoke('pty:setActive', sessionId),
     onData: (cb) => ipcRenderer.on('pty:data', (_e, p) => cb(p.sessionId, p.data)),
     onExit: (cb) => ipcRenderer.on('pty:exit', (_e, p) => cb(p.sessionId, p.code)),
     onMouseMode: (cb) => ipcRenderer.on('pty:mouse-mode', (_e, p) => cb(p.sessionId, p.on)),
@@ -157,6 +157,10 @@ contextBridge.exposeInMainWorld('husk', {
     pickDir: () => ipcRenderer.invoke('dialog:pickDir'),
   },
   dialog: { pickFile: () => ipcRenderer.invoke('dialog:pickFile') },
+  claudeTrust: {
+    status: (cwd) => ipcRenderer.invoke('claude:trust:status', cwd),
+    accept: (cwd) => ipcRenderer.invoke('claude:trust:accept', cwd),
+  },
   voice: {
     status: () => ipcRenderer.invoke('voice:status'),
     install: (opts) => ipcRenderer.invoke('voice:install', opts || {}),

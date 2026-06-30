@@ -52,7 +52,7 @@ test('short window keeps the rail bottom and status footer visible (issue 4)', a
     const spContent = document.getElementById('sp-content');
     return {
       vh,
-      prefsBottom: bottom('.rail-item[data-page="preferences"]'),
+      prefsBottom: bottom('#btn-open-prefs'),
       toolBottom: bottom('#rail-agent-pill'),
       spFootBottom: bottom('.sp-foot'),
       railScrollable: scrollEl ? scrollEl.scrollHeight > scrollEl.clientHeight : false,

@@ -35,7 +35,7 @@ test('AI tool selector sits at the bottom, above Preferences (issue 7)', async (
     return {
       autonomy: idx('#rail-autonomy'),
       toolPill: idx('#rail-agent-pill'),
-      prefs: idx('.rail-item[data-page="preferences"]'),
+      prefs: idx('#btn-open-prefs'),
     };
   });
   // Tool pill is now after the nav items and immediately before Preferences.
@@ -86,7 +86,10 @@ test('rapid theme toggling coalesces config writes and never throws (issue 3)', 
     const orig = window.husk.config.set;
     window.husk.config.set = (patch) => { calls += 1; return orig(patch); };
     const start = document.body.dataset.theme;
-    for (let i = 0; i < 12; i++) document.getElementById('btn-theme').click();
+    // The dark/light topbar toggle was removed; theme changes now go through the
+    // Preferences theme select. Fire rapid changes to prove the writes coalesce.
+    const sel = document.getElementById('pref-theme');
+    for (let i = 0; i < 12; i++) { sel.value = (i % 2 === 0) ? 'light' : 'dark'; sel.dispatchEvent(new Event('change')); }
     const afterClicks = document.body.dataset.theme;
     await new Promise((r) => setTimeout(r, 400));
     window.husk.config.set = orig;
