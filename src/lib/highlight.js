@@ -162,6 +162,7 @@ const LANGUAGES = {
 // whole input. `kind` is null for text matched by no rule.
 function tokenize(code, rules) {
   const pattern = rules.map((r) => '(' + r.src + ')').join('|');
+  // eslint-disable-next-line security/detect-non-literal-regexp -- pattern is built from the static LANGUAGES rule table, never user input
   const re = new RegExp(pattern, 'gm');
   const segments = [];
   let last = 0;

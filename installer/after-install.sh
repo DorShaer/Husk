@@ -1,5 +1,21 @@
 #!/bin/bash
-# Post-install: install icon at standard hicolor sizes GNOME/KDE recognise,
+# Post-install: configure Chromium's sandbox, install icons, refresh caches,
+# and pin to the GNOME Dash.
+
+# Chromium's SUID sandbox helper must be owned by root with mode 4755.
+# electron-builder injects this into its DEFAULT deb/rpm postinst, but supplying
+# a custom afterInstall script REPLACES that default, so we must set it here
+# ourselves. Without it the app aborts immediately on launch (only the launcher
+# icon shows, no window) with:
+#   FATAL ... The SUID sandbox helper binary was found, but is not configured
+#   correctly ... /opt/Husk/chrome-sandbox is owned by root and has mode 4755.
+SANDBOX="/opt/Husk/chrome-sandbox"
+if [ -f "$SANDBOX" ]; then
+  chown root:root "$SANDBOX" || true
+  chmod 4755 "$SANDBOX" || true
+fi
+
+# Install icon at standard hicolor sizes GNOME/KDE recognise,
 # then refresh caches so the icon appears immediately without a logout.
 SRC="/usr/share/icons/hicolor/1024x1024/apps/husk.png"
 if [ -f "$SRC" ]; then

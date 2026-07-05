@@ -67,6 +67,7 @@ function createRunWorktree(userData, runId, workspaceRoot) {
   }
 
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- wtRoot is <userData>/autopilot-worktrees, confined above
     fs.mkdirSync(wtRoot, { recursive: true });
     execFileSync('git', ['worktree', 'add', wtPath, 'HEAD'], { cwd: resolvedWs, stdio: 'pipe' });
     return { ok: true, worktreePath: wtPath };
