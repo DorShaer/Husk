@@ -441,6 +441,15 @@ const MAC_TRUST_CMD = 'xattr -dr com.apple.quarantine /Applications/Husk.app';
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.8.7': {
+    items: [
+      "<strong>Autopilot mission control.</strong> Watch every agent think and act in its own live lane, with a fleet status strip and a readable run log.",
+      "<strong>A usage meter you can trust.</strong> Time, tokens and spend show real consumption from the first second of a run.",
+      "<strong>Run history you can manage.</strong> Open any past run, review its diffs at full width, and bulk-select runs to delete.",
+      "<strong>Back and forward everywhere.</strong> Move between pages with the mouse back and forward buttons or Alt and the arrow keys, and close any dialog with Esc.",
+      "<strong>Linux launch fixed.</strong> The Debian and Fedora packages now start correctly.",
+    ],
+  },
   '2.8.4': {
     items: [
       "<strong>A redesigned workspace.</strong> Collapsible labeled sidebar, a framed chat surface, and a calmer overall layout.",
