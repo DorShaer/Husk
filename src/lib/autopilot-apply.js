@@ -40,7 +40,9 @@ function copyInto(worktreePath, workspaceRoot, rel) {
     return { path: rel, ok: false, reason: 'source escapes worktree root' };
   }
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst re-confined under workspaceRoot above
     fs.mkdirSync(path.dirname(dst), { recursive: true });
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- src and dst both re-confined above
     fs.copyFileSync(src, dst);
     return { path: rel, ok: true, status: 'written' };
   } catch (err) {
