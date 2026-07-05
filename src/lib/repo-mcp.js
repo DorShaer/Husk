@@ -12,7 +12,7 @@
 //         .env.example        optional: lines like KEY=description
 //         dist/               optional: present when build has already run
 //
-// The scanner is forgiving. Missing files, missing fields, weird casing —
+// The scanner is forgiving. Missing files, missing fields, weird casing -
 // each branch produces a sensible status rather than throwing.
 
 const fs = require('fs');
@@ -260,7 +260,7 @@ function tomlStringArray(arr) {
 }
 
 function tomlBareKey(k) {
-  // TOML bare keys allow [A-Za-z0-9_-]+ — fall back to a quoted key
+  // TOML bare keys allow [A-Za-z0-9_-]+: fall back to a quoted key
   // when the input has anything else.
   if (/^[A-Za-z0-9_-]+$/.test(String(k))) return String(k);
   return tomlString(k);

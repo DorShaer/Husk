@@ -57,3 +57,24 @@ test('isInside: a target built with ../ returns false', () => {
 test('isInside: root itself returns true', () => {
   assert.equal(isInside(ROOT, ROOT), true);
 });
+
+// Symlink-escape guard: the composition the fs:readFile handler uses to refuse
+// a link inside root that points outside root (realpath, then isInside).
+test('isInside rejects a symlink whose target escapes root (realpath re-check)', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-sym-'));
+  try {
+    const outside = path.join(base, 'secret.txt');
+    fs.writeFileSync(outside, 'secret');
+    const root = path.join(base, 'proj');
+    fs.mkdirSync(root);
+    const inside = path.join(root, 'ok.txt');
+    fs.writeFileSync(inside, 'safe');
+    const evil = path.join(root, 'evil');
+    fs.symlinkSync(outside, evil);
+    // The confined string is inside root, but its realpath is not.
+    assert.equal(isInside(root, fs.realpathSync(inside)), true);
+    assert.equal(isInside(root, fs.realpathSync(evil)), false);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});

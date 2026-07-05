@@ -7,6 +7,23 @@ cd "$(dirname "$0")"
 
 C_OK='\033[0;32m'; C_INFO='\033[0;36m'; C_WARN='\033[1;33m'; C_DIM='\033[2m'; C_RST='\033[0m'
 
+# Node 20+ gate: npm install and @electron/rebuild below both need it, and
+# failing here beats failing minutes later with a raw ERR_REQUIRE_ESM trace.
+NODE_MIN_MAJOR=20
+if ! command -v node >/dev/null 2>&1; then
+    echo -e "\033[0;31m✗\033[0m Node.js ${NODE_MIN_MAJOR}+ is required but was not found."
+    echo -e "${C_DIM}  Install the current LTS from https://nodejs.org (or: nvm install --lts)${C_RST}"
+    exit 1
+fi
+NODE_VER="$(node --version 2>/dev/null | sed 's/^v//')"
+NODE_MAJOR="${NODE_VER%%.*}"
+case "$NODE_MAJOR" in (*[!0-9]*|'') NODE_MAJOR=0 ;; esac
+if [ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ]; then
+    echo -e "\033[0;31m✗\033[0m Node.js ${NODE_MIN_MAJOR}+ is required; found v${NODE_VER}."
+    echo -e "${C_DIM}  Upgrade to the current LTS from https://nodejs.org (or: nvm install --lts)${C_RST}"
+    exit 1
+fi
+
 # First-run only: install dependencies and build the native pty module.
 if [ ! -d node_modules ] || [ ! -f node_modules/node-pty/build/Release/pty.node ]; then
     echo -e "${C_INFO}▸${C_RST} Installing dependencies (one-time)..."

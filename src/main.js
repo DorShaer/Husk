@@ -20,6 +20,7 @@ const { createMouseModeStripper } = require('./lib/term-mouse');
 const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
 const { agentFileName, renderAgentMd } = require('./lib/agent-file');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
+const { pickResumeSessionId } = require('./lib/claude-session');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 
 // On macOS in particular, a GUI-launched Electron app inherits a
@@ -141,17 +142,17 @@ let mainWindow = null;
 // and listener disposables, so several agents run in parallel. `sessions`
 // maps the renderer's sessionId to that state; `activeSessionId` is the
 // focused tab. The `ptyProc` / `activePtyCwd` / `ptyLastDataAt` mirrors below
-// always track the active session, so the autonomy + stats code (which
+// always track the active session, so the autopilot + stats code (which
 // operates on "the current agent") needs no per-call session plumbing.
 const sessions = new Map();
 let activeSessionId = null;
 let sessionSeq = 0;
 // Mirrors of the active session. setActiveSession() and the active session's
-// onData keep these in sync; autonomy/stats read them directly.
+// onData keep these in sync; autopilot/stats read them directly.
 let ptyProc = null;
 let activePtyCwd = null;
 // Timestamp of the last byte the active agent emitted, used to detect when
-// its TUI has settled before we paste an autonomy goal into it.
+// its TUI has settled before we paste an autopilot goal into it.
 let ptyLastDataAt = 0;
 // The most recent PTY child's pid across all sessions, kept even after a
 // session's pty is nulled, so killPtyTree can still reap an orphaned group.
@@ -249,7 +250,7 @@ const DEFAULT_CONFIG = {
   showSystemView: false,
   treeRoot: HOME,
   showHidden: false,
-  theme: 'dark',
+  theme: 'midnight',
   accent: 'orange',
   railExpanded: true,
   statusCollapsed: false,
@@ -264,6 +265,11 @@ const DEFAULT_CONFIG = {
   paiEnabled: true,
   profiles: DEFAULT_PROFILES,
   activeProfileId: null,
+  // Map of encoded-cwd -> the last claude session id Husk bound there. On a
+  // fresh app boot the in-memory tab->session binding is gone, so this lets a
+  // launch resume the ongoing discussion for that project instead of minting a
+  // new session and splitting one conversation across many transcripts.
+  lastClaudeSessions: {},
 };
 
 function loadConfig() {
@@ -729,7 +735,25 @@ function killPtyTree() {
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
 
-function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null) {
+// The last claude session id Husk bound for a given project dir, so a fresh
+// app boot can resume the ongoing discussion instead of starting a new one.
+function lastClaudeSessionForCwd(encodedCwd, projDir) {
+  const saved = (config.lastClaudeSessions && config.lastClaudeSessions[encodedCwd]) || null;
+  return pickResumeSessionId(projDir, saved);
+}
+
+// Persist the claude session id bound for this project dir so the next boot
+// resumes it. Coalesced (skips no-op writes); harmless if it fails.
+function rememberClaudeSession(encodedCwd, sessionId) {
+  if (!sessionId) return;
+  const map = { ...(config.lastClaudeSessions || {}) };
+  if (map[encodedCwd] === sessionId) return;
+  map[encodedCwd] = sessionId;
+  config = { ...config, lastClaudeSessions: map };
+  saveConfig(config);
+}
+
+function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null, resumeLast = false) {
   // Target an existing session (Restart replaces just that tab's child) or
   // create a new one (New Chat passes a fresh id so the running agents keep
   // going). Falls back to the active session, then a generated id.
@@ -878,23 +902,34 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // known file, keeping each tab's transcript distinct even when several share
   // a cwd. Windows is skipped because its spawn may fall back to
   // `cmd.exe /c <rawCmd>`, which ignores agentArgs.
-  const encodedCwd = cwd.replace(/[/\\:]/g, '-');
+  // Must match the agent CLI's own project-dir encoding (all non-alphanumerics
+  // become dashes, dots included); identical to the old form for paths without
+  // dots, so existing lastClaudeSessions keys stay valid.
+  const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   const resumeMatch = (rawCmd || '').match(/--resume[=\s]+([A-Za-z0-9][A-Za-z0-9-]{6,})/);
   const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
   if (resumeMatch) {
     s.claudeSessionId = resumeMatch[1];
   } else if (isClaudeAgent && !isWin32 && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
     // Keep one discussion in one transcript across restarts (project switch, MCP
-    // reload, manual restart). Mint an id only on a tab's first spawn. If this
-    // tab's transcript already exists, RESUME it so claude appends to the same
-    // file; passing --session-id again would let claude start a fresh session
-    // and split one conversation into many "sessions" in the list.
+    // reload, manual restart). Within a process the tab reuses its own
+    // claudeSessionId. Across a full app restart that in-memory id is gone, so
+    // a boot/launch continuation (resumeLast) rebinds to the last claude
+    // session recorded for this cwd and resumes it. Without this every relaunch
+    // minted a fresh id and split one ongoing discussion into a new "session"
+    // in the list on every boot. A brand-new chat (openNewChatTab) does not set
+    // resumeLast, so it still gets its own fresh session.
+    const projDir = path.join(CLAUDE_DIR, 'projects', encodedCwd);
+    if (!s.claudeSessionId && resumeLast) {
+      s.claudeSessionId = lastClaudeSessionForCwd(encodedCwd, projDir);
+    }
     if (!s.claudeSessionId) s.claudeSessionId = crypto.randomUUID();
     let pinnedExists = false;
-    try { pinnedExists = fs.existsSync(path.join(CLAUDE_DIR, 'projects', encodedCwd, `${s.claudeSessionId}.jsonl`)); } catch (_) {}
+    try { pinnedExists = fs.existsSync(path.join(projDir, `${s.claudeSessionId}.jsonl`)); } catch (_) {}
     agentArgs = pinnedExists
       ? [...agentArgs, '--resume', s.claudeSessionId]
       : [...agentArgs, '--session-id', s.claudeSessionId];
+    rememberClaudeSession(encodedCwd, s.claudeSessionId);
   } else {
     s.claudeSessionId = null;
   }
@@ -970,22 +1005,16 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     s.lastDataAt = Date.now();
     s.dataBuf += data;
     if (!s.flushScheduled) { s.flushScheduled = true; setImmediate(() => flushSessionData(s)); }
-    // Autonomy + the TUI-settle detector operate on the focused agent only.
-    if (id === activeSessionId) { ptyLastDataAt = s.lastDataAt; autonomyTap(data); }
+    // Autopilot + the TUI-settle detector operate on the focused agent only.
+    if (id === activeSessionId) { ptyLastDataAt = s.lastDataAt; }
   });
   s.exitDisposable = s.pty.onExit(({ exitCode }) => {
     flushSessionData(s);
     if (mainWindow) mainWindow.webContents.send('pty:exit', { sessionId: id, code: exitCode });
     s.pty = null;
     if (id === activeSessionId) ptyProc = null;
-    // If an autonomy run was live on the focused agent, the process just
-    // died. Close the run so its 1s meter interval stops, the budget stops
-    // ticking wall-clock against a dead process, and a new run can start (the
-    // "already active" guard would otherwise block forever).
-    if (activeRunner && !autonomyFinishing && id === activeSessionId) {
-      if (mainWindow) mainWindow.webContents.send('autonomy:halt', { reason: 'agent-exited' });
-      finishActiveRun({ reason: 'agent-exited' });
-    }
+    // Autopilot runs own dedicated PTYs (see spawnRunPty); this focused-chat
+    // PTY exit does not touch any run. Each run's own PTY onExit closes it.
   });
   setActiveSession(id);
   return id;
@@ -1162,7 +1191,9 @@ function readActiveSessionStats() {
   try {
     if (!activePtyCwd) return null;
     const projectsDir = path.join(CLAUDE_DIR, 'projects');
-    const encoded = activePtyCwd.replace(/[/\\:]/g, '-');
+    // Same encoding the agent CLI uses (all non-alphanumerics become dashes);
+    // a narrower class breaks any project path containing a dot.
+    const encoded = activePtyCwd.replace(/[^a-zA-Z0-9]/g, '-');
     const dir = path.join(projectsDir, encoded);
     if (!fs.existsSync(dir)) return null;
     const files = fs.readdirSync(dir)
@@ -1316,7 +1347,30 @@ function readActiveSessionStats() {
 function targetSession(sessionId) {
   return (sessionId && sessions.get(sessionId)) || activeSession();
 }
-ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null));
+ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast));
+// List the chat PTYs that are still alive, so a reloaded renderer can rebuild
+// its tabs and reattach instead of orphaning them and minting a fresh chat.
+ipcMain.handle('pty:list', () => {
+  const list = [];
+  for (const [id, s] of sessions) {
+    if (!s.pty) continue;
+    list.push({ sessionId: id, cwd: s.cwd || null, claudeSessionId: s.claudeSessionId || null, active: id === activeSessionId });
+  }
+  return { ok: true, sessions: list, activeSessionId };
+});
+// Reattach a reloaded renderer tab to an existing PTY without disturbing it:
+// resize to the new viewport and re-mark it active. Used only for agents that
+// cannot resume a session (claude chats are resumed instead, which re-renders
+// full history cleanly). No scrollback replay: a PTY byte stream is terminal-
+// control sequences, not a log, and replaying it into a fresh terminal mangles.
+ipcMain.handle('pty:reattach', (_e, { sessionId, cols, rows, activate } = {}) => {
+  const s = sessions.get(sessionId);
+  if (!s || !s.pty) return { ok: false, error: 'no live session' };
+  try { if (cols && rows) s.pty.resize(Math.max(2, cols), Math.max(2, rows)); } catch (_) {}
+  if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', { sessionId, on: !!s.lastMouseOn });
+  if (activate) setActiveSession(sessionId);
+  return { ok: true, mouseOn: !!s.lastMouseOn, cwd: s.cwd || null, claudeSessionId: s.claudeSessionId || null };
+});
 ipcMain.on('pty:write', (_e, { data, sessionId } = {}) => {
   const s = targetSession(sessionId);
   if (s && s.pty) s.pty.write(data);
@@ -1358,7 +1412,7 @@ ipcMain.handle('pty:close', (_e, sessionId) => {
   return true;
 });
 
-// ─── Autonomy Mode IPC ────────────────────────────────────────────────────
+// ─── Autopilot Mode IPC ────────────────────────────────────────────────────
 //
 // The supervisor module owns one autonomous-run lifecycle: snapshot,
 // audit log, budget meter, halt-on-cap. main.js wires it through IPC
@@ -1373,16 +1427,57 @@ ipcMain.handle('pty:close', (_e, sessionId) => {
 // Husk user-data dir; the supervisor still reports the run as
 // "trusted-by-rewind".
 
-const Autonomy = require('./lib/autonomy');
+const Autopilot = require('./lib/autonomy');
 const electronApp = require('electron');
-let activeRunner = null;
-// Guards finishActiveRun against re-entry: an agent crash (onExit) and a
-// user cancel can both try to close the same run at once.
-let autonomyFinishing = false;
-function autonomyStorageRoot() {
+const { execFileSync } = require('child_process');
+
+// runs-pool: concurrent Autopilot runs, each keyed by runId. Each run owns a
+// dedicated PTY (separate from the focused chat PTY) and its own git worktree,
+// so N runs execute side by side without sharing terminal state or files.
+// Each entry: { runner, pty, _dataDisposable, _exitDisposable, worktreePath,
+//               workspaceRoot, isWorktree, outputBuf, flushTimer, finishing,
+//               tickInterval }
+const runs = new Map();
+const pendingRuns = []; // { runId, payload, workspaceRoot } queued past the concurrency cap
+const AP_MAX_CONCURRENT = 4;
+const AUT_OUTPUT_FLUSH_MS = 250;
+
+const applyWorktreeChanges = require('./lib/autopilot-apply').applyWorktreeChanges;
+const { rankRuns } = require('./lib/race-judge');
+const Orchestrator = require('./lib/autopilot-orchestrator');
+
+function autopilotStorageRoot() {
   return path.join(app.getPath('userData'), 'autonomy');
 }
-function autonomyCrypto() {
+
+// Retained-runs registry: a finished run keeps its worktree on disk until the
+// operator applies or discards it, so the changes the agent made are reviewable
+// and mergeable rather than thrown away on completion. The registry is a small
+// JSON file so retained worktrees survive an app restart and orphans are
+// discoverable (each entry names its worktree path + origin workspace).
+function retainedRegistryPath() {
+  return path.join(app.getPath('userData'), 'autopilot-retained.json');
+}
+function readRetained() {
+  try { return JSON.parse(fs.readFileSync(retainedRegistryPath(), 'utf8')); }
+  catch (_) { return {}; }
+}
+function writeRetained(map) {
+  try { fs.writeFileSync(retainedRegistryPath(), JSON.stringify(map, null, 2)); } catch (_) {}
+}
+function retainRun(runId, entry) {
+  const map = readRetained();
+  map[runId] = entry;
+  writeRetained(map);
+}
+function getRetained(runId) {
+  return readRetained()[runId] || null;
+}
+function dropRetained(runId) {
+  const map = readRetained();
+  if (map[runId]) { delete map[runId]; writeRetained(map); }
+}
+function autopilotCrypto() {
   try {
     if (electronApp.safeStorage && electronApp.safeStorage.isEncryptionAvailable()) {
       return {
@@ -1394,88 +1489,622 @@ function autonomyCrypto() {
   return { encrypt: null, decrypt: null };
 }
 
-// Autonomy PTY tap: while a run is active, every chunk of agent
-// output is buffered and flushed once per quarter-second. The
-// flush appends an `agent_output` event to the hash-chained audit
-// log, feeds char count into the budget meter (cost estimate), and
-// broadcasts cleaned-up activity lines + live budget state to the
-// renderer for the activity panel. Batching keeps the audit log
-// from getting one row per stdout byte and keeps IPC traffic sane.
-let autonomyOutputBuf = '';
-let autonomyOutputFlushTimer = null;
-const AUT_OUTPUT_FLUSH_MS = 250;
-
-function autonomyTap(data) {
-  if (!activeRunner) return;
-  autonomyOutputBuf += data;
-  if (!autonomyOutputFlushTimer) {
-    autonomyOutputFlushTimer = setTimeout(flushAutonomyOutput, AUT_OUTPUT_FLUSH_MS);
+// Create an isolated git worktree for a run so concurrent runs never touch
+// each other's files or the operator's working tree. The worktree lives under
+// a managed root in userData, never inside the project tree or HOME.
+function createRunWorktree(runId, workspaceRoot) {
+  const wtRoot = path.join(app.getPath('userData'), 'autopilot-worktrees');
+  const wtPath = path.join(wtRoot, runId);
+  // Refuse HOME
+  if (path.resolve(workspaceRoot) === path.resolve(HOME)) {
+    return { ok: false, error: 'worktree refused for home directory' };
+  }
+  // Check git repo
+  try {
+    execFileSync('git', ['rev-parse', '--git-dir'], { cwd: workspaceRoot, stdio: 'pipe' });
+  } catch (_) {
+    return { ok: false, error: 'project is not a git repository; Autopilot requires git for worktree isolation' };
+  }
+  // Confine wtPath under wtRoot (never inside project tree or HOME)
+  const resolvedWt = path.resolve(wtPath);
+  const resolvedWtRoot = path.resolve(wtRoot);
+  if (!resolvedWt.startsWith(resolvedWtRoot + path.sep) && resolvedWt !== resolvedWtRoot) {
+    return { ok: false, error: 'worktree path escapes managed root' };
+  }
+  const resolvedHome = path.resolve(HOME);
+  if (resolvedWt === resolvedHome || resolvedWt.startsWith(resolvedHome + path.sep + '..')) {
+    return { ok: false, error: 'worktree path resolves to HOME or above' };
+  }
+  try {
+    fs.mkdirSync(wtRoot, { recursive: true });
+    execFileSync('git', ['worktree', 'add', wtPath, 'HEAD'], { cwd: workspaceRoot, stdio: 'pipe' });
+    return { ok: true, worktreePath: wtPath };
+  } catch (err) {
+    return { ok: false, error: `git worktree add failed: ${(err && err.message) || String(err)}` };
   }
 }
 
-// Tail of the last flush: any partial line (no trailing \n) is
-// carried forward so the next chunk can complete it. Without this
-// the feed shows mid-line fragments like "*ie" "*rn" "*ei" because
-// the PTY arrives byte-by-byte during agent streaming.
-let autonomyLineTail = '';
-let autonomyLastTailEmit = '';
-let autonomyLastTailEmitAt = 0;
-
-function flushAutonomyOutput() {
-  autonomyOutputFlushTimer = null;
-  if (!activeRunner) { autonomyOutputBuf = ''; autonomyLineTail = ''; return; }
-  const chunk = autonomyOutputBuf;
-  autonomyOutputBuf = '';
-  if (!chunk) return;
-  // Audit-only event: still record chunks for the tamper-evident
-  // log (size + timestamp), but do NOT feed chars to the budget
-  // meter. The chars/4 estimate is wildly wrong for TUI agents
-  // because PTY bytes include cursor escapes, color codes, and
-  // in-place repaints (5-10x the actual semantic content). Token
-  // counts now come exclusively from the agent's own status line
-  // (parsed in the renderer via parseAgentTokenStatus). If the
-  // agent never reports tokens, the meter stays at 0 -- honest.
+// Remove a run's worktree. Prefer `git worktree remove` (also prunes the
+// admin ref); fall back to a plain recursive delete if git refuses.
+function removeRunWorktree(worktreePath, workspaceRoot) {
   try {
-    activeRunner.recordEvent({
+    execFileSync('git', ['worktree', 'remove', worktreePath, '--force'], { cwd: workspaceRoot || path.dirname(worktreePath), stdio: 'pipe' });
+  } catch (_) {
+    try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch (_) {}
+  }
+}
+
+// Parse an agent's own CUMULATIVE token counter out of raw PTY output
+// (codex "1,234 tokens used", "total tokens: 56k"). Only explicit
+// cumulative counters count. Context gauges ("152k/200k tokens") and
+// per-turn stream counters ("↓ 1.5k tokens") are deliberately NOT
+// matched: a context gauge reports the loaded window, not consumption,
+// and does not belong in a usage meter.
+function parseRunTokenStatus(text) {
+  if (!text) return null;
+  const toN = (raw, suffix) => {
+    const n = parseFloat(String(raw).replace(/,/g, ''));
+    if (!Number.isFinite(n)) return null;
+    const mult = suffix && /m/i.test(suffix) ? 1_000_000 : (suffix && /k/i.test(suffix) ? 1000 : 1);
+    return Math.floor(n * mult);
+  };
+  const used = text.match(/(\d[\d,.]*)\s*([kKmM]?)\s*tokens?\s+used\b/i);
+  if (used) return toN(used[1], used[2]);
+  const total = text.match(/total\s+tokens?\s*[:=]?\s*(\d[\d,.]*)\s*([kKmM]?)/i);
+  if (total) return toN(total[1], total[2]);
+  const usedColon = text.match(/tokens?\s+used\s*[:=]\s*(\d[\d,.]*)\s*([kKmM]?)/i);
+  if (usedColon) return toN(usedColon[1], usedColon[2]);
+  return null;
+}
+
+// Strip terminal escape sequences so token/sentinel scans see rendered text,
+// not cursor movement and color commands.
+function stripAnsi(s) {
+  // eslint-disable-next-line no-control-regex
+  return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b[()][0-9A-Za-z]/g, '');
+}
+
+// Busy marker rendered by agent TUIs while generating or running a tool.
+// Mirrors the renderer's detection; lives here because run PTYs have no
+// renderer terminal and the idle watchdog below observes the run directly.
+const AP_RUN_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]|\bworking\b/i;
+// Generous quiet windows: a run PTY can go byteless for a long stretch during
+// a silent tool call (build, test suite) with a static busy marker on screen.
+// Nudging too early types into the agent mid-tool; these thresholds only trip
+// on runs that are genuinely parked.
+const AP_RUN_NUDGE_PAUSE_MS = 45000;
+const AP_RUN_IDLE_END_MS = 120000;
+const AP_RUN_MAX_NUDGES = 5;
+
+// Agents sometimes paraphrase the completion sentinel ("Goal fully met",
+// "audit complete", "Stopping.") instead of printing it verbatim. When the
+// last narration reads as a completion claim and the agent has gone quiet,
+// the run is treated as complete instead of nudged.
+const AP_COMPLETION_CLAIM_RE = new RegExp(
+  '\\b(goal (is )?(fully )?(met|achieved|complete)'
+  + '|task (is )?(complete|finished|done)'
+  + '|nothing (left|more) to do'
+  + '|no (open|remaining) work'
+  + '|work is (done|complete)'
+  + '|deliverable is complete'
+  + '|implementation (is )?complete'
+  + '|audit complete'
+  + '|fully done)\\b'
+  + '|\\bstopping[.!]?\\s*$', 'i');
+const AP_RUN_FEED_LINE_MAX = 300;
+
+// ── Per-run activity source ─────────────────────────────────────────────────
+// Each run streams its own activity to the renderer, keyed by runId. Primary
+// source is the agent's session transcript (jsonl) written under the run's
+// worktree project dir: clean structured narration (text + tool calls) plus
+// authoritative token usage. Agents that write no transcript fall back to
+// ANSI-stripped complete lines from the run's PTY, deduped per run, so the
+// feed stays populated for any CLI.
+// Project-dir name the agent CLI uses for a cwd's transcripts: every
+// non-alphanumeric character becomes a dash (verified on disk: /home/dor/.claude
+// is stored as -home-dor--claude, the dot encoded too). A partial character
+// class here silently misses dirs with dots (.config) and kills the tail.
+function claudeProjectDirName(cwd) {
+  return String(cwd || '').replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+function newestRunJsonl(r) {
+  try {
+    const encoded = claudeProjectDirName(r.worktreePath);
+    const dir = path.join(CLAUDE_DIR, 'projects', encoded);
+    if (!fs.existsSync(dir)) return null;
+    const files = fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => {
+        const p = path.join(dir, f);
+        try { const st = fs.statSync(p); return { p, mtime: st.mtimeMs, size: st.size }; } catch (_) { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime);
+    return files[0] || null;
+  } catch (_) { return null; }
+}
+
+function pinRunTranscript(r, file, size) {
+  r.transcriptPath = file;
+  // If the PTY fallback already narrated the run's start, tail from EOF so
+  // the transcript's replay of that same content is not emitted twice.
+  r.transcriptOffset = r.ptyFallbackActive ? (size || 0) : 0;
+  r.transcriptRemainder = '';
+  r.transcriptStaleTicks = 0;
+}
+
+function findRunTranscript(r) {
+  if (r.transcriptPath && fs.existsSync(r.transcriptPath)) return r.transcriptPath;
+  // The worktree dir is unique to this run, so the newest file is its own.
+  const newest = newestRunJsonl(r);
+  if (newest) { pinRunTranscript(r, newest.p, newest.size); return r.transcriptPath; }
+  return null;
+}
+
+// Translate one transcript entry into structured feed items:
+// {kind: 'thought'|'tool', text}. Assistant text is the agent's live
+// narration (the dashboard's thinking stream); tool_use becomes a tool
+// item and also updates the run's "current tool" state for the fleet
+// strip. Token usage feeds the run's meter with the same figure the
+// agent's own status line shows (context occupancy).
+function runTranscriptEntryToLines(r, obj) {
+  const lines = [];
+  const msg = obj && obj.message;
+  if (!msg || obj.type !== 'assistant') return lines;
+  const content = msg.content;
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (!part) continue;
+      if (part.type === 'text' && typeof part.text === 'string') {
+        // Keep the agent's latest narration: it becomes the run conclusion
+        // shown in review, and it is the authoritative surface for the
+        // completion sentinel (the PTY view wraps and decorates lines, so
+        // exact-line matching there misses real finishes).
+        const whole = part.text.trim();
+        if (whole) r.lastAssistantText = whole.slice(0, 4000);
+        if (!r.sentinelSeen && part.text.includes(AUTOPILOT_COMPLETE_SENTINEL) && r.runId) {
+          r.sentinelSeen = true;
+          const rid = r.runId;
+          setImmediate(() => finishRun(rid, { reason: 'agent_complete' }));
+        }
+        for (const ln of part.text.split('\n')) {
+          const t = ln.trim();
+          if (t.length > 2) lines.push({ kind: 'thought', text: t.slice(0, 320) });
+        }
+      } else if (part.type === 'tool_use' && part.name) {
+        let detail = '';
+        try {
+          const inp = part.input || {};
+          detail = String(inp.command || inp.file_path || inp.path || inp.pattern || inp.prompt || inp.description || '').slice(0, 140);
+        } catch (_) {}
+        const toolText = `${part.name}${detail ? '  ' + detail : ''}`;
+        r.lastToolText = toolText.slice(0, 180);
+        r.lastToolAt = Date.now();
+        lines.push({ kind: 'tool', text: `→ ${toolText}`.slice(0, 320) });
+      }
+    }
+  }
+  const usage = msg.usage;
+  if (usage) {
+    // Only NEW work this turn: fresh input plus cache writes plus
+    // generated output. Cache reads are excluded; they measure the
+    // loaded context, not consumption, and belong to a context gauge
+    // rather than a usage meter.
+    const inTok = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+    const outTok = usage.output_tokens || 0;
+    if ((inTok > 0 || outTok > 0) && r.runner && typeof r.runner.addTokens === 'function') {
+      try { r.runner.addTokens(inTok, outTok); } catch (_) {}
+    }
+  }
+  return lines;
+}
+
+// Read transcript bytes appended since the last tick and stream new feed
+// lines to the renderer. Returns true when the transcript produced activity
+// this tick (used by the idle watchdog as "the agent moved").
+function tailRunTranscript(runId) {
+  const r = runs.get(runId);
+  if (!r) return false;
+  const file = findRunTranscript(r);
+  if (!file) return false;
+  let sz = 0;
+  try { sz = fs.statSync(file).size; } catch (_) { return false; }
+  if (sz < (r.transcriptOffset || 0)) {
+    // The pinned file shrank in place (rewritten/compacted). Resume from its
+    // new end rather than replaying rewritten history into the feed.
+    r.transcriptOffset = sz;
+    r.transcriptRemainder = '';
+    return false;
+  }
+  if (sz === (r.transcriptOffset || 0)) {
+    // Rotation guard: the agent starts a fresh jsonl on compaction/clear.
+    // A pinned file that stops growing while a newer sibling exists would
+    // silently kill the feed mid-run; re-pin to the newer file. Token
+    // reporting stays monotonic (maxReportedTokens only ever increases).
+    r.transcriptStaleTicks = (r.transcriptStaleTicks || 0) + 1;
+    if (r.transcriptStaleTicks >= 10) {
+      const newest = newestRunJsonl(r);
+      if (newest && newest.p !== r.transcriptPath) pinRunTranscript(r, newest.p, 0);
+      else r.transcriptStaleTicks = 0;
+    }
+    return false;
+  }
+  r.transcriptStaleTicks = 0;
+  let chunk = '';
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const len = sz - (r.transcriptOffset || 0);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, r.transcriptOffset || 0);
+      chunk = buf.toString('utf8');
+    } finally { fs.closeSync(fd); }
+  } catch (_) { return false; }
+  r.transcriptOffset = sz;
+  const data = (r.transcriptRemainder || '') + chunk;
+  const parts = data.split('\n');
+  r.transcriptRemainder = parts.pop() || '';
+  const lines = [];
+  for (const rawLine of parts) {
+    if (!rawLine.trim()) continue;
+    try {
+      const obj = JSON.parse(rawLine);
+      lines.push(...runTranscriptEntryToLines(r, obj));
+    } catch (_) {}
+  }
+  if (lines.length) {
+    r.feedEverStreamed = true;
+    r.lastFeedAt = Date.now();
+    const capped = lines.slice(0, AP_RUN_FEED_LINE_MAX);
+    if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+      runId,
+      lines: capped.map((it) => it.text),
+      items: capped,
+      at: Date.now(),
+    });
+  }
+  return lines.length > 0;
+}
+
+// Fallback feed for agents that write no transcript: complete ANSI-stripped
+// lines from the run's PTY, deduped per run. Skipped once a transcript is
+// streaming (the structured source reads far cleaner than TUI repaints).
+function streamRunPtyLines(runId, clean) {
+  const r = runs.get(runId);
+  if (!r || r.transcriptPath) return;
+  // Grace window: give the structured transcript a chance to appear before
+  // narrating raw PTY lines, so the two sources never overlap. Only agents
+  // that write no transcript at all fall through to this path.
+  if (Date.now() - (r.spawnedAt || 0) < 8000) return;
+  r.ptyFallbackActive = true;
+  if (!r.ptySeenLines) { r.ptySeenLines = new Set(); r.ptySeenOrder = []; }
+  const out = [];
+  for (const rawLine of clean.split('\n')) {
+    const t = rawLine.replace(/\r/g, '').trim();
+    if (t.length < 3) continue;
+    const norm = t.replace(/^[^A-Za-z0-9]+/, '').toLowerCase();
+    if (!norm || r.ptySeenLines.has(norm)) continue;
+    r.ptySeenLines.add(norm);
+    r.ptySeenOrder.push(norm);
+    while (r.ptySeenOrder.length > 400) r.ptySeenLines.delete(r.ptySeenOrder.shift());
+    out.push(t.slice(0, 320));
+  }
+  if (out.length) {
+    r.feedEverStreamed = true;
+    r.lastFeedAt = Date.now();
+    // Parity with transcript agents: keep the latest narrative-looking
+    // line as the run's last words, so completion-claim detection and
+    // the end-of-run final report work for every CLI, not only the
+    // ones that write a structured transcript.
+    for (let i = out.length - 1; i >= 0; i--) {
+      const t = out[i];
+      if (t.length >= 24 && !/^[→>$#]/.test(t)) { r.lastAssistantText = t.slice(0, 4000); break; }
+    }
+    const capped = out.slice(0, AP_RUN_FEED_LINE_MAX);
+    if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+      runId,
+      lines: capped,
+      items: capped.map((t) => ({ kind: 'output', text: t })),
+      at: Date.now(),
+    });
+  }
+}
+
+// Submission verifier: the injected goal's trailing Enter can be consumed by
+// a still-mounting TUI, leaving the goal sitting unsubmitted in the composer
+// (proven by transcript forensics: submitted messages were goal+nudge
+// concatenations). The agent writes its session transcript only after a real
+// submit, so transcript presence IS the submit signal; until it appears,
+// resend a bare Enter every few seconds. Idempotent: the text already sits in
+// the composer, an extra Enter on an empty composer is a no-op. Capped so
+// agents that never write transcripts get at most a few harmless keypresses.
+function ensureRunGoalSubmitted(runId) {
+  const r = runs.get(runId);
+  if (!r || r.goalSubmitted || !r.goalInjectedAt) return;
+  // Submit-proof: a NON-EMPTY transcript. The user message row is written at
+  // submit time, so bytes in the file mean the goal went through; a merely
+  // pre-created empty file must keep the resend loop alive.
+  if (r.transcriptPath) {
+    let sz = 0;
+    try { sz = fs.statSync(r.transcriptPath).size; } catch (_) {}
+    if (sz > 0) { r.goalSubmitted = true; return; }
+  }
+  const now = Date.now();
+  if (now - r.goalInjectedAt < 5000) return;
+  if ((r.injectResends || 0) >= 5) return;
+  if (now - (r.lastResendAt || 0) < 5000) return;
+  r.lastResendAt = now;
+  r.injectResends = (r.injectResends || 0) + 1;
+  try { if (r.pty) r.pty.write('\r'); } catch (_) {}
+}
+
+// Coarse live state for the dashboard fleet strip, derived from signals the
+// watchdog already tracks. Order matters: done > starting > tool > working
+// > quiet.
+function runLiveState(r) {
+  const now = Date.now();
+  if (r.sentinelSeen) return 'done';
+  if (!r.goalSubmitted && !r.feedEverStreamed) return 'starting';
+  if (r.lastToolAt && now - r.lastToolAt < 8000) return 'tool';
+  if (now - (r.lastPtyDataAt || 0) < 6000) return 'working';
+  const workGoneMs = r.workingSeenAt ? now - r.workingSeenAt : Infinity;
+  if (workGoneMs < 6000) return 'working';
+  return 'quiet';
+}
+
+// Idle watchdog, per run, observing the run's own PTY and transcript,
+// never a chat terminal: a focused-terminal proxy can suppress nudges or
+// end a healthy run. While the busy marker is on screen
+// the agent is working. Once it has worked and gone quiet without printing
+// the completion sentinel, nudge it to continue; after the nudges are spent
+// and it stays quiet, end the run as idle.
+function runIdleWatchdog(runId) {
+  const r = runs.get(runId);
+  if (!r || r.finishing || r.sentinelSeen) return;
+  if (!r.feedEverStreamed) return;
+  const now = Date.now();
+  const quietMs = now - (r.lastFeedAt || now);
+  // CLI-neutral working signal: any PTY bytes in the last few seconds mean
+  // the agent is alive (spinners, tool output, repaints), regardless of
+  // whether its busy marker matches the known regex. The regex is a
+  // stronger, earlier signal on top, never the sole gate.
+  if (now - (r.lastPtyDataAt || 0) < 6000) return;
+  const workGoneMs = r.workingSeenAt ? now - r.workingSeenAt : Infinity;
+  if (workGoneMs < 6000) return;
+  // Completion claim: the agent said it's done in plain words and went
+  // quiet. Finish as complete; nudging a finished agent only makes it
+  // re-declare completion in a loop.
+  // Only the tail of the last message counts: "task done, moving on to X"
+  // mid-message is progress narration, not a completion claim.
+  if (quietMs >= AP_RUN_NUDGE_PAUSE_MS && r.lastAssistantText
+      && AP_COMPLETION_CLAIM_RE.test(r.lastAssistantText.slice(-240))) {
+    if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+      runId,
+      lines: ['Agent declared the goal complete and went quiet; ending the run as finished.'],
+      at: now,
+    });
+    finishRun(runId, { reason: 'agent_complete' });
+    return;
+  }
+  if (quietMs >= AP_RUN_NUDGE_PAUSE_MS && (r.nudgeCount || 0) < AP_RUN_MAX_NUDGES) {
+    r.nudgeCount = (r.nudgeCount || 0) + 1;
+    r.lastFeedAt = now;
+    if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+      runId,
+      lines: [`Agent paused without finishing; nudging to continue autonomously (${r.nudgeCount}/${AP_RUN_MAX_NUDGES}).`],
+      at: now,
+    });
+    injectGoalToRunPty(runId, 'Continue working toward the goal autonomously. Decide for yourself; do not wait for input. Print the completion marker when fully done.');
+  } else if (quietMs >= AP_RUN_IDLE_END_MS && (r.nudgeCount || 0) >= AP_RUN_MAX_NUDGES) {
+    if (mainWindow) mainWindow.webContents.send('autopilot:activity', { runId, lines: ['Agent stayed idle after nudges; ending the run.'], at: now });
+    finishRun(runId, { reason: 'agent_idle' });
+  }
+}
+
+// Per-run output flush: buffer this run's PTY bytes and, once per
+// quarter-second, append one agent_output audit row (size + timestamp only,
+// not fed to the budget meter) and re-broadcast the run's budget state so its
+// rings stay live. Char counts are audit-only: the chars/4 estimate is wildly
+// wrong for TUI agents (cursor escapes, color codes, in-place repaints), so
+// authoritative token counts come from the agent's own status line, parsed
+// here from the run's raw output (per-run PTYs have no renderer terminal).
+function flushRunOutput(runId) {
+  const r = runs.get(runId);
+  if (!r) return;
+  r.flushTimer = null;
+  const chunk = r.outputBuf;
+  r.outputBuf = '';
+  if (!chunk) return;
+  try {
+    r.runner.recordEvent({
       kind: 'agent_output',
       ts: new Date().toISOString(),
       payload: { chars: chunk.length },
     });
   } catch (_) {}
-  // NOTE: this flush does not parse the byte stream into activity rows.
-  // That approach is fundamentally wrong for TUI
-  // agents (claude in particular): the PTY stream is a sequence of
-  // commands to a terminal emulator, not a log. Stripping ANSI and
-  // splitting on \n produces fragments because the emulator's job
-  // is to INTERPRET cursor positioning, overwrites, and alternate
-  // screen buffers into a final rendered grid.
-  //
-  // The renderer owns an xterm.js emulator that does exactly that
-  // rendering for the chat view. The activity feed snapshots
-  // that already-rendered grid (see renderer's snapshotTermForAutonomy).
-  //
-  // This flush does two real jobs:
-  //   1. Append one agent_output audit row per chunk so the budget
-  //      meter sees char counts (cost estimate stays accurate).
-  //   2. Broadcast the live budget state to the renderer so the
-  //      rings keep updating in lockstep with token spend.
-  if (mainWindow) {
-    mainWindow.webContents.send('autonomy:budget', activeRunner.budgetState());
+  if (mainWindow) mainWindow.webContents.send('autopilot:budget', { runId, ...r.runner.budgetState() });
+  const clean = stripAnsi(chunk);
+  // Busy-marker tracking for the idle watchdog: the marker on screen means
+  // the agent is mid-generation or mid-tool, so nudges must hold off.
+  if (AP_RUN_WORKING_RE.test(clean)) r.workingSeenAt = Date.now();
+  // Feed fallback for agents without a transcript (no-op once one exists).
+  streamRunPtyLines(runId, clean);
+  // Token meter fallback for agents without a structured transcript:
+  // scan for the agent's own cumulative counter and keep the running
+  // max (the meter is monotonic; status lines flicker). Once a
+  // transcript streams, its exact per-turn deltas are authoritative
+  // and the PTY scan stops.
+  if (!r.transcriptPath) {
+    let maxTok = -1;
+    for (const line of clean.split('\n')) {
+      const parsed = parseRunTokenStatus(line);
+      if (parsed != null && parsed > maxTok) maxTok = parsed;
+    }
+    if (maxTok >= 0 && maxTok > (r.maxReportedTokens || 0)) {
+      r.maxReportedTokens = maxTok;
+      try { r.runner.setReportedTokens(maxTok); } catch (_) {}
+    }
+  }
+  // Detect the completion sentinel that the agent prints when it's fully done.
+  // Per-run PTYs live in the main process and have no renderer-side terminal,
+  // so scan here instead of in the renderer.
+  if (!r.sentinelSeen && clean.includes(AUTOPILOT_COMPLETE_SENTINEL)) {
+    // The TUI decorates output lines (bullets, box-drawing borders), so an
+    // exact-line equality check misses real finishes. Accept the marker
+    // surrounded only by non-alphanumeric decoration; reject lines with
+    // real words (the injected directive quotes the marker after
+    // instruction text). Ignore the echo window right after an injection:
+    // the pasted directive itself contains the marker.
+    const recentlyInjected = Date.now() - (r.lastInjectAt || 0) < 10000;
+    const bareMarker = /^[^A-Za-z0-9]*<<HUSK_AUTOPILOT_COMPLETE>>[^A-Za-z0-9]*$/;
+    const hasSentinelLine = clean.split('\n').some((l) => bareMarker.test(l.replace(/\r/g, '').trim()));
+    if (hasSentinelLine && !recentlyInjected) {
+      r.sentinelSeen = true;
+      setImmediate(() => finishRun(runId, { reason: 'agent_complete' }));
+    }
   }
 }
 
-// Printed by the agent (per the autonomy directive) when the goal is fully
-// done. The renderer watches for this exact marker on its own line so a real
-// finish is detected positively, instead of guessing from terminal idle,
-// which previously mistook "waiting for the user's answer" for "complete".
-const AUTONOMY_COMPLETE_SENTINEL = '<<HUSK_AUTONOMY_COMPLETE>>';
+// Spawn the dedicated agent PTY for a run inside its worktree. Mirrors the
+// chat-PTY env setup (PATH augmentation, CLAUDE_DIR, HUSK_HOST) but wires the
+// data/exit handlers to this run's buffer and lifecycle instead of the chat
+// session's.
+function spawnRunPty(runId, cwd) {
+  const r = runs.get(runId);
+  if (!r) return;
+  const rawCmd = (config.agentCommand || 'claude').trim();
+  const userTokens = rawCmd.split(/\s+/).filter(Boolean);
+  let agentExe = userTokens.shift() || 'claude';
+  const agentArgs = userTokens;
+  const env = Object.assign({}, process.env, {
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    CLAUDE_DIR,
+    HUSK_HOST: '1',
+  });
+  const bunBin = path.join(HOME, '.bun', 'bin');
+  if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
+  const localBin = path.join(HOME, '.local', 'bin');
+  if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
+  agentExe = resolveAgentExe(agentExe, env.PATH);
+  const runPty = pty.spawn(agentExe, agentArgs, {
+    name: 'xterm-256color', cols: 120, rows: 30,
+    cwd,
+    env,
+  });
+  r.pty = runPty;
+  r._dataDisposable = runPty.onData((data) => {
+    const rs = runs.get(runId);
+    if (!rs) return;
+    rs.lastPtyDataAt = Date.now();
+    rs.outputBuf += data;
+    if (!rs.flushTimer) {
+      rs.flushTimer = setTimeout(() => flushRunOutput(runId), AUT_OUTPUT_FLUSH_MS);
+    }
+  });
+  r._exitDisposable = runPty.onExit(() => {
+    const rs = runs.get(runId);
+    if (rs && !rs.finishing) {
+      if (mainWindow) mainWindow.webContents.send('autopilot:halt', { runId, reason: 'agent-exited' });
+      finishRun(runId, { reason: 'agent-exited' });
+    }
+    try { if (r._dataDisposable) r._dataDisposable.dispose(); } catch (_) {}
+    try { if (r._exitDisposable) r._exitDisposable.dispose(); } catch (_) {}
+  });
+}
 
-// Wrap a user goal in an autonomous-operator preamble. An autonomy run is
+// Deliver a goal/nudge into a run's PTY. claude needs a bracketed-paste block
+// then a separate Enter (raw keystrokes hit its TUI hotkeys); other agents
+// take the text directly then Enter to submit.
+function injectGoalToRunPty(runId, text) {
+  const r = runs.get(runId);
+  if (!r || !r.pty) return false;
+  try {
+    // The injected text itself contains the completion sentinel (the
+    // directive tells the agent to print it), and the TUI echoes pasted
+    // text. Timestamp the injection so the PTY sentinel scan can ignore
+    // the echo window.
+    r.lastInjectAt = Date.now();
+    const body = String(text).replace(/\r/g, ' ').replace(/\n/g, ' ');
+    const agentKind = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
+      .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
+    if (agentKind === 'claude') {
+      r.pty.write('\x1b[200~' + body + '\x1b[201~');
+      setTimeout(() => { try { if (r.pty) r.pty.write('\r'); } catch (_) {} }, 120);
+    } else {
+      r.pty.write(body);
+      setTimeout(() => { try { if (r.pty) r.pty.write('\r'); } catch (_) {} }, 150);
+    }
+    return true;
+  } catch (_) { return false; }
+}
+
+// Interrupt the current agent turn in a run's PTY (SIGINT). Does not kill the
+// PTY: the agent stays at its prompt.
+function sigintRunPty(runId) {
+  const r = runs.get(runId);
+  if (!r || !r.pty) return;
+  try { r.pty.write('\x03'); } catch (_) {}
+}
+
+// Resolve once a run's freshly-spawned PTY looks ready for input: it has
+// emitted output then gone quiet for a short settle window, or maxMs elapsed.
+// Pasting before the TUI input mounts silently drops the goal.
+function whenRunPtyReady(runId, maxMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const settleMs = 350;
+    const minWaitMs = Math.min(250, maxMs);
+    let lastDataAt = start;
+    const r = runs.get(runId);
+    if (!r || !r.pty) return resolve('no-pty');
+    // Track last data time via a temporary listener
+    const tmpDisposable = r.pty.onData(() => { lastDataAt = Date.now(); });
+    const check = () => {
+      const now = Date.now();
+      if (now - start >= maxMs) { try { tmpDisposable.dispose(); } catch (_) {} return resolve('timeout'); }
+      const sawOutput = lastDataAt >= start - 50;
+      const quietFor = now - lastDataAt;
+      if (sawOutput && quietFor >= settleMs && (now - start) >= minWaitMs) {
+        try { tmpDisposable.dispose(); } catch (_) {}
+        return resolve('ready');
+      }
+      setTimeout(check, 80);
+    };
+    setTimeout(check, minWaitMs);
+  });
+}
+
+// After a run frees a slot (finish/cancel), start the next queued run if the
+// active count is back under the concurrency cap.
+function drainPendingRun() {
+  if (!pendingRuns.length) return;
+  const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
+  const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
+  if (activeCount >= maxConcurrent) return;
+  const next = pendingRuns.shift();
+  if (next) {
+    // A queued run that fails to start must still be accounted to its collab
+    // group, or the team's remaining-counter stalls and the integrator never
+    // spawns (the whole team would hang with no error surfaced).
+    doStartRun(next.runId, next.payload, next.workspaceRoot)
+      .then((res) => { if (!res || !res.ok) noteCollabStartFailure(next.payload, (res && res.error) || 'failed to start'); })
+      .catch((err) => noteCollabStartFailure(next.payload, (err && err.message) || 'failed to start'));
+  }
+}
+
+// Printed by the agent (per the autopilot directive) when the goal is fully
+// done. The renderer watches for this exact marker on its own line so a real
+// finish is detected positively, instead of guessing from terminal idle.
+const AUTOPILOT_COMPLETE_SENTINEL = '<<HUSK_AUTOPILOT_COMPLETE>>';
+
+// Wrap a user goal in an autonomous-operator preamble. An autopilot run is
 // unattended: the agent must make its own decisions and never block on input.
 // Without this the agent behaves like an interactive session, asks a
 // clarifying question (e.g. "which tech stack?"), and stalls, which the
 // watchdog then reads as a finished run.
-function buildAutonomyGoal(goal) {
+function buildAutopilotGoal(goal) {
   return [
     '[AUTONOMOUS MODE] You are running unattended. No human is available to answer questions.',
     'Operate fully autonomously from start to finish:',
@@ -1483,7 +2112,7 @@ function buildAutonomyGoal(goal) {
     '2. Make every decision yourself (tech stack, architecture, libraries, file layout, naming). When a choice is ambiguous, pick the most sensible mainstream default, state the assumption in one line, and proceed immediately.',
     '3. Do not hand back a plan and stop. Plan if useful, then implement every part end to end.',
     '4. Keep working continuously until the goal is fully achieved and verified.',
-    '5. ONLY when the goal is completely finished, print this exact marker alone on its own line: ' + AUTONOMY_COMPLETE_SENTINEL,
+    '5. ONLY when the goal is completely finished, print this exact marker alone on its own line: ' + AUTOPILOT_COMPLETE_SENTINEL,
     '',
     'GOAL: ' + String(goal),
   ].join('\n');
@@ -1540,65 +2169,215 @@ function whenAgentReady(maxMs) {
   });
 }
 
-ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
-  if (activeRunner) return { ok: false, error: 'an autonomy run is already active' };
-  // Autonomy requires an active project. The whole feature is built
-  // around "snapshot a scoped workspace, watch the agent change it,
-  // let the user revert" - none of that makes sense outside a project.
-  // Refuse here at the IPC layer; the renderer separately gates the
-  // dialog open so this is the belt-and-suspenders check.
+ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
   const activeProj = Array.isArray(config.projects) && config.activeProjectId
     ? config.projects.find((p) => p && p.id === config.activeProjectId)
     : null;
   if (!activeProj || !activeProj.path) {
-    return { ok: false, error: 'pick an active project first; autonomy runs inside a project' };
+    return { ok: false, error: 'pick an active project first; autopilot runs inside a project' };
   }
   const workspaceRoot = activeProj.path;
   if (!fs.existsSync(workspaceRoot)) return { ok: false, error: 'active project path no longer exists' };
-  // Belt and suspenders: never let workspaceRoot resolve to HOME.
   if (path.resolve(workspaceRoot) === path.resolve(HOME)) {
-    return { ok: false, error: 'autonomy refuses to snapshot the entire home folder' };
+    return { ok: false, error: 'autopilot refuses to snapshot the entire home folder' };
   }
-  const sessionId = 'auto-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
-  const { encrypt, decrypt } = autonomyCrypto();
+  const runId = 'ap-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
+  const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
+  const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
+  if (activeCount >= maxConcurrent) {
+    pendingRuns.push({ runId, payload, workspaceRoot });
+    return { ok: true, runId, queued: true };
+  }
+  return doStartRun(runId, payload, workspaceRoot);
+});
 
-  // Snapshot off-cycle via the async path so the main process keeps
-  // painting while we walk the workspace. Progress events surface
-  // file counts into the renderer's start dialog.
-  const onProgress = (info) => {
-    if (mainWindow) mainWindow.webContents.send('autonomy:snapshot-progress', info);
+// ── Collab mode ─────────────────────────────────────────────────────────────
+// One orchestrator call decomposes the goal into 2..K sub-goals (the planner
+// decides the team size, not the user), each sub-goal becomes a normal
+// isolated run labeled with its role, and when the last worker finishes an
+// integrator run merges every worker worktree into its own, which becomes the
+// single Apply target. The only dedicated state is this tracker; everything
+// else rides the existing run model exactly like raceId does.
+const collabGroups = new Map(); // groupId -> { goal, caps, snapshot, workspaceRoot, remaining, workers, integratorSpawned }
+
+function newRunId() {
+  return 'ap-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
+}
+
+ipcMain.handle('autopilot:startCollab', async (_e, payload = {}) => {
+  // Any throw here must land as a visible error in the renderer, never a
+  // rejected invoke that a UI path might swallow.
+  try {
+    return await startCollabTeam(payload);
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || String(err) };
+  }
+});
+
+async function startCollabTeam(payload = {}) {
+  const activeProj = Array.isArray(config.projects) && config.activeProjectId
+    ? config.projects.find((p) => p && p.id === config.activeProjectId)
+    : null;
+  if (!activeProj || !activeProj.path) {
+    return { ok: false, error: 'pick an active project first; autopilot runs inside a project' };
+  }
+  const workspaceRoot = activeProj.path;
+  if (!fs.existsSync(workspaceRoot)) return { ok: false, error: 'active project path no longer exists' };
+  if (path.resolve(workspaceRoot) === path.resolve(HOME)) {
+    return { ok: false, error: 'autopilot refuses to snapshot the entire home folder' };
+  }
+  const goal = String(payload.goal || '').trim().slice(0, 4096);
+  if (!goal) return { ok: false, error: 'a goal is required' };
+  const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
+  const plan = await Orchestrator.planCollab({
+    goal,
+    agentCommand: config.agentCommand || 'claude',
+    cwd: workspaceRoot,
+    maxAgents: Math.min(4, maxConcurrent),
+    env: buildAgentEnv(),
+  });
+  if (!plan.ok) return { ok: false, error: `orchestrator: ${plan.error}` };
+  const groupId = 'collab-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+  if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, goal, agents: plan.agents });
+  collabGroups.set(groupId, {
+    goal, caps: payload.caps, snapshot: payload.snapshot, workspaceRoot,
+    remaining: plan.agents.length, workers: [], integratorSpawned: false,
+  });
+  const started = [];
+  for (let i = 0; i < plan.agents.length; i++) {
+    const a = plan.agents[i];
+    const injectGoal = [
+      `[COLLAB TEAM] You are the "${a.role}" agent, one of ${plan.agents.length} agents working in parallel on a shared goal, each in an isolated copy of the repository.`,
+      `Shared goal: ${goal}`,
+      `Your slice: ${a.subgoal}`,
+      'Work ONLY your slice; teammates own everything else. Deliver your slice completely.',
+    ].join(' ');
+    const p = { goal: a.subgoal, injectGoal, caps: payload.caps, snapshot: payload.snapshot, groupId, role: a.role };
+    const runId = newRunId();
+    const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
+    if (activeCount >= maxConcurrent) {
+      pendingRuns.push({ runId, payload: p, workspaceRoot });
+      started.push({ runId, role: a.role, queued: true });
+      continue;
+    }
+    const res = await doStartRun(runId, p, workspaceRoot);
+    if (!res || !res.ok) {
+      const g = collabGroups.get(groupId);
+      if (g) g.remaining -= 1;
+      started.push({ runId, role: a.role, error: (res && res.error) || 'failed' });
+    } else {
+      started.push({ runId, role: a.role, ok: true });
+    }
+  }
+  if (!started.some((s) => s.ok || s.queued)) {
+    collabGroups.delete(groupId);
+    return { ok: false, error: 'no team member could start: ' + (started[0] && started[0].error || 'unknown') };
+  }
+  return { ok: true, groupId, agents: plan.agents, started };
+}
+
+// Called from finishRun for every run that carried a groupId. Workers are
+// counted down; when the last one lands, spawn the integrator exactly once.
+// The integrator's own finish clears the tracker.
+function maybeAdvanceCollab(groupId, info) {
+  if (!groupId) return;
+  const g = collabGroups.get(groupId);
+  if (!g) return;
+  if (info.isIntegrator) { collabGroups.delete(groupId); return; }
+  g.workers.push(info);
+  g.remaining -= 1;
+  checkCollabComplete(groupId);
+}
+
+// A worker (or the integrator) that never managed to START still has to be
+// accounted, from both the immediate and the queued start paths.
+function noteCollabStartFailure(payload, error) {
+  const groupId = payload && payload.groupId;
+  if (!groupId) return;
+  const g = collabGroups.get(groupId);
+  if (!g) return;
+  if (payload.isIntegrator) {
+    collabGroups.delete(groupId);
+    if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: `Integrator could not start (${String(error).slice(0, 120)}); each team member's result stays available in History.` });
+    return;
+  }
+  g.remaining -= 1;
+  if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: `Team member "${payload.role || 'agent'}" could not start (${String(error).slice(0, 120)}).` });
+  checkCollabComplete(groupId);
+}
+
+function checkCollabComplete(groupId) {
+  const g = collabGroups.get(groupId);
+  if (!g) return;
+  if (g.remaining > 0 || g.integratorSpawned) return;
+  g.integratorSpawned = true;
+  const contributed = g.workers.filter((w) => (w.fileCount || 0) > 0);
+  if (!contributed.length) {
+    if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: 'No team member produced changes; skipping integration.' });
+    collabGroups.delete(groupId);
+    return;
+  }
+  const wtLines = g.workers.map((w) => `${w.role || 'agent'}: ${w.worktreePath} (${w.fileCount || 0} files changed)`);
+  const inject = [
+    `[COLLAB INTEGRATION] ${g.workers.length} agents worked in parallel on this shared goal, each in its own worktree of the same repository. Shared goal: ${g.goal}.`,
+    `Worker worktrees: ${wtLines.join('; ')}.`,
+    'Inspect each worker\'s changes with: git -C <worktree> diff HEAD.',
+    'Bring the good work into YOUR current working directory: export each worker\'s diff and apply it here (git -C <worktree> diff HEAD | git apply), or re-edit the files directly when a patch does not apply cleanly. When workers touched the same code, reconcile by correctness, not order. Verify the combined result is coherent (build/tests where available). Your directory is the final deliverable.',
+  ].join(' ');
+  const p = {
+    goal: `Integrate the team's parallel work: ${g.goal}`.slice(0, 4096),
+    injectGoal: inject,
+    caps: g.caps, snapshot: g.snapshot,
+    groupId, role: 'integrator', isIntegrator: true,
   };
-  // Snapshot is opt-in. When the user turns it off (they manage state with
-  // git), skip the workspace walk entirely: the run still gets an audit log
-  // and budget caps, but diff/revert are unavailable for it.
+  const runId = newRunId();
+  const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
+  const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
+  if (activeCount >= maxConcurrent) {
+    pendingRuns.push({ runId, payload: p, workspaceRoot: g.workspaceRoot });
+  } else {
+    doStartRun(runId, p, g.workspaceRoot)
+      .then((res) => { if (!res || !res.ok) noteCollabStartFailure(p, (res && res.error) || 'failed to start'); })
+      .catch((err) => noteCollabStartFailure(p, (err && err.message) || 'failed to start'));
+  }
+}
+
+// Start one run: create its isolated worktree, snapshot it, spin up the
+// supervisor runner + budget tick + dedicated PTY, then deliver the goal once
+// the agent's TUI settles. Every early-exit path that has already created the
+// worktree removes it before returning, so a failed start leaves nothing on
+// disk.
+async function doStartRun(runId, payload, workspaceRoot) {
+  const wtResult = createRunWorktree(runId, workspaceRoot);
+  if (!wtResult.ok) return { ok: false, error: wtResult.error };
+  const runRoot = wtResult.worktreePath;
+  const sessionId = 'auto-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
+  const { encrypt, decrypt } = autopilotCrypto();
+  const onProgress = (info) => {
+    if (mainWindow) mainWindow.webContents.send('autopilot:snapshot-progress', { runId, ...info });
+  };
   const wantSnapshot = payload.snapshot !== false;
   let snap;
   if (wantSnapshot) {
     try {
-      snap = await Autonomy.snapshot.captureSnapshotAsync(workspaceRoot, autonomyStorageRoot(), sessionId, {
-        encrypt,
-        onProgress,
-      });
+      snap = await Autopilot.snapshot.captureSnapshotAsync(runRoot, autopilotStorageRoot(), sessionId, { encrypt, onProgress });
     } catch (err) {
-      return { ok: false, error: `snapshot crashed: ${err && err.message || String(err)}` };
+      removeRunWorktree(runRoot, workspaceRoot);
+      return { ok: false, error: `snapshot crashed: ${(err && err.message) || String(err)}` };
     }
-    if (!snap.ok) return { ok: false, error: snap.error };
+    if (!snap.ok) {
+      removeRunWorktree(runRoot, workspaceRoot);
+      return { ok: false, error: snap.error };
+    }
   } else {
     snap = { ok: true, manifest: null, fileCount: 0 };
   }
-
-  // Derive the agent name from the configured command so the budget
-  // meter prices the run correctly. Vendor-billed agents (copilot, codex,
-  // aider, gemini) carry a $0 rate so the dollar cap does not fire on a
-  // fabricated Sonnet-priced cost; claude falls through to the default
-  // model rate.
   const agentName = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
     .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
   const vendorBilled = ['copilot', 'codex', 'aider', 'gemini'].includes(agentName);
-  const r = Autonomy.supervisor.startRun({
-    sessionId,
-    workspaceRoot,
-    storageRoot: autonomyStorageRoot(),
+  const r = Autopilot.supervisor.startRun({
+    sessionId, workspaceRoot: runRoot,
+    storageRoot: autopilotStorageRoot(),
     goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
     agent: payload.agent || agentName,
     modelId: payload.modelId || (vendorBilled ? agentName : null),
@@ -1607,151 +2386,388 @@ ipcMain.handle('autonomy:start', async (_e, payload = {}) => {
     skipSnapshot: true,
     snapshotManifest: snap.manifest,
   });
-  if (!r.ok) return { ok: false, error: r.error };
-  activeRunner = r.runner;
-  // Periodic wall-clock tick so even idle runs respect the minutes cap
-  // and the live UI keeps a fresh budget readout. Halt fires SIGINT
-  // into the PTY so the agent stops at the cap, not "eventually".
-  activeRunner._tickInterval = setInterval(() => {
-    if (!activeRunner) return;
-    const s = activeRunner.tickClock();
-    if (mainWindow) mainWindow.webContents.send('autonomy:budget', s);
+  if (!r.ok) {
+    removeRunWorktree(runRoot, workspaceRoot);
+    return { ok: false, error: r.error };
+  }
+  const runState = {
+    runId,
+    runner: r.runner,
+    pty: null, _dataDisposable: null, _exitDisposable: null,
+    worktreePath: runRoot, workspaceRoot,
+    outputBuf: '', flushTimer: null,
+    transcriptPath: null, transcriptOffset: 0, transcriptRemainder: '', transcriptStaleTicks: 0,
+    lastFeedAt: 0, lastPtyDataAt: 0, workingSeenAt: 0, nudgeCount: 0,
+    feedEverStreamed: false, ptyFallbackActive: false, spawnedAt: Date.now(),
+    maxReportedTokens: 0,
+    finishing: false, tickInterval: null,
+    raceId: (payload && typeof payload.raceId === 'string' && payload.raceId) ? payload.raceId : null,
+    groupId: (payload && typeof payload.groupId === 'string' && payload.groupId) ? payload.groupId : null,
+    role: (payload && typeof payload.role === 'string' && payload.role) ? payload.role.slice(0, 40) : null,
+    isIntegrator: !!(payload && payload.isIntegrator),
+    goalInjectedAt: 0, goalSubmitted: false, injectResends: 0, lastResendAt: 0,
+    goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
+    agent: agentName,
+  };
+  runs.set(runId, runState);
+  // Forensics: tie this audit log to its pool identity and isolated worktree
+  // so a session on disk can always be traced back to the run that produced it.
+  try {
+    r.runner.recordEvent({
+      kind: 'run_identity',
+      ts: new Date().toISOString(),
+      payload: { runId, worktreePath: runRoot, workspaceRoot },
+    });
+  } catch (_) {}
+  runState.tickInterval = setInterval(() => {
+    const rs = runs.get(runId);
+    if (!rs) return;
+    // Stream this run's own narration to the renderer feed, then make sure
+    // the goal actually submitted, then check for stalls. All observe the
+    // run directly (transcript + PTY), never a chat terminal.
+    try { tailRunTranscript(runId); } catch (_) {}
+    try { ensureRunGoalSubmitted(runId); } catch (_) {}
+    try { runIdleWatchdog(runId); } catch (_) {}
+    const s = rs.runner.tickClock();
+    if (mainWindow) mainWindow.webContents.send('autopilot:budget', {
+      runId, ...s,
+      // Live telemetry for the dashboard: coarse state, current tool, and
+      // nudge count ride the 1s budget tick instead of a separate channel.
+      state: runLiveState(rs),
+      nudges: rs.nudgeCount || 0,
+      lastTool: rs.lastToolText || null,
+      lastToolAt: rs.lastToolAt || 0,
+      quietMs: Math.max(0, Date.now() - Math.max(rs.lastFeedAt || 0, rs.lastPtyDataAt || 0)),
+      role: rs.role || null,
+      agent: rs.agent || null,
+    });
     if (s.hitCap) {
-      // Cap reached. Stop this interval immediately so we do not inject
-      // a SIGINT and re-broadcast a halt every second (the meter keeps
-      // reporting hitCap once a cap is crossed). Interrupt the agent
-      // once, tell the renderer once, and finalize the run so it leaves
-      // the active state instead of sitting "Running" forever. The agent
-      // stays alive at its prompt; SIGINT interrupts the current turn, it
-      // does not kill the PTY.
-      try { clearInterval(activeRunner._tickInterval); } catch (_) {}
-      sigintPty();
-      if (mainWindow) mainWindow.webContents.send('autonomy:halt', { reason: 'budget', cap: s.hitCap });
-      finishActiveRun({ reason: 'budget', cap: s.hitCap });
+      try { clearInterval(rs.tickInterval); } catch (_) {}
+      sigintRunPty(runId);
+      if (mainWindow) mainWindow.webContents.send('autopilot:halt', { runId, reason: 'budget', cap: s.hitCap });
+      finishRun(runId, { reason: 'budget', cap: s.hitCap });
     }
   }, 1000);
+  spawnRunPty(runId, runRoot);
   const goal = typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : '';
-  if (mainWindow) mainWindow.webContents.send('autonomy:started', { sessionId, workspaceRoot, fileCount: snap.fileCount, goal });
-  // If no PTY is running yet (user jumped straight to Autonomy
-  // without ever opening Chat), spawn one in the project's cwd and
-  // extend the inject delay so the agent's banner finishes rendering
-  // before we paste the goal as input. Without this the goal lands
-  // in a non-existent stdin and the run appears to do nothing.
-  const ptyJustBooted = !ptyProc;
-  if (ptyJustBooted) {
-    try { spawnPty(100, 30, null, workspaceRoot); } catch (_) {}
-  }
+  if (mainWindow) mainWindow.webContents.send('autopilot:started', { runId, sessionId, workspaceRoot: runRoot, fileCount: snap.fileCount, goal, raceId: runState.raceId, groupId: runState.groupId, role: runState.role });
   if (goal) {
-    const deliver = () => {
-      const ok = injectGoalToPty(buildAutonomyGoal(goal));
-      // Surface delivery to the activity feed so the user has explicit
-      // feedback that the goal reached the agent. Without this, an
-      // agent that thinks silently for a while looks identical to a
-      // run that failed to start.
-      if (mainWindow) {
-        mainWindow.webContents.send('autonomy:activity', {
-          lines: [ok ? 'Goal delivered to agent. Waiting for first response...' : 'Could not deliver goal: no agent process available.'],
-          at: Date.now(),
-        });
+    // Collab runs record the readable sub-goal but inject a richer team
+    // directive (shared goal + own lane); other runs inject the goal itself.
+    const injectText = (typeof payload.injectGoal === 'string' && payload.injectGoal) ? payload.injectGoal : goal;
+    whenRunPtyReady(runId, 6000).then(() => {
+      const ok = injectGoalToRunPty(runId, buildAutopilotGoal(injectText));
+      const rs = runs.get(runId);
+      if (ok && rs) {
+        // The TUI may still be mounting when the paste lands, eating the
+        // trailing Enter. Mark the injection so the per-run tick can verify
+        // submission (the transcript only appears after a real submit) and
+        // resend Enter until it does. Also arm the idle watchdog NOW: rescue
+        // must never depend on banner bytes racing the fallback grace window.
+        rs.goalInjectedAt = Date.now();
+        rs.goalSubmitted = false;
+        rs.feedEverStreamed = true;
+        rs.lastFeedAt = Date.now();
       }
-    };
-    if (ptyJustBooted) {
-      // Cold start: wait for the freshly spawned agent's banner to
-      // render and settle before pasting, with a hard fallback so the
-      // goal is always delivered even if the readiness signal never
-      // arrives.
-      whenAgentReady(6000).then(deliver);
-    } else {
-      // Agent already running in Chat: a short delay is enough for the
-      // bracketed paste to land in the existing input.
-      setTimeout(deliver, 400);
-    }
+      if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+        runId,
+        lines: [ok ? 'Goal delivered to agent. Waiting for first response...' : 'Could not deliver goal: no agent process available.'],
+        at: Date.now(),
+      });
+    });
   }
-  return { ok: true, sessionId, workspaceRoot, fileCount: snap.fileCount, goal };
-});
+  return { ok: true, runId, sessionId, workspaceRoot: runRoot, fileCount: snap.fileCount, goal };
+}
 
-ipcMain.handle('autonomy:event', (_e, event = {}) => {
-  if (!activeRunner) return { ok: false, error: 'no active run' };
-  const r = activeRunner.recordEvent(event);
-  return r;
+ipcMain.handle('autopilot:event', (_e, event = {}) => {
+  const runId = String(event && event.runId || '').trim();
+  const r = runId ? runs.get(runId) : [...runs.values()][0];
+  if (!r) return { ok: false, error: 'no active run' };
+  return r.runner.recordEvent(event);
 });
 
 // Push a stalled autonomous agent to keep going on its own. Called by the
 // renderer watchdog when the agent goes quiet without printing the completion
-// marker (the classic "it asked a question and is waiting" stall). Capped on
+// marker (the "it asked a question and is waiting" stall). Capped on
 // the renderer side so a genuinely stuck run still ends.
-ipcMain.handle('autonomy:nudge', () => {
-  if (!activeRunner) return { ok: false, error: 'no active run' };
-  const ok = injectGoalToPty(
+ipcMain.handle('autopilot:nudge', (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  const r = runId ? runs.get(runId) : [...runs.values()][0];
+  if (!r) return { ok: false, error: 'no active run' };
+  const ok = injectGoalToRunPty(runId || [...runs.keys()][0],
     'Continue autonomously. Do not ask questions or wait for input. Pick a sensible default for any open decision, '
     + 'state it in one line, and keep working until the goal is complete. When fully done, print '
-    + AUTONOMY_COMPLETE_SENTINEL + ' alone on its own line.'
+    + AUTOPILOT_COMPLETE_SENTINEL + ' alone on its own line.'
   );
   return { ok };
 });
 
-ipcMain.handle('autonomy:cancel', (_e, detail = {}) => {
-  if (!activeRunner) return { ok: false, error: 'no active run' };
-  sigintPty();
-  activeRunner.cancel(detail);
-  return finishActiveRun();
+ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
+  const runId = String(detail && detail.runId || '').trim();
+  const r = runId ? runs.get(runId) : [...runs.values()][0];
+  const rid = runId || (r ? [...runs.keys()][0] : null);
+  if (!r || !rid) return { ok: false, error: 'no active run' };
+  // Stop the WHOLE autopilot team, not just the focused run: every live
+  // run in this run's collab group, plus queued members that have not
+  // started yet, plus the group tracker so no integrator spawns after the
+  // stop. Only autopilot-owned run PTYs are touched; chat sessions live in
+  // a separate registry and are never affected.
+  const groupId = r.groupId || null;
+  const targets = [rid];
+  if (groupId) {
+    for (const [id, run] of runs) {
+      if (id !== rid && run.groupId === groupId && !run.finishing) targets.push(id);
+    }
+    for (let i = pendingRuns.length - 1; i >= 0; i--) {
+      const p = pendingRuns[i] && pendingRuns[i].payload;
+      if (p && p.groupId === groupId) pendingRuns.splice(i, 1);
+    }
+    collabGroups.delete(groupId);
+    if (mainWindow && targets.length > 1) {
+      mainWindow.webContents.send('autopilot:activity', {
+        runId: rid,
+        lines: [`Stop requested: ending ${targets.length} team agents.`],
+        at: Date.now(),
+      });
+    }
+  }
+  let focusedResult = null;
+  for (const id of targets) {
+    const run = runs.get(id);
+    if (!run || run.finishing) continue;
+    sigintRunPty(id);
+    try { run.runner.cancel(detail); } catch (_) {}
+    const res = finishRun(id, { reason: 'user' });
+    if (id === rid) focusedResult = res;
+  }
+  return focusedResult || { ok: true, runId: rid };
 });
 
-ipcMain.handle('autonomy:end', (_e, detail = {}) => {
-  if (!activeRunner) return { ok: false, error: 'no active run' };
-  return finishActiveRun(detail);
+ipcMain.handle('autopilot:end', (_e, detail = {}) => {
+  const runId = String(detail && detail.runId || '').trim();
+  const rid = runId || [...runs.keys()][0];
+  if (!rid || !runs.has(rid)) return { ok: false, error: 'no active run' };
+  return finishRun(rid, detail);
 });
 
-async function finishActiveRun(detail) {
-  if (!activeRunner || autonomyFinishing) return { ok: false, error: 'no active run' };
-  autonomyFinishing = true;
-  const runner = activeRunner;
+// Close one run: stop its meter, drain its PTY output into the audit log, run
+// the end-of-run diff, summarize WHILE THE WORKTREE STILL EXISTS, tear down its
+// PTY, then RETAIN the worktree (it holds the agent's changes) and register it
+// for later apply/discard. Broadcasts autopilot:ended. Guarded against re-entry
+// (an agent crash and a user cancel can both target the same run) via the
+// per-run `finishing` flag. On exit, drains the pending queue so a freed slot
+// starts the next run.
+//
+// The order is summarize → retain, and removal only happens on explicit apply/discard.
+async function finishRun(runId, detail) {
+  const r = runs.get(runId);
+  if (!r || r.finishing) return { ok: false, error: 'no active run' };
+  r.finishing = true;
   try {
-    try { clearInterval(runner._tickInterval); } catch (_) {}
-    // Drain any pending PTY tap output so the final agent_output event
-    // makes it into the audit log before we close the runner.
-    try { if (autonomyOutputFlushTimer) { clearTimeout(autonomyOutputFlushTimer); autonomyOutputFlushTimer = null; } } catch (_) {}
-    try { flushAutonomyOutput(); } catch (_) {}
-    autonomyOutputBuf = '';
-    autonomyLineTail = '';
-    autonomyLastTailEmit = '';
-    autonomyLastTailEmitAt = 0;
-    // endRunAsync walks the end-of-run diff off the main thread so the
-    // UI does not freeze hashing the workspace at run end.
-    try { await runner.endRunAsync(detail || null); } catch (_) {}
-    const sessionId = runner.sessionId;
-    const workspaceRoot = runner.workspaceRoot;
-    activeRunner = null;
-    const { decrypt } = autonomyCrypto();
+    try { clearInterval(r.tickInterval); } catch (_) {}
+    if (r.flushTimer) { clearTimeout(r.flushTimer); r.flushTimer = null; }
+    flushRunOutput(runId);
+    r.outputBuf = '';
+    try { await r.runner.endRunAsync(detail || null); } catch (_) {}
+    const sessionId = r.runner.sessionId;
+    const runRoot = r.worktreePath;
+    const origRoot = r.workspaceRoot;
+    const raceId = r.raceId || null;
+    const groupId = r.groupId || null;
+    const runRole = r.role || null;
+    const wasIntegrator = !!r.isIntegrator;
+    const runAgent = r.agent || null;
+    const goal = r.goal || null;
+    // Clean up PTY (but NOT the worktree; its files are the deliverable).
+    try { if (r._dataDisposable) r._dataDisposable.dispose(); } catch (_) {}
+    try { if (r._exitDisposable) r._exitDisposable.dispose(); } catch (_) {}
+    try { if (r.pty) r.pty.kill(); } catch (_) {}
+    runs.delete(runId);
+    // Summarize while the worktree still exists so the diff can read real files.
+    const { decrypt } = autopilotCrypto();
     let sum;
     try {
-      sum = await Autonomy.supervisor.summarizeRunAsync({
-        sessionId, workspaceRoot, storageRoot: autonomyStorageRoot(), decrypt,
+      sum = await Autopilot.supervisor.summarizeRunAsync({
+        sessionId, workspaceRoot: runRoot, storageRoot: autopilotStorageRoot(), decrypt,
       });
     } catch (err) {
       sum = { ok: false, error: (err && err.message) || String(err) };
     }
-    // Carry the run identity on the payload so the renderer can enter
-    // review / revert / rerun even when its own autonomyLastSession was
-    // lost (e.g. the renderer reloaded while the run was active).
-    if (sum && typeof sum === 'object') { sum.sessionId = sessionId; sum.workspaceRoot = workspaceRoot; }
-    if (mainWindow) mainWindow.webContents.send('autonomy:ended', sum);
-    return { ok: true, sessionId, summary: sum };
+    if (sum && typeof sum === 'object') {
+      sum.runId = runId; sum.sessionId = sessionId; sum.workspaceRoot = runRoot; sum.raceId = raceId; sum.groupId = groupId; sum.role = runRole;
+      // Conclusion payload for the review UI: why the run ended, how many
+      // nudges it took, and the agent's last narration as its final report.
+      sum.endReason = (detail && detail.reason) || 'ended';
+      sum.nudges = r.nudgeCount || 0;
+      sum.finalMessage = r.lastAssistantText || null;
+    }
+    // Retain the worktree for review. A run whose worktree is inside the
+    // managed root (i.e. it really was isolated) is retained with its diff so
+    // Apply/Discard can act later; a run that somehow ran in-place has nothing
+    // to retain.
+    if (runRoot && origRoot && runRoot !== origRoot) {
+      const changes = (sum && Array.isArray(sum.diff)) ? sum.diff : [];
+      const meter = (sum && sum.summary && sum.summary.meter) || {};
+      retainRun(runId, {
+        runId, sessionId, raceId, goal,
+        groupId, role: runRole, isIntegrator: wasIntegrator,
+        agent: runAgent,
+        worktreePath: runRoot,
+        workspaceRoot: origRoot,
+        changes,
+        metrics: {
+          durationMs: (sum && sum.summary && typeof sum.summary.durationMs === 'number') ? sum.summary.durationMs : 0,
+          tokens: typeof meter.totalTokens === 'number' ? meter.totalTokens : 0,
+          dollars: typeof meter.dollars === 'number' ? meter.dollars : 0,
+          fileCount: changes.length,
+        },
+        endedAt: new Date().toISOString(),
+      });
+    }
+    // Collab bookkeeping: count this worker down and spawn the integrator
+    // when the team is done (or clear the tracker if this WAS the integrator).
+    try {
+      maybeAdvanceCollab(groupId, {
+        runId, role: runRole, isIntegrator: wasIntegrator,
+        worktreePath: runRoot,
+        fileCount: (sum && Array.isArray(sum.diff)) ? sum.diff.length : 0,
+      });
+    } catch (_) {}
+    // If the group is still alive after bookkeeping, more team work follows
+    // (siblings or the integrator that spawns asynchronously). The renderer
+    // must not drop into review mode on this worker's partial slice.
+    if (sum && typeof sum === 'object' && groupId && collabGroups.has(groupId)) sum.groupPending = true;
+    if (mainWindow) mainWindow.webContents.send('autopilot:ended', sum);
+    // Drain any queued runs
+    drainPendingRun();
+    return { ok: true, runId, sessionId, summary: sum };
   } finally {
-    activeRunner = null;
-    autonomyFinishing = false;
+    if (runs.has(runId)) { runs.delete(runId); }
+    r.finishing = false;
   }
 }
 
-ipcMain.handle('autonomy:status', () => {
-  if (!activeRunner) return { ok: true, active: false };
-  return {
-    ok: true,
-    active: true,
-    sessionId: activeRunner.sessionId,
-    state: activeRunner.getState(),
-    budget: activeRunner.budgetState(),
-  };
+// Apply a retained run's changes into its origin workspace, then remove the
+// worktree and drop the registry entry. Honest per-file results: a partial
+// apply returns ok:false with the failed paths named.
+ipcMain.handle('autopilot:applyRun', async (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  const entry = getRetained(runId);
+  if (!entry) return { ok: false, error: 'no retained run with that id' };
+  // While a collab team is still active, worker worktrees are the
+  // integrator's inputs and the integrator is the intended Apply target;
+  // applying a lone slice early ships partial work. After the group ends,
+  // workers become normal retained runs (the integrator-failure fallback).
+  if (entry.groupId && collabGroups.has(entry.groupId) && !entry.isIntegrator) {
+    return { ok: false, error: 'this run is part of an active team; wait for the integrator to finish, then apply its result' };
+  }
+  const result = applyWorktreeChanges(entry.worktreePath, entry.workspaceRoot, entry.changes || []);
+  // Whether or not every file applied, the worktree has served its purpose;
+  // remove it and drop the registry entry so nothing leaks.
+  try { removeRunWorktree(entry.worktreePath, entry.workspaceRoot); } catch (_) {}
+  dropRetained(runId);
+  return { ok: result.ok, runId, applied: result.applied, failed: result.failed };
+});
+
+// Discard a retained run: remove its worktree without applying anything.
+ipcMain.handle('autopilot:discardRun', async (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  const entry = getRetained(runId);
+  if (!entry) return { ok: false, error: 'no retained run with that id' };
+  // Discarding a worker mid-team would delete a worktree the integrator is
+  // about to read, silently dropping that agent's contribution.
+  if (entry.groupId && collabGroups.has(entry.groupId) && !entry.isIntegrator) {
+    return { ok: false, error: 'this run is part of an active team; its work feeds the integrator. Discard after the team finishes' };
+  }
+  try { removeRunWorktree(entry.worktreePath, entry.workspaceRoot); } catch (_) {}
+  dropRetained(runId);
+  return { ok: true, runId };
+});
+
+// List retained (finished, undecided) runs so the review UI can show them and
+// orphans are discoverable across restarts.
+ipcMain.handle('autopilot:retained', () => {
+  const map = readRetained();
+  return { ok: true, runs: Object.values(map) };
+});
+
+// Group retained runs into races (by raceId) and rank each race with the judge,
+// so the comparison UI can show a head-to-head scorecard with a suggested
+// winner. Runs without a raceId are returned loose (single reviews).
+ipcMain.handle('autopilot:race', () => {
+  const all = Object.values(readRetained());
+  const byRace = new Map();
+  const loose = [];
+  for (const r of all) {
+    if (r && r.raceId) {
+      if (!byRace.has(r.raceId)) byRace.set(r.raceId, []);
+      byRace.get(r.raceId).push(r);
+    } else if (r) {
+      loose.push(r);
+    }
+  }
+  const races = [];
+  for (const [raceId, group] of byRace) {
+    const ranked = rankRuns(group);
+    const goal = (group.find((g) => g.goal) || {}).goal || null;
+    races.push({ raceId, goal, count: ranked.length, runs: ranked });
+  }
+  // Newest race first by the winner's endedAt (fall back to any run's).
+  races.sort((a, b) => {
+    const ta = new Date((a.runs[0] && a.runs[0].endedAt) || 0).getTime();
+    const tb = new Date((b.runs[0] && b.runs[0].endedAt) || 0).getTime();
+    return tb - ta;
+  });
+  return { ok: true, races, loose };
+});
+
+// Apply one run of a race and discard all its siblings in a single move: the
+// winner's changes land in the workspace, every other run in the same race has
+// its worktree removed. Confined per-run; a run never touches a sibling's tree.
+ipcMain.handle('autopilot:applyWinner', async (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  const winner = getRetained(runId);
+  if (!winner) return { ok: false, error: 'no retained run with that id' };
+  const result = applyWorktreeChanges(winner.worktreePath, winner.workspaceRoot, winner.changes || []);
+  try { removeRunWorktree(winner.worktreePath, winner.workspaceRoot); } catch (_) {}
+  dropRetained(runId);
+  // Discard the losing siblings in the same race.
+  let discarded = 0;
+  if (winner.raceId) {
+    for (const r of Object.values(readRetained())) {
+      if (r && r.raceId === winner.raceId && r.runId !== runId) {
+        try { removeRunWorktree(r.worktreePath, r.workspaceRoot); } catch (_) {}
+        dropRetained(r.runId);
+        discarded++;
+      }
+    }
+  }
+  return { ok: result.ok, runId, applied: result.applied, failed: result.failed, discarded };
+});
+
+ipcMain.handle('autopilot:status', (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  if (runId) {
+    const r = runs.get(runId);
+    if (!r) return { ok: true, active: false };
+    return { ok: true, active: true, runId, sessionId: r.runner.sessionId, state: r.runner.getState(), budget: r.runner.budgetState() };
+  }
+  // No runId → return list of all active runs
+  const active = [...runs.entries()].map(([rid, r]) => ({
+    runId: rid, sessionId: r.runner.sessionId, state: r.runner.getState(), budget: r.runner.budgetState(),
+  }));
+  return { ok: true, active: active.length > 0, runs: active };
+});
+
+ipcMain.handle('autopilot:list', () => {
+  const active = [...runs.entries()].map(([rid, r]) => ({
+    runId: rid,
+    sessionId: r.runner.sessionId,
+    state: r.runner.getState(),
+    budget: r.runner.budgetState(),
+    worktreePath: r.worktreePath,
+  }));
+  return { ok: true, runs: active, queued: pendingRuns.length };
 });
 
 // The restore/diff target for a session is the directory the snapshot
@@ -1761,23 +2777,41 @@ ipcMain.handle('autonomy:status', () => {
 // snapshot, so a wrong root would wipe an unrelated directory.
 function manifestWorkspaceRoot(sessionId) {
   try {
-    const mp = path.join(autonomyStorageRoot(), 'sessions', sessionId, 'snapshot.json');
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to autonomy storage
+    const mp = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'snapshot.json');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to autopilot storage
     const m = JSON.parse(fs.readFileSync(mp, 'utf8'));
-    return (m && typeof m.workspaceRoot === 'string' && m.workspaceRoot) ? m.workspaceRoot : null;
-  } catch (_) { return null; }
+    if (m && typeof m.workspaceRoot === 'string' && m.workspaceRoot) return m.workspaceRoot;
+  } catch (_) {}
+  // Runs started with the snapshot toggle off write no manifest. The
+  // run_identity audit row records the worktree the run executed in;
+  // summarize can still read its diff and audit data from there.
+  try {
+    const ap = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'audit.jsonl');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to autopilot storage
+    const raw = fs.readFileSync(ap, 'utf8');
+    for (const ln of raw.split('\n').slice(0, 20)) {
+      if (!ln.trim()) continue;
+      try {
+        const row = JSON.parse(ln);
+        if (row.kind === 'run_identity' && row.payload && typeof row.payload.worktreePath === 'string') {
+          return row.payload.worktreePath;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return null;
 }
 
-ipcMain.handle('autonomy:revert', (_e, payload = {}) => {
+ipcMain.handle('autopilot:revert', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   const workspaceRoot = manifestWorkspaceRoot(sessionId);
   if (!workspaceRoot) return { ok: false, error: 'snapshot manifest has no workspace root; cannot revert safely' };
-  const { decrypt } = autonomyCrypto();
-  return Autonomy.supervisor.revertRun({
+  const { decrypt } = autopilotCrypto();
+  return Autopilot.supervisor.revertRun({
     sessionId,
     workspaceRoot,
-    storageRoot: autonomyStorageRoot(),
+    storageRoot: autopilotStorageRoot(),
     decrypt,
     preserveExtras: !!payload.preserveExtras,
   });
@@ -1788,25 +2822,28 @@ ipcMain.handle('autonomy:revert', (_e, payload = {}) => {
 // status line; we treat that as truth and override the chars/4
 // estimate the budget meter would otherwise produce. Cap firing
 // also uses the authoritative number when present.
-ipcMain.handle('autonomy:reportTokens', (_e, payload = {}) => {
-  if (!activeRunner) return { ok: false };
+ipcMain.handle('autopilot:reportTokens', (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  const r = runId ? runs.get(runId) : [...runs.values()][0];
+  if (!r) return { ok: false };
   const n = Number(payload && payload.tokens);
   if (!Number.isFinite(n) || n < 0) return { ok: false };
-  try { activeRunner.setReportedTokens(n); } catch (_) {}
+  try { r.runner.setReportedTokens(n); } catch (_) {}
   // Re-broadcast budget so the rings update immediately to the new
   // authoritative number instead of waiting for the next 1s tick.
-  if (mainWindow) mainWindow.webContents.send('autonomy:budget', activeRunner.budgetState());
+  const rid = runId || [...runs.keys()][0];
+  if (mainWindow) mainWindow.webContents.send('autopilot:budget', { runId: rid, ...r.runner.budgetState() });
   return { ok: true };
 });
 
-// History of past autonomy runs in the active project. Scans the
-// per-session manifests under the autonomy storage dir, returns
+// History of past autopilot runs in the active project. Scans the
+// per-session manifests under the autopilot storage dir, returns
 // the most recent N. Each session manifest carries workspaceRoot;
 // we filter to the requested workspace so each project sees its
 // own history.
-ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
+ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
   const wantWorkspace = String(payload && payload.workspaceRoot || '').trim() || null;
-  const sessionsDir = path.join(autonomyStorageRoot(), 'sessions');
+  const sessionsDir = path.join(autopilotStorageRoot(), 'sessions');
   let entries = [];
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- sessionsDir bounded to userData
@@ -1816,24 +2853,32 @@ ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
   } catch (_) {
     return { ok: true, runs: [] };
   }
-  const runs = [];
+  const pastRuns = [];
   for (const sid of entries) {
     try {
+      // The snapshot manifest is optional (runs started with the snapshot
+      // toggle off never write one), and for isolated runs its
+      // workspaceRoot names the run's own worktree, not the project.
+      // The run_identity audit row carries the origin workspace, so the
+      // project filter reads that first.
       const manifestPath = path.join(sessionsDir, sid, 'snapshot.json');
+      let manifest = {};
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
-      if (!fs.existsSync(manifestPath)) continue;
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      if (wantWorkspace && manifest.workspaceRoot && path.resolve(manifest.workspaceRoot) !== path.resolve(wantWorkspace)) continue;
+      if (fs.existsSync(manifestPath)) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
+        manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      }
       const auditPath = path.join(sessionsDir, sid, 'audit.jsonl');
       let goal = null;
       let status = 'unknown';
       let haltReason = null;
       let fileCount = 0;
       let endedAt = null;
+      let startedAt = null;
       let dollars = 0;
       let tokens = 0;
       let caps = null;
+      let originWorkspace = null;
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
       if (fs.existsSync(auditPath)) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
@@ -1842,6 +2887,10 @@ ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
         for (const ln of lines) {
           try {
             const row = JSON.parse(ln);
+            if (!startedAt && row.ts) startedAt = row.ts;
+            if (row.kind === 'run_identity' && row.payload && typeof row.payload.workspaceRoot === 'string') {
+              originWorkspace = row.payload.workspaceRoot;
+            }
             if (row.kind === 'start_run' && row.payload) {
               if (typeof row.payload.goal === 'string') goal = row.payload.goal;
               if (row.payload.caps && typeof row.payload.caps === 'object') caps = row.payload.caps;
@@ -1858,11 +2907,15 @@ ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
           } catch (_) {}
         }
       }
-      runs.push({
+      // Pre-worktree sessions have no run_identity row; their manifest
+      // workspaceRoot really is the project path.
+      const runWorkspace = originWorkspace || manifest.workspaceRoot || null;
+      if (wantWorkspace && runWorkspace && path.resolve(runWorkspace) !== path.resolve(wantWorkspace)) continue;
+      pastRuns.push({
         sessionId: sid,
-        capturedAt: manifest.capturedAt || null,
+        capturedAt: manifest.capturedAt || startedAt || null,
         endedAt,
-        workspaceRoot: manifest.workspaceRoot || null,
+        workspaceRoot: runWorkspace,
         goal,
         caps,
         status,
@@ -1873,33 +2926,34 @@ ipcMain.handle('autonomy:history', async (_e, payload = {}) => {
       });
     } catch (_) {}
   }
-  runs.sort((a, b) => {
+  pastRuns.sort((a, b) => {
     const ka = new Date(a.endedAt || a.capturedAt || 0).getTime();
     const kb = new Date(b.endedAt || b.capturedAt || 0).getTime();
     return kb - ka;
   });
-  return { ok: true, runs: runs.slice(0, 24) };
+  return { ok: true, runs: pastRuns.slice(0, 24) };
 });
 
 // Delete a past run: removes its session directory (manifest, audit log,
 // and all snapshot blobs). Refuses an active run and validates the
 // sessionId so the recursive remove can only ever touch a single session
-// folder under the autonomy storage root.
-ipcMain.handle('autonomy:deleteRun', (_e, payload = {}) => {
+// folder under the autopilot storage root.
+ipcMain.handle('autopilot:deleteRun', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId || !/^[A-Za-z0-9._-]+$/.test(sessionId)) {
     return { ok: false, error: 'invalid sessionId' };
   }
-  if (activeRunner && activeRunner.sessionId === sessionId) {
+  const isActive = [...runs.values()].some((r) => r.runner && r.runner.sessionId === sessionId);
+  if (isActive) {
     return { ok: false, error: 'cannot delete the run that is still active' };
   }
-  const dir = path.join(autonomyStorageRoot(), 'sessions', sessionId);
-  const root = path.join(autonomyStorageRoot(), 'sessions');
+  const dir = path.join(autopilotStorageRoot(), 'sessions', sessionId);
+  const root = path.join(autopilotStorageRoot(), 'sessions');
   // Belt and suspenders: the resolved target must sit directly under the
   // sessions root and not be the root itself.
   const resolved = path.resolve(dir);
   if (resolved === path.resolve(root) || path.dirname(resolved) !== path.resolve(root)) {
-    return { ok: false, error: 'path escapes autonomy storage' };
+    return { ok: false, error: 'path escapes autopilot storage' };
   }
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolved confined to sessions root above
@@ -1917,30 +2971,37 @@ ipcMain.handle('autonomy:deleteRun', (_e, payload = {}) => {
 // huge binary files do not blow up memory.
 const FILE_DIFF_MAX_BYTES = 1024 * 1024;
 const FILE_DIFF_MAX_LINES = 6000;
-ipcMain.handle('autonomy:fileDiff', async (_e, payload = {}) => {
+ipcMain.handle('autopilot:fileDiff', async (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
-  const workspaceRoot = String(payload && payload.workspaceRoot || '').trim();
   const relPath = String(payload && payload.path || '').trim();
-  if (!sessionId || !workspaceRoot || !relPath) {
-    return { ok: false, error: 'sessionId, workspaceRoot, path required' };
+  if (!sessionId || !relPath) {
+    return { ok: false, error: 'sessionId and path required' };
   }
+  // The run's files live in its own worktree, so the workspace resolves
+  // from the session record (manifest, else the run_identity audit row)
+  // rather than from the caller: callers carry the origin project as a
+  // label, and the "after" side of the diff only exists in the worktree.
+  // Caller value is a fallback for legacy sessions with no recorded root.
+  const workspaceRoot = manifestWorkspaceRoot(sessionId)
+    || String(payload && payload.workspaceRoot || '').trim();
+  if (!workspaceRoot) return { ok: false, error: 'no workspace recorded for this session' };
   // Path traversal guard: reuse the snapshot joinSafely contract.
   const safeWorkspace = path.resolve(workspaceRoot);
   const safeAbs = path.resolve(safeWorkspace, relPath);
   if (!(safeAbs === safeWorkspace || safeAbs.startsWith(safeWorkspace + path.sep))) {
     return { ok: false, error: 'path escapes workspace' };
   }
-  const storageRoot = autonomyStorageRoot();
+  const storageRoot = autopilotStorageRoot();
   const sessDir = path.join(storageRoot, 'sessions', sessionId);
   const manifestPath = path.join(sessDir, 'snapshot.json');
-  let manifest;
+  // Snapshot-off runs write no manifest; every file then diffs as
+  // added against an empty "before", which is the honest view.
+  let manifest = null;
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to storageRoot
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  } catch (err) {
-    return { ok: false, error: `could not read manifest: ${err.message}` };
-  }
-  const entry = manifest.entries && manifest.entries[relPath];
+  } catch (_) {}
+  const entry = manifest && manifest.entries && manifest.entries[relPath];
 
   let before = '';
   let beforeBytes = 0;
@@ -1950,7 +3011,7 @@ ipcMain.handle('autonomy:fileDiff', async (_e, payload = {}) => {
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to storageRoot
       let buf = fs.readFileSync(blobPath);
-      const { decrypt } = autonomyCrypto();
+      const { decrypt } = autopilotCrypto();
       if (typeof decrypt === 'function') {
         try { buf = decrypt(buf); } catch (_) {}
       }
@@ -2006,35 +3067,37 @@ ipcMain.handle('autonomy:fileDiff', async (_e, payload = {}) => {
 });
 
 // Live diff while a run is active. Caller polls every few seconds
-// from the Autonomy page. Uses the async walker so we never freeze
-// the main process for a multi-second diff. No sessionId required:
-// the active runner owns one.
-ipcMain.handle('autonomy:liveDiff', async () => {
-  if (!activeRunner) return { ok: false, error: 'no active run' };
+// from the Autopilot page. Uses the async walker so we never freeze
+// the main process for a multi-second diff. Targets the run named by
+// runId; falls back to the first active run when none is supplied.
+ipcMain.handle('autopilot:liveDiff', async (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  const r = runId ? runs.get(runId) : [...runs.values()][0];
+  if (!r) return { ok: false, error: 'no active run' };
   try {
-    const res = await Autonomy.snapshot.diffWorkspaceAsync(
-      activeRunner.workspaceRoot,
-      autonomyStorageRoot(),
-      activeRunner.sessionId,
+    const res = await Autopilot.snapshot.diffWorkspaceAsync(
+      r.runner.workspaceRoot,
+      autopilotStorageRoot(),
+      r.runner.sessionId,
     );
     return res;
   } catch (err) {
-    return { ok: false, error: err && err.message || String(err) };
+    return { ok: false, error: (err && err.message) || String(err) };
   }
 });
 
-ipcMain.handle('autonomy:summary', async (_e, payload = {}) => {
+ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
-  const { decrypt } = autonomyCrypto();
+  const { decrypt } = autopilotCrypto();
   // Diff the recorded workspace only, never a caller-supplied path, so this
   // read cannot be used to enumerate an arbitrary directory tree. Use the
   // async walker so loading a past run from history does not freeze the UI.
   const workspaceRoot = manifestWorkspaceRoot(sessionId);
-  return Autonomy.supervisor.summarizeRunAsync({
+  return Autopilot.supervisor.summarizeRunAsync({
     sessionId,
     workspaceRoot,
-    storageRoot: autonomyStorageRoot(),
+    storageRoot: autopilotStorageRoot(),
     decrypt,
   });
 });
@@ -3996,6 +5059,17 @@ function lastActivityMs(filePath, fileSize, fallbackMs) {
 // session by: claude's own ai-title, the first user message, a queued prompt,
 // the start timestamp, and the original working directory. Returns null if the
 // file cannot be read.
+// True when a user-message body is a slash-command or system wrapper rather
+// than a human sentence, so title derivation can skip it.
+function isCommandWrapperText(t) {
+  if (!t) return true;
+  return /^<\/?(local-)?command[-a-z]*/i.test(t)
+    || /^<command-(name|message|args)>/i.test(t)
+    || /^<local-command-/i.test(t)
+    || /^<system-reminder/i.test(t)
+    || /^<user-prompt-submit-hook/i.test(t)
+    || /^Caveat:/i.test(t);
+}
 function parseSessionHead(fullPath) {
   let aiTitle = ''; let userMessage = ''; let queueContent = '';
   let startedISO = ''; let originalCwd = '';
@@ -4010,11 +5084,16 @@ function parseSessionHead(fullPath) {
       if (!aiTitle && obj.type === 'ai-title' && typeof obj.aiTitle === 'string') aiTitle = obj.aiTitle.trim();
       if (!userMessage && obj.type === 'user' && obj.message) {
         const c = obj.message.content;
-        if (typeof c === 'string') userMessage = c.trim();
+        let text = '';
+        if (typeof c === 'string') text = c.trim();
         else if (Array.isArray(c)) {
           const tp = c.find((p) => p && p.type === 'text' && typeof p.text === 'string');
-          if (tp) userMessage = tp.text.trim();
+          if (tp) text = tp.text.trim();
         }
+        // Skip slash-command and system wrappers (e.g. "<local-command-...>",
+        // "<command-name>", a caveat banner, a system-reminder). They are not a
+        // human message and read as garbage titles; keep scanning for a real one.
+        if (text && !isCommandWrapperText(text)) userMessage = text;
       }
       if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') queueContent = obj.content.trim();
       if (aiTitle && startedISO && userMessage && originalCwd) break;
@@ -4561,6 +5640,170 @@ ipcMain.handle('fs:listDir', async (_e, { dir, showHidden }) => {
 
 ipcMain.handle('fs:home', () => HOME);
 
+// ─── Files command-center IPC ────────────────────────────────────────────────
+// Backs the redesigned Files page: a fuzzy-searchable index, inline preview,
+// and git decoration. Every read is confined under `root` via path-confine so a
+// crafted relative path can never escape the browsed directory.
+const FILE_PREVIEW_MAX_BYTES = 2 * 1024 * 1024; // 2 MB: past this the renderer would jank
+const FILE_INDEX_MAX = 20000;                    // cap the flat index so search stays instant
+const { detectLanguage } = require('./lib/lang-detect');
+
+// A path is safe to read when it resolves inside root. resolveInside throws on
+// absolute/traversal/null-byte; we translate that into a uniform error.
+function confinedAbs(root, rel) {
+  if (rel === '' || rel === '.') return path.resolve(root);
+  return resolveInside(root, rel);
+}
+
+// Flat file index for fuzzy search. Prefer `git ls-files` (fast, honors
+// .gitignore) and fall back to a bounded manual walk for non-repos.
+ipcMain.handle('fs:indexFiles', async (_e, { root, showHidden } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  try {
+    let files = null;
+    try {
+      const out = execFileSync('git', ['-C', rootAbs, 'ls-files', '--cached', '--others', '--exclude-standard'],
+        { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+      files = out.split('\n').filter(Boolean);
+    } catch (_) { files = null; }
+    let truncated = false;
+    if (!files) {
+      files = [];
+      const skip = new Set(['.git', 'node_modules', 'dist', 'build', '.cache', '.next', 'out', 'coverage']);
+      const walk = (absDir, rel) => {
+        if (files.length >= FILE_INDEX_MAX) { truncated = true; return; }
+        let ents;
+        try { ents = fs.readdirSync(absDir, { withFileTypes: true }); } catch (_) { return; }
+        for (const ent of ents) {
+          if (files.length >= FILE_INDEX_MAX) { truncated = true; return; }
+          if (!showHidden && ent.name.startsWith('.')) continue;
+          if (ent.isDirectory() && skip.has(ent.name)) continue;
+          const childRel = rel ? rel + '/' + ent.name : ent.name;
+          if (ent.isDirectory()) walk(path.join(absDir, ent.name), childRel);
+          else if (ent.isFile()) files.push(childRel);
+        }
+      };
+      walk(rootAbs, '');
+    } else if (files.length > FILE_INDEX_MAX) {
+      files = files.slice(0, FILE_INDEX_MAX);
+      truncated = true;
+    }
+    if (!showHidden) files = files.filter((p) => !p.split('/').some((seg) => seg.startsWith('.')));
+    return { ok: true, files, truncated };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Read one file for preview: confined, size-capped, binary-sniffed.
+ipcMain.handle('fs:readFile', async (_e, { root, rel } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  if (typeof rel !== 'string' || !rel) return { ok: false, error: 'rel required' };
+  let abs;
+  try { abs = confinedAbs(root, rel); }
+  catch (_) { return { ok: false, error: 'path outside root' }; }
+  // Symlink guard: confinedAbs proves the path string is inside root, but a
+  // symlink whose target is outside root would still be followed by readFile.
+  // Canonicalize and re-check so a link like <root>/x -> /etc/passwd is refused.
+  try {
+    const real = fs.realpathSync(abs);
+    if (!isInside(path.resolve(root), real)) return { ok: false, error: 'path outside root' };
+  } catch (_) { return { ok: false, error: 'could not resolve path' }; }
+  try {
+    const st = fs.statSync(abs);
+    if (!st.isFile()) return { ok: false, error: 'not a file' };
+    if (st.size > FILE_PREVIEW_MAX_BYTES) {
+      return { ok: false, error: 'too-large', bytes: st.size, reason: `File is ${(st.size / 1048576).toFixed(1)} MB; open it in your editor.` };
+    }
+    const buf = fs.readFileSync(abs);
+    // Binary sniff: a NUL byte in the first 8 KB means not text.
+    const scan = buf.subarray(0, Math.min(buf.length, 8192));
+    if (scan.includes(0)) return { ok: false, error: 'binary', bytes: st.size, reason: 'Binary file (no text preview).' };
+    const text = buf.toString('utf8');
+    const firstLine = text.slice(0, text.indexOf('\n') === -1 ? text.length : text.indexOf('\n'));
+    return { ok: true, text, lang: detectLanguage(rel, firstLine), bytes: st.size, truncated: false, mtimeMs: st.mtimeMs };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Write edited text back to a file for the inline editor. Confined and
+// symlink-guarded like readFile. Takes an optional `expectMtimeMs`: when the
+// file on disk has changed since the editor loaded it (for example the agent
+// edited it), the write is refused as a conflict rather than clobbering the
+// newer content, unless `force` is set.
+ipcMain.handle('fs:writeFile', async (_e, { root, rel, content, expectMtimeMs, force } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  if (typeof rel !== 'string' || !rel) return { ok: false, error: 'rel required' };
+  if (typeof content !== 'string') return { ok: false, error: 'content must be a string' };
+  if (content.length > FILE_PREVIEW_MAX_BYTES) return { ok: false, error: 'content too large to save' };
+  let abs;
+  try { abs = confinedAbs(root, rel); }
+  catch (_) { return { ok: false, error: 'path outside root' }; }
+  try {
+    const real = fs.realpathSync(abs);
+    if (!isInside(path.resolve(root), real)) return { ok: false, error: 'path outside root' };
+    abs = real;
+  } catch (_) {
+    // A brand-new file has no realpath yet; confinedAbs already proved the
+    // string is inside root, so a create is allowed.
+  }
+  try {
+    let current = null;
+    try { current = fs.statSync(abs); } catch (_) { current = null; }
+    if (current) {
+      if (!current.isFile()) return { ok: false, error: 'not a file' };
+      if (!force && typeof expectMtimeMs === 'number' && Math.abs(current.mtimeMs - expectMtimeMs) > 1) {
+        return { ok: false, error: 'conflict', reason: 'This file changed on disk since you opened it (the agent may have edited it). Reload to see the new version, or save anyway to overwrite it.' };
+      }
+    }
+    fs.writeFileSync(abs, content, 'utf8');
+    const st = fs.statSync(abs);
+    return { ok: true, bytes: st.size, mtimeMs: st.mtimeMs };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Git working-tree status for the whole root. Returns raw porcelain lines; the
+// renderer parses them with lib/git-porcelain so parsing is unit-tested.
+ipcMain.handle('fs:gitStatus', async (_e, { root } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  try {
+    execFileSync('git', ['-C', rootAbs, 'rev-parse', '--git-dir'], { stdio: 'ignore' });
+  } catch (_) { return { ok: true, isRepo: false, porcelain: '' }; }
+  try {
+    const out = execFileSync('git', ['-C', rootAbs, 'status', '--porcelain=v1'],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+    return { ok: true, isRepo: true, porcelain: out };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Unified git diff for one file (staged + unstaged). Path confined; passed as a
+// pathspec after `--` so it is never interpreted as a flag.
+ipcMain.handle('fs:gitDiff', async (_e, { root, rel } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  if (typeof rel !== 'string' || !rel) return { ok: false, error: 'rel required' };
+  const rootAbs = path.resolve(root);
+  try { confinedAbs(root, rel); } catch (_) { return { ok: false, error: 'path outside root' }; }
+  try {
+    const unstaged = execFileSync('git', ['-C', rootAbs, 'diff', '--', rel],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+    const staged = execFileSync('git', ['-C', rootAbs, 'diff', '--cached', '--', rel],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+    let diff = (staged ? staged + '\n' : '') + unstaged;
+    // An untracked file has no tracked diff. Show its whole content as added by
+    // diffing against an empty tree; git diff --no-index exits non-zero when the
+    // files differ, so read the diff from the thrown error's stdout.
+    if (!diff.trim()) {
+      const nullDev = process.platform === 'win32' ? 'NUL' : '/dev/null';
+      try {
+        execFileSync('git', ['-C', rootAbs, 'diff', '--no-index', '--', nullDev, rel],
+          { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch (e) {
+        if (e && typeof e.stdout === 'string' && e.stdout.trim()) diff = e.stdout;
+      }
+    }
+    return { ok: true, diff };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
 // ─── Voice (local TTS, no API keys) ─────────────────────────────────────────────
 //
 // Two backends:
@@ -4948,12 +6191,31 @@ ipcMain.handle('urls:openExternal', (_e, url) => {
 // ─── Lifecycle ────────────────────────────────────────────────────────────────────
 
 // Only allow one Husk at a time. A second launch focuses the existing window
-// instead of spawning another process tree (which is how we ended up with
-// piles of orphans burning the inotify_user_instances limit).
+// instead of spawning another process tree (which would pile up orphans
+// burning the inotify_user_instances limit).
 const gotLock = app.requestSingleInstanceLock();
+// The running instance records its version here so a second launch can tell
+// "user double-clicked again" (same version: just focus, stay silent) apart
+// from "user launched a NEW version while the old one runs" (versions differ:
+// warn the user, because the new binary quits and the OLD window gets focus).
+const instanceInfoPath = () => path.join(app.getPath('userData'), 'instance.json');
 if (!gotLock) {
+  let runningVersion = null;
+  try { runningVersion = JSON.parse(fs.readFileSync(instanceInfoPath(), 'utf8')).version || null; } catch (_) {}
+  if (runningVersion && runningVersion !== app.getVersion()) {
+    const { dialog } = require('electron');
+    try {
+      dialog.showErrorBox(
+        'A different Husk version is already running',
+        `You launched Husk v${app.getVersion()}, but v${runningVersion} is still running.\n\n`
+        + 'The running window was focused instead. To switch versions, fully quit '
+        + 'the running Husk first, then launch again.'
+      );
+    } catch (_) {}
+  }
   app.quit();
 } else {
+  try { fs.writeFileSync(instanceInfoPath(), JSON.stringify({ version: app.getVersion(), pid: process.pid })); } catch (_) {}
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();

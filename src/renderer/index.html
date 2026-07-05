@@ -12,7 +12,7 @@
     <script src="vendor/addon-web-links.js"></script>
     <script src="vendor/drawflow.min.js"></script>
   </head>
-  <body data-theme="dark" data-mode="dark" data-accent="orange" data-page="chat" data-rail="expanded">
+  <body data-theme="midnight" data-mode="dark" data-accent="orange" data-page="chat" data-rail="expanded">
 
     <!-- First-run onboarding -->
     <div id="onboarding" class="onboarding" hidden>
@@ -70,6 +70,10 @@
                 <button type="button" class="ob-theme-sw" data-mode="dark" title="Dark" aria-label="Dark"></button>
                 <button type="button" class="ob-theme-sw" data-mode="light" title="Light" aria-label="Light"></button>
                 <button type="button" class="ob-theme-sw" data-mode="midnight" title="Midnight" aria-label="Midnight"></button>
+                <button type="button" class="ob-theme-sw" data-mode="tokyo-night" title="Tokyo Night" aria-label="Tokyo Night"></button>
+                <button type="button" class="ob-theme-sw" data-mode="catppuccin" title="Catppuccin" aria-label="Catppuccin"></button>
+                <button type="button" class="ob-theme-sw" data-mode="rose-pine" title="Rose Pine" aria-label="Rose Pine"></button>
+                <button type="button" class="ob-theme-sw" data-mode="gruvbox" title="Gruvbox" aria-label="Gruvbox"></button>
                 <button type="button" class="ob-theme-sw" data-mode="nord" title="Nord" aria-label="Nord"></button>
                 <button type="button" class="ob-theme-sw" data-mode="dracula" title="Dracula" aria-label="Dracula"></button>
                 <button type="button" class="ob-theme-sw" data-mode="sepia" title="Sepia" aria-label="Sepia"></button>
@@ -189,9 +193,9 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><rect x="17" y="9" width="6" height="6" rx="1.5"/><path d="M7 12h2M15 12h2"/><path d="M4 9V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg></span>
               <span class="ri-label">Workflows</span>
             </button>
-            <button class="rail-item rail-item-autonomy" data-page="autonomy" title="Autonomy" id="rail-autonomy">
+            <button class="rail-item rail-item-autopilot" data-page="autopilot" title="Autopilot" id="rail-autopilot">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg><span class="rail-aut-pulse" id="rail-aut-pulse" hidden></span></span>
-              <span class="ri-label">Autonomy</span>
+              <span class="ri-label">Autopilot</span>
             </button>
             <button class="rail-item" data-page="projects" title="Projects">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg></span>
@@ -290,14 +294,14 @@
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 Add context
               </button>
-              <button class="ghost-btn" id="btn-autonomy" title="Run autonomously with snapshot + audit + cap">
+              <button class="ghost-btn" id="btn-autopilot" title="Run autonomously with snapshot + audit + cap">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg>
-                <span id="autonomy-label">Autonomy</span>
+                <span id="autopilot-label">Autopilot</span>
               </button>
               <button class="ghost-btn" id="btn-restart" title="Restart agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> Restart</button>
             </div>
           </div>
-          <div id="autonomy-banner" class="autonomy-banner" hidden></div>
+          <div id="autopilot-banner" class="autopilot-banner" hidden></div>
           <div id="trust-banner" class="trust-banner" hidden>
             <span class="trust-banner-text">Claude hasn't trusted this folder, so your saved permissions are ignored.</span>
             <button class="btn-primary trust-banner-btn" id="btn-trust-folder" type="button">Trust this folder</button>
@@ -460,14 +464,26 @@
 
         </div>
 
-        <!-- AUTONOMY PAGE -->
-        <div class="page page-autonomy" data-page="autonomy" hidden>
+        <!-- AUTOPILOT PAGE -->
+        <div class="page page-autopilot" data-page="autopilot" hidden>
           <div class="page-head">
             <div class="page-head-left">
-              <h1 class="page-title">Autonomy</h1>
+              <!-- Review navigation lives top-left where the eye looks for
+                   "back", not in the footer with the destructive actions.
+                   Esc, Alt+Left, and the mouse back button do the same. -->
+              <button class="aut-back-pill" id="aut-review-back" hidden title="Back to all runs (Esc, Alt+Left, or mouse back button)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+                <span>All runs</span>
+                <kbd class="aut-back-kbd">esc</kbd>
+              </button>
+              <h1 class="page-title">Autopilot</h1>
               <span class="page-sub" id="aut-page-sub">hand the agent a goal and supervise the run</span>
             </div>
             <div class="page-head-right">
+              <!-- One command slot across states: Stop while live, Rerun /
+                   Start-new in review. Acting on a run always lives here. -->
+              <button class="aut-hero-secondary aut-review-only" id="aut-review-rerun" hidden>Rerun this task</button>
+              <button class="btn-primary aut-review-only" id="aut-review-new" hidden>Start a new run</button>
               <div class="aut-page-status" id="aut-page-status" hidden>
                 <span class="ap-dot" aria-hidden="true"></span>
                 <span id="aut-page-status-text">Running</span>
@@ -483,7 +499,7 @@
 
           <div class="aut-page-empty" id="aut-page-empty">
             <section class="aut-hero">
-              <div class="aut-hero-eyebrow">AUTONOMY</div>
+              <div class="aut-hero-eyebrow">AUTOPILOT</div>
               <h2 class="aut-hero-title">Hand off entire tasks.<br/>Reach further while you focus.</h2>
               <p class="aut-hero-body">Husk snapshots your workspace, audits every agent step in a hash-chained log, and caps the run on time, tokens, or dollars. Stop anytime. Revert anything.</p>
               <div class="aut-hero-actions">
@@ -518,6 +534,13 @@
               <div class="aut-section-head">
                 <h3 class="aut-section-title">Recent runs</h3>
                 <span class="aut-section-sub" id="aut-recent-meta">no runs yet</span>
+                <div class="aut-recent-tools">
+                  <label class="aut-recent-selall-label" title="Select all runs">
+                    <input type="checkbox" id="aut-recent-selall" class="aut-recent-check">
+                    <span>Select all</span>
+                  </label>
+                  <button type="button" class="aut-recent-bulkdel" id="aut-recent-bulkdel" hidden>Delete selected</button>
+                </div>
               </div>
               <div class="aut-recent" id="aut-recent">
                 <div class="aut-page-feed-empty">No prior runs in this workspace.</div>
@@ -525,73 +548,66 @@
             </section>
           </div>
 
+            <!-- Cockpit: one dense left rail (mission, agents, files, run log)
+                 and agent lanes owning every remaining pixel. The value/cap
+                 ids and .aut-page-meter class are what the budget JS targets. -->
           <div class="aut-page-live" id="aut-page-live" hidden>
-            <section class="aut-page-goal">
-              <div class="aut-page-label">Goal</div>
-              <div class="aut-page-goal-text" id="aut-page-goal-text"></div>
+            <section class="aut-cockpit">
+              <aside class="aut-side">
+                <div class="aut-card aut-card-mission">
+                  <div class="aut-card-head">
+                    <span class="aut-page-label">Mission</span>
+                  </div>
+                  <div class="aut-goal-text" id="aut-page-goal-text" title="Click to expand"></div>
+                  <div class="aut-mission-stats">
+                    <div class="aut-page-meter aut-ms-row" data-key="time">
+                      <span class="aut-stat-label">time</span>
+                      <span class="aut-ms-right"><span class="aut-page-meter-value" id="aut-page-val-time">0s</span> <span class="aut-page-meter-cap" id="aut-page-cap-time">of 60m</span></span>
+                    </div>
+                    <div class="aut-page-meter aut-ms-row" data-key="tokens">
+                      <span class="aut-stat-label">tokens</span>
+                      <span class="aut-ms-right"><span class="aut-page-meter-value" id="aut-page-val-tokens">0</span> <span class="aut-page-meter-cap" id="aut-page-cap-tokens">of 200k</span></span>
+                    </div>
+                    <div class="aut-page-meter aut-ms-row" data-key="dollars">
+                      <span class="aut-stat-label">spend</span>
+                      <span class="aut-ms-right"><span class="aut-page-meter-value" id="aut-page-val-dollars">$0.00</span> <span class="aut-page-meter-cap" id="aut-page-cap-dollars">of $5</span></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="aut-card aut-card-agents">
+                  <div class="aut-card-head">
+                    <span class="aut-page-label">Agents</span>
+                    <span class="aut-page-pane-meta" id="aut-agents-meta"></span>
+                  </div>
+                  <div class="aut-fleet-list" id="aut-fleet-list"></div>
+                </div>
+                <div class="aut-card aut-card-files">
+                  <div class="aut-card-head">
+                    <span class="aut-page-label">Touched files</span>
+                    <span class="aut-page-pane-meta" id="aut-page-files-count">0</span>
+                  </div>
+                  <div class="aut-rail-files" id="aut-page-files">
+                    <div class="aut-page-feed-empty">No file changes yet.</div>
+                  </div>
+                  <!-- Verdict actions sit ON the evidence they judge: these
+                       act on exactly the files listed above. -->
+                  <div class="aut-files-actions">
+                    <button class="aut-fa-btn aut-fa-primary aut-retained-only" id="aut-review-apply" hidden>Apply changes</button>
+                    <button class="aut-fa-btn aut-retained-only" id="aut-review-discard" hidden>Discard</button>
+                    <button class="aut-fa-btn aut-fa-danger aut-review-only" id="aut-review-revert" hidden>Revert all</button>
+                  </div>
+                </div>
+                <div class="aut-card aut-card-log">
+                  <div class="aut-card-head">
+                    <span class="aut-page-label">Run log</span>
+                    <span class="aut-page-pane-meta" id="aut-page-event-count">0 events</span>
+                  </div>
+                  <div class="aut-eventlog" id="aut-timeline"></div>
+                </div>
+              </aside>
+              <div class="aut-lanes" id="aut-lanes"></div>
             </section>
 
-            <section class="aut-page-rings">
-              <div class="aut-page-meter" data-key="time">
-                <svg class="aut-page-ring" viewBox="0 0 96 96" aria-hidden="true">
-                  <circle cx="48" cy="48" r="42" class="aut-page-ring-track"/>
-                  <circle cx="48" cy="48" r="42" class="aut-page-ring-fill" id="aut-page-ring-time"/>
-                </svg>
-                <div class="aut-page-meter-value" id="aut-page-val-time">0s</div>
-                <div class="aut-page-meter-label">time</div>
-                <div class="aut-page-meter-cap" id="aut-page-cap-time">of 60m</div>
-              </div>
-              <div class="aut-page-meter" data-key="tokens">
-                <svg class="aut-page-ring" viewBox="0 0 96 96" aria-hidden="true">
-                  <circle cx="48" cy="48" r="42" class="aut-page-ring-track"/>
-                  <circle cx="48" cy="48" r="42" class="aut-page-ring-fill" id="aut-page-ring-tokens"/>
-                </svg>
-                <div class="aut-page-meter-value" id="aut-page-val-tokens">0</div>
-                <div class="aut-page-meter-label">tokens</div>
-                <div class="aut-page-meter-cap" id="aut-page-cap-tokens">of 200k</div>
-              </div>
-              <div class="aut-page-meter" data-key="dollars">
-                <svg class="aut-page-ring" viewBox="0 0 96 96" aria-hidden="true">
-                  <circle cx="48" cy="48" r="42" class="aut-page-ring-track"/>
-                  <circle cx="48" cy="48" r="42" class="aut-page-ring-fill" id="aut-page-ring-dollars"/>
-                </svg>
-                <div class="aut-page-meter-value" id="aut-page-val-dollars">$0.00</div>
-                <div class="aut-page-meter-label">spend</div>
-                <div class="aut-page-meter-cap" id="aut-page-cap-dollars">of $5</div>
-              </div>
-            </section>
-
-            <section class="aut-page-grid">
-              <div class="aut-page-pane aut-page-feed-pane">
-                <div class="aut-page-pane-head">
-                  <span class="aut-page-label">Activity</span>
-                  <span class="aut-page-pane-meta" id="aut-page-event-count">0 events</span>
-                </div>
-                <div class="aut-page-feed" id="aut-page-feed">
-                  <div class="aut-page-feed-empty">Waiting for the agent to begin...</div>
-                </div>
-              </div>
-              <div class="aut-page-pane aut-page-files-pane">
-                <div class="aut-page-pane-head">
-                  <span class="aut-page-label">Touched files</span>
-                  <span class="aut-page-pane-meta" id="aut-page-files-count">0</span>
-                </div>
-                <div class="aut-page-files" id="aut-page-files">
-                  <div class="aut-page-feed-empty">No file changes yet.</div>
-                </div>
-              </div>
-            </section>
-
-            <footer class="aut-page-foot" id="aut-page-foot">
-              <div class="aut-page-foot-left">
-                <button class="aut-hero-secondary" id="aut-review-back" hidden>&larr; All runs</button>
-              </div>
-              <div class="aut-page-foot-right">
-                <button class="aut-hero-secondary aut-review-only" id="aut-review-revert" hidden>Revert all changes</button>
-                <button class="aut-hero-secondary aut-review-only" id="aut-review-rerun" hidden>Rerun this task</button>
-                <button class="btn-primary aut-review-only" id="aut-review-new" hidden>Start a new run</button>
-              </div>
-            </footer>
           </div>
         </div>
 
@@ -1002,11 +1018,69 @@
                 <input type="checkbox" id="files-hidden" />
                 <span>Show hidden</span>
               </label>
-              <input type="text" id="files-root" class="ghost-input" placeholder="root path" />
+              <button class="ghost-btn fx-open-folder" id="btn-files-open" title="Choose the folder to browse">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                <span class="fx-open-folder-label" id="fx-open-folder-label">Open folder</span>
+              </button>
               <button class="ghost-btn" id="btn-files-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
             </div>
           </div>
-          <div class="tree" id="tree"></div>
+          <div class="fx" id="fx">
+            <aside class="fx-nav">
+              <div class="fx-search">
+                <svg class="fx-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                <input type="text" id="fx-search" class="fx-search-input" placeholder="Jump to file..." spellcheck="false" autocomplete="off" />
+                <kbd class="fx-search-kbd" id="fx-search-kbd">/</kbd>
+              </div>
+              <div class="fx-tabs">
+                <button class="fx-tab is-active" id="fx-tab-all" data-fxtab="all">All</button>
+                <button class="fx-tab" id="fx-tab-changed" data-fxtab="changed"><span>Changed</span><span class="fx-tab-count" id="fx-changed-count" hidden>0</span></button>
+                <button class="fx-filter-btn" id="fx-filter-btn" title="Filter by file type">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18l-7 8v6l-4 2v-8z"/></svg>
+                </button>
+              </div>
+              <div class="fx-filter" id="fx-filter" hidden>
+                <input type="text" id="fx-filter-input" class="fx-filter-input" placeholder="Filter types, e.g. js, ts, .md" spellcheck="false" autocomplete="off" />
+                <button class="fx-filter-clear" id="fx-filter-clear" title="Clear filter" hidden>&times;</button>
+              </div>
+              <div class="fx-filter-chips" id="fx-filter-chips" hidden></div>
+              <div class="fx-list" id="fx-list"></div>
+            </aside>
+            <section class="fx-preview" id="fx-preview">
+              <div class="fx-preview-empty" id="fx-preview-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                <div class="fx-preview-empty-title">Select a file to preview</div>
+                <div class="fx-preview-empty-sub">Search above, or open the Changed tab to see what git thinks changed.</div>
+              </div>
+              <div class="fx-preview-body" id="fx-preview-body" hidden>
+                <header class="fx-preview-head">
+                  <div class="fx-preview-head-main">
+                    <span class="fx-preview-path" id="fx-preview-path"></span>
+                    <span class="fx-preview-badge" id="fx-preview-gitbadge" hidden></span>
+                  </div>
+                  <div class="fx-preview-meta" id="fx-preview-meta"></div>
+                  <div class="fx-preview-actions">
+                    <button class="fx-act" id="fx-act-mention" title="Send this file's path to the agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v12H5.2L4 17.2z"/></svg>Mention</button>
+                    <button class="fx-act" id="fx-act-context" title="Add to the agent's context list"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Context</button>
+                    <button class="fx-act" id="fx-act-diff" title="Toggle git diff" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v3a6 6 0 0 1-6 6h-1"/></svg>Diff</button>
+                    <button class="fx-act fx-act-save" id="fx-act-save" title="Save (Ctrl+S)" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save</button>
+                    <button class="fx-act" id="fx-act-revert" title="Discard unsaved edits" hidden>Revert</button>
+                    <button class="fx-act" id="fx-act-open" title="Open in the OS default app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>Open</button>
+                  </div>
+                </header>
+                <div class="fx-code-wrap" id="fx-code-wrap" hidden><pre class="fx-code" id="fx-code"></pre></div>
+                <div class="fx-editor-wrap" id="fx-editor-wrap" hidden>
+                  <div class="fx-editor-gutter" id="fx-editor-gutter" aria-hidden="true"></div>
+                  <div class="fx-editor-area">
+                    <pre class="fx-editor-highlight" id="fx-editor-highlight" aria-hidden="true"></pre>
+                    <textarea class="fx-editor-input" id="fx-editor-input" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off"></textarea>
+                  </div>
+                </div>
+                <div class="fx-diff-wrap" id="fx-diff-wrap" hidden><pre class="fx-diff" id="fx-diff"></pre></div>
+                <div class="fx-preview-note" id="fx-preview-note" hidden></div>
+              </div>
+            </section>
+          </div>
         </div>
 
         <!-- preferences moved to floating modal below -->
@@ -1093,7 +1167,7 @@
     <!-- Notification stack: top-center, cards stack and dismiss independently. -->
     <div id="toast-stack" class="toast-stack" role="status" aria-live="polite"></div>
 
-    <!-- Autonomy: per-file diff viewer -->
+    <!-- Autopilot: per-file diff viewer -->
     <div id="aut-diff-modal" class="modal" hidden>
       <div class="modal-card modal-card-wide aut-diff-card">
         <div class="modal-head">
@@ -1117,11 +1191,29 @@
       </div>
     </div>
 
-    <!-- Autonomy: start-run dialog -->
-    <div id="autonomy-start-modal" class="modal" hidden>
+    <!-- Race Card: shareable image preview -->
+    <div id="race-card-modal" class="modal" hidden>
       <div class="modal-card modal-card-md">
         <div class="modal-head">
-          <h2 class="modal-title">Start an Autonomy run</h2>
+          <h2 class="modal-title">Race Card</h2>
+          <button class="modal-close" id="rc-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="ra-hint">A shareable image of this race. Repo path and file names are not included.</p>
+          <div class="rc-preview"><canvas id="rc-canvas" width="1200" height="630"></canvas></div>
+        </div>
+        <div class="modal-foot">
+          <button class="ghost-btn" id="rc-save">Save PNG</button>
+          <button class="btn-primary" id="rc-copy">Copy image</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Autopilot: start-run dialog -->
+    <div id="autopilot-start-modal" class="modal" hidden>
+      <div class="modal-card modal-card-md">
+        <div class="modal-head">
+          <h2 class="modal-title">Start an Autopilot run</h2>
           <button class="modal-close" id="aut-start-close" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
@@ -1136,7 +1228,7 @@
               </svg>
             </div>
             <div class="aut-empty-title">Pick a project first</div>
-            <div class="aut-empty-body">Autonomy runs inside a single project so the snapshot, audit log, and one-click revert all stay scoped to your code. Open Projects, choose where to work, then come back.</div>
+            <div class="aut-empty-body">Autopilot runs inside a single project so the snapshot, audit log, and one-click revert all stay scoped to your code. Open Projects, choose where to work, then come back.</div>
             <div class="aut-empty-actions">
               <button class="btn-primary" id="aut-goto-projects">Open Projects</button>
             </div>
@@ -1161,8 +1253,19 @@
               <label for="aut-cap-usd">Dollars cap</label>
               <input id="aut-cap-usd" type="number" min="0" step="0.5" value="5" />
             </div>
+            <div class="mcp-input-group">
+              <label>Mode</label>
+              <div class="aut-seg" id="aut-mode-seg" role="radiogroup" aria-label="Run mode">
+                <button type="button" class="aut-seg-btn is-active" data-mode="solo">Solo</button>
+                <button type="button" class="aut-seg-btn" data-mode="collab">Team</button>
+              </div>
+            </div>
           </div>
-          <div class="mig-hint">All caps are optional. Leave a field as is for the default, or enter 0 for unlimited.</div>
+          <div class="mig-hint aut-caps-hint">
+            <span>All caps are optional. Leave a field as is for the default, or enter 0 for unlimited.</span>
+            <button type="button" class="ghost-btn aut-unlimited-btn" id="aut-caps-unlimited">Set all unlimited</button>
+          </div>
+          <div class="mig-hint" id="aut-mode-hint" hidden>Team: an orchestrator splits the goal into non-overlapping slices, decides the team size, runs the agents in parallel, then a final integrator merges their work into one reviewable result. Caps apply to each team member separately.</div>
           <label class="ai-foot-toggle aut-snapshot-opt" title="Capture a pre-run snapshot so you can review the diff and revert in one click. Turn off if you manage state with git.">
             <input type="checkbox" id="aut-snapshot-toggle" class="ai-check" checked />
             <span class="ai-check-box" aria-hidden="true"></span>
@@ -1181,11 +1284,11 @@
       </div>
     </div>
 
-    <!-- Autonomy: end-of-run review dialog -->
-    <div id="autonomy-end-modal" class="modal" hidden>
+    <!-- Autopilot: end-of-run review dialog -->
+    <div id="autopilot-end-modal" class="modal" hidden>
       <div class="modal-card modal-card-md">
         <div class="modal-head">
-          <h2 class="modal-title" id="aut-end-title">Autonomy run finished</h2>
+          <h2 class="modal-title" id="aut-end-title">Autopilot run finished</h2>
           <button class="modal-close" id="aut-end-close" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
@@ -1364,11 +1467,15 @@
                 <span class="pref-desc">Light or dark interface.</span>
               </span>
               <select id="pref-theme">
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
                 <option value="midnight">Midnight</option>
+                <option value="dark">Dark</option>
+                <option value="tokyo-night">Tokyo Night</option>
+                <option value="catppuccin">Catppuccin</option>
+                <option value="rose-pine">Rose Pine</option>
+                <option value="gruvbox">Gruvbox</option>
                 <option value="nord">Nord</option>
                 <option value="dracula">Dracula</option>
+                <option value="light">Light</option>
                 <option value="sepia">Sepia</option>
               </select>
             </label>

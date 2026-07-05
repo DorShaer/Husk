@@ -1,6 +1,9 @@
 // Renderer-safe API surface.
 const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 const { extractRecap } = require('./lib/recap-extract');
+const { fuzzyFilter } = require('./lib/fuzzy');
+const { highlight, highlightLines } = require('./lib/highlight');
+const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 
 // Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
 // -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
@@ -12,6 +15,8 @@ contextBridge.exposeInMainWorld('husk', {
     // sessionId threads through every channel so multiple PTYs run in
     // parallel; when omitted the main process targets the active session.
     start: (opts) => ipcRenderer.invoke('pty:start', opts || {}),
+    list: () => ipcRenderer.invoke('pty:list'),
+    reattach: (opts) => ipcRenderer.invoke('pty:reattach', opts || {}),
     write: (data, sessionId) => ipcRenderer.send('pty:write', { data, sessionId }),
     resize: (size, sessionId) => ipcRenderer.send('pty:resize', Object.assign({ sessionId }, size)),
     restart: (opts) => ipcRenderer.invoke('pty:restart', opts || {}),
@@ -25,6 +30,18 @@ contextBridge.exposeInMainWorld('husk', {
   // Extract the agent's recap line from rendered grid rows (pure, in-process).
   recap: {
     extract: (rows) => { try { return extractRecap(rows); } catch (_) { return null; } },
+  },
+  // Pure text helpers for the Files command-center, run in-process (no IPC):
+  // fuzzy file search, syntax highlighting, and git porcelain parsing.
+  text: {
+    fuzzyFilter: (query, items, keyName) => {
+      try { return fuzzyFilter(query, items, keyName ? (it) => it[keyName] : undefined); }
+      catch (_) { return items || []; }
+    },
+    highlight: (code, lang) => { try { return highlight(code, lang); } catch (_) { return null; } },
+    highlightLines: (code, lang) => { try { return highlightLines(code, lang); } catch (_) { return null; } },
+    parseGitStatus: (porcelain) => { try { return parsePorcelain(porcelain); } catch (_) { return []; } },
+    gitBadge: (status) => { try { return statusBadge(status); } catch (_) { return ''; } },
   },
   config: {
     get: () => ipcRenderer.invoke('config:get'),
@@ -72,6 +89,11 @@ contextBridge.exposeInMainWorld('husk', {
     dropFile: (payload) => ipcRenderer.invoke('fs:dropFile', payload),
     listDir: (dir, showHidden) => ipcRenderer.invoke('fs:listDir', { dir, showHidden }),
     home: () => ipcRenderer.invoke('fs:home'),
+    indexFiles: (root, showHidden) => ipcRenderer.invoke('fs:indexFiles', { root, showHidden }),
+    readFile: (root, rel) => ipcRenderer.invoke('fs:readFile', { root, rel }),
+    writeFile: (opts) => ipcRenderer.invoke('fs:writeFile', opts || {}),
+    gitStatus: (root) => ipcRenderer.invoke('fs:gitStatus', { root }),
+    gitDiff: (root, rel) => ipcRenderer.invoke('fs:gitDiff', { root, rel }),
   },
   context: {
     list: () => ipcRenderer.invoke('context:list'),
@@ -121,26 +143,34 @@ contextBridge.exposeInMainWorld('husk', {
     build: (dir) => ipcRenderer.invoke('repoMcp:build', { dir }),
     install: (opts) => ipcRenderer.invoke('repoMcp:install', opts || {}),
   },
-  autonomy: {
-    start: (opts) => ipcRenderer.invoke('autonomy:start', opts || {}),
-    event: (event) => ipcRenderer.invoke('autonomy:event', event || {}),
-    nudge: () => ipcRenderer.invoke('autonomy:nudge'),
-    cancel: (detail) => ipcRenderer.invoke('autonomy:cancel', detail || {}),
-    end: (detail) => ipcRenderer.invoke('autonomy:end', detail || {}),
-    status: () => ipcRenderer.invoke('autonomy:status'),
-    revert: (opts) => ipcRenderer.invoke('autonomy:revert', opts || {}),
-    summary: (opts) => ipcRenderer.invoke('autonomy:summary', opts || {}),
-    liveDiff: () => ipcRenderer.invoke('autonomy:liveDiff'),
-    history: (opts) => ipcRenderer.invoke('autonomy:history', opts || {}),
-    deleteRun: (opts) => ipcRenderer.invoke('autonomy:deleteRun', opts || {}),
-    fileDiff: (opts) => ipcRenderer.invoke('autonomy:fileDiff', opts || {}),
-    reportTokens: (n) => ipcRenderer.invoke('autonomy:reportTokens', { tokens: n }),
-    onStarted: (cb) => ipcRenderer.on('autonomy:started', (_e, payload) => cb(payload)),
-    onEnded: (cb) => ipcRenderer.on('autonomy:ended', (_e, payload) => cb(payload)),
-    onHalt: (cb) => ipcRenderer.on('autonomy:halt', (_e, payload) => cb(payload)),
-    onSnapshotProgress: (cb) => ipcRenderer.on('autonomy:snapshot-progress', (_e, payload) => cb(payload)),
-    onActivity: (cb) => ipcRenderer.on('autonomy:activity', (_e, payload) => cb(payload)),
-    onBudget: (cb) => ipcRenderer.on('autonomy:budget', (_e, payload) => cb(payload)),
+  autopilot: {
+    start: (opts) => ipcRenderer.invoke('autopilot:start', opts || {}),
+    startCollab: (opts) => ipcRenderer.invoke('autopilot:startCollab', opts || {}),
+    event: (event) => ipcRenderer.invoke('autopilot:event', event || {}),
+    nudge: (payload) => ipcRenderer.invoke('autopilot:nudge', payload || {}),
+    cancel: (detail) => ipcRenderer.invoke('autopilot:cancel', detail || {}),
+    end: (detail) => ipcRenderer.invoke('autopilot:end', detail || {}),
+    status: (payload) => ipcRenderer.invoke('autopilot:status', payload || {}),
+    list: () => ipcRenderer.invoke('autopilot:list'),
+    revert: (opts) => ipcRenderer.invoke('autopilot:revert', opts || {}),
+    summary: (opts) => ipcRenderer.invoke('autopilot:summary', opts || {}),
+    liveDiff: (opts) => ipcRenderer.invoke('autopilot:liveDiff', opts || {}),
+    history: (opts) => ipcRenderer.invoke('autopilot:history', opts || {}),
+    deleteRun: (opts) => ipcRenderer.invoke('autopilot:deleteRun', opts || {}),
+    applyRun: (opts) => ipcRenderer.invoke('autopilot:applyRun', opts || {}),
+    discardRun: (opts) => ipcRenderer.invoke('autopilot:discardRun', opts || {}),
+    retained: () => ipcRenderer.invoke('autopilot:retained'),
+    race: () => ipcRenderer.invoke('autopilot:race'),
+    applyWinner: (opts) => ipcRenderer.invoke('autopilot:applyWinner', opts || {}),
+    fileDiff: (opts) => ipcRenderer.invoke('autopilot:fileDiff', opts || {}),
+    reportTokens: (n, runId) => ipcRenderer.invoke('autopilot:reportTokens', { tokens: n, runId: runId || undefined }),
+    onStarted: (cb) => ipcRenderer.on('autopilot:started', (_e, payload) => cb(payload)),
+    onEnded: (cb) => ipcRenderer.on('autopilot:ended', (_e, payload) => cb(payload)),
+    onHalt: (cb) => ipcRenderer.on('autopilot:halt', (_e, payload) => cb(payload)),
+    onSnapshotProgress: (cb) => ipcRenderer.on('autopilot:snapshot-progress', (_e, payload) => cb(payload)),
+    onActivity: (cb) => ipcRenderer.on('autopilot:activity', (_e, payload) => cb(payload)),
+    onCollabPlan: (cb) => ipcRenderer.on('autopilot:collab-plan', (_e, payload) => cb(payload)),
+    onBudget: (cb) => ipcRenderer.on('autopilot:budget', (_e, payload) => cb(payload)),
   },
   mcp: {
     catalog: () => ipcRenderer.invoke('mcp:catalog'),

@@ -33,13 +33,13 @@ test('AI tool selector sits at the bottom, above Preferences (issue 7)', async (
     const items = Array.from(document.querySelectorAll('#rail *'));
     const idx = (sel) => items.indexOf(document.querySelector(sel));
     return {
-      autonomy: idx('#rail-autonomy'),
+      autopilot: idx('#rail-autopilot'),
       toolPill: idx('#rail-agent-pill'),
       prefs: idx('#btn-open-prefs'),
     };
   });
   // Tool pill is now after the nav items and immediately before Preferences.
-  expect(order.toolPill).toBeGreaterThan(order.autonomy);
+  expect(order.toolPill).toBeGreaterThan(order.autopilot);
   expect(order.prefs).toBeGreaterThan(order.toolPill);
   await app.close();
 });
@@ -52,12 +52,12 @@ test('rail stacks above the pages column so tooltips are not hidden (issue 6)', 
   await app.close();
 });
 
-test('autonomy wizard has an optional snapshot toggle and unlimited-cap hints (issues 2, 8)', async () => {
+test('autopilot wizard has an optional snapshot toggle and unlimited-cap hints (issues 2, 8)', async () => {
   const app = await launch();
   const win = await ready(app);
   const info = await win.evaluate(() => {
     const toggle = document.getElementById('aut-snapshot-toggle');
-    const hint = Array.from(document.querySelectorAll('#autonomy-start-modal .mig-hint'))
+    const hint = Array.from(document.querySelectorAll('#autopilot-start-modal .mig-hint'))
       .map((e) => e.textContent).join(' ');
     return {
       hasToggle: !!toggle,
@@ -129,18 +129,18 @@ test('the start wizard cannot be dismissed while a run is launching (issue 1)', 
   const app = await launch();
   const win = await ready(app);
   const r = await win.evaluate(() => {
-    openAutonomyStart();
-    const modal = document.getElementById('autonomy-start-modal');
+    openAutopilotStart();
+    const modal = document.getElementById('autopilot-start-modal');
     // Simulate the mid-launch window.
-    autonomyStarting = true;
-    closeAutonomyStart();
+    autopilotStarting = true;
+    closeAutopilotStart();
     const blockedClose = !modal.hidden; // backdrop/close button path
     // Esc path
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     const blockedEsc = !modal.hidden;
     // Once launch finishes the wizard closes normally again.
-    autonomyStarting = false;
-    closeAutonomyStart();
+    autopilotStarting = false;
+    closeAutopilotStart();
     const closesAfter = modal.hidden;
     return { blockedClose, blockedEsc, closesAfter };
   });
@@ -150,22 +150,22 @@ test('the start wizard cannot be dismissed while a run is launching (issue 1)', 
   await app.close();
 });
 
-test('a running autonomy session stays visible when revisiting the tab (issue 1)', async () => {
+test('a running autopilot session stays visible when revisiting the tab (issue 1)', async () => {
   const app = await launch();
   const win = await ready(app);
   const r = await win.evaluate(async () => {
-    autonomyActive = true;
-    setPage('autonomy');
+    autopilotActive = true;
+    setPage('autopilot');
     const live1 = !document.getElementById('aut-page-live').hidden;
     // Navigate away and back; the running view must be restored, not the empty state.
     setPage('chat');
-    setPage('autonomy');
+    setPage('autopilot');
     const live2 = !document.getElementById('aut-page-live').hidden;
     const empty2 = document.getElementById('aut-page-empty').hidden;
-    const isLive = document.querySelector('.page-autonomy').classList.contains('is-live');
+    const isLive = document.querySelector('.page-autopilot').classList.contains('is-live');
     // Cleanup: stop timers/pollers before the app closes.
-    autonomyActive = false;
-    paintAutonomyBanner();
+    autopilotActive = false;
+    paintAutopilotBanner();
     return { live1, live2, empty2, isLive };
   });
   expect(r.live1).toBe(true);
@@ -180,24 +180,24 @@ test('Revert is hidden for runs with no snapshot, shown otherwise (review + end 
   const win = await ready(app);
   const r = await win.evaluate(() => {
     // Review mode footer button.
-    autonomyReview = true;
-    autonomyReviewData = { sessionId: 's', workspaceRoot: '/w', summary: { ok: true, hasSnapshot: false } };
-    paintAutonomyBanner();
+    autopilotReview = true;
+    autopilotReviewData = { sessionId: 's', workspaceRoot: '/w', summary: { ok: true, hasSnapshot: false } };
+    paintAutopilotBanner();
     const reviewRevertHiddenNoSnap = document.getElementById('aut-review-revert').hidden;
-    autonomyReviewData.summary.hasSnapshot = true;
-    paintAutonomyBanner();
+    autopilotReviewData.summary.hasSnapshot = true;
+    paintAutopilotBanner();
     const reviewRevertShownWithSnap = !document.getElementById('aut-review-revert').hidden;
-    autonomyReview = false;
-    autonomyReviewData = null;
-    paintAutonomyBanner();
+    autopilotReview = false;
+    autopilotReviewData = null;
+    paintAutopilotBanner();
 
     // End-of-run modal button.
     const baseSum = { ok: true, summary: { status: 'ended', haltReason: 'natural' }, eventCount: 0, chain: { valid: true }, diff: [] };
-    openAutonomyEndModal({ ...baseSum, hasSnapshot: false });
+    openAutopilotEndModal({ ...baseSum, hasSnapshot: false });
     const endRevertHiddenNoSnap = document.getElementById('aut-end-revert').hidden;
-    openAutonomyEndModal({ ...baseSum, hasSnapshot: true });
+    openAutopilotEndModal({ ...baseSum, hasSnapshot: true });
     const endRevertShownWithSnap = !document.getElementById('aut-end-revert').hidden;
-    closeAutonomyEndModal();
+    closeAutopilotEndModal();
     return { reviewRevertHiddenNoSnap, reviewRevertShownWithSnap, endRevertHiddenNoSnap, endRevertShownWithSnap };
   });
   expect(r.reviewRevertHiddenNoSnap).toBe(true);

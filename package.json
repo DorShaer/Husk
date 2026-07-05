@@ -1,9 +1,12 @@
 {
   "name": "husk",
-  "version": "2.8.4",
+  "version": "2.8.5",
   "description": "A desktop home for your CLI agent. Wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop context, sessions, voice, and a live status panel.",
   "main": "src/main.js",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "author": "Dor Shaer",
   "homepage": "https://github.com/DorShaer/Husk",
   "repository": {

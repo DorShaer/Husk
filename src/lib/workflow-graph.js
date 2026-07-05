@@ -105,11 +105,9 @@ function graphToOrderedSteps(graph) {
   }
   const order = [];
   const seen = new Set();
-  // Breadth-first from every root (a node with no incoming edge). The
-  // previous version followed only the first outgoing edge of a single
-  // root, which silently dropped every other branch and any
-  // disconnected node. A pure-cycle graph has no root, so seed with the
-  // first node to stay terminating while still emitting every node.
+  // Breadth-first from every root (a node with no incoming edge). A
+  // pure-cycle graph has no root, so seed with the first node to stay
+  // terminating while still emitting every node.
   const roots = g.nodes.filter((n) => !hasIncoming.has(n.id));
   const queue = (roots.length ? roots : [g.nodes[0]]).map((n) => n.id);
   while (queue.length) {

@@ -39,7 +39,7 @@ function parseLooseMcpJson(text) {
   if (t3.ok) return t3;
 
   // Tier 4: maybe the input has both leading AND trailing commas plus
-  // sibling entries — wrap the whole thing.
+  // sibling entries: wrap the whole thing.
   const t4 = tryParseAndNormalize('{' + noTrailingCommas.replace(/^[,\s]+|[,\s]+$/g, '') + '}');
   if (t4.ok) return t4;
 
@@ -64,12 +64,12 @@ function normalize(obj) {
   if (!obj || typeof obj !== 'object') return { ok: false, error: 'not a JSON object' };
 
   // A bare entry the user typed straight into the box. Lower priority
-  // than the wrapped shapes — we only treat it as a bare entry if the
+  // than the wrapped shapes: we only treat it as a bare entry if the
   // top level itself has command/url/type. An object whose values are
   // objects with command/url is the multi-server case below.
   if (looksLikeEntry(obj)) return { ok: true, entries: [{ id: '', entry: obj }] };
 
-  // { "mcpServers": { ... } } — the canonical claude / copilot config
+  // { "mcpServers": { ... } }: the canonical claude / copilot config
   // wrapper. Unwrap and recurse exactly once.
   if (obj.mcpServers && typeof obj.mcpServers === 'object' && !Array.isArray(obj.mcpServers)) {
     return normalize(obj.mcpServers);
@@ -79,7 +79,7 @@ function normalize(obj) {
     return normalize(obj.servers);
   }
 
-  // { id1: entry1, id2: entry2, ... } — the multi-server shape that
+  // { id1: entry1, id2: entry2, ... }: the multi-server shape that
   // lets `Install` create N servers at once. Preserve the user's key
   // names (sanitized at install time, not here).
   const keys = Object.keys(obj);
@@ -97,7 +97,7 @@ function looksLikeEntry(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   if (typeof v.command === 'string' && v.command) return true;
   if (typeof v.url === 'string' && v.url) return true;
-  // `type: stdio` without a command is incomplete — we still report it
+  // `type: stdio` without a command is incomplete: we still report it
   // as an entry so the user sees a clear "command required" error at
   // install time rather than silently dropping it.
   if (typeof v.type === 'string' && /^(stdio|http|sse)$/.test(v.type)) return true;
