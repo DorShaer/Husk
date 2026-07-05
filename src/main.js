@@ -1428,6 +1428,7 @@ ipcMain.handle('pty:close', (_e, sessionId) => {
 // "trusted-by-rewind".
 
 const Autopilot = require('./lib/autonomy');
+const AgentOneShot = require('./lib/agent-oneshot');
 const electronApp = require('electron');
 const { execFileSync } = require('child_process');
 
@@ -1708,40 +1709,45 @@ function tailRunTranscript(runId) {
   if (!r) return false;
   const file = findRunTranscript(r);
   if (!file) return false;
-  let sz = 0;
-  try { sz = fs.statSync(file).size; } catch (_) { return false; }
-  if (sz < (r.transcriptOffset || 0)) {
-    // The pinned file shrank in place (rewritten/compacted). Resume from its
-    // new end rather than replaying rewritten history into the feed.
-    r.transcriptOffset = sz;
-    r.transcriptRemainder = '';
-    return false;
-  }
-  if (sz === (r.transcriptOffset || 0)) {
-    // Rotation guard: the agent starts a fresh jsonl on compaction/clear.
-    // A pinned file that stops growing while a newer sibling exists would
-    // silently kill the feed mid-run; re-pin to the newer file. Token
-    // reporting stays monotonic (maxReportedTokens only ever increases).
-    r.transcriptStaleTicks = (r.transcriptStaleTicks || 0) + 1;
-    if (r.transcriptStaleTicks >= 10) {
-      const newest = newestRunJsonl(r);
-      if (newest && newest.p !== r.transcriptPath) pinRunTranscript(r, newest.p, 0);
-      else r.transcriptStaleTicks = 0;
-    }
-    return false;
-  }
-  r.transcriptStaleTicks = 0;
+  // One handle serves both the size check and the read, so the size can
+  // never describe a different file than the bytes that follow.
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch (_) { return false; }
   let chunk = '';
   try {
-    const fd = fs.openSync(file, 'r');
+    let sz = 0;
+    try { sz = fs.fstatSync(fd).size; } catch (_) { return false; }
+    if (sz < (r.transcriptOffset || 0)) {
+      // The pinned file shrank in place (rewritten/compacted). Resume from
+      // its new end rather than replaying rewritten history into the feed.
+      r.transcriptOffset = sz;
+      r.transcriptRemainder = '';
+      return false;
+    }
+    if (sz === (r.transcriptOffset || 0)) {
+      // Rotation guard: the agent starts a fresh jsonl on compaction/clear.
+      // A pinned file that stops growing while a newer sibling exists would
+      // silently kill the feed mid-run; re-pin to the newer file. Token
+      // reporting stays monotonic (maxReportedTokens only ever increases).
+      r.transcriptStaleTicks = (r.transcriptStaleTicks || 0) + 1;
+      if (r.transcriptStaleTicks >= 10) {
+        const newest = newestRunJsonl(r);
+        if (newest && newest.p !== r.transcriptPath) pinRunTranscript(r, newest.p, 0);
+        else r.transcriptStaleTicks = 0;
+      }
+      return false;
+    }
+    r.transcriptStaleTicks = 0;
     try {
       const len = sz - (r.transcriptOffset || 0);
       const buf = Buffer.alloc(len);
       fs.readSync(fd, buf, 0, len, r.transcriptOffset || 0);
       chunk = buf.toString('utf8');
-    } finally { fs.closeSync(fd); }
-  } catch (_) { return false; }
-  r.transcriptOffset = sz;
+    } catch (_) { return false; }
+    r.transcriptOffset = sz;
+  } finally {
+    try { fs.closeSync(fd); } catch (_) {}
+  }
   const data = (r.transcriptRemainder || '') + chunk;
   const parts = data.split('\n');
   r.transcriptRemainder = parts.pop() || '';
@@ -1924,6 +1930,15 @@ function flushRunOutput(runId) {
     });
   } catch (_) {}
   if (mainWindow) mainWindow.webContents.send('autopilot:budget', { runId, ...r.runner.budgetState() });
+  // Submit-proof for agents without a transcript: the composer echo of an
+  // injected goal accounts for roughly its own length in PTY bytes, so
+  // sustained output well past that means the agent is answering and the
+  // Enter-resend loop must stop. Transcript agents get the stronger
+  // non-empty-transcript proof in ensureRunGoalSubmitted.
+  if (!r.goalSubmitted && r.goalInjectedAt) {
+    r.bytesSinceInject = (r.bytesSinceInject || 0) + chunk.length;
+    if (r.bytesSinceInject > (r.injectTextLen || 0) + 8000) r.goalSubmitted = true;
+  }
   const clean = stripAnsi(chunk);
   // Busy-marker tracking for the idle watchdog: the marker on screen means
   // the agent is mid-generation or mid-tool, so nudges must hold off.
@@ -2027,6 +2042,11 @@ function injectGoalToRunPty(runId, text) {
     // the echo window.
     r.lastInjectAt = Date.now();
     const body = String(text).replace(/\r/g, ' ').replace(/\n/g, ' ');
+    // Submit-proof bookkeeping for agents without a transcript: output
+    // volume well beyond the composer echo of this text means the agent
+    // is answering (see flushRunOutput).
+    r.injectTextLen = body.length;
+    r.bytesSinceInject = 0;
     const agentKind = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
       .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
     if (agentKind === 'claude') {
@@ -2116,57 +2136,6 @@ function buildAutopilotGoal(goal) {
     '',
     'GOAL: ' + String(goal),
   ].join('\n');
-}
-
-function injectGoalToPty(goal) {
-  if (!ptyProc) return false;
-  try {
-    const body = String(goal).replace(/\r/g, ' ').replace(/\n/g, ' ');
-    if (getAgentKind() === 'claude') {
-      // claude routes raw keystrokes through its TUI hotkey handler (SPACE
-      // toggles a mode, "/" opens the command palette), so the goal must
-      // arrive as one bracketed-paste block (CSI 200~ / CSI 201~). A
-      // separate Enter after the paste commits submits it.
-      ptyProc.write('\x1b[200~' + body + '\x1b[201~');
-      setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 120);
-    } else {
-      // Other agents (verified with copilot) DO accept a bracketed paste
-      // but do NOT submit on the Enter that follows it: their composer
-      // treats that Enter as a newline, so the goal just sits in the input
-      // and the run does nothing. Typing the goal directly keeps the input
-      // in its normal single-line state where Enter submits.
-      ptyProc.write(body);
-      setTimeout(() => { try { if (ptyProc) ptyProc.write('\r'); } catch (_) {} }, 150);
-    }
-    return true;
-  } catch (_) { return false; }
-}
-
-function sigintPty() {
-  if (!ptyProc) return;
-  try { ptyProc.write('\x03'); } catch (_) {}
-}
-
-// Resolve once the agent's TUI looks ready for input: it has emitted
-// output and then gone quiet for a short settle window, or maxMs has
-// elapsed. Pasting the goal before the input field has mounted makes the
-// run silently do nothing, so a fixed wall-clock guess is not safe on a
-// slow cold start.
-function whenAgentReady(maxMs) {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    const settleMs = 350; // quiet period after last output = TUI settled
-    const minWaitMs = Math.min(250, maxMs);
-    const check = () => {
-      const now = Date.now();
-      if (now - start >= maxMs) return resolve('timeout');
-      const sawOutput = ptyLastDataAt >= start - 50;
-      const quietFor = now - ptyLastDataAt;
-      if (sawOutput && quietFor >= settleMs && (now - start) >= minWaitMs) return resolve('ready');
-      setTimeout(check, 80);
-    };
-    setTimeout(check, minWaitMs);
-  });
 }
 
 ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
@@ -3840,9 +3809,9 @@ async function executeWorkflow(event, workflow, run) {
       args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
     } else {
       const merged = `${wfSystem}\n\n${prompt}`;
-      // codex exec refuses to run outside a trusted git directory unless told to
-      // skip that check, so pass it for the non-interactive workflow step.
-      args = cmd === 'codex' ? ['exec', '--skip-git-repo-check', merged] : ['-p', merged];
+      // Per-CLI one-shot forms come from the shared module (aider needs
+      // --message, codex needs exec, the rest take -p).
+      args = AgentOneShot.oneShotArgs(cmd, merged);
     }
 
     const nid = node.id;
@@ -5708,20 +5677,33 @@ ipcMain.handle('fs:readFile', async (_e, { root, rel } = {}) => {
     const real = fs.realpathSync(abs);
     if (!isInside(path.resolve(root), real)) return { ok: false, error: 'path outside root' };
   } catch (_) { return { ok: false, error: 'could not resolve path' }; }
+  // Open without following a final-component symlink, then stat and read
+  // through the SAME handle: the canonicalized path checked above and the
+  // bytes returned are guaranteed to be the same file object, closing the
+  // window in which the path could be swapped for a link out of the root.
+  // O_NOFOLLOW is POSIX-only; on platforms without it the realpath check
+  // above remains the guard.
+  let fd;
   try {
-    const st = fs.statSync(abs);
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  } catch (err) { return { ok: false, error: err.message }; }
+  try {
+    const st = fs.fstatSync(fd);
     if (!st.isFile()) return { ok: false, error: 'not a file' };
     if (st.size > FILE_PREVIEW_MAX_BYTES) {
       return { ok: false, error: 'too-large', bytes: st.size, reason: `File is ${(st.size / 1048576).toFixed(1)} MB; open it in your editor.` };
     }
-    const buf = fs.readFileSync(abs);
+    const buf = Buffer.alloc(st.size);
+    const read = fs.readSync(fd, buf, 0, st.size, 0);
+    const data = read === st.size ? buf : buf.subarray(0, read);
     // Binary sniff: a NUL byte in the first 8 KB means not text.
-    const scan = buf.subarray(0, Math.min(buf.length, 8192));
+    const scan = data.subarray(0, Math.min(data.length, 8192));
     if (scan.includes(0)) return { ok: false, error: 'binary', bytes: st.size, reason: 'Binary file (no text preview).' };
-    const text = buf.toString('utf8');
+    const text = data.toString('utf8');
     const firstLine = text.slice(0, text.indexOf('\n') === -1 ? text.length : text.indexOf('\n'));
     return { ok: true, text, lang: detectLanguage(rel, firstLine), bytes: st.size, truncated: false, mtimeMs: st.mtimeMs };
   } catch (err) { return { ok: false, error: err.message }; }
+  finally { try { fs.closeSync(fd); } catch (_) {} }
 });
 
 // Write edited text back to a file for the inline editor. Confined and

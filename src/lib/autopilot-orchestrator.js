@@ -4,13 +4,14 @@
 // cannot be parsed is a hard error surfaced to the user, never a silent solo
 // run, so the mode's promise (a coordinated team) is kept or visibly broken.
 const { spawn } = require('child_process');
+const { oneShotArgs } = require('./agent-oneshot');
 
 const PLAN_TIMEOUT_MS = 120000;
 
+// Per-CLI one-shot forms live in agent-oneshot.js so the planner and the
+// workflow runner can never drift apart.
 function plannerArgs(baseCmd, prompt) {
-  if (baseCmd === 'codex') return ['exec', '--skip-git-repo-check', prompt];
-  // claude and most agent CLIs accept -p for a one-shot prompt.
-  return ['-p', prompt];
+  return oneShotArgs(baseCmd, prompt);
 }
 
 function buildPlanPrompt(goal, maxAgents) {

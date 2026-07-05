@@ -3,7 +3,9 @@
 // Includes: command palette, theme toggle, drag overlay, status panel.
 
 const $ = (s) => document.querySelector(s);
-const $$ = (s) => Array.from(document.querySelectorAll(s));
+// Optional root scopes the query (onboarding passes its overlay so its
+// selectors cannot leak matches from the rest of the document).
+const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
 
 // ─── Notifications ─────────────────────────────────────────────────────────
 // A top-center stack of independent cards. Each slides in, auto-dismisses
@@ -626,10 +628,14 @@ async function reattachSessions() {
   let activeTab = null;
   for (const sess of live.sessions) {
     let tab = null;
-    if (sess.claudeSessionId) {
+    // Only close-and-resume when the active agent actually has a resume
+    // form; otherwise the live PTY is kept and reattached below. Closing
+    // first and failing to resume would destroy a healthy session.
+    const resumeCmd = sess.claudeSessionId ? resumeCommandFor(agent, sess.claudeSessionId) : null;
+    if (resumeCmd) {
       // Resume the conversation in a fresh PTY; drop the orphaned old one.
       try { await window.husk.pty.close(sess.sessionId); } catch (_) {}
-      tab = await openNewChatTab({ command: resumeCommandFor(agent, sess.claudeSessionId), cwd: sess.cwd || null, skipContext: true });
+      tab = await openNewChatTab({ command: resumeCmd, cwd: sess.cwd || null, skipContext: true });
       if (tab) {
         tab.agentId = sess.claudeSessionId;
         try {
@@ -3434,7 +3440,7 @@ async function openSessionDetail(d) {
     meta,
     body,
     actions: [
-      { label: '↻ Resume this session', kind: 'primary', onClick: () => resumeSessionInChat(d) },
+      { label: '↻ Resume this session', kind: 'primary', onClick: () => resumeSessionInChat({ ...d, owner: d.owner || sessionsAgent }) },
       d.prdpath ? { label: 'Open PRD', kind: 'ghost', onClick: () => window.husk.fs.open(d.prdpath) } : null,
       { label: 'Open files', kind: 'ghost', onClick: () => window.husk.fs.open(d.path) },
     ].filter(Boolean),
@@ -3444,19 +3450,28 @@ async function openSessionDetail(d) {
 // Build the active agent's "resume session" command. claude takes a positional
 // id (claude --resume <id>); copilot takes an attached value (copilot
 // --resume=<id>). Anything else falls back to the claude form.
+// Build the resume command for the agent that OWNS the session. Returns
+// null when that agent has no session-resume form; callers must handle
+// null rather than run some other agent's binary against a foreign id.
 function resumeCommandFor(agent, id) {
+  if (agent === 'claude') return `claude --resume ${id}`;
   if (agent === 'copilot') return `copilot --resume=${id}`;
-  return `claude --resume ${id}`;
+  return null;
 }
 
 async function resumeSessionInChat(d) {
+  // The session's OWNING agent decides the resume command. Every list
+  // entry carries its owner; the active config is only a last resort
+  // (an owner-less entry from an older render).
+  const agent = (d.owner
+    || (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude')).trim().split(/\s+/)[0].toLowerCase();
+  const cmd = resumeCommandFor(agent, d.id);
+  if (!cmd) {
+    toast(`Resume is not supported for ${agent} sessions`, 'error');
+    return;
+  }
   closeDetail();
   setPage('chat');
-  // Derive the agent from the active config, not sessionsAgent, so resuming
-  // from the rail "Recent" list (before the Sessions page has rendered) still
-  // builds the correct per-agent resume command.
-  const agent = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0].toLowerCase();
-  const cmd = resumeCommandFor(agent, d.id);
   const cmdShort = resumeCommandFor(agent, d.id.slice(0, 8));
   const cwd = d.project || null;
   toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
@@ -4780,14 +4795,14 @@ async function refreshRecentList() {
   section.hidden = false;
   // eslint-disable-next-line no-unsanitized/property -- Recent session fields are escaped via escapeHtml/escapeAttr.
   wrap.innerHTML = top.map((s) => `
-    <div class="rail-recent-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath)}" title="${escapeAttr(s.title)}\n${escapeAttr(s.projectPath)}">
+    <div class="rail-recent-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath)}" data-owner="${escapeAttr(r.agent || '')}" title="${escapeAttr(s.title)}\n${escapeAttr(s.projectPath)}">
       <span class="rri-title">${escapeHtml(s.title)}</span>
       <span class="rri-meta">${escapeHtml(timeAgo(s.mtime))}</span>
     </div>
   `).join('');
   wrap.querySelectorAll('.rail-recent-item').forEach((el) => {
     el.addEventListener('click', () => {
-      resumeSessionInChat({ id: el.dataset.id, project: el.dataset.project });
+      resumeSessionInChat({ id: el.dataset.id, project: el.dataset.project, owner: el.dataset.owner });
     });
   });
 }
@@ -4805,14 +4820,14 @@ async function renderChatsPanelSessions() {
   const top = r.sessions.slice(0, 40);
   // eslint-disable-next-line no-unsanitized/property -- Session fields are escaped.
   container.innerHTML = top.map((s) => `
-    <div class="cp-session-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath || '')}">
+    <div class="cp-session-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath || '')}" data-owner="${escapeAttr(r.agent || '')}">
       <span class="cp-si-title">${escapeHtml(s.title || 'Untitled chat')}</span>
       <span class="cp-si-meta">${escapeHtml(timeAgo(s.mtime))}</span>
     </div>
   `).join('');
   container.querySelectorAll('.cp-session-item').forEach((el) => {
     el.addEventListener('click', () => {
-      resumeSessionInChat({ id: el.dataset.id, project: el.dataset.project });
+      resumeSessionInChat({ id: el.dataset.id, project: el.dataset.project, owner: el.dataset.owner });
     });
   });
 }
@@ -6461,19 +6476,14 @@ async function startAutopilot() {
     }
     return;
   }
-  const runCount = 1;
-  const raceId = null;
   try {
-    let firstRun = null;
-    let started = 0;
-    let queued = 0;
-    let lastError = null;
-    for (let i = 0; i < runCount; i++) {
-      if (status && runCount > 1) status.textContent = `Starting run ${i + 1} of ${runCount}...`;
-      const r = await window.husk.autopilot.start({ goal, caps, snapshot, raceId });
-      if (!r || !r.ok) { lastError = (r && r.error) || 'Could not start autopilot'; continue; }
-      if (r.queued) { queued += 1; continue; }
-      started += 1;
+    const r = await window.husk.autopilot.start({ goal, caps, snapshot });
+    if (!r || !r.ok) {
+      toast((r && r.error) || 'Could not start autopilot', 'error');
+      if (status) { status.hidden = true; status.textContent = ''; }
+      return;
+    }
+    if (!r.queued) {
       const runId = r.runId || null;
       const runKey = runId || '_solo';
       // The autopilot:started event usually lands before this resolves and
@@ -6481,7 +6491,7 @@ async function startAutopilot() {
       if (!activeRuns.has(runKey)) {
         activeRuns.set(runKey, {
           runId, sessionId: r.sessionId, workspaceRoot: r.workspaceRoot, goal,
-          startedAt: Date.now(), caps, budget: null, raceId, feed: [],
+          startedAt: Date.now(), caps, budget: null, feed: [],
           colorIdx: activeRuns.size % AP_LANE_COLORS, files: [],
           state: 'starting', nudges: 0, lastTool: null, lastToolAt: 0, quietMs: 0,
           ended: false, endedOk: false,
@@ -6489,16 +6499,9 @@ async function startAutopilot() {
       }
       const entry = activeRuns.get(runKey);
       entry.caps = caps;
-      if (!firstRun) { firstRun = r; focusedRunId = runKey; }
-    }
-    if (!started && !queued) {
-      toast(lastError || 'Could not start autopilot', 'error');
-      if (status) { status.hidden = true; status.textContent = ''; }
-      return;
-    }
-    if (firstRun) {
+      focusedRunId = runKey;
       autopilotActive = true;
-      autopilotLastSession = { sessionId: firstRun.sessionId, workspaceRoot: firstRun.workspaceRoot };
+      autopilotLastSession = { sessionId: r.sessionId, workspaceRoot: r.workspaceRoot };
       autopilotState.startedAt = Date.now();
       resetAutopilotPanel();
       setAutopilotGoal(goal);
@@ -6509,13 +6512,10 @@ async function startAutopilot() {
     closeAutopilotStart();
     try { setPage('autopilot'); } catch (_) {}
     paintAutopilotBanner();
-    if (runCount > 1) {
-      const parts = [`${started} run${started === 1 ? '' : 's'} started`];
-      if (queued) parts.push(`${queued} queued`);
-      if (lastError) parts.push('some failed');
-      toast(`Autopilot race: ${parts.join(', ')}`, lastError ? 'info' : 'success');
+    if (r.queued) {
+      toast('Autopilot queued; it starts when a slot frees up', 'info');
     } else {
-      const fc = Number(firstRun && firstRun.fileCount) || 0;
+      const fc = Number(r.fileCount) || 0;
       toast(snapshot ? `Autopilot running, snapshot of ${fc} files captured` : 'Autopilot running (no snapshot)', 'success');
     }
   } finally {
@@ -7590,7 +7590,7 @@ function renderRunConclusion(sum) {
   const lane = ensureLane(laneKey);
   const feed = lane && lane.querySelector('.aut-lane-stream');
   if (!feed) return;
-  const s = (sum && sum.summary) || {};
+  const s = sum.summary || {};
   const halt = s.haltReason || 'natural';
   const reason = sum.endReason || '';
   const card = document.createElement('div');
