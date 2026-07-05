@@ -48,6 +48,7 @@ const DEFAULT_RATES = Object.freeze({
   'copilot':           { in: 0, out: 0 },
   'codex':             { in: 0, out: 0 },
   'aider':             { in: 0, out: 0 },
+  'gemini':            { in: 0, out: 0 },
   '_default':          { in: 3, out: 15 },
 });
 
@@ -64,6 +65,9 @@ function createBudgetMeter(opts = {}) {
   const startedAt = Number.isFinite(opts.startedAt) ? opts.startedAt : Date.now();
   let inputTokens = 0;
   let outputTokens = 0;
+  // chars/4 fallback accumulates separately from explicit reports so a
+  // weak estimate can never outrank a real signal.
+  let estOutputTokens = 0;
   let estimatedFlag = false;
   let lastTickAt = startedAt;
   // Authoritative cumulative token count reported by the agent itself
@@ -86,7 +90,7 @@ function createBudgetMeter(opts = {}) {
     if (Number.isFinite(input.outputTokens)) outputTokens += Math.max(0, input.outputTokens);
     if ((!Number.isFinite(input.inputTokens) && !Number.isFinite(input.outputTokens))
         && Number.isFinite(input.charsFromAgent) && input.charsFromAgent > 0) {
-      outputTokens += Math.floor(input.charsFromAgent / 4);
+      estOutputTokens += Math.floor(input.charsFromAgent / 4);
       estimatedFlag = true;
     }
     lastTickAt = now;
@@ -98,20 +102,38 @@ function createBudgetMeter(opts = {}) {
     const elapsedMs = Math.max(0, now - startedAt);
     const elapsedMinutes = elapsedMs / 60000;
     // Truth hierarchy:
-    //   1. agent-reported cumulative tokens (claude/codex status line)
-    //   2. inputTokens + outputTokens from explicit reports
+    //   1. explicit per-turn input/output deltas from a structured
+    //      transcript (exact new work, cache reads excluded)
+    //   2. agent-reported cumulative tokens from its own status line
     //   3. chars-from-agent / 4 fallback estimate (the worst signal,
     //      inflated 5-10x by ANSI/cursor codes on TUI agents)
-    const accumulated = inputTokens + outputTokens;
-    const totalTokens = reportedTotal != null ? reportedTotal : accumulated;
-    // Dollars: if we have authoritative report use it with a blended
-    // rate (chat-style runs are ~70/30 output/input on average so
-    // weighting the output rate higher matches real billing closer
-    // than a flat average). Otherwise use the in/out split we tracked.
-    let dollars;
+    // Explicit deltas and a status-line report can coexist (a report
+    // seen before the transcript pinned); the larger cumulative wins
+    // so a stale early report never masks real accumulation. The
+    // estimate only surfaces when it is the ONLY signal.
+    const explicit = inputTokens + outputTokens;
+    let totalTokens;
+    let source;
     if (reportedTotal != null) {
+      totalTokens = Math.max(reportedTotal, explicit);
+      source = explicit > reportedTotal ? 'explicit' : 'reported';
+    } else if (explicit > 0) {
+      totalTokens = explicit;
+      source = 'explicit';
+    } else {
+      totalTokens = estOutputTokens;
+      source = estimatedFlag ? 'estimate' : 'explicit';
+    }
+    // Dollars follow the total's source: exact in/out split for
+    // explicit deltas, a blended rate over a reported cumulative
+    // (chat-style runs average ~70/30 output/input), output rate for
+    // the chars/4 estimate.
+    let dollars;
+    if (source === 'reported') {
       const blended = (rate.in * 0.3) + (rate.out * 0.7);
       dollars = (reportedTotal / 1e6) * blended;
+    } else if (source === 'estimate') {
+      dollars = (estOutputTokens / 1e6) * rate.out;
     } else {
       dollars = (inputTokens / 1e6) * rate.in + (outputTokens / 1e6) * rate.out;
     }
@@ -122,9 +144,11 @@ function createBudgetMeter(opts = {}) {
       elapsedMs,
       elapsedMinutes,
       inputTokens,
-      outputTokens,
+      // When the chars/4 estimate is the active source it is also the
+      // output figure callers see; explicit deltas otherwise.
+      outputTokens: source === 'estimate' ? estOutputTokens : outputTokens,
       totalTokens,
-      tokensEstimated: reportedTotal == null && estimatedFlag,
+      tokensEstimated: source === 'estimate',
       tokensReported: reportedTotal != null,
       dollars,
       ratios: {

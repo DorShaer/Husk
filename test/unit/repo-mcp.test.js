@@ -1,6 +1,6 @@
 'use strict';
 
-// Tests for src/lib/repo-mcp.js — scanner, env-example parser, spec
+// Tests for src/lib/repo-mcp.js: scanner, env-example parser, spec
 // builder, snippet renderers. Each fs-touching test mints a private
 // tmpdir; no test ever touches the real home directory.
 

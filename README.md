@@ -114,6 +114,7 @@ For pure dev mode without system registration:
 - **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir.
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
+- **Autopilot**: hand the agent a goal and walk away, or launch several runs at once. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run; race the same goal across parallel runs and keep the best diff.
 - **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
 - **Skills**: toggle PAI skills bundled with Husk plus any skills you keep in `~/.claude/skills/`.
 - **MCP**: install / toggle / health-check Model Context Protocol servers.

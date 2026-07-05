@@ -162,3 +162,31 @@ test('reported tokens drive dollar cost via blended in/out rate', () => {
   m.setReportedTokens(1000);
   assert.ok(Math.abs(m.state(T0).dollars - 0.057) < 1e-6);
 });
+
+test('explicit transcript deltas outgrow a stale early report', () => {
+  const m = createBudgetMeter({ startedAt: T0 });
+  // A status-line report lands before the transcript pins...
+  m.setReportedTokens(500);
+  assert.equal(m.state(T0).totalTokens, 500);
+  // ...then exact per-turn deltas accumulate past it and must win.
+  m.tick({ now: T0, inputTokens: 400, outputTokens: 300 });
+  const s = m.state(T0);
+  assert.equal(s.totalTokens, 700);
+  assert.equal(s.tokensEstimated, false);
+});
+
+test('a larger reported cumulative still beats smaller explicit deltas', () => {
+  const m = createBudgetMeter({ startedAt: T0 });
+  m.tick({ now: T0, inputTokens: 100, outputTokens: 100 });
+  m.setReportedTokens(900);
+  assert.equal(m.state(T0).totalTokens, 900);
+});
+
+test('estimate never outranks an explicit or reported signal', () => {
+  const m = createBudgetMeter({ startedAt: T0 });
+  m.tick({ now: T0, charsFromAgent: 40000 }); // 10k estimated
+  m.tick({ now: T0, inputTokens: 50, outputTokens: 50 });
+  const s = m.state(T0);
+  assert.equal(s.totalTokens, 100);
+  assert.equal(s.tokensEstimated, false);
+});

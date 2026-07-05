@@ -5,8 +5,7 @@
 // Husk's session directives (the agent's name, the speech-balloon line the
 // desktop app reads aloud, and whether a recap is wanted) are delivered to
 // each agent through that agent's OWN native instruction channel. This is
-// the single place that knows the per-agent mechanism, so features are no
-// longer coded against one CLI.
+// the single place that knows the per-agent mechanism.
 //
 //   claude   -> the --append-system-prompt flag (no files touched)
 //   copilot  -> a marker-managed block in the project's

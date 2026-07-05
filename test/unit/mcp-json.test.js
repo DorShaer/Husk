@@ -65,7 +65,7 @@ test('parses bare entry (just the inner object) with id=""', () => {
 });
 
 test('parses an indented snippet copied from the middle of a JSON file', () => {
-  // Exactly the shape the user described — mid-JSON copy, leading and
+  // Exactly the shape the user described: mid-JSON copy, leading and
   // trailing commas, indented.
   const text = `
       "my-server": {
