@@ -7,5 +7,7 @@ module.exports = {
   snapshot:   require('./snapshot'),
   audit:      require('./audit'),
   budget:     require('./budget'),
+  progress:   require('./progress'),
   supervisor: require('./supervisor'),
+  receipt:    require('./receipt'),
 };
