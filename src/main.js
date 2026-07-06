@@ -1543,6 +1543,60 @@ function removeRunWorktree(worktreePath, workspaceRoot) {
   }
 }
 
+// Startup reconciliation for crash-orphaned worktrees. An app crash or
+// force-quit during a live run never reaches finishRun, so its worktree is
+// left under autopilot-worktrees/ with no retained-runs entry -- a silent
+// disk leak, and the agent's work is invisible to Apply/Discard. On startup
+// the runs Map is empty, so every worktree dir not in the retained registry
+// is such an orphan. A provably-CLEAN orphan (no uncommitted changes) is
+// safe to prune; an orphan with real changes is RETAINED so the review UI
+// surfaces it and nothing the agent did is ever destroyed. Fully guarded so
+// a reconcile failure can never block startup.
+function reconcileOrphanWorktrees() {
+  const wtRoot = path.join(app.getPath('userData'), 'autopilot-worktrees');
+  let entries;
+  try { entries = fs.readdirSync(wtRoot, { withFileTypes: true }); } catch (_) { return; }
+  const retained = readRetained();
+  let pruned = 0; let recovered = 0;
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const runId = ent.name;
+    if (retained[runId]) continue;                 // already tracked for review
+    const wtPath = path.join(wtRoot, runId);
+    let workspaceRoot = null; let porcelain = null;
+    try {
+      // .git-common-dir points at the MAIN repo's .git; its parent is origin.
+      const commonDir = execFileSync('git', ['-C', wtPath, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', stdio: 'pipe' }).trim();
+      const absCommon = path.isAbsolute(commonDir) ? commonDir : path.resolve(wtPath, commonDir);
+      workspaceRoot = path.dirname(absCommon);
+      porcelain = execFileSync('git', ['-C', wtPath, 'status', '--porcelain'], { encoding: 'utf8', stdio: 'pipe' });
+    } catch (_) {
+      // No longer a valid worktree (admin ref gone / corrupt): prune the dir.
+      try { fs.rmSync(wtPath, { recursive: true, force: true }); pruned++; } catch (_) {}
+      continue;
+    }
+    const changes = porcelain.split('\n').map((l) => l.trim()).filter(Boolean)
+      .map((l) => ({ path: l.replace(/^\S+\s+/, ''), status: 'modified' }));
+    if (!changes.length) {
+      removeRunWorktree(wtPath, workspaceRoot);      // clean: nothing to lose
+      pruned++;
+      continue;
+    }
+    // Orphan with real work: preserve it for review rather than delete.
+    retainRun(runId, {
+      runId, sessionId: runId, raceId: null, goal: null,
+      groupId: null, role: null, isIntegrator: false, agent: null,
+      worktreePath: wtPath, workspaceRoot, changes,
+      metrics: { durationMs: 0, tokens: 0, dollars: 0, fileCount: changes.length },
+      endedAt: new Date().toISOString(), recovered: true,
+    });
+    recovered++;
+  }
+  if (pruned || recovered) {
+    try { console.log(`[autopilot] reconciled orphan worktrees: pruned ${pruned}, recovered ${recovered}`); } catch (_) {}
+  }
+}
+
 // Parse an agent's own CUMULATIVE token counter out of raw PTY output
 // (codex "1,234 tokens used", "total tokens: 56k"). Only explicit
 // cumulative counters count. Context gauges ("152k/200k tokens") and
@@ -6503,6 +6557,9 @@ if (!gotLock) {
     startStatuslineRefresh();
     startUsageRefresh();
     await startNullVoiceServer();
+    // Recover or prune worktrees left behind by a crash before any new run
+    // can create one. Guarded so it never blocks the window from opening.
+    try { reconcileOrphanWorktrees(); } catch (_) {}
     createWindow();
     setupAutoUpdater();
   });
