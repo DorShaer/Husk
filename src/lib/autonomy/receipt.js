@@ -27,8 +27,13 @@ function fromSummary(summary, extra = {}) {
   const s = (summary && summary.summary) || {};
   const meter = s.meter || {};
   const caps = (summary && summary.caps) || meter.caps || {};
-  const diff = Array.isArray(summary && summary.diff) ? summary.diff
-    : (Array.isArray(s.diff) ? s.diff : []);
+  // Prefer the diff RECORDED in the run_summary at finish time: it is the
+  // stable, finish-time truth. The live top-level diff (recomputed by
+  // diffWorkspace at summarize time) goes empty once the worktree is applied
+  // or discarded, which would misreport a landed run as changing nothing.
+  const recordedDiff = Array.isArray(s.diff) ? s.diff : [];
+  const liveDiff = Array.isArray(summary && summary.diff) ? summary.diff : [];
+  const diff = recordedDiff.length ? recordedDiff : liveDiff;
   return {
     agent: extra.agent || null,
     model: extra.model || meter.modelId || null,
@@ -65,26 +70,35 @@ function classify(row) {
   return row.filesChanged > 0 ? 'landed' : 'empty';
 }
 
-// Upper-bound estimate of the spend a stalled run would have incurred had
-// the governor not stopped it. Only meaningful for 'saved' rows.
-//   - If a dollar cap is set, the ceiling is (cap - already spent).
-//   - Else if a token cap is set, project the remaining tokens at the
-//     run's realized $/token rate.
-//   - Else there is no dollar basis (e.g. a flat-rate Copilot run): the
-//     saving is expressed in tokens only, dollars 0.
+// Estimate the spend a stalled run would have incurred had the governor not
+// stopped it. Only meaningful for 'saved' rows.
+//
+// Honesty rule: project the run's OWN realized cost rate forward. A run that
+// has cost $0 so far -- a flat-rate Copilot/Codex/Aider/Gemini run, or one
+// that barely started -- has NO provable dollar rate, so we never invent a
+// dollar figure for it (that was the old bug: the default $5 cap made every
+// vendor stall claim "up to $5 saved" out of thin air). Such runs report
+// their token saving only, dollars 0.
+//
+//   remaining tokens = (token cap - spent), or derived from the dollar cap
+//     at the realized rate when only a dollar cap exists.
+//   saved dollars    = remaining tokens x realized $/token (0 if the run
+//     itself cost nothing).
 function estimateSavings(row) {
   if (classify(row) !== 'saved') return { dollars: 0, tokens: 0, basis: 'none' };
   const spent$ = row.dollars;
   const spentTok = row.tokens;
-  if (row.caps.dollars > 0 && row.caps.dollars > spent$) {
-    return { dollars: round2(row.caps.dollars - spent$), tokens: Math.max(0, row.caps.tokens - spentTok), basis: 'dollarCap' };
-  }
-  if (row.caps.tokens > 0 && row.caps.tokens > spentTok) {
-    const remainingTok = row.caps.tokens - spentTok;
-    const perTok = spentTok > 0 ? spent$ / spentTok : 0;
-    return { dollars: round2(remainingTok * perTok), tokens: remainingTok, basis: 'tokenCap' };
-  }
-  return { dollars: 0, tokens: 0, basis: 'none' };
+  // The run's own realized price. Zero for flat-rate/free runs -> no dollar claim.
+  const perTok = spentTok > 0 ? spent$ / spentTok : 0;
+  let remainingTok = 0;
+  if (row.caps.tokens > 0) remainingTok = Math.max(0, row.caps.tokens - spentTok);
+  else if (row.caps.dollars > 0 && perTok > 0) remainingTok = Math.max(0, (row.caps.dollars - spent$) / perTok);
+  const savedDollars = perTok > 0 ? remainingTok * perTok : 0;
+  return {
+    dollars: round2(savedDollars),
+    tokens: Math.round(remainingTok),
+    basis: perTok > 0 ? 'projectedRate' : (remainingTok > 0 ? 'tokensOnly' : 'none'),
+  };
 }
 
 // Aggregate rows into the fleet receipt.

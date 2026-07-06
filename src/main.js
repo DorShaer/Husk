@@ -1690,6 +1690,10 @@ function runTranscriptEntryToLines(r, obj) {
         const toolText = `${part.name}${detail ? '  ' + detail : ''}`;
         r.lastToolText = toolText.slice(0, 180);
         r.lastToolAt = Date.now();
+        // Feed the governor a stable action signature (tool + target) so it
+        // can catch a genuine loop: the same tool on the same target four
+        // times with no forward progress between them.
+        try { r.runner.reportAction(`${part.name}:${detail}`); } catch (_) {}
         lines.push({ kind: 'tool', text: `→ ${toolText}`.slice(0, 320) });
       }
     }
@@ -1969,8 +1973,23 @@ function flushRunOutput(runId) {
       if (parsed != null && parsed > maxTok) maxTok = parsed;
     }
     if (maxTok >= 0 && maxTok > (r.maxReportedTokens || 0)) {
-      r.maxReportedTokens = maxTok;
-      try { r.runner.setReportedTokens(maxTok); } catch (_) {}
+      // Poison guard: this scans the agent's whole output, not a trusted
+      // status-line region, so a line the agent PRINTS (editing a tokenizer,
+      // cat-ing a benchmark log, echoing a cost report) can carry a huge
+      // number. Because setReportedTokens is monotonic, one poisoned reading
+      // would latch forever and SIGINT a healthy run on a fake budget cap.
+      // Reject an implausible absolute value or a jump too large to be one
+      // run's real growth; the true counter climbs smoothly and re-registers
+      // on the next flush.
+      const prev = r.maxReportedTokens || 0;
+      const ABS_CEIL = 50_000_000;              // no real single-run cumulative reaches this
+      const plausible = maxTok <= ABS_CEIL
+        && (prev === 0 ? maxTok <= 2_000_000     // first sighting: a sane context ceiling
+                       : maxTok <= prev * 8 + 1_000_000); // later: generous but bounded growth
+      if (plausible) {
+        r.maxReportedTokens = maxTok;
+        try { r.runner.setReportedTokens(maxTok); } catch (_) {}
+      }
     }
   }
   // Detect the completion sentinel that the agent prints when it's fully done.

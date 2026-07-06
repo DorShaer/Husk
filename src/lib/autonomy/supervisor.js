@@ -318,6 +318,17 @@ function startRun(opts = {}) {
       // Feed a workspace-diff signature to the governor (forward-progress
       // signal). main.js computes the diff off-thread and calls this.
       reportProgress: (diffSignature) => reportProgress(diffSignature),
+      // Feed the current action signature to the governor (loop detection).
+      // main.js calls this from the transcript tool-use parser. Kept off the
+      // audit path so it stays lightweight per tool call.
+      reportAction: (signature) => {
+        if (!governor || state.status !== 'running') return null;
+        if (typeof signature !== 'string' || !signature) return governor.state(now());
+        governor.tick({ now: now(), signature, totalTokens: budget.state(now()).totalTokens });
+        const g = governor.state(now());
+        if (g.stalled) halt('stall', { signal: g.stalled, progress: g, meter: budget.state(now()) });
+        return g;
+      },
       // Exposed so the supervisor can feed the agent's own reported
       // token count (parsed from its status line by the renderer)
       // into the meter and override the chars/4 estimate.

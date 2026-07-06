@@ -97,6 +97,33 @@ test('governor off: no stall halt ever (behaviour unchanged)', () => {
   assert.equal(runner.governorState(), null);
 });
 
+test('reportAction: the same tool signature 4x halts with stall/loop', () => {
+  const runner = start({ governor: true, caps: BIG_CAPS });
+  for (let i = 1; i <= 4; i++) {
+    clock = T0 + i * 1000;
+    runner.reportAction('Bash:npm test');
+  }
+  const st = runner.getState();
+  assert.equal(st.status, 'halted');
+  assert.equal(st.haltReason, 'stall');
+  assert.equal(st.haltDetail.signal, 'loop');
+});
+
+test('reportProgress clears an almost-spinning run', () => {
+  const runner = start({ governor: true, caps: BIG_CAPS });
+  runner.reportProgress('files=1;churn=10');
+  clock = T0 + 1000;
+  runner.recordEvent({ kind: 'tool_use', tokens: { input: 5000, output: 5000 }, payload: { command: 'c' } });
+  clock = T0 + 4 * MIN;                 // approaching the 5m spinning window
+  assert.equal(runner.tickClock().hitCap, null);
+  assert.equal(runner.getState().status, 'running');
+  // A real edit lands: progress resets the spinning timer.
+  runner.reportProgress('files=2;churn=90');
+  clock = T0 + 8 * MIN;                 // 4m since the reset, not yet spinning
+  runner.tickClock();
+  assert.equal(runner.getState().status, 'running');
+});
+
 test('budget cap takes precedence over a simultaneous stall', () => {
   const runner = start({ governor: true, caps: { tokens: 1, minutes: 60, dollars: 5 } });
   clock = T0 + 1000;
