@@ -3487,14 +3487,18 @@ function readCopilotSessionStats(cwd) {
   if (!best) return null;
   let raw = '';
   try {
-    const sz = fs.statSync(best).size;
     const CAP = 512 * 1024;
-    if (sz > CAP) {
-      const fd = fs.openSync(best, 'r');
-      try { const b = Buffer.alloc(CAP); fs.readSync(fd, b, 0, CAP, sz - CAP); raw = b.toString('utf8'); } finally { fs.closeSync(fd); }
-    } else {
-      raw = fs.readFileSync(best, 'utf8');
-    }
+    // Open once and size/read through the same descriptor so the file can't
+    // be swapped between the size check and the read (the path is resolved
+    // a single time). On a huge transcript keep only the trailing CAP bytes.
+    const fd = fs.openSync(best, 'r');
+    try {
+      const sz = fs.fstatSync(fd).size;
+      const len = Math.min(sz, CAP);
+      const b = Buffer.alloc(len);
+      fs.readSync(fd, b, 0, len, sz > CAP ? sz - CAP : 0);
+      raw = b.toString('utf8');
+    } finally { fs.closeSync(fd); }
   } catch (_) { return null; }
   let model = '';
   let turns = 0;
