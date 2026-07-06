@@ -723,7 +723,7 @@ async function openNewChatTab(opts = {}) {
   await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   tab.term.focus();
   maybeShowTrustBanner();
-  if (!cfg.skipWelcome) $('#chat-empty').classList.add('show');
+  if (!(cfg && cfg.skipWelcome)) $('#chat-empty').classList.add('show');
   // Do not inject the workflow-context primer into a resumed conversation: it
   // would land as a stray message mid-chat. Only fresh chats get it.
   if (!opts.skipContext) {
@@ -764,7 +764,7 @@ async function restartPty(opts = {}) {
   // otherwise the welcome briefly flashes in (added here) and out again
   // (stripped by the first pty.onData tick once the new agent banner
   // arrives), which reads as a layout glitch.
-  if (!cfg.skipWelcome) $('#chat-empty').classList.add('show');
+  if (!(cfg && cfg.skipWelcome)) $('#chat-empty').classList.add('show');
   tab.term.focus();
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
   if (!opts.silent) toast('New session', 'success');
