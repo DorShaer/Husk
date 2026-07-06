@@ -160,6 +160,7 @@ contextBridge.exposeInMainWorld('husk', {
     applyRun: (opts) => ipcRenderer.invoke('autopilot:applyRun', opts || {}),
     discardRun: (opts) => ipcRenderer.invoke('autopilot:discardRun', opts || {}),
     retained: () => ipcRenderer.invoke('autopilot:retained'),
+    receipt: (opts) => ipcRenderer.invoke('autopilot:receipt', opts || {}),
     race: () => ipcRenderer.invoke('autopilot:race'),
     applyWinner: (opts) => ipcRenderer.invoke('autopilot:applyWinner', opts || {}),
     fileDiff: (opts) => ipcRenderer.invoke('autopilot:fileDiff', opts || {}),

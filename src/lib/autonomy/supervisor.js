@@ -150,9 +150,15 @@ function startRun(opts = {}) {
     // Feed the progress governor: agent output keeps the run "alive"
     // (resets idle) and an identifiable action feeds loop detection.
     if (governor) {
+      // Output can arrive as event.tokens.chars (token-bearing events) or
+      // event.payload.chars (the agent_output flush row). Either counts as
+      // the run being alive and resets the idle clock.
+      const chars = (event.tokens && Number.isFinite(event.tokens.chars)) ? event.tokens.chars
+        : (event.payload && Number.isFinite(event.payload.chars)) ? event.payload.chars
+        : undefined;
       governor.tick({
         now: now(),
-        charsFromAgent: event.tokens ? event.tokens.chars : undefined,
+        charsFromAgent: chars,
         signature: actionSignature(event),
         diffSignature: typeof event.diffSignature === 'string' ? event.diffSignature : undefined,
       });

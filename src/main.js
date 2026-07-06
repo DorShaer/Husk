@@ -1937,7 +1937,11 @@ function flushRunOutput(runId) {
       payload: { chars: chunk.length },
     });
   } catch (_) {}
-  if (mainWindow) mainWindow.webContents.send('autopilot:budget', { runId, ...r.runner.budgetState() });
+  if (mainWindow) mainWindow.webContents.send('autopilot:budget', {
+    runId,
+    ...r.runner.budgetState(),
+    governor: (typeof r.runner.governorState === 'function') ? r.runner.governorState() : null,
+  });
   // Submit-proof for agents without a transcript: the composer echo of an
   // injected goal accounts for roughly its own length in PTY bytes, so
   // sustained output well past that means the agent is answering and the
@@ -2365,6 +2369,10 @@ async function doStartRun(runId, payload, workspaceRoot) {
     agent: payload.agent || agentName,
     modelId: payload.modelId || (vendorBilled ? agentName : null),
     caps: payload.caps,
+    // Progress governor: halt a run that idles or loops so it stops
+    // burning tokens on no forward progress. On by default; a caller can
+    // pass governor:false to opt a run out.
+    governor: payload.governor === false ? false : true,
     encrypt, decrypt,
     skipSnapshot: true,
     snapshotManifest: snap.manifest,
@@ -2412,10 +2420,15 @@ async function doStartRun(runId, payload, workspaceRoot) {
     try { ensureRunGoalSubmitted(runId); } catch (_) {}
     try { runIdleWatchdog(runId); } catch (_) {}
     const s = rs.runner.tickClock();
+    // tickClock may internally halt the run on a governor stall; read the
+    // governor state so the dashboard sees the idle/loop ramp and the halt
+    // path below can act on it.
+    const gov = (typeof rs.runner.governorState === 'function') ? rs.runner.governorState() : null;
     if (mainWindow) mainWindow.webContents.send('autopilot:budget', {
       runId, ...s,
       // Live telemetry for the dashboard: coarse state, current tool, and
       // nudge count ride the 1s budget tick instead of a separate channel.
+      governor: gov,
       state: runLiveState(rs),
       nudges: rs.nudgeCount || 0,
       lastTool: rs.lastToolText || null,
@@ -2429,6 +2442,14 @@ async function doStartRun(runId, payload, workspaceRoot) {
       sigintRunPty(runId);
       if (mainWindow) mainWindow.webContents.send('autopilot:halt', { runId, reason: 'budget', cap: s.hitCap });
       finishRun(runId, { reason: 'budget', cap: s.hitCap });
+    } else if (gov && gov.stalled) {
+      // The governor caught a stall (idle / loop / no-progress). The runner
+      // is already halted; tear down the PTY and finish so the worktree is
+      // retained and the run is bookable into the fleet receipt as "saved".
+      try { clearInterval(rs.tickInterval); } catch (_) {}
+      sigintRunPty(runId);
+      if (mainWindow) mainWindow.webContents.send('autopilot:halt', { runId, reason: 'stall', signal: gov.stalled });
+      finishRun(runId, { reason: 'stall', signal: gov.stalled });
     }
   }, 1000);
   spawnRunPty(runId, runRoot);
@@ -3089,6 +3110,39 @@ ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
     storageRoot: autopilotStorageRoot(),
     decrypt,
   });
+});
+
+// Fleet Receipt: aggregate a set of finished runs into one shareable
+// summary (total spend, what landed, and the waste the governor caught).
+// The renderer passes the fleet it launched as [{ sessionId, agent,
+// model }]; each run is summarized from its own audit log (authoritative
+// and resilient even after its worktree was applied or discarded), then
+// folded into the receipt. Pure aggregation lives in autonomy/receipt.
+ipcMain.handle('autopilot:receipt', async (_e, payload = {}) => {
+  const items = Array.isArray(payload && payload.runs) ? payload.runs : [];
+  if (!items.length) return { ok: false, error: 'runs required' };
+  const { decrypt } = autopilotCrypto();
+  const storageRoot = autopilotStorageRoot();
+  const rows = [];
+  for (const it of items) {
+    const sessionId = String(it && it.sessionId || '').trim();
+    if (!sessionId) continue;
+    try {
+      const sum = await Autopilot.supervisor.summarizeRunAsync({
+        sessionId,
+        workspaceRoot: manifestWorkspaceRoot(sessionId),
+        storageRoot,
+        decrypt,
+      });
+      if (sum && sum.ok) {
+        rows.push(Autopilot.receipt.fromSummary(sum, { agent: it.agent || null, model: it.model || null }));
+      }
+    } catch (_) { /* skip a run that cannot be summarized rather than fail the whole receipt */ }
+  }
+  const receipt = Autopilot.receipt.buildFleetReceipt(rows, {
+    label: typeof payload.label === 'string' ? payload.label.slice(0, 80) : null,
+  });
+  return { ok: true, receipt };
 });
 
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
