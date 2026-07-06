@@ -2022,11 +2022,17 @@ function spawnRunPty(runId, cwd) {
       rs.flushTimer = setTimeout(() => flushRunOutput(runId), AUT_OUTPUT_FLUSH_MS);
     }
   });
-  r._exitDisposable = runPty.onExit(() => {
+  r._exitDisposable = runPty.onExit((ev) => {
     const rs = runs.get(runId);
     if (rs && !rs.finishing) {
-      if (mainWindow) mainWindow.webContents.send('autopilot:halt', { runId, reason: 'agent-exited' });
-      finishRun(runId, { reason: 'agent-exited' });
+      // Preserve the agent's exit code. A run "dying" unexpectedly (e.g. the
+      // moment a second agent is launched in a chat tab) shows up here; the
+      // code distinguishes a clean quit (0) from a crash (non-zero) so the
+      // audit trail names WHY the agent left, not just that it did.
+      const exitCode = ev && typeof ev.exitCode === 'number' ? ev.exitCode : null;
+      const signal = ev && typeof ev.signal === 'number' ? ev.signal : null;
+      if (mainWindow) mainWindow.webContents.send('autopilot:halt', { runId, reason: 'agent-exited', exitCode, signal });
+      finishRun(runId, { reason: 'agent-exited', exitCode, signal });
     }
     try { if (r._dataDisposable) r._dataDisposable.dispose(); } catch (_) {}
     try { if (r._exitDisposable) r._exitDisposable.dispose(); } catch (_) {}
@@ -2477,9 +2483,15 @@ ipcMain.handle('autopilot:nudge', (_e, payload = {}) => {
 
 ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
   const runId = String(detail && detail.runId || '').trim();
-  const r = runId ? runs.get(runId) : [...runs.values()][0];
-  const rid = runId || (r ? [...runs.keys()][0] : null);
-  if (!r || !rid) return { ok: false, error: 'no active run' };
+  // Resolve the target run. With an explicit id, cancel exactly that run.
+  // Without one, fall back ONLY when a single run is active; cancelling an
+  // arbitrary "first" run when several are live could stop a run the user
+  // never aimed at.
+  let rid = null;
+  if (runId && runs.has(runId)) rid = runId;
+  else if (!runId && runs.size === 1) rid = [...runs.keys()][0];
+  const r = rid ? runs.get(rid) : null;
+  if (!r || !rid) return { ok: false, error: runId ? 'run not found' : 'no active run' };
   // Stop the WHOLE autopilot team, not just the focused run: every live
   // run in this run's collab group, plus queued members that have not
   // started yet, plus the group tracker so no integrator spawns after the

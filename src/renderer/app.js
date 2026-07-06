@@ -8502,8 +8502,14 @@ try {
     window.husk.autopilot.onHalt((info) => {
       let why, level;
       if (info && info.cap) { why = `${info.cap} cap reached`; level = 'error'; }
-      else if (info && info.reason === 'agent-exited') { why = 'agent exited'; level = 'info'; }
-      else { why = 'stopped'; level = 'error'; }
+      else if (info && info.reason === 'agent-exited') {
+        // Name the exit code so an unexpected death (vs a clean quit) is
+        // legible: a run that vanishes the instant a chat agent launches
+        // reads as "agent exited (code N)", not a silent disappearance.
+        const code = (info && typeof info.exitCode === 'number') ? info.exitCode : null;
+        why = code == null ? 'agent exited' : `agent exited (code ${code})`;
+        level = (code && code !== 0) ? 'error' : 'info';
+      } else { why = 'stopped'; level = 'error'; }
       toast(`Autopilot halted: ${why}`, level);
     });
     if (window.husk.autopilot.onSnapshotProgress) {

@@ -1401,7 +1401,19 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
   animation: ap-pulse 1.6s ease-in-out infinite;
 }
-[data-rail="collapsed"] .rail-aut-pulse { right: 8px; }
+/* Collapsed rail: the icon is centered with no room beside it for a badge,
+   so a positioned dot lands on top of the glyph and reads as a defect.
+   Hide the dot and blink the icon itself instead. The run-active signal is
+   the same one JS already drives: #rail-aut-pulse is unhidden while a run is
+   live, so :has() on it lights the icon animation without new JS state. */
+[data-rail="collapsed"] .rail-aut-pulse { display: none; }
+[data-rail="collapsed"] .rail-item-autopilot:has(#rail-aut-pulse:not([hidden])) .ri-icon {
+  animation: ap-icon-blink 1.6s ease-in-out infinite;
+}
+@keyframes ap-icon-blink {
+  0%, 100% { color: var(--accent); opacity: 1; }
+  50%      { color: color-mix(in srgb, var(--accent) 45%, transparent); opacity: 0.55; }
+}
 
 /* Empty state when no run active. NOT a centered card; this is the
    landing hub for the whole autopilot feature: hero, preset gallery,
