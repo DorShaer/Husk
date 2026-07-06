@@ -5,6 +5,14 @@
 # 
 [![Typing SVG](https://readme-typing-svg.demolab.com?font=Cause&weight=900&size=30&pause=1000&color=F74A1D&width=435&lines=CLI+Agents.+But+for+everyone)](https://git.io/typing-svg)
 
+[![Latest release](https://img.shields.io/github/v/release/DorShaer/Husk?color=F74A1D&label=release&sort=semver)](https://github.com/DorShaer/Husk/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/DorShaer/Husk/total?color=F74A1D&label=downloads)](https://github.com/DorShaer/Husk/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/DorShaer/Husk/ci.yml?branch=main&label=CI)](https://github.com/DorShaer/Husk/actions/workflows/ci.yml)
+[![apt install husk](https://img.shields.io/badge/apt-install%20husk-A81D33?logo=debian&logoColor=white)](https://dorshaer.github.io/Husk/)
+[![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)](https://github.com/DorShaer/Husk/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/DorShaer/Husk?style=flat&color=F74A1D)](https://github.com/DorShaer/Husk/stargazers)
+
 Husk wraps `claude`, `copilot`, `codex`, `aider`, or any other terminal-based AI agent in a clean Electron window with a real PTY, drag-drop file context, voice output, session resume, and a one-glance dashboard. The reasoning, thinking format, and Algorithm phase machine are bundled in. Clone, install, run.
 
 <br />
@@ -49,9 +57,29 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 </div>
 
+## Install
+
+**One line, any OS** (recommended):
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/scripts/install.sh | bash
+```
+
+On Debian/Ubuntu this adds Husk's signed apt repository and installs it, so `sudo apt upgrade` keeps Husk current. On other Linux it fetches the latest AppImage; on macOS the latest `.dmg`. No `git clone`, no Node, checksums verified.
+
+### Debian / Ubuntu (apt)
+
+To wire up the repository yourself and get automatic updates through `apt upgrade`:
+
+```bash
+curl -fsSL https://dorshaer.github.io/Husk/husk.gpg | sudo gpg --dearmor -o /usr/share/keyrings/husk.gpg
+echo "deb [signed-by=/usr/share/keyrings/husk.gpg] https://dorshaer.github.io/Husk/apt stable main" | sudo tee /etc/apt/sources.list.d/husk.list
+sudo apt update && sudo apt install husk
+```
+
 ## Download
 
-Grab the latest installer for your OS from the [releases page](https://github.com/DorShaer/Husk/releases):
+Prefer to grab an installer by hand? Pull the latest for your OS from the [releases page](https://github.com/DorShaer/Husk/releases):
 
 | OS | Download |
 |----|----------|

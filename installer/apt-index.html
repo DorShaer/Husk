@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Husk apt repository</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 -apple-system, system-ui, sans-serif; max-width: 44rem; margin: 4rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.6rem; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  pre { background: #1113; padding: 1rem 1.15rem; border-radius: 8px; overflow-x: auto; }
+  a { color: #f74a1d; }
+  .muted { opacity: .7; font-size: .9rem; }
+</style>
+</head>
+<body>
+  <h1>Husk apt repository</h1>
+  <p>Install Husk on Debian and Ubuntu, and keep it current with <code>apt upgrade</code>.</p>
+  <pre><code>curl -fsSL https://dorshaer.github.io/Husk/husk.gpg | sudo gpg --dearmor -o /usr/share/keyrings/husk.gpg
+echo "deb [signed-by=/usr/share/keyrings/husk.gpg] https://dorshaer.github.io/Husk/apt stable main" | sudo tee /etc/apt/sources.list.d/husk.list
+sudo apt update && sudo apt install husk</code></pre>
+  <p class="muted">Packages are signed with the Husk package-signing key served at
+  <a href="husk.gpg">husk.gpg</a>. Source and other platforms:
+  <a href="https://github.com/DorShaer/Husk">github.com/DorShaer/Husk</a>.</p>
+</body>
+</html>

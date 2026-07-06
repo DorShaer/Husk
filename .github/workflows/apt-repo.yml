@@ -1,0 +1,132 @@
+name: APT Repository
+
+# Publishes a signed Debian/apt repository to the gh-pages branch so users
+# can `sudo apt install husk` and stay current with `apt upgrade`. Runs when
+# a release is published (ingests that release's .deb) and can be dispatched
+# manually to (re)ingest a specific tag, e.g. to seed the repo from an
+# existing release without cutting a new version.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to ingest (e.g. v2.8.7). Defaults to the latest release.'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apt-repo
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main (public key + workflow)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Resolve release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ] && [ "$EVENT_NAME" = "release" ]; then
+            TAG="$RELEASE_TAG"
+          fi
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --json tagName -q .tagName)
+          fi
+          # Constrain to a safe tag shape before it reaches any shell/URL use.
+          if ! printf '%s' "$TAG" | grep -Eq '^v?[0-9A-Za-z._-]+$'; then
+            echo "Refusing to ingest untrusted tag: $TAG" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Ingesting $TAG"
+
+      - name: Download .deb from the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p incoming
+          gh release download "$TAG" --pattern '*-linux-amd64.deb' --dir incoming
+          ls -la incoming
+
+      - name: Install apt-utils
+        run: sudo apt-get update && sudo apt-get install -y apt-utils
+
+      - name: Fetch existing repo state from gh-pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Preserve the accumulated package pool: copy the current gh-pages
+          # tree into a plain (non-git) site/ dir if the branch exists,
+          # otherwise start fresh. The publish step re-inits and force-pushes.
+          if git ls-remote --exit-code --heads "https://github.com/${REPO}.git" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages \
+              "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" site
+            rm -rf site/.git
+          else
+            mkdir -p site
+          fi
+          mkdir -p site/apt/pool/main site/apt/dists/stable/main/binary-amd64
+
+      - name: Add new package(s) to the pool
+        run: cp -v incoming/*.deb site/apt/pool/main/
+
+      - name: Build package index
+        working-directory: site/apt
+        run: |
+          apt-ftparchive packages pool > dists/stable/main/binary-amd64/Packages
+          gzip -9kf dists/stable/main/binary-amd64/Packages
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin=Husk \
+            -o APT::FTPArchive::Release::Label=Husk \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Architectures=amd64 \
+            -o APT::FTPArchive::Release::Components=main \
+            release dists/stable > dists/stable/Release
+
+      - name: Sign the repository
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          KEY_ID: ${{ vars.APT_GPG_KEY_ID }}
+        working-directory: site/apt
+        run: |
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --batch --yes --local-user "$KEY_ID" \
+            --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --batch --yes --local-user "$KEY_ID" \
+            -abs -o dists/stable/Release.gpg dists/stable/Release
+
+      - name: Stage public key and landing page
+        run: |
+          cp installer/husk-apt.gpg site/husk.gpg
+          cp installer/apt-index.html site/index.html
+          touch site/.nojekyll
+
+      - name: Publish to gh-pages
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          cd site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "apt: publish $TAG"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" gh-pages
