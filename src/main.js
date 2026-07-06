@@ -1134,8 +1134,8 @@ function baseContextWindow(model) {
 // under projects[cwd].lastModelUsage. So: prefer an explicit 1M tier (from the
 // id or that usage record), else look up the family's base size, else infer.
 // Claude Code accepts short model aliases in settings.json ("opus", "sonnet",
-// "haiku", "opusplan"). We prefer settings.json over the transcript for the
-// active model, but a bare alias matches none of the claude-* family regexes,
+// "haiku", "opusplan"). The settings model is used whenever the transcript has
+// not yet named one, but a bare alias matches none of the claude-* family regexes,
 // so the window wrongly falls back to the 200K default -- e.g. "opus" never hit
 // the [/^claude-opus/, 1000000] rule and showed 200K instead of 1M. Expand
 // known aliases to a canonical family id before matching; any tier suffix
@@ -1294,13 +1294,17 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    // Prefer the configured model from settings.json (what Claude Code shows in
-    // its banner) over the transcript model. The transcript lags (no model
-    // until the first assistant turn) and the newest-by-mtime file can belong
-    // to a different/older session, which would make the panel show a stale model.
-    // settings.json is authoritative, never stale, and auto-updates on change.
+    // Model preference. The transcript records the model on every assistant
+    // turn, so when this tab owns its transcript it is the live truth for the
+    // session: it reflects mid-session switches that happen server-side
+    // without settings.json ever changing (settings only knows what was
+    // configured, not what the session is actually running). settings.json
+    // still fills the gap before the first assistant turn. When the tab has
+    // NO resolved transcript of its own (bare files[0] fallback below), keep
+    // settings first so a stale newest-by-mtime file cannot mislabel it.
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
-    let effModel = settingsModel || model;
+    const ownTranscript = Boolean(sess && latest);
+    let effModel = ownTranscript ? (model || settingsModel) : (settingsModel || model);
     // Model label fallback, DISPLAY ONLY. If neither settings.json nor this
     // tab's own transcript yielded a model (a brand-new tab before its first
     // turn, or a non-claude tab), borrow the model from the newest transcript
