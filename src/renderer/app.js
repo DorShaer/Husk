@@ -5858,9 +5858,13 @@ function paintAgentMenu() {
   if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefsModal(); });
 }
 function openAgentMenu() {
+  // Paint instantly from cache, then re-detect so an agent installed after
+  // Husk launched (e.g. a fresh `npm i -g @google/gemini-cli`) shows as
+  // available without a restart. refreshAgentMenu repaints when it resolves.
   paintAgentMenu();
   $('#rail-agent-menu').hidden = false;
   agentMenuOpen = true;
+  refreshAgentMenu();
 }
 function closeAgentMenu() {
   $('#rail-agent-menu').hidden = true;
