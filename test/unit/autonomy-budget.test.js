@@ -146,6 +146,27 @@ test('setReportedTokens overrides chars/4 estimate as the truth source', () => {
   assert.equal(s.tokensEstimated, false);
 });
 
+test('reported dollars use the cache-weighted rate, not the fresh blend', () => {
+  // Calibrated from real usage: a status-line cumulative is ~97% cache reads,
+  // so 1M reported tokens costs ~$0.54 for Sonnet, not the old ~$11.40.
+  const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-sonnet-4-7' });
+  m.setReportedTokens(1_000_000);
+  const s = m.state(T0);
+  // rate.in*0.13 + rate.out*0.01 = 3*0.13 + 15*0.01 = 0.54
+  assert.ok(Math.abs(s.dollars - 0.54) < 0.001, `dollars ${s.dollars}`);
+  assert.ok(s.dollars < 1, 'nowhere near the old $11.40');
+});
+
+test('a cache-heavy high-token run does not false-trip the dollar cap', () => {
+  // 5M reported tokens (cache-dominated) under a $5 cap. Old fresh blend
+  // charged 5M*11.4 = $57 -> instant false halt. Calibrated: 5M*0.54 = $2.70.
+  const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-sonnet-4-7', caps: { minutes: 1e9, tokens: 1e9, dollars: 5 } });
+  m.setReportedTokens(5_000_000);
+  const s = m.state(T0);
+  assert.ok(s.dollars < 5, `dollars ${s.dollars} should be under the cap`);
+  assert.equal(s.hitCap, null);
+});
+
 test('setReportedTokens is monotonic (never lets the counter regress)', () => {
   const m = createBudgetMeter({ startedAt: T0 });
   m.setReportedTokens(1500);
@@ -155,12 +176,13 @@ test('setReportedTokens is monotonic (never lets the counter regress)', () => {
   assert.equal(m.state(T0).totalTokens, 2200);
 });
 
-test('reported tokens drive dollar cost via blended in/out rate', () => {
-  // claude-opus rates: in $15/Mtok, out $75/Mtok. Blend = 30% in + 70% out
-  // = 0.3*15 + 0.7*75 = 57. 1000 tokens => 0.057 dollars.
+test('reported tokens drive dollar cost via the cache-weighted rate', () => {
+  // claude-opus rates: in $15/Mtok, out $75/Mtok. A reported cumulative is
+  // cache-dominated, so the calibrated rate is in*0.13 + out*0.01 =
+  // 15*0.13 + 75*0.01 = 2.70/Mtok. 1000 tokens => 0.0027 dollars.
   const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-opus-4-7' });
   m.setReportedTokens(1000);
-  assert.ok(Math.abs(m.state(T0).dollars - 0.057) < 1e-6);
+  assert.ok(Math.abs(m.state(T0).dollars - 0.0027) < 1e-6, `dollars ${m.state(T0).dollars}`);
 });
 
 test('explicit transcript deltas outgrow a stale early report', () => {

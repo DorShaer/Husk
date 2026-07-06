@@ -133,8 +133,18 @@ function createBudgetMeter(opts = {}) {
     // the chars/4 estimate.
     let dollars;
     if (source === 'reported') {
-      const blended = (rate.in * 0.3) + (rate.out * 0.7);
-      dollars = (reportedTotal / 1e6) * blended;
+      // A status-line cumulative counter conflates cache reads, re-sent
+      // context, fresh input, and output into one number. Calibrated against
+      // 715 real agent messages, that mix is ~97% cache-read tokens (billed
+      // at 0.1x input) -- the measured effective rate is ~$0.49/Mtok for a
+      // Sonnet-class model, NOT the $11.40/Mtok a fresh 30/70 blend implies.
+      // Charging the fresh rate over-stated cost ~23x and could SIGINT a
+      // healthy run on a phantom dollar cap. This cache-weighted rate tracks
+      // the measured cost and is biased slightly low on purpose: under-
+      // charging just fires the cap a little late (benign), while over-
+      // charging kills a cheap run (the failure we are removing).
+      const reportedRate = (rate.in * 0.13) + (rate.out * 0.01);
+      dollars = (reportedTotal / 1e6) * reportedRate;
     } else if (source === 'estimate') {
       dollars = (estOutputTokens / 1e6) * rate.out;
     } else {
