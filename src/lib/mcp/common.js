@@ -71,6 +71,12 @@ function writeJsonFile(filePath, obj) {
   let tmp;
   try {
     const dir = path.dirname(filePath);
+    // The agent's config dir may not exist yet (e.g. configuring an MCP
+    // server before the CLI has ever run and created ~/.gemini). Create it
+    // so the write, and the atomic rename that follows, cannot fail on a
+    // missing directory.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     tmp = path.join(dir, '.' + path.basename(filePath) + '.husk-' + process.pid + '.tmp');
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: 0o600 });

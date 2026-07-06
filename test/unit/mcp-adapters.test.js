@@ -202,3 +202,15 @@ test('claude / copilot adapters: round-trip add + list + toggle + remove on a te
   assert.ok(loaded.mcpServers.mem);
   assert.ok(loaded._huskMcpDisabled.old);
 });
+
+test('writeJsonFile creates the config dir when it does not exist yet', () => {
+  // Configuring an MCP server before the CLI has ever run (so ~/.gemini
+  // does not exist) must still succeed.
+  const { readJsonFile, writeJsonFile } = require('../../src/lib/mcp/common');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-mcp-'));
+  const nested = path.join(base, '.gemini', 'settings.json');
+  assert.equal(fs.existsSync(path.dirname(nested)), false);
+  const ok = writeJsonFile(nested, { mcpServers: { mem: { command: 'npx' } } });
+  assert.equal(ok, true);
+  assert.ok(readJsonFile(nested).mcpServers.mem);
+});
