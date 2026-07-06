@@ -54,6 +54,9 @@ function preferExecutableSibling(resolved, env) {
   // Windows file names are case-insensitive; npm writes `claude.cmd`
   // (lowercase) while PATHEXT is upper-case, so match without regard to case.
   let entries;
+  // dir is the directory of an already-resolved executable path; this is a
+  // read-only listing to find a runnable sibling, no contents are opened.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename
   try { entries = fs.readdirSync(dir); } catch (_) { return resolved; }
   for (const e of exts) {
     const want = base + e;
