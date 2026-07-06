@@ -24,6 +24,21 @@ const path = require('path');
 const Snapshot = require('./snapshot');
 const Audit = require('./audit');
 const Budget = require('./budget');
+const Progress = require('./progress');
+
+// A stable action signature for loop detection. Returns a string only
+// when the event carries an identifiable action (a command, tool, or
+// file the agent is acting on); returns null otherwise so loop
+// detection never trips on generic chatter that merely shares a kind.
+function actionSignature(event) {
+  if (!event || typeof event !== 'object') return null;
+  const p = event.payload;
+  const id = p && typeof p === 'object'
+    ? (p.command || p.tool || p.file || p.path || p.action || null)
+    : null;
+  if (!id) return null;
+  return `${event.kind || 'event'}:${String(id)}`;
+}
 
 function startRun(opts = {}) {
   const sessionId = String(opts.sessionId || '').trim();
@@ -69,6 +84,18 @@ function startRun(opts = {}) {
     modelId: opts.modelId,
     rates: opts.rates,
   });
+
+  // 3b. progress governor (opt-in). Detects idle / loop / no-progress
+  // stalls so a run that is burning wall-clock and tokens without doing
+  // useful work is halted early. Off unless the caller opts in, so the
+  // budget-only behaviour stays unchanged for callers that do not want
+  // the governor.
+  const governor = opts.governor
+    ? Progress.createProgressMeter({
+        startedAt: now(),
+        thresholds: (opts.governor === true ? null : opts.governor.thresholds),
+      })
+    : null;
 
   // 4. write the start_run event
   auditWriter.append({
@@ -120,12 +147,27 @@ function startRun(opts = {}) {
       ts: event.ts,
       payload: event.payload,
     });
+    // Feed the progress governor: agent output keeps the run "alive"
+    // (resets idle) and an identifiable action feeds loop detection.
+    if (governor) {
+      governor.tick({
+        now: now(),
+        charsFromAgent: event.tokens ? event.tokens.chars : undefined,
+        signature: actionSignature(event),
+        diffSignature: typeof event.diffSignature === 'string' ? event.diffSignature : undefined,
+      });
+    }
     // Check caps after every event. The supervisor's pattern is
     // "record then halt", so the triggering event stays in the
-    // log; the halt_budget event appears AFTER it.
+    // log; the halt_budget event appears AFTER it. Budget (hard spend)
+    // is checked before the governor (waste) so a run that hit both
+    // reports the budget cap it truly crossed.
     const meterState = budget.state(now());
     if (meterState.hitCap) {
       halt('budget', { cap: meterState.hitCap, meter: meterState });
+    } else if (governor) {
+      const g = governor.state(now());
+      if (g.stalled) halt('stall', { signal: g.stalled, progress: g, meter: meterState });
     }
     return { ok: true, meterState };
   }
@@ -134,7 +176,17 @@ function startRun(opts = {}) {
     if (state.status !== 'running') return budget.state(now());
     budget.tick({ now: now() });
     const s = budget.state(now());
-    if (s.hitCap) halt('budget', { cap: s.hitCap, meter: s });
+    if (s.hitCap) {
+      halt('budget', { cap: s.hitCap, meter: s });
+      return s;
+    }
+    // A pure clock tick with no output is exactly how an idle stall is
+    // caught: the governor sees time advance with no charsFromAgent.
+    if (governor) {
+      governor.tick({ now: now() });
+      const g = governor.state(now());
+      if (g.stalled) halt('stall', { signal: g.stalled, progress: g, meter: s });
+    }
     return s;
   }
 
@@ -237,6 +289,11 @@ function startRun(opts = {}) {
       getState,
       snapshotManifest: snapshotOnly,
       budgetState: () => budget.state(now()),
+      // Live governor state (idle / loop / no-progress ratios and the
+      // tripped signal, if any) so the fleet strip can render a run as
+      // "healthy" vs "stalling" without re-deriving it. Null when the
+      // governor is not enabled for this run.
+      governorState: () => (governor ? governor.state(now()) : null),
       // Exposed so the supervisor can feed the agent's own reported
       // token count (parsed from its status line by the renderer)
       // into the meter and override the chars/4 estimate.
