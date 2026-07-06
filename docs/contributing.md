@@ -77,7 +77,7 @@ Multiple unrelated scopes? Split into multiple commits.
 
 ## CI gates
 
-Two workflows fire on every push and pull request to `main`, `development`, and `dev/**` (`.github/workflows/`):
+Three workflows fire on every push to `main`, `development`, and `dev/**`, and on every pull request to `main` or `development` (`.github/workflows/`):
 
 ### `ci.yml`
 
@@ -85,7 +85,10 @@ Two workflows fire on every push and pull request to `main`, `development`, and 
 - `bash -n` on `install.sh`, `run.sh`, `uninstall.sh`
 - `package.json` and `package-lock.json` JSON validity
 - `npm ci --dry-run` to catch lockfile drift
-- `npm test` against `test/unit/`
+
+### `tests.yml`
+
+- `npm test` against `test/unit/` (node:test)
 - `npm run test:e2e` (Playwright smoke against a real Electron boot)
 
 ### `security.yml`

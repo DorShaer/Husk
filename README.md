@@ -55,9 +55,9 @@ Grab the latest installer for your OS from the [releases page](https://github.co
 
 | OS | Download |
 |----|----------|
-| Linux | `Husk-<version>.AppImage` (double-click), `.deb`, or `.rpm` |
-| macOS | `Husk-<version>.dmg` (drag to Applications); both Apple Silicon and Intel |
-| Windows | `Husk-<version>-Setup.exe` (NSIS installer) |
+| Linux | `husk-v<version>-linux-x86_64.AppImage` (double-click), `-amd64.deb`, or `-x86_64.rpm` |
+| macOS | `husk-v<version>-mac-arm64.dmg` (Apple Silicon) or `husk-v<version>-mac-x64.dmg` (Intel); drag to Applications |
+| Windows | `husk-v<version>-win-x64.exe` (NSIS installer) |
 
 No Node, no npm, no `git clone`. Husk bundles its own Electron runtime and copies the agent reasoning layer into `~/.claude/` on first launch.
 
@@ -72,7 +72,7 @@ Every release ships a `SHA256SUMS` file plus Sigstore build-provenance attestati
 sha256sum -c SHA256SUMS
 
 # Verify provenance (requires gh CLI 2.49+)
-gh attestation verify Husk-1.2.1.dmg --repo DorShaer/Husk
+gh attestation verify husk-v<version>-mac-arm64.dmg --repo DorShaer/Husk
 ```
 
 ## Install from source
@@ -106,7 +106,7 @@ For pure dev mode without system registration:
 2. On first run, Husk asks for the agent's name (default: Husk) and the agent command (default: `claude`). Both are saved to `~/.config/husk/config.json` and can be edited later in Preferences.
 3. Press the Launch button and start chatting. The agent runs in a real PTY, so everything you would normally do in the terminal works: tool calls, slash commands, stdin, ctrl-c, scrollback, keyboard interrupts, the lot.
 4. Drag files onto the window to share them with the agent. Use the topbar `+` button as a fallback file picker.
-5. Switch pages with the rail or `Alt+1..5`. Open the command palette with `Cmd/Ctrl+K`.
+5. Switch pages with the rail or `Alt+1..6`. Open the command palette with `Cmd/Ctrl+K`.
 
 ### Pages
 
@@ -114,13 +114,15 @@ For pure dev mode without system registration:
 - **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir.
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
-- **Autopilot**: hand the agent a goal and walk away, or launch several runs at once. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run; race the same goal across parallel runs and keep the best diff.
+- **Autopilot**: hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across collaborating parallel runs. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run.
 - **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
 - **Skills**: toggle PAI skills bundled with Husk plus any skills you keep in `~/.claude/skills/`.
 - **MCP**: install / toggle / health-check Model Context Protocol servers.
+- **Plugins**: browse and manage Husk plugins.
 - **Files**: drag-drop file context, with a tree view of your working directory.
 - **Sessions**: resume any prior agent session from its JSONL log.
-- **Preferences**: agent command, name, theme, accent, voice, recap, sidebar defaults.
+
+Preferences (agent command, name, theme, accent, voice, recap, sidebar defaults) open as a modal from the rail or `Alt+6`, not as a page.
 
 ## Architecture
 
@@ -135,7 +137,10 @@ husk/
 │   │   ├── pty-spawn.js       Per-platform pty.spawn argv assembly
 │   │   ├── user-path.js       Inherit shell PATH on GUI launch
 │   │   ├── agent-md.js        Agent markdown frontmatter parser
-│   │   └── workflow-graph.js  Sanitize, migrate, traverse, route
+│   │   ├── workflow-graph.js  Sanitize, migrate, traverse, route
+│   │   ├── mcp/               Per-agent MCP adapters
+│   │   ├── autonomy/          Autopilot budget, audit log, snapshot, supervisor
+│   │   └── ...                ~28 modules total; see docs/architecture.md
 │   └── renderer/              UI (single-page Electron view)
 │       ├── index.html
 │       ├── app.js
@@ -147,7 +152,7 @@ husk/
 ├── libs/
 │   └── pai/                   Bundled PAI framework, third-party
 ├── test/                      Unit tests (node:test) + Electron smoke
-│   ├── unit/                  124 unit tests against src/lib/
+│   ├── unit/                  node:test unit suite (500+ tests)
 │   └── e2e/                   Playwright smoke (real Electron boot)
 ├── install.sh / run.sh / uninstall.sh
 ├── package.json
@@ -176,9 +181,9 @@ husk/
 ```
 
 - `src/main.js` is the Electron main process. It assembles the PTY spawn per platform (see `src/lib/pty-spawn.js`): direct `pty.spawn(exe, argv)` on macOS, `/usr/bin/script -q -c <argv>` on Linux so `claude --resume` gets its TIOCSCTTY setup, and PATH+PATHEXT resolution before `pty.spawn` on Windows. It exposes IPC handlers for skills, sessions, voice, MCP servers, file drops, workflows, agents, projects, and live stats.
-- `src/lib/` holds the pure helpers: shell-quote, path-confine, pty-spawn, user-path, agent-md, workflow-graph. Each is small, with no Electron / fs / spawn coupling, and unit-tested. New IPC handler logic should land here.
+- `src/lib/` holds the pure helpers: shell-quote, path-confine, pty-spawn, user-path, agent-md, workflow-graph, the `mcp/` per-agent adapters, the `autonomy/` Autopilot safety modules, and about twenty more (see `docs/architecture.md`). Each is small, with no Electron / fs / spawn coupling, and unit-tested. New IPC handler logic should land here.
 - `src/preload.js` exposes a narrow `window.husk` API to the renderer through `contextBridge`. The renderer never gets Node access.
-- `src/renderer/` is the renderer: a single-page Electron view with rail navigation, an embedded xterm, a status panel, and the Chat / Agents / Workflows / Projects / Prompts / Skills / MCP / Files / Sessions / Preferences surfaces.
+- `src/renderer/` is the renderer: a single-page Electron view with rail navigation, an embedded xterm, a status panel, and the Chat / Agents / Workflows / Autopilot / Projects / Prompts / Skills / MCP / Plugins / Files / Sessions surfaces plus the Preferences modal.
 - `libs/pai/` is the bundled PAI framework, copied into `~/.claude/` on first install. Contains the system prompt, Algorithm phase machine, agents, hooks, lib, and the curated skills set.
 - `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
 - `install.sh` / `run.sh` / `uninstall.sh` are the entry-point scripts and stay at the repo root for easy `git clone && cd && ./install.sh`.
@@ -186,12 +191,12 @@ husk/
 ### Testing
 
 ```bash
-npm test         # 124 node:test unit tests, ~100ms
+npm test         # node:test unit suite (500+ tests), well under a second
 npm run test:e2e # Playwright smoke that boots real Electron
 npm run test:all # both
 ```
 
-CI runs both jobs on every push and pull request to `main`, `development`, and `dev/**` feature branches.
+CI runs both jobs on every push to `main`, `development`, and `dev/**`, and on every pull request to `main` or `development`.
 
 ## Branches
 
@@ -207,7 +212,7 @@ All settings live in `~/.config/husk/config.json` and are editable from the Pref
 - **Agent command** (`claude`, `copilot`, `codex`, `aider`, or any binary on `$PATH`) and **agent name**
 - **Active agent profiles**: one or more PAI agent personas applied to the next session
 - **Active project**: drives the agent's working directory so per-folder trust prompts work
-- **Theme** (dark / light) and **accent color** (orange / cyan / indigo / emerald / rose)
+- **Theme** (10 themes: Midnight default, Dark, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula, Light, Sepia) and **accent color** (orange / cyan / indigo / emerald / rose)
 - **Voice** (enable, voice model, speaking rate)
 - **Show recap line** (when off, suppresses end-of-response summaries)
 - **Sidebar default state**, **status panel collapsed**, **file tree root**, **show hidden files**

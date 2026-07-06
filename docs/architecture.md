@@ -17,12 +17,16 @@ husk/
 │   │   ├── agent-md.js        Agent markdown frontmatter parser
 │   │   ├── workflow-graph.js  Sanitize, migrate, traverse, route
 │   │   ├── mcp-status.js      Parse `claude mcp list` output into a status map
-│   │   └── mcp/               Per-agent MCP adapters
-│   │       ├── index.js       getAdapter(agentCommand) selector
-│   │       ├── common.js      Shared shape, read/write, build helpers
-│   │       ├── claude.js      ~/.claude.json + `claude mcp list`
-│   │       ├── copilot.js     ~/.copilot/mcp-config.json (no live probe)
-│   │       └── stub.js        Empty-list stub for codex / aider / gemini
+│   │   ├── mcp/               Per-agent MCP adapters
+│   │   │   ├── index.js       getAdapter(agentCommand) selector
+│   │   │   ├── common.js      Shared shape, read/write, build helpers
+│   │   │   ├── claude.js      ~/.claude.json + `claude mcp list`
+│   │   │   ├── copilot.js     ~/.copilot/mcp-config.json (no live probe)
+│   │   │   ├── gemini.js      ~/.gemini/settings.json (no live probe)
+│   │   │   └── stub.js        Empty-list stub for codex / aider
+│   │   ├── autonomy/          Autopilot safety: budget, hash-chained audit, snapshot, supervisor
+│   │   └── ...                ~20 more helpers (autopilot-*, agent-*, git-porcelain, fuzzy,
+│   │                          highlight, lang-detect, recap-extract, plugins, ...)
 │   └── renderer/              Single-page Electron view
 │       ├── index.html
 │       ├── app.js
@@ -74,7 +78,7 @@ husk/
 
 - **Main process (`src/main.js`).** Owns OS-facing concerns: spawns the agent CLI inside a `node-pty` PTY, owns IPC handlers, reads and writes user data under `~/.claude/`, `~/.config/husk/`, and `~/.local/share/husk/`. Single source of truth for the agent process tree.
 - **Preload (`src/preload.js`).** A small bridge. Exposes `window.husk` via Electron's `contextBridge`. The renderer never gets `require`, `process`, or Node globals.
-- **Renderer (`src/renderer/`).** Single-page Electron view. xterm.js terminal mounts on the Chat page; the rail navigates between Chat, Agents, Workflows, Projects, Prompts, Skills, MCP, Files, Sessions, Preferences. CSS lives in `styles.css`; vendored xterm in `vendor/`.
+- **Renderer (`src/renderer/`).** Single-page Electron view. xterm.js terminal mounts on the Chat page; the rail navigates between Chat, Agents, Workflows, Autopilot, Projects, Prompts, Skills, MCP, Plugins, Files, Sessions. Preferences open as a modal, not a page. CSS lives in `styles.css`; vendored xterm in `vendor/`.
 
 Electron security baseline: `contextIsolation: true`, `nodeIntegration: false`. CSP restricts the renderer to its own origin (no remote scripts). DevTools is off in packaged builds (`devTools: !app.isPackaged`). External URL clicks pass through a confirm dialog before `shell.openExternal`. Full posture in [`../SECURITY.md`](../SECURITY.md).
 
@@ -87,7 +91,7 @@ Electron security baseline: `contextIsolation: true`, `nodeIntegration: false`. 
 - **Windows:** `pty.spawn(resolvedViaPathExt, agentArgs)` when the program name resolves to a real file. Win32 `CreateProcess` does not honor `PATHEXT`, so a bare `pty.spawn('claude')` would miss `claude.cmd`. `resolveWindowsExe` walks `PATH` and applies `PATHEXT` itself, then spawns the resolved path directly. If no resolution is possible, it falls back to `pty.spawn('cmd.exe', ['/c', rawCmd])`. Persona injection (the agentName plus recap override) is skipped on Windows because cmd.exe quoting plus node-pty's argv-to-cmdline serializer would shatter the long quoted prompt.
 
 When the agent is `claude` (and the user did not pass their own `--settings`), the main process injects:
-- a temp settings file overriding `statusLine` to a no-op (Husk renders its own panel) and bumping `skillListingBudgetFraction` to 0.05 so claude does not silently drop skill descriptions;
+- an inline `--settings` JSON string overriding `statusLine` to a no-op command (Husk renders its own STATUS panel). claude merges the string over the user's `settings.json`, so every other setting still applies; because it is a string rather than a temp file, claude never writes trust data back into it (see `src/lib/agent-inject.js`);
 - an `--append-system-prompt` directive that names the agent according to `cfg.agentName` and (optionally) suppresses recap lines.
 
 ## IPC surface
@@ -97,11 +101,14 @@ The full `window.husk.*` API exposed through `src/preload.js`:
 | Namespace | What |
 |-----------|------|
 | `pty` | start / write / resize / restart, plus onData / onExit subscriptions |
+| `recap` | extract a recap line from terminal rows (in-process, no IPC) |
+| `text` | pure text helpers for the Files page: fuzzy filter, syntax highlight, git porcelain parse (in-process, no IPC) |
 | `config` | get / set (persisted in `~/.config/husk/config.json` mode 0600) |
 | `stats` | location, time, weather, tool counts, learning sparkline, usage |
 | `skills` | list (claude + Husk merged) / read / toggle / create |
 | `sessions` | list / read / findClaudeId / delete |
 | `prds` | enumerate `~/.claude/MEMORY/WORK/<slug>/PRD.md` |
+| `plugins` | list / catalog / run / files / readFile / writeFile / openFolder |
 | `prompts` | list / create / delete (Husk-managed prompt store) |
 | `projects` | list / create / setActive / clearActive / delete |
 | `fs` | open / dropFile (path-containment-checked) / listDir / home |
@@ -109,6 +116,10 @@ The full `window.husk.*` API exposed through `src/preload.js`:
 | `agents` | detect (PATHEXT-aware) / install (npm or pipx, streamed) / install-progress events |
 | `workflows` | list / create / update / delete / run / stop, plus generateStepPrompt and per-node and edge progress events |
 | `profiles` | list / create / update / delete / activate / deactivate / deactivateAll, plus generate / listImportableAgents / importAgents |
+| `repoAgents` | pickDir / scan / install agent files found in a repo |
+| `repoMcp` | pickDir / scan / build / install MCP servers found in a repo |
+| `autopilot` | start / startCollab / status / revert / apply / discard / history and the run event stream |
+| `claudeTrust` | per-folder trust status / accept for the claude CLI |
 | `mcp` | catalog / list / add / remove / toggle / health, all dispatched through the active agent's adapter |
 | `dialog` / `dialog2` | pickFile / pickDir |
 | `voice` | status / install / speak / stop / uninstall, plus progress events |
@@ -124,7 +135,8 @@ The full `window.husk.*` API exposed through `src/preload.js`:
 |-------|-------------|------------------|
 | `claude` | `~/.claude.json` | yes, parses `claude mcp list` via `src/lib/mcp-status.js` |
 | `copilot` | `~/.copilot/mcp-config.json` | no, returns `configured` for every entry |
-| `codex`, `aider`, `gemini`, any other binary | none | empty list; writes refused with a clear "not yet supported" message |
+| `gemini` | `~/.gemini/settings.json` | no, returns `configured` for every entry |
+| `codex`, `aider`, any other binary | none | empty list; writes refused with a clear "not yet supported" message |
 
 The on-disk shape (`mcpServers` plus the Husk-private `_huskMcpDisabled`) is identical across adapters, so a config written by Husk is readable by the agent CLI directly.
 
@@ -137,10 +149,10 @@ The on-disk shape (`mcpServers` plus the Husk-private `_huskMcpDisabled`) is ide
 | `~/.claude/MEMORY/CONTEXT/` | Files dragged onto Husk for the current chat |
 | `~/.claude.json` | claude's user config; Husk writes `mcpServers` here at mode 0600 |
 | `~/.copilot/mcp-config.json` | copilot's MCP config; Husk writes here at mode 0600 when the active agent is copilot |
+| `~/.gemini/settings.json` | gemini's user settings; Husk touches only `mcpServers` and the disabled sidecar, mode 0600, when the active agent is gemini |
 | `~/.config/husk/config.json` | Husk's own preferences, mode 0600 |
 | `~/.config/husk/prompts/` | Husk-managed prompts (seeded from `installer/prompts/` on first launch) |
-| `~/.local/share/husk/piper/` | Piper TTS binary + voice models (Linux only) |
-| `/tmp/husk-<uid>/` | Per-launch settings overrides; mode 0700 dir, 0600 files |
+| `~/.local/share/husk/piper/` | Piper TTS binary + voice models (Linux and Windows) |
 
 ## Packaging
 

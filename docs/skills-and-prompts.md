@@ -68,7 +68,7 @@ The page is always called "Skills" regardless of which CLI you picked. The cross
 The fast path: click `+ Create skill` in the Skills page header. The modal asks for name (lowercase letters/digits/dashes, must start with a letter), description, and content. Husk picks the right store based on the active agent (claude → `~/.claude/skills/<name>/SKILL.md`, otherwise → `~/.config/husk/prompts/<name>.md`).
 
 The slow path: drop a `.md` file onto the Husk window. The drag overlay offers two targets:
-- **Add to context** → copy into `~/.claude/MEMORY/CONTEXT/` and inject `Please read the file I just shared: <path>` into the active chat
+- **Add to context** → copy into `~/.claude/MEMORY/CONTEXT/` and drop the quoted path into the agent's pending input (no trailing newline, so you add your question and send both together)
 - **Install as skill** → copy into `~/.claude/skills/<basename>/SKILL.md`
 
 ## Why one page

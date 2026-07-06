@@ -23,7 +23,8 @@ The MCP page reads from whichever agent is active. Each agent has its own config
 |--------------|-------------------------|-------------------|
 | `claude` | `~/.claude.json` | yes (`claude mcp list`) |
 | `copilot` | `~/.copilot/mcp-config.json` | no, the page shows `configured` for every entry |
-| `codex`, `aider`, `gemini` | not wired up yet | the page is empty with a clear "not yet supported" state |
+| `gemini` | `~/.gemini/settings.json` (only `mcpServers` and the disabled sidecar are touched; other settings are preserved) | no, the page shows `configured` for every entry |
+| `codex`, `aider` | not wired up yet | the page is empty with a clear "not yet supported" state |
 
 The adapter pattern lives in `src/lib/mcp/`. The on-disk shape is the same across all wired-up agents (`mcpServers` plus the Husk-private `_huskMcpDisabled`), so a config Husk wrote can be loaded by the agent CLI directly, and an MCP entry someone else dropped in is readable by Husk.
 
@@ -37,7 +38,7 @@ INSTALLED
      memory       npx -y @modelcontextprotocol/server-memory      [● connected]   [toggle]  [×]
 
   ●  Applying · agent reload pending
-     bright       HTTP · https://app.example.com/mcp              [checking…]    [toggle]  [×]
+     my-server    HTTP · https://app.example.com/mcp              [checking…]    [toggle]  [×]
 
 AVAILABLE
   [Filesystem]  [Memory installed]  [GitHub]  [Time]  [Fetch]  [Brave Search]
@@ -49,7 +50,7 @@ Three semantic sections in "Installed":
 - **Applying**: amber dot. Enabled now but added or re-enabled since launch. Husk silently restarts the agent to load them; the dot becomes green when the new session starts.
 - **Inactive**: grey dot. Toggled off. Persisted in `_huskMcpDisabled` inside the active agent's config file, so re-enabling is one click and zero retyping.
 
-Plus a per-row connection state pill: `connected` / `failed` / `needs auth` / `checking…` / `configured`. The first four come from the claude adapter's parse of `claude mcp list`. The `configured` pill is the copilot adapter's response when there is no live probe.
+Plus a per-row connection state pill: `connected` / `failed` / `needs auth` / `checking…` / `configured`. The first four come from the claude adapter's parse of `claude mcp list`. The `configured` pill is the copilot and gemini adapters' response when there is no live probe.
 
 ## Installing a curated server
 
@@ -59,7 +60,7 @@ Click any catalog card. If the server needs configuration (a folder for Filesyst
 2. Writes a clean entry into the active agent's `mcpServers` config.
 3. chmods the file to `0600` (it now holds your token).
 4. Silently restarts the agent so the new server loads.
-5. Re-runs `mcp:health` and flips the row's status pill from `checking…` to `connected` (claude) or `configured` (copilot) once the write lands.
+5. Re-runs `mcp:health` and flips the row's status pill from `checking…` to `connected` (claude) or `configured` (copilot / gemini) once the write lands.
 
 You never touch JSON.
 
@@ -104,7 +105,7 @@ When the active agent is `claude`, Husk shells out to `claude mcp list` shortly 
 | `FAILED` | claude reported a connection error (bad URL, bad token) | rose |
 | `NEEDS AUTH` | server requires an OAuth flow (e.g. claude.ai connectors) | amber |
 | `CHECKING…` | probe in flight | grey, italic |
-| `CONFIGURED` | the active adapter has no live probe (copilot today) | slate |
+| `CONFIGURED` | the active adapter has no live probe (copilot and gemini) | slate |
 
 This is the difference between "I configured it" (green section dot, "loaded") and "the agent can actually reach it" (per-row pill).
 
