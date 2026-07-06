@@ -37,6 +37,32 @@ function resolveWindowsExe(exe, env) {
   return null;
 }
 
+// preferExecutableSibling upgrades a resolved path that Win32 CreateProcess
+// cannot launch directly. The npm install shape puts three files in the bin
+// dir: an extension-less `claude` (a POSIX shell shim), `claude.cmd`, and
+// `claude.ps1`. Resolving to the extension-less file (or being handed one that
+// already carries a .cmd/.bat) and spawning it raises "Cannot create process,
+// error code: 193". When the resolved file lacks a real executable extension,
+// probe for a PATHEXT sibling (claude -> claude.cmd) and return that instead.
+function preferExecutableSibling(resolved, env) {
+  const ext = path.extname(resolved).toLowerCase();
+  if (ext === '.exe' || ext === '.com' || ext === '.bat' || ext === '.cmd') return resolved;
+  const exts = ((env && env.PATHEXT) || '.COM;.EXE;.BAT;.CMD')
+    .split(';').filter(Boolean).map((e) => e.toLowerCase());
+  const dir = path.dirname(resolved);
+  const base = path.basename(resolved).toLowerCase();
+  // Windows file names are case-insensitive; npm writes `claude.cmd`
+  // (lowercase) while PATHEXT is upper-case, so match without regard to case.
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch (_) { return resolved; }
+  for (const e of exts) {
+    const want = base + e;
+    const hit = entries.find((name) => name.toLowerCase() === want);
+    if (hit) return path.join(dir, hit);
+  }
+  return resolved;
+}
+
 function safeExists(p) {
   // resolveWindowsExe probes candidate file paths built from PATH+PATHEXT
   // entries to find the real location of a program. This is a read-only
@@ -83,9 +109,17 @@ function buildSpawnSpec(opts) {
   }
 
   if (platform === 'win32') {
-    const resolved = resolveWindowsExe(agentExe, env);
-    if (resolved) return { exe: resolved, argv: agentArgs };
     const cmdExe = env.ComSpec || 'cmd.exe';
+    const resolved = resolveWindowsExe(agentExe, env);
+    if (resolved) {
+      const target = preferExecutableSibling(resolved, env);
+      const ext = path.extname(target).toLowerCase();
+      // Only real executables can be handed to CreateProcess directly. A
+      // .cmd/.bat shim must run through the command interpreter, otherwise
+      // pty.spawn fails with "Cannot create process, error code: 193".
+      if (ext === '.exe' || ext === '.com') return { exe: target, argv: agentArgs };
+      return { exe: cmdExe, argv: ['/c', target, ...agentArgs] };
+    }
     return { exe: cmdExe, argv: ['/c', rawCmd] };
   }
 

@@ -161,7 +161,7 @@ test('buildSpawnSpec: linux argv-inside-string is shell-escaped against injectio
   assert.equal(cmdStr.startsWith("'a;b'"), true, cmdStr);
 });
 
-test('buildSpawnSpec: win32 uses the PATHEXT-resolved exe directly when available', () => {
+test('buildSpawnSpec: win32 runs a .cmd shim through cmd.exe (avoids error 193)', () => {
   const dir = tempBin();
   fs.writeFileSync(path.join(dir, 'claude.CMD'), '');
   const spec = buildSpawnSpec({
@@ -169,11 +169,47 @@ test('buildSpawnSpec: win32 uses the PATHEXT-resolved exe directly when availabl
     agentExe: 'claude',
     agentArgs: ['--help'],
     rawCmd: 'claude --help',
-    env: { PATH: dir, PATHEXT: '.EXE;.CMD' },
+    env: { PATH: dir, PATHEXT: '.EXE;.CMD', ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
     shell: 'cmd.exe',
     shJoin,
   });
-  assert.equal(spec.exe, path.join(dir, 'claude.CMD'));
+  // A .cmd is not a PE binary; CreateProcess (pty.spawn) cannot launch it
+  // directly, so it must be invoked via the command interpreter.
+  assert.equal(spec.exe, 'C:\\Windows\\System32\\cmd.exe');
+  assert.deepEqual(spec.argv, ['/c', path.join(dir, 'claude.CMD'), '--help']);
+});
+
+test('buildSpawnSpec: win32 upgrades an extension-less npm shim to its .cmd sibling', () => {
+  const dir = tempBin();
+  // The npm install shape: an extension-less POSIX shim plus a .cmd.
+  fs.writeFileSync(path.join(dir, 'claude'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(dir, 'claude.cmd'), '');
+  const spec = buildSpawnSpec({
+    platform: 'win32',
+    agentExe: path.join(dir, 'claude'), // absolute, extension-less (the 193 case)
+    agentArgs: ['--session-id', 'abc'],
+    rawCmd: 'claude --session-id abc',
+    env: { PATHEXT: '.COM;.EXE;.BAT;.CMD', ComSpec: 'cmd.exe' },
+    shell: 'cmd.exe',
+    shJoin,
+  });
+  assert.equal(spec.exe, 'cmd.exe');
+  assert.deepEqual(spec.argv, ['/c', path.join(dir, 'claude.cmd'), '--session-id', 'abc']);
+});
+
+test('buildSpawnSpec: win32 spawns a real .exe directly', () => {
+  const dir = tempBin();
+  fs.writeFileSync(path.join(dir, 'claude.EXE'), '');
+  const spec = buildSpawnSpec({
+    platform: 'win32',
+    agentExe: 'claude',
+    agentArgs: ['--help'],
+    rawCmd: 'claude --help',
+    env: { PATH: dir, PATHEXT: '.EXE;.CMD', ComSpec: 'cmd.exe' },
+    shell: 'cmd.exe',
+    shJoin,
+  });
+  assert.equal(spec.exe, path.join(dir, 'claude.EXE'));
   assert.deepEqual(spec.argv, ['--help']);
 });
 
