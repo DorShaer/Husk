@@ -4563,7 +4563,18 @@ input[type="checkbox"]:disabled {
   -webkit-text-fill-color: transparent;
   caret-color: var(--accent); outline: none;
 }
-.fx-editor-input::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+/* Selection paints ONLY the highlight band, never the textarea's own glyphs.
+   The textarea text is normally hidden (-webkit-text-fill-color: transparent)
+   so the syntax-highlighted backdrop is the single visible glyph layer. But a
+   global ::selection sets `color: white`, which overrides the text fill and
+   reveals the textarea glyphs in white on top of the backdrop's same glyphs:
+   two offset text layers read as blur. Keep the selected text transparent so
+   the crisp backdrop shows through the translucent band alone. */
+.fx-editor-area .fx-editor-input::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
 .fx-editor-input::-webkit-scrollbar { width: 9px; height: 9px; }
 .fx-editor-input::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: 5px; }
 /* A global dark-mode rule paints every focused textarea with a 45% black
