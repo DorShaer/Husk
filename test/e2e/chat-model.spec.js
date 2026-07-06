@@ -48,6 +48,6 @@ test('status panel shows the active model', async () => {
     return { statModel: s.usage && s.usage.session && s.usage.session.model, modelRow };
   });
   expect(result.statModel).toBe('claude-opus-4-8');
-  expect(result.modelRow).toContain('opus-4-8');
+  expect(result.modelRow).toContain('Opus 4.8');
   await app.close();
 });
