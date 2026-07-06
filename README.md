@@ -9,7 +9,7 @@ Husk wraps `claude`, `copilot`, `codex`, `aider`, or any other terminal-based AI
 
 <br />
 
-<img src="docs/images/husk-dashboard.gif" alt="Husk dashboard" width="900" />
+<img src="https://github.com/user-attachments/assets/c7dba73c-4bff-473b-b4d8-8db9c55e6213" alt="Husk dashboard" width="900" />
 
 </div>
 
