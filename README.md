@@ -59,22 +59,53 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 ## Install
 
-**One line, any OS** (recommended):
+**One line, any OS** (recommended). On Debian/Ubuntu it wires up the signed apt repo and installs Husk (so `apt upgrade` keeps it current); on other Linux it fetches the AppImage, on macOS the `.dmg`. Checksums verified, no `git clone`, no Node.
 
 ```bash
 curl -fsSL https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/scripts/install.sh | bash
 ```
 
-On Debian/Ubuntu this adds Husk's signed apt repository and installs it, so `sudo apt upgrade` keeps Husk current. On other Linux it fetches the latest AppImage; on macOS the latest `.dmg`. No `git clone`, no Node, checksums verified.
+Full per-platform install page: **[dorshaer.github.io/Husk](https://dorshaer.github.io/Husk/)**.
 
-### Debian / Ubuntu (apt)
-
-To wire up the repository yourself and get automatic updates through `apt upgrade`:
+### Linux
 
 ```bash
+# Debian / Ubuntu: add the signed apt repo once, then `apt upgrade` keeps Husk current
 curl -fsSL https://dorshaer.github.io/Husk/husk.gpg | sudo gpg --dearmor -o /usr/share/keyrings/husk.gpg
 echo "deb [signed-by=/usr/share/keyrings/husk.gpg] https://dorshaer.github.io/Husk/apt stable main" | sudo tee /etc/apt/sources.list.d/husk.list
 sudo apt update && sudo apt install husk
+
+# Or install a downloaded .deb by hand
+sudo dpkg -i husk-v*-linux-amd64.deb || sudo apt -f install
+
+# Or run the portable AppImage (no root)
+chmod +x husk-v*-linux-x86_64.AppImage && ./husk-v*-linux-x86_64.AppImage
+
+# Or build from source
+git clone https://github.com/DorShaer/Husk.git && cd Husk && ./install.sh
+```
+
+### macOS
+
+```bash
+# One line (Apple Silicon or Intel, auto-detected)
+curl -fsSL https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/scripts/install.sh | bash
+
+# Or download the .dmg from the releases page and drag Husk to Applications.
+# If macOS blocks the unsigned app on first launch:
+xattr -dr com.apple.quarantine /Applications/Husk.app
+```
+
+### Windows
+
+Download `husk-v<version>-win-x64.exe` from the [latest release](https://github.com/DorShaer/Husk/releases/latest) and run it.
+
+```powershell
+# Run the downloaded installer from cmd
+husk-v<version>-win-x64.exe
+
+# Or build from source in PowerShell / Git-Bash
+git clone https://github.com/DorShaer/Husk.git; cd Husk; .\install.ps1
 ```
 
 ## Download
