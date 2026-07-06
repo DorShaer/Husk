@@ -7730,6 +7730,78 @@ function renderRunConclusion(sum) {
   feed.appendChild(card);
   feed.scrollTop = feed.scrollHeight;
 }
+// Fleet Receipt: one shareable card summarizing the whole fleet -- total
+// spend, what landed, and the waste the governor caught. Built from the
+// autopilot:receipt IPC and rendered in the review lane. Reuses the
+// conclusion card's classes so it inherits the theme; adds a Copy button
+// so the headline is one click from a tweet.
+async function showFleetReceipt(members) {
+  try {
+    const runs = (Array.isArray(members) ? members : []).filter((m) => m && m.sessionId);
+    if (!runs.length) return;
+    const res = await window.husk.autopilot.receipt({ runs });
+    if (!res || !res.ok || !res.receipt) return;
+    renderFleetReceipt(res.receipt);
+  } catch (_) { /* a receipt is a bonus; never let it break review */ }
+}
+function renderFleetReceipt(receipt) {
+  if (!receipt || !receipt.runCount) return;
+  const lane = ensureLane('_review');
+  const feed = lane && lane.querySelector('.aut-lane-stream');
+  if (!feed) return;
+  const card = document.createElement('div');
+  card.className = 'aut-conclusion aut-receipt';
+  card.style.borderLeft = '2px solid var(--accent, #67e8f9)';
+
+  const label = document.createElement('div');
+  label.className = 'aut-conclusion-label';
+  label.textContent = 'FLEET RECEIPT';
+  card.appendChild(label);
+
+  const title = document.createElement('div');
+  title.className = 'aut-conclusion-title';
+  title.textContent = receipt.headline;
+  card.appendChild(title);
+
+  const c = receipt.counts || {};
+  const secs = Math.round((receipt.totalDurationMs || 0) / 1000);
+  const durTxt = secs >= 60 ? `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s` : `${secs}s`;
+  const meta = document.createElement('div');
+  meta.className = 'aut-conclusion-meta';
+  const bits = [
+    `${receipt.runCount} ${receipt.runCount === 1 ? 'run' : 'runs'}`,
+    `${durTxt} wall-clock`,
+    `${formatTokens(receipt.totalTokens || 0)} tokens`,
+    `$${(receipt.totalDollars || 0).toFixed(2)}`,
+  ];
+  if (c.landed) bits.push(`${c.landed} landed`);
+  if (c.saved) bits.push(`${c.saved} runaway${c.saved === 1 ? '' : 's'} caught`);
+  if (c.capped) bits.push(`${c.capped} capped`);
+  meta.textContent = bits.join('  ·  ');
+  card.appendChild(meta);
+
+  if (Array.isArray(receipt.agents) && receipt.agents.length > 1) {
+    const per = document.createElement('div');
+    per.className = 'aut-conclusion-meta';
+    per.textContent = receipt.agents.map((a) => `${a.agent} ${a.runs}× $${(a.dollars || 0).toFixed(2)}`).join('   ');
+    card.appendChild(per);
+  }
+
+  const copy = document.createElement('button');
+  copy.textContent = 'Copy receipt';
+  copy.className = 'aut-receipt-copy';
+  copy.style.cssText = 'margin-top:10px;padding:4px 10px;font-size:12px;border-radius:6px;cursor:pointer;background:var(--accent,#67e8f9);color:#04121a;border:none;';
+  copy.addEventListener('click', () => {
+    const s$ = receipt.savings && receipt.savings.dollars > 0 ? ` Governor caught ${receipt.savings.caughtStalls} runaway run${receipt.savings.caughtStalls === 1 ? '' : 's'} (up to $${receipt.savings.dollars.toFixed(2)} saved).` : '';
+    const text = `Ran my backlog across ${receipt.runCount} agents in Husk: ${receipt.headline}.${s$}`;
+    try { navigator.clipboard.writeText(text); toast('Receipt copied', 'success'); }
+    catch (_) { toast('Copy failed', 'error'); }
+  });
+  card.appendChild(copy);
+
+  feed.appendChild(card);
+  feed.scrollTop = feed.scrollHeight;
+}
 function setAutopilotGoal(goal) {
   autopilotState.goal = goal || '(no goal provided)';
   const el = $('#aut-page-goal-text');
@@ -8574,10 +8646,17 @@ try {
         if (sum && sum.ok) {
           const sid = (sum.sessionId) || (autopilotLastSession && autopilotLastSession.sessionId) || '';
           const wr = (sum.workspaceRoot) || (autopilotLastSession && autopilotLastSession.workspaceRoot) || '';
+          // Snapshot the fleet's members before clearing so the receipt can
+          // summarize every run that just finished (not only the last one).
+          const fleetMembers = [...activeRuns.values()].map((r) => ({
+            sessionId: r.sessionId || (r.endSummary && r.endSummary.sessionId) || null,
+            agent: r.agent || (r.endSummary && r.endSummary.agent) || null,
+          })).filter((m) => m.sessionId);
           // A just-finished run retains its worktree, so this review offers
           // Apply/Discard rather than the snapshot-era Revert.
           activeRuns.clear();
           enterReviewMode({ sessionId: sid, workspaceRoot: wr, summary: sum, retained: true, runId });
+          showFleetReceipt(fleetMembers);
           const halt = (sum.summary && sum.summary.haltReason) || 'natural';
           if (sum.endReason === 'agent_complete') runEndBanner('Run complete: goal declared finished', '');
           else if (halt === 'budget') runEndBanner('Run stopped at a budget cap', 'budget');
