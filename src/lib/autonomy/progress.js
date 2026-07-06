@@ -1,117 +1,114 @@
 'use strict';
 
-// Progress meter for Husk Autonomy Mode -- the "governor" that stops a
-// run from burning tokens while making no forward progress.
+// Progress governor for Husk Autonomy Mode -- the "busy-stall" detector.
 //
-// The budget meter (budget.js) answers "has this run spent too much?".
-// This meter answers the orthogonal question "is this run still doing
-// useful work, or is it idling / looping and wasting spend?". A run can
-// be well under its dollar cap and still be pure waste: an agent stuck
-// in a retry loop, or hung waiting on nothing, keeps the meter running
-// with zero value. Catching that early is the difference between a
-// governor and a passive odometer.
+// There are two ways an autonomous run wastes money, and they need two
+// different detectors:
 //
-// Three independent stall signals, cheapest-first so the whole meter is
-// pure (no fs, no PTY, no clock -- the caller supplies timestamps and
-// the parsed signals, exactly like budget.js):
+//   quiet-stall -- the agent goes silent (hung, deadlocked, waiting on
+//                  nothing). This is already handled well by the run
+//                  idle-watchdog in main.js: it nudges a few times, then
+//                  ends the run. It checks live PTY bytes and the busy
+//                  marker so it never touches an agent that is genuinely
+//                  working through a long silent tool call.
 //
-//   1. idle       -- no agent output for idleMs. The process is alive
-//                    but silent (hung on input, deadlocked, waiting on a
-//                    network call that will never return). Every second
-//                    idle is a second of wall-clock cap burned for free.
-//   2. loop       -- the same action signature repeats loopRepeat times
-//                    in a row. Classic agent failure: re-running the same
-//                    failing command, re-reading the same file, retrying
-//                    an edit that never applies. This is where real token
-//                    spend leaks, because each repeat is a fresh model
-//                    turn.
-//   3. noProgress -- optional, diff-based: the workspace diff has not
-//                    advanced for noProgressMs while the agent IS active
-//                    (producing output). Talking a lot, changing nothing.
-//                    Only evaluated when the caller feeds a diffSignature;
-//                    left dormant otherwise so the meter stays fs-free.
+//   busy-stall  -- the agent is LOUD (chattering, retrying, re-running the
+//                  same failing command) so the quiet-watchdog thinks it is
+//                  fine, but the workspace never changes and tokens keep
+//                  climbing. Nothing else in the system catches this, and
+//                  it is where real money leaks. That is this module's job.
 //
-// Design rules (identical contract to budget.js so the supervisor can
-// treat both meters the same way):
-//   - Pure: no side effects, no fs, no Date.now(). The caller supplies
-//     `now` on every tick so the module is testable with fake timers.
-//   - Conservative: a signal only trips when it is unambiguous. Idle
-//     needs true silence; loop needs consecutive identical signatures;
-//     noProgress needs both activity AND a frozen diff. False pauses are
-//     worse than a slightly late one, so every default leans lenient.
-//   - Independent signals: tripping any one stalls the run. The first
-//     tripped signal (idle, then loop, then noProgress) is reported.
+// The governor deliberately does NOT halt on silence -- doing so would
+// false-kill a healthy agent waiting on a 3-minute build. It halts only on
+// evidence of active waste, always gated on the workspace making no forward
+// progress:
+//
+//   spinning -- the workspace diff has not advanced for noProgressMs WHILE
+//               the agent burned at least minWasteTokens in that window.
+//               Frozen output + real spend = spinning. A silent or idle
+//               agent (no token growth) is NOT spinning; that is the
+//               watchdog's quiet-stall.
+//   loop     -- the same identifiable action repeated loopRepeat times with
+//               no forward progress between repeats. Any diff advance resets
+//               the loop, so a legitimate try/adjust/retry cycle never trips.
+//
+// Design rules (same contract as budget.js): pure, caller-supplied clock,
+// no fs. The caller feeds the parsed signals; the workspace diff signature
+// and cumulative token count come from the supervisor. `progress` -- a
+// change in the diff signature -- is the single source of truth that resets
+// both waste signals, so a run that keeps changing files can never be
+// halted no matter how slow, chatty, or long it runs.
 
 const DEFAULT_THRESHOLDS = Object.freeze({
-  // Silence this long with no agent output -> idle. 90s is comfortably
-  // past a slow model turn or a big file read, so a healthy run never
-  // trips it, but a genuinely hung process is caught inside two minutes.
-  idleMs: 90000,
-  // The same action signature this many times in a row -> loop. Three
-  // is the smallest count that cannot be a legitimate "try, adjust,
-  // retry" cycle; a fourth identical attempt is a stuck agent.
+  // Diff frozen at least this long is the first half of "spinning". Five
+  // minutes is long enough that reading/exploring a codebase before the
+  // first edit, or a slow multi-step tool sequence, never trips it.
+  noProgressMs: 300000,
+  // ...and the agent must have burned at least this many tokens in that
+  // frozen window for it to count as waste. Without real spend it is not
+  // "spinning", it is idle -- which the quiet-watchdog owns, not this.
+  minWasteTokens: 6000,
+  // The same action this many times in a row with no diff progress between
+  // them is a loop. Four is the smallest count that cannot be a legitimate
+  // try/adjust/retry cycle.
   loopRepeat: 4,
-  // Diff frozen this long WHILE the agent is active -> noProgress. Only
-  // used when the caller feeds diffSignature. Longer than idleMs because
-  // "thinking out loud before an edit" is normal and must not trip it.
-  noProgressMs: 180000,
+  // Idle telemetry only (surfaced for the UI ramp); the governor never
+  // HALTS on idle -- the quiet-watchdog does.
+  idleMs: 90000,
 });
 
 function createProgressMeter(opts = {}) {
   const th = Object.assign({}, DEFAULT_THRESHOLDS, opts.thresholds || {});
-  if (!Number.isFinite(th.idleMs) || th.idleMs < 0) th.idleMs = DEFAULT_THRESHOLDS.idleMs;
-  if (!Number.isInteger(th.loopRepeat) || th.loopRepeat < 2) th.loopRepeat = DEFAULT_THRESHOLDS.loopRepeat;
   if (!Number.isFinite(th.noProgressMs) || th.noProgressMs < 0) th.noProgressMs = DEFAULT_THRESHOLDS.noProgressMs;
+  if (!Number.isFinite(th.minWasteTokens) || th.minWasteTokens < 0) th.minWasteTokens = DEFAULT_THRESHOLDS.minWasteTokens;
+  if (!Number.isInteger(th.loopRepeat) || th.loopRepeat < 2) th.loopRepeat = DEFAULT_THRESHOLDS.loopRepeat;
+  if (!Number.isFinite(th.idleMs) || th.idleMs < 0) th.idleMs = DEFAULT_THRESHOLDS.idleMs;
 
   const startedAt = Number.isFinite(opts.startedAt) ? opts.startedAt : Date.now();
 
-  // Last moment the agent produced any output. Seeded to startedAt so a
-  // run that never emits a byte still trips idle after idleMs rather
-  // than reading as "never started".
+  // Idle telemetry.
   let lastOutputAt = startedAt;
-  // Loop tracking: the signature of the most recent action and how many
-  // times in a row it has appeared. A different signature resets the run
-  // length to 1.
+  // Loop tracking (reset by any forward progress).
   let lastSignature = null;
   let repeatCount = 0;
-  // noProgress tracking: the most recent diff signature and when it last
-  // changed. Null until the caller opts in by passing diffSignature.
+  // Progress tracking. lastProgressAt is the last time the diff changed;
+  // tokensAtProgress is the cumulative token count at that moment. sawDiff
+  // stays false until a diff signature is ever fed, which keeps "spinning"
+  // dormant for callers that do not supply diffs.
   let lastDiffSignature = null;
   let lastProgressAt = startedAt;
+  let tokensAtProgress = 0;
   let sawDiff = false;
+  // Monotonic cumulative tokens; never regresses on a flaky report.
+  let curTokens = 0;
 
-  // tick({ now?, charsFromAgent?, signature?, diffSignature? })
-  //   charsFromAgent  -- bytes of agent output since the last tick; any
-  //                      positive value counts as "alive" and resets idle.
-  //   signature       -- a stable string identifying the current action
-  //                      (e.g., a normalized tool call or command). Feeding
-  //                      it enables loop detection; omit for output-only
-  //                      ticks (which still count as activity).
-  //   diffSignature   -- a stable string summarizing the workspace diff
-  //                      (e.g., "files=3;churn=812"). Feeding it enables
-  //                      noProgress detection; omit to keep the meter
-  //                      fs-free.
+  // tick({ now?, charsFromAgent?, signature?, diffSignature?, totalTokens? })
   function tick(input = {}) {
     const now = Number.isFinite(input.now) ? input.now : Date.now();
 
-    const hasOutput = Number.isFinite(input.charsFromAgent) && input.charsFromAgent > 0;
-    if (hasOutput) lastOutputAt = now;
+    if (Number.isFinite(input.charsFromAgent) && input.charsFromAgent > 0) lastOutputAt = now;
 
-    if (typeof input.signature === 'string' && input.signature.length) {
-      if (input.signature === lastSignature) {
-        repeatCount += 1;
-      } else {
-        lastSignature = input.signature;
-        repeatCount = 1;
-      }
-    }
+    // Monotonic token intake: only a larger cumulative count moves it.
+    if (Number.isFinite(input.totalTokens) && input.totalTokens > curTokens) curTokens = input.totalTokens;
 
+    // Forward progress is the master reset: a changed diff means the run is
+    // producing, so both waste signals start over from now.
     if (typeof input.diffSignature === 'string') {
       sawDiff = true;
       if (input.diffSignature !== lastDiffSignature) {
         lastDiffSignature = input.diffSignature;
         lastProgressAt = now;
+        tokensAtProgress = curTokens;
+        repeatCount = 0;
+        lastSignature = null;
       }
+    }
+
+    // Loop accrual happens only while the diff is frozen (progress above
+    // resets it in the same tick if the diff just changed).
+    if (typeof input.signature === 'string' && input.signature.length) {
+      if (input.signature === lastSignature) repeatCount += 1;
+      else { lastSignature = input.signature; repeatCount = 1; }
     }
 
     return state(now);
@@ -120,36 +117,38 @@ function createProgressMeter(opts = {}) {
   function state(nowParam) {
     const now = Number.isFinite(nowParam) ? nowParam : Date.now();
     const idleMs = Math.max(0, now - lastOutputAt);
-    // Only meaningful once a diff has ever been seen; otherwise a run
-    // that never opts into diff signals would falsely accrue "frozen"
-    // time from startedAt.
-    const sinceProgressMs = sawDiff ? Math.max(0, now - lastProgressAt) : 0;
+    const sinceProgressMs = Math.max(0, now - lastProgressAt);
+    const tokensSinceProgress = Math.max(0, curTokens - tokensAtProgress);
 
-    const idleTripped = idleMs >= th.idleMs;
-    const loopTripped = repeatCount >= th.loopRepeat;
-    // noProgress requires the agent to be ACTIVE (not already idle) so it
-    // never double-reports what idle already caught: a silent frozen diff
-    // is idle, a chatty frozen diff is noProgress.
-    const noProgressTripped = sawDiff && !idleTripped && sinceProgressMs >= th.noProgressMs;
+    // spinning: needs a diff baseline, a long frozen window, AND real spend
+    // in that window. All three so a silent/idle or exploring-but-cheap run
+    // is never mistaken for waste.
+    const spinning = sawDiff
+      && sinceProgressMs >= th.noProgressMs
+      && tokensSinceProgress >= th.minWasteTokens;
+
+    // loop: repetition with no forward progress (progress zeroes repeatCount).
+    const loop = repeatCount >= th.loopRepeat;
 
     let stalled = null;
-    if (idleTripped) stalled = 'idle';
-    else if (loopTripped) stalled = 'loop';
-    else if (noProgressTripped) stalled = 'noProgress';
+    if (spinning) stalled = 'spinning';
+    else if (loop) stalled = 'loop';
 
     return {
       thresholds: { ...th },
       startedAt,
-      idleMs,
+      idleMs,                       // telemetry only; never a halt reason
+      idle: idleMs >= th.idleMs,    // telemetry flag for the UI ramp
       repeatCount,
       repeatSignature: lastSignature,
       sinceProgressMs,
+      tokensSinceProgress,
       diffTracked: sawDiff,
-      stalled,
+      stalled,                      // 'spinning' | 'loop' | null
       ratios: {
-        idle: th.idleMs > 0 ? Math.min(1, idleMs / th.idleMs) : 0,
+        spinning: th.noProgressMs > 0 && sawDiff ? Math.min(1, sinceProgressMs / th.noProgressMs) : 0,
         loop: th.loopRepeat > 0 ? Math.min(1, repeatCount / th.loopRepeat) : 0,
-        noProgress: th.noProgressMs > 0 ? Math.min(1, sinceProgressMs / th.noProgressMs) : 0,
+        idle: th.idleMs > 0 ? Math.min(1, idleMs / th.idleMs) : 0,
       },
     };
   }

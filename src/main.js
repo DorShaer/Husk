@@ -2419,6 +2419,35 @@ async function doStartRun(runId, payload, workspaceRoot) {
     try { tailRunTranscript(runId); } catch (_) {}
     try { ensureRunGoalSubmitted(runId); } catch (_) {}
     try { runIdleWatchdog(runId); } catch (_) {}
+    // Every ~20s, compute a content-sensitive signature of the worktree diff
+    // off-thread and feed it to the governor as the forward-progress signal.
+    // stat(size+mtime) per changed file is cheap and catches repeated edits
+    // to the same file (which keep status='modified'); a stat failure falls
+    // back to status so a missing file never fakes progress. Throttled and
+    // guarded so at most one diff walk per run is ever in flight.
+    rs._diffTick = (rs._diffTick || 0) + 1;
+    if (rs._diffTick % 20 === 0 && !rs._diffPending) {
+      rs._diffPending = true;
+      Autopilot.snapshot.diffWorkspaceAsync(rs.worktreePath, autopilotStorageRoot(), rs.runner.sessionId)
+        .then((d) => {
+          const rr = runs.get(runId);
+          if (!rr) return;
+          let sig = '';
+          if (d && d.ok && Array.isArray(d.changes)) {
+            sig = d.changes.map((c) => {
+              let meta = c.status;
+              try {
+                const st = fs.statSync(path.join(rr.worktreePath, c.path));
+                meta = `${c.status}:${st.size}:${Math.round(st.mtimeMs)}`;
+              } catch (_) { /* deleted/unreadable: status alone */ }
+              return `${c.path}#${meta}`;
+            }).sort().join('|');
+          }
+          try { rr.runner.reportProgress(sig); } catch (_) {}
+        })
+        .catch(() => {})
+        .finally(() => { const rr = runs.get(runId); if (rr) rr._diffPending = false; });
+    }
     const s = rs.runner.tickClock();
     // tickClock may internally halt the run on a governor stall; read the
     // governor state so the dashboard sees the idle/loop ramp and the halt

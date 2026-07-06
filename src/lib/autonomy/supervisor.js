@@ -161,6 +161,7 @@ function startRun(opts = {}) {
         charsFromAgent: chars,
         signature: actionSignature(event),
         diffSignature: typeof event.diffSignature === 'string' ? event.diffSignature : undefined,
+        totalTokens: budget.state(now()).totalTokens,
       });
     }
     // Check caps after every event. The supervisor's pattern is
@@ -186,14 +187,28 @@ function startRun(opts = {}) {
       halt('budget', { cap: s.hitCap, meter: s });
       return s;
     }
-    // A pure clock tick with no output is exactly how an idle stall is
-    // caught: the governor sees time advance with no charsFromAgent.
+    // Feed the clock + current token total so the governor can measure
+    // token burn against a frozen diff (the "spinning" waste signal). The
+    // diff signature itself arrives out-of-band via reportDiff().
     if (governor) {
-      governor.tick({ now: now() });
+      governor.tick({ now: now(), totalTokens: s.totalTokens });
       const g = governor.state(now());
       if (g.stalled) halt('stall', { signal: g.stalled, progress: g, meter: s });
     }
     return s;
+  }
+
+  // Feed the governor a workspace-diff signature. The supervisor never
+  // walks the fs itself (that belongs to main.js, which computes the diff
+  // off-thread and calls this periodically); a change in the signature is
+  // the forward-progress signal that resets the governor's waste timers.
+  function reportProgress(diffSignature) {
+    if (!governor || state.status !== 'running') return null;
+    if (typeof diffSignature !== 'string') return governor.state(now());
+    governor.tick({ now: now(), diffSignature, totalTokens: budget.state(now()).totalTokens });
+    const g = governor.state(now());
+    if (g.stalled) halt('stall', { signal: g.stalled, progress: g, meter: budget.state(now()) });
+    return g;
   }
 
   function halt(reason, detail) {
@@ -300,6 +315,9 @@ function startRun(opts = {}) {
       // "healthy" vs "stalling" without re-deriving it. Null when the
       // governor is not enabled for this run.
       governorState: () => (governor ? governor.state(now()) : null),
+      // Feed a workspace-diff signature to the governor (forward-progress
+      // signal). main.js computes the diff off-thread and calls this.
+      reportProgress: (diffSignature) => reportProgress(diffSignature),
       // Exposed so the supervisor can feed the agent's own reported
       // token count (parsed from its status line by the renderer)
       // into the meter and override the chars/4 estimate.
