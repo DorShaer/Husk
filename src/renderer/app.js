@@ -441,6 +441,15 @@ const MAC_TRUST_CMD = 'xattr -dr com.apple.quarantine /Applications/Husk.app';
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.8.8': {
+    items: [
+      "<strong>Install in one line.</strong> A single command sets Husk up on Linux and macOS, with checksums verified.",
+      "<strong>apt install husk.</strong> Debian and Ubuntu can install from a signed repository and stay current with apt upgrade.",
+      "<strong>Gemini support.</strong> Husk now runs the Gemini CLI alongside claude, copilot, codex, and aider.",
+      "<strong>A status panel that fits your agent.</strong> Usage and model rows adapt to whichever agent you run, with readable model names.",
+      "<strong>Windows startup fixed.</strong> Agents installed as a command shim now launch reliably.",
+    ],
+  },
   '2.8.7': {
     items: [
       "<strong>Autopilot mission control.</strong> Watch every agent think and act in its own live lane, with a fleet status strip and a readable run log.",
