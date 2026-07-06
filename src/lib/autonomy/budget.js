@@ -42,9 +42,12 @@ const DEFAULT_RATES = Object.freeze({
   'claude-opus-4-6':   { in: 15, out: 75 },
   'claude-opus-4-7':   { in: 15, out: 75 },
   'claude-haiku-4-5':  { in: 0.8, out: 4 },
-  // GitHub Copilot / Codex / Aider: vendor-billed. Treat dollars as
-  // 0 by default so the dollar cap never fires there; supervisor can
-  // override per-tool.
+  // Copilot / Codex / Aider / Gemini: billing depends on the account, not
+  // the CLI (a Copilot or Gemini subscription is flat; the same CLI on an
+  // API key is metered), and Husk cannot tell which mode is active. Treat
+  // dollars as 0 so the dollar cap never fires on a false assumption; the
+  // time and token caps still bound the run, and the supervisor can pass an
+  // explicit per-tool rate when the account's billing is known.
   'copilot':           { in: 0, out: 0 },
   'codex':             { in: 0, out: 0 },
   'aider':             { in: 0, out: 0 },

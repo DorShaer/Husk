@@ -5143,19 +5143,19 @@ input[type="checkbox"]:disabled {
   /* Fixed viewport between the head and foot border lines. Content never
      scrolls: the .sp-fit wrapper is measured after every render and scaled
      down (transform) when it would overflow, so all sections stay visible
-     at any window height. Centered so the stack sits evenly between the
-     two border lines when it fits with room to spare. */
+     at any window height. Top-aligned so a short panel (for example an
+     agent with fewer sections) reads as a list from the top rather than
+     floating in the middle. */
   flex: 1; min-height: 0; overflow: hidden;
   padding: 12px 14px;
   display: flex; flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
 }
 .sp-fit {
   display: flex; flex-direction: column; gap: 14px;
-  /* Scale around the middle so the shrunk copy stays centered between the
-     border lines; layout height is unchanged by transform, and the flex
-     centering above splits any overflow equally top and bottom. */
-  transform-origin: 50% 50%;
+  /* Scale from the top so the shrunk copy stays pinned under the head
+     line, matching the top-aligned content column. */
+  transform-origin: 50% 0;
 }
 
 .sp-section {

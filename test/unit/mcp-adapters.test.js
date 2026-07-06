@@ -55,12 +55,23 @@ test('getAdapter: returns the copilot adapter by name', () => {
   assert.equal(getAdapter('copilot').agent, 'copilot');
 });
 
-test('getAdapter: stubs codex / aider / gemini', () => {
-  for (const name of ['codex', 'aider', 'gemini']) {
+test('getAdapter: stubs codex / aider', () => {
+  for (const name of ['codex', 'aider']) {
     const a = getAdapter(name);
     assert.equal(a.agent, name);
     assert.equal(a.supportsWrite, false);
     assert.equal(a.supportsLiveStatus, false);
+  }
+});
+
+test('getAdapter: gemini is a real write adapter over ~/.gemini/settings.json', () => {
+  const a = getAdapter('gemini');
+  assert.equal(a.agent, 'gemini');
+  assert.equal(a.supportsWrite, true);
+  assert.equal(a.supportsLiveStatus, false);
+  assert.ok(a.configPath.endsWith(path.join('.gemini', 'settings.json')));
+  for (const fn of ['list', 'add', 'update', 'remove', 'toggle', 'health']) {
+    assert.equal(typeof a[fn], 'function', `gemini adapter missing ${fn}`);
   }
 });
 

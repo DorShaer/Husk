@@ -114,6 +114,12 @@ function planInjection({ agentCommand, agentName, paiEnabled, recap } = {}) {
     const filePath = '.husk-aider.md';
     return { method: 'read-file', filePath, body, args: ['--read', filePath] };
   }
+  if (key === 'gemini') {
+    // gemini auto-reads GEMINI.md from the project root, the direct analog of
+    // codex's AGENTS.md. Merge non-destructively so the user's own GEMINI.md
+    // content is preserved.
+    return { method: 'instructions-file', filePath: 'GEMINI.md', body };
+  }
   return { method: 'none' };
 }
 

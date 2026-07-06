@@ -1004,6 +1004,10 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   s.dataDisposable = s.pty.onData((data) => {
     s.lastDataAt = Date.now();
     s.dataBuf += data;
+    // Small rolling tail of raw output, kept so the status panel can read a
+    // CLI's own status line (e.g. Copilot's "Session: N AIC used") without a
+    // transcript. Capped so it never grows with the session.
+    s.tailBuf = ((s.tailBuf || '') + data).slice(-8192);
     if (!s.flushScheduled) { s.flushScheduled = true; setImmediate(() => flushSessionData(s)); }
     // Autopilot + the TUI-settle detector operate on the focused agent only.
     if (id === activeSessionId) { ptyLastDataAt = s.lastDataAt; }
@@ -3273,7 +3277,7 @@ const MCP_CATALOG = [
   {
     id: 'filesystem',
     name: 'Filesystem (sandbox)',
-    description: 'Restrict the agent to one folder. Claude already reads and writes files; this MCP confines it to a path you pick.',
+    description: 'Restrict the agent to one folder. The agent already reads and writes files; this MCP confines it to a path you pick.',
     icon: '▤',
     template: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '<PATH>'] },
     inputs: [{ id: 'PATH', label: 'Folder the agent may access', kind: 'path', required: true }],
@@ -3424,24 +3428,160 @@ function getAgentVersion(cmd) {
   return v;
 }
 
+// Compact git summary for the status panel: branch, ahead/behind, and the
+// count of dirty (staged, unstaged, or untracked) paths. Vendor-neutral and
+// fast; bounded by a short timeout so a slow repo never stalls the panel.
+function gitSummary(cwd) {
+  const dir = cwd || HOME;
+  try {
+    execFileSync('git', ['-C', dir, 'rev-parse', '--git-dir'], { stdio: 'ignore', timeout: 1500 });
+  } catch (_) { return { isRepo: false }; }
+  try {
+    const out = execFileSync('git', ['-C', dir, 'status', '--porcelain=v1', '--branch'],
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], timeout: 2500 });
+    const lines = out.split('\n');
+    let branch = '';
+    let ahead = 0;
+    let behind = 0;
+    let dirty = 0;
+    for (const ln of lines) {
+      if (!ln) continue;
+      if (ln.startsWith('## ')) {
+        // "## main...origin/main [ahead 2, behind 1]" or "## HEAD (no branch)"
+        const head = ln.slice(3);
+        branch = head.split(/\.\.\.| \(|\s\[/)[0].trim();
+        const am = head.match(/ahead (\d+)/); if (am) ahead = Number(am[1]);
+        const bm = head.match(/behind (\d+)/); if (bm) behind = Number(bm[1]);
+      } else {
+        dirty += 1;
+      }
+    }
+    return { isRepo: true, branch, ahead, behind, dirty };
+  } catch (_) { return { isRepo: true, branch: '', ahead: 0, behind: 0, dirty: 0 }; }
+}
+
+// Session stats for a Copilot chat, read from its own transcript at
+// ~/.copilot/session-state/<uuid>/events.jsonl. Returns the live model
+// (from session.model_change), the turn count, and the summed output
+// tokens Copilot records per assistant message. Copilot does not log
+// input/context-window totals, so ctxTokens/ctxWindow stay 0 and the
+// panel's Context Window row is correctly omitted for it. Picks the
+// newest session whose workspace cwd matches the active chat's cwd.
+function readCopilotSessionStats(cwd) {
+  const root = path.join(HOME, '.copilot', 'session-state');
+  let dirs = [];
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
+  catch (_) { return null; }
+  const wantCwd = cwd ? path.resolve(cwd) : null;
+  let best = null;
+  let bestMtime = -1;
+  for (const d of dirs) {
+    const full = path.join(root, d.name);
+    const ws = readCopilotWorkspace(full);
+    if (!ws) continue;
+    if (wantCwd && ws.cwd && path.resolve(ws.cwd) !== wantCwd) continue;
+    let mt = 0;
+    try { mt = fs.statSync(path.join(full, 'events.jsonl')).mtimeMs; } catch (_) { continue; }
+    if (mt > bestMtime) { bestMtime = mt; best = path.join(full, 'events.jsonl'); }
+  }
+  if (!best) return null;
+  let raw = '';
+  try {
+    const sz = fs.statSync(best).size;
+    const CAP = 512 * 1024;
+    if (sz > CAP) {
+      const fd = fs.openSync(best, 'r');
+      try { const b = Buffer.alloc(CAP); fs.readSync(fd, b, 0, CAP, sz - CAP); raw = b.toString('utf8'); } finally { fs.closeSync(fd); }
+    } else {
+      raw = fs.readFileSync(best, 'utf8');
+    }
+  } catch (_) { return null; }
+  let model = '';
+  let turns = 0;
+  let outTokens = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let o;
+    try { o = JSON.parse(line); } catch (_) { continue; }
+    const t = o && o.type;
+    const data = (o && o.data) || {};
+    if (t === 'session.model_change' && typeof data.newModel === 'string') model = data.newModel;
+    else if (t === 'user.message' || t === 'assistant.message') turns += 1;
+    if (typeof data.outputTokens === 'number') outTokens += data.outputTokens;
+  }
+  if (!model && turns === 0 && outTokens === 0) return null;
+  return { model, turns, tokens: outTokens, ctxTokens: 0, ctxWindow: 0, ctxPct: 0, partialTokens: true };
+}
+
+// Parse a CLI's own session usage counter out of its status line. Copilot
+// prints "Session: N AIC used" (AI credits). Returns the number or null.
+function parseAgentSessionUsage(agentCmd, tail) {
+  if (!tail) return null;
+  const clean = stripAnsi(tail);
+  if (agentCmd === 'copilot') {
+    // Keep the last occurrence: the status line is repainted, so the newest
+    // frame in the tail holds the current count.
+    let n = null;
+    const re = /Session:\s*([\d,]+)\s*AIC used/gi;
+    let m;
+    while ((m = re.exec(clean)) !== null) n = Number(m[1].replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// Compact MCP summary for the status panel: how many servers the active
+// agent has configured. Reads the agent's config only (cheap); live health
+// stays on the MCP page where its async probe runs.
+function mcpSummary() {
+  try {
+    const adapter = activeMcpAdapter();
+    const r = adapter.list();
+    const servers = (r && Array.isArray(r.servers)) ? r.servers : [];
+    return {
+      count: servers.length,
+      enabled: servers.filter((s) => s.enabled !== false).length,
+      supported: !(r && r.unsupported),
+    };
+  } catch (_) { return { count: 0, enabled: 0, supported: false }; }
+}
+
 ipcMain.handle('stats:get', () => {
   const agentCmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
+  // The model, per-session context, and plan-usage caches all come from
+  // ~/.claude state and describe the Claude CLI only. For any other agent
+  // they would surface a different, unrelated Claude session's model and
+  // usage, so they are read solely when the active agent is claude.
+  const agentIsClaude = agentCmd === 'claude';
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   const skills = safeCount(skillsDir, (d) => d.isDirectory());
   const workflowsDir = path.join(CLAUDE_DIR, 'workflows');
   const workflows = safeCount(workflowsDir, (e) => e.isFile() && e.name.endsWith('.md'))
                   + safeCount(workflowsDir, (e) => e.isDirectory());
-  const hooksDir = path.join(CLAUDE_DIR, 'hooks');
-  const hooks = safeCount(hooksDir, (e) => e.isFile() && e.name.endsWith('.hook.ts'));
+  // Hooks are per-agent: Claude runs ~/.claude/hooks/*.hook.ts, Copilot
+  // runs ~/.copilot/hooks/*.json. Count and expose whichever the active
+  // agent uses; agents with no hook system report hooksApplicable false.
+  let hooksDir = null;
+  let hooks = 0;
+  let hooksApplicable = false;
+  if (agentIsClaude) {
+    hooksDir = path.join(CLAUDE_DIR, 'hooks');
+    hooks = safeCount(hooksDir, (e) => e.isFile() && e.name.endsWith('.hook.ts'));
+    hooksApplicable = true;
+  } else if (agentCmd === 'copilot') {
+    hooksDir = path.join(HOME, '.copilot', 'hooks');
+    hooks = safeCount(hooksDir, (e) => e.isFile() && e.name.endsWith('.json'));
+    hooksApplicable = true;
+  }
   const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
-  const sessions = safeCount(workDir, (e) => e.isDirectory());
+  const sessionsCount = safeCount(workDir, (e) => e.isDirectory());
   const ratings = countLines(path.join(CLAUDE_DIR, 'MEMORY', 'LEARNING', 'SIGNALS', 'ratings.jsonl'));
   const researchDir = path.join(CLAUDE_DIR, 'MEMORY', 'RESEARCH');
   const research = safeCount(researchDir, (e) => e.isDirectory());
 
   // Reads from the same caches the statusline-command.sh consumes
   const stateDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
-  const usage = readJSON(path.join(stateDir, 'usage-cache.json'), {});
+  const usage = agentIsClaude ? readJSON(path.join(stateDir, 'usage-cache.json'), {}) : {};
   const location = readJSON(path.join(stateDir, 'location-cache.json'), {});
   const weather = readJSON(path.join(stateDir, 'weather-cache.json'), {});
 
@@ -3480,10 +3620,19 @@ ipcMain.handle('stats:get', () => {
     }
   } catch (_) {}
 
+  const activeProject = (Array.isArray(config.projects) && config.activeProjectId)
+    ? config.projects.find((p) => p && p.id === config.activeProjectId) : null;
+  const cwd = activePtyCwd || (activeProject && activeProject.path) || HOME;
   return {
-    skills, workflows, hooks, sessions, ratings, research,
+    skills, workflows, hooks, hooksApplicable, sessions: sessionsCount, ratings, research,
     agent: agentCmd, agentVersion: getAgentVersion(agentCmd),
     huskVer: app.getVersion(),
+    workspace: {
+      name: (activeProject && activeProject.name) || path.basename(cwd) || '',
+      cwd,
+      git: gitSummary(cwd),
+    },
+    mcp: mcpSummary(),
     claudeDir: CLAUDE_DIR, skillsDir, hooksDir,
     memoryDir: path.join(CLAUDE_DIR, 'MEMORY'),
     workflowsDir,
@@ -3508,7 +3657,18 @@ ipcMain.handle('stats:get', () => {
       extra_limit: usage.extra_limit_dollars || 0,
       session_cost: usage.session_cost || '',
       cache_present: Object.keys(usage).length > 0,
-      session: readActiveSessionStats(),
+      // Session model/turns read from each agent's OWN transcript, so the
+      // figure always belongs to the active agent (never a different CLI's
+      // session): claude from ~/.claude, copilot from ~/.copilot.
+      session: agentIsClaude ? readActiveSessionStats()
+        : (agentCmd === 'copilot' ? readCopilotSessionStats(activePtyCwd) : null),
+      // A CLI's own session usage counter parsed from its status line
+      // (Copilot's "N AIC used"). Null when the agent prints none.
+      agentSession: (() => {
+        const act = activeSessionId ? sessions.get(activeSessionId) : null;
+        const n = act ? parseAgentSessionUsage(agentCmd, act.tailBuf) : null;
+        return n == null ? null : { label: agentCmd === 'copilot' ? 'Session AIC' : 'Session usage', value: n };
+      })(),
     },
     learning,
     home: HOME,
@@ -3982,6 +4142,7 @@ Create an agent profile. Return ONLY valid JSON, no markdown fences, no explanat
 // a { label, dir } entry. Files in each dir are parsed by parseAgentMd.
 const AGENT_SOURCES = [
   { label: 'Claude Code', dir: path.join(HOME, '.claude', 'agents') },
+  { label: 'GitHub Copilot', dir: path.join(HOME, '.copilot', 'agents') },
 ];
 
 // Native agents directory per CLI. Both claude and copilot load the same
@@ -4407,7 +4568,7 @@ ipcMain.handle('repoMcp:build', async (_e, payload = {}) => {
 // the others. The renderer paints a per-target status pill from the
 // returned `results` map.
 const SNIPPET_TARGETS = new Set(['codex', 'aider']);
-const WRITE_TARGETS = new Set(['claude', 'copilot']);
+const WRITE_TARGETS = new Set(['claude', 'copilot', 'gemini']);
 const KNOWN_TARGETS = new Set([...SNIPPET_TARGETS, ...WRITE_TARGETS]);
 
 ipcMain.handle('repoMcp:install', (_e, payload = {}) => {
@@ -5469,8 +5630,8 @@ ipcMain.handle('sessions:delete', async (_e, payload) => {
       cancelId: 0,
       title: 'Delete sessions',
       message: safe.length === 1
-        ? 'Permanently delete this claude session?'
-        : `Permanently delete ${safe.length} claude sessions?`,
+        ? 'Permanently delete this session?'
+        : `Permanently delete ${safe.length} sessions?`,
       detail: safe.map((p) => path.basename(p)).slice(0, 10).join('\n')
         + (safe.length > 10 ? `\n…and ${safe.length - 10} more` : ''),
     });

@@ -128,12 +128,12 @@
         <div class="drag-target" data-kind="context">
           <div class="dt-icon">⇩</div>
           <div class="dt-title">Add to context</div>
-          <div class="dt-hint">→ ~/.claude/MEMORY/CONTEXT/</div>
+          <div class="dt-hint">→ shared context tray</div>
         </div>
         <div class="drag-target" data-kind="skill">
           <div class="dt-icon">⌬</div>
           <div class="dt-title">Install as skill</div>
-          <div class="dt-hint">→ ~/.claude/skills/&lt;name&gt;/</div>
+          <div class="dt-hint">→ shared skill library</div>
         </div>
       </div>
     </div>
@@ -884,7 +884,7 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Skills</h1>
-              <span class="page-sub" id="skills-sub">skills installed at ~/.claude/skills/</span>
+              <span class="page-sub" id="skills-sub">skills in the shared library</span>
             </div>
             <div class="page-head-right">
               <input type="search" id="skills-search" class="ghost-input" placeholder="Filter skills…" />
@@ -1137,7 +1137,7 @@
       <div class="modal-card modal-wide">
         <div class="modal-icon">⌬</div>
         <div class="modal-title">Create a skill</div>
-        <div class="modal-sub">Skills live at <code>~/.claude/skills/&lt;name&gt;/SKILL.md</code> and load when you start claude.</div>
+        <div class="modal-sub">Skills live in the shared library (<code>skills/&lt;name&gt;/SKILL.md</code>). Use one via <strong>Use</strong> on the Skills page; Claude also loads them automatically.</div>
 
         <div class="modal-section">
           <div class="modal-label">Name</div>
@@ -1148,7 +1148,7 @@
         <div class="modal-section">
           <div class="modal-label">Description</div>
           <input type="text" id="ns-desc" placeholder="Short one-line summary of when to use this skill" autocomplete="off" />
-          <div class="modal-hint">Shown to claude as the skill's purpose. Required.</div>
+          <div class="modal-hint">Shown to the agent as the skill's purpose. Required.</div>
         </div>
 
         <div class="modal-section">
@@ -1485,7 +1485,7 @@
                 <span class="pref-desc">Highlight color used across the interface.</span>
               </span>
               <div class="accent-picker" id="accent-picker">
-                <div class="accent-swatch" data-c="orange" title="Orange (Claude)"></div>
+                <div class="accent-swatch" data-c="orange" title="Orange"></div>
                 <div class="accent-swatch" data-c="cyan" title="Cyan"></div>
                 <div class="accent-swatch" data-c="indigo" title="Indigo"></div>
                 <div class="accent-swatch" data-c="emerald" title="Emerald"></div>

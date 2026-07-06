@@ -48,3 +48,9 @@ libs/pai/**/history.jsonl
 # playwright run artifacts
 test-results/
 playwright-report/
+
+# Local PAI Algorithm task artifacts (per-task working state, never shipped)
+ISA*.md
+
+# Husk-managed per-session agent identity file (rewritten at runtime)
+.github/copilot-instructions.md

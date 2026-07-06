@@ -1052,7 +1052,11 @@ async function refreshStats() {
   try {
     const s = await window.husk.stats.get();
     lastStats = s;
-    $('#skills-sub').textContent = `${s.skills} skills installed at ~/.claude/skills/`;
+    // The Skills subtitle is owned entirely by applyPromptsLabels (agent
+    // aware). refreshStats used to also write it on a timer, clobbering
+    // that text with a hardcoded claude path for every agent. Refresh it
+    // here so the count stays current without reintroducing the conflict.
+    applyPromptsLabels();
     // Sessions subheader is refined by renderSessions once the active agent's
     // sessions are read; show an agent-appropriate hint until then.
     const agentNow = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0];
@@ -1184,14 +1188,33 @@ async function refreshStatusline() {
   // real change overwrites it on the next good poll, and activateTab() clears it
   // on a session switch so we never show a stale cross-session number.
   if (u.session && u.session.ctxTokens > 0) lastGoodCtx = u.session;
-  const ctx = (u.session && u.session.ctxTokens > 0) ? u.session : lastGoodCtx;
+  // Context window is a Claude-session figure; for any other agent, do not
+  // fall back to a Claude session's cached ctx.
+  const ctx = agentKindCache !== 'claude'
+    ? null
+    : ((u.session && u.session.ctxTokens > 0) ? u.session : lastGoodCtx);
   // The active model. Trim the vendor prefix and the context-tier suffix so the
   // readout stays compact and matches the banner (e.g. "fable-5", not
   // "claude-fable-5[1m]"). Empty when no model is known, which hides the row.
-  const modelLabel = ((u.session && u.session.model) || (ctx && ctx.model) || '').replace(/^claude-/, '').replace(/\[[^\]]*\]/g, '');
+  // The model comes from the active agent's OWN session transcript
+  // (claude from ~/.claude, copilot from ~/.copilot), so it always names
+  // the agent's real model, never a different CLI's session. The ctx
+  // fallback is claude-only (context window is a claude-transcript figure).
+  const modelLabel = ((u.session && u.session.model)
+    || (agentKindCache === 'claude' && ctx && ctx.model) || '')
+    .replace(/^claude-/, '').replace(/\[[^\]]*\]/g, '');
   // The active agent CLI (claude, codex, copilot, ...) and its version, so the
   // Build section reflects whichever agent is selected, not a fixed one.
   const agentLabel = (s.agent || 'claude').replace(/^\w/, (c) => c.toUpperCase());
+  // Workspace + git: vendor-neutral, the most glanceable state for a coding
+  // session. Branch with ahead/behind arrows and a dirty-file count.
+  const ws = s.workspace || {};
+  const g = ws.git || {};
+  const abParts = [];
+  if (g.ahead) abParts.push(`↑${g.ahead}`);
+  if (g.behind) abParts.push(`↓${g.behind}`);
+  const branchLabel = `${g.branch || 'detached'}${abParts.length ? ' ' + abParts.join(' ') : ''}`;
+  const mcp = s.mcp || {};
 
   const html = `
     <div class="sp-section">
@@ -1202,6 +1225,18 @@ async function refreshStatusline() {
         ${weatherStr ? `<div class="sp-row"><span class="sp-muted">Weather ${spInfo('Current weather at your detected location.')}</span><span class="sp-mono">${escapeHtml(weatherStr)}</span></div>` : ''}
       </div>
     </div>
+
+    ${ws.name ? `
+    <div class="sp-section">
+      <div class="sp-section-head"><span class="sp-h-icon">◫</span><span>Workspace</span></div>
+      <div class="sp-section-body">
+        <div class="sp-row sp-clickable" data-open="files"><span class="sp-muted">Project ${spInfo('The active project directory. Click to open the Files page.')}</span><span class="sp-mono sp-accent" title="${escapeHtml(ws.cwd || '')}">${escapeHtml(ws.name)}</span></div>
+        ${g.isRepo ? `
+        <div class="sp-row"><span class="sp-muted">Branch ${spInfo('Current git branch, with commits ahead of / behind the upstream.')}</span><span class="sp-mono" title="${escapeHtml(branchLabel)}">${escapeHtml(branchLabel)}</span></div>
+        <div class="sp-row"><span class="sp-muted">Changes ${spInfo('Uncommitted changes in the working tree (staged, unstaged, and untracked).')}</span><span class="sp-mono ${g.dirty > 0 ? 'sp-accent' : 'sp-muted'}">${g.dirty > 0 ? escapeHtml(g.dirty) + (g.dirty === 1 ? ' file' : ' files') : 'clean'}</span></div>
+        ` : `<div class="sp-row sp-tiny sp-muted">Not a git repository.</div>`}
+      </div>
+    </div>` : ''}
 
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">▣</span><span>Build</span></div>
@@ -1215,9 +1250,10 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⌬</span><span>Tools</span></div>
       <div class="sp-section-body">
-        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo('Skills installed in ~/.claude/skills. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
+        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo(agentKindCache === 'claude' ? 'Skills in the shared library; auto-loaded by the agent. Click to open.' : 'Skills in the shared library; use Use on the Skills page to inject one into the chat. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
         <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows ${spInfo('Saved Husk workflows. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.workflows)}</span></div>
-        <div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks ${spInfo('Hooks installed in ~/.claude/hooks. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>
+        ${s.hooksApplicable ? `<div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks ${spInfo('Hooks the agent runs at lifecycle events. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>` : ''}
+        ${mcp.supported ? `<div class="sp-row sp-clickable" data-open="mcp"><span class="sp-muted">MCP ${spInfo('MCP servers configured for the active agent. Click to open the MCP page.')}</span><span class="sp-mono sp-accent">${escapeHtml(mcp.count)}</span></div>` : ''}
       </div>
     </div>
 
@@ -1233,7 +1269,7 @@ async function refreshStatusline() {
         ${ctxBarHTML(ctx.ctxPct)}
         <div class="sp-divider"></div>
         ` : ''}
-        ${u.cache_present ? `
+        ${agentKindCache === 'claude' ? (u.cache_present ? `
         <div class="sp-row"><span class="sp-muted">5 Hours Limit ${spInfo('Share of your rolling 5-hour usage allowance consumed.')}</span><span class="sp-mono">${fmtPct(u.h5_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.h5_pct||0)}%"></div></div>
         ${u.h5_reset ? `<div class="sp-row"><span class="sp-muted">Resets ${spInfo('When the 5-hour usage window resets.')}</span><span class="sp-mono" title="${escapeHtml(u.h5_reset)}">${escapeHtml(fmtUntil(u.h5_reset))}</span></div>` : ''}
@@ -1242,12 +1278,16 @@ async function refreshStatusline() {
         ${u.week_reset ? `<div class="sp-row"><span class="sp-muted">Resets ${spInfo('When the weekly usage window resets.')}</span><span class="sp-mono" title="${escapeHtml(u.week_reset)}">${escapeHtml(fmtUntil(u.week_reset))}</span></div>` : ''}
         ` : `
         <div class="sp-row"><span class="sp-muted">5h / Weekly</span><span class="sp-mono sp-muted">warming up…</span></div>
-        <div class="sp-row sp-tiny sp-muted">Refreshing every 30s from your Anthropic OAuth token; first sample takes a few seconds after launch.</div>
-        `}
+        <div class="sp-row sp-tiny sp-muted">First sample takes a few seconds after launch, then refreshes automatically.</div>
+        `) : (u.agentSession ? `
+        <div class="sp-row"><span class="sp-muted">${escapeHtml(u.agentSession.label)} ${spInfo('Session usage reported by your CLI in its own status line.')}</span><span class="sp-mono sp-accent">${escapeHtml(fmtThousands(u.agentSession.value))}</span></div>
+        ` : `
+        <div class="sp-row sp-tiny sp-muted">Plan usage limits appear here when your CLI reports them.</div>
+        `)}
         ${u.session ? `
         <div class="sp-divider"></div>
         <div class="sp-row"><span class="sp-muted">Session turns ${spInfo('Number of user and assistant messages exchanged in this session.')}</span><span class="sp-mono sp-accent">${escapeHtml(u.session.turns)}</span></div>
-        <div class="sp-row"><span class="sp-muted">Session tokens ${spInfo('Estimated total tokens processed across this whole session (cumulative odometer, not the current context window).')}</span><span class="sp-mono sp-accent">~${escapeHtml(fmtThousands(u.session.tokens))}</span></div>
+        ${u.session.partialTokens ? '' : `<div class="sp-row"><span class="sp-muted">Session tokens ${spInfo('Estimated total tokens processed across this whole session (cumulative odometer, not the current context window).')}</span><span class="sp-mono sp-accent">~${escapeHtml(fmtThousands(u.session.tokens))}</span></div>`}
         ` : ''}
         ${(u.api_cost || u.extra_used || u.session_cost) ? `
         <div class="sp-divider"></div>
@@ -1258,6 +1298,7 @@ async function refreshStatusline() {
       </div>
     </div>
 
+    ${agentKindCache === 'claude' ? `
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">◎</span><span>Memory</span></div>
       <div class="sp-section-body">
@@ -1266,8 +1307,8 @@ async function refreshStatusline() {
         <div class="sp-row sp-clickable" data-open="work"><span class="sp-muted">Work ${spInfo('Active work projects tracked in memory. Click to open.')}</span><span class="sp-mono sp-accent">${s.sessions}</span></div>
         <div class="sp-row sp-clickable" data-open="research"><span class="sp-muted">Research ${spInfo('Research entries stored in memory. Click to open.')}</span><span class="sp-mono sp-accent">${s.research}</span></div>
       </div>
-    </div>
-
+    </div>` : ''}
+    ${agentKindCache === 'claude' ? `
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">✿</span><span>Learning</span></div>
       <div class="sp-section-body">
@@ -1279,7 +1320,7 @@ async function refreshStatusline() {
         ${L.recent && L.recent.length ? sparkHTML(L.recent, L.recentTs) : ''}
         ${(L.latest == null && L.avg1h == null && L.avg1d == null && L.avg1w == null && L.avg1mo == null) ? `<div class="sp-row sp-tiny sp-muted">No ratings yet · sessions you rate will land here.</div>` : ''}
       </div>
-    </div>
+    </div>` : ''}
   `;
 
   // eslint-disable-next-line no-unsanitized/property -- Template content is escaped or trusted static markup.
@@ -1296,6 +1337,8 @@ async function refreshStatusline() {
       else if (t === 'work') window.husk.fs.open(s.sessionsDir);
       else if (t === 'research') window.husk.fs.open(s.researchDir);
       else if (t === 'ratings') window.husk.fs.open(s.memoryDir + '/LEARNING/SIGNALS');
+      else if (t === 'files') setPage('files');
+      else if (t === 'mcp') setPage('mcp');
     });
   });
 }
@@ -2564,7 +2607,7 @@ async function scanRepoRoot(root) {
   listEl.innerHTML = res.agents.map((a) => {
     const pill = a.alreadyImported
       ? `<span class="ai-row-pill">Already imported</span>`
-      : (a.alreadyInClaude ? `<span class="ai-row-source">in ~/.claude/agents</span>` : '');
+      : (a.alreadyInClaude ? '<span class="ai-row-source">already installed</span>' : '');
     if (a.alreadyImported) {
       return `
         <div class="ai-row-done">
@@ -2766,6 +2809,7 @@ function rmAdvanceToDetail() {
   const targets = [
     { id: 'claude', label: 'Claude Code', sub: 'writes ~/.claude.json', write: true },
     { id: 'copilot', label: 'GitHub Copilot CLI', sub: 'writes ~/.copilot/mcp-config.json', write: true },
+    { id: 'gemini', label: 'Gemini CLI', sub: 'writes ~/.gemini/settings.json', write: true },
     { id: 'codex', label: 'Codex CLI', sub: 'shows TOML snippet to paste into ~/.codex/config.toml', write: false },
     { id: 'aider', label: 'Aider', sub: 'shows --mcp flag snippet to paste into your aider invocation', write: false },
   ];
@@ -3078,9 +3122,13 @@ function applyPromptsLabels() {
   const skillsTitle = document.querySelector('.page-skills .page-title');
   if (skillsTitle) skillsTitle.textContent = 'Skills';
   const skillsSub = document.querySelector('.page-skills .page-sub');
-  if (skillsSub) skillsSub.textContent = agentKindCache === 'claude'
-    ? 'auto-loaded by claude · click Use to inject manually'
-    : 'click Use to inject any skill into the chat';
+  if (skillsSub) {
+    const n = (lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null;
+    const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
+    skillsSub.textContent = count + (agentKindCache === 'claude'
+      ? 'auto-loaded by claude, or click Use to inject manually'
+      : 'click Use to inject any skill into the chat');
+  }
 }
 async function injectPromptToChat(content) {
   if (!content) return;
@@ -3113,7 +3161,7 @@ function paintSkills(list, query) {
   grid.innerHTML = filtered.map((sk) => {
     const sourceBadge = sk.source === 'husk'
       ? '<span class="sk-badge sk-badge-husk" title="Husk-managed prompt">prompt</span>'
-      : '<span class="sk-badge sk-badge-claude" title="Claude skill (auto-loaded by claude)">skill</span>';
+      : `<span class="sk-badge sk-badge-claude" title="${agentKindCache === 'claude' ? 'Shared-library skill; Claude auto-loads it, and Use injects it into any chat' : 'Shared-library skill; use Use to inject it into the chat'}">skill</span>`;
     return `
     <div class="skill-card${sk.disabled ? ' disabled' : ''}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
       <div class="sk-row1">
@@ -3304,7 +3352,7 @@ function paintSessions(list, query) {
     (s.title + ' ' + s.id + ' ' + s.projectPath + ' ' + (s.prdPhase || '')).toLowerCase().includes(q)
   ) : list;
   if (!filtered.length) {
-    const msg = list.length ? `No sessions match "${escapeHtml(query)}"` : 'No claude sessions yet. Start a chat to create one.';
+    const msg = list.length ? `No sessions match "${escapeHtml(query)}"` : 'No sessions yet. Start a chat to create one.';
     // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
     ul.innerHTML = `<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">${msg}</div></div>`;
     return;
@@ -4577,6 +4625,11 @@ function openUpdatePop() {
   const body = $('#up-body');
   const cta = $('#up-cta');
   const notesBtn = $('#up-notes');
+  // Every render starts from a clean, enabled CTA. The download click
+  // disables it while downloading; when the status then flips to ready
+  // this re-render must re-enable it, or the "Restart and install"
+  // button stays greyed out and the update cannot be applied.
+  cta.disabled = false;
   notesBtn.hidden = !s.url;
   notesBtn.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
   if (s.dev) {
@@ -4944,7 +4997,7 @@ function healthBadgeHTML(id, enabled) {
   if (h === 'connected') return '<span class="mcp-health mcp-health-ok" title="Connected">connected</span>';
   if (h === 'failed')    return '<span class="mcp-health mcp-health-err" title="Failed to connect">failed</span>';
   if (h === 'auth')      return '<span class="mcp-health mcp-health-warn" title="Server requires authentication">needs auth</span>';
-  if (h === 'disabled')  return '<span class="mcp-health mcp-health-unknown" title="Disabled by claude">disabled</span>';
+  if (h === 'disabled')  return '<span class="mcp-health mcp-health-unknown" title="Disabled in the CLI config">disabled</span>';
   return `<span class="mcp-health mcp-health-unknown">${escapeHtml(h)}</span>`;
 }
 function mcpRowHTML(s) {
@@ -5917,9 +5970,9 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.plus,        label: 'Add custom MCP server',          run: () => openMcpCustomModal() },
   { icon: ICONS.mcp,         label: 'Install MCP servers from repo',  run: () => openRepoMcpModal() },
   { icon: ICONS.plus,        label: 'Share file (picker)',            run: shareFilesViaPicker },
-  { icon: ICONS.folder,      label: 'Open ~/.claude/MEMORY/WORK/',    run: () => lastStats && window.husk.fs.open(lastStats.sessionsDir) },
-  { icon: ICONS.skills,      label: 'Open ~/.claude/skills/',         run: () => lastStats && window.husk.fs.open(lastStats.skillsDir) },
-  { icon: ICONS.folder,      label: 'Open ~/.claude/hooks/',          run: () => lastStats && window.husk.fs.open(lastStats.hooksDir) },
+  { icon: ICONS.folder,      label: 'Open memory folder',             run: () => lastStats && window.husk.fs.open(lastStats.sessionsDir), claudeOnly: true },
+  { icon: ICONS.skills,      label: 'Open skill library',             run: () => lastStats && window.husk.fs.open(lastStats.skillsDir) },
+  { icon: ICONS.folder,      label: 'Open hooks folder',              run: () => lastStats && lastStats.hooksDir && window.husk.fs.open(lastStats.hooksDir), show: () => !!(lastStats && lastStats.hooksApplicable) },
 ];
 
 let paletteSel = 0;
@@ -5933,7 +5986,10 @@ function openPalette() {
 function closePalette() { $('#palette').hidden = true; if (term) term.focus(); }
 function renderPalette(query) {
   const q = query.toLowerCase().trim();
-  const matches = PALETTE_ACTIONS.filter((a) => !q || a.label.toLowerCase().includes(q));
+  const matches = PALETTE_ACTIONS
+    .filter((a) => !a.claudeOnly || agentKindCache === 'claude')
+    .filter((a) => typeof a.show !== 'function' || a.show())
+    .filter((a) => !q || a.label.toLowerCase().includes(q));
   // eslint-disable-next-line no-unsanitized/property -- Palette labels are escaped and icons are trusted constants.
   $('#palette-list').innerHTML = matches.map((a, i) => `
     <li class="${i === paletteSel ? 'active' : ''}" data-idx="${i}">
@@ -8506,7 +8562,7 @@ try {
         // Name the exit code so an unexpected death (vs a clean quit) is
         // legible: a run that vanishes the instant a chat agent launches
         // reads as "agent exited (code N)", not a silent disappearance.
-        const code = (info && typeof info.exitCode === 'number') ? info.exitCode : null;
+        const code = (typeof info.exitCode === 'number') ? info.exitCode : null;
         why = code == null ? 'agent exited' : `agent exited (code ${code})`;
         level = (code && code !== 0) ? 'error' : 'info';
       } else { why = 'stopped'; level = 'error'; }
