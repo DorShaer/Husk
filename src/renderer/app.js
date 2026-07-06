@@ -1141,6 +1141,30 @@ function ctxBucketColor(pos) {
 }
 // Build the discrete block meter. Filled cells take their gradient color from
 // their own position along the bar; trailing cells are the dim empty marker.
+// Friendly model name for the status readout. The banner the CLI prints
+// ("Opus 4.8") is its own text; here we derive the same shape from the model
+// id. Strip the tier suffix ("[1m]") and vendor prefix ("claude-"), then split
+// the rest into family + version. Bare aliases from settings.json ("opus",
+// before any transcript turn names the full "claude-opus-4-8[1m]") carry no
+// version, so they render capitalized ("Opus") and upgrade to "Opus 4.8" once
+// the session resolves the full id. Date stamps (6+ digits) are dropped.
+function prettyModelLabel(raw) {
+  const id = String(raw || '').replace(/\[[^\]]*\]/g, '').replace(/^claude-/, '');
+  if (!id) return '';
+  const parts = id.split('-');
+  const family = parts[0];
+  const ver = [];
+  const tail = [];
+  for (const p of parts.slice(1)) {
+    if (/^\d{6,}$/.test(p)) continue;              // date stamp
+    else if (/^\d{1,2}$/.test(p) && !tail.length) ver.push(p);
+    else tail.push(p);
+  }
+  const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+  const famDisp = /^gpt$/i.test(family) ? 'GPT' : cap(family);
+  return [famDisp, ver.join('.'), tail.map(cap).join(' ')].filter(Boolean).join(' ');
+}
+
 function ctxBarHTML(pct, buckets = 26) {
   const p = Math.max(0, Math.min(100, Number(pct) || 0));
   const filled = Math.round(p / 100 * buckets);
@@ -1200,9 +1224,8 @@ async function refreshStatusline() {
   // (claude from ~/.claude, copilot from ~/.copilot), so it always names
   // the agent's real model, never a different CLI's session. The ctx
   // fallback is claude-only (context window is a claude-transcript figure).
-  const modelLabel = ((u.session && u.session.model)
-    || (agentKindCache === 'claude' && ctx && ctx.model) || '')
-    .replace(/^claude-/, '').replace(/\[[^\]]*\]/g, '');
+  const modelLabel = prettyModelLabel((u.session && u.session.model)
+    || (agentKindCache === 'claude' && ctx && ctx.model) || '');
   // The active agent CLI (claude, codex, copilot, ...) and its version, so the
   // Build section reflects whichever agent is selected, not a fixed one.
   const agentLabel = (s.agent || 'claude').replace(/^\w/, (c) => c.toUpperCase());
