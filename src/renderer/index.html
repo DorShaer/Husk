@@ -530,6 +530,44 @@
               <div class="aut-preset-grid" id="aut-preset-grid"></div>
             </section>
 
+            <section class="aut-section" id="aut-orchestrator-section">
+              <div class="aut-section-head">
+                <h3 class="aut-section-title">Configure custom orchestrator agents</h3>
+                <span class="aut-section-sub">Pick which model each task complexity uses. Leave blank and Husk automatically selects the model for you and tells you why in the run log.</span>
+              </div>
+              <div class="aut-orch-grid">
+                <label class="pref-row">
+                  <span class="pref-row-text"><span class="pref-label">claude</span><span class="pref-desc">cheap (mechanical) / smart (reasoning) model</span></span>
+                  <span class="pref-field-group">
+                    <input type="text" id="aut-mr-claude-cheap" placeholder="haiku" />
+                    <input type="text" id="aut-mr-claude-smart" placeholder="opus" />
+                  </span>
+                </label>
+                <label class="pref-row">
+                  <span class="pref-row-text"><span class="pref-label">gemini</span><span class="pref-desc">cheap / smart model</span></span>
+                  <span class="pref-field-group">
+                    <input type="text" id="aut-mr-gemini-cheap" placeholder="gemini-2.5-flash" />
+                    <input type="text" id="aut-mr-gemini-smart" placeholder="gemini-2.5-pro" />
+                  </span>
+                </label>
+                <label class="pref-row">
+                  <span class="pref-row-text"><span class="pref-label">codex</span><span class="pref-desc">cheap / smart model (blank = CLI default)</span></span>
+                  <span class="pref-field-group">
+                    <input type="text" id="aut-mr-codex-cheap" placeholder="cli default" />
+                    <input type="text" id="aut-mr-codex-smart" placeholder="cli default" />
+                  </span>
+                </label>
+                <label class="pref-row">
+                  <span class="pref-row-text"><span class="pref-label">aider</span><span class="pref-desc">cheap / smart model. Copilot has no model switch.</span></span>
+                  <span class="pref-field-group">
+                    <input type="text" id="aut-mr-aider-cheap" placeholder="cli default" />
+                    <input type="text" id="aut-mr-aider-smart" placeholder="cli default" />
+                  </span>
+                </label>
+                <button class="btn-primary" id="aut-mr-save" type="button">Save model routing</button>
+              </div>
+            </section>
+
             <section class="aut-section">
               <div class="aut-section-head">
                 <h3 class="aut-section-title">Recent runs</h3>
@@ -552,36 +590,72 @@
                  and agent lanes owning every remaining pixel. The value/cap
                  ids and .aut-page-meter class are what the budget JS targets. -->
           <div class="aut-page-live" id="aut-page-live" hidden>
-            <section class="aut-cockpit">
-              <aside class="aut-side">
-                <div class="aut-card aut-card-mission">
+            <div class="aut-dash-wrapper">
+              
+              <!-- TOP ROW: Stats & Mission -->
+              <div class="aut-dash-row aut-row-top">
+                <div class="aut-card aut-card-main-stats">
                   <div class="aut-card-head">
-                    <span class="aut-page-label">Mission</span>
+                    <span class="aut-page-label">Token Consumption & Quotas</span>
+                    <span class="aut-page-pane-meta">Live metrics</span>
                   </div>
-                  <div class="aut-goal-text" id="aut-page-goal-text" title="Click to expand"></div>
-                  <div class="aut-mission-stats">
-                    <div class="aut-page-meter aut-ms-row" data-key="time">
-                      <span class="aut-stat-label">time</span>
-                      <span class="aut-ms-right"><span class="aut-page-meter-value" id="aut-page-val-time">0s</span> <span class="aut-page-meter-cap" id="aut-page-cap-time">of 60m</span></span>
+                  
+                  <div class="aut-main-stats-content">
+                    <div class="aut-stat-huge aut-page-meter" data-key="tokens">
+                      <div class="aut-huge-value" id="aut-page-val-tokens">0</div>
+                      <div class="aut-huge-label">Tokens consumed <span class="aut-huge-cap" id="aut-page-cap-tokens">of 200k</span></div>
                     </div>
-                    <div class="aut-page-meter aut-ms-row" data-key="tokens">
-                      <span class="aut-stat-label">tokens</span>
-                      <span class="aut-ms-right"><span class="aut-page-meter-value" id="aut-page-val-tokens">0</span> <span class="aut-page-meter-cap" id="aut-page-cap-tokens">of 200k</span></span>
+                    <div class="aut-stat-huge aut-page-meter" data-key="time">
+                      <div class="aut-huge-value" id="aut-page-val-time">0s</div>
+                      <div class="aut-huge-label">Elapsed Time <span class="aut-huge-cap" id="aut-page-cap-time">of 60m</span></div>
                     </div>
-                    <div class="aut-page-meter aut-ms-row" data-key="dollars">
-                      <span class="aut-stat-label">spend</span>
-                      <span class="aut-ms-right"><span class="aut-page-meter-value" id="aut-page-val-dollars">$0.00</span> <span class="aut-page-meter-cap" id="aut-page-cap-dollars">of $5</span></span>
+                    <div class="aut-stat-huge aut-page-meter" data-key="dollars">
+                      <div class="aut-huge-value" id="aut-page-val-dollars">$0.00</div>
+                      <div class="aut-huge-label">Total Spend <span class="aut-huge-cap" id="aut-page-cap-dollars">of $5</span></div>
                     </div>
                   </div>
                 </div>
-                <div class="aut-card aut-card-agents">
+
+                <div class="aut-card aut-card-mission-side">
                   <div class="aut-card-head">
-                    <span class="aut-page-label">Agents</span>
+                    <span class="aut-page-label">Mission Protocol</span>
+                  </div>
+                  <div class="aut-goal-text" id="aut-page-goal-text" title="Click to expand"></div>
+                  <div class="aut-mission-decor"></div>
+                </div>
+              </div>
+
+              <!-- MIDDLE ROW: Terminals & Agents -->
+              <div class="aut-dash-row aut-row-middle">
+                <div class="aut-card aut-card-agents-dash">
+                  <div class="aut-card-head">
+                    <span class="aut-page-label">Spawned Agents</span>
                     <span class="aut-page-pane-meta" id="aut-agents-meta"></span>
                   </div>
                   <div class="aut-fleet-list" id="aut-fleet-list"></div>
                 </div>
-                <div class="aut-card aut-card-files">
+
+                <div class="aut-card aut-card-lanes-dash">
+                  <div class="aut-card-head">
+                    <span class="aut-page-label">Agent Terminal Activity</span>
+                  </div>
+                  <div class="aut-lanes-wrap">
+                    <div class="aut-lanes" id="aut-lanes"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- BOTTOM ROW: Logs & Files -->
+              <div class="aut-dash-row aut-row-bottom">
+                <div class="aut-card aut-card-log-dash">
+                  <div class="aut-card-head">
+                    <span class="aut-page-label">Recent Tasks</span>
+                    <span class="aut-page-pane-meta" id="aut-page-event-count">0 events</span>
+                  </div>
+                  <div class="aut-eventlog" id="aut-timeline"></div>
+                </div>
+
+                <div class="aut-card aut-card-files-dash">
                   <div class="aut-card-head">
                     <span class="aut-page-label">Touched files</span>
                     <span class="aut-page-pane-meta" id="aut-page-files-count">0</span>
@@ -589,25 +663,15 @@
                   <div class="aut-rail-files" id="aut-page-files">
                     <div class="aut-page-feed-empty">No file changes yet.</div>
                   </div>
-                  <!-- Verdict actions sit ON the evidence they judge: these
-                       act on exactly the files listed above. -->
                   <div class="aut-files-actions">
                     <button class="aut-fa-btn aut-fa-primary aut-retained-only" id="aut-review-apply" hidden>Apply changes</button>
                     <button class="aut-fa-btn aut-retained-only" id="aut-review-discard" hidden>Discard</button>
                     <button class="aut-fa-btn aut-fa-danger aut-review-only" id="aut-review-revert" hidden>Revert all</button>
                   </div>
                 </div>
-                <div class="aut-card aut-card-log">
-                  <div class="aut-card-head">
-                    <span class="aut-page-label">Run log</span>
-                    <span class="aut-page-pane-meta" id="aut-page-event-count">0 events</span>
-                  </div>
-                  <div class="aut-eventlog" id="aut-timeline"></div>
-                </div>
-              </aside>
-              <div class="aut-lanes" id="aut-lanes"></div>
-            </section>
+              </div>
 
+            </div>
           </div>
         </div>
 
@@ -1382,47 +1446,6 @@
               <span class="pref-field-group">
                 <input type="text" id="pref-agent-cwd" placeholder="e.g. /path/to/project" />
                 <button class="ghost-btn" id="btn-pref-cwd-pick" type="button">Pick&hellip;</button>
-              </span>
-            </label>
-            <div class="pref-card-title" style="margin-top:18px;">Model routing</div>
-            <label class="pref-row">
-              <span class="pref-row-text">
-                <span class="pref-label">claude</span>
-                <span class="pref-desc">Cheap and smart model names. Mechanical sub-tasks use cheap. Blank uses the CLI default.</span>
-              </span>
-              <span class="pref-field-group">
-                <input type="text" id="pref-mr-claude-cheap" placeholder="haiku" />
-                <input type="text" id="pref-mr-claude-smart" placeholder="opus" />
-              </span>
-            </label>
-            <label class="pref-row">
-              <span class="pref-row-text">
-                <span class="pref-label">gemini</span>
-                <span class="pref-desc">Cheap / smart model.</span>
-              </span>
-              <span class="pref-field-group">
-                <input type="text" id="pref-mr-gemini-cheap" placeholder="gemini-2.5-flash" />
-                <input type="text" id="pref-mr-gemini-smart" placeholder="gemini-2.5-pro" />
-              </span>
-            </label>
-            <label class="pref-row">
-              <span class="pref-row-text">
-                <span class="pref-label">codex</span>
-                <span class="pref-desc">Cheap / smart model. Blank leaves the codex default.</span>
-              </span>
-              <span class="pref-field-group">
-                <input type="text" id="pref-mr-codex-cheap" placeholder="cli default" />
-                <input type="text" id="pref-mr-codex-smart" placeholder="cli default" />
-              </span>
-            </label>
-            <label class="pref-row">
-              <span class="pref-row-text">
-                <span class="pref-label">aider</span>
-                <span class="pref-desc">Cheap / smart model. Blank leaves the aider default. Copilot has no model switch.</span>
-              </span>
-              <span class="pref-field-group">
-                <input type="text" id="pref-mr-aider-cheap" placeholder="cli default" />
-                <input type="text" id="pref-mr-aider-smart" placeholder="cli default" />
               </span>
             </label>
             <button class="btn-primary" id="pref-save">Save &amp; Restart Agent</button>

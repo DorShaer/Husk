@@ -4291,11 +4291,7 @@ function bindPrefs() {
   $('#pref-agent').value = cfg.agentCommand || '';
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
   if ($('#pref-agent-cwd')) $('#pref-agent-cwd').value = cfg.agentCwd || '';
-  const mr = cfg.modelRouting || {};
-  ['claude', 'gemini', 'codex', 'aider'].forEach((v) => {
-    const c = $(`#pref-mr-${v}-cheap`); if (c) c.value = (mr[v] && mr[v].cheap) || '';
-    const s = $(`#pref-mr-${v}-smart`); if (s) s.value = (mr[v] && mr[v].smart) || '';
-  });
+  bindOrchestratorConfig();
   $('#pref-recap').checked = cfg.recap !== false;
   if ($('#pref-pai')) $('#pref-pai').checked = cfg.paiEnabled !== false;
   $('#pref-theme').value = cfg.theme || 'midnight';
@@ -4548,21 +4544,35 @@ function closePrefsModal() {
   }
 })();
 
+// Model routing lives on the Autopilot page ("Configure custom orchestrator
+// agents"). Load config into its inputs and save on demand.
+function bindOrchestratorConfig() {
+  const mr = (cfg && cfg.modelRouting) || {};
+  ['claude', 'gemini', 'codex', 'aider'].forEach((v) => {
+    const c = $(`#aut-mr-${v}-cheap`); if (c) c.value = (mr[v] && mr[v].cheap) || '';
+    const s = $(`#aut-mr-${v}-smart`); if (s) s.value = (mr[v] && mr[v].smart) || '';
+  });
+}
+if ($('#aut-mr-save')) {
+  $('#aut-mr-save').addEventListener('click', async () => {
+    const modelRouting = {};
+    ['claude', 'gemini', 'codex', 'aider'].forEach((v) => {
+      const cheap = (($(`#aut-mr-${v}-cheap`) || {}).value || '').trim();
+      const smart = (($(`#aut-mr-${v}-smart`) || {}).value || '').trim();
+      if (cheap || smart) modelRouting[v] = Object.assign({}, cheap ? { cheap } : {}, smart ? { smart } : {});
+    });
+    cfg = await window.husk.config.set({ modelRouting });
+    toast('Model routing saved', 'success');
+  });
+}
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
   const cwdInput = $('#pref-agent-cwd');
   const agentCwd = cwdInput ? cwdInput.value.trim() : '';
-  const modelRouting = {};
-  ['claude', 'gemini', 'codex', 'aider'].forEach((v) => {
-    const cheap = (($(`#pref-mr-${v}-cheap`) || {}).value || '').trim();
-    const smart = (($(`#pref-mr-${v}-smart`) || {}).value || '').trim();
-    if (cheap || smart) modelRouting[v] = Object.assign({}, cheap ? { cheap } : {}, smart ? { smart } : {});
-  });
   cfg = await window.husk.config.set({
     agentCommand: $('#pref-agent').value.trim(),
     agentName: name,
     agentCwd,
-    modelRouting,
   });
   bindPrefs();
   renderSkills();
