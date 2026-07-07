@@ -8748,12 +8748,13 @@ try {
         const agents = Array.isArray(info.agents) ? info.agents : [];
         // Planned-but-not-started agents appear as queued chips in the
         // fleet strip until their started event replaces them.
-        plannedAgents = agents.map((a) => ({ role: a.role, subgoal: a.subgoal }));
-        const lines = [`Planned a team of ${agents.length}:`];
-        for (const a of agents) lines.push(`→ ${a.role}: ${String(a.subgoal || '').slice(0, 160)}`);
+        plannedAgents = agents.map((a) => ({ role: a.role, subgoal: a.subgoal, tier: a.tier }));
+        const withTier = (a) => `${a.role}${a.tier ? ` (${a.tier})` : ''}`;
+        const lines = [`ORCHESTRATOR decided ${agents.length} agent${agents.length === 1 ? '' : 's'} for this task:`];
+        for (const a of agents) lines.push(`→ ${withTier(a)}: ${String(a.subgoal || '').slice(0, 160)}`);
         pushActivity(lines, '_orch');
-        toast(`Orchestrator chose ${agents.length} agent${agents.length === 1 ? '' : 's'}: ${agents.map((a) => a.role).join(', ')}`, 'info');
-        tlPush('plan', `team of ${agents.length} planned`, 3);
+        toast(`Orchestrator chose ${agents.length} agent${agents.length === 1 ? '' : 's'}: ${agents.map(withTier).join(', ')}`, 'info');
+        tlPush('plan', `ORCHESTRATOR · decided ${agents.length} agents · ${agents.map(withTier).join(', ')}`, 3);
         renderRunCards();
       });
     }

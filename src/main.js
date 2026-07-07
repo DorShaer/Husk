@@ -1454,6 +1454,8 @@ const AUT_OUTPUT_FLUSH_MS = 250;
 const applyWorktreeChanges = require('./lib/autopilot-apply').applyWorktreeChanges;
 const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
+const { modelArgsFor } = require('./lib/model-routing');
+const { agentBaseName } = require('./lib/agent-oneshot');
 
 function autopilotStorageRoot() {
   return path.join(app.getPath('userData'), 'autonomy');
@@ -2074,7 +2076,7 @@ function flushRunOutput(runId) {
 function spawnRunPty(runId, cwd) {
   const r = runs.get(runId);
   if (!r) return;
-  const rawCmd = (config.agentCommand || 'claude').trim();
+  const rawCmd = (r.agentCommandOverride || config.agentCommand || 'claude').trim();
   const userTokens = rawCmd.split(/\s+/).filter(Boolean);
   let agentExe = userTokens.shift() || 'claude';
   const agentArgs = userTokens;
@@ -2319,7 +2321,10 @@ async function startCollabTeam(payload = {}) {
       `Your slice: ${a.subgoal}`,
       'Work ONLY your slice; teammates own everything else. Deliver your slice completely.',
     ].join(' ');
-    const p = { goal: a.subgoal, injectGoal, caps: payload.caps, snapshot: payload.snapshot, groupId, role: a.role };
+    const baseCmd = config.agentCommand || 'claude';
+    const modelArgs = modelArgsFor(agentBaseName(baseCmd), a.tier, config.modelRouting || {});
+    const workerCmd = modelArgs.length ? `${baseCmd} ${modelArgs.join(' ')}` : baseCmd;
+    const p = { goal: a.subgoal, injectGoal, caps: payload.caps, snapshot: payload.snapshot, groupId, role: a.role, agentCommand: workerCmd, tier: a.tier };
     const runId = newRunId();
     const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
     if (activeCount >= maxConcurrent) {
@@ -2479,6 +2484,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
     goalInjectedAt: 0, goalSubmitted: false, injectResends: 0, lastResendAt: 0,
     goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
     agent: agentName,
+    agentCommandOverride: (typeof payload.agentCommand === 'string' && payload.agentCommand.trim()) ? payload.agentCommand.trim() : null,
   };
   runs.set(runId, runState);
   // Forensics: tie this audit log to its pool identity and isolated worktree

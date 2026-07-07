@@ -15,15 +15,16 @@ function agentBaseName(agentCommand) {
     .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
 }
 
-function oneShotArgs(agentCommand, prompt) {
+function oneShotArgs(agentCommand, prompt, opts = {}) {
   const base = agentBaseName(agentCommand);
+  const model = Array.isArray(opts.modelArgs) ? opts.modelArgs : [];
   // codex exec refuses to run outside a trusted git directory unless told
   // to skip that check.
-  if (base === 'codex') return ['exec', '--skip-git-repo-check', prompt];
+  if (base === 'codex') return ['exec', ...model, '--skip-git-repo-check', prompt];
   // aider blocks on interactive confirmations without --yes-always, which
   // stalls a headless call forever.
-  if (base === 'aider') return ['--message', prompt, '--yes-always'];
-  return ['-p', prompt];
+  if (base === 'aider') return [...model, '--message', prompt, '--yes-always'];
+  return [...model, '-p', prompt];
 }
 
 module.exports = { agentBaseName, oneShotArgs };

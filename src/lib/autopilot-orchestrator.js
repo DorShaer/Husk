@@ -5,6 +5,7 @@
 // run, so the mode's promise (a coordinated team) is kept or visibly broken.
 const { spawn } = require('child_process');
 const { oneShotArgs } = require('./agent-oneshot');
+const { classifyTier, normalizeTier } = require('./model-routing');
 
 const PLAN_TIMEOUT_MS = 120000;
 
@@ -23,8 +24,9 @@ function buildPlanPrompt(goal, maxAgents) {
     'First INSPECT this actual repository before deciding anything: list the top-level directories, detect the languages and frameworks present, and find where the goal-relevant code actually lives. Do not assume a generic backend/frontend/build split -- if this project has no backend, do not invent a backend agent.',
     '',
     `Then split the goal into INDEPENDENT, NON-OVERLAPPING sub-tasks mapped to REAL areas of this repo that actually contain relevant work, one agent each, with clear boundaries so no two agents touch the same files. Use as FEW agents as the goal genuinely needs (2 to ${maxAgents}); an agent that would find nothing to do is waste, so do not create it.`,
+    'For EACH agent set "tier": "cheap" if its sub-task is mechanical (bumping deps, formatting, renaming, finding TODOs, simple edits) or "smart" if it needs real reasoning (design, debugging, non-trivial implementation). Prefer cheap when the work is genuinely mechanical -- it saves the user money.',
     'Reply with ONLY a JSON object, no prose before or after:',
-    '{"agents":[{"role":"short-name-from-a-real-area","subgoal":"precise scope and deliverable, naming the actual paths this agent owns"}]}',
+    '{"agents":[{"role":"short-name-from-a-real-area","tier":"cheap|smart","subgoal":"precise scope and deliverable, naming the actual paths this agent owns"}]}',
   ].join('\n');
 }
 
@@ -42,6 +44,9 @@ function extractPlan(text, maxAgents) {
     .map((a) => ({
       role: (a.role.trim().slice(0, 40) || 'agent').replace(/\s+/g, ' '),
       subgoal: a.subgoal.trim().slice(0, 2000),
+      // Trust the planner's tier; fall back to a keyword classifier on the
+      // sub-task so a plan without tiers still routes.
+      tier: normalizeTier(typeof a.tier === 'string' ? a.tier : classifyTier(a.subgoal)),
     }))
     .slice(0, Math.max(2, maxAgents));
   return clean.length >= 2 ? clean : null;
