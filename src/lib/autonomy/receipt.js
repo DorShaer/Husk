@@ -158,10 +158,18 @@ function buildFleetReceipt(rows, opts = {}) {
     agents: Array.from(perAgent.values()).map((a) => ({ ...a, dollars: round2(a.dollars) })),
     label: typeof opts.label === 'string' ? opts.label : null,
   };
-  // Outcome: 'productive' if any run landed changes, else 'no-changes' -- a
-  // fleet that spent money and changed nothing is a failure, not a win, and
-  // the UI must not celebrate it.
-  receipt.outcome = counts.landed > 0 ? 'productive' : (list.length ? 'no-changes' : 'empty');
+  // Outcome:
+  //   productive  -- at least one run landed file changes.
+  //   no-op       -- runs finished CLEANLY but changed nothing. This is a
+  //                  success for a read-only task (audit/list/report) or when
+  //                  there was genuinely nothing to change. Not a failure.
+  //   incomplete  -- nothing landed and the only outcomes were stalls/caps/
+  //                  stops: the fleet did not finish its work. The real
+  //                  failure state.
+  receipt.outcome = counts.landed > 0 ? 'productive'
+    : counts.empty > 0 ? 'no-op'
+    : list.length ? 'incomplete'
+    : 'empty';
   receipt.headline = headline(receipt);
   return receipt;
 }
@@ -175,7 +183,8 @@ function headline(receipt) {
   const money = receipt.tokensEstimated ? `~$${receipt.totalDollars.toFixed(2)}` : `$${receipt.totalDollars.toFixed(2)}`;
   parts.push(money);
   if (landed) parts.push(`${landed} landed`);
-  else if (total) parts.push('no changes landed');
+  else if (receipt.outcome === 'no-op') parts.push('completed, no code changes');
+  else if (total) parts.push('did not complete');
   if (receipt.savings.caughtStalls > 0) {
     const s$ = receipt.savings.dollars;
     parts.push(s$ > 0

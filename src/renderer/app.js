@@ -7866,20 +7866,31 @@ function renderFleetReceipt(receipt) {
   const lane = ensureLane('_review');
   const feed = lane && lane.querySelector('.aut-lane-stream');
   if (!feed) return;
-  const noChanges = receipt.outcome === 'no-changes';
+  // Only a genuinely incomplete fleet (stalled/capped/stopped, nothing landed)
+  // is a failure. A clean finish with no file changes is a read-only/no-op
+  // success and must not be flagged red.
+  const incomplete = receipt.outcome === 'incomplete';
+  const noOp = receipt.outcome === 'no-op';
   const card = document.createElement('div');
   card.className = 'aut-conclusion aut-receipt';
-  card.style.borderLeft = `2px solid ${noChanges ? 'var(--warn, #f59e0b)' : 'var(--accent, #67e8f9)'}`;
+  card.style.borderLeft = `2px solid ${incomplete ? 'var(--warn, #f59e0b)' : 'var(--accent, #67e8f9)'}`;
 
   const label = document.createElement('div');
   label.className = 'aut-conclusion-label';
-  label.textContent = noChanges ? 'FLEET RECEIPT · NO CHANGES LANDED' : 'FLEET RECEIPT';
+  label.textContent = incomplete ? 'FLEET RECEIPT · DID NOT COMPLETE'
+    : noOp ? 'FLEET RECEIPT · NO CODE CHANGES'
+    : 'FLEET RECEIPT';
   card.appendChild(label);
 
-  if (noChanges) {
+  if (incomplete) {
     const note = document.createElement('div');
     note.className = 'aut-conclusion-meta';
-    note.textContent = 'The goal was not completed: no files changed. Review each agent for why, then rerun or adjust the goal.';
+    note.textContent = 'The fleet stopped before finishing (stall or cap) and nothing landed. Review each agent, then rerun or adjust the goal.';
+    card.appendChild(note);
+  } else if (noOp) {
+    const note = document.createElement('div');
+    note.className = 'aut-conclusion-meta';
+    note.textContent = 'Agents completed and changed no files. Expected for a read-only task (audit, list, report); if you wanted edits, make the goal explicit.';
     card.appendChild(note);
   }
 

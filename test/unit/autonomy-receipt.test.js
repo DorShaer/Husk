@@ -129,15 +129,27 @@ test('headline omits the dollar clause when savings are flat-rate only', () => {
   assert.doesNotMatch(r.headline, /saved/);
 });
 
-test('a fleet that lands nothing reads as no-changes, not a win', () => {
+test('a fleet that only stalls, nothing landed, reads as incomplete (real failure)', () => {
   const rows = [
     fromSummary(summary({ haltReason: 'stall', signal: 'spinning', dollars: 1.2, tokens: 30000, durationMs: 120000, caps: {} })),
     fromSummary(summary({ haltReason: 'stall', signal: 'loop', dollars: 0.9, tokens: 20000, durationMs: 90000, caps: {} })),
   ];
   const r = buildFleetReceipt(rows);
   assert.equal(r.counts.landed, 0);
-  assert.equal(r.outcome, 'no-changes');
-  assert.match(r.headline, /no changes landed/);
+  assert.equal(r.outcome, 'incomplete');
+  assert.match(r.headline, /did not complete/);
+});
+
+test('a read-only fleet that finishes clean with 0 files is a no-op success, not a failure', () => {
+  const rows = [
+    fromSummary(summary({ status: 'ended', haltReason: 'natural', files: 0, dollars: 1.4, tokens: 198000, durationMs: 150000 })),
+    fromSummary(summary({ status: 'ended', haltReason: 'natural', files: 0, dollars: 0.6, tokens: 120000, durationMs: 130000 })),
+  ];
+  const r = buildFleetReceipt(rows);
+  assert.equal(r.counts.landed, 0);
+  assert.equal(r.counts.empty, 2);
+  assert.equal(r.outcome, 'no-op');
+  assert.match(r.headline, /completed, no code changes/);
 });
 
 test('empty fleet is safe', () => {
