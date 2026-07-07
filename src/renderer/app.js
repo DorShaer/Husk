@@ -6547,6 +6547,32 @@ async function startAutopilot() {
   // git can skip it; revert/diff are then unavailable for the run.
   const snapEl = $('#aut-snapshot-toggle');
   const snapshot = snapEl ? !!snapEl.checked : true;
+  // Cost guard: caps are PER AGENT, so a team multiplies them; and an
+  // uncapped run can burn tokens fast. Confirm before launching without a
+  // dollar limit; for a capped team, state the fleet ceiling so "$5" never
+  // surprises as $20.
+  const isTeam = autopilotStartMode === 'collab';
+  if (caps.dollars <= 0) {
+    const ok = await openConfirmDialog({
+      title: 'Launch with no spend limit?',
+      bodyHtml: (isTeam
+        ? 'This team has <b>no dollar cap</b>, and a stuck team can burn tokens fast. '
+        : 'This run has <b>no dollar cap</b>. ')
+        + 'It runs until it finishes or hits the time/token cap. Set a dollar cap, or continue uncapped.',
+      confirmLabel: 'Run uncapped',
+      cancelLabel: 'Set a limit',
+    });
+    if (!ok) return;
+  } else if (isTeam) {
+    const fleetMax = caps.dollars * 4;
+    const ok = await openConfirmDialog({
+      title: `Start the team? Up to $${fleetMax.toFixed(2)} total`,
+      bodyHtml: `The $${caps.dollars.toFixed(2)} cap is <b>per agent</b>. The orchestrator may spawn up to 4 agents, so the team can spend up to <b>$${fleetMax.toFixed(2)}</b> before caps stop it.`,
+      confirmLabel: 'Start team',
+      cancelLabel: 'Adjust caps',
+    });
+    if (!ok) return;
+  }
   const goBtn = $('#aut-start-go');
   const cancelBtn = $('#aut-start-cancel');
   const status = $('#aut-snapshot-status');

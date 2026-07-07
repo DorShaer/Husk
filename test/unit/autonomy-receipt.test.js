@@ -70,6 +70,22 @@ test('CRITICAL: a flat-rate/$0 run never fabricates dollar savings', () => {
   assert.equal(sv.tokens, 191000);
 });
 
+test('estimateSavings: an UNCAPPED stall projects the burn rate over the horizon', () => {
+  // $1.00 in 2 minutes, no caps. Over a 15-minute unattended horizon that
+  // rate projects 7.5x = $7.50 it would have kept burning.
+  const row = fromSummary(summary({ haltReason: 'stall', signal: 'spinning', dollars: 1.0, tokens: 20000, durationMs: 120000, caps: {} }));
+  const sv = estimateSavings(row, 900000);
+  assert.equal(sv.basis, 'projectedRate');
+  assert.equal(sv.dollars, 7.5);
+});
+
+test('estimateSavings: an uncapped flat-rate stall projects tokens only, no dollars', () => {
+  const row = fromSummary(summary({ haltReason: 'stall', signal: 'loop', dollars: 0, tokens: 10000, durationMs: 60000, caps: {} }), { agent: 'copilot' });
+  const sv = estimateSavings(row, 900000);
+  assert.equal(sv.dollars, 0);
+  assert.equal(sv.basis, 'tokensOnly');
+});
+
 test('estimateSavings: a non-stalled run has zero savings', () => {
   assert.equal(estimateSavings(fromSummary(summary({ status: 'ended', files: 3, dollars: 2, caps: { dollars: 5 } }))).dollars, 0);
 });

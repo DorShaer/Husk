@@ -84,21 +84,33 @@ function classify(row) {
 //     at the realized rate when only a dollar cap exists.
 //   saved dollars    = remaining tokens x realized $/token (0 if the run
 //     itself cost nothing).
-function estimateSavings(row) {
+// horizonMs is how long a stalled UNCAPPED run would keep spinning before a
+// human noticed; the burn caught is projected at the run's realized rate over
+// that window. Only used when no cap bounds the projection.
+function estimateSavings(row, horizonMs = 900000) {
   if (classify(row) !== 'saved') return { dollars: 0, tokens: 0, basis: 'none' };
   const spent$ = row.dollars;
   const spentTok = row.tokens;
-  // The run's own realized price. Zero for flat-rate/free runs -> no dollar claim.
   const perTok = spentTok > 0 ? spent$ / spentTok : 0;
-  let remainingTok = 0;
-  if (row.caps.tokens > 0) remainingTok = Math.max(0, row.caps.tokens - spentTok);
-  else if (row.caps.dollars > 0 && perTok > 0) remainingTok = Math.max(0, (row.caps.dollars - spent$) / perTok);
-  const savedDollars = perTok > 0 ? remainingTok * perTok : 0;
-  return {
-    dollars: round2(savedDollars),
-    tokens: Math.round(remainingTok),
-    basis: perTok > 0 ? 'projectedRate' : (remainingTok > 0 ? 'tokensOnly' : 'none'),
-  };
+  if (row.caps.tokens > 0) {
+    const remainingTok = Math.max(0, row.caps.tokens - spentTok);
+    return { dollars: round2(perTok * remainingTok), tokens: Math.round(remainingTok), basis: perTok > 0 ? 'projectedRate' : 'tokensOnly' };
+  }
+  if (row.caps.dollars > 0 && perTok > 0) {
+    const remainingTok = Math.max(0, (row.caps.dollars - spent$) / perTok);
+    return { dollars: round2(perTok * remainingTok), tokens: Math.round(remainingTok), basis: 'projectedRate' };
+  }
+  // No cap: project the realized burn rate over the unattended horizon.
+  if (row.durationMs > 0 && (spent$ > 0 || spentTok > 0)) {
+    const perMs$ = spent$ / row.durationMs;
+    const perMsTok = spentTok / row.durationMs;
+    return {
+      dollars: round2(perMs$ * horizonMs),
+      tokens: Math.round(perMsTok * horizonMs),
+      basis: spent$ > 0 ? 'projectedRate' : 'tokensOnly',
+    };
+  }
+  return { dollars: 0, tokens: 0, basis: 'none' };
 }
 
 // Aggregate rows into the fleet receipt.
@@ -121,7 +133,7 @@ function buildFleetReceipt(rows, opts = {}) {
     totalDurationMs = Math.max(totalDurationMs, row.durationMs); // wall-clock: fleet runs in parallel
     if (row.tokensEstimated) anyEstimated = true;
     if (bucket === 'saved') {
-      const sv = estimateSavings(row);
+      const sv = estimateSavings(row, opts.horizonMs);
       savedDollars += sv.dollars;
       savedTokens += sv.tokens;
     }
