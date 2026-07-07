@@ -52,7 +52,7 @@ function extractPlan(text, maxAgents) {
   return clean.length >= 2 ? clean : null;
 }
 
-function planCollab({ goal, agentCommand, cwd, maxAgents, env }) {
+function planCollab({ goal, agentCommand, cwd, maxAgents, env, onChild }) {
   return new Promise((resolve) => {
     const tokens = String(agentCommand || 'claude').trim().split(/\s+/).filter(Boolean);
     const cmd = tokens[0] || 'claude';
@@ -64,6 +64,8 @@ function planCollab({ goal, agentCommand, cwd, maxAgents, env }) {
     } catch (err) {
       return resolve({ ok: false, error: `could not launch the planner: ${(err && err.message) || err}` });
     }
+    // Hand the child to the caller so the planning phase can be cancelled.
+    if (typeof onChild === 'function') { try { onChild(child); } catch (_) {} }
     let out = '';
     let errOut = '';
     let settled = false;

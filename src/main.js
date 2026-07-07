@@ -2268,6 +2268,9 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
 // single Apply target. The only dedicated state is this tracker; everything
 // else rides the existing run model exactly like raceId does.
 const collabGroups = new Map(); // groupId -> { goal, caps, snapshot, workspaceRoot, remaining, workers, integratorSpawned }
+// Set while the collab orchestrator is planning (before any worker run
+// exists), so Stop can cancel that phase instead of reporting no active run.
+let activePlanning = null;
 
 function newRunId() {
   return 'ap-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
@@ -2298,13 +2301,22 @@ async function startCollabTeam(payload = {}) {
   const goal = String(payload.goal || '').trim().slice(0, 4096);
   if (!goal) return { ok: false, error: 'a goal is required' };
   const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
+  // The planner runs as a detached child with no entry in `runs`, so make the
+  // planning phase cancellable: track the child and let autopilot:cancel kill
+  // it, otherwise Stop reports "no active run" for the 1-2 min plan window.
+  let planChild = null;
+  let planCancelled = false;
+  activePlanning = { cancel: () => { planCancelled = true; try { planChild && planChild.kill('SIGKILL'); } catch (_) {} } };
   const plan = await Orchestrator.planCollab({
     goal,
     agentCommand: config.agentCommand || 'claude',
     cwd: workspaceRoot,
     maxAgents: Math.min(4, maxConcurrent),
     env: buildAgentEnv(),
+    onChild: (c) => { planChild = c; if (planCancelled) { try { c.kill('SIGKILL'); } catch (_) {} } },
   });
+  activePlanning = null;
+  if (planCancelled) return { ok: false, error: 'planning cancelled' };
   if (!plan.ok) return { ok: false, error: `orchestrator: ${plan.error}` };
   const groupId = 'collab-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
   if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, goal, agents: plan.agents });
@@ -2622,6 +2634,16 @@ ipcMain.handle('autopilot:nudge', (_e, payload = {}) => {
 });
 
 ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
+  // No worker runs yet but the orchestrator is planning: cancel that phase.
+  if (runs.size === 0 && activePlanning) {
+    try { activePlanning.cancel(); } catch (_) {}
+    activePlanning = null;
+    if (mainWindow) {
+      mainWindow.webContents.send('autopilot:collab-plan', { note: 'Planning cancelled before the team started.' });
+      mainWindow.webContents.send('autopilot:halt', { reason: 'user' });
+    }
+    return { ok: true, cancelledPlanning: true };
+  }
   const runId = String(detail && detail.runId || '').trim();
   // Resolve the target run. With an explicit id, cancel exactly that run.
   // Without one, fall back ONLY when a single run is active; cancelling an
