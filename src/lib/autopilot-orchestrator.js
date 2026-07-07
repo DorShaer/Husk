@@ -16,13 +16,15 @@ function plannerArgs(baseCmd, prompt) {
 
 function buildPlanPrompt(goal, maxAgents) {
   return [
-    'You are an orchestrator planning a team of autonomous coding agents that will work IN PARALLEL on one shared goal, each in an isolated copy of the same repository.',
+    'You are an orchestrator planning a team of autonomous coding agents that will work IN PARALLEL on one shared goal, each in an isolated copy of THIS repository.',
     '',
     `Shared goal: ${goal}`,
     '',
-    `Decide how many agents this goal genuinely needs, from 2 to ${maxAgents}; prefer the fewest that truly parallelize. Split the goal into that many INDEPENDENT, NON-OVERLAPPING sub-tasks with clear scope boundaries so no two agents edit the same areas.`,
-    'Reply with ONLY a JSON object, no prose before or after, in exactly this shape:',
-    '{"agents":[{"role":"short-name","subgoal":"precise scope and deliverable for this agent"}]}',
+    'First INSPECT this actual repository before deciding anything: list the top-level directories, detect the languages and frameworks present, and find where the goal-relevant code actually lives. Do not assume a generic backend/frontend/build split -- if this project has no backend, do not invent a backend agent.',
+    '',
+    `Then split the goal into INDEPENDENT, NON-OVERLAPPING sub-tasks mapped to REAL areas of this repo that actually contain relevant work, one agent each, with clear boundaries so no two agents touch the same files. Use as FEW agents as the goal genuinely needs (2 to ${maxAgents}); an agent that would find nothing to do is waste, so do not create it.`,
+    'Reply with ONLY a JSON object, no prose before or after:',
+    '{"agents":[{"role":"short-name-from-a-real-area","subgoal":"precise scope and deliverable, naming the actual paths this agent owns"}]}',
   ].join('\n');
 }
 

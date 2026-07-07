@@ -7742,6 +7742,18 @@ async function showFleetReceipt(members) {
     const res = await window.husk.autopilot.receipt({ runs });
     if (!res || !res.ok || !res.receipt) return;
     renderFleetReceipt(res.receipt);
+    // For a real fleet, the MISSION panel must show the FLEET total, not the
+    // single reviewed agent -- otherwise the panel (one agent) and the
+    // receipt (all agents) disagree and the user cannot tell which is real.
+    if (res.receipt.runCount > 1) {
+      try {
+        updateAutopilotBudget({
+          totalTokens: res.receipt.totalTokens,
+          dollars: res.receipt.totalDollars,
+          tokensReported: !!res.receipt.tokensEstimated,
+        });
+      } catch (_) {}
+    }
   } catch (_) { /* a receipt is a bonus; never let it break review */ }
 }
 function renderFleetReceipt(receipt) {
@@ -8740,6 +8752,7 @@ try {
         const lines = [`Planned a team of ${agents.length}:`];
         for (const a of agents) lines.push(`→ ${a.role}: ${String(a.subgoal || '').slice(0, 160)}`);
         pushActivity(lines, '_orch');
+        toast(`Orchestrator chose ${agents.length} agent${agents.length === 1 ? '' : 's'}: ${agents.map((a) => a.role).join(', ')}`, 'info');
         tlPush('plan', `team of ${agents.length} planned`, 3);
         renderRunCards();
       });

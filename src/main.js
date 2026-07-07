@@ -1644,11 +1644,13 @@ const AP_RUN_MAX_NUDGES = 5;
 // last narration reads as a completion claim and the agent has gone quiet,
 // the run is treated as complete instead of nudged.
 const AP_COMPLETION_CLAIM_RE = new RegExp(
-  '\\b(goal (is )?(fully )?(met|achieved|complete)'
+  '\\b(goal (is )?(already )?(fully )?(met|achieved|complete)'
   + '|task (is )?(complete|finished|done)'
   + '|nothing (left|more) to do'
-  + '|no (open|remaining) work'
+  + '|nothing (to (group|fix|report|change|commit)|remaining)'
+  + '|no (open|remaining) (work|work items|markers|changes)'
   + '|work is (done|complete)'
+  + '|report delivered'
   + '|deliverable is complete'
   + '|implementation (is )?complete'
   + '|audit complete'
@@ -1726,7 +1728,7 @@ function runTranscriptEntryToLines(r, obj) {
         // exact-line matching there misses real finishes).
         const whole = part.text.trim();
         if (whole) r.lastAssistantText = whole.slice(0, 4000);
-        if (!r.sentinelSeen && part.text.includes(AUTOPILOT_COMPLETE_SENTINEL) && r.runId) {
+        if (!r.sentinelSeen && hasCompletionMarkerLine(part.text) && r.runId) {
           r.sentinelSeen = true;
           const rid = r.runId;
           setImmediate(() => finishRun(rid, { reason: 'agent_complete' }));
@@ -1955,7 +1957,7 @@ function runIdleWatchdog(runId) {
   // Only the tail of the last message counts: "task done, moving on to X"
   // mid-message is progress narration, not a completion claim.
   if (quietMs >= AP_RUN_NUDGE_PAUSE_MS && r.lastAssistantText
-      && AP_COMPLETION_CLAIM_RE.test(r.lastAssistantText.slice(-240))) {
+      && AP_COMPLETION_CLAIM_RE.test(r.lastAssistantText.slice(-400))) {
     if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
       runId,
       lines: ['Agent declared the goal complete and went quiet; ending the run as finished.'],
@@ -2054,17 +2056,11 @@ function flushRunOutput(runId) {
   // Detect the completion sentinel that the agent prints when it's fully done.
   // Per-run PTYs live in the main process and have no renderer-side terminal,
   // so scan here instead of in the renderer.
-  if (!r.sentinelSeen && clean.includes(AUTOPILOT_COMPLETE_SENTINEL)) {
-    // The TUI decorates output lines (bullets, box-drawing borders), so an
-    // exact-line equality check misses real finishes. Accept the marker
-    // surrounded only by non-alphanumeric decoration; reject lines with
-    // real words (the injected directive quotes the marker after
-    // instruction text). Ignore the echo window right after an injection:
-    // the pasted directive itself contains the marker.
+  if (!r.sentinelSeen && hasCompletionMarkerLine(clean)) {
+    // Ignore the echo window right after an injection: the pasted directive
+    // itself quotes the marker.
     const recentlyInjected = Date.now() - (r.lastInjectAt || 0) < 10000;
-    const bareMarker = /^[^A-Za-z0-9]*<<HUSK_AUTOPILOT_COMPLETE>>[^A-Za-z0-9]*$/;
-    const hasSentinelLine = clean.split('\n').some((l) => bareMarker.test(l.replace(/\r/g, '').trim()));
-    if (hasSentinelLine && !recentlyInjected) {
+    if (!recentlyInjected) {
       r.sentinelSeen = true;
       setImmediate(() => finishRun(runId, { reason: 'agent_complete' }));
     }
@@ -2214,6 +2210,12 @@ function drainPendingRun() {
 // done. The renderer watches for this exact marker on its own line so a real
 // finish is detected positively, instead of guessing from terminal idle.
 const AUTOPILOT_COMPLETE_SENTINEL = '<<HUSK_AUTOPILOT_COMPLETE>>';
+// Agents paraphrase the marker (AUTOPILOT_TASK_COMPLETE etc.), so match the
+// whole family on a bare line, not the exact literal.
+const AP_COMPLETE_BARE_LINE_RE = /^[^A-Za-z0-9]*(?:HUSK_)?AUTOPILOT_(?:TASK_)?COMPLETE[^A-Za-z0-9]*$/i;
+function hasCompletionMarkerLine(text) {
+  return String(text || '').split('\n').some((l) => AP_COMPLETE_BARE_LINE_RE.test(l.replace(/\r/g, '').trim()));
+}
 
 // Wrap a user goal in an autonomous-operator preamble. An autopilot run is
 // unattended: the agent must make its own decisions and never block on input.
