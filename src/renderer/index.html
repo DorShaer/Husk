@@ -712,33 +712,19 @@
               <button class="modal-close" id="aut-orch-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ai-hint">Pick which model each task complexity uses. Leave blank and Husk automatically selects the model for you, and tells you why in the run log.</p>
+              <p class="ai-hint">Pick which model runs simple vs complex tasks for <strong id="aut-orch-vendor">your agent</strong>. Leave on Automatic and Husk selects for you, and tells you why in the run log.</p>
               <label class="pref-row">
-                <span class="pref-row-text"><span class="pref-label">claude</span><span class="pref-desc">cheap (mechanical) / smart (reasoning) model</span></span>
+                <span class="pref-row-text"><span class="pref-label">Simple tasks</span><span class="pref-desc">Mechanical work: dep bumps, formatting, renames, TODO hunts.</span></span>
                 <span class="pref-field-group">
-                  <input type="text" id="aut-mr-claude-cheap" placeholder="haiku" />
-                  <input type="text" id="aut-mr-claude-smart" placeholder="opus" />
+                  <select id="aut-mr-simple"></select>
+                  <input type="text" id="aut-mr-simple-custom" placeholder="custom model name" hidden />
                 </span>
               </label>
               <label class="pref-row">
-                <span class="pref-row-text"><span class="pref-label">gemini</span><span class="pref-desc">cheap / smart model</span></span>
+                <span class="pref-row-text"><span class="pref-label">Complex tasks</span><span class="pref-desc">Reasoning: design, debugging, non-trivial implementation.</span></span>
                 <span class="pref-field-group">
-                  <input type="text" id="aut-mr-gemini-cheap" placeholder="gemini-2.5-flash" />
-                  <input type="text" id="aut-mr-gemini-smart" placeholder="gemini-2.5-pro" />
-                </span>
-              </label>
-              <label class="pref-row">
-                <span class="pref-row-text"><span class="pref-label">codex</span><span class="pref-desc">cheap / smart model (blank = CLI default)</span></span>
-                <span class="pref-field-group">
-                  <input type="text" id="aut-mr-codex-cheap" placeholder="cli default" />
-                  <input type="text" id="aut-mr-codex-smart" placeholder="cli default" />
-                </span>
-              </label>
-              <label class="pref-row">
-                <span class="pref-row-text"><span class="pref-label">aider</span><span class="pref-desc">cheap / smart model. Copilot has no model switch.</span></span>
-                <span class="pref-field-group">
-                  <input type="text" id="aut-mr-aider-cheap" placeholder="cli default" />
-                  <input type="text" id="aut-mr-aider-smart" placeholder="cli default" />
+                  <select id="aut-mr-complex"></select>
+                  <input type="text" id="aut-mr-complex-custom" placeholder="custom model name" hidden />
                 </span>
               </label>
             </div>

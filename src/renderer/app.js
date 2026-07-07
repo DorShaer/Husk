@@ -4544,16 +4544,61 @@ function closePrefsModal() {
   }
 })();
 
-// Model routing is configured from the "Configure" button next to Start a
-// run, which opens the orchestrator modal. Load config into its inputs and
-// save on demand.
+// Orchestrator model routing, configured from the "Configure" button next to
+// Start a run. Dropdowns are populated from the active agent's model catalog;
+// "Custom" reveals a free-text field. Only claude/gemini ship known names;
+// other vendors offer Automatic + Custom only.
+const ORCH_MODEL_CATALOG = {
+  claude: [
+    { value: 'haiku', label: 'Haiku (cheapest)' },
+    { value: 'sonnet', label: 'Sonnet (balanced)' },
+    { value: 'opus', label: 'Opus (most capable)' },
+    { value: 'claude-fable-5', label: 'Fable 5 (max, premium)' },
+  ],
+  gemini: [
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (cheap)' },
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (smart)' },
+  ],
+  codex: [],
+  aider: [],
+  copilot: [],
+};
+function orchVendor() {
+  return (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude')
+    .trim().split(/\s+/)[0].split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
+}
+function fillOrchSelect(sel, customInput, vendor, current) {
+  if (!sel) return;
+  sel.replaceChildren();
+  const add = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; sel.appendChild(o); };
+  add('', 'Automatic (Husk decides)');
+  for (const m of (ORCH_MODEL_CATALOG[vendor] || [])) add(m.value, m.label);
+  add('__custom__', 'Custom…');
+  const known = (ORCH_MODEL_CATALOG[vendor] || []).some((m) => m.value === current);
+  if (current && !known) { sel.value = '__custom__'; if (customInput) { customInput.value = current; customInput.hidden = false; } }
+  else { sel.value = current || ''; if (customInput) { customInput.hidden = true; customInput.value = ''; } }
+}
+function readOrchValue(sel, customInput) {
+  if (!sel) return '';
+  return sel.value === '__custom__' ? ((customInput && customInput.value) || '').trim() : (sel.value || '');
+}
 function bindOrchestratorConfig() {
-  const mr = (cfg && cfg.modelRouting) || {};
-  ['claude', 'gemini', 'codex', 'aider'].forEach((v) => {
-    const c = $(`#aut-mr-${v}-cheap`); if (c) c.value = (mr[v] && mr[v].cheap) || '';
-    const s = $(`#aut-mr-${v}-smart`); if (s) s.value = (mr[v] && mr[v].smart) || '';
+  const vendor = orchVendor();
+  const label = $('#aut-orch-vendor'); if (label) label.textContent = vendor + (vendor === 'copilot' ? ' (no model switch)' : '');
+  const mr = ((cfg && cfg.modelRouting) || {})[vendor] || {};
+  fillOrchSelect($('#aut-mr-simple'), $('#aut-mr-simple-custom'), vendor, mr.cheap || '');
+  fillOrchSelect($('#aut-mr-complex'), $('#aut-mr-complex-custom'), vendor, mr.smart || '');
+}
+function wireOrchCustomToggle(sel, customInput) {
+  if (!sel || !customInput) return;
+  sel.addEventListener('change', () => {
+    const isCustom = sel.value === '__custom__';
+    customInput.hidden = !isCustom;
+    if (isCustom) customInput.focus();
   });
 }
+wireOrchCustomToggle($('#aut-mr-simple'), $('#aut-mr-simple-custom'));
+wireOrchCustomToggle($('#aut-mr-complex'), $('#aut-mr-complex-custom'));
 function openOrchestratorModal() {
   bindOrchestratorConfig();
   const m = $('#aut-orch-modal'); if (m) m.hidden = false;
@@ -4566,13 +4611,13 @@ $('#aut-orch-close') && $('#aut-orch-close').addEventListener('click', closeOrch
 $('#aut-orch-cancel') && $('#aut-orch-cancel').addEventListener('click', closeOrchestratorModal);
 if ($('#aut-mr-save')) {
   $('#aut-mr-save').addEventListener('click', async () => {
-    const modelRouting = {};
-    ['claude', 'gemini', 'codex', 'aider'].forEach((v) => {
-      const cheap = (($(`#aut-mr-${v}-cheap`) || {}).value || '').trim();
-      const smart = (($(`#aut-mr-${v}-smart`) || {}).value || '').trim();
-      if (cheap || smart) modelRouting[v] = Object.assign({}, cheap ? { cheap } : {}, smart ? { smart } : {});
-    });
-    cfg = await window.husk.config.set({ modelRouting });
+    const vendor = orchVendor();
+    const cheap = readOrchValue($('#aut-mr-simple'), $('#aut-mr-simple-custom'));
+    const smart = readOrchValue($('#aut-mr-complex'), $('#aut-mr-complex-custom'));
+    const mr = Object.assign({}, (cfg && cfg.modelRouting) || {});
+    const entry = Object.assign({}, cheap ? { cheap } : {}, smart ? { smart } : {});
+    if (Object.keys(entry).length) mr[vendor] = entry; else delete mr[vendor];
+    cfg = await window.husk.config.set({ modelRouting: mr });
     closeOrchestratorModal();
     toast('Model routing saved', 'success');
   });
