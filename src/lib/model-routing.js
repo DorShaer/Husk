@@ -53,8 +53,8 @@ const CHEAP_RE = new RegExp(
   '\\b(bump|upgrade|update)\\b[^.]*\\b(dep|deps|dependenc\\w*|version\\w*|package\\w*)'
   + '|\\b(re)?format\\b|\\blint\\b|prettier|eslint --fix'
   + '|\\brename\\b|\\btypo\\b|sort imports|organize imports'
-  + '|find (all )?(the )?(todo|fixme)|list (all )?|inventory of'
-  + '|add (a )?(comment|docstring|jsdoc)|changelog', 'i');
+  + '|\\b(find|list|scan|hunt|locate|collect|gather|catalog|audit|search|grep)\\b[^.]*\\b(todo|fixme|comment)'
+  + '|inventory of|add (a )?(comment|docstring|jsdoc)|changelog', 'i');
 
 function classifyTier(goal) {
   return CHEAP_RE.test(String(goal || '')) ? 'cheap' : 'smart';

@@ -49,8 +49,14 @@ test('override supplying only model names deep-merges the known flag', () => {
 test('classifyTier routes mechanical work to cheap', () => {
   assert.equal(classifyTier('Bump safe patch/minor versions of devDependencies in package.json'), 'cheap');
   assert.equal(classifyTier('find all TODO and FIXME comments'), 'cheap');
+  assert.equal(classifyTier('audit the frontend client for TODO and FIXME markers'), 'cheap');
+  assert.equal(classifyTier('scan the repo for FIXME comments and list them'), 'cheap');
   assert.equal(classifyTier('reformat the codebase with prettier'), 'cheap');
   assert.equal(classifyTier('rename the getUser helper everywhere'), 'cheap');
+});
+
+test('classifyTier keeps a real audit (no markers) as smart', () => {
+  assert.equal(classifyTier('audit the codebase for security vulnerabilities'), 'smart');
 });
 
 test('classifyTier defaults complex work to smart', () => {
