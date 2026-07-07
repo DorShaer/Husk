@@ -4544,8 +4544,9 @@ function closePrefsModal() {
   }
 })();
 
-// Model routing lives on the Autopilot page ("Configure custom orchestrator
-// agents"). Load config into its inputs and save on demand.
+// Model routing is configured from the "Configure" button next to Start a
+// run, which opens the orchestrator modal. Load config into its inputs and
+// save on demand.
 function bindOrchestratorConfig() {
   const mr = (cfg && cfg.modelRouting) || {};
   ['claude', 'gemini', 'codex', 'aider'].forEach((v) => {
@@ -4553,6 +4554,16 @@ function bindOrchestratorConfig() {
     const s = $(`#aut-mr-${v}-smart`); if (s) s.value = (mr[v] && mr[v].smart) || '';
   });
 }
+function openOrchestratorModal() {
+  bindOrchestratorConfig();
+  const m = $('#aut-orch-modal'); if (m) m.hidden = false;
+}
+function closeOrchestratorModal() {
+  const m = $('#aut-orch-modal'); if (m) m.hidden = true;
+}
+$('#aut-configure-orch') && $('#aut-configure-orch').addEventListener('click', openOrchestratorModal);
+$('#aut-orch-close') && $('#aut-orch-close').addEventListener('click', closeOrchestratorModal);
+$('#aut-orch-cancel') && $('#aut-orch-cancel').addEventListener('click', closeOrchestratorModal);
 if ($('#aut-mr-save')) {
   $('#aut-mr-save').addEventListener('click', async () => {
     const modelRouting = {};
@@ -4562,6 +4573,7 @@ if ($('#aut-mr-save')) {
       if (cheap || smart) modelRouting[v] = Object.assign({}, cheap ? { cheap } : {}, smart ? { smart } : {});
     });
     cfg = await window.husk.config.set({ modelRouting });
+    closeOrchestratorModal();
     toast('Model routing saved', 'success');
   });
 }

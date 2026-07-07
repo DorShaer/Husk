@@ -493,6 +493,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 Stop run
               </button>
+              <button class="ghost-btn" id="aut-configure-orch">Configure</button>
               <button class="btn-primary" id="aut-page-start">Start a run</button>
             </div>
           </div>
@@ -528,44 +529,6 @@
                 <span class="aut-section-sub">click to load the goal and caps; you can edit before running</span>
               </div>
               <div class="aut-preset-grid" id="aut-preset-grid"></div>
-            </section>
-
-            <section class="aut-section" id="aut-orchestrator-section">
-              <div class="aut-section-head">
-                <h3 class="aut-section-title">Configure custom orchestrator agents</h3>
-                <span class="aut-section-sub">Pick which model each task complexity uses. Leave blank and Husk automatically selects the model for you and tells you why in the run log.</span>
-              </div>
-              <div class="aut-orch-grid">
-                <label class="pref-row">
-                  <span class="pref-row-text"><span class="pref-label">claude</span><span class="pref-desc">cheap (mechanical) / smart (reasoning) model</span></span>
-                  <span class="pref-field-group">
-                    <input type="text" id="aut-mr-claude-cheap" placeholder="haiku" />
-                    <input type="text" id="aut-mr-claude-smart" placeholder="opus" />
-                  </span>
-                </label>
-                <label class="pref-row">
-                  <span class="pref-row-text"><span class="pref-label">gemini</span><span class="pref-desc">cheap / smart model</span></span>
-                  <span class="pref-field-group">
-                    <input type="text" id="aut-mr-gemini-cheap" placeholder="gemini-2.5-flash" />
-                    <input type="text" id="aut-mr-gemini-smart" placeholder="gemini-2.5-pro" />
-                  </span>
-                </label>
-                <label class="pref-row">
-                  <span class="pref-row-text"><span class="pref-label">codex</span><span class="pref-desc">cheap / smart model (blank = CLI default)</span></span>
-                  <span class="pref-field-group">
-                    <input type="text" id="aut-mr-codex-cheap" placeholder="cli default" />
-                    <input type="text" id="aut-mr-codex-smart" placeholder="cli default" />
-                  </span>
-                </label>
-                <label class="pref-row">
-                  <span class="pref-row-text"><span class="pref-label">aider</span><span class="pref-desc">cheap / smart model. Copilot has no model switch.</span></span>
-                  <span class="pref-field-group">
-                    <input type="text" id="aut-mr-aider-cheap" placeholder="cli default" />
-                    <input type="text" id="aut-mr-aider-smart" placeholder="cli default" />
-                  </span>
-                </label>
-                <button class="btn-primary" id="aut-mr-save" type="button">Save model routing</button>
-              </div>
             </section>
 
             <section class="aut-section">
@@ -737,6 +700,51 @@
               </label>
               <button class="ghost-btn" id="ai-cancel">Cancel</button>
               <button class="btn-primary" id="ai-confirm" disabled>Import 0 agents</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- CONFIGURE ORCHESTRATOR AGENTS MODAL -->
+        <div id="aut-orch-modal" class="modal" hidden>
+          <div class="modal-card modal-card-md">
+            <div class="modal-head">
+              <h2 class="modal-title">Configure custom orchestrator agents</h2>
+              <button class="modal-close" id="aut-orch-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <p class="ai-hint">Pick which model each task complexity uses. Leave blank and Husk automatically selects the model for you, and tells you why in the run log.</p>
+              <label class="pref-row">
+                <span class="pref-row-text"><span class="pref-label">claude</span><span class="pref-desc">cheap (mechanical) / smart (reasoning) model</span></span>
+                <span class="pref-field-group">
+                  <input type="text" id="aut-mr-claude-cheap" placeholder="haiku" />
+                  <input type="text" id="aut-mr-claude-smart" placeholder="opus" />
+                </span>
+              </label>
+              <label class="pref-row">
+                <span class="pref-row-text"><span class="pref-label">gemini</span><span class="pref-desc">cheap / smart model</span></span>
+                <span class="pref-field-group">
+                  <input type="text" id="aut-mr-gemini-cheap" placeholder="gemini-2.5-flash" />
+                  <input type="text" id="aut-mr-gemini-smart" placeholder="gemini-2.5-pro" />
+                </span>
+              </label>
+              <label class="pref-row">
+                <span class="pref-row-text"><span class="pref-label">codex</span><span class="pref-desc">cheap / smart model (blank = CLI default)</span></span>
+                <span class="pref-field-group">
+                  <input type="text" id="aut-mr-codex-cheap" placeholder="cli default" />
+                  <input type="text" id="aut-mr-codex-smart" placeholder="cli default" />
+                </span>
+              </label>
+              <label class="pref-row">
+                <span class="pref-row-text"><span class="pref-label">aider</span><span class="pref-desc">cheap / smart model. Copilot has no model switch.</span></span>
+                <span class="pref-field-group">
+                  <input type="text" id="aut-mr-aider-cheap" placeholder="cli default" />
+                  <input type="text" id="aut-mr-aider-smart" placeholder="cli default" />
+                </span>
+              </label>
+            </div>
+            <div class="modal-foot">
+              <button class="ghost-btn" id="aut-orch-cancel">Cancel</button>
+              <button class="btn-primary" id="aut-mr-save" type="button">Save</button>
             </div>
           </div>
         </div>
