@@ -10,15 +10,18 @@ test('claude routes both tiers with stable aliases', () => {
   assert.deepEqual(modelArgsFor('claude', 'smart'), ['--model', 'opus']);
 });
 
-test('gemini uses its -m flag', () => {
-  assert.deepEqual(modelArgsFor('gemini', 'cheap'), ['-m', 'gemini-2.5-flash']);
-  assert.deepEqual(modelArgsFor('gemini', 'smart'), ['-m', 'gemini-2.5-pro']);
-});
-
-test('subscription-bound CLIs inject NO flag by default (never break a run)', () => {
+test('only claude ships defaults; other CLIs are opt-in (no default names)', () => {
+  // gemini knows its flag but ships no default names -> no routing until set.
+  assert.deepEqual(modelArgsFor('gemini', 'cheap'), []);
   assert.deepEqual(modelArgsFor('copilot', 'cheap'), []);
   assert.deepEqual(modelArgsFor('aider', 'smart'), []);
   assert.deepEqual(modelArgsFor('codex', 'cheap'), []);
+});
+
+test('gemini routes once the user supplies names, using its verified -m flag', () => {
+  const ov = { gemini: { cheap: 'gemini-2.5-flash', smart: 'gemini-2.5-pro' } };
+  assert.deepEqual(modelArgsFor('gemini', 'cheap', ov), ['-m', 'gemini-2.5-flash']);
+  assert.deepEqual(modelArgsFor('gemini', 'smart', ov), ['-m', 'gemini-2.5-pro']);
 });
 
 test('an unknown CLI injects no flag', () => {

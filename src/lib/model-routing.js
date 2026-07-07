@@ -15,9 +15,14 @@
 // codex/aider know the flag but not the model names (version/account bound),
 // so they stay unrouted until the user supplies names in settings. copilot
 // has no model switch at all.
+// Only claude ships model-name defaults, because its --model aliases (haiku,
+// opus) are documented-stable and verified. Every other CLI knows its flag
+// but ships NO default names: a wrong model id fails the whole run, so the
+// user confirms the exact name in settings (placeholders suggest them). This
+// keeps routing safe on every CLI and automatic on claude.
 const DEFAULT_VENDOR_MODELS = Object.freeze({
   claude:  { flag: '--model', cheap: 'haiku', smart: 'opus' },
-  gemini:  { flag: '-m', cheap: 'gemini-2.5-flash', smart: 'gemini-2.5-pro' },
+  gemini:  { flag: '-m', cheap: null, smart: null },
   codex:   { flag: '--model', cheap: null, smart: null },
   aider:   { flag: '--model', cheap: null, smart: null },
   copilot: null,
