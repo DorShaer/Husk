@@ -7799,14 +7799,22 @@ function renderFleetReceipt(receipt) {
   const lane = ensureLane('_review');
   const feed = lane && lane.querySelector('.aut-lane-stream');
   if (!feed) return;
+  const noChanges = receipt.outcome === 'no-changes';
   const card = document.createElement('div');
   card.className = 'aut-conclusion aut-receipt';
-  card.style.borderLeft = '2px solid var(--accent, #67e8f9)';
+  card.style.borderLeft = `2px solid ${noChanges ? 'var(--warn, #f59e0b)' : 'var(--accent, #67e8f9)'}`;
 
   const label = document.createElement('div');
   label.className = 'aut-conclusion-label';
-  label.textContent = 'FLEET RECEIPT';
+  label.textContent = noChanges ? 'FLEET RECEIPT · NO CHANGES LANDED' : 'FLEET RECEIPT';
   card.appendChild(label);
+
+  if (noChanges) {
+    const note = document.createElement('div');
+    note.className = 'aut-conclusion-meta';
+    note.textContent = 'The goal was not completed: no files changed. Review each agent for why, then rerun or adjust the goal.';
+    card.appendChild(note);
+  }
 
   const title = document.createElement('div');
   title.className = 'aut-conclusion-title';

@@ -158,6 +158,10 @@ function buildFleetReceipt(rows, opts = {}) {
     agents: Array.from(perAgent.values()).map((a) => ({ ...a, dollars: round2(a.dollars) })),
     label: typeof opts.label === 'string' ? opts.label : null,
   };
+  // Outcome: 'productive' if any run landed changes, else 'no-changes' -- a
+  // fleet that spent money and changed nothing is a failure, not a win, and
+  // the UI must not celebrate it.
+  receipt.outcome = counts.landed > 0 ? 'productive' : (list.length ? 'no-changes' : 'empty');
   receipt.headline = headline(receipt);
   return receipt;
 }
@@ -171,6 +175,7 @@ function headline(receipt) {
   const money = receipt.tokensEstimated ? `~$${receipt.totalDollars.toFixed(2)}` : `$${receipt.totalDollars.toFixed(2)}`;
   parts.push(money);
   if (landed) parts.push(`${landed} landed`);
+  else if (total) parts.push('no changes landed');
   if (receipt.savings.caughtStalls > 0) {
     const s$ = receipt.savings.dollars;
     parts.push(s$ > 0

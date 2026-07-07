@@ -129,6 +129,17 @@ test('headline omits the dollar clause when savings are flat-rate only', () => {
   assert.doesNotMatch(r.headline, /saved/);
 });
 
+test('a fleet that lands nothing reads as no-changes, not a win', () => {
+  const rows = [
+    fromSummary(summary({ haltReason: 'stall', signal: 'spinning', dollars: 1.2, tokens: 30000, durationMs: 120000, caps: {} })),
+    fromSummary(summary({ haltReason: 'stall', signal: 'loop', dollars: 0.9, tokens: 20000, durationMs: 90000, caps: {} })),
+  ];
+  const r = buildFleetReceipt(rows);
+  assert.equal(r.counts.landed, 0);
+  assert.equal(r.outcome, 'no-changes');
+  assert.match(r.headline, /no changes landed/);
+});
+
 test('empty fleet is safe', () => {
   const r = buildFleetReceipt([]);
   assert.equal(r.runCount, 0);

@@ -1454,7 +1454,7 @@ const AUT_OUTPUT_FLUSH_MS = 250;
 const applyWorktreeChanges = require('./lib/autopilot-apply').applyWorktreeChanges;
 const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
-const { modelArgsFor } = require('./lib/model-routing');
+const { modelArgsFor, classifyTier } = require('./lib/model-routing');
 const { agentBaseName } = require('./lib/agent-oneshot');
 
 function autopilotStorageRoot() {
@@ -2251,6 +2251,13 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
     return { ok: false, error: 'autopilot refuses to snapshot the entire home folder' };
   }
   const runId = 'ap-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
+  // Downgrade a clearly mechanical solo task to the cheap model to save money;
+  // leave reasoning tasks on the user's chosen model.
+  if (classifyTier(payload.goal || '') === 'cheap') {
+    const base = config.agentCommand || 'claude';
+    const modelArgs = modelArgsFor(agentBaseName(base), 'cheap', config.modelRouting || {});
+    if (modelArgs.length) payload.agentCommand = `${base} ${modelArgs.join(' ')}`;
+  }
   const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
   const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
   if (activeCount >= maxConcurrent) {
