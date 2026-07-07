@@ -8002,13 +8002,11 @@ function tlPush(kind, label, colorIdx) {
   if (autopilotTimeline.length > 150) autopilotTimeline.shift();
   renderTimeline();
 }
-// Run log: labeled lifecycle events, newest first. Each row: +elapsed
-// time since run start, colored marker for the owning agent, and what
-// happened. Readable at a glance, unlike a bare dot axis.
+// Run log: labeled lifecycle events, newest first. Each row: wall-clock
+// timestamp, colored marker for the owning agent, and what happened.
 function renderTimeline() {
   const el = $('#aut-timeline');
   if (!el) return;
-  const start = autopilotRunStart || (autopilotTimeline[0] && autopilotTimeline[0].at) || Date.now();
   // Rebuild only when a new event landed; this runs on every budget tick.
   const sig = String(autopilotTimeline.length);
   if (el.dataset.sig === sig) return;
@@ -8026,10 +8024,11 @@ function renderTimeline() {
     const row = document.createElement('div');
     row.className = `aut-ev aut-ev-${ev.kind}`;
     if (ev.color >= 0) row.dataset.lane = String(ev.color);
-    const secs = Math.max(0, Math.round((ev.at - start) / 1000));
+    const d = new Date(ev.at);
     const t = document.createElement('span');
     t.className = 'aut-ev-time';
-    t.textContent = secs < 60 ? `+${secs}s` : `+${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, '0')}`;
+    // Absolute wall-clock timestamp, not a relative +Ns offset.
+    t.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
     const mark = document.createElement('span');
     mark.className = 'aut-ev-mark';
     const label = document.createElement('span');
@@ -8794,14 +8793,26 @@ try {
         const agents = Array.isArray(info.agents) ? info.agents : [];
         // Planned-but-not-started agents appear as queued chips in the
         // fleet strip until their started event replaces them.
-        plannedAgents = agents.map((a) => ({ role: a.role, subgoal: a.subgoal, tier: a.tier }));
-        const withTier = (a) => `${a.role}${a.tier ? ` (${a.tier})` : ''}`;
-        const lines = [`ORCHESTRATOR decided ${agents.length} agent${agents.length === 1 ? '' : 's'} for this task:`];
-        for (const a of agents) lines.push(`→ ${withTier(a)}: ${String(a.subgoal || '').slice(0, 160)}`);
+        plannedAgents = agents.map((a) => ({ role: a.role, subgoal: a.subgoal, tier: a.tier, model: a.model }));
+        // Persistent run-log entries, one per agent, explaining the model
+        // choice. No toast -- the user wants a durable, readable record.
+        const auto = agents.some((a) => a.autoSelected);
+        tlPush('plan', `ORCHESTRATOR decided ${agents.length} agent${agents.length === 1 ? '' : 's'} for this task${auto ? ' (auto-selected)' : ''}`, 3);
+        const lines = [`Planned ${agents.length} agent${agents.length === 1 ? '' : 's'}:`];
+        for (const a of agents) {
+          const detail = a.reason || `${a.tier} → ${a.model || 'default'}`;
+          tlPush('plan', `${a.role}: ${detail}`, 3);
+          lines.push(`→ ${a.role}: ${detail}`);
+        }
         pushActivity(lines, '_orch');
-        toast(`Orchestrator chose ${agents.length} agent${agents.length === 1 ? '' : 's'}: ${agents.map(withTier).join(', ')}`, 'info');
-        tlPush('plan', `ORCHESTRATOR · decided ${agents.length} agents · ${agents.map(withTier).join(', ')}`, 3);
         renderRunCards();
+      });
+    }
+    if (window.husk.autopilot.onOrchestrator) {
+      window.husk.autopilot.onOrchestrator((info) => {
+        if (!info || !info.reason) return;
+        tlPush('plan', `ORCHESTRATOR: ${info.reason}${info.autoSelected ? ' (auto-selected)' : ''}`, 3);
+        pushActivity([info.reason], '_orch');
       });
     }
     if (window.husk.autopilot.onBudget) {

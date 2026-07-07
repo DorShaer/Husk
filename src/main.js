@@ -2252,11 +2252,24 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
   }
   const runId = 'ap-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
   // Downgrade a clearly mechanical solo task to the cheap model to save money;
-  // leave reasoning tasks on the user's chosen model.
-  if (classifyTier(payload.goal || '') === 'cheap') {
+  // leave reasoning tasks on the user's chosen model. Emit the decision to the
+  // run log so the user sees which model was chosen and why.
+  {
     const base = config.agentCommand || 'claude';
-    const modelArgs = modelArgsFor(agentBaseName(base), 'cheap', config.modelRouting || {});
-    if (modelArgs.length) payload.agentCommand = `${base} ${modelArgs.join(' ')}`;
+    const baseName = agentBaseName(base);
+    const tier = classifyTier(payload.goal || '');
+    const routed = !!(config.modelRouting && Object.keys(config.modelRouting).length);
+    let model = `${baseName} (default)`;
+    if (tier === 'cheap') {
+      const modelArgs = modelArgsFor(baseName, 'cheap', config.modelRouting || {});
+      if (modelArgs.length) { payload.agentCommand = `${base} ${modelArgs.join(' ')}`; model = modelArgs[modelArgs.length - 1]; }
+    }
+    if (mainWindow) mainWindow.webContents.send('autopilot:orchestrator', {
+      runId, tier, model, autoSelected: !routed,
+      reason: tier === 'cheap'
+        ? `Task looks mechanical, spawning ${model} to save cost`
+        : `Task needs reasoning, using ${model}`,
+    });
   }
   const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
   const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
@@ -2326,6 +2339,18 @@ async function startCollabTeam(payload = {}) {
   if (planCancelled) return { ok: false, error: 'planning cancelled' };
   if (!plan.ok) return { ok: false, error: `orchestrator: ${plan.error}` };
   const groupId = 'collab-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+  // Resolve the model each agent will run on and attach a human-readable
+  // reason, so the run log can explain every orchestrator decision.
+  const routed = !!(config.modelRouting && Object.keys(config.modelRouting).length);
+  const baseName0 = agentBaseName(config.agentCommand || 'claude');
+  for (const a of plan.agents) {
+    const args = modelArgsFor(baseName0, a.tier, config.modelRouting || {});
+    a.model = args.length ? args[args.length - 1] : `${baseName0} (default)`;
+    a.autoSelected = !routed;
+    a.reason = a.tier === 'cheap'
+      ? `looks mechanical, ${args.length ? 'spawning ' + a.model : 'using the default model'}`
+      : `needs reasoning, using ${a.model}`;
+  }
   if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, goal, agents: plan.agents });
   collabGroups.set(groupId, {
     goal, caps: payload.caps, snapshot: payload.snapshot, workspaceRoot,

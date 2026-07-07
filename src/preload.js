@@ -171,6 +171,7 @@ contextBridge.exposeInMainWorld('husk', {
     onSnapshotProgress: (cb) => ipcRenderer.on('autopilot:snapshot-progress', (_e, payload) => cb(payload)),
     onActivity: (cb) => ipcRenderer.on('autopilot:activity', (_e, payload) => cb(payload)),
     onCollabPlan: (cb) => ipcRenderer.on('autopilot:collab-plan', (_e, payload) => cb(payload)),
+    onOrchestrator: (cb) => ipcRenderer.on('autopilot:orchestrator', (_e, payload) => cb(payload)),
     onBudget: (cb) => ipcRenderer.on('autopilot:budget', (_e, payload) => cb(payload)),
   },
   mcp: {
