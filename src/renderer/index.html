@@ -1384,6 +1384,47 @@
                 <button class="ghost-btn" id="btn-pref-cwd-pick" type="button">Pick&hellip;</button>
               </span>
             </label>
+            <div class="pref-card-title" style="margin-top:18px;">Model routing</div>
+            <label class="pref-row">
+              <span class="pref-row-text">
+                <span class="pref-label">claude</span>
+                <span class="pref-desc">Cheap and smart model names. Mechanical sub-tasks use cheap. Blank uses the CLI default.</span>
+              </span>
+              <span class="pref-field-group">
+                <input type="text" id="pref-mr-claude-cheap" placeholder="haiku" />
+                <input type="text" id="pref-mr-claude-smart" placeholder="opus" />
+              </span>
+            </label>
+            <label class="pref-row">
+              <span class="pref-row-text">
+                <span class="pref-label">gemini</span>
+                <span class="pref-desc">Cheap / smart model.</span>
+              </span>
+              <span class="pref-field-group">
+                <input type="text" id="pref-mr-gemini-cheap" placeholder="gemini-2.5-flash" />
+                <input type="text" id="pref-mr-gemini-smart" placeholder="gemini-2.5-pro" />
+              </span>
+            </label>
+            <label class="pref-row">
+              <span class="pref-row-text">
+                <span class="pref-label">codex</span>
+                <span class="pref-desc">Cheap / smart model. Blank leaves the codex default.</span>
+              </span>
+              <span class="pref-field-group">
+                <input type="text" id="pref-mr-codex-cheap" placeholder="cli default" />
+                <input type="text" id="pref-mr-codex-smart" placeholder="cli default" />
+              </span>
+            </label>
+            <label class="pref-row">
+              <span class="pref-row-text">
+                <span class="pref-label">aider</span>
+                <span class="pref-desc">Cheap / smart model. Blank leaves the aider default. Copilot has no model switch.</span>
+              </span>
+              <span class="pref-field-group">
+                <input type="text" id="pref-mr-aider-cheap" placeholder="cli default" />
+                <input type="text" id="pref-mr-aider-smart" placeholder="cli default" />
+              </span>
+            </label>
             <button class="btn-primary" id="pref-save">Save &amp; Restart Agent</button>
           </section>
         </div><!-- /pref-section agent -->

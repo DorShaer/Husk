@@ -11,30 +11,33 @@
 // than not routing. Every default is overridable from settings, keyed by the
 // CLI base name, so a user on any CLI version can point the tiers at the
 // exact model names their install accepts.
+// Per-vendor flag + tier model names. claude/gemini ship working defaults;
+// codex/aider know the flag but not the model names (version/account bound),
+// so they stay unrouted until the user supplies names in settings. copilot
+// has no model switch at all.
 const DEFAULT_VENDOR_MODELS = Object.freeze({
-  // claude accepts stable aliases the CLI resolves to the current version.
   claude:  { flag: '--model', cheap: 'haiku', smart: 'opus' },
   gemini:  { flag: '-m', cheap: 'gemini-2.5-flash', smart: 'gemini-2.5-pro' },
-  // codex / aider / copilot: model choice is bound to the account or a config
-  // file, and a wrong id fails the CLI, so route only when the user opts in
-  // with overrides. null = leave the CLI's own model.
-  codex: null,
-  aider: null,
+  codex:   { flag: '--model', cheap: null, smart: null },
+  aider:   { flag: '--model', cheap: null, smart: null },
   copilot: null,
 });
 
 // Return the argv fragment that selects `tier`'s model for this CLI, or []
-// when the vendor has no mapping (leave its default). overrides is a
-// per-vendor table merged over the defaults.
+// to leave the CLI default. overrides is a per-vendor table (from settings)
+// deep-merged over the defaults, so the UI only supplies model-name strings;
+// an override of null disables routing for that vendor.
 function modelArgsFor(agentBaseName, tier, overrides = {}) {
   const base = String(agentBaseName || '').toLowerCase();
-  const entry = Object.prototype.hasOwnProperty.call(overrides, base)
-    ? overrides[base]
-    : DEFAULT_VENDOR_MODELS[base];
+  const hasOv = Object.prototype.hasOwnProperty.call(overrides, base);
+  if (hasOv && overrides[base] === null) return [];
+  const def = DEFAULT_VENDOR_MODELS[base] || null;
+  const ov = hasOv ? overrides[base] : null;
+  const entry = (def || ov) ? Object.assign({}, def || {}, ov || {}) : null;
   if (!entry || !entry.flag) return [];
   const model = tier === 'cheap' ? entry.cheap : entry.smart;
-  if (!model || typeof model !== 'string') return [];
-  return [entry.flag, model];
+  if (!model || typeof model !== 'string' || !model.trim()) return [];
+  return [entry.flag, model.trim()];
 }
 
 // Classify a goal into a model tier. Conservative by design: only route DOWN

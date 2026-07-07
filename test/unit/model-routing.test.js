@@ -35,6 +35,14 @@ test('an override of null disables routing for a vendor', () => {
   assert.deepEqual(modelArgsFor('claude', 'cheap', { claude: null }), []);
 });
 
+test('override supplying only model names deep-merges the known flag', () => {
+  // codex knows its flag (--model) but ships no model names; the settings UI
+  // supplies just the names.
+  assert.deepEqual(modelArgsFor('codex', 'cheap', { codex: { cheap: 'gpt-5-mini' } }), ['--model', 'gpt-5-mini']);
+  // partial override: cheap set, smart still unrouted
+  assert.deepEqual(modelArgsFor('codex', 'smart', { codex: { cheap: 'gpt-5-mini' } }), []);
+});
+
 test('classifyTier routes mechanical work to cheap', () => {
   assert.equal(classifyTier('Bump safe patch/minor versions of devDependencies in package.json'), 'cheap');
   assert.equal(classifyTier('find all TODO and FIXME comments'), 'cheap');
