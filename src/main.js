@@ -1754,14 +1754,19 @@ function runTranscriptEntryToLines(r, obj) {
   }
   const usage = msg.usage;
   if (usage) {
-    // Only NEW work this turn: fresh input plus cache writes plus
-    // generated output. Cache reads are excluded; they measure the
-    // loaded context, not consumption, and belong to a context gauge
-    // rather than a usage meter.
-    const inTok = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
-    const outTok = usage.output_tokens || 0;
-    if ((inTok > 0 || outTok > 0) && r.runner && typeof r.runner.addTokens === 'function') {
-      try { r.runner.addTokens(inTok, outTok); } catch (_) {}
+    // Exact per-turn usage. Feed each tier separately so the meter bills it
+    // precisely: fresh input + output at their rates, cache writes at 1.25x
+    // input, cache reads at 0.1x input. Cache reads are billed (they cost a
+    // tenth, not nothing) but excluded from the token cap basis inside the
+    // meter, so a cap of "200k tokens" still means fresh work.
+    const u = {
+      input: usage.input_tokens || 0,
+      output: usage.output_tokens || 0,
+      cacheCreate: usage.cache_creation_input_tokens || 0,
+      cacheRead: usage.cache_read_input_tokens || 0,
+    };
+    if ((u.input || u.output || u.cacheCreate || u.cacheRead) && r.runner && typeof r.runner.addUsage === 'function') {
+      try { r.runner.addUsage(u); } catch (_) {}
     }
   }
   return lines;

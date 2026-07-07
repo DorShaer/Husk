@@ -68,6 +68,16 @@ function createBudgetMeter(opts = {}) {
   const startedAt = Number.isFinite(opts.startedAt) ? opts.startedAt : Date.now();
   let inputTokens = 0;
   let outputTokens = 0;
+  // Cache-tier tokens from a structured transcript, billed at their real
+  // Anthropic multiples of the input rate: cache writes at 1.25x, cache
+  // reads at 0.1x. Kept separate so the dollar figure is EXACT (not the
+  // status-line estimate) and so cache reads -- which dominate token counts
+  // but cost a tenth -- do not blow the token cap (they are excluded from
+  // the cap basis; only fresh work counts there).
+  let cacheCreateTokens = 0;
+  let cacheReadTokens = 0;
+  const CACHE_CREATE_MULT = 1.25;
+  const CACHE_READ_MULT = 0.1;
   // chars/4 fallback accumulates separately from explicit reports so a
   // weak estimate can never outrank a real signal.
   let estOutputTokens = 0;
@@ -91,6 +101,8 @@ function createBudgetMeter(opts = {}) {
     const now = Number.isFinite(input.now) ? input.now : Date.now();
     if (Number.isFinite(input.inputTokens))  inputTokens  += Math.max(0, input.inputTokens);
     if (Number.isFinite(input.outputTokens)) outputTokens += Math.max(0, input.outputTokens);
+    if (Number.isFinite(input.cacheCreateTokens)) cacheCreateTokens += Math.max(0, input.cacheCreateTokens);
+    if (Number.isFinite(input.cacheReadTokens))   cacheReadTokens   += Math.max(0, input.cacheReadTokens);
     if ((!Number.isFinite(input.inputTokens) && !Number.isFinite(input.outputTokens))
         && Number.isFinite(input.charsFromAgent) && input.charsFromAgent > 0) {
       estOutputTokens += Math.floor(input.charsFromAgent / 4);
@@ -114,7 +126,11 @@ function createBudgetMeter(opts = {}) {
     // seen before the transcript pinned); the larger cumulative wins
     // so a stale early report never masks real accumulation. The
     // estimate only surfaces when it is the ONLY signal.
-    const explicit = inputTokens + outputTokens;
+    // Fresh work = input + output + cache writes. Cache READS are excluded
+    // from the cap basis (they cost a tenth and dominate counts, so a token
+    // cap that included them would fire instantly) but they DO count toward
+    // dollars below.
+    const explicit = inputTokens + outputTokens + cacheCreateTokens;
     let totalTokens;
     let source;
     if (reportedTotal != null) {
@@ -148,7 +164,13 @@ function createBudgetMeter(opts = {}) {
     } else if (source === 'estimate') {
       dollars = (estOutputTokens / 1e6) * rate.out;
     } else {
-      dollars = (inputTokens / 1e6) * rate.in + (outputTokens / 1e6) * rate.out;
+      // Exact cache-aware cost from structured transcript deltas: fresh input
+      // and output at their rates, cache writes at 1.25x input, cache reads
+      // at 0.1x input. This is the precise dollar figure, not an estimate.
+      dollars = (inputTokens / 1e6) * rate.in
+        + (outputTokens / 1e6) * rate.out
+        + (cacheCreateTokens / 1e6) * (rate.in * CACHE_CREATE_MULT)
+        + (cacheReadTokens / 1e6) * (rate.in * CACHE_READ_MULT);
     }
     return {
       caps: { ...caps },
@@ -160,9 +182,15 @@ function createBudgetMeter(opts = {}) {
       // When the chars/4 estimate is the active source it is also the
       // output figure callers see; explicit deltas otherwise.
       outputTokens: source === 'estimate' ? estOutputTokens : outputTokens,
+      cacheCreateTokens,
+      cacheReadTokens,
       totalTokens,
       tokensEstimated: source === 'estimate',
       tokensReported: reportedTotal != null,
+      // Exact when the dollar figure comes from structured transcript deltas
+      // (the 'explicit' source with real work recorded), not an estimate or a
+      // status-line blend.
+      tokensExact: source === 'explicit' && explicit > 0,
       dollars,
       ratios: {
         minutes: caps.minutes > 0 ? Math.min(1, elapsedMinutes / caps.minutes) : 0,

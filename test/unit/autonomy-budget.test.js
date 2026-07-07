@@ -146,6 +146,27 @@ test('setReportedTokens overrides chars/4 estimate as the truth source', () => {
   assert.equal(s.tokensEstimated, false);
 });
 
+test('exact cache-aware cost: each tier billed at its real rate', () => {
+  const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-sonnet-4-7' }); // in $3, out $15
+  m.tick({ inputTokens: 10000, outputTokens: 5000, cacheCreateTokens: 20000, cacheReadTokens: 1_000_000 });
+  const s = m.state(T0);
+  // dollars = 10k*3 + 5k*15 + 20k*(3*1.25) + 1M*(3*0.1), all /1e6
+  //         = 0.03 + 0.075 + 0.075 + 0.30 = 0.48
+  assert.ok(Math.abs(s.dollars - 0.48) < 1e-9, `dollars ${s.dollars}`);
+  assert.equal(s.tokensExact, true);
+  assert.equal(s.cacheReadTokens, 1_000_000);
+});
+
+test('cache reads are billed but EXCLUDED from the token cap basis', () => {
+  // 1M cache reads under a 200k token cap must not trip it: the cap counts
+  // fresh work (input + output + cache writes), not cheap cache re-reads.
+  const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-sonnet-4-7', caps: { minutes: 1e9, tokens: 200000, dollars: 1e9 } });
+  m.tick({ inputTokens: 10000, outputTokens: 5000, cacheCreateTokens: 20000, cacheReadTokens: 1_000_000 });
+  const s = m.state(T0);
+  assert.equal(s.totalTokens, 35000);       // 10k + 5k + 20k, cache reads excluded
+  assert.equal(s.hitCap, null);             // 35k < 200k, despite 1M cache reads
+});
+
 test('reported dollars use the cache-weighted rate, not the fresh blend', () => {
   // Calibrated from real usage: a status-line cumulative is ~97% cache reads,
   // so 1M reported tokens costs ~$0.54 for Sonnet, not the old ~$11.40.

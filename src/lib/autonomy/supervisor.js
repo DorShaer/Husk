@@ -337,6 +337,15 @@ function startRun(opts = {}) {
       // input + generated output, cache reads excluded). The truthful
       // signal: sums to what the run actually consumed.
       addTokens: (inp, out) => budget.tick({ inputTokens: inp, outputTokens: out }),
+      // Exact per-turn usage from a structured transcript: fresh input,
+      // output, cache writes, and cache reads billed at their real rates.
+      // The precise dollar path; supersedes the status-line estimate.
+      addUsage: (u = {}) => budget.tick({
+        inputTokens: u.input,
+        outputTokens: u.output,
+        cacheCreateTokens: u.cacheCreate,
+        cacheReadTokens: u.cacheRead,
+      }),
     },
   };
 }
