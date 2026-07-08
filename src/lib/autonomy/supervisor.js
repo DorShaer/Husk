@@ -333,6 +333,10 @@ function startRun(opts = {}) {
       // token count (parsed from its status line by the renderer)
       // into the meter and override the chars/4 estimate.
       setReportedTokens: (n) => budget.setReportedTokens(n),
+      // Re-pin the billing rate to the model the transcript reports actually
+      // ran this turn, so dollars use the real model's price, not the guess
+      // made at start.
+      setModel: (id) => { try { budget.setModel(id); } catch (_) {} },
       // Exact per-turn deltas from a structured transcript (real new
       // input + generated output, cache reads excluded). The truthful
       // signal: sums to what the run actually consumed.

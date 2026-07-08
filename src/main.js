@@ -1756,6 +1756,14 @@ function runTranscriptEntryToLines(r, obj) {
       }
     }
   }
+  // Pin the meter's billing rate to the model that actually produced this
+  // turn (transcript is ground truth; the start-time model may be a guess or
+  // a tier alias). Cheap + idempotent, so feed it every turn.
+  if (typeof msg.model === 'string' && msg.model && msg.model !== '<synthetic>'
+      && r.runner && typeof r.runner.setModel === 'function') {
+    try { r.runner.setModel(msg.model); } catch (_) {}
+    if (!r.observedModel) r.observedModel = msg.model;
+  }
   const usage = msg.usage;
   if (usage) {
     // Exact per-turn usage. Feed each tier separately so the meter bills it
@@ -2595,6 +2603,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
       quietMs: Math.max(0, Date.now() - Math.max(rs.lastFeedAt || 0, rs.lastPtyDataAt || 0)),
       role: rs.role || null,
       agent: rs.agent || null,
+      modelObserved: rs.observedModel || null,
     });
     if (s.hitCap) {
       try { clearInterval(rs.tickInterval); } catch (_) {}

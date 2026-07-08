@@ -36,12 +36,19 @@ const DEFAULT_CAPS = Object.freeze({
 // Numbers are intentionally rough; the meter is for "stop the run
 // before it gets wild", not for billing accuracy.
 const DEFAULT_RATES = Object.freeze({
-  // model id -> { in: $/Mtok, out: $/Mtok }
+  // model id -> { in: $/Mtok, out: $/Mtok }. Public list prices; the meter
+  // bills input and output at their own rates (output is ~5x input) and
+  // cache tiers at input multiples, so the dollar figure tracks the model
+  // that actually ran, not a blended guess.
+  'claude-fable-5':    { in: 10, out: 50 },
+  'claude-opus-4-8':   { in: 5, out: 25 },
+  'claude-opus-4-7':   { in: 5, out: 25 },
+  'claude-opus-4-6':   { in: 5, out: 25 },
+  'claude-sonnet-5':   { in: 3, out: 15 },
   'claude-sonnet-4-6': { in: 3, out: 15 },
   'claude-sonnet-4-7': { in: 3, out: 15 },
-  'claude-opus-4-6':   { in: 15, out: 75 },
-  'claude-opus-4-7':   { in: 15, out: 75 },
-  'claude-haiku-4-5':  { in: 0.8, out: 4 },
+  'claude-haiku-4-5':  { in: 1, out: 5 },
+  'claude-haiku-4-5-20251001': { in: 1, out: 5 },
   // Copilot / Codex / Aider / Gemini: billing depends on the account, not
   // the CLI (a Copilot or Gemini subscription is flat; the same CLI on an
   // API key is metered), and Husk cannot tell which mode is active. Treat
@@ -55,6 +62,36 @@ const DEFAULT_RATES = Object.freeze({
   '_default':          { in: 3, out: 15 },
 });
 
+// Resolve a model id to its rate. A transcript reports dated ids
+// (claude-opus-4-8-20260115) and tier aliases (opus, haiku); match exact
+// first, then strip a trailing -YYYYMMDD date, then match the longest rate
+// key that is a substring (so "opus-4-8" and a bare "opus" both land on the
+// opus rate). Falls back to _default so an unknown id never crashes billing.
+function resolveRate(modelId, rates) {
+  const id = String(modelId || '').toLowerCase();
+  if (!id) return { id: '_default', rate: rates._default };
+  if (rates[id]) return { id, rate: rates[id] };
+  const undated = id.replace(/-\d{8}$/, '');
+  if (rates[undated]) return { id: undated, rate: rates[undated] };
+  let best = null;
+  for (const key of Object.keys(rates)) {
+    if (key === '_default') continue;
+    const fam = key.replace(/^claude-/, '');
+    if (id.includes(key) || id.includes(fam)) {
+      if (!best || fam.length > best.fam.length) best = { key, fam };
+    }
+  }
+  // Bare tier aliases the CLI accepts as --model values.
+  if (!best) {
+    if (/\bopus\b/.test(id)) best = { key: 'claude-opus-4-8', fam: 'opus' };
+    else if (/\bsonnet\b/.test(id)) best = { key: 'claude-sonnet-5', fam: 'sonnet' };
+    else if (/\bhaiku\b/.test(id)) best = { key: 'claude-haiku-4-5', fam: 'haiku' };
+    else if (/\bfable\b/.test(id)) best = { key: 'claude-fable-5', fam: 'fable' };
+  }
+  if (best) return { id: best.key, rate: rates[best.key] };
+  return { id: '_default', rate: rates._default };
+}
+
 function createBudgetMeter(opts = {}) {
   const caps = Object.assign({}, DEFAULT_CAPS, opts.caps || {});
   if (!Number.isFinite(caps.minutes) || caps.minutes < 0) caps.minutes = DEFAULT_CAPS.minutes;
@@ -62,8 +99,11 @@ function createBudgetMeter(opts = {}) {
   if (!Number.isFinite(caps.dollars) || caps.dollars < 0) caps.dollars = DEFAULT_CAPS.dollars;
 
   const rates = Object.assign({}, DEFAULT_RATES, opts.rates || {});
-  const modelId = typeof opts.modelId === 'string' && opts.modelId ? opts.modelId : '_default';
-  const rate = rates[modelId] || rates._default;
+  // Mutable: the run may not know its model until the first transcript turn
+  // reports it; setModel() re-pins the rate to what actually ran.
+  let resolved = resolveRate(opts.modelId, rates);
+  let modelId = resolved.id;
+  let rate = resolved.rate;
 
   const startedAt = Number.isFinite(opts.startedAt) ? opts.startedAt : Date.now();
   let inputTokens = 0;
@@ -201,6 +241,16 @@ function createBudgetMeter(opts = {}) {
     };
   }
 
+  // Re-pin the billing rate to the model the transcript says actually ran.
+  // Idempotent: a no-op when the resolved id is unchanged, so feeding it on
+  // every turn is cheap.
+  function setModel(id) {
+    const next = resolveRate(id, rates);
+    if (next.id === modelId) return;
+    modelId = next.id;
+    rate = next.rate;
+  }
+
   function setReportedTokens(n) {
     if (!Number.isFinite(n) || n < 0) return;
     // Monotonic: cumulative counters do not shrink; if the parser sees
@@ -225,6 +275,7 @@ function createBudgetMeter(opts = {}) {
     tick,
     state,
     setReportedTokens,
+    setModel,
     startedAt() { return startedAt; },
     lastTickAt() { return lastTickAt; },
   };
@@ -233,5 +284,6 @@ function createBudgetMeter(opts = {}) {
 module.exports = {
   DEFAULT_CAPS,
   DEFAULT_RATES,
+  resolveRate,
   createBudgetMeter,
 };

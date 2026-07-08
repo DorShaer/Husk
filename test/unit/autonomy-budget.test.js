@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   DEFAULT_CAPS,
   DEFAULT_RATES,
+  resolveRate,
   createBudgetMeter,
 } = require('../../src/lib/autonomy/budget');
 
@@ -198,12 +199,12 @@ test('setReportedTokens is monotonic (never lets the counter regress)', () => {
 });
 
 test('reported tokens drive dollar cost via the cache-weighted rate', () => {
-  // claude-opus rates: in $15/Mtok, out $75/Mtok. A reported cumulative is
+  // claude-opus-4-7 rates: in $5/Mtok, out $25/Mtok. A reported cumulative is
   // cache-dominated, so the calibrated rate is in*0.13 + out*0.01 =
-  // 15*0.13 + 75*0.01 = 2.70/Mtok. 1000 tokens => 0.0027 dollars.
+  // 5*0.13 + 25*0.01 = 0.90/Mtok. 1000 tokens => 0.0009 dollars.
   const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-opus-4-7' });
   m.setReportedTokens(1000);
-  assert.ok(Math.abs(m.state(T0).dollars - 0.0027) < 1e-6, `dollars ${m.state(T0).dollars}`);
+  assert.ok(Math.abs(m.state(T0).dollars - 0.0009) < 1e-6, `dollars ${m.state(T0).dollars}`);
 });
 
 test('explicit transcript deltas outgrow a stale early report', () => {
@@ -232,4 +233,36 @@ test('estimate never outranks an explicit or reported signal', () => {
   const s = m.state(T0);
   assert.equal(s.totalTokens, 100);
   assert.equal(s.tokensEstimated, false);
+});
+
+test('current model rates are real list prices (opus 5/25, haiku 1/5, fable 10/50)', () => {
+  assert.deepEqual(DEFAULT_RATES['claude-opus-4-8'], { in: 5, out: 25 });
+  assert.deepEqual(DEFAULT_RATES['claude-opus-4-7'], { in: 5, out: 25 });
+  assert.deepEqual(DEFAULT_RATES['claude-haiku-4-5'], { in: 1, out: 5 });
+  assert.deepEqual(DEFAULT_RATES['claude-fable-5'], { in: 10, out: 50 });
+  assert.deepEqual(DEFAULT_RATES['claude-sonnet-5'], { in: 3, out: 15 });
+});
+
+test('resolveRate matches exact id, strips date suffix, and maps tier aliases', () => {
+  assert.equal(resolveRate('claude-opus-4-8', DEFAULT_RATES).id, 'claude-opus-4-8');
+  assert.equal(resolveRate('claude-opus-4-8-20260115', DEFAULT_RATES).id, 'claude-opus-4-8');
+  assert.equal(resolveRate('opus', DEFAULT_RATES).id, 'claude-opus-4-8');
+  assert.equal(resolveRate('haiku', DEFAULT_RATES).id, 'claude-haiku-4-5');
+  assert.equal(resolveRate('fable', DEFAULT_RATES).id, 'claude-fable-5');
+  assert.equal(resolveRate('somenewcli-model', DEFAULT_RATES).id, '_default');
+});
+
+test('setModel re-pins the billing rate to the model that actually ran', () => {
+  // Meter created blind (no model). Same fresh work billed under haiku then opus.
+  const mh = createBudgetMeter({ startedAt: T0 });
+  mh.setModel('claude-haiku-4-5');            // in $1, out $5
+  mh.tick({ inputTokens: 100000, outputTokens: 100000 });
+  // 100k*1 + 100k*5, /1e6 = 0.1 + 0.5 = 0.6
+  assert.ok(Math.abs(mh.state(T0).dollars - 0.6) < 1e-9, `haiku ${mh.state(T0).dollars}`);
+
+  const mo = createBudgetMeter({ startedAt: T0 });
+  mo.setModel('claude-opus-4-8-20260115');    // dated id -> in $5, out $25
+  mo.tick({ inputTokens: 100000, outputTokens: 100000 });
+  // 100k*5 + 100k*25, /1e6 = 0.5 + 2.5 = 3.0
+  assert.ok(Math.abs(mo.state(T0).dollars - 3.0) < 1e-9, `opus ${mo.state(T0).dollars}`);
 });

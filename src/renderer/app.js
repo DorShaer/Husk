@@ -7445,7 +7445,8 @@ function renderRunCards() {
   // Rebuild the DOM only when the set of agents changes; budget ticks
   // patch the existing nodes in place (updateRunCardsLive) so clicks
   // never land on a node destroyed mid-frame.
-  const sig = [...activeRuns.keys()].join(',') + '|' + plannedAgents.map((p) => p.role).join(',');
+  const sig = [...activeRuns.keys()].join(',') + '|' + plannedAgents.map((p) => p.role).join(',')
+    + '|done:' + (activeRuns.size ? '' : finishedFleet.map((f) => f.role).join(','));
   if (list.dataset.sig === sig) { updateRunCardsLive(); return; }
   list.dataset.sig = sig;
   while (list.firstChild) list.removeChild(list.firstChild);
@@ -7518,7 +7519,53 @@ function renderRunCards() {
     row.appendChild(action);
     list.appendChild(row);
   }
+  // Post-run: no live or queued agents, but a finished fleet to keep on screen.
+  // Each card shows what that agent did (model, tokens, cost, cache, files, how
+  // it ended) so the panel is a durable record instead of going blank.
+  if (!activeRuns.size && !plannedAgents.length && finishedFleet.length) {
+    for (const f of finishedFleet) list.appendChild(buildFinishedAgentCard(f));
+  }
   updateRunCardsLive();
+}
+// Read-only card for a finished agent (persisted post-run record).
+function buildFinishedAgentCard(f) {
+  const row = document.createElement('div');
+  row.className = 'aut-agent-row is-done' + (f.endedOk ? '' : ' is-halted');
+  row.dataset.lane = String((f.colorIdx || 0) % AP_LANE_COLORS);
+  row.title = f.goal || f.role;
+  const nameRow = document.createElement('div');
+  nameRow.className = 'aut-chip-name';
+  const dot = document.createElement('span');
+  dot.className = 'aut-chip-dot';
+  const label = document.createElement('span');
+  label.className = 'aut-chip-label';
+  label.textContent = f.role;
+  const state = document.createElement('span');
+  state.className = 'aut-chip-state';
+  state.dataset.state = f.endedOk ? 'done' : 'stopped';
+  state.textContent = f.endedOk ? 'done' : (f.endReason || 'stopped');
+  nameRow.appendChild(dot);
+  nameRow.appendChild(label);
+  nameRow.appendChild(state);
+  const action = document.createElement('div');
+  action.className = 'aut-chip-action';
+  const model = prettyModel(f.model);
+  action.textContent = (model ? model + ' · ' : '') + (f.finalMessage || `${f.files} file${f.files === 1 ? '' : 's'} changed`);
+  const meta = document.createElement('div');
+  meta.className = 'aut-swarm-card-meta';
+  const secs = Math.round((f.durationMs || 0) / 1000);
+  const dur = secs >= 60 ? `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s` : `${secs}s`;
+  const money = f.approx && !f.exact ? `~${formatDollars(f.dollars)}` : formatDollars(f.dollars);
+  meta.textContent = `${dur}  ·  ${formatTokens(f.tokens)} tok  ·  ${money}`;
+  // Cache-aware split, so the persisted record proves the number is real.
+  const split = document.createElement('div');
+  split.className = 'aut-chip-split';
+  split.textContent = `in ${formatTokens(f.input)} · out ${formatTokens(f.output)} · cache r ${formatTokens(f.cacheRead)}/w ${formatTokens(f.cacheWrite)}`;
+  row.appendChild(nameRow);
+  row.appendChild(action);
+  row.appendChild(meta);
+  row.appendChild(split);
+  return row;
 }
 // Patch live agent-row content (state, current action, meta) in place.
 function updateRunCardsLive() {
@@ -7526,8 +7573,14 @@ function updateRunCardsLive() {
   if (!list) return;
   const meta = document.getElementById('aut-agents-meta');
   if (meta) {
-    const totalUsd = [...activeRuns.values()].reduce((s, r) => s + (r.budget ? Number(r.budget.dollars) || 0 : 0), 0);
-    meta.textContent = `${liveRunCount()}/${activeRuns.size + plannedAgents.length} live · $${totalUsd.toFixed(2)}`;
+    if (!activeRuns.size && finishedFleet.length) {
+      // Post-run: summarize the finished fleet, not a live count.
+      const usd = finishedFleet.reduce((s, f) => s + (Number(f.dollars) || 0), 0);
+      meta.textContent = `${finishedFleet.length} finished · ${formatDollars(usd)}`;
+    } else {
+      const totalUsd = [...activeRuns.values()].reduce((s, r) => s + (r.budget ? Number(r.budget.dollars) || 0 : 0), 0);
+      meta.textContent = `${liveRunCount()}/${activeRuns.size + plannedAgents.length} live · ${formatDollars(totalUsd)}`;
+    }
   }
   list.querySelectorAll('.aut-agent-row[data-rid]').forEach((row) => {
     const rid = row.dataset.rid;
@@ -7955,6 +8008,18 @@ function formatTokens(n) {
   if (n >= 1000) return (n / 1000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'k';
   return String(n);
 }
+// Friendly model label from a raw id or tier alias, vendor-agnostic.
+// claude-opus-4-8 -> Opus 4.8; haiku -> Haiku; gemini-2.5-pro -> Gemini 2.5 Pro.
+function prettyModel(id) {
+  const s = String(id || '').trim();
+  if (!s) return '';
+  const bare = s.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+  const cap = (w) => w ? w[0].toUpperCase() + w.slice(1) : w;
+  const m = bare.match(/^(opus|sonnet|haiku|fable|mythos)-?(\d+(?:[-.]\d+)?)?$/);
+  if (m) return cap(m[1]) + (m[2] ? ' ' + m[2].replace('-', '.') : '');
+  // Non-claude ids: title-case the dashed segments.
+  return bare.split(/[-_]/).map((p) => /^\d/.test(p) ? p : cap(p)).join(' ');
+}
 function formatDollars(usd) {
   // Always render as $X.YY so the unit is unambiguous. Under a cent
   // we still show two decimal places ($0.00) rather than a different
@@ -8008,16 +8073,23 @@ function renderUsageStripLive() {
   let warnTokens = false;
   let warnDollars = false;
   let earliest = 0;
+  let brk = { input: 0, output: 0, cw: 0, cr: 0, exact: false, approx: false };
   for (const run of activeRuns.values()) {
     const b = run.budget;
     if (run.startedAt && (!earliest || run.startedAt < earliest)) earliest = run.startedAt;
     if (!b) continue;
     tokens += Number(b.totalTokens) || 0;
     dollars += Number(b.dollars) || 0;
-    if (b.tokensReported || b.tokensEstimated) anyApprox = true;
+    brk.input += Number(b.inputTokens) || 0;
+    brk.output += Number(b.outputTokens) || 0;
+    brk.cw += Number(b.cacheCreateTokens) || 0;
+    brk.cr += Number(b.cacheReadTokens) || 0;
+    if (b.tokensExact) brk.exact = true;
+    if (b.tokensReported || b.tokensEstimated) { anyApprox = true; brk.approx = true; }
     if (caps.tokens > 0 && (Number(b.totalTokens) || 0) / caps.tokens >= 0.8) warnTokens = true;
     if (caps.dollars > 0 && (Number(b.dollars) || 0) / caps.dollars >= 0.8) warnDollars = true;
   }
+  renderTokenBreakdown(brk);
   const elapsedMin = earliest ? (Date.now() - earliest) / 60000 : 0;
   if (caps.minutes > 0 && elapsedMin / caps.minutes >= 0.8) warnTime = true;
   const tv = $('#aut-page-val-time');
@@ -8029,6 +8101,28 @@ function renderUsageStripLive() {
   if (meters[0]) meters[0].classList.toggle('is-warn', warnTime);
   if (meters[1]) meters[1].classList.toggle('is-warn', warnTokens);
   if (meters[2]) meters[2].classList.toggle('is-warn', warnDollars);
+}
+// Cache-aware token split under the headline count. Cache reads dominate the
+// raw token number but bill at a tenth, so showing the split is how the user
+// sees the dollar figure is real, not a flat per-token guess. 'exact' means
+// the numbers came from the agent's structured transcript (input/output/cache
+// deltas), 'approx' means a status-line cumulative or a chars/4 estimate.
+function renderTokenBreakdown(brk) {
+  const box = document.getElementById('aut-token-breakdown');
+  if (!box) return;
+  const total = brk.input + brk.output + brk.cw + brk.cr;
+  if (!total) { box.hidden = true; return; }
+  box.hidden = false;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = formatTokens(v); };
+  set('aut-tb-input', brk.input);
+  set('aut-tb-output', brk.output);
+  set('aut-tb-cw', brk.cw);
+  set('aut-tb-cr', brk.cr);
+  const src = document.getElementById('aut-tb-src');
+  if (src) {
+    src.textContent = brk.exact ? 'exact · from transcript' : brk.approx ? 'approx · status line' : '';
+    src.dataset.exact = brk.exact ? '1' : '0';
+  }
 }
 function updateAutopilotElapsed() {
   if (!autopilotActive) return;
@@ -8065,6 +8159,37 @@ const AP_LANE_COLORS = 4; // hue set: accent, emerald, amber, violet
 let autopilotTimeline = [];
 let autopilotRunStart = 0;
 let plannedAgents = []; // orchestrator-planned roles not yet started
+let finishedFleet = []; // per-agent records that survive activeRuns.clear() into review
+
+// Snapshot every active run's final state before activeRuns is cleared, so the
+// SPAWNED AGENTS panel keeps showing what each agent did (model, tokens, cost,
+// cache split, files, how it ended) after the run instead of going blank.
+function snapshotFinishedFleet() {
+  finishedFleet = [...activeRuns.values()].map((run) => {
+    const b = run.budget || {};
+    const sum = run.endSummary || null;
+    return {
+      role: run.role || run.agent || (run.goal ? run.goal.slice(0, 24) : 'agent'),
+      agent: run.agent || null,
+      model: b.modelObserved || b.modelId || run.model || null,
+      goal: run.goal || null,
+      colorIdx: run.colorIdx || 0,
+      endedOk: !!run.endedOk,
+      endReason: (sum && sum.endReason) || (run.endedOk ? 'agent_complete' : 'ended'),
+      finalMessage: (sum && sum.finalMessage) ? String(sum.finalMessage).slice(0, 200) : null,
+      durationMs: run.startedAt ? Date.now() - run.startedAt : 0,
+      files: Array.isArray(run.files) ? run.files.length : 0,
+      dollars: Number(b.dollars) || 0,
+      tokens: Number(b.totalTokens) || 0,
+      input: Number(b.inputTokens) || 0,
+      output: Number(b.outputTokens) || 0,
+      cacheWrite: Number(b.cacheCreateTokens) || 0,
+      cacheRead: Number(b.cacheReadTokens) || 0,
+      exact: !!b.tokensExact,
+      approx: !!(b.tokensReported || b.tokensEstimated),
+    };
+  });
+}
 
 function liveRunCount() {
   let n = 0;
@@ -8105,8 +8230,11 @@ function renderTimeline() {
     const d = new Date(ev.at);
     const t = document.createElement('span');
     t.className = 'aut-ev-time';
-    // Absolute wall-clock timestamp, not a relative +Ns offset.
-    t.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+    // Absolute wall-clock stamp, DD-MM-YYYY HH:MM:SS, so a persisted log reads
+    // unambiguously after the run (and across days), not a relative offset.
+    const p2 = (n) => String(n).padStart(2, '0');
+    t.textContent = `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()} `
+      + `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
     const mark = document.createElement('span');
     mark.className = 'aut-ev-mark';
     const label = document.createElement('span');
@@ -8714,6 +8842,7 @@ try {
         autopilotTimeline = [];
         autopilotRunStart = 0;
         plannedAgents = [];
+        finishedFleet = [];
         autopilotState.eventCount = 0;
         const lanes = $('#aut-lanes');
         if (lanes) {
@@ -8789,6 +8918,7 @@ try {
           })).filter((m) => m.sessionId);
           // A just-finished run retains its worktree, so this review offers
           // Apply/Discard rather than the snapshot-era Revert.
+          snapshotFinishedFleet();
           activeRuns.clear();
           enterReviewMode({ sessionId: sid, workspaceRoot: wr, summary: sum, retained: true, runId });
           showFleetReceipt(fleetMembers);
@@ -8799,6 +8929,7 @@ try {
           else if (halt === 'agent-exited') runEndBanner('Run ended: agent exited', 'stopped');
           else runEndBanner('Run complete', '');
         } else {
+          snapshotFinishedFleet();
           activeRuns.clear();
           paintAutopilotBanner();
         }
@@ -8875,10 +9006,16 @@ try {
         // Persistent run-log entries, one per agent, explaining the model
         // choice. No toast -- the user wants a durable, readable record.
         const auto = agents.some((a) => a.autoSelected);
-        tlPush('plan', `ORCHESTRATOR decided ${agents.length} agent${agents.length === 1 ? '' : 's'} for this task${auto ? ' (auto-selected)' : ''}`, 3);
+        // Name each agent's model in the headline so the persisted log reads
+        // "decided 2 agents: Backend Auditor (haiku), Frontend Auditor (opus)".
+        const roster = agents
+          .map((a) => `${a.role} (${prettyModel(a.model) || a.tier || 'default'})`)
+          .join(', ');
+        tlPush('plan', `ORCHESTRATOR decided ${agents.length} agent${agents.length === 1 ? '' : 's'}`
+          + `${roster ? ': ' + roster : ''}${auto ? ' (auto-selected)' : ''}`, 3);
         const lines = [`Planned ${agents.length} agent${agents.length === 1 ? '' : 's'}:`];
         for (const a of agents) {
-          const detail = a.reason || `${a.tier} → ${a.model || 'default'}`;
+          const detail = a.reason || `${a.tier} → ${prettyModel(a.model) || 'default'}`;
           tlPush('plan', `${a.role}: ${detail}`, 3);
           lines.push(`→ ${a.role}: ${detail}`);
         }
