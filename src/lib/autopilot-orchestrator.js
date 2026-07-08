@@ -32,6 +32,17 @@ function buildPlanPrompt(goal, maxAgents) {
 
 // Pull the plan out of possibly prose-wrapped output. Returns a cleaned
 // agents array (2..maxAgents) or null when no usable plan exists.
+// Resolve one agent's tier. The keyword classifier only ever fires 'cheap' on
+// clearly mechanical work (find TODOs, bump deps, format, rename), so a cheap
+// verdict is a safe, money-saving downgrade that overrides a planner that
+// over-tagged the sub-task 'smart'. When the classifier stays neutral (smart),
+// defer to the planner's own tier (it saw the whole plan). No planner tier and
+// no cheap signal falls through to smart.
+function resolveTier(a) {
+  const plannerTier = normalizeTier(typeof a.tier === 'string' ? a.tier : 'smart');
+  return classifyTier(a.subgoal) === 'cheap' ? 'cheap' : plannerTier;
+}
+
 function extractPlan(text, maxAgents) {
   const m = String(text || '').match(/\{[\s\S]*\}/);
   if (!m) return null;
@@ -44,9 +55,7 @@ function extractPlan(text, maxAgents) {
     .map((a) => ({
       role: (a.role.trim().slice(0, 40) || 'agent').replace(/\s+/g, ' '),
       subgoal: a.subgoal.trim().slice(0, 2000),
-      // Trust the planner's tier; fall back to a keyword classifier on the
-      // sub-task so a plan without tiers still routes.
-      tier: normalizeTier(typeof a.tier === 'string' ? a.tier : classifyTier(a.subgoal)),
+      tier: resolveTier(a),
     }))
     .slice(0, Math.max(2, maxAgents));
   return clean.length >= 2 ? clean : null;
@@ -91,4 +100,4 @@ function planCollab({ goal, agentCommand, cwd, maxAgents, env, onChild }) {
   });
 }
 
-module.exports = { planCollab, extractPlan, buildPlanPrompt };
+module.exports = { planCollab, extractPlan, buildPlanPrompt, resolveTier };
