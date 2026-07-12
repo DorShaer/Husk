@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src/renderer/assets/husk-logo.png" alt="Husk" width="100" />
+<img src="src/renderer/assets/husk-logo.png" alt="Husk" width="180" />
 
 # 
 [![Typing SVG](https://readme-typing-svg.demolab.com?font=Cause&weight=900&size=30&pause=1000&color=F74A1D&width=435&lines=CLI+Agents.+But+for+everyone)](https://git.io/typing-svg)
