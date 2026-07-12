@@ -6360,14 +6360,14 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
    own rather than the husk closing over him. Keep these two in step. */
 .hk.is-shut .hk-seed {
   transition:
-    transform 1.8s cubic-bezier(.35,0,.5,1) 0.1s,
-    opacity 0.4s ease 1.75s;
+    transform 1.15s cubic-bezier(.35,0,.5,1) 0.08s,
+    opacity 0.3s ease 1.05s;
 }
-.hk.is-shut .hk-petal { transition: transform 1.8s cubic-bezier(.35,0,.5,1) 0.1s; }
+.hk.is-shut .hk-petal { transition: transform 1.15s cubic-bezier(.35,0,.5,1) 0.08s; }
 .hk.is-shut .hk-hand { transition: opacity 0.35s ease; }
 /* The cavity holds its fill until the halves have met over it, or the page
    shows through the closing seam. */
-.hk.is-shut .hk-pit { transition: opacity 0.3s ease 2.1s; }
+.hk.is-shut .hk-pit { transition: opacity 0.3s ease 1.4s; }
 .hk.is-shut .hk-glow { transition: opacity 1.3s ease 0.7s; }
 
 .hk-pit { opacity: 0; transition: opacity 0.5s ease 0.15s; }
