@@ -6218,10 +6218,78 @@ input[type="checkbox"]:disabled {
 
 /* Welcome step: the block-level rise is replaced by a per-element one, so the
    page assembles itself instead of arriving in a single slab. */
-.ob-step[data-step="welcome"] { animation: none; }
+.ob-step[data-step="welcome"] { animation: none; position: relative; isolation: isolate; }
 .ob-step[data-step="welcome"] > * {
   opacity: 0;
   animation: ob-rise-in 0.62s var(--ease-out) forwards;
+}
+
+/* Two soft light fields drifting behind the content, on their own layer so they
+   never affect layout or intercept the pointer. */
+.ob-aurora {
+  position: absolute; inset: -30% -20%; z-index: -1;
+  pointer-events: none; overflow: hidden;
+  opacity: 1; animation: none;
+}
+.ob-aurora i {
+  position: absolute; display: block;
+  width: 46rem; height: 46rem; border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.5;
+}
+.ob-aurora i:nth-child(1) {
+  left: -6rem; top: -8rem;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 42%, transparent), transparent 68%);
+  animation: ob-drift-a 22s ease-in-out infinite;
+}
+.ob-aurora i:nth-child(2) {
+  right: -8rem; bottom: -10rem;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent-2) 32%, transparent), transparent 68%);
+  animation: ob-drift-b 27s ease-in-out infinite;
+}
+body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
+@keyframes ob-drift-a {
+  0%, 100% { translate: 0 0; scale: 1; }
+  50%      { translate: 6rem 4rem; scale: 1.14; }
+}
+@keyframes ob-drift-b {
+  0%, 100% { translate: 0 0; scale: 1.08; }
+  50%      { translate: -5rem -5rem; scale: 1; }
+}
+
+/* Embers: a few motes lifting through the frame, seeded with different delays so
+   they never march in step. */
+.ob-embers {
+  position: absolute; inset: 0; z-index: -1;
+  pointer-events: none; overflow: hidden;
+  opacity: 1; animation: none;
+}
+.ob-embers i {
+  position: absolute; bottom: -12px; display: block;
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent);
+  animation: ob-ember 11s linear infinite;
+}
+.ob-embers i:nth-child(1) { left: 12%; animation-delay: 0s;   animation-duration: 12s; }
+.ob-embers i:nth-child(2) { left: 28%; animation-delay: 2.4s; animation-duration: 14s; width: 3px; height: 3px; }
+.ob-embers i:nth-child(3) { left: 46%; animation-delay: 5.1s; animation-duration: 10s; }
+.ob-embers i:nth-child(4) { left: 63%; animation-delay: 1.3s; animation-duration: 15s; width: 5px; height: 5px; }
+.ob-embers i:nth-child(5) { left: 79%; animation-delay: 7.0s; animation-duration: 13s; width: 3px; height: 3px; }
+.ob-embers i:nth-child(6) { left: 91%; animation-delay: 3.7s; animation-duration: 11s; }
+@keyframes ob-ember {
+  0%   { translate: 0 0;        opacity: 0; scale: 0.6; }
+  12%  { opacity: 0.75; }
+  70%  { opacity: 0.5; }
+  100% { translate: 14px -30rem; opacity: 0; scale: 1; }
+}
+
+/* The logo sits in a wrapper so the pointer tilt and the entrance can own
+   different properties instead of fighting over transform. */
+.ob-logo-wrap {
+  perspective: 700px;
+  transform-style: preserve-3d;
 }
 @keyframes ob-rise-in {
   from { opacity: 0; transform: translateY(16px); }
@@ -6236,32 +6304,81 @@ input[type="checkbox"]:disabled {
   0%, 100% { filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4)) drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 30%, transparent)); }
   50%      { filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4)) drop-shadow(0 0 26px color-mix(in srgb, var(--accent) 65%, transparent)); }
 }
-.ob-step[data-step="welcome"] > .ob-logo {
+/* Rises on `translate`, leaving `transform` free for the pointer tilt. */
+.ob-step[data-step="welcome"] > .ob-logo-wrap {
+  animation: ob-rise-in-t 0.62s var(--ease-out) 0.04s forwards;
+  will-change: transform;
+}
+@keyframes ob-rise-in-t {
+  from { opacity: 0; translate: 0 16px; }
+  to   { opacity: 1; translate: none; }
+}
+.ob-step[data-step="welcome"] .ob-logo {
   animation:
-    ob-rise-in 0.62s var(--ease-out) 0.04s forwards,
     ob-float 6.5s ease-in-out 0.9s infinite,
     ob-glow 4.5s ease-in-out 0.9s infinite;
 }
-.ob-step[data-step="welcome"] > .ob-wordmark {
+.ob-step[data-step="welcome"] > .ob-wordmark { opacity: 1; animation: none; }
+/* Each letter strikes in, then keeps its own sheen. The sheen delays are stepped,
+   so the highlight crosses H, U, S, K in turn rather than flashing the word. */
+.ob-wordmark span {
+  display: inline-block;
+  opacity: 0;
   animation:
-    ob-rise-in 0.62s var(--ease-out) 0.16s forwards,
-    ob-sheen 5.5s ease-in-out 1.3s infinite;
+    ob-strike 0.7s var(--ease-out) forwards,
+    ob-sheen 5.5s ease-in-out infinite;
 }
-.ob-step[data-step="welcome"] > .ob-title   { animation-delay: 0.28s; }
-.ob-step[data-step="welcome"] > .ob-sub     { animation-delay: 0.40s; }
-.ob-step[data-step="welcome"] > .ob-cta     { animation-delay: 0.52s; }
-.ob-step[data-step="welcome"] > .ob-version { animation-delay: 0.64s; }
+.ob-wordmark span:nth-child(1) { animation-delay: 0.18s, 1.60s; }
+.ob-wordmark span:nth-child(2) { animation-delay: 0.28s, 1.72s; }
+.ob-wordmark span:nth-child(3) { animation-delay: 0.38s, 1.84s; }
+.ob-wordmark span:nth-child(4) { animation-delay: 0.48s, 1.96s; }
+/* Each letter drops in from above, out of focus, and lands sharp. */
+@keyframes ob-strike {
+  0%   { opacity: 0; transform: translateY(-16px) scale(1.35); filter: blur(9px); }
+  60%  { opacity: 1; }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.ob-step[data-step="welcome"] > .ob-title   { animation-delay: 0.58s; }
+.ob-step[data-step="welcome"] > .ob-sub     { animation-delay: 0.70s; }
+.ob-step[data-step="welcome"] > .ob-cta     { animation-delay: 0.82s; }
+.ob-step[data-step="welcome"] > .ob-version { animation-delay: 0.94s; }
+
+/* The button breathes, and a highlight crosses it on hover. */
+.ob-step[data-step="welcome"] > .ob-cta {
+  position: relative;
+  overflow: hidden;
+}
+.ob-step[data-step="welcome"] > .ob-cta::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 35%, rgba(255,255,255,0.38) 50%, transparent 65%);
+  translate: -120% 0;
+}
+.ob-step[data-step="welcome"] > .ob-cta:hover::after {
+  animation: ob-cta-sweep 0.75s var(--ease-out);
+}
+@keyframes ob-cta-sweep {
+  to { translate: 120% 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .ob-step[data-step="welcome"] > *,
-  .ob-step[data-step="welcome"] > .ob-logo,
-  .ob-step[data-step="welcome"] > .ob-wordmark {
+  .ob-step[data-step="welcome"] .ob-logo,
+  .ob-step[data-step="welcome"] > .ob-wordmark,
+  .ob-wordmark span,
+  .ob-aurora i,
+  .ob-embers i {
     animation: none;
     opacity: 1;
     translate: none;
+    transform: none;
+    filter: none;
   }
   /* Park the sheen mid-sweep so the wordmark still reads as metal. */
   .ob-wordmark { background-position: 50% 50%; }
+  .ob-embers { display: none; }
+  .ob-aurora i { opacity: 0.35; }
+  .ob-logo { filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4)); }
 }
 .ob-logo-sm { width: 48px; height: 48px; margin-bottom: 4px; filter: none; }
 .ob-wordmark {
@@ -6275,8 +6392,16 @@ input[type="checkbox"]:disabled {
   text-indent: 0.14em;
   text-transform: uppercase;
   line-height: 1;
-  /* Brushed silver: dark edges, a bright band, dark edges. The band is wider than
-     the text so it can be slid across the letters (see ob-sheen). */
+}
+/* The metal lives on each letter, not on the word. A letter that is transformed
+   or filtered stops being clipped by its parent's background-clip, so a gradient
+   set on the word disappears the moment the letters animate. Each letter carries
+   its own ramp, and the sheen is staggered across them so the highlight still
+   travels along the word.
+
+   Brushed silver: dark edges, a bright band, dark edges. The band is wider than
+   the glyph so it can be slid across it (see ob-sheen). */
+.ob-wordmark span {
   background: linear-gradient(100deg,
     #7d8794 0%, #c3cad4 28%, #ffffff 46%, #c3cad4 62%, #7d8794 100%);
   background-size: 240% 100%;
@@ -6286,7 +6411,7 @@ input[type="checkbox"]:disabled {
 }
 /* On a light surface the same silver washes out, so the ramp is darker and the
    bright band stops short of white. */
-body[data-mode="light"] .ob-wordmark {
+body[data-mode="light"] .ob-wordmark span {
   background: linear-gradient(100deg,
     #4b5563 0%, #808b99 28%, #b9c1cb 46%, #808b99 62%, #4b5563 100%);
   background-size: 240% 100%;

@@ -28,8 +28,16 @@
       <div class="ob-stage">
         <!-- Step 1: Welcome -->
         <section class="ob-step" data-step="welcome">
-          <img class="ob-logo" src="assets/husk-logo.png" alt="Husk" />
-          <div class="ob-wordmark">Husk</div>
+          <!-- Decorative: two drifting light fields and a few rising embers. -->
+          <div class="ob-aurora" aria-hidden="true"><i></i><i></i></div>
+          <div class="ob-embers" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="ob-logo-wrap">
+            <img class="ob-logo" src="assets/husk-logo.png" alt="Husk" />
+          </div>
+          <!-- Letters are separate elements so each can be struck individually. -->
+          <div class="ob-wordmark" aria-label="Husk">
+            <span aria-hidden="true">H</span><span aria-hidden="true">U</span><span aria-hidden="true">S</span><span aria-hidden="true">K</span>
+          </div>
           <h1 class="ob-title">Your terminal,<br />now an AI workspace.</h1>
           <p class="ob-sub">A clean, fast desktop home for your favorite AI coding CLI. Let's get you set up.</p>
           <button class="btn-primary ob-cta" id="ob-start" type="button">Get Started <span class="ob-nav-arrow">→</span></button>

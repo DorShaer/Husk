@@ -7020,6 +7020,37 @@ async function runOnboarding({ replay = false } = {}) {
     finish();
   }
 
+  // The logo leans toward the pointer. The tilt lives on the wrapper, so it never
+  // competes with the drift and glow running on the logo itself. Held to a few
+  // degrees: past that it stops reading as depth and starts reading as a gimmick.
+  {
+    const wrap = overlay.querySelector('.ob-logo-wrap');
+    const welcome = overlay.querySelector('.ob-step[data-step="welcome"]');
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (wrap && welcome && !still) {
+      let frame = 0;
+      const MAX_DEG = 9;
+      on(welcome, 'pointermove', (e) => {
+        if (frame) return; // one update per painted frame, not one per event
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          const r = welcome.getBoundingClientRect();
+          const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+          const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+          const clamp = (n) => Math.max(-1, Math.min(1, n));
+          wrap.style.transform =
+            `rotateY(${clamp(dx) * MAX_DEG}deg) rotateX(${clamp(-dy) * MAX_DEG}deg)`;
+        });
+      });
+      on(welcome, 'pointerleave', () => {
+        if (frame) { cancelAnimationFrame(frame); frame = 0; }
+        wrap.style.transition = 'transform 0.6s var(--ease-out)';
+        wrap.style.transform = '';
+        setTimeout(() => { wrap.style.transition = ''; }, 650);
+      });
+    }
+  }
+
   // Navigation.
   on($('#ob-start'), 'click', () => showStep(1));
   on(cliNext, 'click', () => showStep(2));
