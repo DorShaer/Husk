@@ -6017,8 +6017,6 @@ function activePluginContext() {
   return null;
 }
 
-function pluginsSupported() { return !!activePluginContext(); }
-
 // Resolve a validated installed plugin's install path, confined to the
 // plugins root. Returns null when unknown or outside the root (a
 // tampered registry must not turn the editor into an arbitrary-fs API).
@@ -6267,21 +6265,26 @@ const TITLE_CACHE_MAX = 300;
 function latestTranscriptTitle(fullPath, dialectName) {
   const dialect = TITLE_DIALECTS[dialectName];
   if (!dialect) return '';
-  let st;
-  try { st = fs.statSync(fullPath); } catch (_) { return ''; }
 
   const key = `${dialectName}:${fullPath}`;
   const prev = titleScanCache.get(key);
-  // Resume from the previous read only when this is the same file, still growing.
-  // A file that shrank was replaced, so start over.
-  const resumable = prev && st.size >= prev.size;
-  let scanned = resumable ? prev.scanned : 0;
-  let title = resumable ? prev.title : '';
 
-  if (scanned < st.size) {
-    let fd;
-    try {
-      fd = fs.openSync(fullPath, 'r');
+  // Open once and measure the descriptor. Sizing the read from a stat of the
+  // path and then opening the path again reads whatever the name points at by
+  // then, which need not be the file that was measured.
+  let fd;
+  try { fd = fs.openSync(fullPath, 'r'); } catch (_) { return ''; }
+
+  let title = '';
+  try {
+    const st = fs.fstatSync(fd);
+    // Resume from the previous read only when this is the same file, still
+    // growing. A file that shrank was replaced, so start over.
+    const resumable = prev && st.size >= prev.size;
+    let scanned = resumable ? prev.scanned : 0;
+    title = resumable ? prev.title : '';
+
+    if (scanned < st.size) {
       const len = st.size - scanned;
       const buf = Buffer.alloc(len);
       const n = fs.readSync(fd, buf, 0, len, scanned);
@@ -6301,16 +6304,16 @@ function latestTranscriptTitle(fullPath, dialectName) {
         }
         scanned += Buffer.byteLength(text.slice(0, lastNl + 1), 'utf8');
       }
-    } catch (_) {
-      return title;
-    } finally {
-      if (fd !== undefined) { try { fs.closeSync(fd); } catch (_) {} }
     }
-  }
 
-  if (titleScanCache.size > TITLE_CACHE_MAX) titleScanCache.clear();
-  titleScanCache.set(key, { size: st.size, mtimeMs: st.mtimeMs, scanned, title });
-  return title;
+    if (titleScanCache.size > TITLE_CACHE_MAX) titleScanCache.clear();
+    titleScanCache.set(key, { size: st.size, mtimeMs: st.mtimeMs, scanned, title });
+    return title;
+  } catch (_) {
+    return title;
+  } finally {
+    try { fs.closeSync(fd); } catch (_) {}
+  }
 }
 
 function latestAiTitle(fullPath) {
@@ -6520,13 +6523,17 @@ const copilotTitleCache = new Map(); // dir -> { sig, value }
 const COPILOT_CACHE_MAX = 4000;
 
 function readCopilotWorkspace(dir) {
+  const yamlPath = path.join(dir, 'workspace.yaml');
+  // The cache signature and the contents both come from one descriptor, so the
+  // entry can never describe a different file than the one that was read.
+  let fd;
+  try { fd = fs.openSync(yamlPath, 'r'); } catch (_) { return null; }
   try {
-    const yamlPath = path.join(dir, 'workspace.yaml');
-    const st = fs.statSync(yamlPath);
+    const st = fs.fstatSync(fd);
     const sig = `${st.size}:${st.mtimeMs}`;
     const hit = copilotWorkspaceCache.get(dir);
     if (hit && hit.sig === sig) return hit.ws;
-    const text = fs.readFileSync(yamlPath, 'utf8');
+    const text = fs.readFileSync(fd, 'utf8');
     const o = {};
     for (const line of text.split('\n')) {
       const m = line.match(/^([A-Za-z_]+):\s*(.*)$/);
@@ -6536,6 +6543,7 @@ function readCopilotWorkspace(dir) {
     copilotWorkspaceCache.set(dir, { sig, ws: o });
     return o;
   } catch (_) { return null; }
+  finally { try { fs.closeSync(fd); } catch (_) {} }
 }
 
 function readCopilotSessionTitle(dir) {

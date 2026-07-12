@@ -192,7 +192,7 @@ function toggle(id, activeAgentCommand) {
   const results = {};
   let failures = 0;
   for (const [key, adapter] of writeAdapters()) {
-    let cur = findServer(adapter, id);
+    const cur = findServer(adapter, id);
     if (!cur && payload) {
       const addRes = adapter.add(payload);
       if (!addRes || !addRes.ok) {
@@ -200,7 +200,6 @@ function toggle(id, activeAgentCommand) {
         results[key] = { status: 'error', error: (addRes && addRes.error) || 'install failed', configPath: adapter.configPath };
         continue;
       }
-      cur = findServer(adapter, id);
     }
     const r = setEnabled(adapter, id, desired);
     if (r && r.ok) results[key] = { status: desired ? 'enabled' : 'disabled', configPath: adapter.configPath };
