@@ -3152,13 +3152,13 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   filter: saturate(140%);
 }
 .ce-logo-img {
-  width: 64px; height: 64px;
+  width: 116px; height: 116px;
   display: block;
-  margin: 0 auto 6px;
+  margin: 0 auto 10px;
   user-select: none;
   -webkit-user-drag: none;
   opacity: 0.95;
-  filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--accent) 28%, transparent));
+  filter: drop-shadow(0 8px 24px color-mix(in srgb, var(--accent) 28%, transparent));
 }
 .ce-title {
   font-family: var(--font-display);
