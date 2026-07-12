@@ -6344,24 +6344,30 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 }
 .hk.is-open .hk-seed { transform: translateY(0) scale(1) rotate(-3deg); opacity: 1; }
 .hk.is-open.is-peek .hk-seed { transform: translateY(-7px) scale(1.05) rotate(-3deg); }
-.hk.is-open .hk-seed { animation: hk-breathe 4.4s ease-in-out 1.2s infinite; }
+
+/* Breathing lives on its own group. Put it on the seed and it would be animating
+   the very property the sink transitions, and an animation wins that fight: the
+   seed would jump to the bottom the instant the animation came off. */
+.hk-breath { transform-box: view-box; transform-origin: 100px 150px; }
+.hk.is-open .hk-breath { animation: hk-breathe 4.4s ease-in-out 1.2s infinite; }
 
 /* Going back in: the hands let go and the seed sinks slowly, while the halves
    swing shut over it. The two overlap on purpose, so the husk closes ON the
    seed rather than waiting for it to disappear first. */
-/* He stays solid the whole way down. Fading him early would make him vanish on
-   his own while the husk was still wide open, so the shell is what hides him and
-   the fade only finishes the job once the halves have nearly met. */
+/* He stays solid the whole way down, and he descends on exactly the same clock
+   and curve as the halves. Given a faster curve than theirs he reaches the
+   bottom while the husk is still wide open, which reads as him diving in on his
+   own rather than the husk closing over him. Keep these two in step. */
 .hk.is-shut .hk-seed {
   transition:
-    transform 1.9s cubic-bezier(.4,.02,.5,1) 0.15s,
-    opacity 0.5s ease 1.6s;
+    transform 1.8s cubic-bezier(.35,0,.5,1) 0.1s,
+    opacity 0.4s ease 1.75s;
 }
-.hk.is-shut .hk-petal { transition: transform 1.6s cubic-bezier(.4,0,.55,1) 0.55s; }
+.hk.is-shut .hk-petal { transition: transform 1.8s cubic-bezier(.35,0,.5,1) 0.1s; }
 .hk.is-shut .hk-hand { transition: opacity 0.35s ease; }
 /* The cavity holds its fill until the halves have met over it, or the page
    shows through the closing seam. */
-.hk.is-shut .hk-pit { transition: opacity 0.3s ease 2.2s; }
+.hk.is-shut .hk-pit { transition: opacity 0.3s ease 2.1s; }
 .hk.is-shut .hk-glow { transition: opacity 1.3s ease 0.7s; }
 
 .hk-pit { opacity: 0; transition: opacity 0.5s ease 0.15s; }
@@ -6428,8 +6434,8 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 }
 
 @keyframes hk-breathe {
-  0%, 100% { transform: scale(1) rotate(-3deg); }
-  50%      { transform: scale(1.022) rotate(-3deg); }
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.022); }
 }
 @keyframes hk-glow-pulse {
   0%, 100% { opacity: 0.75; scale: 1; }
@@ -6533,7 +6539,7 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
   .hk .hk-seed { transform: rotate(-3deg); opacity: 1; }
   .hk .hk-hand { opacity: 1; translate: 0 0; }
   .hk .hk-glow, .hk .hk-pit { opacity: 1; }
-  .hk, .hk-petal, .hk-seed, .hk-sprout-g, .hk-hand,
+  .hk, .hk-petal, .hk-seed, .hk-breath, .hk-sprout-g, .hk-hand,
   .hk-glow, .hk-pit, .hk-lid, .hk-sparks circle { animation: none; transition: none; }
 
   .ob-step[data-step="welcome"] > *,

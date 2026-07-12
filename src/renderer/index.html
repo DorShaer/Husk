@@ -103,7 +103,10 @@
                 <path d="M100 12 C 60 46, 30 76, 30 108 C 30 142, 60 178, 100 202 Z" fill="url(#hk-pit)" />
               </g>
 
-              <g class="hk-seed">
+              <!-- The breath rides its own group. A CSS animation outranks a transition
+                   on the same property, so breathing on the seed itself would make the
+                   seed snap to the bottom the moment the animation is dropped. -->
+              <g class="hk-seed"><g class="hk-breath">
                 <g class="hk-sprout-g">
                   <path d="M99 34 C 96 18, 88 8, 73 3 C 84 -4, 100 4, 105 18 C 110 4, 122 -3, 135 2 C 129 20, 115 32, 102 35 Z" fill="url(#hk-sprout)" />
                   <path d="M101 38 C 100 30, 99 22, 96 14" stroke="#31673a" stroke-width="2.4" fill="none" stroke-linecap="round" />
@@ -140,7 +143,7 @@
                 <g clip-path="url(#hk-clip-r)"><rect class="hk-lid" x="105" y="35" width="34" height="34" fill="url(#hk-body)" /></g>
 
                 <path class="hk-mouth" d="M92 112 C 96 117.5, 104 117.5, 108 112" stroke="#8f4816" stroke-width="3.4" fill="none" stroke-linecap="round" />
-              </g>
+              </g></g>
 
               <g class="hk-petal hk-petal-l">
                 <path d="M100 12 C 60 46, 30 76, 30 108 C 30 142, 60 178, 100 202 Z" fill="url(#hk-rind-l)" />
