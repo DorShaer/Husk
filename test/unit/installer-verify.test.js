@@ -92,35 +92,35 @@ test('download_and_verify: removes stale output when the download fails', () => 
 // ─── Installer-script shape ─────────────────────────────────────────────
 
 test('install.sh: bun installer is downloaded to a temp file before running', () => {
-  const text = fs.readFileSync(path.join(REPO_ROOT, 'install.sh'), 'utf8');
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'install.sh'), 'utf8');
   assert.match(text, /download_and_verify[^\n]*BUN_INSTALLER_URL/);
   assert.match(text, /bash\s+"\$installer_tmp"/);
 });
 
 test('install.sh: sources installer/lib/verify.sh', () => {
-  const text = fs.readFileSync(path.join(REPO_ROOT, 'install.sh'), 'utf8');
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'install.sh'), 'utf8');
   assert.match(text, /installer\/lib\/verify\.sh/);
 });
 
 test('install.sh: pins BUN_INSTALLER_SHA256 to a 64-hex value', () => {
-  const text = fs.readFileSync(path.join(REPO_ROOT, 'install.sh'), 'utf8');
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'install.sh'), 'utf8');
   const m = text.match(/BUN_INSTALLER_SHA256="([0-9a-f]{64})"/);
   assert.ok(m, 'expected BUN_INSTALLER_SHA256="<64-hex>" in install.sh');
 });
 
 test('install.ps1: bun installer is downloaded to a temp file before running', () => {
-  const text = fs.readFileSync(path.join(REPO_ROOT, 'install.ps1'), 'utf8');
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'install.ps1'), 'utf8');
   assert.match(text, /Get-VerifiedDownload[^\n]*BunInstallerUrl/);
   assert.match(text, /-File\s+\$installerTmp/);
 });
 
 test('install.ps1: sources installer/lib/verify.ps1', () => {
-  const text = fs.readFileSync(path.join(REPO_ROOT, 'install.ps1'), 'utf8');
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'install.ps1'), 'utf8');
   assert.match(text, /installer\/lib\/verify\.ps1/);
 });
 
 test('install.ps1: pins BunInstallerSha256 to a 64-hex value', () => {
-  const text = fs.readFileSync(path.join(REPO_ROOT, 'install.ps1'), 'utf8');
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'install.ps1'), 'utf8');
   const m = text.match(/BunInstallerSha256\s*=\s*'([0-9a-f]{64})'/);
   assert.ok(m, "expected $Script:BunInstallerSha256 = '<64-hex>' in install.ps1");
 });

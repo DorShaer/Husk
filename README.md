@@ -90,7 +90,7 @@ sudo dpkg -i husk-v*-linux-amd64.deb || sudo apt -f install
 chmod +x husk-v*-linux-x86_64.AppImage && ./husk-v*-linux-x86_64.AppImage
 
 # Or build from source
-git clone https://github.com/DorShaer/Husk.git && cd Husk && ./install.sh
+git clone https://github.com/DorShaer/Husk.git && cd Husk && ./installer/install.sh
 ```
 
 Only x86_64 Linux builds are published today. There is no arm64 Linux build yet, and the binaries are glibc-linked, so musl distros (Alpine) are not supported.
@@ -148,7 +148,7 @@ For contributors and tinkerers:
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
 cd husk
-./install.sh
+./installer/install.sh
 ```
 
 `install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS), and bootstraps PAI into `~/.claude/`.
@@ -156,14 +156,14 @@ cd husk
 For pure dev mode without system registration:
 
 ```bash
-./run.sh
+./scripts/run.sh
 ```
 
 ## Uninstall
 
 ```bash
-./uninstall.sh             # remove launcher, icon, config, voice models
-./uninstall.sh --keep-data # preserve config and Piper voices
+./installer/uninstall.sh             # remove launcher, icon, config, voice models
+./installer/uninstall.sh --keep-data # preserve config and Piper voices
 ```
 
 The source checkout and `node_modules/` are protected; if the checkout is inside
@@ -223,7 +223,7 @@ husk/
 ├── test/                      Unit tests (node:test) + Electron smoke
 │   ├── unit/                  node:test unit suite (500+ tests)
 │   └── e2e/                   Playwright smoke (real Electron boot)
-├── install.sh / run.sh / uninstall.sh
+├── installer/                  source installers, packaging assets, landing page
 ├── package.json
 ├── README.md
 └── LICENSE
@@ -255,7 +255,7 @@ husk/
 - `src/renderer/` is the renderer: a single-page Electron view with rail navigation, an embedded xterm, a status panel, and the Chat / Agents / Workflows / Autopilot / Projects / Prompts / Skills / MCP / Plugins / Files / Sessions surfaces plus the Preferences modal.
 - `libs/pai/` is the bundled PAI framework, copied into `~/.claude/` on first install. Contains the system prompt, Algorithm phase machine, agents, hooks, lib, and the curated skills set.
 - `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
-- `install.sh` / `run.sh` / `uninstall.sh` are the entry-point scripts and stay at the repo root for easy `git clone && cd && ./install.sh`.
+- `installer/` holds the source installers (`install.sh`, `install.ps1`, `uninstall.sh`) alongside the packaging assets they use. `scripts/` holds the published one-line installers and the dev launcher (`run.sh`). The repo root stays free of loose scripts.
 
 ### Testing
 

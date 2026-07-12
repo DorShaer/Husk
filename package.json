@@ -21,9 +21,9 @@
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
     "test": "node --test test/unit/",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --config test/playwright.config.js",
     "test:all": "npm run test && npm run test:e2e",
-    "test:perf": "playwright test --config playwright.perf.config.js"
+    "test:perf": "playwright test --config test/playwright.perf.config.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -64,8 +64,8 @@
         ]
       },
       {
-        "from": "installer",
-        "to": "installer",
+        "from": "installer/prompts",
+        "to": "installer/prompts",
         "filter": [
           "**/*"
         ]

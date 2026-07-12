@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Husk: local dev launcher.
 # Runs the app from the source tree without registering it as a desktop app.
-# Use this while iterating on code. For a real install, run ./install.sh once.
+# Use this while iterating on code. For a real install, run ./installer/install.sh once.
 set -e
-cd "$(dirname "$0")"
+# This script lives in scripts/, and everything below (node_modules, electron .)
+# is resolved from the project root, which is its parent.
+cd "$(dirname "$0")/.."
 
 C_OK='\033[0;32m'; C_INFO='\033[0;36m'; C_WARN='\033[1;33m'; C_DIM='\033[2m'; C_RST='\033[0m'
 

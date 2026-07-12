@@ -7,7 +7,7 @@ Quick reference for working on Husk. Skim once before sending your first PR.
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
 cd husk
-./run.sh
+./scripts/run.sh
 ```
 
 `run.sh`:
@@ -17,7 +17,7 @@ cd husk
 4. Warns if `fs.inotify.max_user_instances` is below 256 with the `sysctl` fix.
 5. Spawns Husk in dev mode (no system registration).
 
-For a system-registered install (Linux `.desktop` entry, macOS `.app` bundle, OS file associations), use `./install.sh` instead.
+For a system-registered install (Linux `.desktop` entry, macOS `.app` bundle, OS file associations), use `./installer/install.sh` instead.
 
 ## Repo layout
 

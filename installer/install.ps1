@@ -3,9 +3,9 @@
 Husk Windows installer.
 
 Run from an elevated or normal PowerShell prompt:
-    powershell -ExecutionPolicy Bypass -File .\install.ps1
+    powershell -ExecutionPolicy Bypass -File .\installer\install.ps1
 or in PowerShell 7+:
-    pwsh -File .\install.ps1
+    pwsh -File .\installer\install.ps1
 
 Goals (parity with install.sh on Linux/macOS):
 - Detect and install prerequisites: jq (statusline) and bun (PAI hooks)
@@ -19,7 +19,8 @@ degraded.
 #>
 
 $ErrorActionPreference = 'Stop'
-$AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+# This script lives in installer/, so the project root is its parent.
+$AppDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
 
 # Pinned SHA-256 of the upstream bun installer script revision we
 # accept. Install-Bun verifies the downloaded file against this constant

@@ -77,9 +77,9 @@ The provenance verifier checks that the artifact really came out of the GitHub A
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
 cd husk
-./install.sh        # registers Husk with the OS and bootstraps PAI into ~/.claude/
+./installer/install.sh   # registers Husk with the OS and bootstraps PAI into ~/.claude/
 # or
-./run.sh            # dev mode, no system registration
+./scripts/run.sh         # dev mode, no system registration
 ```
 
 `install.sh` detects the platform with `uname` and runs the right registration model:
@@ -94,11 +94,11 @@ Any third-party script the installer fetches (currently just the bun installer) 
 ## Uninstall
 
 ```bash
-./uninstall.sh             # removes the launcher, OS registration, config, voice models
-./uninstall.sh --keep-data # preserves ~/.config/husk/ and the Piper voices
+./installer/uninstall.sh             # removes the launcher, OS registration, config, voice models
+./installer/uninstall.sh --keep-data # preserves ~/.config/husk/ and the Piper voices
 ```
 
-The project directory and `node_modules/` are always left intact so `./install.sh` can re-run.
+The project directory and `node_modules/` are always left intact so `./installer/install.sh` can re-run.
 If the checkout itself lives inside a path the uninstaller would normally clean
 (for example `~/.local/share/husk`), that cleanup is skipped and a warning is
 printed rather than deleting the project.

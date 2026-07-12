@@ -2,13 +2,15 @@
 # Husk uninstaller. Removes the launcher and platform-specific app
 # registration, plus config / voice / cache by default. Pass --keep-data
 # to preserve config and voice data. The project directory and node_modules
-# are always left intact (re-install via ./install.sh uses them).
+# are always left intact (re-install via ./installer/install.sh uses them).
 set -e
 
 APP_ID="husk"
 APP_NAME="Husk"
 PLATFORM="$(uname -s)"
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# This script lives in installer/, so the project root is its parent. APP_DIR is
+# the path the removal guard refuses to delete inside.
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 WRAPPER="$HOME/.local/bin/$APP_ID"
 CONFIG_DIR="$HOME/.config/$APP_ID"

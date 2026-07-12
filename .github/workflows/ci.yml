@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(install.sh run.sh uninstall.sh installer/lib/*.sh installer/after-install.sh installer/after-remove.sh)
+          files=(installer/*.sh installer/lib/*.sh scripts/*.sh)
           for f in "${files[@]}"; do
             [ -f "$f" ] || continue
             echo "checking $f"

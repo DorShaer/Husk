@@ -35,18 +35,26 @@ husk/
 │       └── vendor/            Bundled xterm.js + addons
 ├── libs/
 │   └── pai/                   Bundled PAI framework, third-party
-├── installer/
+├── installer/                 Source installers and packaging assets
+│   ├── install.sh             Source install, Linux / macOS
+│   ├── install.ps1            Source install, Windows
+│   ├── uninstall.sh           Removes the launcher, OS registration and data
 │   ├── husk-icon.png          Source for OS icons (1024x1024)
+│   ├── index.html             The dorshaer.github.io/Husk landing page
 │   ├── after-install.sh       deb / rpm post-install
 │   ├── after-remove.sh        deb / rpm post-remove
 │   ├── prompts/               Curated default Husk prompts (seed -> ~/.config/husk/prompts/)
 │   └── lib/                   verify.sh / verify.ps1 download-and-verify helpers
+├── scripts/                   Installers served over the network, plus the dev launcher
+│   ├── install.sh             The Linux / macOS one-liner
+│   ├── install.ps1            The Windows one-liner
+│   └── run.sh                 Run from the source tree, no OS registration
 ├── test/
 │   ├── unit/                  node:test unit tests against src/lib/
-│   └── e2e/                   Playwright smoke that boots real Electron
+│   ├── e2e/                   Playwright smoke that boots real Electron
+│   ├── perf/                  Memory and stability profiling
+│   └── playwright*.config.js  Config for the two suites above
 ├── docs/                      You are here
-├── install.sh / run.sh / uninstall.sh
-├── install.ps1                Windows source-install
 ├── .github/                   CI: lint, security, release, dependabot
 ├── package.json               electron-builder config + scripts
 ├── README.md

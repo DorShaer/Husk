@@ -36,7 +36,7 @@ Out of scope:
   - `font-src 'self' data: https://fonts.gstatic.com`.
   - `img-src 'self' data:`, `connect-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`.
 - `webSecurity` is left at the default (on).
-- DevTools is disabled in packaged builds (`webPreferences.devTools: !app.isPackaged`). The View menu entry, `F12`, and `Ctrl+Shift+I` are all no-ops in shipped installers. Source-tree runs (`./run.sh`) keep DevTools for development.
+- DevTools is disabled in packaged builds (`webPreferences.devTools: !app.isPackaged`). The View menu entry, `F12`, and `Ctrl+Shift+I` are all no-ops in shipped installers. Source-tree runs (`./scripts/run.sh`) keep DevTools for development.
 - External URL clicks (plain-text URLs and OSC 8 hyperlinks emitted by the agent) route through a confirm dialog that shows the full URL before `shell.openExternal` runs. The renderer cannot open a URL silently.
 
 **File permissions**
