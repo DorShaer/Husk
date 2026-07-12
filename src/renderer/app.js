@@ -9110,6 +9110,14 @@ function renderTimeline() {
   const sig = String(autopilotTimeline.length);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
+  // The count belongs to this card, so it reports what this card renders. It
+  // used to be written by the run-log feed, which counts a different stream:
+  // a reviewed run showed a non-zero count above an empty timeline.
+  const ec = $('#aut-page-event-count');
+  if (ec) {
+    const n = autopilotTimeline.length;
+    ec.textContent = `${n} ${n === 1 ? 'event' : 'events'}`;
+  }
   while (el.firstChild) el.removeChild(el.firstChild);
   if (!autopilotTimeline.length) {
     const empty = document.createElement('div');
@@ -9267,8 +9275,6 @@ function laneAppend(key, items, opts = {}) {
   }
   while (stream.children.length > AP_FEED_MAX_ROWS) stream.removeChild(stream.firstChild);
   if (follow) stream.scrollTop = stream.scrollHeight;
-  const ec = $('#aut-page-event-count');
-  if (ec) ec.textContent = `${autopilotState.eventCount} ${autopilotState.eventCount === 1 ? 'event' : 'events'}`;
 }
 // Update a lane's header from the run's live telemetry (state chip and
 // current-tool ticker with elapsed seconds).

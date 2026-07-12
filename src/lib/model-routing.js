@@ -63,8 +63,36 @@ const CHEAP_RE = new RegExp(
   + '|\\b(find|list|scan|hunt|locate|collect|gather|catalog|audit|search|grep)\\b[^.]*\\b(todo|fixme)\\b'
   + '|inventory of|add (a )?(comment|docstring|jsdoc)|changelog', 'i');
 
+// The smallest possible task: put a file on disk with literal content. It is not
+// "maintenance" in the CHEAP_RE sense, so it used to fall through to the smart
+// tier and land on a frontier model, which is how "write hello123 into test.txt"
+// ends up costing dollars. The guards keep real engineering out: anything long,
+// or naming work that needs judgement, stays on the smart tier, because routing
+// wrong toward cheap costs quality and that is the expensive mistake.
+const TRIVIAL_VERB_RE = /\b(create|creates|creating|make|makes|add|adds|write|writes|writing|wriute|put|touch|generate)\b/i;
+const TRIVIAL_TARGET_RE = /\b(file|\.txt|\.md|\.json|\.csv|\.log|\.yml|\.yaml)\b/i;
+const NOT_TRIVIAL_RE = /\b(implement|build|design|refactor|debug|fix|migrat\w*|integrat\w*|test|spec|api|endpoint|component|module|class|function|feature|script|parser|server|schema|migration|auth|deploy|optimi[sz]e|rewrite|port|convert)\b/i;
+
+function isTrivialFileTask(goal) {
+  const g = String(goal || '').trim();
+  // A trivial task is a short, single instruction. Length is the cheapest proxy
+  // for "carries requirements", and a long goal always deserves a capable model.
+  if (!g || g.length > 140) return false;
+  if (!TRIVIAL_VERB_RE.test(g)) return false;
+  if (!TRIVIAL_TARGET_RE.test(g)) return false;
+  // Filenames are not requirements. Drop them before looking for the words that
+  // mean real work, or a file called test.txt reads as "write tests" and a file
+  // called api.json reads as "build an API".
+  const withoutFilenames = g.replace(/\b[\w-]+\.(txt|md|json|csv|log|ya?ml|js|ts|jsx|tsx|html|css|sh|py)\b/gi, ' ');
+  if (NOT_TRIVIAL_RE.test(withoutFilenames)) return false;
+  return true;
+}
+
 function classifyTier(goal) {
-  return CHEAP_RE.test(String(goal || '')) ? 'cheap' : 'smart';
+  const g = String(goal || '');
+  if (CHEAP_RE.test(g)) return 'cheap';
+  if (isTrivialFileTask(g)) return 'cheap';
+  return 'smart';
 }
 
 // Normalize a tier value from any source (planner output, config) to a valid
@@ -73,4 +101,4 @@ function normalizeTier(t) {
   return t === 'cheap' ? 'cheap' : 'smart';
 }
 
-module.exports = { DEFAULT_VENDOR_MODELS, modelArgsFor, classifyTier, normalizeTier };
+module.exports = { DEFAULT_VENDOR_MODELS, modelArgsFor, classifyTier, normalizeTier, isTrivialFileTask };

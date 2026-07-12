@@ -1362,6 +1362,26 @@ body[data-page="boot"] .page { display: none !important; }
 .aut-diff-line.remove .aut-diff-text { color: #ffdde3; }
 .aut-diff-line.remove .aut-diff-ln { background: color-mix(in srgb, var(--rose) 18%, transparent); color: var(--rose); }
 .aut-diff-line.context .aut-diff-text { color: var(--text-2); }
+
+/* The diff colours above are tuned for a dark surface: near-white text over a
+   dark wash. On a light theme that leaves the text all but invisible, so restate
+   the surface and the text against a light background. */
+body[data-mode="light"] .aut-diff-content { background: rgba(0, 0, 0, 0.03); }
+body[data-mode="light"] .aut-diff-line.add { background: color-mix(in srgb, #1a7f4b 12%, transparent); }
+body[data-mode="light"] .aut-diff-line.add .aut-diff-text { color: #0b5132; }
+body[data-mode="light"] .aut-diff-line.add .aut-diff-sign { color: #12703f; }
+body[data-mode="light"] .aut-diff-line.add .aut-diff-ln {
+  background: color-mix(in srgb, #1a7f4b 16%, transparent);
+  color: #12703f;
+}
+body[data-mode="light"] .aut-diff-line.remove { background: color-mix(in srgb, #b42318 12%, transparent); }
+body[data-mode="light"] .aut-diff-line.remove .aut-diff-text { color: #7a1c14; }
+body[data-mode="light"] .aut-diff-line.remove .aut-diff-sign { color: #b42318; }
+body[data-mode="light"] .aut-diff-line.remove .aut-diff-ln {
+  background: color-mix(in srgb, #b42318 16%, transparent);
+  color: #b42318;
+}
+body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 .aut-diff-line.hunk-gap {
   background: var(--bg-1);
   border-top: 1px dashed var(--line);
