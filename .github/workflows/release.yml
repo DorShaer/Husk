@@ -42,6 +42,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The rpm target shells out to rpmbuild. The runner image happens to carry
+      # it today, so the release depends on that without asking for it.
+      - name: Install rpmbuild (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
       - name: Build (current platform)
         env:
           # Skip macOS code-signing for now. Users will need to allow the

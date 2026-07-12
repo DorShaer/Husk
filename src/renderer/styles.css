@@ -320,17 +320,15 @@
   --tracking-tight: -0.015em;
   --tracking-normal: 0;
   --tracking-wide: 0.12em;
-  /* Display face. The app asked for Space Grotesk but never shipped it, so every
-     machine without it installed, which is nearly all of them, silently fell back
-     to the system sans and the type read as a generic web app. It is bundled now,
-     as one variable woff2 covering the whole weight range. */
+  /* Display face. Bundled below, so it renders the same on every machine. */
   --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-body: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+/* Local file: a packaged app has no network to fetch a webfont. One variable
+   woff2 covers the whole 300-700 range. */
 @font-face {
   font-family: 'Space Grotesk';
-  /* A packaged app has no network, so the file is local. */
   src: url('assets/fonts/space-grotesk-latin.woff2') format('woff2');
   font-weight: 300 700;
   font-style: normal;
@@ -6223,11 +6221,9 @@ input[type="checkbox"]:disabled {
   font-family: var(--font-display);
   font-size: 40px;
   font-weight: 700;
-  /* Uppercase needs air, but 0.18em at this size reads as gappy rather than
-     confident, so the tracking comes down as the size goes up. */
   letter-spacing: 0.14em;
-  /* The tracking adds a trailing gap after the last letter, which throws the
-     wordmark off-centre under the logo. Pull it back by the same amount. */
+  /* letter-spacing also adds a gap after the final letter, which pushes a centred
+     wordmark off-axis. text-indent cancels it. */
   text-indent: 0.14em;
   text-transform: uppercase;
   line-height: 1;

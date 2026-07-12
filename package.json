@@ -154,7 +154,7 @@
       "shortcutName": "Husk"
     },
     "appImage": {
-      "license": "LICENSE"
+      "license": "installer/LICENSE.txt"
     },
     "publish": {
       "provider": "github",
