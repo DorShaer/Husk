@@ -6215,21 +6215,87 @@ input[type="checkbox"]:disabled {
   user-select: none; -webkit-user-drag: none;
   filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4));
 }
+
+/* Welcome step: the block-level rise is replaced by a per-element one, so the
+   page assembles itself instead of arriving in a single slab. */
+.ob-step[data-step="welcome"] { animation: none; }
+.ob-step[data-step="welcome"] > * {
+  opacity: 0;
+  animation: ob-rise-in 0.62s var(--ease-out) forwards;
+}
+@keyframes ob-rise-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: none; }
+}
+/* The logo drifts with `translate`, not `transform`, so it composes with the
+   transform the entrance animation is already using. */
+@keyframes ob-float {
+  50% { translate: 0 -7px; }
+}
+@keyframes ob-glow {
+  0%, 100% { filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4)) drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 30%, transparent)); }
+  50%      { filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4)) drop-shadow(0 0 26px color-mix(in srgb, var(--accent) 65%, transparent)); }
+}
+.ob-step[data-step="welcome"] > .ob-logo {
+  animation:
+    ob-rise-in 0.62s var(--ease-out) 0.04s forwards,
+    ob-float 6.5s ease-in-out 0.9s infinite,
+    ob-glow 4.5s ease-in-out 0.9s infinite;
+}
+.ob-step[data-step="welcome"] > .ob-wordmark {
+  animation:
+    ob-rise-in 0.62s var(--ease-out) 0.16s forwards,
+    ob-sheen 5.5s ease-in-out 1.3s infinite;
+}
+.ob-step[data-step="welcome"] > .ob-title   { animation-delay: 0.28s; }
+.ob-step[data-step="welcome"] > .ob-sub     { animation-delay: 0.40s; }
+.ob-step[data-step="welcome"] > .ob-cta     { animation-delay: 0.52s; }
+.ob-step[data-step="welcome"] > .ob-version { animation-delay: 0.64s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-step[data-step="welcome"] > *,
+  .ob-step[data-step="welcome"] > .ob-logo,
+  .ob-step[data-step="welcome"] > .ob-wordmark {
+    animation: none;
+    opacity: 1;
+    translate: none;
+  }
+  /* Park the sheen mid-sweep so the wordmark still reads as metal. */
+  .ob-wordmark { background-position: 50% 50%; }
+}
 .ob-logo-sm { width: 48px; height: 48px; margin-bottom: 4px; filter: none; }
 .ob-wordmark {
   margin-top: 14px;
   font-family: var(--font-display);
   font-size: 40px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.14em;
   /* letter-spacing also adds a gap after the final letter, which pushes a centred
      wordmark off-axis. text-indent cancels it. */
   text-indent: 0.14em;
   text-transform: uppercase;
   line-height: 1;
-  background: linear-gradient(100deg, var(--accent) 15%, var(--accent-2) 85%);
+  /* Brushed silver: dark edges, a bright band, dark edges. The band is wider than
+     the text so it can be slid across the letters (see ob-sheen). */
+  background: linear-gradient(100deg,
+    #7d8794 0%, #c3cad4 28%, #ffffff 46%, #c3cad4 62%, #7d8794 100%);
+  background-size: 240% 100%;
+  background-position: 100% 50%;
   -webkit-background-clip: text; background-clip: text;
   color: transparent;
+}
+/* On a light surface the same silver washes out, so the ramp is darker and the
+   bright band stops short of white. */
+body[data-mode="light"] .ob-wordmark {
+  background: linear-gradient(100deg,
+    #4b5563 0%, #808b99 28%, #b9c1cb 46%, #808b99 62%, #4b5563 100%);
+  background-size: 240% 100%;
+  background-position: 100% 50%;
+  -webkit-background-clip: text; background-clip: text;
+}
+@keyframes ob-sheen {
+  0%       { background-position: 100% 50%; }
+  45%, 100% { background-position: 0% 50%; }
 }
 .ob-title {
   font-family: var(--font-display);
