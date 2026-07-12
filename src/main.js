@@ -6236,6 +6236,66 @@ function readHead(filePath, bytes) {
   return buf.toString('utf8', 0, n);
 }
 
+// The agent appends an `ai-title` entry to the transcript once the conversation
+// earns a name, and further entries as it refines that name. Both land wherever
+// the conversation had reached, which in a long session is hundreds of kilobytes
+// past the head, so a title cannot be found by reading the head alone.
+//
+// Scan forward from wherever the last read stopped and keep the newest title.
+// A poll then costs the bytes appended since the previous poll rather than the
+// size of the whole transcript, which matters because this runs every few
+// seconds for each open tab and transcripts reach tens of megabytes.
+const aiTitleCache = new Map(); // path -> { size, mtimeMs, scanned, title }
+const AI_TITLE_CACHE_MAX = 300;
+
+function latestAiTitle(fullPath) {
+  let st;
+  try { st = fs.statSync(fullPath); } catch (_) { return ''; }
+
+  const prev = aiTitleCache.get(fullPath);
+  // Resume from the previous read only when this is the same file, still growing.
+  // A file that shrank was replaced, so start over.
+  const resumable = prev && st.size >= prev.size;
+  let scanned = resumable ? prev.scanned : 0;
+  let title = resumable ? prev.title : '';
+
+  if (scanned < st.size) {
+    let fd;
+    try {
+      fd = fs.openSync(fullPath, 'r');
+      const len = st.size - scanned;
+      const buf = Buffer.alloc(len);
+      const n = fs.readSync(fd, buf, 0, len, scanned);
+      const text = buf.toString('utf8', 0, n);
+      // A read can land mid-line, so only consume up to the last newline and
+      // leave the remainder for the next pass.
+      const lastNl = text.lastIndexOf('\n');
+      if (lastNl >= 0) {
+        for (const line of text.slice(0, lastNl).split('\n')) {
+          // Cheap prefilter: parsing every line of a large transcript is the
+          // expensive part, and only these carry a title.
+          if (line.indexOf('"ai-title"') === -1) continue;
+          try {
+            const obj = JSON.parse(line);
+            if (obj && obj.type === 'ai-title' && typeof obj.aiTitle === 'string' && obj.aiTitle.trim()) {
+              title = obj.aiTitle.trim();
+            }
+          } catch (_) { /* a partial or malformed line is not a title */ }
+        }
+        scanned += Buffer.byteLength(text.slice(0, lastNl + 1), 'utf8');
+      }
+    } catch (_) {
+      return title;
+    } finally {
+      if (fd !== undefined) { try { fs.closeSync(fd); } catch (_) {} }
+    }
+  }
+
+  if (aiTitleCache.size > AI_TITLE_CACHE_MAX) aiTitleCache.clear();
+  aiTitleCache.set(fullPath, { size: st.size, mtimeMs: st.mtimeMs, scanned, title });
+  return title;
+}
+
 // Read the last `bytes` of a file. Used to take a transcript's last-activity
 // timestamp from its final entry, which reflects real activity more reliably
 // than the file mtime (opening or scanning a session updates mtime).
@@ -6276,7 +6336,11 @@ function isCommandWrapperText(t) {
     || /^Caveat:/i.test(t);
 }
 function parseSessionHead(fullPath) {
-  let aiTitle = ''; let userMessage = ''; let queueContent = '';
+  // The title is the one field that is not in the head: it is appended once the
+  // conversation earns a name, so it is read from the whole transcript. The rest
+  // describe how the session opened and are always in the first entries.
+  let aiTitle = latestAiTitle(fullPath);
+  let userMessage = ''; let queueContent = '';
   let startedISO = ''; let originalCwd = '';
   try {
     const text = readHead(fullPath, 32768);
@@ -6286,7 +6350,6 @@ function parseSessionHead(fullPath) {
       try { obj = JSON.parse(line); } catch (_) { continue; }
       if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
       if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
-      if (!aiTitle && obj.type === 'ai-title' && typeof obj.aiTitle === 'string') aiTitle = obj.aiTitle.trim();
       if (!userMessage && obj.type === 'user' && obj.message) {
         const c = obj.message.content;
         let text = '';
@@ -6545,9 +6608,11 @@ ipcMain.handle('sessions:list', () => {
   let hiddenAutopilot = 0;
   for (const { id, project: projName, fullPath, st } of top) {
     {
-      // Read first 32KB and pull priority-ranked title + the original cwd
+      // Read the first 32KB for how the session opened, and take the title from
+      // the whole transcript: it is appended once the conversation earns a name,
+      // which for a long session is far past the head.
       let startedISO = '';
-      let aiTitle = '';
+      let aiTitle = latestAiTitle(fullPath);
       let userMessage = '';
       let queueContent = '';
       let originalCwd = '';
@@ -6564,9 +6629,6 @@ ipcMain.handle('sessions:list', () => {
           if (!sawAssistant && obj.type === 'assistant') sawAssistant = true;
           if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
           if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
-          if (!aiTitle && obj.type === 'ai-title' && typeof obj.aiTitle === 'string') {
-            aiTitle = obj.aiTitle.trim();
-          }
           if (!userMessage && obj.type === 'user' && obj.message) {
             const c = obj.message.content;
             if (typeof c === 'string') userMessage = c.trim();
