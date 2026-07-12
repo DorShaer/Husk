@@ -37,12 +37,14 @@ case "$PLATFORM" in
 esac
 
 # ─── Node.js gate ──────────────────────────────────────────────────
-# Everything below (npm install, @electron/rebuild) needs Node 20+.
-# Checking here saves the user from sudo prompts and a multi-minute
-# npm install that ends in a raw ERR_REQUIRE_ESM stack trace.
+# Everything below (npm install, @electron/rebuild) needs Node 20.19 or newer.
+# Electron's own installer require()s an ESM-only module, which node supports by
+# default only from 20.19, so an older 20.x clears a major-only check and then
+# dies on a raw ERR_REQUIRE_ESM part-way through npm install. Check the minor too.
 NODE_MIN_MAJOR=20
+NODE_MIN_MINOR=19
 if ! command -v node >/dev/null 2>&1; then
-    echo -e "\033[0;31m✗\033[0m Node.js ${NODE_MIN_MAJOR}+ is required but was not found."
+    echo -e "\033[0;31m✗\033[0m Node.js ${NODE_MIN_MAJOR}.${NODE_MIN_MINOR}+ is required but was not found."
     dim "  Install the current LTS from https://nodejs.org"
     dim "  or with nvm:  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash && nvm install --lts"
     dim "  Prefer no install at all? Grab a prebuilt release instead:"
@@ -51,9 +53,12 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 NODE_VER="$(node --version 2>/dev/null | sed 's/^v//')"
 NODE_MAJOR="${NODE_VER%%.*}"
+NODE_MINOR="${NODE_VER#*.}"; NODE_MINOR="${NODE_MINOR%%.*}"
 case "$NODE_MAJOR" in (*[!0-9]*|'') NODE_MAJOR=0 ;; esac
-if [ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ]; then
-    echo -e "\033[0;31m✗\033[0m Node.js ${NODE_MIN_MAJOR}+ is required; found v${NODE_VER}."
+case "$NODE_MINOR" in (*[!0-9]*|'') NODE_MINOR=0 ;; esac
+if [ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ] \
+   || { [ "$NODE_MAJOR" -eq "$NODE_MIN_MAJOR" ] && [ "$NODE_MINOR" -lt "$NODE_MIN_MINOR" ]; }; then
+    echo -e "\033[0;31m✗\033[0m Node.js ${NODE_MIN_MAJOR}.${NODE_MIN_MINOR}+ is required; found v${NODE_VER}."
     dim "  Upgrade to the current LTS from https://nodejs.org (or: nvm install --lts)"
     dim "  Prebuilt releases need no Node at all: https://github.com/DorShaer/Husk/releases"
     exit 1

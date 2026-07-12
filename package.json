@@ -5,7 +5,7 @@
   "main": "src/main.js",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "author": "Dor Shaer",
   "homepage": "https://github.com/DorShaer/Husk",

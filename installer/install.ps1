@@ -43,7 +43,7 @@ function Test-Cmd($name) {
 
 # ─── 0. Node.js detection (hard prereq) ──────────────────────────────
 if (-not (Test-Cmd node)) {
-    Write-Warn2 "Node.js is required but was not found. Install Node 20+ from https://nodejs.org/ and re-run."
+    Write-Warn2 "Node.js 20.19 or newer is required but was not found. Install the current LTS from https://nodejs.org/ and re-run."
     exit 1
 }
 $nodeVer = (& node --version) 2>$null
