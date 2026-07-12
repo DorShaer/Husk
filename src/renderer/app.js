@@ -813,7 +813,13 @@ async function reattachSessions() {
     // Only close-and-resume when the active agent actually has a resume
     // form; otherwise the live PTY is kept and reattached below. Closing
     // first and failing to resume would destroy a healthy session.
-    const resumeCmd = sess.claudeSessionId ? resumeCommandFor(agent, sess.claudeSessionId) : null;
+    let resumeCmd = null;
+    if (sess.claudeSessionId) {
+      try {
+        const r = await window.husk.sessions.resumeCommand({ agent, id: sess.claudeSessionId, cwd: sess.cwd || '' });
+        if (r && r.ok && r.command) resumeCmd = r.command;
+      } catch (_) { /* no resume form for this agent: keep the live PTY below */ }
+    }
     if (resumeCmd) {
       // Resume the conversation in a fresh PTY; drop the orphaned old one.
       try { await window.husk.pty.close(sess.sessionId); } catch (_) {}
@@ -3875,9 +3881,13 @@ async function openSessionDetail(d) {
 // Build the resume command for the agent that OWNS the session. Returns
 // null when that agent has no session-resume form; callers must handle
 // null rather than run some other agent's binary against a foreign id.
-function resumeCommandFor(agent, id) {
+// A short, display-only rendering of the resume command. The command that is
+// actually run comes from main, because gemini resumes by position in its own
+// session list and only main can resolve that against what is on disk now.
+function resumeCommandLabel(agent, id) {
   if (agent === 'claude') return `claude --resume ${id}`;
   if (agent === 'copilot') return `copilot --resume=${id}`;
+  if (agent === 'gemini') return `gemini --resume ${id}`;
   return null;
 }
 
@@ -3887,14 +3897,19 @@ async function resumeSessionInChat(d) {
   // (an owner-less entry from an older render).
   const agent = (d.owner
     || (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude')).trim().split(/\s+/)[0].toLowerCase();
-  const cmd = resumeCommandFor(agent, d.id);
+  let cmd = null;
+  try {
+    const r = await window.husk.sessions.resumeCommand({ agent, id: d.id, cwd: d.project || '' });
+    if (r && r.ok && r.command) cmd = r.command;
+    else if (r && r.error) { toast(r.error, 'error'); return; }
+  } catch (_) { /* fall through to the unsupported message */ }
   if (!cmd) {
     toast(`Resume is not supported for ${agent} sessions`, 'error');
     return;
   }
   closeDetail();
   setPage('chat');
-  const cmdShort = resumeCommandFor(agent, d.id.slice(0, 8));
+  const cmdShort = resumeCommandLabel(agent, d.id.slice(0, 8)) || cmd;
   const cwd = d.project || null;
   toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
   $('#chat-sub').textContent = `${cmdShort} · ${cwd || huskHome}`;

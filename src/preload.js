@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('husk', {
     findClaudeId: (payload) => ipcRenderer.invoke('sessions:findClaudeId', payload),
     resolveLiveTitle: (payload) => ipcRenderer.invoke('sessions:resolveLiveTitle', payload),
     rename: (payload) => ipcRenderer.invoke('sessions:rename', payload),
+    resumeCommand: (payload) => ipcRenderer.invoke('sessions:resumeCommand', payload),
     delete: (paths) => ipcRenderer.invoke('sessions:delete', { paths }),
   },
   prds: { list: () => ipcRenderer.invoke('prds:list') },

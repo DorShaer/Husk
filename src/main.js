@@ -6236,23 +6236,42 @@ function readHead(filePath, bytes) {
   return buf.toString('utf8', 0, n);
 }
 
-// The agent appends an `ai-title` entry to the transcript once the conversation
-// earns a name, and further entries as it refines that name. Both land wherever
-// the conversation had reached, which in a long session is hundreds of kilobytes
-// past the head, so a title cannot be found by reading the head alone.
+// Agents append a title entry to the transcript once the conversation earns a
+// name, and further entries as they refine it. Both land wherever the
+// conversation had reached, which in a long session is hundreds of kilobytes past
+// the head, so a title cannot be found by reading the head alone.
 //
 // Scan forward from wherever the last read stopped and keep the newest title.
 // A poll then costs the bytes appended since the previous poll rather than the
 // size of the whole transcript, which matters because this runs every few
 // seconds for each open tab and transcripts reach tens of megabytes.
-const aiTitleCache = new Map(); // path -> { size, mtimeMs, scanned, title }
-const AI_TITLE_CACHE_MAX = 300;
+//
+// The shape of the entry differs per CLI, so a dialect supplies a cheap substring
+// to prefilter lines on and an extractor to pull the title out of a parsed one.
+const TITLE_DIALECTS = Object.freeze({
+  // claude: {"type":"ai-title","aiTitle":"..."}
+  claude: {
+    marker: '"ai-title"',
+    extract: (o) => (o && o.type === 'ai-title' && typeof o.aiTitle === 'string' ? o.aiTitle : ''),
+  },
+  // gemini: {"$set":{"summary":"...", ...}}
+  gemini: {
+    marker: '"$set"',
+    extract: (o) => (o && o.$set && typeof o.$set.summary === 'string' ? o.$set.summary : ''),
+  },
+});
 
-function latestAiTitle(fullPath) {
+const titleScanCache = new Map(); // `${dialect}:${path}` -> { size, mtimeMs, scanned, title }
+const TITLE_CACHE_MAX = 300;
+
+function latestTranscriptTitle(fullPath, dialectName) {
+  const dialect = TITLE_DIALECTS[dialectName];
+  if (!dialect) return '';
   let st;
   try { st = fs.statSync(fullPath); } catch (_) { return ''; }
 
-  const prev = aiTitleCache.get(fullPath);
+  const key = `${dialectName}:${fullPath}`;
+  const prev = titleScanCache.get(key);
   // Resume from the previous read only when this is the same file, still growing.
   // A file that shrank was replaced, so start over.
   const resumable = prev && st.size >= prev.size;
@@ -6274,12 +6293,10 @@ function latestAiTitle(fullPath) {
         for (const line of text.slice(0, lastNl).split('\n')) {
           // Cheap prefilter: parsing every line of a large transcript is the
           // expensive part, and only these carry a title.
-          if (line.indexOf('"ai-title"') === -1) continue;
+          if (line.indexOf(dialect.marker) === -1) continue;
           try {
-            const obj = JSON.parse(line);
-            if (obj && obj.type === 'ai-title' && typeof obj.aiTitle === 'string' && obj.aiTitle.trim()) {
-              title = obj.aiTitle.trim();
-            }
+            const found = String(dialect.extract(JSON.parse(line)) || '').trim();
+            if (found) title = found;
           } catch (_) { /* a partial or malformed line is not a title */ }
         }
         scanned += Buffer.byteLength(text.slice(0, lastNl + 1), 'utf8');
@@ -6291,9 +6308,116 @@ function latestAiTitle(fullPath) {
     }
   }
 
-  if (aiTitleCache.size > AI_TITLE_CACHE_MAX) aiTitleCache.clear();
-  aiTitleCache.set(fullPath, { size: st.size, mtimeMs: st.mtimeMs, scanned, title });
+  if (titleScanCache.size > TITLE_CACHE_MAX) titleScanCache.clear();
+  titleScanCache.set(key, { size: st.size, mtimeMs: st.mtimeMs, scanned, title });
   return title;
+}
+
+function latestAiTitle(fullPath) {
+  return latestTranscriptTitle(fullPath, 'claude');
+}
+
+// ─── gemini sessions ────────────────────────────────────────────────────────
+// gemini keeps one directory per project under ~/.gemini/tmp/<name>/, holding a
+// .project_root naming the cwd and chats/session-<stamp>-<short-id>.jsonl per
+// session. A session file opens with a header line carrying sessionId and
+// startTime, then appends message entries, and writes its generated name into a
+// {"$set":{"summary":"..."}} entry once the conversation earns one.
+const GEMINI_DIR = path.join(HOME, '.gemini');
+
+function geminiProjectRoot(projectDir) {
+  try { return fs.readFileSync(path.join(projectDir, '.project_root'), 'utf8').trim(); }
+  catch (_) { return ''; }
+}
+
+// First real user turn, used as the title until gemini writes its summary. The
+// content is an array of parts, matching the transcript on disk.
+function geminiFirstUserMessage(fullPath) {
+  try {
+    for (const line of readHead(fullPath, 32768).split('\n')) {
+      if (!line.trim() || line.indexOf('"user"') === -1) continue;
+      let o;
+      try { o = JSON.parse(line); } catch (_) { continue; }
+      if (!o || o.type !== 'user') continue;
+      const c = o.content;
+      let text = '';
+      if (typeof c === 'string') text = c;
+      else if (Array.isArray(c)) {
+        const part = c.find((p) => p && typeof p.text === 'string' && p.text.trim());
+        if (part) text = part.text;
+      }
+      text = String(text || '').replace(/\s+/g, ' ').trim();
+      // Slash commands are not a conversation, so keep looking for a real turn.
+      if (text && !text.startsWith('/')) return text.slice(0, 120);
+    }
+  } catch (_) { /* an unreadable transcript simply has no title */ }
+  return '';
+}
+
+function listGeminiSessions() {
+  const root = path.join(GEMINI_DIR, 'tmp');
+  let projects = [];
+  try { projects = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
+  catch (_) { return []; }
+
+  const out = [];
+  for (const proj of projects) {
+    const projDir = path.join(root, proj.name);
+    const cwd = geminiProjectRoot(projDir);
+    const chatsDir = path.join(projDir, 'chats');
+    let files = [];
+    try { files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.jsonl')); }
+    catch (_) { continue; }
+
+    for (const f of files) {
+      const fullPath = path.join(chatsDir, f);
+      let st;
+      try { st = fs.statSync(fullPath); } catch (_) { continue; }
+      if (!st.isFile()) continue;
+
+      let head = null;
+      try { head = JSON.parse(readHead(fullPath, 4096).split('\n')[0] || 'null'); } catch (_) { head = null; }
+      const id = head && typeof head.sessionId === 'string' ? head.sessionId : '';
+      if (!id) continue;
+
+      const summary = latestTranscriptTitle(fullPath, 'gemini');
+      const firstMessage = geminiFirstUserMessage(fullPath);
+      const startedMs = Date.parse((head && head.startTime) || '') || st.birthtimeMs || st.mtimeMs;
+
+      out.push({
+        id,
+        project: proj.name,
+        projectPath: cwd,
+        originalCwd: cwd,
+        path: fullPath,
+        title: (summary || firstMessage || 'New Gemini chat').slice(0, 120),
+        // True only for a name gemini generated, never the first-message fallback,
+        // so a tab keeps its pending state until the session really earns a name.
+        named: !!summary,
+        firstMessage: firstMessage || summary || '',
+        hasContent: st.size > 0 && !!(summary || firstMessage),
+        prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
+        startedISO: new Date(startedMs).toISOString(),
+        startedMs,
+        sizeBytes: st.size,
+        mtime: st.mtimeMs,
+      });
+    }
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+// gemini resumes by position, not by id: `--resume <n>` where n indexes the
+// project's sessions oldest-first, as `gemini --list-sessions` prints them. The
+// index therefore has to be computed against the current list, since a new
+// session shifts nothing but a deleted one would.
+function geminiResumeIndex(sessionId, cwd) {
+  const mine = listGeminiSessions()
+    .filter((s) => !cwd || !s.originalCwd || s.originalCwd === cwd)
+    .sort((a, b) => a.startedMs - b.startedMs);
+  const at = mine.findIndex((s) => s.id === sessionId);
+  return at === -1 ? 0 : at + 1;
 }
 
 // Read the last `bytes` of a file. Used to take a transcript's last-activity
@@ -6545,6 +6669,17 @@ ipcMain.handle('sessions:list', () => {
       currentCwd: activePtyCwd || '',
       sessions: listed.sessions,
       hiddenAutopilotSessions: listed.hiddenAutopilot,
+    };
+  }
+  if (agent === 'gemini') {
+    return {
+      ok: true,
+      agent,
+      supported: true,
+      sessionsDir: path.join(GEMINI_DIR, 'tmp'),
+      currentCwd: activePtyCwd || '',
+      sessions: listGeminiSessions(),
+      hiddenAutopilotSessions: 0,
     };
   }
   if (agent !== 'claude') {
@@ -6819,6 +6954,51 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       provisional: custom == null && !best.hasContent,
     };
   }
+
+  if (agent === 'gemini') {
+    const known = String((payload && payload.knownAgentId) || '');
+    const list = listGeminiSessions();
+    if (known) {
+      const custom = customFor(known);
+      const hit = list.find((x) => x.id === known) || null;
+      if (hit || custom != null) {
+        return {
+          ok: true, agentId: known, custom: custom != null,
+          title: custom != null ? custom : (hit ? hit.title : ''),
+          named: custom != null || !!(hit && hit.named),
+          provisional: custom == null && !(hit && hit.hasContent),
+        };
+      }
+      return { ok: false };
+    }
+
+    // Same rules as copilot: a tab cannot own a session that predates it, and a
+    // session carrying content beats an empty one that merely started earlier.
+    const s = sessions.get(String((payload && payload.huskSessionId) || ''));
+    if (!s || !s.cwd) return { ok: false };
+    const startedAt = s.startedAt || 0;
+    const exclude = new Set(Array.isArray(payload && payload.excludeAgentIds) ? payload.excludeAgentIds : []);
+    const candidates = list.filter((x) => {
+      if (exclude.has(x.id)) return false;
+      if (x.originalCwd && x.originalCwd !== s.cwd) return false;
+      if (isFinite(x.startedMs) && x.startedMs < startedAt - 60_000) return false;
+      return true;
+    });
+    if (!candidates.length) return { ok: false };
+    const pick = (pool) => pool.reduce((a, b) => (!a || b.startedMs < a.startedMs ? b : a), null);
+    const startedAfter = candidates.filter((x) => !isFinite(x.startedMs) || x.startedMs >= startedAt);
+    const pool = startedAfter.length ? startedAfter : candidates;
+    const best = pick(pool.filter((x) => x.hasContent)) || pick(pool);
+    if (!best) return { ok: false };
+    const custom = customFor(best.id);
+    return {
+      ok: true, agentId: best.id, custom: custom != null,
+      title: custom != null ? custom : best.title,
+      named: custom != null || !!best.named,
+      provisional: custom == null && !best.hasContent,
+    };
+  }
+
   if (agent !== 'claude') return { ok: false };
 
   const known = String((payload && payload.knownAgentId) || '');
@@ -6887,6 +7067,24 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
 
 // Save (or clear, when name is empty) a user's custom name for an agent
 // session, keyed by the stable claude session id so it survives restarts.
+// The command that resumes a session, built where the session state lives.
+// claude and copilot resume by id, so the string is fixed. gemini resumes by
+// position in its own list, so the index has to be resolved against the sessions
+// on disk right now rather than baked into a stale render.
+ipcMain.handle('sessions:resumeCommand', (_e, payload = {}) => {
+  const agent = String(payload.agent || activeAgentName()).trim().toLowerCase();
+  const id = String(payload.id || '');
+  if (!id) return { ok: false, error: 'no session id' };
+  if (agent === 'claude') return { ok: true, command: `claude --resume ${id}` };
+  if (agent === 'copilot') return { ok: true, command: `copilot --resume=${id}` };
+  if (agent === 'gemini') {
+    const index = geminiResumeIndex(id, String(payload.cwd || ''));
+    if (!index) return { ok: false, error: 'that gemini session is no longer listed' };
+    return { ok: true, command: `gemini --resume ${index}` };
+  }
+  return { ok: false, error: `resume is not supported for ${agent} sessions` };
+});
+
 ipcMain.handle('sessions:rename', (_e, payload = {}) => {
   const agentId = String((payload && payload.agentId) || '');
   if (!agentId) return { ok: false };

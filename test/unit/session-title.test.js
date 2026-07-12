@@ -8,15 +8,27 @@ const path = require('path');
 const vm = require('vm');
 
 // main.js is an Electron entrypoint and cannot be required, so lift the real
-// latestAiTitle out of the source and run it against transcripts on disk.
+// title scanner out of the source and run it against transcripts on disk. The
+// scanner is shared across CLIs; latestAiTitle is the claude dialect of it.
 const SRC = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
-const IMPL = SRC.match(/const aiTitleCache = new Map\(\);[\s\S]*?\nfunction latestAiTitle\(fullPath\) \{[\s\S]*?\n\}\n/);
-assert.ok(IMPL, 'could not find latestAiTitle in src/main.js');
+
+function grab(re, name) {
+  const m = SRC.match(re);
+  assert.ok(m, `could not find ${name} in src/main.js`);
+  return m[0];
+}
+
+const IMPL = [
+  grab(/const TITLE_DIALECTS = Object\.freeze\(\{[\s\S]*?\n\}\);/, 'TITLE_DIALECTS'),
+  'const titleScanCache = new Map(); const TITLE_CACHE_MAX = 300;',
+  grab(/function latestTranscriptTitle\(fullPath, dialectName\) \{[\s\S]*?\n\}\n/, 'latestTranscriptTitle'),
+  grab(/function latestAiTitle\(fullPath\) \{[\s\S]*?\n\}/, 'latestAiTitle'),
+].join('\n');
 
 function freshImpl() {
-  const ctx = { fs, Map, Buffer, JSON };
+  const ctx = { fs, Map, Buffer, JSON, Object, String };
   vm.createContext(ctx);
-  vm.runInContext(`${IMPL[0]}\nthis.latestAiTitle = latestAiTitle;`, ctx);
+  vm.runInContext(`${IMPL}\nthis.latestAiTitle = latestAiTitle;`, ctx);
   return ctx.latestAiTitle;
 }
 
