@@ -6332,10 +6332,11 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 .hk.is-open.is-peek .hk-petal-l { transform: rotate(-25deg); }
 .hk.is-open.is-peek .hk-petal-r { transform: rotate(25deg); }
 
-/* The seed sits down inside the closed pod, then climbs out once it cracks. */
+/* The seed sits down inside the closed pod, then climbs out once it cracks. It
+   rests deep enough that the shell alone hides it, with no fade needed. */
 .hk-seed {
   transform-origin: 100px 150px;
-  transform: translateY(34px) scale(0.72);
+  transform: translateY(56px) scale(0.7);
   opacity: 0;
   transition:
     transform 1s cubic-bezier(.18,1.45,.32,1) 0.25s,
@@ -6348,10 +6349,13 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 /* Going back in: the hands let go and the seed sinks slowly, while the halves
    swing shut over it. The two overlap on purpose, so the husk closes ON the
    seed rather than waiting for it to disappear first. */
+/* He stays solid the whole way down. Fading him early would make him vanish on
+   his own while the husk was still wide open, so the shell is what hides him and
+   the fade only finishes the job once the halves have nearly met. */
 .hk.is-shut .hk-seed {
   transition:
     transform 1.9s cubic-bezier(.4,.02,.5,1) 0.15s,
-    opacity 1.5s ease-in 0.55s;
+    opacity 0.5s ease 1.6s;
 }
 .hk.is-shut .hk-petal { transition: transform 1.6s cubic-bezier(.4,0,.55,1) 0.55s; }
 .hk.is-shut .hk-hand { transition: opacity 0.35s ease; }
@@ -6363,10 +6367,10 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 .hk-pit { opacity: 0; transition: opacity 0.5s ease 0.15s; }
 .hk.is-open .hk-pit { opacity: 1; }
 
-/* Only wanted while the halves are closing. Once they meet they cover it, and
-   while the pod is open it would darken the gap the seed is sitting in. */
-.hk-seam { opacity: 0; transition: opacity 0.25s ease; }
-.hk.is-shut .hk-seam { opacity: 1; transition: opacity 0.5s ease 1.2s; }
+/* The liners carry the same petal classes, so they hinge on the same timings.
+   They want no shadow of their own: they are the inside of the husk, not a
+   surface with light on it. */
+.hk-liner { filter: none; }
 
 .hk-glow {
   opacity: 0;
