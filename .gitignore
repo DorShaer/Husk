@@ -1,40 +1,64 @@
+# ─── Dependencies and build output ──────────────────────────────────────────
 node_modules/
 dist/
 out/
 build/
+*.tgz
 
+# ─── Logs, caches, test artifacts ───────────────────────────────────────────
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+coverage/
+test-results/
+playwright-report/
+.eslintcache
+.npm/
+.cache/
 
-.DS_Store
-Thumbs.db
+# ─── Secrets and credentials ────────────────────────────────────────────────
+# Nothing matching these has ever been committed. The rules exist so that a
+# stray copy dropped into the checkout cannot be staged by accident.
+# Note: no *.gpg rule. installer/husk-apt.gpg is the PUBLIC apt signing key and
+# is tracked on purpose; the private key lives only in the APT_GPG_PRIVATE_KEY
+# repository secret.
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.provisionprofile
 
-# Local screen recordings used to generate docs/images/*.gif. The
-# optimized GIFs go in the repo; the source MP4 / MOV stays local.
-docs/*.mp4
-docs/*.mov
-
+# ─── Editor and OS files ────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-.env
-.env.local
-.env.*.local
-
-# Local Husk data and config (live on the user's machine, not in source)
-config.json
-**/voice-models/
+# ─── Local Husk data and config ─────────────────────────────────────────────
+# These belong on the user's machine, not in source. Anchored to the repo root
+# so a legitimate config.json or data/ elsewhere in the tree is still tracked.
+/config.json
+/data
 .husk-tmp/
 MEMORY/
-data
+**/voice-models/
 
-# Bundled PAI: ship the framework only. Personal PAI data (memory, learning,
-# credentials, user-specific extensions) must never enter the repo, even if a
-# sync tool copies a populated ~/.claude tree into libs/pai.
+# Screen recordings used to produce docs/images/*.gif. The optimised GIFs are
+# committed; the source MP4 / MOV stays local.
+docs/*.mp4
+docs/*.mov
+
+# ─── Bundled PAI ────────────────────────────────────────────────────────────
+# Ship the framework only. Personal PAI data (memory, learning, credentials,
+# user-specific extensions) must never enter the repo, even if a sync tool
+# copies a populated ~/.claude tree into libs/pai.
 libs/pai/PAI/USER/**
 !libs/pai/PAI/USER/**/
 !libs/pai/PAI/USER/**/README.md
@@ -45,18 +69,19 @@ libs/pai/**/ratings.jsonl
 libs/pai/**/*reflections*.jsonl
 libs/pai/**/history.jsonl
 
-# playwright run artifacts
-test-results/
-playwright-report/
-
-# Local PAI Algorithm task artifacts (per-task working state, never shipped)
-ISA*.md
-
-# Husk-managed per-session agent identity files (rewritten at runtime)
+# ─── Agent tooling artifacts ────────────────────────────────────────────────
+# Per-session identity files Husk rewrites at runtime.
 .github/copilot-instructions.md
 AGENTS.md
 GEMINI.md
 .husk-aider.md
 
-# aider's own local artifacts (chat history, input history, tags cache)
+# aider's local artifacts (chat history, input history, tags cache).
 .aider*
+
+# Claude Code's local state. Nothing here is shipped; force-add if a shared
+# agent config is ever committed deliberately.
+.claude/
+
+# PAI Algorithm task artifacts (per-task working state, never shipped).
+ISA*.md
