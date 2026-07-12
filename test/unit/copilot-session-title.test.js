@@ -14,6 +14,7 @@ test('derives title from Copilot user.message data.content string', () => {
   assert.deepEqual(deriveCopilotSessionTitleFromEventsText(text), {
     title: 'Fix the MCP server connection timeout and validate it',
     firstMessage: 'Fix the MCP server connection timeout and validate it',
+    generatedTitle: '',
     sawAssistant: true,
   });
 });

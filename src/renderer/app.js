@@ -333,6 +333,11 @@ function createTab(idOverride) {
     // agentId links this tab to its claude session once resolved.
     title: `Chat ${TABS.size + 1}`,
     customTitle: null,
+    // titleEarned flips once the session's generated name is adopted;
+    // promptSent marks the first submitted prompt, which is when the name
+    // starts brewing (between the two the tab shows a thinking indicator).
+    titleEarned: false,
+    promptSent: false,
     agentId: null,
     writeBuf: '', flushScheduled: false,
   };
@@ -341,7 +346,10 @@ function createTab(idOverride) {
     tab.chatHasInput = true;
     chatHasInput = true;
     $('#chat-empty').classList.remove('show');
-    if (/[\r\n]/.test(d)) armRecap();
+    if (/[\r\n]/.test(d)) {
+      armRecap();
+      if (!tab.promptSent) { tab.promptSent = true; renderTabStrip(); }
+    }
     window.husk.pty.write(d, id);
     t.scrollToBottom();
   });
@@ -807,7 +815,10 @@ async function reattachSessions() {
         tab.agentId = sess.claudeSessionId;
         try {
           const res = await window.husk.sessions.resolveLiveTitle({ knownAgentId: sess.claudeSessionId });
-          if (res && res.ok && res.title) { if (res.custom) tab.customTitle = res.title; else tab.title = res.title; }
+          if (res && res.ok && res.title) {
+            if (res.custom) tab.customTitle = res.title; else tab.title = res.title;
+            tab.titleEarned = true;
+          }
         } catch (_) {}
       }
     } else {
@@ -970,6 +981,41 @@ function displayTitle(tab) {
   return (tab.customTitle || tab.title || '').trim() || 'Chat';
 }
 
+// ── Session-title presentation helpers ───────────────────────────────────────
+// While a conversation waits for its generated name, titles show a breathing
+// three-dot indicator; when the name lands it types in character by character.
+// Used by the chat tab pill and the Recent chats rail so both stay in step.
+
+// Placeholder titles carry no information; the UI treats them as "no name yet".
+function sessionTitleUsable(title) {
+  const t = String(title || '').trim();
+  return !!t && t !== '(empty)' && !/^new .* chat$/i.test(t) && !/^chat( \d+)?$/i.test(t);
+}
+
+const THINKING_DOTS_HTML = '<span class="title-thinking"><span></span><span></span><span></span></span>';
+function showThinkingDots(el) {
+  if (!el) return;
+  if (el._twTimer) { clearInterval(el._twTimer); el._twTimer = null; }
+  // eslint-disable-next-line no-unsanitized/property -- static indicator markup
+  el.innerHTML = THINKING_DOTS_HTML;
+}
+
+// Type `full` into `el` character by character. The element must already hold
+// its final state elsewhere (data/attributes): if this animation is
+// interrupted by a repaint, the repaint simply shows the full text.
+function typewriterTo(el, full, msPerChar = 30) {
+  if (!el) return;
+  if (el._twTimer) clearInterval(el._twTimer);
+  const text = String(full || '');
+  let i = 0;
+  el.textContent = '';
+  el._twTimer = setInterval(() => {
+    i += 1;
+    el.textContent = text.slice(0, i);
+    if (i >= text.length) { clearInterval(el._twTimer); el._twTimer = null; }
+  }, msPerChar);
+}
+
 // Swap a tab's label for an inline input so the user can rename the chat.
 // Commit on Enter or blur; cancel on Escape. A custom name is persisted by
 // agent session id (once the tab is linked) so it survives restarts.
@@ -1041,7 +1087,12 @@ function renderTabStrip() {
     btn.title = name;
     const label = document.createElement('span');
     label.className = 'chat-tab-label';
-    label.textContent = name;
+    if (!t.customTitle && !t.titleEarned && t.promptSent) {
+      // Name is brewing: breathing dots instead of the "Chat N" placeholder.
+      showThinkingDots(label);
+    } else {
+      label.textContent = name;
+    }
     btn.appendChild(label);
     const edit = document.createElement('span');
     edit.className = 'chat-tab-edit';
@@ -1063,9 +1114,8 @@ function renderTabStrip() {
 }
 
 // Link each new tab to the agent session it spawned, once, so a saved custom
-// name can be restored and future renames persisted. We do NOT derive the tab
-// label from the session: the label stays "Chat N" unless the user renames it.
-// Only unlinked tabs are probed, so once every tab is linked this does no work.
+// name can be restored and future renames persisted. Only unlinked tabs are
+// probed, so once every tab is linked this does no work.
 async function linkTabs() {
   const unlinked = [...TABS.values()].filter((t) => !t.agentId);
   if (!unlinked.length) return;
@@ -1081,13 +1131,57 @@ async function linkTabs() {
         // A rename made before linking had nowhere to persist; save it now.
         try { window.husk.sessions.rename({ agentId: res.agentId, name: tab.customTitle }); } catch (_) {}
       } else if (res.custom && res.title) {
-        tab.customTitle = res.title; changed = true;
+        tab.customTitle = res.title; tab.titleEarned = true; changed = true;
+      } else if (res.named && res.title && sessionTitleUsable(res.title)) {
+        adoptTabTitle(tab, res.title);
       }
     } catch (_) {}
   }
   if (changed) renderTabStrip();
 }
 setInterval(linkTabs, 3000);
+
+// Adopt a generated session name for a tab. State first, full repaint second
+// (so the name is already correct even if the animation is interrupted), then
+// the typewriter reveal plays over the freshly painted label.
+function adoptTabTitle(tab, title) {
+  const clean = String(title || '').trim();
+  if (!clean) return;
+  const firstEarn = !tab.titleEarned;
+  tab.title = clean;
+  tab.titleEarned = true;
+  renderTabStrip();
+  if (firstEarn && !tab.customTitle) {
+    try { typewriterTo(document.querySelector(`#tab-strip [data-tab="${tab.id}"] .chat-tab-label`), clean); } catch (_) {}
+  }
+  // Keep the rail's Recent list in step without waiting for its slow poll.
+  try { refreshRecentList(); } catch (_) {}
+}
+
+// Keep each tab's label in step with its session's title, so the tab matches
+// the Sessions and Recent lists once the conversation earns a name (e.g. the
+// agent summarizes it). A user rename (customTitle) always wins and opts the
+// tab out. The first earned name types itself in; later refinements swap
+// silently through the repaint inside adoptTabTitle.
+async function syncTabTitles() {
+  for (const tab of TABS.values()) {
+    if (!tab.agentId || tab.customTitle) continue;
+    try {
+      const res = await window.husk.sessions.resolveLiveTitle({ knownAgentId: tab.agentId });
+      if (!res || !res.ok || !res.title) continue;
+      if (res.custom) {
+        tab.customTitle = res.title; tab.titleEarned = true; renderTabStrip();
+        continue;
+      }
+      // Only a name the CLI generated counts; the first user message echoed
+      // back as a title does not, so the dots keep breathing until then.
+      if (!res.named || !sessionTitleUsable(res.title)) continue;
+      const clean = String(res.title).trim();
+      if (clean !== tab.title || !tab.titleEarned) adoptTabTitle(tab, clean);
+    } catch (_) {}
+  }
+}
+setInterval(syncTabTitles, 5000);
 
 // Delegated handling for the tab strip: rename on the pencil, close (with
 // confirm) on the ×, otherwise switch focus to the clicked tab.
@@ -5321,6 +5415,36 @@ async function refreshRecentList() {
       resumeSessionInChat({ id: el.dataset.id, project: el.dataset.project, owner: el.dataset.owner });
     });
   });
+  animateRecentTitles(wrap, top);
+}
+
+// Presentation pass over the freshly painted Recent list: a just-active
+// session that has no real name yet breathes thinking dots, and the first
+// paint of its earned name types in. Older unnamed sessions keep their
+// placeholder text (nothing is brewing for them anymore).
+const railTitleSeen = new Map(); // session id -> last title painted
+const RAIL_NAMING_WINDOW_MS = 3 * 60 * 1000;
+function animateRecentTitles(wrap, sessions) {
+  const alive = new Set();
+  for (const s of sessions) {
+    alive.add(s.id);
+    const titleEl = wrap.querySelector(`.rail-recent-item[data-id="${escapeAttr(s.id)}"] .rri-title`);
+    if (!titleEl) continue;
+    const prev = railTitleSeen.get(s.id);
+    railTitleSeen.set(s.id, { title: s.title, named: !!s.named });
+    if (!s.named) {
+      // No generated name yet: a session with fresh activity breathes dots
+      // (its name is brewing); a stale one keeps its placeholder text.
+      const active = Date.now() - (Number(s.mtime) || 0) < RAIL_NAMING_WINDOW_MS;
+      if (active) showThinkingDots(titleEl);
+      continue;
+    }
+    // First paint of the generated name after the unnamed phase: type it in.
+    if (prev !== undefined && !prev.named) {
+      try { typewriterTo(titleEl, s.title); } catch (_) {}
+    }
+  }
+  for (const id of railTitleSeen.keys()) if (!alive.has(id)) railTitleSeen.delete(id);
 }
 $('#btn-recent-all').addEventListener('click', () => setPage('sessions'));
 

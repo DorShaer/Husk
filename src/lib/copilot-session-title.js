@@ -71,6 +71,9 @@ function deriveCopilotSessionTitleFromEventsText(text) {
   return {
     title: firstTitle || firstUser,
     firstMessage: firstUser || firstTitle,
+    // A title the CLI generated itself, as opposed to the first-user-message
+    // fallback above. Consumers use this to tell a real name from filler.
+    generatedTitle: firstTitle,
     sawAssistant,
   };
 }

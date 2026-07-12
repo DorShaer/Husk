@@ -3352,6 +3352,28 @@ body[data-page="chat"] #chats-panel { display: flex; }
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-1));
 }
 .chat-tab-label { overflow: hidden; text-overflow: ellipsis; }
+/* Breathing thinking indicator shown while a chat waits for its generated
+   name (tab pill and Recent rail). Three dots pulse in sequence. */
+.title-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+  min-height: 1em;
+}
+.title-thinking > span {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+  animation: title-thinking-pulse 1.2s ease-in-out infinite;
+}
+.title-thinking > span:nth-child(2) { animation-delay: 0.2s; }
+.title-thinking > span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes title-thinking-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  40% { opacity: 0.9; transform: scale(1.15); }
+}
 .chat-tab-rename {
   font: inherit;
   color: var(--text);

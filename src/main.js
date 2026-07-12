@@ -6321,7 +6321,7 @@ function readCopilotSessionTitle(dir) {
       return { ...deriveCopilotSessionTitleFromEventsText(raw), autopilot: containsAutopilotCopilotText(raw) };
     } finally { fs.closeSync(fd); }
   } catch (_) {
-    return { title: '', firstMessage: '', sawAssistant: false, autopilot: false };
+    return { title: '', firstMessage: '', generatedTitle: '', sawAssistant: false, autopilot: false };
   }
 }
 
@@ -6392,6 +6392,9 @@ function listCopilotSessions(opts = {}) {
       originalCwd: ws.cwd || '',
       path: full,
       title,
+      // True once the session carries a real name (the CLI's generated one or
+      // a user rename), not the first-user-message fallback.
+      named: !!(name || eventTitle.generatedTitle),
       firstMessage,
       prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
       startedISO: ws.created_at || new Date(mtime || 0).toISOString(),
@@ -6559,6 +6562,9 @@ ipcMain.handle('sessions:list', () => {
         originalCwd: originalCwd || '',
         path: fullPath,
         title: matchedPrd ? matchedPrd.task : (firstMessage || '(empty)'),
+        // True once the transcript carries a generated title, not just the
+        // first user message standing in for one.
+        named: !!aiTitle || !!matchedPrd,
         firstMessage: firstMessage || '',
         prdSlug: matchedPrd ? matchedPrd.slug : '',
         prdPhase: matchedPrd ? matchedPrd.phase : '',
@@ -6622,7 +6628,11 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       const hit = list.find((x) => x.id === known);
       const custom = customFor(known);
       if (hit || custom != null) {
-        return { ok: true, agentId: known, custom: custom != null, title: custom != null ? custom : (hit ? hit.title : '') };
+        return {
+          ok: true, agentId: known, custom: custom != null,
+          title: custom != null ? custom : (hit ? hit.title : ''),
+          named: custom != null || !!(hit && hit.named),
+        };
       }
       return { ok: false };
     }
@@ -6639,7 +6649,11 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
     }
     if (!best) return { ok: false };
     const custom = customFor(best.id);
-    return { ok: true, agentId: best.id, custom: custom != null, title: custom != null ? custom : best.title };
+    return {
+      ok: true, agentId: best.id, custom: custom != null,
+      title: custom != null ? custom : best.title,
+      named: custom != null || !!best.named,
+    };
   }
   if (agent !== 'claude') return { ok: false };
 
@@ -6652,10 +6666,15 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       let st; try { st = fs.statSync(full); } catch (_) { continue; }
       if (!st.isFile()) continue;
       const custom = customFor(known);
-      return { ok: true, agentId: known, custom: custom != null, title: custom != null ? custom : sessionTitleFrom(parseSessionHead(full)) };
+      const head = parseSessionHead(full);
+      return {
+        ok: true, agentId: known, custom: custom != null,
+        title: custom != null ? custom : sessionTitleFrom(head),
+        named: custom != null || !!(head && head.aiTitle),
+      };
     }
     const custom = customFor(known);
-    return custom != null ? { ok: true, agentId: known, custom: true, title: custom } : { ok: false };
+    return custom != null ? { ok: true, agentId: known, custom: true, title: custom, named: true } : { ok: false };
   }
 
   const huskId = String((payload && payload.huskSessionId) || '');
@@ -6695,7 +6714,11 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
   }
   if (!best) return { ok: false };
   const custom = customFor(best.id);
-  return { ok: true, agentId: best.id, custom: custom != null, title: custom != null ? custom : sessionTitleFrom(best.info) };
+  return {
+    ok: true, agentId: best.id, custom: custom != null,
+    title: custom != null ? custom : sessionTitleFrom(best.info),
+    named: custom != null || !!(best.info && best.info.aiTitle),
+  };
 });
 
 // Save (or clear, when name is empty) a user's custom name for an agent
