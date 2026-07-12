@@ -41,7 +41,7 @@ function augmentUserPathAsync() {
   if (process.platform !== 'darwin' && process.platform !== 'linux') return;
   const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
   try {
-    const child = spawn(shellBin, ['-ilc', `echo "${MARKER_START}$PATH${MARKER_END}"`], { timeout: 5000 });
+    const child = spawn(shellBin, ['-ilc', `echo "${MARKER_START}\${PATH}${MARKER_END}"`], { timeout: 5000 });
     let out = '';
     child.stdout.on('data', (d) => { out += d.toString(); });
     child.on('error', () => {});
@@ -4136,7 +4136,7 @@ function loginShellPath() {
   try {
     const { spawnSync } = require('child_process');
     const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/bash';
-    const res = spawnSync(shellBin, ['-ilc', `echo "${MARKER_START}$PATH${MARKER_END}"`], { encoding: 'utf8', timeout: 5000 });
+    const res = spawnSync(shellBin, ['-ilc', `echo "${MARKER_START}\${PATH}${MARKER_END}"`], { encoding: 'utf8', timeout: 5000 });
     const p = parseShellPathOutput((res && res.stdout) || '');
     if (p) _loginShellPathCache = p;
   } catch (_) {}

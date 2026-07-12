@@ -6,6 +6,10 @@
 // (/usr/bin:/bin:/usr/sbin:/sbin) that misses npm-global, homebrew, and
 // bun install directories where users keep their agent CLIs.
 
+// The end marker begins with underscores, which are valid in a shell variable
+// name. So the braces around ${PATH} in the echo below are load bearing: without
+// them the shell reads $PATH__HUSK_PATH_END__ as one variable name, finds it
+// unset, and prints nothing between the markers.
 const MARKER_START = '__HUSK_PATH_START__';
 const MARKER_END = '__HUSK_PATH_END__';
 
@@ -30,7 +34,7 @@ function getUserPath({ platform, env, runShell }) {
   if (platform !== 'darwin' && platform !== 'linux') return null;
   const e = env || {};
   const shell = (typeof e.SHELL === 'string' && e.SHELL) ? e.SHELL : '/bin/zsh';
-  const cmd = `echo "${MARKER_START}$PATH${MARKER_END}"`;
+  const cmd = `echo "${MARKER_START}\${PATH}${MARKER_END}"`;
   let result;
   try {
     result = runShell(shell, ['-ilc', cmd]);

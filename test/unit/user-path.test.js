@@ -160,6 +160,12 @@ test('getUserPath: the shell command does not interpolate any env value', () => 
     env: { SHELL: '/bin/zsh', FOO: 'bar;evil', PATH: 'unused' },
     runShell,
   });
-  const expected = `echo "${MARKER_START}$PATH${MARKER_END}"`;
+  // PATH is braced. The end marker starts with underscores, which are valid in a
+  // variable name, so an unbraced $PATH makes the shell read
+  // $PATH__HUSK_PATH_END__ as one unset variable and print nothing between the
+  // markers. See user-path-shell.test.js, which runs this against a real shell.
+  const expected = `echo "${MARKER_START}\${PATH}${MARKER_END}"`;
   assert.equal(captured, expected);
+  // The point of this test: no value from env reaches the command.
+  assert.ok(!captured.includes('bar;evil'));
 });
