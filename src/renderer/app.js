@@ -7022,16 +7022,69 @@ async function runOnboarding({ replay = false } = {}) {
     finish();
   }
 
-  // The logo leans toward the pointer. The tilt lives on the wrapper, so it never
-  // competes with the drift and glow running on the logo itself. Held to a few
-  // degrees: past that it stops reading as depth and starts reading as a gimmick.
+  // Kernel. The husk hatches, and what is inside watches the pointer, blinks, and
+  // reacts to being poked. The shell tilts on its wrapper so the tilt never
+  // competes with the breathing and drift running on the mark itself.
   {
     const wrap = overlay.querySelector('.ob-logo-wrap');
     const welcome = overlay.querySelector('.ob-step[data-step="welcome"]');
+    const hk = overlay.querySelector('#ob-kernel');
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (hk && !still) {
+      // Hatch once the wordmark has landed, so the eye is already on the mark.
+      const hatch = setTimeout(() => {
+        hk.classList.add('is-open', 'is-pop');
+        setTimeout(() => hk.classList.remove('is-pop'), 950);
+      }, 900);
+      ac.signal.addEventListener('abort', () => clearTimeout(hatch));
+
+      // Blink at irregular intervals. A fixed cadence reads as a machine.
+      let blinkTimer = 0;
+      const scheduleBlink = () => {
+        blinkTimer = setTimeout(() => {
+          hk.classList.add('is-blink');
+          setTimeout(() => hk.classList.remove('is-blink'), 130);
+          // Occasionally a double blink, which is what makes it read as alive.
+          if (Math.random() < 0.25) {
+            setTimeout(() => {
+              hk.classList.add('is-blink');
+              setTimeout(() => hk.classList.remove('is-blink'), 120);
+            }, 260);
+          }
+          scheduleBlink();
+        }, 2600 + Math.random() * 4200);
+      };
+      scheduleBlink();
+      ac.signal.addEventListener('abort', () => clearTimeout(blinkTimer));
+
+      // Poke it: it pops, leans out, and blinks at you.
+      on(hk, 'pointerenter', () => hk.classList.add('is-peek'));
+      on(hk, 'pointerleave', () => hk.classList.remove('is-peek'));
+      on(hk, 'click', () => {
+        hk.classList.remove('is-pop');
+        // Reflow, or re-adding the class in the same frame does not restart it.
+        void hk.offsetWidth;
+        hk.classList.add('is-open', 'is-pop');
+        setTimeout(() => hk.classList.remove('is-pop'), 950);
+      });
+
+      // It watches the Get Started button when you go for it.
+      const cta = $('#ob-start');
+      if (cta) {
+        on(cta, 'pointerenter', () => {
+          hk.style.setProperty('--hk-x', '0px');
+          hk.style.setProperty('--hk-y', '3px');
+          hk.classList.add('is-peek');
+        });
+        on(cta, 'pointerleave', () => hk.classList.remove('is-peek'));
+      }
+    }
+
     if (wrap && welcome && !still) {
       let frame = 0;
       const MAX_DEG = 9;
+      const EYE_PX = 2.6;
       on(welcome, 'pointermove', (e) => {
         if (frame) return; // one update per painted frame, not one per event
         frame = requestAnimationFrame(() => {
@@ -7042,12 +7095,24 @@ async function runOnboarding({ replay = false } = {}) {
           const clamp = (n) => Math.max(-1, Math.min(1, n));
           wrap.style.transform =
             `rotateY(${clamp(dx) * MAX_DEG}deg) rotateX(${clamp(-dy) * MAX_DEG}deg)`;
+          if (hk) {
+            // The eyes lead the head: they travel further than the shell tilts.
+            const b = hk.getBoundingClientRect();
+            const ex = (e.clientX - (b.left + b.width / 2)) / (b.width * 2);
+            const ey = (e.clientY - (b.top + b.height / 2)) / (b.height * 2);
+            hk.style.setProperty('--hk-x', `${clamp(ex) * EYE_PX}px`);
+            hk.style.setProperty('--hk-y', `${clamp(ey) * EYE_PX}px`);
+          }
         });
       });
       on(welcome, 'pointerleave', () => {
         if (frame) { cancelAnimationFrame(frame); frame = 0; }
         wrap.style.transition = 'transform 0.6s var(--ease-out)';
         wrap.style.transform = '';
+        if (hk) {
+          hk.style.setProperty('--hk-x', '0px');
+          hk.style.setProperty('--hk-y', '0px');
+        }
         setTimeout(() => { wrap.style.transition = ''; }, 650);
       });
     }
