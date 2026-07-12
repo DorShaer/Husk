@@ -41,3 +41,29 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: smoke test under xvfb
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:e2e
+
+  perf:
+    name: memory + stability profile (electron)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: unit
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: install system deps for headless electron
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1
+      - run: npm ci --no-audit --no-fund
+      - name: memory and stability profile under xvfb
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:perf
+      - name: upload perf report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: perf-report
+          path: test-results/perf-report.json
+          if-no-files-found: ignore

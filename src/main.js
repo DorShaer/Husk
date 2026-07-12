@@ -6295,14 +6295,29 @@ function activeAgentName() {
 
 // Parse a copilot session's workspace.yaml (a flat key: value file) into an
 // object. Returns null if it cannot be read.
+// Copilot session state is polled from several places (title sync, Recent
+// list, stats). With hundreds of session dirs a naive pass rereads tens of MB
+// per tick, so both readers below are cached on file identity (size + mtime):
+// unchanged files parse once, and a poll cycle degrades to stat() calls.
+const copilotWorkspaceCache = new Map(); // dir -> { sig, ws }
+const copilotTitleCache = new Map(); // dir -> { sig, value }
+const COPILOT_CACHE_MAX = 4000;
+
 function readCopilotWorkspace(dir) {
   try {
-    const text = fs.readFileSync(path.join(dir, 'workspace.yaml'), 'utf8');
+    const yamlPath = path.join(dir, 'workspace.yaml');
+    const st = fs.statSync(yamlPath);
+    const sig = `${st.size}:${st.mtimeMs}`;
+    const hit = copilotWorkspaceCache.get(dir);
+    if (hit && hit.sig === sig) return hit.ws;
+    const text = fs.readFileSync(yamlPath, 'utf8');
     const o = {};
     for (const line of text.split('\n')) {
       const m = line.match(/^([A-Za-z_]+):\s*(.*)$/);
       if (m) o[m[1]] = m[2].trim();
     }
+    if (copilotWorkspaceCache.size > COPILOT_CACHE_MAX) copilotWorkspaceCache.clear();
+    copilotWorkspaceCache.set(dir, { sig, ws: o });
     return o;
   } catch (_) { return null; }
 }
@@ -6313,12 +6328,19 @@ function readCopilotSessionTitle(dir) {
     const fd = fs.openSync(eventsPath, 'r');
     try {
       const CAP = 192 * 1024;
-      const sz = fs.fstatSync(fd).size;
+      const st = fs.fstatSync(fd);
+      const sz = st.size;
+      const sig = `${sz}:${st.mtimeMs}`;
+      const hit = copilotTitleCache.get(dir);
+      if (hit && hit.sig === sig) return hit.value;
       const len = Math.min(sz, CAP);
       const b = Buffer.alloc(len);
       fs.readSync(fd, b, 0, len, 0);
       const raw = b.toString('utf8');
-      return { ...deriveCopilotSessionTitleFromEventsText(raw), autopilot: containsAutopilotCopilotText(raw) };
+      const value = { ...deriveCopilotSessionTitleFromEventsText(raw), autopilot: containsAutopilotCopilotText(raw) };
+      if (copilotTitleCache.size > COPILOT_CACHE_MAX) copilotTitleCache.clear();
+      copilotTitleCache.set(dir, { sig, value });
+      return value;
     } finally { fs.closeSync(fd); }
   } catch (_) {
     return { title: '', firstMessage: '', generatedTitle: '', sawAssistant: false, autopilot: false };
@@ -6622,11 +6644,26 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
   const agent = activeAgentName();
 
   if (agent === 'copilot') {
-    const list = listCopilotSessions();
     const known = String((payload && payload.knownAgentId) || '');
     if (known) {
-      const hit = list.find((x) => x.id === known);
+      // Known id: read exactly that session's dir instead of scanning every
+      // session under session-state (this path polls every few seconds per
+      // open tab). The id came from our own discovery, but validate it anyway
+      // so the path join can never escape the session-state root.
       const custom = customFor(known);
+      let hit = null;
+      if (/^[A-Za-z0-9][A-Za-z0-9-]{5,80}$/.test(known)) {
+        const dir = path.join(HOME, '.copilot', 'session-state', known);
+        const ws = readCopilotWorkspace(dir);
+        if (ws && ws.id) {
+          const eventTitle = readCopilotSessionTitle(dir);
+          const name = (ws.name && ws.name !== 'null') ? ws.name.slice(0, 120) : '';
+          hit = {
+            title: name || eventTitle.title || 'New Copilot chat',
+            named: !!(name || eventTitle.generatedTitle),
+          };
+        }
+      }
       if (hit || custom != null) {
         return {
           ok: true, agentId: known, custom: custom != null,
@@ -6636,6 +6673,7 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       }
       return { ok: false };
     }
+    const list = listCopilotSessions();
     const s = sessions.get(String((payload && payload.huskSessionId) || ''));
     if (!s || !s.cwd) return { ok: false };
     const startedAt = s.startedAt || 0;

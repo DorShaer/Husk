@@ -22,7 +22,8 @@
     "dist:win": "electron-builder --win --publish never",
     "test": "node --test \"test/unit/*.test.js\"",
     "test:e2e": "playwright test",
-    "test:all": "npm run test && npm run test:e2e"
+    "test:all": "npm run test && npm run test:e2e",
+    "test:perf": "playwright test --config playwright.perf.config.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
