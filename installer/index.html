@@ -45,9 +45,9 @@
     transition: border-color .25s ease, background .25s ease;
   }
   nav.scrolled { border-bottom-color: var(--line); }
-  .nav-inner { display: flex; align-items: center; gap: 1.1rem; height: 60px; }
-  .nav-brand { display: flex; align-items: center; gap: .55rem; font-weight: 800; letter-spacing: .04em; }
-  .nav-brand img { width: 24px; height: 24px; }
+  .nav-inner { display: flex; align-items: center; gap: 1.1rem; height: 68px; }
+  .nav-brand { display: flex; align-items: center; gap: .6rem; font-weight: 800; letter-spacing: .06em; font-size: 1.18rem; }
+  .nav-brand img { width: 30px; height: 30px; filter: drop-shadow(0 0 10px rgba(247,74,29,.45)); }
   .nav-brand span {
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
     -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -97,13 +97,30 @@
   .btn-primary:hover { box-shadow: 0 12px 30px -8px rgba(247,74,29,.85); }
   .btn-ghost { color: var(--text); background: var(--panel); border-color: var(--line-2); }
   .btn-ghost:hover { border-color: var(--muted-2); }
+  /* One command is shown at a time, picked by the OS toggle above it. The box is
+     sized to hold the longest of them in full: the commands are nowrap, so a
+     container narrower than its content hides the tail of the URL behind the
+     copy button rather than wrapping it. */
+  .hero-os { display: flex; gap: .35rem; justify-content: center; margin-bottom: .7rem; }
+  .os-btn {
+    border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
+    border-radius: 999px; padding: .3rem .8rem; font-size: .78rem; font-weight: 600;
+    cursor: pointer; font-family: inherit; transition: color .15s ease, border-color .15s ease;
+  }
+  .os-btn:hover { color: var(--text); }
+  .os-btn.active { color: #fff; background: var(--accent-soft); border-color: var(--accent); }
   .hero-install {
-    max-width: 34rem; margin: 0 auto; display: flex; align-items: center;
+    max-width: 40rem; margin: 0 auto;
+    display: flex; align-items: center;
     gap: .6rem; background: #08090c; border: 1px solid var(--line-2);
     border-radius: 11px; padding: .55rem .6rem .55rem .95rem; text-align: left;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .84rem;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .8rem;
   }
-  .hero-install .prompt { color: var(--accent); user-select: none; }
+  .hero-install[hidden] { display: none; }
+  /* Fixed width so the command text starts at the same x in every row, whether
+     the prompt is "$" or "PS". */
+  .hero-install .prompt { color: var(--accent); user-select: none; min-width: 1.4rem; flex-shrink: 0; }
+  .hero-install + .hero-install { margin-top: .5rem; }
   .hero-install code { flex: 1; overflow-x: auto; white-space: nowrap; color: var(--text); scrollbar-width: none; }
   .hero-install code::-webkit-scrollbar { display: none; }
   .mini-copy {
@@ -130,10 +147,30 @@
 
   /* ── Section headings ────────────────────────────── */
   section { padding: 4.5rem 0; }
-  .sec-head { text-align: center; max-width: 40rem; margin: 0 auto 3rem; }
-  .kicker { font-size: .8rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
-  .sec-head h2 { font-size: clamp(1.7rem, 3.5vw, 2.4rem); margin: .6rem 0 .7rem; letter-spacing: -.01em; font-weight: 800; }
-  .sec-head p { color: var(--muted); font-size: 1.05rem; margin: 0; }
+  .sec-head { text-align: center; max-width: 46rem; margin: 0 auto 3.5rem; }
+  /* The kicker reads as a pill so it registers as a label rather than stray
+     small text above the heading. */
+  .kicker {
+    display: inline-flex; align-items: center; gap: .45rem;
+    font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent-2); background: var(--accent-soft);
+    border: 1px solid rgba(247,74,29,.28); border-radius: 999px;
+    padding: .32rem .75rem; line-height: 1;
+  }
+  .kicker::before {
+    content: ""; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 7px var(--accent);
+  }
+  /* Headings set their own line-height: the body's 1.65 is tuned for prose and
+     leaves a two-line heading with a gap wide enough to read as two blocks. */
+  .sec-head h2 {
+    font-size: clamp(2.05rem, 4.4vw, 3.05rem);
+    line-height: 1.1; letter-spacing: -.025em; font-weight: 800;
+    margin: 1.05rem 0 .9rem;
+    background: linear-gradient(180deg, var(--text) 40%, #a9b0bd);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sec-head p { color: var(--muted); font-size: 1.12rem; line-height: 1.6; margin: 0 auto; max-width: 40rem; }
 
   /* ── Bento grid ──────────────────────────────────── */
   .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1rem; }
@@ -147,9 +184,12 @@
   .cell.in { opacity: 1; transform: none; }
   .cell:hover { border-color: var(--line-2); }
   .cell .tag { font-size: .74rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
-  .cell h3 { margin: .5rem 0 .4rem; font-size: 1.22rem; letter-spacing: -.01em; }
-  .cell p { margin: 0; color: var(--muted); font-size: .93rem; }
-  .cell .shot { margin-top: 1.2rem; border-radius: 12px; border: 1px solid var(--line-2); overflow: hidden; background: #08090c; }
+  .cell h3 { margin: .5rem 0 .4rem; font-size: 1.22rem; line-height: 1.25; letter-spacing: -.01em; }
+  .cell p { margin: 0 0 1.4rem; color: var(--muted); font-size: .93rem; }
+  /* Cells in a row stretch to the tallest, so anchoring the shot to the bottom
+     keeps every screenshot on the same line whether its blurb runs one line or
+     two. Without this the images sit directly under text of unequal height. */
+  .cell .shot { margin-top: auto; border-radius: 12px; border: 1px solid var(--line-2); overflow: hidden; background: #08090c; }
   .cell .shot img { width: 100%; display: block; }
   .c-6 { grid-column: span 6; }
   .c-4 { grid-column: span 4; }
@@ -181,7 +221,7 @@
     border-radius: var(--radius); padding: 1.15rem 1.25rem; margin-bottom: 1rem;
   }
   .card.rec { border-color: rgba(247,74,29,.45); box-shadow: 0 0 0 1px rgba(247,74,29,.12); }
-  .card h3 { margin: 0 0 .35rem; font-size: 1.05rem; display: flex; align-items: center; gap: .6rem; }
+  .card h3 { margin: 0 0 .5rem; font-size: 1.18rem; line-height: 1.3; letter-spacing: -.01em; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
   .card h3 .badge {
     font-size: .62rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em;
     color: var(--accent); border: 1px solid rgba(247,74,29,.5); border-radius: 999px; padding: .12rem .5rem;
@@ -203,6 +243,15 @@
   .copy:hover { color: var(--text); border-color: var(--accent); }
   .install-group { display: none; }
   .install-group.active { display: block; }
+
+  /* Below this width a one-line install command is wider than the screen. Wrap it
+     rather than letting it scroll under a hidden scrollbar, where the tail of the
+     URL simply reads as missing. */
+  @media (max-width: 720px) {
+    .hero-install { align-items: flex-start; }
+    .hero-install code { white-space: pre-wrap; overflow-wrap: anywhere; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  }
 
   /* ── Trust row ───────────────────────────────────── */
   .trust { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
@@ -259,17 +308,21 @@
       </a>
       <a class="btn btn-ghost" href="https://github.com/DorShaer/Husk" target="_blank" rel="noopener">View on GitHub</a>
     </div>
-    <div class="hero-install">
+    <div class="hero-os">
+      <button class="os-btn active" data-cmd="hero-cmd">Linux / macOS</button>
+      <button class="os-btn" data-cmd="hero-cmd-win">Windows</button>
+    </div>
+    <div class="hero-install" data-for="hero-cmd">
       <span class="prompt">$</span>
       <code id="hero-cmd">curl -fsSL https://dorshaer.github.io/Husk/install.sh | bash</code>
       <button class="mini-copy" data-copy="#hero-cmd">Copy</button>
     </div>
-    <div class="hero-install">
+    <div class="hero-install" data-for="hero-cmd-win" hidden>
       <span class="prompt">PS</span>
       <code id="hero-cmd-win">irm https://dorshaer.github.io/Husk/install.ps1 | iex</code>
       <button class="mini-copy" data-copy="#hero-cmd-win">Copy</button>
     </div>
-    <div class="os-note">Linux and macOS use the first line, Windows the second. Debian/Ubuntu gets the signed apt repo, Fedora the .rpm, other Linux the AppImage, macOS the .dmg. Every download is checked against the release SHA256SUMS before it runs.</div>
+    <div class="os-note">Signed apt repo on Debian/Ubuntu, .rpm on Fedora, AppImage elsewhere, .dmg on macOS. Checksums verified.</div>
 
     <div class="hero-shot">
       <video autoplay muted loop playsinline preload="metadata" poster="husk-poster.jpg" aria-label="Husk in action">
@@ -501,6 +554,17 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
       navigator.clipboard.writeText(el.innerText).then(function () {
         var t = btn.textContent; btn.textContent = 'Copied';
         setTimeout(function () { btn.textContent = t; }, 1200);
+      });
+    });
+  });
+
+  // Hero OS toggle: show one install command at a time.
+  document.querySelectorAll('.os-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.os-btn').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      document.querySelectorAll('.hero-install').forEach(function (row) {
+        row.hidden = row.dataset.for !== btn.dataset.cmd;
       });
     });
   });
