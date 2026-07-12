@@ -285,7 +285,9 @@ const DEFAULT_CONFIG = {
   showSystemView: false,
   treeRoot: HOME,
   showHidden: false,
-  theme: 'midnight',
+  // Applies to a first install only. An existing install keeps whatever theme it
+  // already has, via the pin in loadConfig.
+  theme: 'light',
   accent: 'orange',
   railExpanded: true,
   statusCollapsed: false,
@@ -307,10 +309,35 @@ const DEFAULT_CONFIG = {
   lastClaudeSessions: {},
 };
 
+// The theme a config was running under before `theme` became a stored key. Any
+// config file that predates the key was showing this, so it is what that install
+// keeps.
+const PRE_EXISTING_THEME = 'midnight';
+
+// Themes whose --term-light token is 1 in styles.css. The renderer derives the
+// light/dark family from that token once the stylesheet is live; the window and
+// the preload need the answer before any of that exists, so it is mirrored here.
+const LIGHT_THEMES = new Set(['light', 'sepia']);
+// Each theme's --bg, used for the window's own paint. Only the two families are
+// needed: the window is only visible behind the app for the first frame.
+const THEME_BG = { light: '#fafafa', sepia: '#f3ead6' };
+const DARK_BG = '#0c0a09';
+
+function themeBackground(theme) {
+  return THEME_BG[theme] || (LIGHT_THEMES.has(theme) ? THEME_BG.light : DARK_BG);
+}
+
 function loadConfig() {
   try {
     if (!fs.existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
-    return { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
+    const stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    // A config file on disk means this is an existing install, and an update must
+    // never move its theme. Where the file carries no theme, pin the one it was
+    // already showing so the new-install default cannot reach it.
+    if (!Object.prototype.hasOwnProperty.call(stored, 'theme')) {
+      stored.theme = PRE_EXISTING_THEME;
+    }
+    return { ...DEFAULT_CONFIG, ...stored };
   } catch (_) { return { ...DEFAULT_CONFIG }; }
 }
 
@@ -648,7 +675,9 @@ function createWindow() {
     // a small window instead of clipping its chrome.
     minWidth: 720,
     minHeight: 520,
-    backgroundColor: '#0c0a09',
+    // The window paints this before the renderer has run, so it has to match the
+    // theme about to be applied or the app opens on a frame of the wrong colour.
+    backgroundColor: themeBackground(config.theme),
     title: 'Husk',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
@@ -7518,6 +7547,18 @@ function setupAutoUpdater() {
   updaterPeriodicTimer = setInterval(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 6 * 60 * 60 * 1000);
   updaterPeriodicTimer.unref();
 }
+
+// Synchronous on purpose. The preload reads this at document start and stamps the
+// theme onto <body> the moment it exists, which is what keeps a light install from
+// painting index.html's baked-in dark default first. An async channel resolves too
+// late to beat the first frame.
+ipcMain.on('config:boot-theme', (e) => {
+  e.returnValue = {
+    theme: config.theme,
+    accent: config.accent,
+    mode: LIGHT_THEMES.has(config.theme) ? 'light' : 'dark',
+  };
+});
 
 ipcMain.handle('update:get', () => updateState);
 

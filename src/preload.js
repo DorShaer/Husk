@@ -10,6 +10,34 @@ const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const HUSK_BASE_ZOOM = -0.5;
 try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
 
+// Stamp the saved theme onto <body> the moment it is parsed, before the first
+// paint. index.html ships a dark theme on the body tag as its static value, and
+// the renderer only corrects it once config arrives over IPC, which is a frame or
+// more later: long enough to show the wrong theme. Reading the theme synchronously
+// here and writing it as soon as the element exists closes that window.
+try {
+  const boot = ipcRenderer.sendSync('config:boot-theme');
+  if (boot && boot.theme) {
+    const stamp = () => {
+      if (!document.body) return false;
+      document.body.dataset.theme = boot.theme;
+      document.body.dataset.mode = boot.mode;
+      if (boot.accent) document.body.dataset.accent = boot.accent;
+      return true;
+    };
+    if (!stamp()) {
+      // <body> does not exist yet at document start, so catch it on insertion
+      // rather than waiting for DOMContentLoaded, which can land after a paint.
+      // Observe `document`, not `document.documentElement`: at this point the
+      // latter can still be null, and observing null throws.
+      const obs = new MutationObserver(() => { if (stamp()) obs.disconnect(); });
+      obs.observe(document, { childList: true, subtree: true });
+      // Backstop, in case the body somehow lands without a delivered mutation.
+      document.addEventListener('DOMContentLoaded', () => { stamp(); obs.disconnect(); }, { once: true });
+    }
+  }
+} catch (_) { /* the renderer still applies the theme from config on load */ }
+
 contextBridge.exposeInMainWorld('husk', {
   pty: {
     // sessionId threads through every channel so multiple PTYs run in
