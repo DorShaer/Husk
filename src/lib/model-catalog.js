@@ -154,6 +154,26 @@ function labelBefore(text, index) {
   return prefix.replace(/^[\s>*›❯➜→•·●○◉◌◦✓✔☑\-\[\]()/]+/, '').trim();
 }
 
+// Vendor-word model ids, optionally carrying one "provider/" prefix. The
+// checker rejects quantifiers nested inside optional groups, so the prefix is
+// not part of the core regex: matches start at the vendor word and grow
+// leftward over a plain "token/" when one directly precedes them.
+const MODEL_CORE_RE = /\b(?:gpt|claude|gemini|codex|o[1-9]|llama|mistral|mixtral|qwen|deepseek|grok|xai|openai|anthropic|google)[A-Za-z0-9._/:+-]*/ig;
+const MODEL_PREFIX_RE = /([A-Za-z0-9]+\/)$/;
+function directModelMatches(text) {
+  const out = [];
+  const src = String(text || '');
+  for (const m of src.matchAll(MODEL_CORE_RE)) {
+    let start = m.index;
+    let value = m[0];
+    const pre = src.slice(Math.max(0, start - 25), start).match(MODEL_PREFIX_RE);
+    if (pre) { value = pre[1] + value; start -= pre[1].length; }
+    if (value.length > 90) continue;
+    out.push({ value, index: start, length: value.length });
+  }
+  return out;
+}
+
 function allModelCandidatesFromText(text, vendor) {
   const items = [];
   const src = String(text || '');
@@ -170,11 +190,10 @@ function allModelCandidatesFromText(text, vendor) {
     items.push({ value, label: labelBefore(src, m.index) || titleFromId(value) });
   }
 
-  const directRe = /\b((?:[A-Za-z0-9]+\/)?(?:gpt|claude|gemini|codex|o[1-9]|llama|mistral|mixtral|qwen|deepseek|grok|xai|openai|anthropic|google)[A-Za-z0-9._/:+-]{0,88})\b/ig;
-  for (const m of src.matchAll(directRe)) {
-    const suffix = src.slice(m.index + m[1].length, m.index + m[1].length + 8);
+  for (const d of directModelMatches(src)) {
+    const suffix = src.slice(d.index + d.length, d.index + d.length + 8);
     if (/^\s+mini\b/i.test(suffix)) continue;
-    const value = normalizeModelId(m[1]);
+    const value = normalizeModelId(d.value);
     if (!value || !looksLikeModelId(value, vendor)) continue;
     items.push({ value, label: titleFromId(value), source: 'direct' });
   }
@@ -229,10 +248,19 @@ function modelCandidateFromLine(line, vendor) {
   if (vendor === 'claude' && /^\d+\.\s*Default\b/i.test(l)) return null;
 
   if (vendor === 'claude') {
-    const choice = l.match(/^\d+\.\s*(?:\((?:selected|current|recommended)\)\s*)?(opus|fable|sonnet|haiku)\b(?:\s*[-\u2014\u2013]\s*(.+))?/i);
-    if (choice) {
-      const value = choice[1].toLowerCase();
-      return { value, label: cleanLabel(choice[2] || titleFromId(value)) };
+    // Numbered picker rows: "1. (selected) opus - description". Parsed
+    // stepwise so no quantifier ends up nested inside an optional group.
+    const rowNum = l.match(/^\d+\./);
+    if (rowNum) {
+      let rest = l.slice(rowNum[0].length).trim();
+      const tag = rest.match(/^\((?:selected|current|recommended)\)/i);
+      if (tag) rest = rest.slice(tag[0].length).trim();
+      const fam = rest.match(/^(opus|fable|sonnet|haiku)\b/i);
+      if (fam) {
+        const label = rest.slice(fam[0].length).trim().replace(/^[-\u2014\u2013]/, '').trim().slice(0, 160);
+        const value = fam[1].toLowerCase();
+        return { value, label: cleanLabel(label || titleFromId(value)) };
+      }
     }
   }
 
@@ -240,7 +268,13 @@ function modelCandidateFromLine(line, vendor) {
     // aider --list-models prints one provider-route id per line
     // (anthropic/claude-sonnet-4-5, openrouter/z-ai/glm-4.6). Accept a
     // whole-line slash route regardless of the generic vendor-word regex.
-    const route = l.match(/^([A-Za-z0-9][A-Za-z0-9._:+-]*(?:\/[A-Za-z0-9._:+-]+)+)$/);
+    // Whole line is a provider route when every /-separated segment is a
+    // plain token. Split-and-test keeps each check a flat regex.
+    const segs = l.length <= 90 && l.includes('/') ? l.split('/') : null;
+    const route = segs && segs.length >= 2 && segs.length <= 7
+      && /^[A-Za-z0-9]/.test(l)
+      && segs.every((p) => /^[A-Za-z0-9._:+-]+$/.test(p))
+      ? [l, l] : null;
     if (route) {
       const value = normalizeModelId(route[1]);
       if (value && !/\.(json|jsonc|ya?ml|md|txt|lock|toml)$/i.test(value)) {
@@ -260,11 +294,10 @@ function modelCandidateFromLine(line, vendor) {
     }
   }
 
-  const directMatches = l.matchAll(/\b((?:[A-Za-z0-9]+\/)?(?:gpt|claude|gemini|codex|o[1-9]|llama|mistral|mixtral|qwen|deepseek|grok|xai|openai|anthropic|google)[A-Za-z0-9._/:+-]{0,88})\b/ig);
-  for (const direct of directMatches) {
-    const suffix = l.slice(direct.index + direct[1].length, direct.index + direct[1].length + 8);
+  for (const direct of directModelMatches(l)) {
+    const suffix = l.slice(direct.index + direct.length, direct.index + direct.length + 8);
     if (/^\s+mini\b/i.test(suffix)) continue;
-    const value = normalizeModelId(direct[1]);
+    const value = normalizeModelId(direct.value);
     if (value && looksLikeModelId(value, vendor)) {
       const label = l === value ? titleFromId(value) : l.replace(/\s*\[(?:current|default|selected)\]\s*/i, '').trim();
       return { value, label: cleanLabel(label || titleFromId(value)) };
@@ -320,7 +353,10 @@ function looksLikeModelId(id, vendor) {
     if (/^(haiku|sonnet|opus|fable|opusplan)$/.test(x)) return true;
     return /^claude-[a-z0-9][a-z0-9.-]*$/.test(x);
   }
-  return /^(?:[a-z0-9]+\/)?(?:gpt|claude|gemini|codex|o[1-9]|llama|mistral|mixtral|qwen|deepseek|grok|xai|openai|anthropic|google)/.test(x);
+  // One optional "provider/" prefix, stripped before the vendor-word check so
+  // the regex stays flat.
+  const body = /^[a-z0-9]+\//.test(x) ? x.slice(x.indexOf('/') + 1) : x;
+  return /^(?:gpt|claude|gemini|codex|o[1-9]|llama|mistral|mixtral|qwen|deepseek|grok|xai|openai|anthropic|google)/.test(body);
 }
 
 function uniqueModels(items) {

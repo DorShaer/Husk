@@ -165,6 +165,7 @@ function dependencyFallbackPlan(goal, cwd, maxAgents) {
 }
 
 function safeReadDir(dir) {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir descends from the Husk-managed workspace root being profiled
   try { return fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return []; }
 }
 
@@ -207,6 +208,7 @@ function collectRepoProfile(cwd, goal) {
     packageInfo: null,
     relevantPaths: [],
   };
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- cwd is the active project's workspace root
   if (!cwd || !fs.existsSync(cwd)) return profile;
 
   const entries = safeReadDir(cwd).sort((a, b) => a.name.localeCompare(b.name));
@@ -252,7 +254,9 @@ function collectRepoProfile(cwd, goal) {
 
   try {
     const pkgPath = path.join(cwd, 'package.json');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- workspace root + fixed basename
     if (fs.existsSync(pkgPath)) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- workspace root + fixed basename
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
       profile.packageInfo = {
         name: typeof pkg.name === 'string' ? pkg.name : null,

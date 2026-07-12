@@ -1,5 +1,6 @@
 'use strict';
 
+// eslint-disable-next-line security/detect-non-literal-regexp -- built once from the literal fragments below, no runtime input
 const QUESTION_RE = new RegExp([
   '\\?\\s*$',
   '\\bwhat (would|should) (you|i)\\b',

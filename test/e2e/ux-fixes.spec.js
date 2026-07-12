@@ -242,7 +242,7 @@ test('Ctrl+R reloads in place without starting a chat', async () => {
   await app.close();
 });
 
-test('appearance changes require refresh confirmation before saving', async () => {
+test('appearance changes preview live and persist only on save', async () => {
   const app = await launch();
   const win = await ready(app);
   await win.evaluate(() => {
@@ -257,33 +257,55 @@ test('appearance changes require refresh confirmation before saving', async () =
     reloadRendererPreservingPlace = () => { window.__appearanceReloads += 1; };
   });
 
+  // Changing the theme previews instantly: no dialog, nothing persisted, and
+  // the unsaved-changes bar appears.
   await win.evaluate(() => {
+    openPrefsModal();
     const sel = document.getElementById('pref-theme');
     sel.value = 'light';
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await win.waitForSelector('#confirm-modal:not([hidden])', { timeout: 5_000 });
-  await win.evaluate(() => { document.getElementById('onboarding')?.remove(); });
-  await win.click('#confirm-cancel');
-  await win.waitForFunction(() => document.getElementById('confirm-modal').hidden && !appearancePromptActive);
+  const previewing = await win.evaluate(() => ({
+    theme: document.body.dataset.theme,
+    savedTheme: cfg.theme,
+    barVisible: !document.getElementById('pref-appearance-actions').hidden,
+    reloads: window.__appearanceReloads,
+  }));
+  expect(previewing.theme).toBe('light');
+  expect(previewing.savedTheme).toBe('midnight');
+  expect(previewing.barVisible).toBe(true);
+  expect(previewing.reloads).toBe(0);
+
+  // A second change must keep previewing (the old flow locked up here).
+  await win.evaluate(() => {
+    const sel = document.getElementById('pref-theme');
+    sel.value = 'nord';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const second = await win.evaluate(() => document.body.dataset.theme);
+  expect(second).toBe('nord');
+
+  // Cancel restores the saved appearance and hides the bar.
+  await win.evaluate(() => document.getElementById('pref-appearance-revert').click());
   const cancelled = await win.evaluate(() => ({
     theme: document.body.dataset.theme,
     savedTheme: cfg.theme,
     selectValue: document.getElementById('pref-theme').value,
+    barVisible: !document.getElementById('pref-appearance-actions').hidden,
     reloads: window.__appearanceReloads,
   }));
   expect(cancelled.theme).toBe('midnight');
   expect(cancelled.savedTheme).toBe('midnight');
   expect(cancelled.selectValue).toBe('midnight');
+  expect(cancelled.barVisible).toBe(false);
   expect(cancelled.reloads).toBe(0);
 
+  // Save persists the previewed accent and refreshes the UI (non-chat page).
   await win.evaluate(() => {
-    const swatch = document.querySelector('.accent-swatch[data-c="cyan"]');
-    swatch.click();
+    setPage('agents');
+    document.querySelector('.accent-swatch[data-c="cyan"]').click();
   });
-  await win.waitForSelector('#confirm-modal:not([hidden])', { timeout: 5_000 });
-  await win.evaluate(() => { document.getElementById('onboarding')?.remove(); });
-  await win.click('#confirm-ok');
+  await win.evaluate(() => document.getElementById('pref-appearance-save').click());
   await win.waitForFunction(() => window.__appearanceReloads === 1);
   const saved = await win.evaluate(() => ({
     accent: cfg.accent,

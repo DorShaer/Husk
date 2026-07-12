@@ -62,6 +62,7 @@ function readStatus(workspaceRoot) {
   const file = statusPath(workspaceRoot);
   let raw;
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- file is workspaceRoot + a fixed basename, both Husk-managed
     raw = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if (err && err.code === 'ENOENT') return { ok: false, missing: true, error: 'missing' };

@@ -989,7 +989,12 @@ function displayTitle(tab) {
 // Placeholder titles carry no information; the UI treats them as "no name yet".
 function sessionTitleUsable(title) {
   const t = String(title || '').trim();
-  return !!t && t !== '(empty)' && !/^new .* chat$/i.test(t) && !/^chat( \d+)?$/i.test(t);
+  if (!t || t === '(empty)') return false;
+  const lower = t.toLowerCase();
+  if (lower.startsWith('new ') && lower.endsWith(' chat')) return false;
+  if (lower === 'chat') return false;
+  if (lower.startsWith('chat ') && /^\d+$/.test(lower.slice(5))) return false;
+  return true;
 }
 
 const THINKING_DOTS_HTML = '<span class="title-thinking"><span></span><span></span><span></span></span>';
@@ -8713,12 +8718,24 @@ function formatTokens(n) {
 function prettyModel(id) {
   const s = String(id || '').trim();
   if (!s) return '';
-  const gpt = s.match(/^gpt[-_\s]?([0-9](?:\.[0-9]+)?)(?:[-_\s]?([A-Za-z0-9.]+))?$/i);
-  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? '-' + gpt[2] : ''}`;
+  // gpt ids ("gpt-5.5", "gpt 5.4-mini") parsed stepwise: version head first,
+  // then a plain-token remainder, so no quantifier nests in an optional group.
+  const gptHead = s.match(/^gpt[-_ ]?(\d[\d.]*)/i);
+  if (gptHead) {
+    let rest = s.slice(gptHead[0].length);
+    if (/^[-_ ]/.test(rest)) rest = rest.slice(1);
+    if (!rest || (rest.length <= 32 && /^[A-Za-z0-9.]+$/.test(rest))) {
+      return `GPT-${gptHead[1]}${rest ? '-' + rest : ''}`;
+    }
+  }
   const bare = s.replace(/^claude-/, '').replace(/-\d{8}$/, '');
   const cap = (w) => w ? w[0].toUpperCase() + w.slice(1) : w;
-  const m = bare.match(/^(opus|sonnet|haiku|fable|mythos)-?(\d+(?:[-.]\d+)?)?$/);
-  if (m) return cap(m[1]) + (m[2] ? ' ' + m[2].replace('-', '.') : '');
+  const fam = bare.match(/^(opus|sonnet|haiku|fable|mythos)\b/);
+  if (fam) {
+    const ver = bare.slice(fam[1].length).replace(/^-/, '');
+    if (!ver) return cap(fam[1]);
+    if (ver.length <= 8 && /^\d[\d.-]*$/.test(ver)) return cap(fam[1]) + ' ' + ver.replace('-', '.');
+  }
   // Non-claude ids: title-case the dashed segments.
   return bare.split(/[-_]/).map((p) => /^\d/.test(p) ? p : cap(p)).join(' ');
 }
