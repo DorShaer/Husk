@@ -60,7 +60,8 @@
         "from": "libs/pai",
         "to": "pai",
         "filter": [
-          "**/*"
+          "**/*",
+          "!skills/**/Examples/**"
         ]
       },
       {
