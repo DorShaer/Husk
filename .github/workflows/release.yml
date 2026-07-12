@@ -148,20 +148,30 @@ jobs:
 
       - name: Extract release notes from the annotated tag
         run: |
-          # Read the annotated tag's body and hand it to the release
-          # action. Release notes live in the tag message we wrote at
-          # `git tag -a`, so the release page on github.com matches
-          # what the maintainer typed when cutting the tag.
+          # Release notes are the message written at `git tag -a`, so the release
+          # page matches what the maintainer typed when cutting the tag.
+          #
+          # Refetch the tag object first. Checkout can leave the tag as a
+          # lightweight ref pointing straight at the commit, and for those
+          # %(contents) resolves to the COMMIT message: the release then quietly
+          # publishes the commit body as its notes, which is how internal changes
+          # end up on the release page.
           TAG="${GITHUB_REF#refs/tags/}"
-          BODY=$(git tag -l --format='%(contents:body)' "$TAG")
-          if [ -z "$BODY" ]; then
-            BODY=$(git tag -l --format='%(contents)' "$TAG")
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+
+          if [ "$(git cat-file -t "$TAG")" != "tag" ]; then
+            echo "::error::$TAG is not an annotated tag, so it carries no release notes. Cut it with 'git tag -a'."
+            exit 1
           fi
-          if [ -z "$BODY" ]; then
-            BODY="Husk $TAG. See the repository for changes."
+
+          BODY=$(git tag -l --format='%(contents)' "$TAG")
+          if [ -z "${BODY//[[:space:]]/}" ]; then
+            echo "::error::The annotation on $TAG is empty. Write the release notes into the tag message."
+            exit 1
           fi
+
           printf '%s\n' "$BODY" > /tmp/release-notes.md
-          echo "wrote $(wc -l < /tmp/release-notes.md) lines"
+          echo "wrote $(wc -l < /tmp/release-notes.md) lines from the tag annotation"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

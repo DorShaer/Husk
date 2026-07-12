@@ -7,6 +7,14 @@ name: APT Repository
 # existing release without cutting a new version.
 
 on:
+  # Hangs off the Release run finishing rather than the release being published.
+  # A release created by a workflow's own token does not fire `release: published`,
+  # since GitHub will not let a run trigger another run. That is why apt kept
+  # serving an old version while the releases themselves went out fine.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # Still wanted for a release published by hand from the GitHub UI.
   release:
     types: [published]
   # Republish whenever the installers or the landing page change, so a fix to
@@ -35,6 +43,12 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Only ingest from a Release run that actually succeeded, and only for a
+    # version tag. head_branch carries the tag name on a tag push.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
     timeout-minutes: 15
     steps:
       - name: Checkout main (public key + workflow)
