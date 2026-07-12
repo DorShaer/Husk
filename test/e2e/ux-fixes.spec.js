@@ -7,10 +7,17 @@ const os = require('node:os');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-function launch() {
+// Pass `config` to seed the app's config on disk. A test that instead assigns to
+// the renderer's cfg races the boot config load, which lands afterwards and puts
+// the stored values back.
+function launch(config) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
-  fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
+  const cfgDir = path.join(homeDir, '.config', 'husk');
+  fs.mkdirSync(cfgDir, { recursive: true });
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
+  if (config) {
+    fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify(config, null, 2));
+  }
   return electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
@@ -243,15 +250,18 @@ test('Ctrl+R reloads in place without starting a chat', async () => {
 });
 
 test('appearance changes preview live and persist only on save', async () => {
-  const app = await launch();
+  // Stored on disk, so the boot config load agrees with what the test expects
+  // rather than overwriting it a moment later.
+  const app = await launch({
+    theme: 'midnight', accent: 'orange', railExpanded: true, firstRunDone: true,
+  });
   const win = await ready(app);
+  // Boot loads the config asynchronously. Wait for it, or the assertions below
+  // run against whatever cfg held before it landed.
+  await win.waitForFunction(() => cfg && cfg.theme === 'midnight');
   await win.evaluate(() => {
     const onboarding = document.getElementById('onboarding');
     if (onboarding) onboarding.hidden = true;
-    cfg = { ...cfg, theme: 'midnight', accent: 'orange', railExpanded: true };
-    applyTheme('midnight');
-    applyAccent('orange');
-    document.body.dataset.rail = 'expanded';
     bindPrefs();
     window.__appearanceReloads = 0;
     reloadRendererPreservingPlace = () => { window.__appearanceReloads += 1; };
