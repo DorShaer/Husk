@@ -6511,6 +6511,12 @@ function listCopilotSessions(opts = {}) {
       named: !!(name || eventTitle.generatedTitle),
       firstMessage,
       prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
+      // The CLI creates a session directory the moment it launches and only
+      // writes events.jsonl once the conversation starts, so an abandoned chat
+      // leaves an empty directory behind. Such a session can never earn a name,
+      // and a tab bound to one shows the pending dots forever. Flag the ones
+      // that carry real content so tab discovery can prefer them.
+      hasContent: sizeBytes > 0 || !!name,
       startedISO: ws.created_at || new Date(mtime || 0).toISOString(),
       startedMs,
       sizeBytes,
@@ -6749,9 +6755,12 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
         if (ws && ws.id) {
           const eventTitle = readCopilotSessionTitle(dir);
           const name = (ws.name && ws.name !== 'null') ? ws.name.slice(0, 120) : '';
+          let sizeBytes = 0;
+          try { sizeBytes = fs.statSync(path.join(dir, 'events.jsonl')).size; } catch (_) { sizeBytes = 0; }
           hit = {
             title: name || eventTitle.title || 'New Copilot chat',
             named: !!(name || eventTitle.generatedTitle),
+            hasContent: sizeBytes > 0 || !!name,
           };
         }
       }
@@ -6760,6 +6769,9 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
           ok: true, agentId: known, custom: custom != null,
           title: custom != null ? custom : (hit ? hit.title : ''),
           named: custom != null || !!(hit && hit.named),
+          // Still bound to an empty session, which cannot earn a name. Keep the
+          // binding open so discovery can move the tab to the real session.
+          provisional: custom == null && !(hit && hit.hasContent),
         };
       }
       return { ok: false };
@@ -6769,19 +6781,42 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
     if (!s || !s.cwd) return { ok: false };
     const startedAt = s.startedAt || 0;
     const exclude = new Set(Array.isArray(payload && payload.excludeAgentIds) ? payload.excludeAgentIds : []);
-    let best = null;
+
+    // Candidates are the sessions in this tab's cwd that this tab could have
+    // started. Two rules pick between them, and both matter:
+    //
+    // The tab launches the CLI, so its session cannot predate it. Sessions that
+    // started before the tab belong to an earlier chat, and are only considered
+    // when nothing started after it (the window keeps a little slack for clock
+    // skew, but a session from a chat a minute ago must not win).
+    //
+    // Prefer a session that carries content. The CLI can create several session
+    // directories for one chat and only write the conversation into the last, so
+    // the empty ones left behind can never earn a name: a tab bound to one shows
+    // the pending dots for good.
+    const candidates = [];
     for (const x of list) {
       if (exclude.has(x.id)) continue;
       if (x.originalCwd && x.originalCwd !== s.cwd) continue;
       if (isFinite(x.startedMs) && x.startedMs < startedAt - 60_000) continue;
-      if (!best || x.startedMs < best.startedMs) best = x;
+      candidates.push(x);
     }
+    if (!candidates.length) return { ok: false };
+    const pick = (pool) => pool.reduce((a, b) => (!a || b.startedMs < a.startedMs ? b : a), null);
+    const startedAfter = candidates.filter((x) => !isFinite(x.startedMs) || x.startedMs >= startedAt);
+    const pool = startedAfter.length ? startedAfter : candidates;
+    const best = pick(pool.filter((x) => x.hasContent)) || pick(pool);
     if (!best) return { ok: false };
+
     const custom = customFor(best.id);
     return {
       ok: true, agentId: best.id, custom: custom != null,
       title: custom != null ? custom : best.title,
       named: custom != null || !!best.named,
+      // The only candidate was an empty session, so this binding is a guess. The
+      // renderer keeps probing so the tab can move to the real session once the
+      // conversation starts writing.
+      provisional: custom == null && !best.hasContent,
     };
   }
   if (agent !== 'claude') return { ok: false };

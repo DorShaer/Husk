@@ -1125,20 +1125,30 @@ function renderTabStrip() {
   strip.classList.toggle('multi', tabs.length >= 1);
 }
 
-// Link each new tab to the agent session it spawned, once, so a saved custom
-// name can be restored and future renames persisted. Only unlinked tabs are
-// probed, so once every tab is linked this does no work.
+// Link each tab to the agent session it spawned, so a saved custom name can be
+// restored and future renames persisted.
+//
+// A tab is probed while it has no session, and also while the session it landed
+// on is provisional. Some CLIs create a session directory at launch and only
+// write to it once the conversation starts, so the first match can be an empty
+// directory left behind by an abandoned chat. That session never earns a name,
+// so a binding frozen on it leaves the tab showing the pending dots forever.
+// Re-probing lets the tab move across to the real session once it appears.
 async function linkTabs() {
-  const unlinked = [...TABS.values()].filter((t) => !t.agentId);
-  if (!unlinked.length) return;
-  const claimed = [...TABS.values()].map((t) => t.agentId).filter(Boolean);
+  const pending = [...TABS.values()].filter((t) => !t.agentId || t.agentIdProvisional);
+  if (!pending.length) return;
+  const claimed = [...TABS.values()]
+    .filter((t) => t.agentId && !t.agentIdProvisional)
+    .map((t) => t.agentId);
   let changed = false;
-  for (const tab of unlinked) {
+  for (const tab of pending) {
     try {
       const res = await window.husk.sessions.resolveLiveTitle({ huskSessionId: tab.id, excludeAgentIds: claimed });
       if (!res || !res.ok || !res.agentId) continue;
+      if (tab.agentId && tab.agentId !== res.agentId) changed = true;
       tab.agentId = res.agentId;
-      claimed.push(res.agentId);
+      tab.agentIdProvisional = !!res.provisional;
+      if (!res.provisional) claimed.push(res.agentId);
       if (tab.customTitle) {
         // A rename made before linking had nowhere to persist; save it now.
         try { window.husk.sessions.rename({ agentId: res.agentId, name: tab.customTitle }); } catch (_) {}
@@ -1180,7 +1190,11 @@ async function syncTabTitles() {
     if (!tab.agentId || tab.customTitle) continue;
     try {
       const res = await window.husk.sessions.resolveLiveTitle({ knownAgentId: tab.agentId });
-      if (!res || !res.ok || !res.title) continue;
+      if (!res || !res.ok) continue;
+      // Track this every poll: once the bound session stops being provisional the
+      // tab stays put, and while it still is, linkTabs keeps looking for the real one.
+      tab.agentIdProvisional = !!res.provisional;
+      if (!res.title) continue;
       if (res.custom) {
         tab.customTitle = res.title; tab.titleEarned = true; renderTabStrip();
         continue;
