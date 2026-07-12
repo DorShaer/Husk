@@ -20,7 +20,7 @@
     "dist:linux": "electron-builder --linux --publish never",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
-    "test": "node --test \"test/unit/*.test.js\"",
+    "test": "node --test test/unit/",
     "test:e2e": "playwright test",
     "test:all": "npm run test && npm run test:e2e",
     "test:perf": "playwright test --config playwright.perf.config.js"
