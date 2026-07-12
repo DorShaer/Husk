@@ -63,7 +63,9 @@ setInterval(() => {}, 1000);
   await win.click('body');
   await win.keyboard.press('Control+R');
   await win.waitForFunction(() => document.body && document.body.dataset.page === 'mcp', null, { timeout: 10_000 });
-  await win.waitForTimeout(500);
+  // The reloaded renderer reattaches to the surviving PTY asynchronously
+  // during boot; wait for the tab to exist instead of sampling on a timer.
+  await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size === 1, null, { timeout: 15_000 });
 
   const result = await win.evaluate(async () => {
     const live = await window.husk.pty.list();

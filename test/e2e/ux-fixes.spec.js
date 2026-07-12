@@ -330,7 +330,13 @@ test('copy from the terminal context menu keeps focus in the terminal (issue 5)'
     try { term.selectAll(); } catch (_) {}
     const copyBtn = document.querySelector('#terminal-ctx-menu [data-action="copy"]');
     copyBtn.click();
-    await new Promise((r) => setTimeout(r, 50));
+    // Focus restoration is async (clipboard write then term.focus); poll for
+    // it instead of sampling once, or a slow CI runner reads a stale target.
+    for (let i = 0; i < 50; i++) {
+      const ae = document.activeElement;
+      if (ae && String(ae.className || '').includes('xterm-helper-textarea')) break;
+      await new Promise((r) => setTimeout(r, 40));
+    }
     const ae = document.activeElement;
     return ae ? (ae.className || ae.tagName) : 'none';
   });
