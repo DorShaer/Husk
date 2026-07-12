@@ -63,6 +63,12 @@
   }
   a { color: var(--accent-2); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  .lbl {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); font-weight: 700; margin: 0 0 .35rem;
+  }
+  .cmd + .lbl { margin-top: .9rem; }
+  .note { margin: .85rem 0 0; color: var(--muted); font-size: .85rem; }
   footer { text-align: center; color: var(--muted); font-size: .85rem; margin-top: 2.5rem; }
 </style>
 </head>
@@ -79,11 +85,17 @@
 
   <h2>Fastest path</h2>
   <div class="card rec">
-    <h3>One line, any OS</h3>
-    <p>Debian/Ubuntu gets the signed apt repo (so <code>apt upgrade</code> keeps Husk current); other Linux gets the AppImage, macOS the .dmg. Checksums verified.</p>
+    <h3>One line</h3>
+    <p>Debian/Ubuntu gets the signed apt repo (so <code>apt upgrade</code> keeps Husk current); other Linux gets the AppImage, macOS the .dmg, Windows the installer. Every download is checked against the release SHA256SUMS before it runs.</p>
+    <div class="lbl">Linux and macOS</div>
     <div class="cmd">
       <button class="copy">Copy</button>
-      <pre><code>curl -fsSL https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/scripts/install.sh | bash</code></pre>
+      <pre><code>curl -fsSL https://dorshaer.github.io/Husk/install.sh | bash</code></pre>
+    </div>
+    <div class="lbl">Windows (PowerShell)</div>
+    <div class="cmd">
+      <button class="copy">Copy</button>
+      <pre><code>irm https://dorshaer.github.io/Husk/install.ps1 | iex</code></pre>
     </div>
   </div>
 
@@ -121,7 +133,7 @@ git clone https://github.com/DorShaer/Husk.git && cd Husk && ./install.sh</code>
     <div class="cmd">
       <button class="copy">Copy</button>
       <pre><code># One line (Apple Silicon or Intel, auto-detected)
-curl -fsSL https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/scripts/install.sh | bash
+curl -fsSL https://dorshaer.github.io/Husk/install.sh | bash
 
 # If macOS blocks the unsigned app on first launch
 xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
@@ -130,20 +142,24 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
 
   <h2>Windows</h2>
   <div class="card">
-    <h3>Installer, or from source</h3>
-    <p>Download <code>husk-v&lt;version&gt;-win-x64.exe</code> from the <a href="https://github.com/DorShaer/Husk/releases/latest">latest release</a> and run it. From a terminal:</p>
+    <h3>One line, or download the installer</h3>
+    <p>Paste this into PowerShell. It resolves the latest release, downloads the x64 installer, verifies it against the published checksum, and runs it. Prefer to do it by hand? Grab the <code>.exe</code> from the <a href="https://github.com/DorShaer/Husk/releases/latest">latest release</a> and run it yourself.</p>
     <div class="cmd">
       <button class="copy">Copy</button>
-      <pre><code>:: Run the downloaded installer from cmd
-husk-v&lt;version&gt;-win-x64.exe
-
-# Or build from source in PowerShell / Git-Bash
-git clone https://github.com/DorShaer/Husk.git; cd Husk; .\install.ps1</code></pre>
+      <pre><code>irm https://dorshaer.github.io/Husk/install.ps1 | iex</code></pre>
     </div>
+    <div class="lbl">Unattended install</div>
+    <div class="cmd">
+      <button class="copy">Copy</button>
+      <pre><code>&amp; ([scriptblock]::Create((irm https://dorshaer.github.io/Husk/install.ps1))) -Silent</code></pre>
+    </div>
+    <p class="note">The Windows build is not code-signed yet, so SmartScreen may warn about an unknown publisher. The installer is checksum-verified before it runs, and you can confirm the hash yourself against <code>SHA256SUMS</code> in the release.</p>
   </div>
 
   <footer>
-    Packages signed with the <a href="husk.gpg">Husk signing key</a>.
+    Debian packages are signed with the <a href="husk.gpg">Husk signing key</a>. The Windows and macOS
+    builds are not code-signed yet; every release publishes <code>SHA256SUMS</code> and the installers
+    verify against it.
     Source: <a href="https://github.com/DorShaer/Husk">github.com/DorShaer/Husk</a>.
   </footer>
 </div>

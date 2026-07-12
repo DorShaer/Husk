@@ -9,6 +9,16 @@ name: APT Repository
 on:
   release:
     types: [published]
+  # Republish when the installers or the landing page change. Without this, a
+  # fix to install.sh sat unpublished until the next release cut.
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
+      - 'installer/apt-index.html'
+      - 'installer/husk-apt.gpg'
+      - '.github/workflows/apt-repo.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -111,9 +121,23 @@ jobs:
           gpg --batch --yes --local-user "$KEY_ID" \
             -abs -o dists/stable/Release.gpg dists/stable/Release
 
-      - name: Stage public key and landing page
+      - name: Stage public key, installers and landing page
         run: |
-          cp installer/husk-apt.gpg site/husk.gpg
+          # Publish the key DEARMORED (binary). apt consumes a binary keyring
+          # directly, so the client no longer has to run `gpg --dearmor` itself.
+          # That single client-side call was fatal on any bare Debian/Ubuntu
+          # image, which ships without gnupg: the installer died on
+          # "gpg: command not found" before it touched anything.
+          # husk.asc keeps the armored form available for humans.
+          gpg --dearmor < installer/husk-apt.gpg > site/husk.gpg
+          cp installer/husk-apt.gpg site/husk.asc
+
+          # Serve the installers from Pages rather than a CDN. jsdelivr caches
+          # @main for up to 12 hours, so a broken installer stayed broken
+          # worldwide long after the fix was pushed. Pages updates on deploy.
+          cp scripts/install.sh site/install.sh
+          cp scripts/install.ps1 site/install.ps1
+
           cp installer/apt-index.html site/index.html
           touch site/.nojekyll
 

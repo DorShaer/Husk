@@ -1,16 +1,31 @@
 # Installation
 
-Husk ships as a packaged Electron binary on three platforms. Pick the one that fits your OS and skip everything else.
+The one-liner picks the right build for the machine it lands on. Everything below is the manual path.
+
+```bash
+# Linux and macOS
+curl -fsSL https://dorshaer.github.io/Husk/install.sh | bash
+```
+
+```powershell
+# Windows
+irm https://dorshaer.github.io/Husk/install.ps1 | iex
+```
 
 The Releases page is https://github.com/DorShaer/Husk/releases. Filenames follow `husk-v<version>-<os>-<arch>.<ext>`.
 
 ## Linux
 
+Only x86_64 is published today: there is no arm64 Linux build, and the binaries are glibc-linked so musl distros (Alpine) cannot run them.
+
 | Format | Use when | Notes |
 |--------|----------|-------|
-| `husk-v<version>-linux-x86_64.AppImage` | Zero install, double-click and run | `chmod +x` once, then double-click. Self-contained. Auto-update works. |
-| `husk-v<version>-linux-amd64.deb` | Debian / Ubuntu / Mint | `sudo apt install ./husk-v<version>-linux-amd64.deb`. Auto-update is not supported on `.deb`; the in-app pill falls back to the releases page. |
-| `husk-v<version>-linux-x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./husk-v<version>-linux-x86_64.rpm`. Same auto-update caveat as `.deb`. |
+| apt repo | Debian / Ubuntu / Mint | The one-liner's default. `apt upgrade` keeps Husk current. Installs to `/opt/husk`. |
+| `husk-v<version>-linux-x86_64.AppImage` | Zero install, no root | Needs `libfuse2` (Ubuntu 24.04 ships fuse3 only: `sudo apt install libfuse2`). The installer places it at `~/.local/share/husk/Husk.AppImage` under a version-less name, which is what lets in-app auto-update replace it in place. |
+| `husk-v<version>-linux-amd64.deb` | Debian / Ubuntu, manual | `sudo apt install ./husk-v<version>-linux-amd64.deb` |
+| `husk-v<version>-linux-x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./husk-v<version>-linux-x86_64.rpm` |
+
+**Updating.** On `.deb` and `.rpm` the in-app updater installs through the system package manager, so the desktop asks for your password once. If that prompt is dismissed or your desktop has no polkit agent, Husk tells you and hands you the command to finish it yourself (`sudo apt install --only-upgrade husk`). AppImage updates apply in place with no prompt.
 
 **Sandbox helper.** Electron's `chrome-sandbox` needs to be setuid root for hardened mode. Husk runs fine without it (`--no-sandbox` is auto-applied), and `install.sh` will tell you the one-time `sudo chown root:root && sudo chmod 4755` command if you want to enable it.
 

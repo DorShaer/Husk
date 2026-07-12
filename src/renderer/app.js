@@ -512,6 +512,14 @@ if (isMac) document.documentElement.setAttribute('data-platform', 'mac');
 // so Gatekeeper will open it (we have no Apple Developer ID yet).
 const MAC_TRUST_CMD = 'xattr -dr com.apple.quarantine /Applications/Husk.app';
 
+// What to tell the user to run when the in-app update cannot install itself.
+// Keyed by how Husk was installed, so the command we hand over actually works
+// on their machine instead of being generic advice.
+const MANUAL_UPDATE_CMD = {
+  deb: 'sudo apt update && sudo apt install --only-upgrade husk',
+  rpm: 'sudo dnf upgrade husk',
+};
+
 // What's new highlights, keyed by version. Shown once per version (after an
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
@@ -5226,9 +5234,20 @@ function openUpdatePop() {
     }
   } else if (s.status === 'ready') {
     title.textContent = `Husk ${next} is ready`;
-    body.textContent = `Husk will close and reopen to finish installing. Your current chat will end.`;
+    // On deb/rpm the install shells out to the package manager as root, so the
+    // desktop throws up a password prompt. Users who were not told to expect it
+    // read the prompt as malware and dismissed it, which looked like the update
+    // silently doing nothing. Set the expectation before it appears.
+    const needsAuth = s.packageType === 'deb' || s.packageType === 'rpm';
+    body.textContent = needsAuth
+      ? 'Husk will ask for your password to install the update, then close and reopen. Your current chat will end.'
+      : 'Husk will close and reopen to finish installing. Your current chat will end.';
     cta.textContent = 'Restart and install';
-    cta.onclick = () => window.husk.updates.install();
+    cta.onclick = () => {
+      cta.disabled = true;
+      cta.textContent = needsAuth ? 'Waiting for your password…' : 'Installing…';
+      window.husk.updates.install();
+    };
   } else if (s.status === 'downloading') {
     title.textContent = `Downloading ${next}`;
     // eslint-disable-next-line no-unsanitized/property -- Progress value is escaped before insertion.
@@ -5245,6 +5264,25 @@ function openUpdatePop() {
       await window.husk.updates.check();
       cta.disabled = false;
     };
+  } else if (s.status === 'error' && s.phase === 'install') {
+    // A failed install is not a failed check, and it must never be silent. Say
+    // what broke and hand over the exact command that finishes the job.
+    title.textContent = 'Could not install the update';
+    const manual = MANUAL_UPDATE_CMD[s.packageType] || '';
+    let html = `Husk downloaded ${escapeHtml(next || 'the update')} but could not install it: <strong>${escapeHtml(s.error || 'unknown error')}</strong>.`;
+    if (manual) {
+      html += ` You can finish it yourself:`
+        + `<div class="up-cmd"><code>${escapeHtml(manual)}</code><button class="ghost-btn up-copy" id="up-manual-copy" type="button">Copy</button></div>`;
+    }
+    if (s.logPath) html += `<div class="up-note">Details: ${escapeHtml(s.logPath)}</div>`;
+    // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.
+    body.innerHTML = html;
+    const copyBtn = $('#up-manual-copy');
+    if (copyBtn) copyBtn.onclick = () => {
+      try { navigator.clipboard.writeText(manual); copyBtn.textContent = 'Copied'; } catch (_) {}
+    };
+    cta.textContent = 'Download from GitHub';
+    cta.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
   } else {
     title.textContent = 'Updates';
     // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, remaining markup is static.

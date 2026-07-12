@@ -17,7 +17,7 @@
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w node-pty",
     "dist": "electron-builder --publish never",
-    "dist:linux": "electron-builder --linux --publish never",
+    "dist:linux": "electron-builder --linux --publish never -c.productName=husk",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
     "test": "node --test test/unit/",
@@ -30,6 +30,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "drawflow": "^0.0.60",
+    "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0"
   },
@@ -81,11 +82,30 @@
       "synopsis": "Desktop home for CLI AI agents",
       "description": "Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.",
       "maintainer": "DorShaer <85877103+DorShaer@users.noreply.github.com>",
-      "artifactName": "${name}-v${version}-linux-${arch}.${ext}"
+      "artifactName": "${name}-v${version}-linux-${arch}.${ext}",
+      "executableName": "husk",
+      "desktop": {
+        "entry": {
+          "Name": "Husk",
+          "StartupWMClass": "husk"
+        }
+      }
     },
     "deb": {
       "afterInstall": "installer/after-install.sh",
-      "afterRemove": "installer/after-remove.sh"
+      "afterRemove": "installer/after-remove.sh",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2t64 | libasound2"
+      ]
     },
     "mac": {
       "target": [
@@ -133,6 +153,24 @@
       "provider": "github",
       "owner": "DorShaer",
       "repo": "Husk"
+    },
+    "rpm": {
+      "depends": [
+        "gtk3",
+        "libnotify",
+        "nss",
+        "libXScrnSaver",
+        "libXtst",
+        "xdg-utils",
+        "at-spi2-core",
+        "libuuid",
+        "libsecret",
+        "alsa-lib"
+      ]
+    },
+    "dmg": {
+      "title": "Husk"
     }
-  }
+  },
+  "desktopName": "husk.desktop"
 }

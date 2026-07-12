@@ -51,7 +51,12 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           # Disable Squirrel auto-update injection on Windows; we use NSIS.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist
+        shell: bash
+        # Linux goes through dist:linux, which lowercases productName so the app
+        # lands in /opt/husk rather than /opt/Husk. macOS and Windows keep the
+        # capitalised product name their platforms expect (Husk.app, Start menu).
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then npm run dist:linux; else npm run dist; fi
 
       - name: Inventory dist/
         if: always()

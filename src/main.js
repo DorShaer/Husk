@@ -7418,15 +7418,30 @@ function stopNullVoiceServer() {
 let updaterInstance = null;
 let updaterInitialTimer = null;
 let updaterPeriodicTimer = null;
+let updaterLogPath = null;
 function stopAutoUpdater() {
   if (updaterInitialTimer) { clearTimeout(updaterInitialTimer); updaterInitialTimer = null; }
   if (updaterPeriodicTimer) { clearInterval(updaterPeriodicTimer); updaterPeriodicTimer = null; }
 }
 let updateState = { status: 'idle', current: app.getVersion() };
+let updateInstallAttempted = false;
 
 function sendUpdateStatus(extra = {}) {
   updateState = { ...updateState, ...extra };
   if (mainWindow) mainWindow.webContents.send('update:status', updateState);
+}
+
+// How this copy of Husk was installed. electron-builder writes this file next
+// to the app for deb/rpm/pacman targets; its absence plus an APPIMAGE env var
+// means AppImage. The renderer uses it to give an accurate manual-update
+// command when the automatic path fails.
+function huskPackageType() {
+  try {
+    return fs.readFileSync(path.join(process.resourcesPath, 'package-type'), 'utf8').trim();
+  } catch (_) {
+    if (process.env.APPIMAGE) return 'appimage';
+    return process.platform === 'darwin' ? 'dmg' : (process.platform === 'win32' ? 'nsis' : '');
+  }
 }
 
 function setupAutoUpdater() {
@@ -7443,6 +7458,30 @@ function setupAutoUpdater() {
   updaterInstance = autoUpdater;
   autoUpdater.autoDownload = false;       // we choose when to download
   autoUpdater.autoInstallOnAppQuit = false;
+
+  // electron-updater defaults its logger to `console`, and a GUI-launched app
+  // has nowhere for console output to go. Every update failure in the field was
+  // therefore invisible and undiagnosable. Route it to a file the user can send.
+  try {
+    const log = require('electron-log');
+    log.transports.file.level = 'info';
+    autoUpdater.logger = log;
+    updaterLogPath = log.transports.file.getFile().path;
+  } catch (_) { /* logging is best effort, never block the updater */ }
+
+  // The AppImage updater renames the file on disk when the old name carries a
+  // version (see AppImageUpdater.doInstall). Our installer deliberately uses a
+  // stable name so this should not fire, but if a user installed an older,
+  // versioned AppImage by hand, re-point their launcher instead of orphaning it.
+  autoUpdater.on('appimage-filename-updated', (newPath) => {
+    try {
+      const link = path.join(os.homedir(), '.local', 'bin', 'husk');
+      if (fs.existsSync(link) || fs.lstatSync(link, { throwIfNoEntry: false })) {
+        fs.rmSync(link, { force: true });
+      }
+      fs.symlinkSync(newPath, link);
+    } catch (_) { /* the app still updated; a stale symlink is not fatal */ }
+  });
 
   autoUpdater.on('checking-for-update', () => sendUpdateStatus({ status: 'checking' }));
   autoUpdater.on('update-available', (info) => sendUpdateStatus({
@@ -7461,9 +7500,15 @@ function setupAutoUpdater() {
     status: 'ready',
     version: info.version,
   }));
+  // Distinguish a failed CHECK from a failed INSTALL. They need completely
+  // different copy: one is "we could not reach GitHub", the other is "the
+  // package manager refused, here is the command to run yourself".
   autoUpdater.on('error', (err) => sendUpdateStatus({
     status: 'error',
     error: (err && err.message) || String(err),
+    phase: updateInstallAttempted ? 'install' : 'check',
+    packageType: huskPackageType(),
+    logPath: updaterLogPath,
   }));
 
   // Fire one check shortly after launch and again every 6 hours. Both are
@@ -7495,10 +7540,34 @@ ipcMain.handle('update:download', async () => {
 
 ipcMain.handle('update:install', () => {
   if (!updaterInstance) return { ok: false, error: 'no updater' };
-  // Quit current app, install update, relaunch. forceRunAfter true so the
-  // user does not have to relaunch manually.
-  setImmediate(() => { try { updaterInstance.quitAndInstall(false, true); } catch (_) {} });
-  return { ok: true };
+  // Quit, install, relaunch. forceRunAfter true so the user does not have to
+  // relaunch by hand.
+  //
+  // This used to run inside `setImmediate(() => { try { ... } catch (_) {} })`
+  // and return {ok:true} unconditionally. That is why "install update" appeared
+  // to do nothing for everyone: on Linux the install is a synchronous shell out
+  // to dpkg/rpm via pkexec, and when it failed (no polkit agent, user dismissed
+  // the password prompt) the throw was swallowed, the renderer was told the
+  // install succeeded, and no error ever reached a human. Call it inline and
+  // report what actually happened.
+  updateInstallAttempted = true;
+  try {
+    updaterInstance.quitAndInstall(false, true);
+    // A successful install quits the app, so reaching the next line at all
+    // means the package manager declined. electron-updater reports that via its
+    // 'error' event rather than a throw, which the handler above surfaces.
+    return { ok: true };
+  } catch (err) {
+    const message = (err && err.message) || String(err);
+    sendUpdateStatus({
+      status: 'error',
+      error: message,
+      phase: 'install',
+      packageType: huskPackageType(),
+      logPath: updaterLogPath,
+    });
+    return { ok: false, error: message };
+  }
 });
 
 ipcMain.handle('update:open-release', (_e, url) => {

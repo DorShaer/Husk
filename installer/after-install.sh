@@ -8,20 +8,27 @@
 # ourselves. Without it the app aborts immediately on launch (only the launcher
 # icon shows, no window) with:
 #   FATAL ... The SUID sandbox helper binary was found, but is not configured
-#   correctly ... /opt/Husk/chrome-sandbox is owned by root and has mode 4755.
-SANDBOX="/opt/Husk/chrome-sandbox"
+#   correctly ... /opt/husk/chrome-sandbox is owned by root and has mode 4755.
+SANDBOX="/opt/husk/chrome-sandbox"
 if [ -f "$SANDBOX" ]; then
   chown root:root "$SANDBOX" || true
   chmod 4755 "$SANDBOX" || true
 fi
 
 # Expose a `husk` command on PATH. electron-builder installs the binary to
-# /opt/Husk and registers only a .desktop entry, so a fresh package gives no
+# /opt/husk and registers only a .desktop entry, so a fresh package gives no
 # terminal launcher. Symlink into /usr/local/bin so `husk` works from a shell,
 # matching the wrapper the source installer (install.sh) creates.
-if [ -x "/opt/Husk/husk" ]; then
+# `ln -sf` also repoints the symlink left by pre-2.8.9 packages, which installed
+# to the capitalised /opt/Husk and would otherwise dangle after this upgrade.
+if [ -x "/opt/husk/husk" ]; then
   mkdir -p /usr/local/bin
-  ln -sf /opt/Husk/husk /usr/local/bin/husk || true
+  ln -sf /opt/husk/husk /usr/local/bin/husk || true
+fi
+
+# Drop the old capitalised install dir if an upgrade left it behind.
+if [ -d "/opt/Husk" ] && [ -d "/opt/husk" ]; then
+  rm -rf "/opt/Husk" || true
 fi
 
 # Install icon at standard hicolor sizes GNOME/KDE recognise,
