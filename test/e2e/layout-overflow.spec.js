@@ -1,7 +1,8 @@
 'use strict';
 
 // On a short window the rail bottom group and status footer remain visible.
-// The middle rail content and status body scroll independently.
+// The rail's middle section scrolls; the status body does not scroll but scales
+// its content to fit, so every section stays on screen and nothing is clipped.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -25,11 +26,20 @@ test('short window keeps the rail bottom and status footer visible (issue 4)', a
   const win = await app.firstWindow({ timeout: 30_000 });
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 620); });
-  await win.waitForTimeout(200);
 
-  const info = await win.evaluate(() => {
-    // Make the rail tall enough to require middle-section scrolling.
+  // The status panel fills in over IPC after boot. Measuring on a fixed timer
+  // races that, and an empty panel trivially fits any window, so wait for the
+  // sections to exist before shrinking the window around them.
+  await win.waitForFunction(() => {
+    const fit = document.getElementById('sp-fit');
+    return !!fit && fit.children.length > 0 && fit.scrollHeight > 0;
+  }, null, { timeout: 15_000 });
+
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 620); });
+
+  // Fill the rail so its middle section has to scroll, then wait for the layout
+  // and the status panel's fit pass (driven by a ResizeObserver) to settle.
+  await win.evaluate(() => {
     const rec = document.getElementById('rail-recent');
     const list = document.getElementById('rail-recent-list');
     if (rec) rec.hidden = false;
@@ -43,17 +53,36 @@ test('short window keeps the rail bottom and status footer visible (issue 4)', a
       }
     }
     document.body.dataset.rail = 'expanded';
-    const vh = window.innerHeight;
+  });
+  await win.waitForFunction(() => {
+    const scrollEl = document.querySelector('.rail-scroll');
+    const box = document.getElementById('sp-content');
+    const fit = document.getElementById('sp-fit');
+    if (!scrollEl || !box || !fit) return false;
+    // The rail overflows, and the status content has been fitted to its box.
+    const fitted = fit.getBoundingClientRect().height <= box.clientHeight + 1;
+    return scrollEl.scrollHeight > scrollEl.clientHeight && fitted;
+  }, null, { timeout: 10_000 });
+
+  const info = await win.evaluate(() => {
     const bottom = (sel) => { const el = document.querySelector(sel); return el ? Math.round(el.getBoundingClientRect().bottom) : null; };
     const scrollEl = document.querySelector('.rail-scroll');
-    const spContent = document.getElementById('sp-content');
+    const box = document.getElementById('sp-content');
+    const fit = document.getElementById('sp-fit');
+    const foot = document.querySelector('.sp-foot');
     return {
-      vh,
+      vh: window.innerHeight,
       prefsBottom: bottom('#btn-open-prefs'),
       toolBottom: bottom('#rail-agent-pill'),
       spFootBottom: bottom('.sp-foot'),
-      railScrollable: scrollEl ? scrollEl.scrollHeight > scrollEl.clientHeight : false,
-      spScrollable: spContent ? spContent.scrollHeight > spContent.clientHeight : false,
+      railScrollable: scrollEl.scrollHeight > scrollEl.clientHeight,
+      // The status body clips its overflow by design and scales #sp-fit to fit,
+      // so the check is that the rendered content fits rather than that it scrolls.
+      fitHeight: Math.round(fit.getBoundingClientRect().height),
+      boxHeight: box.clientHeight,
+      fitBottom: Math.round(fit.getBoundingClientRect().bottom),
+      footTop: foot ? Math.round(foot.getBoundingClientRect().top) : null,
+      sectionCount: fit.children.length,
     };
   });
 
@@ -61,8 +90,14 @@ test('short window keeps the rail bottom and status footer visible (issue 4)', a
   expect(info.prefsBottom).toBeLessThanOrEqual(info.vh + 1);
   expect(info.toolBottom).toBeLessThanOrEqual(info.vh + 1);
   expect(info.spFootBottom).toBeLessThanOrEqual(info.vh + 1);
-  // The overflow goes to the scroll regions, not off the window.
+  // The rail sends its overflow to its scroll region rather than off the window.
   expect(info.railScrollable).toBe(true);
-  expect(info.spScrollable).toBe(true);
+  // The status panel really has sections to lay out, and every one of them is
+  // visible: the fitted content stays inside its box and above the footer.
+  expect(info.sectionCount).toBeGreaterThan(0);
+  expect(info.fitHeight).toBeLessThanOrEqual(info.boxHeight + 1);
+  expect(info.fitBottom).toBeLessThanOrEqual(info.footTop + 1);
+
   await app.close();
+  fs.rmSync(homeDir, { recursive: true, force: true });
 });
