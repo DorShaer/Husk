@@ -1,8 +1,7 @@
 'use strict';
 
-// Regression: the status panel context must follow the focused chat tab.
-// Opening a tab with a busy session then switching to a fresh chat used to
-// keep showing the busy tab's context. Each tab must report its own.
+// The status panel context follows the focused chat tab. Each tab reports its
+// own transcript and context count.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');

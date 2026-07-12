@@ -1,9 +1,8 @@
 'use strict';
 
-// Smoke test: launch the real Electron app and assert it boots cleanly.
-// Canary that catches a hard boot regression: main process throws at
-// boot, preload blocks the bridge, or the renderer crashes early. Does
-// not exercise features beyond mount; feature E2E goes in other specs.
+// Smoke test: launch the real Electron app and assert it boots cleanly. This
+// covers main-process startup, preload bridge availability, and early renderer
+// mount. Feature E2E belongs in focused specs.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');

@@ -52,5 +52,11 @@ playwright-report/
 # Local PAI Algorithm task artifacts (per-task working state, never shipped)
 ISA*.md
 
-# Husk-managed per-session agent identity file (rewritten at runtime)
+# Husk-managed per-session agent identity files (rewritten at runtime)
 .github/copilot-instructions.md
+AGENTS.md
+GEMINI.md
+.husk-aider.md
+
+# aider's own local artifacts (chat history, input history, tags cache)
+.aider*

@@ -21,7 +21,10 @@ const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
 const { agentFileName, renderAgentMd } = require('./lib/agent-file');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { pickResumeSessionId } = require('./lib/claude-session');
+const { parsePorcelain } = require('./lib/git-porcelain');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
+const SharedMcp = require('./lib/mcp/shared');
+const { deriveCopilotSessionTitleFromEventsText } = require('./lib/copilot-session-title');
 
 // On macOS in particular, a GUI-launched Electron app inherits a
 // minimal PATH that does not include the npm-global, homebrew, or bun
@@ -117,6 +120,7 @@ const {
 
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const HOME = os.homedir();
+const COPILOT_DIR = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 const CONFIG_DIR = path.join(HOME, '.config', 'husk');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const HUSK_PROMPTS_DIR = path.join(CONFIG_DIR, 'prompts');
@@ -136,6 +140,37 @@ app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
+let lastReloadRequestAt = 0;
+let rendererRouteState = { page: 'chat', activeTabId: null, ts: 0 };
+let pendingRendererReloadState = null;
+
+function normalizeRendererPage(page) {
+  return [
+    'chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts',
+    'skills', 'sessions', 'files', 'mcp', 'plugins',
+  ].includes(page) ? page : 'chat';
+}
+
+function reloadMainWindow() {
+  if (!mainWindow) return;
+  const now = Date.now();
+  if (now - lastReloadRequestAt < 900) return;
+  lastReloadRequestAt = now;
+  pendingRendererReloadState = {
+    page: normalizeRendererPage(rendererRouteState.page),
+    activeTabId: rendererRouteState.activeTabId || null,
+    ts: now,
+    suppressAutoChat: true,
+  };
+  try {
+    mainWindow.webContents.send('app:reload-in-place');
+    setTimeout(() => {
+      try { if (mainWindow) mainWindow.webContents.reload(); } catch (_) {}
+    }, 40).unref();
+  } catch (_) {
+    try { mainWindow.webContents.reload(); } catch (_e) {}
+  }
+}
 
 // ─── Multi-session registry ────────────────────────────────────────────────
 // Each chat tab owns its own PTY child, output buffer, mouse-mode stripper,
@@ -345,10 +380,9 @@ function stopStatuslineRefresh() {
 
 // Hit the Anthropic OAuth usage endpoint with the user's claude credential
 // and write the result into ~/.claude/MEMORY/STATE/usage-cache.json. This
-// mirrors the inline fetch the PAI statusline does each render, but the
-// statusline never persisted those numbers, so Husk's stats reader was
-// always seeing a phantom file. Writing the cache here makes the existing
-// stats:get path light up.
+// mirrors the inline fetch the PAI statusline does each render. The statusline
+// does not persist what it fetches, so Husk owns the cache write that the
+// stats:get path reads from.
 function readClaudeOauthToken() {
   try {
     if (process.platform === 'darwin') {
@@ -649,6 +683,18 @@ function createWindow() {
   // arrive as their own events (input.key is the combo key), so
   // terminal Alt-sequences keep working.
   mainWindow.webContents.on('before-input-event', (event, input) => {
+    const key = String(input.key || '').toLowerCase();
+    const code = String(input.code || '');
+    if ((input.control || input.meta) && (key === 'r' || code === 'KeyR')) {
+      event.preventDefault();
+      if (!input.isAutoRepeat) mainWindow.webContents.send('app:reload-shortcut');
+      return;
+    }
+    if (input.key === 'F5') {
+      event.preventDefault();
+      if (!input.isAutoRepeat) reloadMainWindow();
+      return;
+    }
     if (input.key === 'Alt' && !input.control && !input.shift && !input.meta) {
       event.preventDefault();
     }
@@ -668,7 +714,13 @@ function createWindow() {
   // menu does not advertise an entry that webPreferences.devTools:false
   // would silently no-op.
   const viewSubmenu = [
-    { role: 'reload' },
+    {
+      label: 'Reload',
+      accelerator: 'CmdOrCtrl+R',
+      // Custom click instead of role:reload: the renderer records the current
+      // route as users navigate, so a main-process reload can come back there.
+      click: reloadMainWindow,
+    },
     ...(app.isPackaged ? [] : [{ role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }]),
     // The renderer owns the Ctrl/Cmd +/-/0 keys (applies zoom, refits the
     // terminal, shows the percent). `registerAccelerator: false` keeps the menu
@@ -724,6 +776,19 @@ function killSession(s) {
 // leaves no orphan agent processes behind.
 function killPtyTree() {
   for (const s of sessions.values()) killSession(s);
+  try {
+    for (const r of runs.values()) {
+      try { clearInterval(r.tickInterval); } catch (_) {}
+      try { if (r.flushTimer) clearTimeout(r.flushTimer); } catch (_) {}
+      try { if (r._dataDisposable) r._dataDisposable.dispose(); } catch (_) {}
+      try { if (r._exitDisposable) r._exitDisposable.dispose(); } catch (_) {}
+      reapPid(r.pty && r.pty.pid);
+      try { if (r.pty) r.pty.kill('SIGKILL'); } catch (_) {}
+      r.pty = null;
+    }
+    runs.clear();
+    pendingRuns.length = 0;
+  } catch (_) {}
   // Fallback: reap a last-known orphan group even if the map is already empty
   // (e.g. every session's pty was nulled by onExit).
   if (!sessions.size && lastPtyPid) reapPid(lastPtyPid);
@@ -773,7 +838,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     s.flushScheduled = false;
     s.mouseStripper.reset();
     if (s.lastMouseOn) { s.lastMouseOn = false; if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', { sessionId: id, on: false }); }
-    if (s.pty) try { s.pty.kill(); } catch (_) {}
+    reapPid((s.pty && s.pty.pid) || s.pid);
+    if (s.pty) try { s.pty.kill('SIGKILL'); } catch (_) {}
   }
   // Reset this session's transcript lock so it re-resolves its own session
   // file instead of inheriting the previous child's or a background agent's.
@@ -832,11 +898,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // resolved. See src/lib/agent-inject.js.
   //
   // Note for claude: the statusline override goes through --settings as an
-  // INLINE JSON string, not a temp file. claude merges it over the user's
-  // settings.json and, because there is no file, never writes folder-trust
-  // back into it (trust lives in ~/.claude.json). An earlier temp-file
-  // approach was dropped because claude wrote trust into that file and Husk
-  // regenerated it each launch, wiping the trust.
+  // inline JSON string. Claude merges it over the user's settings.json, while
+  // folder trust remains in ~/.claude.json.
   const isWin32 = process.platform === 'win32';
   let injectionPlan = { method: 'none' };
   if (!isWin32 && !agentArgs.includes('--settings')) {
@@ -915,10 +978,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     // reload, manual restart). Within a process the tab reuses its own
     // claudeSessionId. Across a full app restart that in-memory id is gone, so
     // a boot/launch continuation (resumeLast) rebinds to the last claude
-    // session recorded for this cwd and resumes it. Without this every relaunch
-    // minted a fresh id and split one ongoing discussion into a new "session"
-    // in the list on every boot. A brand-new chat (openNewChatTab) does not set
-    // resumeLast, so it still gets its own fresh session.
+    // session recorded for this cwd and resumes it. A brand-new chat
+    // (openNewChatTab) does not set resumeLast, so it gets its own fresh session.
     const projDir = path.join(CLAUDE_DIR, 'projects', encodedCwd);
     if (!s.claudeSessionId && resumeLast) {
       s.claudeSessionId = lastClaudeSessionForCwd(encodedCwd, projDir);
@@ -968,6 +1029,26 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
         fs.writeFileSync(fileAbs, AgentInject.mergeSessionBlock(existing, injectionPlan.body));
       }
     } catch (_) {}
+  }
+
+  // Refresh the HUSK-SESSION block in every OTHER managed instruction file
+  // that already carries one. Agent CLIs read each other's files (copilot
+  // also reads AGENTS.md / GEMINI.md), so each block must state the current
+  // directives regardless of which agent wrote it. Only files that exist
+  // and already contain Husk's markers are touched; nothing is created here.
+  if (injectionPlan.refresh && Array.isArray(injectionPlan.refresh.filePaths)) {
+    for (const rel of injectionPlan.refresh.filePaths) {
+      if (rel === injectionPlan.filePath) continue;
+      try {
+        const fileAbs = path.join(cwd, rel);
+        let existing = null;
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- cwd + a fixed relative path from the plan
+        try { existing = fs.readFileSync(fileAbs, 'utf8'); } catch (_) {}
+        if (existing === null || !existing.includes(AgentInject.HUSK_SESSION_START)) continue;
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
+        fs.writeFileSync(fileAbs, AgentInject.mergeSessionBlock(existing, injectionPlan.refresh.body));
+      } catch (_) {}
+    }
   }
 
   // Per-platform argv assembly (see src/lib/pty-spawn.js for the rules):
@@ -1139,10 +1220,8 @@ function baseContextWindow(model) {
 // id or that usage record), else look up the family's base size, else infer.
 // Claude Code accepts short model aliases in settings.json ("opus", "sonnet",
 // "haiku", "opusplan"). The settings model is used whenever the transcript has
-// not yet named one, but a bare alias matches none of the claude-* family regexes,
-// so the window wrongly falls back to the 200K default -- e.g. "opus" never hit
-// the [/^claude-opus/, 1000000] rule and showed 200K instead of 1M. Expand
-// known aliases to a canonical family id before matching; any tier suffix
+// not yet named one. A bare alias matches none of the claude-* family regexes,
+// so expand known aliases to a canonical family id before matching; any tier suffix
 // ("opus[1m]") is preserved. Full ids ("claude-opus-4-8", "gpt-5-codex") and
 // unknown values pass through untouched.
 function normalizeModelId(id) {
@@ -1403,6 +1482,23 @@ ipcMain.handle('pty:restart', (_e, { cols, rows, command, cwd, sessionId } = {})
   return true;
 });
 ipcMain.handle('pty:setActive', (_e, sessionId) => { if (sessions.has(sessionId)) setActiveSession(sessionId); return true; });
+
+ipcMain.handle('ui:setRouteState', (_e, state = {}) => {
+  rendererRouteState = {
+    page: normalizeRendererPage(String(state.page || 'chat')),
+    activeTabId: state.activeTabId ? String(state.activeTabId) : null,
+    ts: Date.now(),
+  };
+  return true;
+});
+
+ipcMain.handle('ui:takeReloadState', () => {
+  const state = pendingRendererReloadState;
+  pendingRendererReloadState = null;
+  if (!state || Date.now() - Number(state.ts || 0) > 60_000) return null;
+  return state;
+});
+
 // Close exactly one session, leaving the others running. Promotes the next
 // remaining session to active if the closed one was focused.
 ipcMain.handle('pty:close', (_e, sessionId) => {
@@ -1437,6 +1533,11 @@ ipcMain.handle('pty:close', (_e, sessionId) => {
 
 const Autopilot = require('./lib/autonomy');
 const AgentOneShot = require('./lib/agent-oneshot');
+const { withAutopilotArgs } = require('./lib/autopilot-args');
+const AutopilotStatus = require('./lib/autopilot-status');
+const AutopilotQuestion = require('./lib/autopilot-question');
+const { applyWorkerChangesToIntegrator, applyWorkersWhenIntegratorEmpty } = require('./lib/autopilot-integrate');
+const { groupHistoryRuns } = require('./lib/autopilot-history');
 const electronApp = require('electron');
 const { execFileSync } = require('child_process');
 
@@ -1456,6 +1557,15 @@ const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
 const { modelArgsFor, classifyTier } = require('./lib/model-routing');
 const { agentBaseName } = require('./lib/agent-oneshot');
+const {
+  modelFlagFor,
+  parseModelCatalog,
+  providerLabel,
+  titleFromId,
+  uniqueModels,
+  fallbackModelsFor,
+  isModelValueUsable,
+} = require('./lib/model-catalog');
 
 function autopilotStorageRoot() {
   return path.join(app.getPath('userData'), 'autonomy');
@@ -1535,6 +1645,22 @@ function createRunWorktree(runId, workspaceRoot) {
   }
 }
 
+function autopilotWorktreeRoot() {
+  return path.join(app.getPath('userData'), 'autopilot-worktrees');
+}
+
+function isAutopilotWorkspacePath(p) {
+  if (typeof p !== 'string' || !p.trim()) return false;
+  try {
+    const root = path.resolve(autopilotWorktreeRoot());
+    const abs = path.resolve(p);
+    if (abs === root || abs.startsWith(root + path.sep)) return true;
+    return abs.split(path.sep).includes('autopilot-worktrees');
+  } catch (_) {
+    return false;
+  }
+}
+
 // Remove a run's worktree. Prefer `git worktree remove` (also prunes the
 // admin ref); fall back to a plain recursive delete if git refuses.
 function removeRunWorktree(worktreePath, workspaceRoot) {
@@ -1571,14 +1697,24 @@ function reconcileOrphanWorktrees() {
       const commonDir = execFileSync('git', ['-C', wtPath, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', stdio: 'pipe' }).trim();
       const absCommon = path.isAbsolute(commonDir) ? commonDir : path.resolve(wtPath, commonDir);
       workspaceRoot = path.dirname(absCommon);
-      porcelain = execFileSync('git', ['-C', wtPath, 'status', '--porcelain'], { encoding: 'utf8', stdio: 'pipe' });
+      porcelain = execFileSync('git', ['-C', wtPath, 'status', '--porcelain=v1'], { encoding: 'utf8', stdio: 'pipe' });
     } catch (_) {
-      // No longer a valid worktree (admin ref gone / corrupt): prune the dir.
+      // Invalid worktree metadata is pruned from the retained-run directory.
       try { fs.rmSync(wtPath, { recursive: true, force: true }); pruned++; } catch (_) {}
       continue;
     }
-    const changes = porcelain.split('\n').map((l) => l.trim()).filter(Boolean)
-      .map((l) => ({ path: l.replace(/^\S+\s+/, ''), status: 'modified' }));
+    const changes = [];
+    for (const c of parsePorcelain(porcelain)) {
+      if (!c || c.status === 'ignored') continue;
+      if (c.status === 'renamed') {
+        if (c.oldPath) changes.push({ path: c.oldPath, status: 'deleted' });
+        changes.push({ path: c.path, status: 'added' });
+      } else if (c.status === 'copied') {
+        changes.push({ path: c.path, status: 'added' });
+      } else {
+        changes.push({ path: c.path, status: c.status === 'untracked' ? 'added' : c.status });
+      }
+    }
     if (!changes.length) {
       removeRunWorktree(wtPath, workspaceRoot);      // clean: nothing to lose
       pruned++;
@@ -1622,6 +1758,28 @@ function parseRunTokenStatus(text) {
   return null;
 }
 
+function parseRunModelStatus(text) {
+  const src = String(text || '');
+  let found = '';
+  for (const raw of src.split('\n')) {
+    const line = raw.trim();
+    if (!line || !/(working|session:|plan:|context|reasoning|model)/i.test(line)) continue;
+    let m = line.match(/\b(gpt-[0-9][A-Za-z0-9._-]*)\b/i);
+    if (m) { found = m[1].toUpperCase(); continue; }
+    m = line.match(/\bGPT[-\s]?([0-9](?:\.[0-9]+)?)(\s+mini)?\b/i);
+    if (m) { found = `GPT-${m[1]}${m[2] ? ' mini' : ''}`; continue; }
+    m = line.match(/\b(claude-(?:opus|sonnet|haiku|fable)[A-Za-z0-9._-]*)\b/i);
+    if (m) { found = m[1]; continue; }
+    m = line.match(/\bClaude\s+(Opus|Sonnet|Haiku|Fable)(?:\s+([0-9](?:\.[0-9]+)?))?\b/i);
+    if (m) { found = `Claude ${m[1]}${m[2] ? ' ' + m[2] : ''}`; continue; }
+    m = line.match(/\b(gemini-[A-Za-z0-9._-]*)\b/i);
+    if (m) { found = m[1]; continue; }
+    m = line.match(/\bGemini\s+([0-9](?:\.[0-9]+)?)(?:\s+([A-Za-z]+))?\b/i);
+    if (m) { found = `Gemini ${m[1]}${m[2] ? ' ' + m[2] : ''}`; }
+  }
+  return found;
+}
+
 // Strip terminal escape sequences so token/sentinel scans see rendered text,
 // not cursor movement and color commands.
 function stripAnsi(s) {
@@ -1640,6 +1798,9 @@ const AP_RUN_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]|\bworking\b/
 const AP_RUN_NUDGE_PAUSE_MS = 45000;
 const AP_RUN_IDLE_END_MS = 120000;
 const AP_RUN_MAX_NUDGES = 5;
+const AP_INTEGRATOR_MAX_NUDGES = 2;
+const AP_INTEGRATOR_IDLE_END_MS = 60000;
+const AP_RUN_STARTUP_STALL_MS = 180000;
 
 // Agents sometimes paraphrase the completion sentinel ("Goal fully met",
 // "audit complete", "Stopping.") instead of printing it verbatim. When the
@@ -1668,9 +1829,8 @@ const AP_RUN_FEED_LINE_MAX = 300;
 // ANSI-stripped complete lines from the run's PTY, deduped per run, so the
 // feed stays populated for any CLI.
 // Project-dir name the agent CLI uses for a cwd's transcripts: every
-// non-alphanumeric character becomes a dash (verified on disk: /home/dor/.claude
-// is stored as -home-dor--claude, the dot encoded too). A partial character
-// class here silently misses dirs with dots (.config) and kills the tail.
+// non-alphanumeric character becomes a dash, including dots in hidden
+// directories. The same encoding is required to locate transcript tails.
 function claudeProjectDirName(cwd) {
   return String(cwd || '').replace(/[^a-zA-Z0-9]/g, '-');
 }
@@ -1709,6 +1869,18 @@ function findRunTranscript(r) {
   return null;
 }
 
+function stableJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
+  const keys = Object.keys(value).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableJson(value[k])).join(',') + '}';
+}
+
+function hashToolInput(input) {
+  const json = stableJson(input || {});
+  return crypto.createHash('sha256').update(json).digest('hex').slice(0, 16);
+}
+
 // Translate one transcript entry into structured feed items:
 // {kind: 'thought'|'tool', text}. Assistant text is the agent's live
 // narration (the dashboard's thinking stream); tool_use becomes a tool
@@ -1729,7 +1901,11 @@ function runTranscriptEntryToLines(r, obj) {
         // completion sentinel (the PTY view wraps and decorates lines, so
         // exact-line matching there misses real finishes).
         const whole = part.text.trim();
-        if (whole) r.lastAssistantText = whole.slice(0, 4000);
+        if (whole) {
+          r.lastAssistantText = whole.slice(0, 4000);
+          r.substantiveAt = Date.now();
+          if (r.runId) redirectAutonomousQuestion(r.runId, whole);
+        }
         if (!r.sentinelSeen && hasCompletionMarkerLine(part.text) && r.runId) {
           r.sentinelSeen = true;
           const rid = r.runId;
@@ -1740,10 +1916,13 @@ function runTranscriptEntryToLines(r, obj) {
           if (t.length > 2) lines.push({ kind: 'thought', text: t.slice(0, 320) });
         }
       } else if (part.type === 'tool_use' && part.name) {
+        r.substantiveAt = Date.now();
         let detail = '';
+        let actionHash = '';
         try {
           const inp = part.input || {};
           detail = String(inp.command || inp.file_path || inp.path || inp.pattern || inp.prompt || inp.description || '').slice(0, 140);
+          actionHash = hashToolInput(inp);
         } catch (_) {}
         const toolText = `${part.name}${detail ? '  ' + detail : ''}`;
         r.lastToolText = toolText.slice(0, 180);
@@ -1751,7 +1930,7 @@ function runTranscriptEntryToLines(r, obj) {
         // Feed the governor a stable action signature (tool + target) so it
         // can catch a genuine loop: the same tool on the same target four
         // times with no forward progress between them.
-        try { r.runner.reportAction(`${part.name}:${detail}`); } catch (_) {}
+        try { r.runner.reportAction(`${part.name}:${actionHash || detail}`); } catch (_) {}
         lines.push({ kind: 'tool', text: `→ ${toolText}`.slice(0, 320) });
       }
     }
@@ -1762,7 +1941,7 @@ function runTranscriptEntryToLines(r, obj) {
   if (typeof msg.model === 'string' && msg.model && msg.model !== '<synthetic>'
       && r.runner && typeof r.runner.setModel === 'function') {
     try { r.runner.setModel(msg.model); } catch (_) {}
-    if (!r.observedModel) r.observedModel = msg.model;
+    r.observedModel = msg.model;
   }
   const usage = msg.usage;
   if (usage) {
@@ -1778,10 +1957,115 @@ function runTranscriptEntryToLines(r, obj) {
       cacheRead: usage.cache_read_input_tokens || 0,
     };
     if ((u.input || u.output || u.cacheCreate || u.cacheRead) && r.runner && typeof r.runner.addUsage === 'function') {
+      r.substantiveAt = Date.now();
       try { r.runner.addUsage(u); } catch (_) {}
     }
   }
   return lines;
+}
+
+function refreshRunCopilotStats(r) {
+  if (!r || r.agent !== 'copilot') return;
+  const now = Date.now();
+  if (r._modelProbeAt && now - r._modelProbeAt < 5000) return;
+  r._modelProbeAt = now;
+  const stats = readCopilotSessionStats(r.worktreePath);
+  if (!stats) return;
+  r.tokensPartial = !!stats.partialTokens;
+  if (stats.model) {
+    r.observedModel = stats.model;
+    try { if (r.runner && typeof r.runner.setModel === 'function') r.runner.setModel(stats.model); } catch (_) {}
+  }
+  if (!r.runner) return;
+  const prev = r._copilotUsage || {};
+  const delta = (key) => {
+    const next = Number(stats[key]) || 0;
+    const old = Number(prev[key]) || 0;
+    return next > old ? next - old : 0;
+  };
+  const outputDelta = delta('outputTokens') + delta('reasoningTokens');
+  const cacheCreateDelta = delta('cacheWriteTokens');
+  const cacheReadDelta = delta('cacheReadTokens');
+  if (outputDelta || cacheCreateDelta || cacheReadDelta) {
+    r.substantiveAt = Date.now();
+    try {
+      r.runner.addUsage({
+        output: outputDelta,
+        cacheCreate: cacheCreateDelta,
+        cacheRead: cacheReadDelta,
+      });
+    } catch (_) {}
+  }
+  r._copilotUsage = {
+    outputTokens: Number(stats.outputTokens) || 0,
+    reasoningTokens: Number(stats.reasoningTokens) || 0,
+    cacheWriteTokens: Number(stats.cacheWriteTokens) || 0,
+    cacheReadTokens: Number(stats.cacheReadTokens) || 0,
+  };
+  const reported = Math.max(
+    Number(stats.currentTokens) || 0,
+    (Number(stats.outputTokens) || 0)
+      + (Number(stats.reasoningTokens) || 0)
+      + (Number(stats.cacheWriteTokens) || 0),
+  );
+  if (reported > 0) {
+    try { r.runner.setReportedTokens(reported); } catch (_) {}
+  }
+}
+
+function statusSummaryLine(state) {
+  const pct = Number.isFinite(state.progress) ? ` ${state.progress}%` : '';
+  const step = state.currentStep || state.summary || '';
+  return `Status ${state.status}${pct}${step ? ': ' + step : ''}`;
+}
+
+function pollRunStatusFile(runId) {
+  const r = runs.get(runId);
+  if (!r || !r.worktreePath || r.finishing) return;
+  const res = AutopilotStatus.readStatus(r.worktreePath);
+  if (!res.ok) return;
+  if (res.signature && res.signature === r.statusFileSignature) return;
+  r.statusFileSignature = res.signature;
+  r.structuredStatus = res.state;
+  r.substantiveAt = Date.now();
+  r.lastFeedAt = Date.now();
+  r.lastAssistantText = res.state.summary || res.state.currentStep || r.lastAssistantText || '';
+  if (res.state.currentStep) {
+    r.lastToolText = res.state.currentStep.slice(0, 180);
+    r.lastToolAt = Date.now();
+  }
+  try {
+    r.runner.recordEvent({
+      kind: 'run_status',
+      ts: new Date().toISOString(),
+      payload: res.state,
+    });
+  } catch (_) {}
+  if (mainWindow) {
+    const lines = [statusSummaryLine(res.state)];
+    if (res.state.blockers.length) lines.push(`Blockers: ${res.state.blockers.join('; ')}`.slice(0, 360));
+    if (res.state.verification.passed === true && res.state.verification.commands.length) {
+      lines.push(`Verified: ${res.state.verification.commands.join('; ')}`.slice(0, 360));
+    }
+    mainWindow.webContents.send('autopilot:activity', {
+      runId,
+      lines,
+      items: lines.map((text) => ({ kind: 'status', text })),
+      at: Date.now(),
+    });
+  }
+  if (r.statusTerminalSeen) return;
+  if (res.state.status === 'complete') {
+    r.statusTerminalSeen = true;
+    const reason = res.state.verification.passed === true ? 'agent_complete' : 'agent_unverified';
+    setImmediate(() => finishRun(runId, { reason }));
+  } else if (res.state.status === 'blocked' || res.state.status === 'failed') {
+    r.statusTerminalSeen = true;
+    setImmediate(() => finishRun(runId, {
+      reason: res.state.status === 'blocked' ? 'agent_blocked' : 'agent_failed',
+      status: res.state,
+    }));
+  }
 }
 
 // Read transcript bytes appended since the last tick and stream new feed
@@ -1888,7 +2172,12 @@ function streamRunPtyLines(runId, clean) {
     // ones that write a structured transcript.
     for (let i = out.length - 1; i >= 0; i--) {
       const t = out[i];
-      if (t.length >= 24 && !/^[→>$#]/.test(t)) { r.lastAssistantText = t.slice(0, 4000); break; }
+      if (t.length >= 24 && !/^[→>$#]/.test(t)) {
+        r.lastAssistantText = t.slice(0, 4000);
+        if (!/^loading\b/i.test(t)) r.substantiveAt = Date.now();
+        if (!AutopilotQuestion.isPermissionPrompt(t)) redirectAutonomousQuestion(runId, t);
+        break;
+      }
     }
     const capped = out.slice(0, AP_RUN_FEED_LINE_MAX);
     if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
@@ -1933,6 +2222,10 @@ function ensureRunGoalSubmitted(runId) {
 // > quiet.
 function runLiveState(r) {
   const now = Date.now();
+  const structured = r.structuredStatus && r.structuredStatus.status;
+  if (structured === 'complete') return 'done';
+  if (structured === 'blocked' || structured === 'failed') return 'blocked';
+  if (structured === 'running' && r.structuredStatus.currentStep) return 'working';
   if (r.sentinelSeen) return 'done';
   if (!r.goalSubmitted && !r.feedEverStreamed) return 'starting';
   if (r.lastToolAt && now - r.lastToolAt < 8000) return 'tool';
@@ -1951,8 +2244,18 @@ function runLiveState(r) {
 function runIdleWatchdog(runId) {
   const r = runs.get(runId);
   if (!r || r.finishing || r.sentinelSeen) return;
-  if (!r.feedEverStreamed) return;
   const now = Date.now();
+  if (!r.substantiveAt && now - (r.spawnedAt || now) >= AP_RUN_STARTUP_STALL_MS) {
+    if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+      runId,
+      lines: ['Agent stayed at startup without producing work; ending the run.'],
+      at: now,
+    });
+    try { r.runner.halt('stall', { signal: 'startup', reason: 'no model activity after startup' }); } catch (_) {}
+    finishRun(runId, { reason: 'agent_startup_stall' });
+    return;
+  }
+  if (!r.feedEverStreamed) return;
   const quietMs = now - (r.lastFeedAt || now);
   // CLI-neutral working signal: any PTY bytes in the last few seconds mean
   // the agent is alive (spinners, tool output, repaints), regardless of
@@ -1976,16 +2279,18 @@ function runIdleWatchdog(runId) {
     finishRun(runId, { reason: 'agent_complete' });
     return;
   }
-  if (quietMs >= AP_RUN_NUDGE_PAUSE_MS && (r.nudgeCount || 0) < AP_RUN_MAX_NUDGES) {
+  const maxNudges = r.isIntegrator ? AP_INTEGRATOR_MAX_NUDGES : AP_RUN_MAX_NUDGES;
+  const idleEndMs = r.isIntegrator ? AP_INTEGRATOR_IDLE_END_MS : AP_RUN_IDLE_END_MS;
+  if (quietMs >= AP_RUN_NUDGE_PAUSE_MS && (r.nudgeCount || 0) < maxNudges) {
     r.nudgeCount = (r.nudgeCount || 0) + 1;
     r.lastFeedAt = now;
     if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
       runId,
-      lines: [`Agent paused without finishing; nudging to continue autonomously (${r.nudgeCount}/${AP_RUN_MAX_NUDGES}).`],
+      lines: [`Agent paused without finishing; nudging to continue autonomously (${r.nudgeCount}/${maxNudges}).`],
       at: now,
     });
     injectGoalToRunPty(runId, 'Continue working toward the goal autonomously. Decide for yourself; do not wait for input. Print the completion marker when fully done.');
-  } else if (quietMs >= AP_RUN_IDLE_END_MS && (r.nudgeCount || 0) >= AP_RUN_MAX_NUDGES) {
+  } else if (quietMs >= idleEndMs && (r.nudgeCount || 0) >= maxNudges) {
     if (mainWindow) mainWindow.webContents.send('autopilot:activity', { runId, lines: ['Agent stayed idle after nudges; ending the run.'], at: now });
     finishRun(runId, { reason: 'agent_idle' });
   }
@@ -2027,6 +2332,13 @@ function flushRunOutput(runId) {
     if (r.bytesSinceInject > (r.injectTextLen || 0) + 8000) r.goalSubmitted = true;
   }
   const clean = stripAnsi(chunk);
+  r.permissionPromptTail = ((r.permissionPromptTail || '') + '\n' + clean).slice(-4000);
+  handlePermissionPrompt(runId, r.permissionPromptTail);
+  const statusModel = parseRunModelStatus(clean);
+  if (statusModel) {
+    r.observedModel = statusModel;
+    try { r.runner.setModel(statusModel); } catch (_) {}
+  }
   // Busy-marker tracking for the idle watchdog: the marker on screen means
   // the agent is mid-generation or mid-tool, so nudges must hold off.
   if (AP_RUN_WORKING_RE.test(clean)) r.workingSeenAt = Date.now();
@@ -2087,7 +2399,7 @@ function spawnRunPty(runId, cwd) {
   const rawCmd = (r.agentCommandOverride || config.agentCommand || 'claude').trim();
   const userTokens = rawCmd.split(/\s+/).filter(Boolean);
   let agentExe = userTokens.shift() || 'claude';
-  const agentArgs = userTokens;
+  let agentArgs = withAutopilotArgs(agentExe, userTokens);
   const env = Object.assign({}, process.env, {
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
@@ -2162,6 +2474,49 @@ function injectGoalToRunPty(runId, text) {
   } catch (_) { return false; }
 }
 
+function redirectAutonomousQuestion(runId, text) {
+  const r = runs.get(runId);
+  if (!r || r.finishing) return false;
+  if (!AutopilotQuestion.isAutonomousQuestion(text)) return false;
+  const now = Date.now();
+  if ((r.questionRedirects || 0) >= 3) return false;
+  if (now - (r.lastQuestionRedirectAt || 0) < 8000) return false;
+  r.questionRedirects = (r.questionRedirects || 0) + 1;
+  r.lastQuestionRedirectAt = now;
+  r.lastFeedAt = now;
+  r.lastToolText = 'Answered autonomous prompt with a safe default';
+  r.lastToolAt = now;
+  const ok = injectGoalToRunPty(runId, AutopilotQuestion.buildQuestionRedirect());
+  if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+    runId,
+    lines: [`Agent asked for input; continuing autonomously (${r.questionRedirects}/3).`],
+    items: [{ kind: 'status', text: `Agent asked for input; continuing autonomously (${r.questionRedirects}/3).` }],
+    at: now,
+  });
+  return ok;
+}
+
+function handlePermissionPrompt(runId, text) {
+  const r = runs.get(runId);
+  if (!r || r.finishing || !AutopilotQuestion.isPermissionPrompt(text)) return false;
+  const now = Date.now();
+  if (now - (r.lastPermissionPromptAt || 0) < 5000) return false;
+  r.lastPermissionPromptAt = now;
+  r.permissionPromptResponses = (r.permissionPromptResponses || 0) + 1;
+  const choice = AutopilotQuestion.permissionPromptChoice(text);
+  try { if (r.pty) r.pty.write(choice + '\r'); } catch (_) {}
+  r.lastFeedAt = now;
+  r.lastToolText = 'Approved agent tool prompt';
+  r.lastToolAt = now;
+  if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
+    runId,
+    lines: ['Approved an agent tool prompt automatically.'],
+    items: [{ kind: 'status', text: 'Approved an agent tool prompt automatically.' }],
+    at: now,
+  });
+  return true;
+}
+
 // Interrupt the current agent turn in a run's PTY (SIGINT). Does not kill the
 // PTY: the agent stays at its prompt.
 function sigintRunPty(runId) {
@@ -2198,22 +2553,37 @@ function whenRunPtyReady(runId, maxMs) {
   });
 }
 
-// After a run frees a slot (finish/cancel), start the next queued run if the
-// active count is back under the concurrency cap.
+function activeAutopilotRunCount() {
+  return [...runs.values()].filter((r) => !r.finishing).length;
+}
+
+let drainingPendingRuns = false;
+
+// After a run frees a slot (finish/cancel), start queued runs while capacity is
+// available. A failed queued start must not strand every item behind it.
 function drainPendingRun() {
-  if (!pendingRuns.length) return;
-  const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
-  const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
-  if (activeCount >= maxConcurrent) return;
-  const next = pendingRuns.shift();
-  if (next) {
+  if (drainingPendingRuns) return;
+  drainingPendingRuns = true;
+  const pump = () => {
+    if (!pendingRuns.length) { drainingPendingRuns = false; return; }
+    const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
+    if (activeAutopilotRunCount() >= maxConcurrent) { drainingPendingRuns = false; return; }
+    const next = pendingRuns.shift();
+    if (!next) { drainingPendingRuns = false; return; }
     // A queued run that fails to start must still be accounted to its collab
     // group, or the team's remaining-counter stalls and the integrator never
     // spawns (the whole team would hang with no error surfaced).
     doStartRun(next.runId, next.payload, next.workspaceRoot)
-      .then((res) => { if (!res || !res.ok) noteCollabStartFailure(next.payload, (res && res.error) || 'failed to start'); })
-      .catch((err) => noteCollabStartFailure(next.payload, (err && err.message) || 'failed to start'));
-  }
+      .then((res) => {
+        if (!res || !res.ok) noteCollabStartFailure(next.payload, (res && res.error) || 'failed to start');
+        pump();
+      })
+      .catch((err) => {
+        noteCollabStartFailure(next.payload, (err && err.message) || 'failed to start');
+        pump();
+      });
+  };
+  pump();
 }
 
 // Printed by the agent (per the autopilot directive) when the goal is fully
@@ -2240,7 +2610,11 @@ function buildAutopilotGoal(goal) {
     '2. Make every decision yourself (tech stack, architecture, libraries, file layout, naming). When a choice is ambiguous, pick the most sensible mainstream default, state the assumption in one line, and proceed immediately.',
     '3. Do not hand back a plan and stop. Plan if useful, then implement every part end to end.',
     '4. Keep working continuously until the goal is fully achieved and verified.',
-    '5. ONLY when the goal is completely finished, print this exact marker alone on its own line: ' + AUTOPILOT_COMPLETE_SENTINEL,
+    '5. Maintain a JSON status file at the workspace root named ' + AutopilotStatus.STATUS_FILE + '.',
+    '   Schema: {"status":"running|blocked|complete|failed","progress":0-100,"currentStep":"...","summary":"...","blockers":[],"files":[],"verification":{"passed":true|false,"commands":[],"notes":"..."}}.',
+    '   Update it before work starts, after meaningful progress, and at the end.',
+    '   Use "complete" only after verifying the original goal. Use "blocked" or "failed" when you cannot finish autonomously.',
+    '6. ONLY when the goal is completely finished, print this exact marker alone on its own line: ' + AUTOPILOT_COMPLETE_SENTINEL,
     '',
     'GOAL: ' + String(goal),
   ].join('\n');
@@ -2329,6 +2703,9 @@ async function startCollabTeam(payload = {}) {
   const goal = String(payload.goal || '').trim().slice(0, 4096);
   if (!goal) return { ok: false, error: 'a goal is required' };
   const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
+  if (maxConcurrent < 2) {
+    return { ok: false, error: 'team mode needs at least 2 concurrent Autopilot slots; raise the Autopilot concurrency limit or start a solo run' };
+  }
   // The planner runs as a detached child with no entry in `runs`, so make the
   // planning phase cancellable: track the child and let autopilot:cancel kill
   // it, otherwise Stop reports "no active run" for the 1-2 min plan window.
@@ -2359,10 +2736,14 @@ async function startCollabTeam(payload = {}) {
       ? `looks mechanical, ${args.length ? 'spawning ' + a.model : 'using the default model'}`
       : `needs reasoning, using ${a.model}`;
   }
-  if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, goal, agents: plan.agents });
+  if (mainWindow) {
+    mainWindow.webContents.send('autopilot:collab-plan', { groupId, goal, agents: plan.agents });
+    if (plan.warning) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: plan.warning, warning: true });
+  }
+  const fleetStartedAt = Date.now();
   collabGroups.set(groupId, {
     goal, caps: payload.caps, snapshot: payload.snapshot, workspaceRoot,
-    remaining: plan.agents.length, workers: [], integratorSpawned: false,
+    startedAt: fleetStartedAt, remaining: plan.agents.length, workers: [], integratorSpawned: false,
   });
   const started = [];
   for (let i = 0; i < plan.agents.length; i++) {
@@ -2376,7 +2757,7 @@ async function startCollabTeam(payload = {}) {
     const baseCmd = config.agentCommand || 'claude';
     const modelArgs = modelArgsFor(agentBaseName(baseCmd), a.tier, config.modelRouting || {});
     const workerCmd = modelArgs.length ? `${baseCmd} ${modelArgs.join(' ')}` : baseCmd;
-    const p = { goal: a.subgoal, injectGoal, caps: payload.caps, snapshot: payload.snapshot, groupId, role: a.role, agentCommand: workerCmd, tier: a.tier };
+    const p = { goal: a.subgoal, originalGoal: goal, fleetStartedAt, injectGoal, caps: payload.caps, snapshot: payload.snapshot, groupId, role: a.role, agentCommand: workerCmd, tier: a.tier };
     const runId = newRunId();
     const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
     if (activeCount >= maxConcurrent) {
@@ -2386,8 +2767,7 @@ async function startCollabTeam(payload = {}) {
     }
     const res = await doStartRun(runId, p, workspaceRoot);
     if (!res || !res.ok) {
-      const g = collabGroups.get(groupId);
-      if (g) g.remaining -= 1;
+      noteCollabStartFailure(p, (res && res.error) || 'failed');
       started.push({ runId, role: a.role, error: (res && res.error) || 'failed' });
     } else {
       started.push({ runId, role: a.role, ok: true });
@@ -2422,11 +2802,11 @@ function noteCollabStartFailure(payload, error) {
   if (!g) return;
   if (payload.isIntegrator) {
     collabGroups.delete(groupId);
-    if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: `Integrator could not start (${String(error).slice(0, 120)}); each team member's result stays available in History.` });
+    if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, terminal: true, integrator: true, note: `Integrator could not start (${String(error).slice(0, 120)}); each team member's result stays available in History.` });
     return;
   }
   g.remaining -= 1;
-  if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: `Team member "${payload.role || 'agent'}" could not start (${String(error).slice(0, 120)}).` });
+  if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, role: payload.role || null, note: `Team member "${payload.role || 'agent'}" could not start (${String(error).slice(0, 120)}).` });
   checkCollabComplete(groupId);
 }
 
@@ -2437,7 +2817,7 @@ function checkCollabComplete(groupId) {
   g.integratorSpawned = true;
   const contributed = g.workers.filter((w) => (w.fileCount || 0) > 0);
   if (!contributed.length) {
-    if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: 'No team member produced changes; skipping integration.' });
+    if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, terminal: true, note: 'No team member produced changes; skipping integration.' });
     collabGroups.delete(groupId);
     return;
   }
@@ -2450,6 +2830,13 @@ function checkCollabComplete(groupId) {
   ].join(' ');
   const p = {
     goal: `Integrate the team's parallel work: ${g.goal}`.slice(0, 4096),
+    originalGoal: g.goal,
+    fleetStartedAt: g.startedAt || Date.now(),
+    preApplyWorkers: g.workers.map((w) => ({
+      role: w.role || 'worker',
+      worktreePath: w.worktreePath,
+      changes: Array.isArray(w.changes) ? w.changes : [],
+    })),
     injectGoal: inject,
     caps: g.caps, snapshot: g.snapshot,
     groupId, role: 'integrator', isIntegrator: true,
@@ -2496,13 +2883,25 @@ async function doStartRun(runId, payload, workspaceRoot) {
   } else {
     snap = { ok: true, manifest: null, fileCount: 0 };
   }
+  let preApplyResult = null;
+  if (Array.isArray(payload.preApplyWorkers) && payload.preApplyWorkers.length) {
+    preApplyResult = applyWorkerChangesToIntegrator(runRoot, payload.preApplyWorkers);
+    const appliedCount = preApplyResult.applied.length;
+    const failedCount = preApplyResult.failed.length;
+    const line = `Preloaded ${appliedCount} worker change${appliedCount === 1 ? '' : 's'} into this integration worktree${failedCount ? `; ${failedCount} failed` : ''}.`;
+    payload.injectGoal = `${payload.injectGoal || payload.goal || ''} ${line}`;
+  }
   const agentName = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
     .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
   const vendorBilled = ['copilot', 'codex', 'aider', 'gemini'].includes(agentName);
+  const originalGoal = (payload && typeof payload.originalGoal === 'string' && payload.originalGoal.trim())
+    ? payload.originalGoal.trim().slice(0, 4096)
+    : null;
+  const auditGoal = originalGoal || (typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null);
   const r = Autopilot.supervisor.startRun({
     sessionId, workspaceRoot: runRoot,
     storageRoot: autopilotStorageRoot(),
-    goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
+    goal: auditGoal,
     agent: payload.agent || agentName,
     modelId: payload.modelId || (vendorBilled ? agentName : null),
     caps: payload.caps,
@@ -2535,6 +2934,10 @@ async function doStartRun(runId, payload, workspaceRoot) {
     isIntegrator: !!(payload && payload.isIntegrator),
     goalInjectedAt: 0, goalSubmitted: false, injectResends: 0, lastResendAt: 0,
     goal: typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null,
+    originalGoal: originalGoal || (typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : null),
+    fleetStartedAt: Number(payload.fleetStartedAt) || 0,
+    preApplyResult,
+    preApplyWorkers: Array.isArray(payload.preApplyWorkers) ? payload.preApplyWorkers : [],
     agent: agentName,
     agentCommandOverride: (typeof payload.agentCommand === 'string' && payload.agentCommand.trim()) ? payload.agentCommand.trim() : null,
   };
@@ -2545,7 +2948,17 @@ async function doStartRun(runId, payload, workspaceRoot) {
     r.runner.recordEvent({
       kind: 'run_identity',
       ts: new Date().toISOString(),
-      payload: { runId, worktreePath: runRoot, workspaceRoot },
+      payload: {
+        runId,
+        worktreePath: runRoot,
+        workspaceRoot,
+        groupId: runState.groupId,
+        role: runState.role,
+        isIntegrator: runState.isIntegrator,
+        originalGoal: runState.originalGoal,
+        fleetStartedAt: runState.fleetStartedAt || null,
+        agent: runState.agent,
+      },
     });
   } catch (_) {}
   runState.tickInterval = setInterval(() => {
@@ -2555,8 +2968,10 @@ async function doStartRun(runId, payload, workspaceRoot) {
     // the goal actually submitted, then check for stalls. All observe the
     // run directly (transcript + PTY), never a chat terminal.
     try { tailRunTranscript(runId); } catch (_) {}
+    try { pollRunStatusFile(runId); } catch (_) {}
     try { ensureRunGoalSubmitted(runId); } catch (_) {}
     try { runIdleWatchdog(runId); } catch (_) {}
+    try { refreshRunCopilotStats(rs); } catch (_) {}
     // Every ~20s, compute a content-sensitive signature of the worktree diff
     // off-thread and feed it to the governor as the forward-progress signal.
     // stat(size+mtime) per changed file is cheap and catches repeated edits
@@ -2604,6 +3019,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
       role: rs.role || null,
       agent: rs.agent || null,
       modelObserved: rs.observedModel || null,
+      tokensPartial: !!rs.tokensPartial,
     });
     if (s.hitCap) {
       try { clearInterval(rs.tickInterval); } catch (_) {}
@@ -2622,7 +3038,12 @@ async function doStartRun(runId, payload, workspaceRoot) {
   }, 1000);
   spawnRunPty(runId, runRoot);
   const goal = typeof payload.goal === 'string' ? payload.goal.slice(0, 4096) : '';
-  if (mainWindow) mainWindow.webContents.send('autopilot:started', { runId, sessionId, workspaceRoot: runRoot, fileCount: snap.fileCount, goal, raceId: runState.raceId, groupId: runState.groupId, role: runState.role });
+  if (mainWindow) mainWindow.webContents.send('autopilot:started', {
+    runId, sessionId, workspaceRoot: runRoot, fileCount: snap.fileCount, goal,
+    originalGoal: runState.originalGoal || goal,
+    fleetStartedAt: runState.fleetStartedAt || null,
+    raceId: runState.raceId, groupId: runState.groupId, role: runState.role,
+  });
   if (goal) {
     // Collab runs record the readable sub-goal but inject a richer team
     // directive (shared goal + own lane); other runs inject the goal itself.
@@ -2675,8 +3096,9 @@ ipcMain.handle('autopilot:nudge', (_e, payload = {}) => {
 });
 
 ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
+  const runId = String(detail && detail.runId || '').trim();
   // No worker runs yet but the orchestrator is planning: cancel that phase.
-  if (runs.size === 0 && activePlanning) {
+  if (!runId && activePlanning) {
     try { activePlanning.cancel(); } catch (_) {}
     activePlanning = null;
     if (mainWindow) {
@@ -2685,14 +3107,40 @@ ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
     }
     return { ok: true, cancelledPlanning: true };
   }
-  const runId = String(detail && detail.runId || '').trim();
   // Resolve the target run. With an explicit id, cancel exactly that run.
   // Without one, fall back ONLY when a single run is active; cancelling an
   // arbitrary "first" run when several are live could stop a run the user
   // never aimed at.
   let rid = null;
+  let queuedIdx = -1;
+  let queuedPayload = null;
+  if (runId && !runs.has(runId)) {
+    queuedIdx = pendingRuns.findIndex((p) => p && p.runId === runId);
+    if (queuedIdx >= 0) queuedPayload = pendingRuns[queuedIdx] && pendingRuns[queuedIdx].payload;
+  }
   if (runId && runs.has(runId)) rid = runId;
+  else if (runId && queuedPayload && queuedPayload.groupId) {
+    const activeSibling = [...runs.entries()]
+      .find(([, run]) => run && run.groupId === queuedPayload.groupId && !run.finishing);
+    if (activeSibling) rid = activeSibling[0];
+  }
   else if (!runId && runs.size === 1) rid = [...runs.keys()][0];
+  if (!rid && runId && queuedIdx >= 0) {
+    const groupId = queuedPayload && queuedPayload.groupId;
+    let cancelled = 0;
+    if (groupId) {
+      for (let i = pendingRuns.length - 1; i >= 0; i--) {
+        const p = pendingRuns[i] && pendingRuns[i].payload;
+        if (p && p.groupId === groupId) { pendingRuns.splice(i, 1); cancelled++; }
+      }
+      collabGroups.delete(groupId);
+      if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, terminal: true, cancelled: true, note: 'Team cancelled before all queued agents started.' });
+    } else {
+      pendingRuns.splice(queuedIdx, 1);
+      cancelled = 1;
+    }
+    return { ok: true, runId, queued: true, cancelled };
+  }
   const r = rid ? runs.get(rid) : null;
   if (!r || !rid) return { ok: false, error: runId ? 'run not found' : 'no active run' };
   // Stop the WHOLE autopilot team, not just the focused run: every live
@@ -2711,6 +3159,7 @@ ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
       if (p && p.groupId === groupId) pendingRuns.splice(i, 1);
     }
     collabGroups.delete(groupId);
+    if (mainWindow) mainWindow.webContents.send('autopilot:collab-plan', { groupId, terminal: true, cancelled: true, note: 'Team stop requested.' });
     if (mainWindow && targets.length > 1) {
       mainWindow.webContents.send('autopilot:activity', {
         runId: rid,
@@ -2756,6 +3205,15 @@ async function finishRun(runId, detail) {
     if (r.flushTimer) { clearTimeout(r.flushTimer); r.flushTimer = null; }
     flushRunOutput(runId);
     r.outputBuf = '';
+    try { refreshRunCopilotStats(r); } catch (_) {}
+    if (r.isIntegrator && Array.isArray(r.preApplyWorkers) && r.preApplyWorkers.length) {
+      try {
+        const live = await Autopilot.snapshot.diffWorkspaceAsync(r.worktreePath, autopilotStorageRoot(), r.runner.sessionId);
+        if (live && live.ok && Array.isArray(live.changes) && live.changes.length === 0) {
+          r.preApplyResult = applyWorkersWhenIntegratorEmpty(live.changes, r.worktreePath, r.preApplyWorkers);
+        }
+      } catch (_) {}
+    }
     try { await r.runner.endRunAsync(detail || null); } catch (_) {}
     const sessionId = r.runner.sessionId;
     const runRoot = r.worktreePath;
@@ -2783,11 +3241,16 @@ async function finishRun(runId, detail) {
     }
     if (sum && typeof sum === 'object') {
       sum.runId = runId; sum.sessionId = sessionId; sum.workspaceRoot = runRoot; sum.raceId = raceId; sum.groupId = groupId; sum.role = runRole;
+      sum.originalGoal = r.originalGoal || goal || null;
+      if (r.fleetStartedAt) sum.fleetStartedAt = r.fleetStartedAt;
       // Conclusion payload for the review UI: why the run ended, how many
       // nudges it took, and the agent's last narration as its final report.
       sum.endReason = (detail && detail.reason) || 'ended';
       sum.nudges = r.nudgeCount || 0;
       sum.finalMessage = r.lastAssistantText || null;
+      sum.modelObserved = r.observedModel || null;
+      if (sum.summary && sum.summary.meter) sum.summary.meter.tokensPartial = !!r.tokensPartial;
+      if (sum.summary && r.fleetStartedAt) sum.summary.fleetDurationMs = Math.max(0, Date.now() - r.fleetStartedAt);
     }
     // Retain the worktree for review. A run whose worktree is inside the
     // managed root (i.e. it really was isolated) is retained with its diff so
@@ -2797,7 +3260,7 @@ async function finishRun(runId, detail) {
       const changes = (sum && Array.isArray(sum.diff)) ? sum.diff : [];
       const meter = (sum && sum.summary && sum.summary.meter) || {};
       retainRun(runId, {
-        runId, sessionId, raceId, goal,
+        runId, sessionId, raceId, goal: r.originalGoal || goal, subgoal: goal,
         groupId, role: runRole, isIntegrator: wasIntegrator,
         agent: runAgent,
         worktreePath: runRoot,
@@ -2809,6 +3272,7 @@ async function finishRun(runId, detail) {
           dollars: typeof meter.dollars === 'number' ? meter.dollars : 0,
           fileCount: changes.length,
         },
+        fleetStartedAt: r.fleetStartedAt || null,
         endedAt: new Date().toISOString(),
       });
     }
@@ -2819,6 +3283,7 @@ async function finishRun(runId, detail) {
         runId, role: runRole, isIntegrator: wasIntegrator,
         worktreePath: runRoot,
         fileCount: (sum && Array.isArray(sum.diff)) ? sum.diff.length : 0,
+        changes: (sum && Array.isArray(sum.diff)) ? sum.diff : [],
       });
     } catch (_) {}
     // If the group is still alive after bookkeeping, more team work follows
@@ -2835,9 +3300,9 @@ async function finishRun(runId, detail) {
   }
 }
 
-// Apply a retained run's changes into its origin workspace, then remove the
-// worktree and drop the registry entry. Honest per-file results: a partial
-// apply returns ok:false with the failed paths named.
+// Apply a retained run's changes into its origin workspace. A complete success
+// removes the worktree and registry entry; a partial failure keeps them so the
+// unapplied work remains reviewable/retryable.
 ipcMain.handle('autopilot:applyRun', async (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
   const entry = getRetained(runId);
@@ -2850,8 +3315,7 @@ ipcMain.handle('autopilot:applyRun', async (_e, payload = {}) => {
     return { ok: false, error: 'this run is part of an active team; wait for the integrator to finish, then apply its result' };
   }
   const result = applyWorktreeChanges(entry.worktreePath, entry.workspaceRoot, entry.changes || []);
-  // Whether or not every file applied, the worktree has served its purpose;
-  // remove it and drop the registry entry so nothing leaks.
+  if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed };
   try { removeRunWorktree(entry.worktreePath, entry.workspaceRoot); } catch (_) {}
   dropRetained(runId);
   return { ok: result.ok, runId, applied: result.applied, failed: result.failed };
@@ -2909,14 +3373,15 @@ ipcMain.handle('autopilot:race', () => {
   return { ok: true, races, loose };
 });
 
-// Apply one run of a race and discard all its siblings in a single move: the
-// winner's changes land in the workspace, every other run in the same race has
-// its worktree removed. Confined per-run; a run never touches a sibling's tree.
+// Apply one run of a race and discard all its siblings in a single move after
+// the winner lands cleanly. If the winner partially fails, every worktree stays
+// retained so no candidate work is destroyed.
 ipcMain.handle('autopilot:applyWinner', async (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
   const winner = getRetained(runId);
   if (!winner) return { ok: false, error: 'no retained run with that id' };
   const result = applyWorktreeChanges(winner.worktreePath, winner.workspaceRoot, winner.changes || []);
+  if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed, discarded: 0 };
   try { removeRunWorktree(winner.worktreePath, winner.workspaceRoot); } catch (_) {}
   dropRetained(runId);
   // Discard the losing siblings in the same race.
@@ -2964,6 +3429,7 @@ ipcMain.handle('autopilot:list', () => {
 // to fall back to HOME, and the restore deletes every file not in the
 // snapshot, so a wrong root would wipe an unrelated directory.
 function manifestWorkspaceRoot(sessionId) {
+  if (!isSafeAutopilotSessionId(sessionId)) return null;
   try {
     const mp = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'snapshot.json');
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to autopilot storage
@@ -2990,9 +3456,15 @@ function manifestWorkspaceRoot(sessionId) {
   return null;
 }
 
+const AUTOPILOT_SESSION_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+function isSafeAutopilotSessionId(sessionId) {
+  return typeof sessionId === 'string' && AUTOPILOT_SESSION_ID_RE.test(sessionId);
+}
+
 ipcMain.handle('autopilot:revert', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
+  if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   const workspaceRoot = manifestWorkspaceRoot(sessionId);
   if (!workspaceRoot) return { ok: false, error: 'snapshot manifest has no workspace root; cannot revert safely' };
   const { decrypt } = autopilotCrypto();
@@ -3012,14 +3484,20 @@ ipcMain.handle('autopilot:revert', (_e, payload = {}) => {
 // also uses the authoritative number when present.
 ipcMain.handle('autopilot:reportTokens', (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
-  const r = runId ? runs.get(runId) : [...runs.values()][0];
-  if (!r) return { ok: false };
+  let rid = runId;
+  if (!rid) {
+    if (runs.size !== 1) {
+      return { ok: false, error: runs.size ? 'runId required when multiple runs are active' : 'no active run' };
+    }
+    rid = [...runs.keys()][0];
+  }
+  const r = runs.get(rid);
+  if (!r) return { ok: false, error: 'run not found' };
   const n = Number(payload && payload.tokens);
   if (!Number.isFinite(n) || n < 0) return { ok: false };
   try { r.runner.setReportedTokens(n); } catch (_) {}
   // Re-broadcast budget so the rings update immediately to the new
   // authoritative number instead of waiting for the next 1s tick.
-  const rid = runId || [...runs.keys()][0];
   if (mainWindow) mainWindow.webContents.send('autopilot:budget', { runId: rid, ...r.runner.budgetState() });
   return { ok: true };
 });
@@ -3042,6 +3520,10 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
     return { ok: true, runs: [] };
   }
   const pastRuns = [];
+  const retainedBySession = new Map();
+  for (const entry of Object.values(readRetained())) {
+    if (entry && entry.sessionId) retainedBySession.set(entry.sessionId, entry);
+  }
   for (const sid of entries) {
     try {
       // The snapshot manifest is optional (runs started with the snapshot
@@ -3067,6 +3549,20 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
       let tokens = 0;
       let caps = null;
       let originWorkspace = null;
+      let groupId = null;
+      let role = null;
+      let isIntegrator = false;
+      let runId = null;
+      let agent = null;
+      const retained = retainedBySession.get(sid) || null;
+      if (retained) {
+        groupId = retained.groupId || null;
+        role = retained.role || null;
+        isIntegrator = !!retained.isIntegrator;
+        runId = retained.runId || null;
+        agent = retained.agent || null;
+        if (retained.goal) goal = retained.goal;
+      }
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
       if (fs.existsSync(auditPath)) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to sessionsDir
@@ -3078,6 +3574,12 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
             if (!startedAt && row.ts) startedAt = row.ts;
             if (row.kind === 'run_identity' && row.payload && typeof row.payload.workspaceRoot === 'string') {
               originWorkspace = row.payload.workspaceRoot;
+              groupId = row.payload.groupId || groupId;
+              role = row.payload.role || role;
+              isIntegrator = !!row.payload.isIntegrator || isIntegrator;
+              runId = row.payload.runId || runId;
+              agent = row.payload.agent || agent;
+              if (row.payload.originalGoal && !goal) goal = row.payload.originalGoal;
             }
             if (row.kind === 'start_run' && row.payload) {
               if (typeof row.payload.goal === 'string') goal = row.payload.goal;
@@ -3111,15 +3613,21 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
         fileCount,
         dollars,
         tokens,
+        groupId,
+        role,
+        isIntegrator,
+        runId,
+        agent,
       });
     } catch (_) {}
   }
-  pastRuns.sort((a, b) => {
+  const groupedRuns = groupHistoryRuns(pastRuns);
+  groupedRuns.sort((a, b) => {
     const ka = new Date(a.endedAt || a.capturedAt || 0).getTime();
     const kb = new Date(b.endedAt || b.capturedAt || 0).getTime();
     return kb - ka;
   });
-  return { ok: true, runs: pastRuns.slice(0, 24) };
+  return { ok: true, runs: groupedRuns.slice(0, 24) };
 });
 
 // Delete a past run: removes its session directory (manifest, audit log,
@@ -3128,7 +3636,7 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
 // folder under the autopilot storage root.
 ipcMain.handle('autopilot:deleteRun', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
-  if (!sessionId || !/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+  if (!sessionId || !isSafeAutopilotSessionId(sessionId)) {
     return { ok: false, error: 'invalid sessionId' };
   }
   const isActive = [...runs.values()].some((r) => r.runner && r.runner.sessionId === sessionId);
@@ -3165,6 +3673,7 @@ ipcMain.handle('autopilot:fileDiff', async (_e, payload = {}) => {
   if (!sessionId || !relPath) {
     return { ok: false, error: 'sessionId and path required' };
   }
+  if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   // The run's files live in its own worktree, so the workspace resolves
   // from the session record (manifest, else the run_identity audit row)
   // rather than from the caller: callers carry the origin project as a
@@ -3277,6 +3786,7 @@ ipcMain.handle('autopilot:liveDiff', async (_e, payload = {}) => {
 ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
+  if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   const { decrypt } = autopilotCrypto();
   // Diff the recorded workspace only, never a caller-supplied path, so this
   // read cannot be used to enumerate an arbitrary directory tree. Use the
@@ -3304,7 +3814,7 @@ ipcMain.handle('autopilot:receipt', async (_e, payload = {}) => {
   const rows = [];
   for (const it of items) {
     const sessionId = String(it && it.sessionId || '').trim();
-    if (!sessionId) continue;
+    if (!sessionId || !isSafeAutopilotSessionId(sessionId)) continue;
     try {
       const sum = await Autopilot.supervisor.summarizeRunAsync({
         sessionId,
@@ -3313,7 +3823,11 @@ ipcMain.handle('autopilot:receipt', async (_e, payload = {}) => {
         decrypt,
       });
       if (sum && sum.ok) {
-        rows.push(Autopilot.receipt.fromSummary(sum, { agent: it.agent || null, model: it.model || null }));
+        rows.push(Autopilot.receipt.fromSummary(sum, {
+          agent: it.agent || null,
+          model: it.model || null,
+          fleetStartedAt: Number(it.fleetStartedAt) || Number(sum.fleetStartedAt) || 0,
+        }));
       }
     } catch (_) { /* skip a run that cannot be summarized rather than fail the whole receipt */ }
   }
@@ -3322,6 +3836,209 @@ ipcMain.handle('autopilot:receipt', async (_e, payload = {}) => {
   });
   return { ok: true, receipt };
 });
+
+// ─── Model catalog IPC ───────────────────────────────────────────────────────────
+
+const MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
+const MODEL_PROBE_TIMEOUT_MS = 11000;
+const MODEL_PROBE_OUTPUT_CAP = 256 * 1024;
+const modelCatalogCache = new Map();
+
+function modelProbeCwd() {
+  if (Array.isArray(config.projects) && config.activeProjectId) {
+    const active = config.projects.find((p) => p && p.id === config.activeProjectId);
+    if (active && active.path) {
+      try {
+        if (fs.existsSync(active.path) && fs.statSync(active.path).isDirectory()) return active.path;
+      } catch (_) {}
+    }
+  }
+  if (config.agentCwd && typeof config.agentCwd === 'string') {
+    try {
+      if (fs.existsSync(config.agentCwd) && fs.statSync(config.agentCwd).isDirectory()) return config.agentCwd;
+    } catch (_) {}
+  }
+  return HOME;
+}
+
+function safeAgentCommandHead(agentCommand) {
+  const tokens = String(agentCommand || 'claude').trim().split(/\s+/).filter(Boolean);
+  const exe = tokens[0] || 'claude';
+  const base = agentBaseName(exe);
+  if (!modelFlagFor(base)) return null;
+  return { exe, base };
+}
+
+function savedRoutingModels(vendor) {
+  const entry = config.modelRouting && typeof config.modelRouting === 'object'
+    ? config.modelRouting[vendor]
+    : null;
+  if (!entry || typeof entry !== 'object') return [];
+  return uniqueModels(['cheap', 'smart']
+    .map((k) => entry[k])
+    .filter((value) => isModelValueUsable(value, vendor))
+    .map((value) => ({ value, label: `${titleFromId(value)} (saved)` })));
+}
+
+function slashProbeArgs(vendor) {
+  if (vendor === 'copilot') {
+    return ['--no-color', '--no-auto-update', '--no-remote-export', '--no-custom-instructions', '--log-level', 'none', '--screen-reader'];
+  }
+  if (vendor === 'claude') {
+    return ['--ax-screen-reader'];
+  }
+  if (vendor === 'gemini') {
+    return ['--screen-reader', '--skip-trust'];
+  }
+  return [];
+}
+
+function runSlashModelProbe(agentCommand, vendor) {
+  return new Promise((resolve) => {
+    const head = safeAgentCommandHead(agentCommand);
+    if (!head) return resolve({ ok: false, output: '', error: 'active agent is not supported for model discovery' });
+    const env = Object.assign(buildAgentEnv(), {
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      NO_COLOR: '1',
+      HUSK_MODEL_PROBE: '1',
+    });
+    const exe = resolveAgentExe(head.exe, env.PATH);
+    const args = slashProbeArgs(vendor);
+    let child;
+    try {
+      child = pty.spawn(exe, args, {
+        name: 'xterm-256color',
+        cols: 160,
+        rows: 48,
+        cwd: modelProbeCwd(),
+        env,
+      });
+    } catch (err) {
+      return resolve({ ok: false, output: '', error: (err && err.message) || String(err) });
+    }
+
+    let output = '';
+    let settled = false;
+    const timers = [];
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      for (const t of timers) clearTimeout(t);
+      try { child.kill(); } catch (_) {}
+      resolve(result);
+    };
+    // Slow-mounting TUIs eat the /model keystrokes if sent too early:
+    // copilot needs the longest settle, claude a moderate one.
+    const submitDelay = vendor === 'copilot' ? 2800 : (vendor === 'claude' ? 1800 : 900);
+    timers.push(setTimeout(() => { try { child.write('/model\r'); } catch (_) {} }, submitDelay));
+    timers.push(setTimeout(() => { try { child.write('\x1b'); } catch (_) {} }, submitDelay + 5200));
+    timers.push(setTimeout(() => { try { child.write('\x03'); } catch (_) {} }, submitDelay + 5500));
+    timers.push(setTimeout(() => {
+      done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model picker produced no output' });
+    }, MODEL_PROBE_TIMEOUT_MS));
+    child.onData((d) => {
+      if (output.length < MODEL_PROBE_OUTPUT_CAP) output += String(d);
+    });
+    child.onExit(() => {
+      done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model picker exited with no output' });
+    });
+  });
+}
+
+function runAiderModelProbe(agentCommand) {
+  return new Promise((resolve) => {
+    const head = safeAgentCommandHead(agentCommand);
+    if (!head) return resolve({ ok: false, output: '', error: 'active agent is not supported for model discovery' });
+    const env = Object.assign(buildAgentEnv(), { NO_COLOR: '1', HUSK_MODEL_PROBE: '1' });
+    const exe = resolveAgentExe(head.exe, env.PATH);
+    let child;
+    try {
+      child = spawn(exe, ['--list-models', '', '--no-check-model-accepts-settings'], {
+        cwd: modelProbeCwd(),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    } catch (err) {
+      return resolve({ ok: false, output: '', error: (err && err.message) || String(err) });
+    }
+    let output = '';
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill('SIGKILL'); } catch (_) {}
+      resolve(result);
+    };
+    const collect = (d) => {
+      if (output.length < MODEL_PROBE_OUTPUT_CAP) output += String(d);
+    };
+    const timer = setTimeout(() => {
+      done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list timed out' });
+    }, MODEL_PROBE_TIMEOUT_MS);
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    child.on('error', (err) => done({ ok: false, output, error: (err && err.message) || String(err) }));
+    child.on('close', () => done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list exited with no output' }));
+  });
+}
+
+async function discoverModelCatalog({ refresh = false } = {}) {
+  const rawCommand = config.agentCommand || 'claude';
+  const head = safeAgentCommandHead(rawCommand);
+  const vendor = head ? head.base : agentBaseName(rawCommand);
+  const flag = modelFlagFor(vendor);
+  const base = {
+    ok: true,
+    vendor,
+    providerLabel: providerLabel(vendor),
+    command: head ? head.exe : String(rawCommand || '').trim().split(/\s+/)[0],
+    supported: !!(head && flag),
+    flag,
+    models: [],
+    source: 'none',
+    sourceLabel: 'No live catalog',
+  };
+  if (!base.supported) {
+    return Object.assign(base, {
+      ok: false,
+      error: head ? `${providerLabel(vendor)} does not expose a model flag Husk can route yet.` : 'Active agent command is not supported.',
+    });
+  }
+
+  const cacheKey = `${vendor}:${head.exe}`;
+  const cached = modelCatalogCache.get(cacheKey);
+  if (!refresh && cached && Date.now() - cached.cachedAt < MODEL_CATALOG_TTL_MS) {
+    return Object.assign({}, cached.value, { cached: true });
+  }
+
+  const probe = vendor === 'aider'
+    ? await runAiderModelProbe(rawCommand)
+    : await runSlashModelProbe(rawCommand, vendor);
+  const probeOutput = probe.output || '';
+  const authBlocked = vendor === 'copilot' && /not logged in to select a model|use \/login to authenticate/i.test(probeOutput);
+  const partialCopilotCatalog = vendor === 'copilot' && !/Model\b[\s\S]{0,80}\bReasoning/i.test(probeOutput);
+  const liveModels = (authBlocked || partialCopilotCatalog) ? [] : parseModelCatalog(probeOutput, vendor);
+  const savedModels = savedRoutingModels(vendor);
+  const fallbackModels = (!liveModels.length && !authBlocked) ? fallbackModelsFor(vendor) : [];
+  const models = uniqueModels([...liveModels, ...fallbackModels, ...savedModels]);
+  const value = Object.assign(base, {
+    models,
+    source: liveModels.length ? (vendor === 'aider' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
+    sourceLabel: liveModels.length
+      ? (vendor === 'aider' ? 'Read from aider --list-models' : 'Read from /model')
+      : (fallbackModels.length ? 'Known provider catalog' : (savedModels.length ? 'Saved selections' : 'No models discovered')),
+    error: (liveModels.length || fallbackModels.length) ? '' : (authBlocked
+      ? 'Copilot requires login before it will list models.'
+      : (partialCopilotCatalog ? 'Copilot model picker did not finish loading. Refresh models to retry.' : ((probe && probe.error) || 'No models were found in the provider output.'))),
+  });
+  modelCatalogCache.set(cacheKey, { cachedAt: Date.now(), value });
+  return value;
+}
+
+ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ refresh: !!(opts && opts.refresh) }));
 
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 
@@ -3332,11 +4049,9 @@ ipcMain.handle('config:set', (_e, partial) => {
   config = { ...config, ...partial };
   saveConfig(config);
   if (paiChanged) {
-    // Park or restore ~/.claude/CLAUDE.md so the next agent restart actually
-    // sees (or no longer sees) the PAI mode-banner instructions. The
-    // statusline tick is best-effort kicked back in / off; bootstrap on disk
-    // is left as-is; bringing PAI back on a future launch will repair any
-    // missing pieces via bootstrapPaiIfNeeded.
+    // Park or restore ~/.claude/CLAUDE.md so the next agent restart sees the
+    // selected PAI instruction state. The statusline tick follows the same
+    // setting; bootstrap files on disk are left intact.
     applyPaiState(config.paiEnabled !== false);
     if (config.paiEnabled !== false) startStatuslineRefresh();
     else stopStatuslineRefresh();
@@ -3562,54 +4277,46 @@ const MCP_CATALOG = [
 
 ipcMain.handle('mcp:catalog', () => MCP_CATALOG);
 
-// Every mcp:* handler routes through the per-agent adapter selected
-// by config.agentCommand. claude and copilot are fully wired; codex,
-// aider, gemini, and unknown agents fall through to a stub that
-// surfaces "not supported" without misreading another agent's config.
+// Health still routes through the active CLI because only that CLI can report
+// live connection state. Configuration writes go through SharedMcp below:
+// one Husk MCP set is mirrored to every write-capable vendor adapter, so
+// switching claude <-> copilot <-> gemini does not require reinstalling MCPs.
 function activeMcpAdapter() {
   return getMcpAdapter(config.agentCommand);
 }
 
 ipcMain.handle('mcp:list', () => {
-  const result = activeMcpAdapter().list();
-  return { ...result, agent: activeMcpAdapter().agent, supportsWrite: activeMcpAdapter().supportsWrite, supportsLiveStatus: activeMcpAdapter().supportsLiveStatus };
+  const active = activeMcpAdapter();
+  const result = SharedMcp.list(config.agentCommand);
+  return {
+    ...result,
+    agent: active.agent,
+    activeAgent: active.agent,
+    supportsWrite: true,
+    supportsLiveStatus: active.supportsLiveStatus,
+  };
 });
 
 ipcMain.handle('mcp:health', () => activeMcpAdapter().health());
-ipcMain.handle('mcp:add', (_e, payload = {}) => activeMcpAdapter().add(payload));
+ipcMain.handle('mcp:add', (_e, payload = {}) => SharedMcp.add(payload));
 ipcMain.handle('mcp:update', (_e, payload = {}) => {
-  const adapter = activeMcpAdapter();
-  if (typeof adapter.update !== 'function') return { ok: false, error: 'Edit not supported for this CLI' };
   // `id` is the (possibly edited) name from the form; `oldId` is the
   // original key. Locate by oldId, pass the new name as `newId` so the
-  // adapter can rewrite the JSON key when the two differ.
+  // shared layer can rewrite the JSON key when the two differ.
   const { id, oldId, ...rest } = payload || {};
-  return adapter.update(oldId || id, { ...rest, newId: id });
+  return SharedMcp.update(oldId || id, { ...rest, newId: id });
 });
-ipcMain.handle('mcp:remove', (_e, id) => activeMcpAdapter().remove(id));
-ipcMain.handle('mcp:toggle', (_e, id) => activeMcpAdapter().toggle(id));
+ipcMain.handle('mcp:remove', (_e, id) => SharedMcp.remove(id));
+ipcMain.handle('mcp:toggle', (_e, id) => SharedMcp.toggle(id, config.agentCommand));
 
 // addMany takes a list of canonical payloads (each already split into
 // command/args + transport per the buildServerEntry contract) and tries
 // to add() each one. Returns a per-id status map so the renderer can
 // show which succeeded vs. which already existed vs. which errored.
 ipcMain.handle('mcp:addMany', (_e, payload = {}) => {
-  const adapter = activeMcpAdapter();
   const items = Array.isArray(payload && payload.items) ? payload.items : [];
   if (!items.length) return { ok: false, error: 'no items supplied' };
-  const results = {};
-  let installed = 0;
-  for (const item of items) {
-    if (!item || !item.id) {
-      results[item && item.id ? item.id : '_anon_'] = { status: 'error', error: 'missing id' };
-      continue;
-    }
-    const r = adapter.add(item);
-    if (r.ok) { results[item.id] = { status: 'installed' }; installed++; }
-    else if (/already exists/i.test(r.error || '')) results[item.id] = { status: 'exists', error: r.error };
-    else results[item.id] = { status: 'error', error: r.error };
-  }
-  return { ok: true, results, installed, total: items.length };
+  return SharedMcp.addMany(items);
 });
 
 // Lenient JSON parser surface. The renderer hands the raw textarea
@@ -3735,6 +4442,20 @@ function readCopilotSessionStats(cwd) {
   let model = '';
   let turns = 0;
   let outTokens = 0;
+  let currentTokens = 0;
+  let conversationTokens = 0;
+  let systemTokens = 0;
+  let toolDefinitionsTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
+  let premiumRequests = 0;
+  let apiDurationMs = 0;
+  let totalNanoAiu = 0;
+  let requestCount = 0;
+  let metricOutputTokens = 0;
+  const modelMetricTotals = new Map();
+  const asNum = (v) => Number.isFinite(Number(v)) ? Number(v) : 0;
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     let o;
@@ -3742,11 +4463,54 @@ function readCopilotSessionStats(cwd) {
     const t = o && o.type;
     const data = (o && o.data) || {};
     if (t === 'session.model_change' && typeof data.newModel === 'string') model = data.newModel;
-    else if (t === 'user.message' || t === 'assistant.message') turns += 1;
+    else if (t === 'user.message' || t === 'assistant.message') {
+      turns += 1;
+      if (t === 'assistant.message' && typeof data.model === 'string' && data.model) model = data.model;
+    }
     if (typeof data.outputTokens === 'number') outTokens += data.outputTokens;
+    if (t === 'session.shutdown') {
+      if (typeof data.currentModel === 'string' && data.currentModel) model = data.currentModel;
+      currentTokens = Math.max(currentTokens, asNum(data.currentTokens));
+      conversationTokens = Math.max(conversationTokens, asNum(data.conversationTokens));
+      systemTokens = Math.max(systemTokens, asNum(data.systemTokens));
+      toolDefinitionsTokens = Math.max(toolDefinitionsTokens, asNum(data.toolDefinitionsTokens));
+      premiumRequests = Math.max(premiumRequests, asNum(data.totalPremiumRequests));
+      apiDurationMs = Math.max(apiDurationMs, asNum(data.totalApiDurationMs));
+      totalNanoAiu = Math.max(totalNanoAiu, asNum(data.totalNanoAiu));
+      const metrics = data.modelMetrics && typeof data.modelMetrics === 'object' ? data.modelMetrics : {};
+      for (const [key, m] of Object.entries(metrics)) {
+        if (!m || typeof m !== 'object') continue;
+        const usage = m.usage && typeof m.usage === 'object' ? m.usage : {};
+        const req = m.requests && typeof m.requests === 'object' ? m.requests : {};
+        const prev = modelMetricTotals.get(key) || {};
+        modelMetricTotals.set(key, {
+          outputTokens: Math.max(asNum(prev.outputTokens), asNum(usage.outputTokens)),
+          cacheReadTokens: Math.max(asNum(prev.cacheReadTokens), asNum(usage.cacheReadTokens)),
+          cacheWriteTokens: Math.max(asNum(prev.cacheWriteTokens), asNum(usage.cacheWriteTokens)),
+          reasoningTokens: Math.max(asNum(prev.reasoningTokens), asNum(usage.reasoningTokens)),
+          requestCount: Math.max(asNum(prev.requestCount), asNum(req.count)),
+          totalNanoAiu: Math.max(asNum(prev.totalNanoAiu), asNum(m.totalNanoAiu)),
+        });
+      }
+    }
   }
-  if (!model && turns === 0 && outTokens === 0) return null;
-  return { model, turns, tokens: outTokens, ctxTokens: 0, ctxWindow: 0, ctxPct: 0, partialTokens: true };
+  for (const m of modelMetricTotals.values()) {
+    metricOutputTokens += asNum(m.outputTokens);
+    cacheReadTokens += asNum(m.cacheReadTokens);
+    cacheWriteTokens += asNum(m.cacheWriteTokens);
+    reasoningTokens += asNum(m.reasoningTokens);
+    requestCount += asNum(m.requestCount);
+    totalNanoAiu = Math.max(totalNanoAiu, asNum(m.totalNanoAiu));
+  }
+  outTokens = Math.max(outTokens, metricOutputTokens);
+  if (!model && turns === 0 && outTokens === 0 && currentTokens === 0) return null;
+  return {
+    model, turns, tokens: outTokens, outputTokens: outTokens,
+    currentTokens, conversationTokens, systemTokens, toolDefinitionsTokens,
+    cacheReadTokens, cacheWriteTokens, reasoningTokens,
+    premiumRequests, requestCount, apiDurationMs, totalNanoAiu,
+    ctxTokens: 0, ctxWindow: 0, ctxPct: 0, partialTokens: true,
+  };
 }
 
 // Parse a CLI's own session usage counter out of its status line. Copilot
@@ -3771,13 +4535,12 @@ function parseAgentSessionUsage(agentCmd, tail) {
 // stays on the MCP page where its async probe runs.
 function mcpSummary() {
   try {
-    const adapter = activeMcpAdapter();
-    const r = adapter.list();
+    const r = SharedMcp.list(config.agentCommand, { sync: false });
     const servers = (r && Array.isArray(r.servers)) ? r.servers : [];
     return {
       count: servers.length,
       enabled: servers.filter((s) => s.enabled !== false).length,
-      supported: !(r && r.unsupported),
+      supported: true,
     };
   } catch (_) { return { count: 0, enabled: 0, supported: false }; }
 }
@@ -5115,9 +5878,8 @@ ipcMain.handle('skills:create', (_e, { name, description, content }) => {
   if (!description || !description.trim()) {
     return { ok: false, error: 'Description is required.' };
   }
-  // Escape backslashes BEFORE quotes so we don't leave half-escaped pairs:
-  //   raw: foo\"bar    naive: foo\\"bar (broken, closes the JSON string)
-  //   escape \\ first:  foo\\\"bar -> when YAML parses double-quoted, it sees foo\"bar
+  // Escape backslashes before quotes so YAML double-quoted strings parse
+  // backslash-quote pairs correctly.
   const safeDesc = description.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const body = (content || '').trim() || `# ${name}\n\n${description.trim()}\n\n## When to use\n\nDescribe trigger conditions.\n\n## How to use\n\nDescribe steps.\n`;
   const md = `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
@@ -5204,44 +5966,76 @@ ipcMain.handle('skills:toggle', (_e, payload = {}) => {
 // subprocess). Mutations shell out to the agent CLI so it remains the
 // single writer of its own registry. Only agents with a plugin system
 // are supported; everything else gets a graceful supported:false,
-// mirroring sessions:list.
+// mirroring sessions:list. Claude and Copilot both expose plugins, but
+// their on-disk registries and supported verbs differ.
 
 const Plugins = require('./lib/plugins');
 
 const PLUGIN_CLI_TIMEOUT_MS = 180000; // installs may git-clone
 const PLUGIN_CLI_OUTPUT_CAP = 65536;
 
-function pluginsSupported() { return getAgentKind() === 'claude'; }
+function copilotCacheDir() {
+  if (process.env.COPILOT_CACHE_HOME) return process.env.COPILOT_CACHE_HOME;
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) return path.join(process.env.LOCALAPPDATA, 'copilot');
+  const base = process.env.XDG_CACHE_HOME || path.join(HOME, '.cache');
+  return path.join(base, 'copilot');
+}
+
+function activePluginContext() {
+  const agent = agentBaseName(config.agentCommand || 'claude');
+  if (agent === 'claude') return { agent, dir: CLAUDE_DIR, cacheDir: '' };
+  if (agent === 'copilot') return { agent, dir: COPILOT_DIR, cacheDir: copilotCacheDir() };
+  return null;
+}
+
+function pluginsSupported() { return !!activePluginContext(); }
 
 // Resolve a validated installed plugin's install path, confined to the
 // plugins root. Returns null when unknown or outside the root (a
 // tampered registry must not turn the editor into an arbitrary-fs API).
 function pluginInstallPath(id) {
   if (!Plugins.isSafePluginId(id)) return null;
-  const inst = Plugins.readInstalled(CLAUDE_DIR).find((p) => p.id === id);
+  const ctx = activePluginContext();
+  if (!ctx) return null;
+  const inst = Plugins.readInstalled(ctx.dir, ctx.agent, ctx.cacheDir).find((p) => p.id === id);
   if (!inst || !inst.installPath) return null;
-  if (!Plugins.isInsidePluginsRoot(CLAUDE_DIR, inst.installPath)) return null;
+  if (!Plugins.isInsidePluginsRoot(ctx.dir, inst.installPath, ctx.agent)) return null;
   return inst.installPath;
 }
 
 ipcMain.handle('plugins:list', () => {
-  if (!pluginsSupported()) return { ok: true, supported: false, plugins: [] };
-  return { ok: true, supported: true, plugins: Plugins.readInstalled(CLAUDE_DIR) };
+  const ctx = activePluginContext();
+  if (!ctx) return { ok: true, supported: false, plugins: [] };
+  return {
+    ok: true,
+    supported: true,
+    agent: ctx.agent,
+    capabilities: Plugins.pluginCapabilities(ctx.agent),
+    plugins: Plugins.readInstalled(ctx.dir, ctx.agent, ctx.cacheDir),
+  };
 });
 
 ipcMain.handle('plugins:catalog', () => {
-  if (!pluginsSupported()) return { ok: true, supported: false, catalog: [] };
-  return { ok: true, supported: true, catalog: Plugins.readCatalog(CLAUDE_DIR) };
+  const ctx = activePluginContext();
+  if (!ctx) return { ok: true, supported: false, catalog: [] };
+  return {
+    ok: true,
+    supported: true,
+    agent: ctx.agent,
+    capabilities: Plugins.pluginCapabilities(ctx.agent),
+    catalog: Plugins.readCatalog(ctx.dir, ctx.agent, ctx.cacheDir),
+  };
 });
 
 ipcMain.handle('plugins:run', (_e, payload = {}) => {
-  if (!pluginsSupported()) return { ok: false, error: 'the active agent has no plugin system' };
+  const ctx = activePluginContext();
+  if (!ctx) return { ok: false, error: 'the active agent has no plugin system' };
   const verb = String(payload.action || '');
   // buildPluginCliArgs owns the verb allowlist AND the id validation
   // (isSafePluginId): null means one of them failed. The id rides as a
   // single argv element with no shell, so neither flags nor
   // metacharacters can ride along.
-  const argv = Plugins.buildPluginCliArgs(verb, String(payload.id || ''));
+  const argv = Plugins.buildPluginCliArgs(ctx.agent, verb, String(payload.id || ''));
   if (!argv) return { ok: false, error: 'invalid plugin action or identifier' };
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
   if (!isAllowedAgentCommand(cmd)) return { ok: false, error: `agent command "${cmd}" is not allowlisted` };
@@ -5513,33 +6307,92 @@ function readCopilotWorkspace(dir) {
   } catch (_) { return null; }
 }
 
+function readCopilotSessionTitle(dir) {
+  try {
+    const eventsPath = path.join(dir, 'events.jsonl');
+    const fd = fs.openSync(eventsPath, 'r');
+    try {
+      const CAP = 192 * 1024;
+      const sz = fs.fstatSync(fd).size;
+      const len = Math.min(sz, CAP);
+      const b = Buffer.alloc(len);
+      fs.readSync(fd, b, 0, len, 0);
+      const raw = b.toString('utf8');
+      return { ...deriveCopilotSessionTitleFromEventsText(raw), autopilot: containsAutopilotCopilotText(raw) };
+    } finally { fs.closeSync(fd); }
+  } catch (_) {
+    return { title: '', firstMessage: '', sawAssistant: false, autopilot: false };
+  }
+}
+
+function isAutopilotCopilotText(text) {
+  const t = String(text || '').trim().replace(/^\|-\s*/, '').trim();
+  return /^\[AUTONOMOUS MODE\]/.test(t)
+    || /^\[COLLAB TEAM\]/.test(t)
+    || /^\[COLLAB INTEGRATION\]/.test(t)
+    || /^You are an orchestrator planning a team of autonomous coding agents\b/.test(t)
+    || /^Integrate the team's parallel work:/i.test(t)
+    || /^Continue autonomously\./i.test(t)
+    || /^Continue working toward the goal autonomously\./i.test(t)
+    || /^No human is available to answer questions\./i.test(t);
+}
+
+function containsAutopilotCopilotText(text) {
+  const t = String(text || '');
+  return /\[AUTONOMOUS MODE\]/.test(t)
+    || /\[COLLAB TEAM\]/.test(t)
+    || /\[COLLAB INTEGRATION\]/.test(t)
+    || /You are an orchestrator planning a team of autonomous coding agents\b/.test(t)
+    || /Integrate the team's parallel work:/i.test(t)
+    || /\.husk-autopilot-status\.json/.test(t)
+    || /No human is available to answer questions\./i.test(t)
+    || /Continue autonomously\./i.test(t)
+    || /Continue working toward the goal autonomously\./i.test(t);
+}
+
+function isAutopilotCopilotSession(ws, eventTitle) {
+  return isAutopilotWorkspacePath(ws && ws.cwd)
+    || !!(eventTitle && eventTitle.autopilot)
+    || isAutopilotCopilotText(eventTitle && eventTitle.firstMessage)
+    || isAutopilotCopilotText(eventTitle && eventTitle.title);
+}
+
 // List copilot sessions from ~/.copilot/session-state/<uuid>/, normalized to
 // the same shape the renderer consumes for claude sessions. Copilot stores the
-// session name, cwd, and timestamps in each session's workspace.yaml.
-function listCopilotSessions() {
+// cwd and timestamps in each session's workspace.yaml; names are often null,
+// so derive a stable title from the event log's first user turn.
+function listCopilotSessions(opts = {}) {
   const root = path.join(HOME, '.copilot', 'session-state');
   let dirs = [];
   try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
-  catch (_) { return []; }
+  catch (_) { return opts.withMeta ? { sessions: [], hiddenAutopilot: 0 } : []; }
   const out = [];
+  let hiddenAutopilot = 0;
   for (const d of dirs) {
     const full = path.join(root, d.name);
     const ws = readCopilotWorkspace(full);
     if (!ws || !ws.id) continue;
+    const eventTitle = readCopilotSessionTitle(full);
+    if (isAutopilotCopilotSession(ws, eventTitle)) {
+      hiddenAutopilot++;
+      if (opts.includeAutopilot !== true) continue;
+    }
     let mtime = Date.parse(ws.updated_at) || 0;
     let sizeBytes = 0;
     try { const st = fs.statSync(path.join(full, 'events.jsonl')); sizeBytes = st.size; if (!mtime) mtime = st.mtimeMs; }
     catch (_) { if (!mtime) { try { mtime = fs.statSync(full).mtimeMs; } catch (_e) {} } }
     const startedMs = Date.parse(ws.created_at) || mtime;
     const name = (ws.name && ws.name !== 'null') ? ws.name.slice(0, 120) : '';
+    const title = name || eventTitle.title || 'New Copilot chat';
+    const firstMessage = eventTitle.firstMessage || name || '';
     out.push({
       id: ws.id,
       project: ws.cwd || '',
       projectPath: ws.cwd || '',
       originalCwd: ws.cwd || '',
       path: full,
-      title: name || '(unnamed session)',
-      firstMessage: name,
+      title,
+      firstMessage,
       prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
       startedISO: ws.created_at || new Date(mtime || 0).toISOString(),
       startedMs,
@@ -5548,6 +6401,7 @@ function listCopilotSessions() {
     });
   }
   out.sort((a, b) => b.mtime - a.mtime);
+  if (opts.withMeta) return { sessions: out, hiddenAutopilot };
   return out;
 }
 
@@ -5559,7 +6413,16 @@ function listCopilotSessions() {
 ipcMain.handle('sessions:list', () => {
   const agent = activeAgentName();
   if (agent === 'copilot') {
-    return { ok: true, agent, supported: true, sessionsDir: path.join(HOME, '.copilot', 'session-state'), currentCwd: activePtyCwd || '', sessions: listCopilotSessions() };
+    const listed = listCopilotSessions({ withMeta: true });
+    return {
+      ok: true,
+      agent,
+      supported: true,
+      sessionsDir: path.join(HOME, '.copilot', 'session-state'),
+      currentCwd: activePtyCwd || '',
+      sessions: listed.sessions,
+      hiddenAutopilotSessions: listed.hiddenAutopilot,
+    };
   }
   if (agent !== 'claude') {
     return { ok: true, agent, supported: false, sessionsDir: '', sessions: [] };
@@ -5625,6 +6488,7 @@ ipcMain.handle('sessions:list', () => {
 
   // Pass 2: read first 8KB for timestamp + first message preview
   const out = [];
+  let hiddenAutopilot = 0;
   for (const { id, project: projName, fullPath, st } of top) {
     {
       // Read first 32KB and pull priority-ranked title + the original cwd
@@ -5683,6 +6547,10 @@ ipcMain.handle('sessions:list', () => {
 
       // Authoritative cwd is what the JSONL recorded; fall back to decoded project name
       const cwdAuthoritative = originalCwd || decodeProjectPath(projName);
+      if (isAutopilotWorkspacePath(cwdAuthoritative)) {
+        hiddenAutopilot++;
+        continue;
+      }
 
       out.push({
         id,
@@ -5723,7 +6591,15 @@ ipcMain.handle('sessions:list', () => {
   // currentCwd is the live working directory of the active chat. The renderer
   // uses it to scope the rail's Recent list to this project, so only this
   // project's sessions appear there.
-  return { ok: true, agent: 'claude', supported: true, sessionsDir: projectsDir, currentCwd: activePtyCwd || '', sessions: deduped };
+  return {
+    ok: true,
+    agent: 'claude',
+    supported: true,
+    sessionsDir: projectsDir,
+    currentCwd: activePtyCwd || '',
+    sessions: deduped,
+    hiddenAutopilotSessions: hiddenAutopilot,
+  };
 });
 
 // Resolve the agent-session title for a LIVE chat tab so the tab can show the

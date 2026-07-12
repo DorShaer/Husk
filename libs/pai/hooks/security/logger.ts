@@ -5,7 +5,7 @@
  * Logging failures are silent — they must never block operations.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import { paiPath } from '../lib/paths';
 import type { SecurityEvent } from './types';
 
@@ -42,7 +42,7 @@ export function logSecurityEvent(event: SecurityEvent): void {
       mkdirSync(dir, { recursive: true });
     }
 
-    writeFileSync(logPath, JSON.stringify(event, null, 2));
+    appendFileSync(logPath, JSON.stringify(event) + '\n', 'utf-8');
   } catch {
     // Logging failure must never block operations
     console.error('[SecurityLogger] Failed to write security event');

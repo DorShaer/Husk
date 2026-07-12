@@ -715,6 +715,24 @@ body[data-rail="collapsed"] .rail-item.active .ri-icon { color: var(--accent); }
 .rail-item .ri-label { font-weight: 500; opacity: 0; transform: translateX(-4px); transition: opacity 0.18s ease, transform 0.18s ease; }
 body[data-rail="expanded"] .rail-item .ri-label { opacity: 1; transform: translateX(0); }
 body[data-rail="collapsed"] .ri-label { display: none; }
+.rail-beta-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 17px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, #60a5fa 48%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, #60a5fa 15%, transparent);
+  color: #93c5fd;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  transform: translateY(-0.5px);
+}
+body[data-rail="collapsed"] .rail-beta-tag { display: none; }
 
 /* Section heads have opacity:0 when collapsed but still occupy height. Remove them. */
 body[data-rail="collapsed"] .rail-section-head { display: none; }
@@ -963,6 +981,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   padding: 28px 32px 20px;
   overflow: hidden;
 }
+body[data-page="boot"] .page { display: none !important; }
 .page-head {
   display: flex; justify-content: space-between; align-items: baseline;
   gap: 16px;
@@ -1024,7 +1043,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .ghost-btn-danger { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 30%, var(--line)); }
 .ghost-btn-danger:hover { color: #fff; background: var(--rose); border-color: var(--rose); }
 
-/* Old slim banner kept as no-op (full Autopilot page is the real UI). */
+/* Slim banner: no-op placeholder. The full Autopilot page is the live UI. */
 .autopilot-banner { display: none; }
 
 /* Untrusted-folder banner: prompts the user to trust the workspace so Claude
@@ -1053,7 +1072,8 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
    overlay, no covering the status panel. */
 .page-autopilot {
   padding: 28px 36px 48px;
-  max-width: 1320px;
+  width: 100%;
+  max-width: none;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -1065,9 +1085,8 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   overflow: hidden;
   padding-bottom: 20px;
   display: flex; flex-direction: column;
-  /* Live and review fill whatever width the window gives them; the
-     1320px cap is for the empty-state hub only. Collapsing the side
-     panels should hand every freed pixel to the activity feed. */
+  /* Live and review fill whatever width the window gives them. Collapsing
+     the side panels should hand every freed pixel to the activity feed. */
   max-width: none;
   padding: 24px 32px 32px;
 }
@@ -1190,6 +1209,18 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   animation: none;
   box-shadow: none;
 }
+.aut-page-status.is-review.is-success {
+  border-color: color-mix(in srgb, var(--emerald) 45%, var(--line-2));
+  color: var(--emerald);
+  background: color-mix(in srgb, var(--emerald) 10%, var(--bg-2));
+}
+.aut-page-status.is-review.is-success .ap-dot { background: var(--emerald); }
+.aut-page-status.is-review.is-incomplete {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line-2));
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-2));
+}
+.aut-page-status.is-review.is-incomplete .ap-dot { background: var(--warn); }
 
 /* ── Diff viewer modal ──────────────────────────────────────────── */
 /* Triple class on purpose: the shared .modal-card.modal-card-wide rule
@@ -1551,7 +1582,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 /* PRESETS GRID */
 .aut-preset-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
 }
 @media (max-width: 1080px) {
@@ -1939,7 +1970,14 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .aut-stat-huge {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+}
+.aut-stat-huge .aut-huge-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 .aut-stat-huge .aut-huge-value {
   font-family: 'JetBrains Mono', monospace;
@@ -1960,6 +1998,9 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   color: var(--text-2);
 }
 .aut-stat-huge .aut-huge-cap {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
   color: var(--text-3);
 }
 
@@ -2100,10 +2141,15 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   border-radius: 10px;
   cursor: pointer;
   min-width: 0;
+  /* Never let the list's flexbox crush a card below its content height;
+     overflow:hidden zeroes the automatic minimum size, so without this the
+     cards squeeze and clip instead of letting the list scroll. */
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
+  overflow: hidden;
   background: var(--bg-1);
   border: 1px solid transparent;
   transition: background 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.2s var(--ease);
@@ -2113,8 +2159,18 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .aut-agent-row[data-lane="3"] { --lane-c: var(--lane-3); }
 .aut-agent-row:hover { background: var(--bg-2); border-color: var(--line); transform: translateY(-1px); }
 .aut-agent-row.is-focused { 
-  background: color-mix(in srgb, var(--lane-c) 12%, var(--bg-2)); 
-  border-color: color-mix(in srgb, var(--lane-c) 30%, var(--line-2));
+  background: var(--bg-2);
+  border-color: color-mix(in srgb, var(--lane-c) 70%, var(--line-2));
+  box-shadow: inset 3px 0 0 var(--lane-c);
+  transform: none;
+}
+.aut-agent-row.is-focused:hover { transform: none; }
+.aut-agent-row.is-focused .aut-chip-label,
+.aut-agent-row.is-focused .aut-chip-action,
+.aut-agent-row.is-focused .aut-swarm-card-meta {
+  text-shadow: none;
+  opacity: 1;
+  -webkit-font-smoothing: antialiased;
 }
 .aut-agent-row.is-ended { opacity: 0.6; }
 .aut-agent-row.is-ended .aut-chip-dot { background: var(--text-3); box-shadow: none; }
@@ -2130,14 +2186,17 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   font-size: 10px;
   color: var(--text-3);
   margin-top: 2px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 .aut-chip-label {
-  flex: 1;
+  display: block;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   min-width: 0;
   font-weight: 500;
   font-size: 13px;
+  line-height: 1.2;
   color: var(--text);
 }
 .aut-agent-row .aut-swarm-card-cancel {
@@ -2202,6 +2261,17 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   flex: 1; min-width: 0;
   letter-spacing: 0.02em;
 }
+.aut-lane-model {
+  flex: 0 0 auto;
+  font-size: 10.5px; font-weight: 800;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  white-space: nowrap;
+}
 .aut-lane-state {
   flex: 0 0 auto;
   font-size: 10.5px; font-weight: 700;
@@ -2223,6 +2293,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 }
 .aut-lane-state[data-state="quiet"] { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 40%, transparent); background: color-mix(in srgb, #fbbf24 10%, transparent); animation: none; }
 .aut-lane-state[data-state="done"] { color: #5bd994; border-color: color-mix(in srgb, #5bd994 45%, transparent); background: color-mix(in srgb, #5bd994 10%, transparent); }
+.aut-lane-state[data-state="blocked"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); animation: none; }
 .aut-lane-state[data-state="stopped"] { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 45%, transparent); background: color-mix(in srgb, var(--rose) 10%, transparent); }
 @keyframes aut-state-pulse {
   0%, 100% { opacity: 1; }
@@ -2375,10 +2446,15 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 
 /* Agent-row inner parts (shared with queued placeholder rows) */
 .aut-chip-name {
-  display: flex; align-items: center; gap: 7px;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 7px;
   font-size: 12px; font-weight: 600; color: var(--text-1);
   min-width: 0;
   padding-right: 16px;
+  overflow: hidden;
+  line-height: 1.2;
 }
 .aut-chip-dot { 
   width: 8px; 
@@ -2389,7 +2465,8 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   box-shadow: 0 0 8px color-mix(in srgb, var(--lane-c) 60%, transparent);
 }
 .aut-chip-state {
-  margin-left: auto;
+  margin-left: 0;
+  justify-self: end;
   font-size: 9.5px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--text-3);
@@ -2398,6 +2475,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .aut-chip-state[data-state="working"], .aut-chip-state[data-state="tool"] { color: var(--lane-c); }
 .aut-chip-state[data-state="quiet"] { color: #fbbf24; }
 .aut-chip-state[data-state="done"] { color: #5bd994; }
+.aut-chip-state[data-state="blocked"] { color: var(--warn); }
 .aut-chip-state[data-state="stopped"] { color: var(--rose); }
 .aut-chip-action {
   font-family: 'JetBrains Mono', monospace;
@@ -2589,6 +2667,109 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   background: color-mix(in srgb, var(--rose) 16%, transparent);
 }
 
+/* Review-only polish. Keep this scoped so the Autopilot start hub and live
+   cockpit keep their existing proportions. */
+.aut-chip-model {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.aut-chip-model-k {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  flex: 0 0 auto;
+}
+.aut-model-pill,
+.aut-tier-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.aut-model-pill {
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 800;
+}
+.aut-model-pill.is-pending {
+  color: var(--text-3);
+  border-color: var(--line-2);
+  background: var(--bg-1);
+  font-weight: 600;
+}
+.aut-tier-pill {
+  color: var(--text-2);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.aut-chip-model-reason {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.aut-empty-title {
+  color: var(--text-2);
+  font-weight: 700;
+  font-size: 13px;
+}
+.aut-empty-sub {
+  max-width: 520px;
+  margin: 6px auto 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.page-autopilot.is-review-mode .aut-files-actions {
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.page-autopilot.is-review-mode .aut-fa-btn {
+  flex: 0 0 auto;
+  min-width: 116px;
+  max-width: 180px;
+  padding: 8px 12px;
+}
+.page-autopilot.is-review-mode .aut-fa-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.page-autopilot.is-review-mode .aut-fa-primary {
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.aut-receipt-copy {
+  margin-top: 10px;
+  align-self: flex-start;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  color: #fff;
+  border: 0;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 /* ── Files: open-folder button + type filter ── */
 .fx-open-folder { display: inline-flex; align-items: center; gap: 7px; max-width: 260px; }
 .fx-open-folder-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
@@ -2681,9 +2862,9 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .aut-swarm-card-meta { 
   font-size: 11px; 
   color: var(--text-3); 
-  white-space: nowrap; 
-  overflow: hidden; 
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 .aut-swarm-card-cancel {
   position: absolute; top: 6px; right: 6px;
@@ -3277,16 +3458,35 @@ body[data-page="chat"] #chats-panel { display: flex; }
   padding: 0 0 16px; border-bottom: 1px solid var(--line);
   margin-bottom: 20px;
 }
-.wf-builder-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-.wf-name-input {
-  flex: 1;
-  background: transparent; border: 0;
-  color: var(--text); font-size: 20px; font-weight: 700;
-  font-family: inherit;
-  padding: 0; outline: 0;
-  line-height: 1.2;
+.wf-name-field {
+  display: flex; flex-direction: column; gap: 6px;
+  max-width: 420px; margin-bottom: 4px;
 }
-.wf-name-input::placeholder { color: var(--text-3); font-weight: 600; }
+.wf-name-label { font-size: 12px; font-weight: 600; color: var(--text-2); letter-spacing: 0.01em; }
+.wf-name-control { position: relative; }
+.wf-name-input {
+  width: 100%;
+  height: var(--control-h-lg);
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px; font-weight: 500; font-family: inherit;
+  padding: 0 62px 0 12px;
+  outline: 0;
+  text-overflow: ellipsis;
+}
+.wf-name-input::placeholder { color: var(--text-3); font-weight: 400; }
+.wf-name-count {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 500;
+  color: var(--text-3);
+  opacity: 0; transition: opacity var(--motion-fast) var(--ease);
+  pointer-events: none;
+}
+.wf-name-control:focus-within .wf-name-count { opacity: 1; }
+.wf-name-count.near-limit { color: var(--accent); }
 .wf-builder-meta-row { display: flex; align-items: center; gap: 16px; }
 .wf-builder-body { display: flex; flex-direction: column; gap: 0; padding-bottom: 40px; }
 .wf-steps-list { display: flex; flex-direction: column; gap: 0; }
@@ -4947,7 +5147,11 @@ input[type="checkbox"]:disabled {
   flex: 1; min-width: 0; min-height: 0;
   overflow-y: auto;
   padding: 20px 24px;
+  /* Column flex so the unsaved-appearance bar can pin to the pane's bottom
+     (margin-top:auto) even when the active section is short. */
+  display: flex; flex-direction: column;
 }
+.prefs-content > .pref-section { flex: 0 0 auto; }
 .prefs-content::-webkit-scrollbar { width: 5px; }
 .prefs-content::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
 .prefs-content::-webkit-scrollbar-track { background: transparent; }
@@ -5045,6 +5249,30 @@ input[type="checkbox"]:disabled {
   border-top: 1px solid var(--line);
   background: transparent;
 }
+/* Unsaved appearance preview: pinned to the bottom of the settings pane,
+   note left, Cancel/Save bottom right. Shown only while a previewed
+   theme/accent/rail differs from the saved config. */
+.pref-appearance-actions {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex; align-items: center; gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 20px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  /* --bg-1 is translucent; blur what scrolls underneath while the bar is
+     stuck so text never smears through it. */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.pref-appearance-note {
+  margin-right: auto;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
 /* Left column: setting name over a muted one-line description. The control
    lives on the right. This label-and-description pairing is what makes each
    row read as a deliberate setting rather than a bare form field. */
@@ -5087,6 +5315,148 @@ input[type="checkbox"]:disabled {
 .pref-status.ok { color: var(--emerald); }
 .pref-status.err { color: var(--rose); }
 .pref-status.busy { color: var(--accent); }
+.aut-model-card.modal-card-md {
+  width: 700px;
+  max-width: 94vw;
+  padding: 24px 26px 22px;
+}
+.aut-model-card .modal-head { margin-bottom: 12px; }
+.modal-card.aut-model-card .modal-title {
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.aut-model-card .ai-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 74ch;
+}
+.aut-model-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 72%, transparent), color-mix(in srgb, var(--bg-1) 86%, transparent));
+  box-shadow: var(--hl-top);
+}
+.aut-model-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.aut-model-eyebrow {
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+#aut-orch-vendor {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.25;
+}
+.aut-model-command {
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 460px;
+}
+.aut-model-status {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-1);
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.aut-model-status.is-loading {
+  color: var(--text-2);
+  gap: 9px;
+}
+.aut-model-status.is-loading::before {
+  content: '';
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--text-3) 38%, transparent);
+  border-top-color: var(--accent);
+  flex: 0 0 auto;
+  animation: aut-model-spin 0.8s linear infinite;
+}
+@keyframes aut-model-spin { to { transform: rotate(360deg); } }
+.aut-model-status.is-live {
+  color: var(--emerald);
+  border-color: color-mix(in srgb, var(--emerald) 32%, var(--line));
+  background: color-mix(in srgb, var(--emerald) 9%, var(--bg-1));
+}
+.aut-model-status.is-error {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 32%, var(--line));
+  background: color-mix(in srgb, var(--amber) 9%, var(--bg-1));
+}
+.aut-model-row {
+  align-items: flex-start;
+  gap: 26px;
+  padding: 18px 0;
+}
+.aut-model-picker {
+  flex: 0 0 370px;
+  max-width: 54%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.aut-model-card .aut-model-picker select,
+.aut-model-card .aut-model-picker input[type="text"] {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: 0;
+}
+.aut-model-card .aut-model-picker input[type="text"] {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.aut-model-card .aut-model-picker select:focus,
+.aut-model-card .aut-model-picker input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+.aut-model-card .aut-model-picker select:disabled,
+.aut-model-card .aut-model-picker input[type="text"]:disabled {
+  opacity: 0.58;
+  cursor: wait;
+}
+@media (max-width: 760px) {
+  .aut-model-summary { align-items: stretch; flex-direction: column; }
+  .aut-model-summary .ghost-btn { align-self: flex-start; }
+  .aut-model-row { flex-direction: column; gap: 12px; }
+  .aut-model-picker { flex: 0 0 auto; width: 100%; max-width: none; }
+  .aut-model-command { max-width: 100%; }
+}
 .pref-hint { font-size: 12.5px; color: var(--text-3); line-height: 1.6; padding: 11px 0 2px; max-width: 60ch; }
 /* Inline code in descriptions stays calm: monospace, faint surface, no loud
    accent color so help text reads as prose, not a terminal dump. */
@@ -5235,6 +5605,11 @@ input[type="checkbox"]:disabled {
 .plugin-row-name { font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .plugin-row-meta { color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
 .plugin-row-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.plugin-update-btn.is-current {
+  color: var(--text-3);
+  border-color: var(--line);
+  background: var(--bg-2);
+}
 .plugin-badge {
   font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -5429,8 +5804,17 @@ input[type="checkbox"]:disabled {
   border-bottom: 1px solid var(--line);
 }
 .sp-head-label {
-  font-size: 18px; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--text-2); font-weight: 700;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 22px;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  font-weight: 850;
+  color: var(--accent);
+  background: linear-gradient(90deg, var(--accent-2) 0%, var(--accent) 58%, #ffb08f 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .sp-live-dot {
   width: 6px; height: 6px; border-radius: 50%;

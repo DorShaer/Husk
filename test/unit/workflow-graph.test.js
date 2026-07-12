@@ -177,7 +177,7 @@ test('graphToOrderedSteps: empty graph returns []', () => {
 });
 
 test('graphToOrderedSteps: a branching node keeps every branch', () => {
-  // a -> b, a -> c. The old single-edge walk dropped the second branch.
+  // a -> b, a -> c. Both branches must appear in the ordered steps.
   const g = {
     nodes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
     edges: [
@@ -360,7 +360,7 @@ test('wfRouteInstruction: includes all target names and END option', () => {
   assert.match(txt, /ROUTE: END/);
 });
 
-// ─── Source-shape regression guard ──────────────────────────────────────────
+// ─── Source-shape assertions ────────────────────────────────────────────────
 
 test('executeWorkflow in main.js gates the spawn behind isAllowedAgentCommand', () => {
   const fs = require('node:fs');

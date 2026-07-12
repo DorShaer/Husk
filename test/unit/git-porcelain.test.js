@@ -10,6 +10,10 @@ test('parsePorcelain: empty input yields empty array', () => {
   assert.deepEqual(parsePorcelain('\n'), []);
 });
 
+test('parsePorcelain: non-string input yields empty array', () => {
+  assert.deepEqual(parsePorcelain(null), []);
+});
+
 test('parsePorcelain: modified in working tree', () => {
   const [entry] = parsePorcelain(' M src/app.js\n');
   assert.deepEqual(entry, {
@@ -106,6 +110,11 @@ test('parsePorcelain: quoted path with octal escapes decodes UTF-8', () => {
   assert.equal(entry.path, 'café.txt');
 });
 
+test('parsePorcelain: quoted path keeps unknown escapes literally', () => {
+  const [entry] = parsePorcelain(' M "literal\\qescape.txt"\n');
+  assert.equal(entry.path, 'literalqescape.txt');
+});
+
 test('parsePorcelain: quoted rename decodes both sides and keeps new', () => {
   const [entry] = parsePorcelain('R  "old name.js" -> "new name.js"\n');
   assert.equal(entry.status, 'renamed');
@@ -117,6 +126,13 @@ test('parsePorcelain: multiple lines in one status block', () => {
   const entries = parsePorcelain(text);
   assert.equal(entries.length, 3);
   assert.deepEqual(entries.map((e) => e.status), ['modified', 'untracked', 'deleted']);
+});
+
+test('parsePorcelain: unknown status code defaults to modified label', () => {
+  const [entry] = parsePorcelain('X  odd.txt\n');
+  assert.equal(entry.status, 'modified');
+  assert.equal(entry.staged, true);
+  assert.equal(entry.unstaged, false);
 });
 
 test('statusBadge: maps every human label to its single letter', () => {

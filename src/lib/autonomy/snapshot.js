@@ -31,6 +31,7 @@ const crypto = require('crypto');
 const SESSION_DIR_RE = /^[A-Za-z0-9._-]+$/;
 const DEFAULT_IGNORE = [
   '.git', 'node_modules', 'dist', 'build', '.DS_Store', '.husk-tmp',
+  '.husk-autopilot-status.json',
   // Common heavy directories that explode snapshot time without
   // contributing real "did the agent change my code" signal.
   'libs', 'release', 'out', 'target', '.next', '.nuxt', '.cache',
@@ -173,8 +174,9 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
     dirents = fs.readdirSync(here, { withFileTypes: true });
   } catch (err) {
     warnings.push({ path: rel || '.', reason: err.message });
-    return;
+    return 0;
   }
+  let captured = 0;
   for (const ent of dirents) {
     const relChild = rel ? path.join(rel, ent.name) : ent.name;
     if (shouldIgnore(relChild, ignores)) continue;
@@ -186,14 +188,22 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
         const target = fs.readlinkSync(abs);
         entries[relChild] = { type: 'symlink', target };
+        captured++;
       } else if (ent.isDirectory()) {
-        walk(absRoot, relChild, ignores, entries, warnings, opts, bdir, seen);
+        const n = walk(absRoot, relChild, ignores, entries, warnings, opts, bdir, seen);
+        if (!n) {
+          entries[relChild] = { type: 'dir' };
+          captured++;
+        } else {
+          captured += n;
+        }
       } else if (ent.isFile()) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
         const content = fs.readFileSync(abs);
         const sha = sha256OfBuffer(content);
         writeBlobAtomic(bdir, sha, content, opts.encrypt, seen);
         entries[relChild] = { type: 'file', sha };
+        captured++;
       } else {
         // Sockets, devices, fifos. Ignore: not meaningful for the
         // "did the agent change my files" question.
@@ -209,9 +219,10 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
       // diff does not later call it "added" and a revert does not delete
       // a file the agent never touched. We cannot hash it, so it carries
       // no sha and restore leaves its content alone.
-      try { if (ent.isFile()) entries[relChild] = { type: 'unreadable' }; } catch (_) {}
+      try { if (ent.isFile()) { entries[relChild] = { type: 'unreadable' }; captured++; } } catch (_) {}
     }
   }
+  return captured;
 }
 
 // restoreFromSnapshot writes every entry from the manifest back to
@@ -264,17 +275,28 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
     if (meta && meta.type === 'unreadable') continue;
     const abs = joinSafely(workspaceRoot, relPath);
     if (!abs) { warnings.push({ path: relPath, reason: 'path escapes workspaceRoot' }); continue; }
-    if (!validateAncestorChain(workspaceRoot, abs)) {
+    if (!ensureRestoreParent(workspaceRoot, abs)) {
       warnings.push({ path: relPath, reason: 'ancestor path is a symlink, refusing write' });
       continue;
     }
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to workspaceRoot
       fs.mkdirSync(path.dirname(abs), { recursive: true });
-      if (meta.type === 'symlink') {
+      if (meta.type === 'dir') {
         try {
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
-          fs.rmSync(abs, { force: true });
+          const lst = fs.lstatSync(abs);
+          if (!lst.isDirectory() || lst.isSymbolicLink()) {
+            // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+            fs.rmSync(abs, { recursive: true, force: true });
+          }
+        } catch (_) {}
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+        fs.mkdirSync(abs, { recursive: true });
+      } else if (meta.type === 'symlink') {
+        try {
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+          fs.rmSync(abs, { recursive: true, force: true });
         } catch (_) {}
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
         fs.symlinkSync(meta.target, abs);
@@ -299,17 +321,13 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
           continue;
         }
         // Pre-unlink so a hostile or pre-existing symlink at abs does
-        // not get followed by writeFileSync. fs.rmSync with force:true
-        // removes the link itself on POSIX and Windows, never the
-        // target it points at. lstat to avoid removing a directory
-        // that legitimately existed before the run.
+        // not get followed by writeFileSync. Directories at this path
+        // are post-snapshot type conflicts and must be replaced.
         try {
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
-          const lst = fs.lstatSync(abs);
-          if (lst && !lst.isDirectory()) {
-            // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
-            fs.rmSync(abs, { force: true });
-          }
+          fs.lstatSync(abs);
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
+          fs.rmSync(abs, { recursive: true, force: true });
         } catch (_) {
           // abs did not exist; the write below creates it fresh.
         }
@@ -368,6 +386,36 @@ function validateAncestorChain(baseAbs, fileAbs) {
     }
     if (lst.isSymbolicLink()) return false;
     if (!lst.isDirectory()) return false;
+  }
+  return true;
+}
+
+function ensureRestoreParent(baseAbs, fileAbs) {
+  const baseN = path.resolve(baseAbs);
+  const parent = path.dirname(fileAbs);
+  if (parent === baseN || parent === path.dirname(baseN)) return true;
+  const rel = path.relative(baseN, parent);
+  if (!rel || rel.startsWith('..')) return false;
+  let cur = baseN;
+  for (const seg of rel.split(path.sep)) {
+    cur = path.join(cur, seg);
+    let lst;
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under baseAbs
+      lst = fs.lstatSync(cur);
+    } catch (_) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under baseAbs
+      fs.mkdirSync(parent, { recursive: true });
+      return true;
+    }
+    if (lst.isSymbolicLink()) return false;
+    if (!lst.isDirectory()) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under baseAbs
+      fs.rmSync(cur, { recursive: true, force: true });
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under baseAbs
+      fs.mkdirSync(parent, { recursive: true });
+      return true;
+    }
   }
   return true;
 }
@@ -483,6 +531,11 @@ function walkForDiff(absRoot, rel, ignores, manifestEntries, seen, changes, warn
           changes.push({ path: relChild, status: 'modified' });
         }
       } else if (ent.isDirectory()) {
+        const expected = manifestEntries[relChild];
+        if (expected) {
+          seen.add(relChild);
+          if (expected.type !== 'dir') changes.push({ path: relChild, status: 'modified' });
+        }
         walkForDiff(absRoot, relChild, ignores, manifestEntries, seen, changes, warnings);
       } else if (ent.isFile()) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs bounded
@@ -548,7 +601,7 @@ async function captureSnapshotAsync(workspaceRoot, storageRoot, sessionId, opts 
 }
 
 async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, state) {
-  if (state.aborted) return;
+  if (state.aborted) return 0;
   const here = rel ? path.join(absRoot, rel) : absRoot;
   let dirents;
   try {
@@ -556,10 +609,11 @@ async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, s
     dirents = fs.readdirSync(here, { withFileTypes: true });
   } catch (err) {
     warnings.push({ path: rel || '.', reason: err.message });
-    return;
+    return 0;
   }
+  let captured = 0;
   for (const ent of dirents) {
-    if (state.aborted) return;
+    if (state.aborted) return captured;
     const relChild = rel ? path.join(rel, ent.name) : ent.name;
     if (shouldIgnore(relChild, ignores)) continue;
     const abs = path.join(here, ent.name);
@@ -568,16 +622,24 @@ async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, s
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
         const target = fs.readlinkSync(abs);
         entries[relChild] = { type: 'symlink', target };
+        captured++;
       } else if (ent.isDirectory()) {
-        await walkAsync(absRoot, relChild, ignores, entries, warnings, opts, bdir, state);
+        const n = await walkAsync(absRoot, relChild, ignores, entries, warnings, opts, bdir, state);
+        if (!n) {
+          entries[relChild] = { type: 'dir' };
+          captured++;
+        } else {
+          captured += n;
+        }
       } else if (ent.isFile()) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
         const content = fs.readFileSync(abs);
         const sha = sha256OfBuffer(content);
         writeBlobAtomic(bdir, sha, content, opts.encrypt, state.seen);
         entries[relChild] = { type: 'file', sha };
+        captured++;
         state.count++;
-        if (state.count >= state.maxEntries) { state.aborted = true; return; }
+        if (state.count >= state.maxEntries) { state.aborted = true; return captured; }
         if (state.count % YIELD_EVERY === 0) {
           if (state.onProgress) {
             try { state.onProgress({ count: state.count, currentPath: relChild }); } catch (_) {}
@@ -589,9 +651,10 @@ async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, s
       warnings.push({ path: relChild, reason: err.message });
       // See walk(): a momentarily-unreadable pre-existing file is recorded
       // so the diff does not call it "added" and a revert does not delete it.
-      try { if (ent.isFile()) entries[relChild] = { type: 'unreadable' }; } catch (_) {}
+      try { if (ent.isFile()) { entries[relChild] = { type: 'unreadable' }; captured++; } } catch (_) {}
     }
   }
+  return captured;
 }
 
 // diffWorkspaceAsync is the same as diffWorkspace but yields to the
@@ -651,6 +714,11 @@ async function walkForDiffAsync(absRoot, rel, ignores, manifestEntries, seen, ch
           changes.push({ path: relChild, status: 'modified' });
         }
       } else if (ent.isDirectory()) {
+        const expected = manifestEntries[relChild];
+        if (expected) {
+          seen.add(relChild);
+          if (expected.type !== 'dir') changes.push({ path: relChild, status: 'modified' });
+        }
         await walkForDiffAsync(absRoot, relChild, ignores, manifestEntries, seen, changes, warnings, state);
       } else if (ent.isFile()) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs bounded

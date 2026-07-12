@@ -102,6 +102,26 @@ test('drainPending returns false when queue is empty', () => {
   assert.equal(dispatched, false);
 });
 
+test('drainPending falls back to DEFAULT_MAX_CONCURRENT for invalid caps', async () => {
+  for (let i = 0; i < pool.DEFAULT_MAX_CONCURRENT - 1; i++) {
+    pool.addRun(`r-default-${i}`, makeState(false));
+  }
+  pool.enqueuePending({ runId: 'q-default', payload: {}, workspaceRoot: '/p' });
+  let started = false;
+  const dispatched = pool.drainPending(0, async () => { started = true; });
+  assert.equal(dispatched, true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(started, true);
+});
+
+test('drainPending still reports dispatch when startFn rejects', async () => {
+  pool.enqueuePending({ runId: 'q-reject', payload: {}, workspaceRoot: '/p' });
+  const dispatched = pool.drainPending(4, async () => { throw new Error('boom'); });
+  assert.equal(dispatched, true);
+  assert.equal(pool.pendingCount(), 0);
+  await new Promise((r) => setImmediate(r));
+});
+
 // ─── per-run isolation ────────────────────────────────────────────────────────
 
 test('modifying one run state does not affect another', () => {

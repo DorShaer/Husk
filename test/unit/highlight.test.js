@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { highlight, highlightLines, escapeHtml } = require('../../src/lib/highlight');
+const { highlight, highlightLines, escapeHtml, LANGUAGES } = require('../../src/lib/highlight');
 
 // Count occurrences of a substring (non-overlapping).
 function count(haystack, needle) {
@@ -68,6 +68,38 @@ test('highlight: numbers get tok-number spans', () => {
   assert.ok(out.includes('<span class="tok-number">42</span>'), out);
 });
 
+test('highlight: tokenizes representative supported languages', () => {
+  const cases = [
+    ['typescript', 'interface User { readonly id: number }', ['<span class="tok-keyword">interface</span>', '<span class="tok-keyword">readonly</span>']],
+    ['json', '{"ok": true, "n": -2}', ['<span class="tok-property">&quot;ok&quot;</span>', '<span class="tok-keyword">true</span>']],
+    ['css', '@media screen { color: #fff; }', ['<span class="tok-keyword">@media</span>', '<span class="tok-property">color</span>']],
+    ['html', '<div class="x">', ['<span class="tok-tag">&lt;div</span>', '<span class="tok-attr">class</span>']],
+    ['markdown', '# Title\n[link](https://example.test)', ['<span class="tok-keyword"># Title</span>', '<span class="tok-function">[link](https://example.test)</span>']],
+    ['python', 'def run(x):\n    return x + 1', ['<span class="tok-keyword">def</span>', '<span class="tok-function">run</span>']],
+    ['shell', 'echo "$HOME" && exit 0', ['<span class="tok-keyword">echo</span>', '<span class="tok-string">&quot;$HOME&quot;</span>']],
+    ['go', 'func main() { return }', ['<span class="tok-keyword">func</span>', '<span class="tok-function">main</span>']],
+  ];
+  for (const [lang, source, expectedParts] of cases) {
+    const out = highlight(source, lang);
+    for (const part of expectedParts) {
+      assert.ok(out.includes(part), `${lang} missing ${part}: ${out}`);
+    }
+  }
+});
+
+test('highlight: nullish code is treated as empty source', () => {
+  assert.equal(highlight(null, 'javascript'), '');
+});
+
+test('highlight: tokenizer skips zero-length rules without stalling', () => {
+  LANGUAGES.__zeroLengthTest = [{ kind: 'keyword', src: '(?:)' }];
+  try {
+    assert.equal(highlight('abc', '__zeroLengthTest'), 'abc');
+  } finally {
+    delete LANGUAGES.__zeroLengthTest;
+  }
+});
+
 test("highlight: 'text' lang returns escaped-only output with no spans", () => {
   const out = highlight('const x = 1; // <b>', 'text');
   assert.ok(!out.includes('<span'), 'text output must contain no spans');
@@ -114,4 +146,9 @@ test('highlightLines: XSS-safe per line', () => {
 test('highlightLines: text lang returns escaped plain lines', () => {
   const lines = highlightLines('a < b\nc & d', 'text');
   assert.deepEqual(lines, ['a &lt; b', 'c &amp; d']);
+});
+
+test('highlightLines: nullish and trailing-newline input preserve line shape', () => {
+  assert.deepEqual(highlightLines(null, 'javascript'), ['']);
+  assert.deepEqual(highlightLines('a\n', 'text'), ['a', '']);
 });

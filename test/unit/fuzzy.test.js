@@ -11,6 +11,11 @@ test('fuzzyMatch: non-subsequence returns null', () => {
   assert.equal(fuzzyMatch('longer', 'lon'), null);
 });
 
+test('fuzzyMatch: non-string inputs do not match', () => {
+  assert.equal(fuzzyMatch(null, 'abc'), null);
+  assert.equal(fuzzyMatch('abc', null), null);
+});
+
 test('fuzzyMatch: matching is case-insensitive', () => {
   const m = fuzzyMatch('AB', 'axb');
   assert.notEqual(m, null);
@@ -52,6 +57,17 @@ test('fuzzyMatch: camelCase hump counts as a boundary', () => {
   assert.ok(humped > flat, `expected ${humped} > ${flat}`);
 });
 
+test('isBoundary: recognizes starts, separators, and digit humps', () => {
+  assert.equal(isBoundary('abc', 0), true);
+  assert.equal(isBoundary('foo/bar', 4), true);
+  assert.equal(isBoundary('foo_bar', 4), true);
+  assert.equal(isBoundary('foo-bar', 4), true);
+  assert.equal(isBoundary('foo.bar', 4), true);
+  assert.equal(isBoundary('foo bar', 4), true);
+  assert.equal(isBoundary('v2Beta', 2), true);
+  assert.equal(isBoundary('v2beta', 2), false);
+});
+
 test('fuzzyFilter: ranks boundary and consecutive above scattered', () => {
   const items = ['axxb', 'a_b', 'ab'];
   const ranked = fuzzyFilter('ab', items);
@@ -69,6 +85,13 @@ test('fuzzyFilter: drops non-matching items', () => {
 test('fuzzyFilter: empty query returns all items in original order', () => {
   const items = ['c', 'a', 'b'];
   assert.deepEqual(fuzzyFilter('', items), ['c', 'a', 'b']);
+});
+
+test('fuzzyFilter: non-string query returns a shallow copy in original order', () => {
+  const items = ['c', 'a', 'b'];
+  const result = fuzzyFilter(null, items);
+  assert.deepEqual(result, items);
+  assert.notEqual(result, items);
 });
 
 test('fuzzyFilter: ties broken by shorter target then original index', () => {
@@ -94,6 +117,11 @@ test('fuzzyFilter: keyFn extracts the match target from objects', () => {
   assert.ok(names.includes('main'));
   assert.ok(names.includes('makefile'));
   assert.ok(!names.includes('readme'));
+});
+
+test('fuzzyFilter: stringifies non-string match targets', () => {
+  const items = [{ id: 101 }, { id: 12 }, { id: 210 }];
+  assert.deepEqual(fuzzyFilter('12', items, (it) => it.id), [{ id: 12 }]);
 });
 
 test('fuzzyFilter: non-array items yields empty result', () => {

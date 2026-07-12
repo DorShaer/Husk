@@ -159,6 +159,29 @@ test('reopening an existing log resumes the chain from the last row hash', () =>
   assert.equal(v.valid, true);
 });
 
+test('reopening a log with a valid unterminated row adds the missing newline', () => {
+  let w = makeWriter();
+  w.append({ kind: 'a' });
+  let text = fs.readFileSync(auditFile(), 'utf8');
+  fs.writeFileSync(auditFile(), text.replace(/\n$/, ''));
+  w = makeWriter();
+  w.append({ kind: 'b' });
+  const lines = fs.readFileSync(auditFile(), 'utf8').split('\n').filter(Boolean);
+  assert.equal(lines.length, 2);
+  assert.equal(verifyAuditChain(store, SID).valid, true);
+});
+
+test('reopening a log with an incomplete trailing row drops that row', () => {
+  let w = makeWriter();
+  w.append({ kind: 'a' });
+  fs.appendFileSync(auditFile(), '{"v":1,"kind":"partial"');
+  w = makeWriter();
+  w.append({ kind: 'b' });
+  const rows = fs.readFileSync(auditFile(), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  assert.deepEqual(rows.map((r) => r.kind), ['a', 'b']);
+  assert.equal(verifyAuditChain(store, SID).valid, true);
+});
+
 // ─── blob spill ──────────────────────────────────────────────────────────
 
 test('large payloads spill into the blob store with sha256 names', () => {

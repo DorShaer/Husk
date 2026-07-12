@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('husk', {
     get: () => ipcRenderer.invoke('config:get'),
     set: (partial) => ipcRenderer.invoke('config:set', partial),
   },
+  models: {
+    list: (opts) => ipcRenderer.invoke('models:list', opts || {}),
+  },
   stats: { get: () => ipcRenderer.invoke('stats:get') },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
@@ -221,6 +224,14 @@ contextBridge.exposeInMainWorld('husk', {
     zoomGet: () => webFrame.getZoomLevel(),
     // Husk's base zoom level, so the renderer can label it as 100%.
     zoomBase: HUSK_BASE_ZOOM,
+    setRouteState: (state) => ipcRenderer.invoke('ui:setRouteState', state || {}),
+    takeReloadState: () => ipcRenderer.invoke('ui:takeReloadState'),
+  },
+  shortcuts: {
+    // Main-process shortcuts are forwarded into the renderer, which owns the
+    // terminal lifecycle and can restart the active chat without reloading UI.
+    onRestartAgent: (cb) => ipcRenderer.on('app:restart-agent-shortcut', () => cb()),
+    onReload: (cb) => ipcRenderer.on('app:reload-shortcut', () => cb()),
+    onReloadInPlace: (cb) => ipcRenderer.on('app:reload-in-place', () => cb()),
   },
 });
-

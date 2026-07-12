@@ -34,3 +34,18 @@ test('unknown CLIs fall back to -p', () => {
 test('full command strings resolve by their base binary', () => {
   assert.deepEqual(oneShotArgs('aider --model ollama/qwen', 'x'), ['--message', 'x', '--yes-always']);
 });
+
+test('model args are preserved before each CLI prompt form', () => {
+  assert.deepEqual(
+    oneShotArgs('claude', 'x', { modelArgs: ['--model', 'sonnet'] }),
+    ['--model', 'sonnet', '-p', 'x'],
+  );
+  assert.deepEqual(
+    oneShotArgs('codex', 'x', { modelArgs: ['--model', 'gpt-5'] }),
+    ['exec', '--model', 'gpt-5', '--skip-git-repo-check', 'x'],
+  );
+  assert.deepEqual(
+    oneShotArgs('aider', 'x', { modelArgs: ['--model', 'opus'] }),
+    ['--model', 'opus', '--message', 'x', '--yes-always'],
+  );
+});

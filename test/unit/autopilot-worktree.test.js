@@ -67,6 +67,13 @@ test('createRunWorktree fails with missing args', () => {
   assert.equal(createRunWorktree(userData, 'run-abc', '').ok, false);
 });
 
+test('createRunWorktree refuses runIds that escape the managed root', () => {
+  const result = createRunWorktree(userData, '../escape', repoDir);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /escapes managed root/);
+  assert.equal(fs.existsSync(path.join(userData, 'escape')), false);
+});
+
 test('removeRunWorktree removes the worktree directory', () => {
   const result = createRunWorktree(userData, 'run-xyz', repoDir);
   assert.equal(result.ok, true);

@@ -71,6 +71,18 @@ test('applies a deletion by removing the workspace file', () => {
   assert.equal(fs.existsSync(path.join(ws, 'gone.txt')), false);
 });
 
+test('applies a recovered rename as delete plus add without duplicating the old file', () => {
+  fs.writeFileSync(path.join(ws, 'old.txt'), 'old');
+  fs.writeFileSync(path.join(wt, 'new.txt'), 'new');
+  const r = applyWorktreeChanges(wt, ws, [
+    { path: 'old.txt', status: 'deleted' },
+    { path: 'new.txt', status: 'added' },
+  ]);
+  assert.equal(r.ok, true);
+  assert.equal(fs.existsSync(path.join(ws, 'old.txt')), false);
+  assert.equal(fs.readFileSync(path.join(ws, 'new.txt'), 'utf8'), 'new');
+});
+
 test('deletion of a non-existent file still succeeds (idempotent)', () => {
   const r = applyWorktreeChanges(wt, ws, [{ path: 'never.txt', status: 'deleted' }]);
   assert.equal(r.ok, true);
@@ -113,4 +125,12 @@ test('empty change set is a trivial success', () => {
   assert.equal(r.ok, true);
   assert.equal(r.applied.length, 0);
   assert.equal(r.failed.length, 0);
+});
+
+test('skips the Autopilot status file when applying changes', () => {
+  fs.writeFileSync(path.join(wt, '.husk-autopilot-status.json'), '{"status":"complete"}');
+  const r = applyWorktreeChanges(wt, ws, [{ path: '.husk-autopilot-status.json', status: 'added' }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.applied.length, 0);
+  assert.equal(fs.existsSync(path.join(ws, '.husk-autopilot-status.json')), false);
 });

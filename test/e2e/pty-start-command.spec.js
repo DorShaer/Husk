@@ -1,9 +1,8 @@
 'use strict';
 
-// Regression test for resume-in-a-new-tab: openNewChatTab passes a command to
-// pty.start (e.g. "claude --resume <id>" / "copilot --resume=<id>"). The
-// pty:start IPC handler must forward that command to the spawned process,
-// otherwise resume silently starts a fresh default-agent session.
+// Resume-in-a-new-tab passes an explicit command to pty.start
+// (for example "claude --resume <id>" or "copilot --resume=<id>").
+// The pty:start IPC handler forwards that command to the spawned process.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');

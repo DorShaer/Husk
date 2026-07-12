@@ -7,6 +7,7 @@ const {
   HUSK_SESSION_START,
   HUSK_SESSION_END,
   buildGenericDirectives,
+  renderSessionBlock,
   mergeSessionBlock,
   planInjection,
 } = require('../../src/lib/agent-inject');
@@ -64,6 +65,14 @@ test('aider gets a --read plan pointing at a Husk-owned file', () => {
   assert.ok(plan.body.includes('\u{1F5E3}'));
 });
 
+test('gemini gets a GEMINI.md instructions-file plan', () => {
+  const plan = planInjection({ agentCommand: 'gemini', agentName: 'Husk', recap: true });
+  assert.equal(plan.method, 'instructions-file');
+  assert.equal(plan.filePath, 'GEMINI.md');
+  assert.ok(plan.body.includes('Husk'));
+  assert.ok(plan.body.includes('\u{1F5E3}'));
+});
+
 test('a truly unknown agent gets no injection', () => {
   assert.equal(planInjection({ agentCommand: 'mysteryagent' }).method, 'none');
   assert.ok(!planInjection({ agentCommand: 'mysteryagent' }).args);
@@ -77,9 +86,9 @@ test('directives name the agent and ask for the speech-balloon line', () => {
   assert.ok(d.includes('\u{1F5E3}\u{FE0F} Ada:'));
 });
 
-test('recap=false adds the suppression line; recap=true does not', () => {
-  assert.ok(buildGenericDirectives({ agentName: 'X', recap: false }).includes('Do not add'));
-  assert.ok(!buildGenericDirectives({ agentName: 'X', recap: true }).includes('Do not add'));
+test('recap=false omits the speech-balloon directive; recap=true includes it', () => {
+  assert.ok(!buildGenericDirectives({ agentName: 'X', recap: false }).includes('\u{1F5E3}\u{FE0F}'));
+  assert.ok(buildGenericDirectives({ agentName: 'X', recap: true }).includes('\u{1F5E3}\u{FE0F}'));
 });
 
 test('an empty or all-stripped name falls back to Husk; unsafe chars removed', () => {
@@ -88,6 +97,17 @@ test('an empty or all-stripped name falls back to Husk; unsafe chars removed', (
   const d = buildGenericDirectives({ agentName: '<script>' });
   assert.ok(d.includes('answer as script'));
   assert.ok(!d.includes('<script>'));
+});
+
+// ─── renderSessionBlock ─────────────────────────────────────────────────────
+
+test('renderSessionBlock wraps trimmed body in the managed marker block', () => {
+  const out = renderSessionBlock('\nhello\n');
+  assert.ok(out.startsWith(`${HUSK_SESSION_START}\n`));
+  assert.ok(out.endsWith(`\n${HUSK_SESSION_END}`));
+  assert.ok(out.includes('\nhello\n'));
+  assert.equal(out.split(HUSK_SESSION_START).length - 1, 1);
+  assert.equal(out.split(HUSK_SESSION_END).length - 1, 1);
 });
 
 // ─── mergeSessionBlock: non-destructive ──────────────────────────────────────

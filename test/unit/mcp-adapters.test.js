@@ -5,10 +5,57 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
 
 const { getAdapter, ADAPTERS } = require('../../src/lib/mcp');
 const { agentKey, shapeServer, buildServerEntry } = require('../../src/lib/mcp/common');
 const { makeStub } = require('../../src/lib/mcp/stub');
+
+const REAL_ADAPTERS = [
+  { name: 'claude', modulePath: '../../src/lib/mcp/claude', configRel: '.claude.json' },
+  { name: 'copilot', modulePath: '../../src/lib/mcp/copilot', configRel: path.join('.copilot', 'mcp-config.json') },
+  { name: 'gemini', modulePath: '../../src/lib/mcp/gemini', configRel: path.join('.gemini', 'settings.json') },
+];
+
+function tmpHome(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-mcp-home-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function loadFreshAdapter(t, modulePath, home) {
+  const resolved = require.resolve(modulePath);
+  delete require.cache[resolved];
+  const originalHomedir = os.homedir;
+  os.homedir = () => home;
+  try {
+    return require(modulePath);
+  } finally {
+    os.homedir = originalHomedir;
+    t.after(() => { delete require.cache[resolved]; });
+  }
+}
+
+function writeAdapterConfig(adapter, cfg) {
+  fs.mkdirSync(path.dirname(adapter.configPath), { recursive: true });
+  fs.writeFileSync(adapter.configPath, JSON.stringify(cfg));
+}
+
+function readAdapterConfig(adapter) {
+  return JSON.parse(fs.readFileSync(adapter.configPath, 'utf8'));
+}
+
+function fakeHealthProcess(stdoutText, stderrText = '') {
+  const proc = new EventEmitter();
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  process.nextTick(() => {
+    if (stdoutText) proc.stdout.emit('data', Buffer.from(stdoutText));
+    if (stderrText) proc.stderr.emit('data', Buffer.from(stderrText));
+    proc.emit('close', 0);
+  });
+  return proc;
+}
 
 // ─── agentKey ────────────────────────────────────────────────────────────────
 
@@ -213,4 +260,191 @@ test('writeJsonFile creates the config dir when it does not exist yet', () => {
   const ok = writeJsonFile(nested, { mcpServers: { mem: { command: 'npx' } } });
   assert.equal(ok, true);
   assert.ok(readJsonFile(nested).mcpServers.mem);
+});
+
+// ─── real adapter modules over isolated config homes ─────────────────────────
+
+test('real MCP adapters list active and disabled servers from their own config files', (t) => {
+  for (const spec of REAL_ADAPTERS) {
+    const home = tmpHome(t);
+    const adapter = loadFreshAdapter(t, spec.modulePath, home);
+    assert.equal(adapter.configPath, path.join(home, spec.configRel), spec.name);
+
+    writeAdapterConfig(adapter, {
+      mcpServers: {
+        zed: { command: 'node', args: ['zed.js'] },
+        api: { type: 'sse', url: 'https://example.test/sse', headers: { Authorization: 'Bearer t' } },
+      },
+      _huskMcpDisabled: {
+        old: { command: 'node', args: ['old.js'] },
+      },
+    });
+
+    const result = adapter.list();
+    assert.equal(result.ok, true, spec.name);
+    assert.deepEqual(result.servers.map((s) => s.id), ['api', 'old', 'zed']);
+    assert.equal(result.servers.find((s) => s.id === 'api').transport, 'sse');
+    assert.equal(result.servers.find((s) => s.id === 'api').enabled, true);
+    assert.equal(result.servers.find((s) => s.id === 'old').enabled, false);
+  }
+});
+
+test('real MCP adapters add, update, toggle, and remove without dropping unrelated settings', (t) => {
+  for (const spec of REAL_ADAPTERS) {
+    const home = tmpHome(t);
+    const adapter = loadFreshAdapter(t, spec.modulePath, home);
+    writeAdapterConfig(adapter, {
+      theme: 'dark',
+      mcpServers: {},
+      _huskMcpDisabled: {
+        archived: { command: 'node', args: ['archived.js'] },
+      },
+    });
+
+    assert.deepEqual(adapter.add({ id: 'mem', command: 'npx', args: ['-y', 'memory'], env: { TOKEN: 'x' } }), { ok: true }, spec.name);
+    let cfg = readAdapterConfig(adapter);
+    assert.equal(cfg.theme, 'dark', spec.name);
+    assert.deepEqual(cfg.mcpServers.mem, { command: 'npx', args: ['-y', 'memory'], env: { TOKEN: 'x' } });
+    assert.match(adapter.add({ id: 'mem', command: 'npx' }).error, /already exists/, spec.name);
+    assert.match(adapter.add({ id: 'archived', command: 'npx' }).error, /already exists/, spec.name);
+    assert.equal(adapter.add({ id: 'bad id', command: 'npx' }).ok, false, spec.name);
+
+    assert.deepEqual(adapter.update('mem', {
+      newId: 'remote',
+      transport: 'http',
+      url: 'https://example.test/mcp',
+      headers: { Authorization: 'Bearer t' },
+    }), { ok: true }, spec.name);
+    cfg = readAdapterConfig(adapter);
+    assert.equal(cfg.mcpServers.mem, undefined, spec.name);
+    assert.deepEqual(cfg.mcpServers.remote, {
+      type: 'http',
+      url: 'https://example.test/mcp',
+      headers: { Authorization: 'Bearer t' },
+    });
+    assert.match(adapter.update('missing', { command: 'node' }).error, /not found/, spec.name);
+    assert.match(adapter.update('remote', { newId: 'archived', command: 'node' }).error, /already exists/, spec.name);
+    assert.equal(adapter.update('', {}).ok, false, spec.name);
+
+    assert.deepEqual(adapter.toggle('remote'), { ok: true }, spec.name);
+    cfg = readAdapterConfig(adapter);
+    assert.equal(cfg.mcpServers.remote, undefined, spec.name);
+    assert.ok(cfg._huskMcpDisabled.remote, spec.name);
+
+    assert.deepEqual(adapter.update('remote', { newId: 'restored', command: 'node', args: ['server.js'] }), { ok: true }, spec.name);
+    cfg = readAdapterConfig(adapter);
+    assert.equal(cfg._huskMcpDisabled.remote, undefined, spec.name);
+    assert.deepEqual(cfg._huskMcpDisabled.restored, { command: 'node', args: ['server.js'] });
+
+    assert.deepEqual(adapter.toggle('restored'), { ok: true }, spec.name);
+    cfg = readAdapterConfig(adapter);
+    assert.deepEqual(cfg.mcpServers.restored, { command: 'node', args: ['server.js'] });
+    assert.equal(cfg._huskMcpDisabled.restored, undefined, spec.name);
+    assert.equal(adapter.toggle('missing').ok, false, spec.name);
+
+    assert.deepEqual(adapter.remove('restored'), { ok: true }, spec.name);
+    cfg = readAdapterConfig(adapter);
+    assert.equal(cfg.mcpServers.restored, undefined, spec.name);
+    assert.equal(cfg._huskMcpDisabled.restored, undefined, spec.name);
+    assert.equal(cfg.theme, 'dark', spec.name);
+    assert.equal(adapter.remove('').ok, false, spec.name);
+  }
+});
+
+test('real MCP adapters refuse writes when their config file is corrupt', (t) => {
+  for (const spec of REAL_ADAPTERS) {
+    const home = tmpHome(t);
+    const adapter = loadFreshAdapter(t, spec.modulePath, home);
+    fs.mkdirSync(path.dirname(adapter.configPath), { recursive: true });
+    fs.writeFileSync(adapter.configPath, '{ this is not json');
+    assert.match(adapter.add({ id: 'mem', command: 'npx' }).error, /could not be read/, spec.name);
+  }
+});
+
+test('copilot and gemini adapters return configured health without spawning a probe', async (t) => {
+  for (const spec of REAL_ADAPTERS.filter((a) => a.name !== 'claude')) {
+    const adapter = loadFreshAdapter(t, spec.modulePath, tmpHome(t));
+    assert.deepEqual(await adapter.health(), { ok: true, status: {} }, spec.name);
+  }
+});
+
+test('claude adapter health probes once and reuses the fresh cache', async (t) => {
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  const calls = [];
+  childProcess.spawn = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    return fakeHealthProcess(
+      'mem: npx - connected\n',
+      'auth: https://example.test/mcp - needs auth\n',
+    );
+  };
+  t.after(() => { childProcess.spawn = originalSpawn; });
+
+  const adapter = loadFreshAdapter(t, '../../src/lib/mcp/claude', tmpHome(t));
+  const first = await adapter.health({ force: true });
+  assert.deepEqual(first, { ok: true, status: { mem: 'connected', auth: 'auth' } });
+
+  const second = await adapter.health();
+  assert.deepEqual(second, first);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, 'claude');
+  assert.deepEqual(calls[0].args, ['mcp', 'list']);
+  assert.equal(calls[0].opts.timeout, 60000);
+  assert.equal(calls[0].opts.windowsHide, true);
+});
+
+test('claude adapter health returns spawn errors and retries after failures', async (t) => {
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  let mode = 'throw';
+  let calls = 0;
+  childProcess.spawn = () => {
+    calls += 1;
+    if (mode === 'throw') throw new Error('claude missing');
+    return fakeHealthProcess('mem: npx - connected\n');
+  };
+  t.after(() => { childProcess.spawn = originalSpawn; });
+
+  const adapter = loadFreshAdapter(t, '../../src/lib/mcp/claude', tmpHome(t));
+  const failed = await adapter.health({ force: true });
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /claude missing/);
+  assert.deepEqual(failed.status, {});
+
+  mode = 'success';
+  assert.deepEqual(await adapter.health(), { ok: true, status: { mem: 'connected' } });
+  assert.equal(calls, 2);
+});
+
+test('claude adapter health reports async probe error events', async (t) => {
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  childProcess.spawn = () => {
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    process.nextTick(() => proc.emit('error', new Error('probe failed')));
+    return proc;
+  };
+  t.after(() => { childProcess.spawn = originalSpawn; });
+
+  const adapter = loadFreshAdapter(t, '../../src/lib/mcp/claude', tmpHome(t));
+  const result = await adapter.health({ force: true });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /probe failed/);
+  assert.deepEqual(result.status, {});
+});
+
+test('claude adapter health converts probe setup exceptions to a failed status', async (t) => {
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  childProcess.spawn = () => ({});
+  t.after(() => { childProcess.spawn = originalSpawn; });
+
+  const adapter = loadFreshAdapter(t, '../../src/lib/mcp/claude', tmpHome(t));
+  const result = await adapter.health({ force: true });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /stdout|on|undefined/i);
+  assert.deepEqual(result.status, {});
 });

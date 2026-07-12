@@ -2,7 +2,8 @@
 /**
  * Log Rotation for PAI Observability & Security logs
  *
- * Checks *.jsonl files in MEMORY/OBSERVABILITY/ and MEMORY/SECURITY/.
+ * Checks *.jsonl files in MEMORY/OBSERVABILITY/ and recursively under
+ * MEMORY/SECURITY/.
  * If any exceed 10MB, rotates to {basename}.{YYYY-MM}.archive and creates
  * a fresh empty file. Intended to be called from SessionStart hooks.
  *
@@ -12,7 +13,7 @@
  */
 
 import { existsSync, statSync, renameSync, writeFileSync, readdirSync } from 'fs';
-import { join, basename } from 'path';
+import { join, basename, dirname } from 'path';
 import { paiPath } from './paths';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -27,7 +28,7 @@ function rotateFile(filePath: string): boolean {
     const stat = statSync(filePath);
     if (stat.size <= MAX_FILE_SIZE) return false;
 
-    const dir = join(filePath, '..');
+    const dir = dirname(filePath);
     const name = basename(filePath, '.jsonl');
     const archivePath = join(dir, `${name}.${getYearMonth()}.jsonl.archive`);
 
@@ -55,10 +56,15 @@ function rotateDirectory(dirPath: string): number {
   if (!existsSync(dirPath)) return 0;
 
   let rotated = 0;
-  const files = readdirSync(dirPath);
-  for (const file of files) {
-    if (!file.endsWith('.jsonl')) continue;
-    if (rotateFile(join(dirPath, file))) rotated++;
+  const entries = readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const childPath = join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      rotated += rotateDirectory(childPath);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+    if (rotateFile(childPath)) rotated++;
   }
   return rotated;
 }

@@ -24,9 +24,13 @@
 // passes them (main.js knows each run's tool + model); everything else
 // comes from the run's own recorded meter and diff.
 function fromSummary(summary, extra = {}) {
-  const s = (summary && summary.summary) || {};
+  const hasSummary = !!(summary && summary.summary && typeof summary.summary === 'object');
+  const s = hasSummary ? summary.summary : {};
   const meter = s.meter || {};
   const caps = (summary && summary.caps) || meter.caps || {};
+  const endReason = (summary && summary.endReason)
+    || (s.haltDetail && s.haltDetail.reason)
+    || null;
   // Prefer the diff RECORDED in the run_summary at finish time: it is the
   // stable, finish-time truth. The live top-level diff (recomputed by
   // diffWorkspace at summarize time) goes empty once the worktree is applied
@@ -38,13 +42,16 @@ function fromSummary(summary, extra = {}) {
     agent: extra.agent || null,
     model: extra.model || meter.modelId || null,
     goal: (summary && summary.goal) || null,
-    status: s.status || 'unknown',           // running | ended | halted | cancelled | unknown
+    status: hasSummary ? (s.status || 'unknown') : 'running',
+    endReason,
     haltReason: s.haltReason || null,         // natural | budget | stall | user | ...
     stallSignal: (s.haltDetail && s.haltDetail.signal) || null, // idle | loop | noProgress
     dollars: num(meter.dollars),
     tokens: num(meter.totalTokens),
     tokensEstimated: !!meter.tokensEstimated,
     durationMs: num(s.durationMs),
+    startedMs: num(extra.fleetStartedAt) || timeMs(s.startedAt),
+    endedMs: timeMs(s.endedAt),
     filesChanged: diff.length,
     caps: {
       dollars: num(caps.dollars),
@@ -63,6 +70,7 @@ function fromSummary(summary, extra = {}) {
 //   running  -- still going
 function classify(row) {
   if (row.status === 'running') return 'running';
+  if (['agent_idle', 'agent_startup_stall', 'agent-exited', 'agent_blocked', 'agent_failed', 'agent_unverified'].includes(row.endReason)) return 'incomplete';
   if (row.haltReason === 'stall') return 'saved';
   if (row.haltReason === 'budget') return 'capped';
   if (row.status === 'cancelled' || row.haltReason === 'user') return 'stopped';
@@ -75,10 +83,8 @@ function classify(row) {
 //
 // Honesty rule: project the run's OWN realized cost rate forward. A run that
 // has cost $0 so far -- a flat-rate Copilot/Codex/Aider/Gemini run, or one
-// that barely started -- has NO provable dollar rate, so we never invent a
-// dollar figure for it (that was the old bug: the default $5 cap made every
-// vendor stall claim "up to $5 saved" out of thin air). Such runs report
-// their token saving only, dollars 0.
+// that barely started -- has NO provable dollar rate, so it reports token
+// savings only and dollar savings as 0.
 //
 //   remaining tokens = (token cap - spent), or derived from the dollar cap
 //     at the realized rate when only a dollar cap exists.
@@ -116,7 +122,7 @@ function estimateSavings(row, horizonMs = 900000) {
 // Aggregate rows into the fleet receipt.
 function buildFleetReceipt(rows, opts = {}) {
   const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
-  const counts = { landed: 0, empty: 0, saved: 0, capped: 0, stopped: 0, running: 0 };
+  const counts = { landed: 0, empty: 0, saved: 0, capped: 0, stopped: 0, running: 0, incomplete: 0 };
   const perAgent = new Map();
   let totalDollars = 0;
   let totalTokens = 0;
@@ -124,6 +130,8 @@ function buildFleetReceipt(rows, opts = {}) {
   let savedDollars = 0;
   let savedTokens = 0;
   let anyEstimated = false;
+  let earliestStart = 0;
+  let latestEnd = 0;
 
   for (const row of list) {
     const bucket = classify(row);
@@ -131,6 +139,8 @@ function buildFleetReceipt(rows, opts = {}) {
     totalDollars += row.dollars;
     totalTokens += row.tokens;
     totalDurationMs = Math.max(totalDurationMs, row.durationMs); // wall-clock: fleet runs in parallel
+    if (row.startedMs > 0 && (!earliestStart || row.startedMs < earliestStart)) earliestStart = row.startedMs;
+    if (row.endedMs > 0 && row.endedMs > latestEnd) latestEnd = row.endedMs;
     if (row.tokensEstimated) anyEstimated = true;
     if (bucket === 'saved') {
       const sv = estimateSavings(row, opts.horizonMs);
@@ -147,7 +157,7 @@ function buildFleetReceipt(rows, opts = {}) {
     runCount: list.length,
     totalDollars: round2(totalDollars),
     totalTokens,
-    totalDurationMs,
+    totalDurationMs: earliestStart && latestEnd > earliestStart ? latestEnd - earliestStart : totalDurationMs,
     tokensEstimated: anyEstimated,
     counts,
     savings: {
@@ -166,7 +176,8 @@ function buildFleetReceipt(rows, opts = {}) {
   //   incomplete  -- nothing landed and the only outcomes were stalls/caps/
   //                  stops: the fleet did not finish its work. The real
   //                  failure state.
-  receipt.outcome = counts.landed > 0 ? 'productive'
+  receipt.outcome = counts.incomplete > 0 ? 'incomplete'
+    : counts.landed > 0 ? 'productive'
     : counts.empty > 0 ? 'no-op'
     : list.length ? 'incomplete'
     : 'empty';
@@ -183,6 +194,7 @@ function headline(receipt) {
   const money = receipt.tokensEstimated ? `~$${receipt.totalDollars.toFixed(2)}` : `$${receipt.totalDollars.toFixed(2)}`;
   parts.push(money);
   if (landed) parts.push(`${landed} landed`);
+  if (receipt.outcome === 'incomplete') parts.push('did not complete');
   else if (receipt.outcome === 'no-op') parts.push('completed, no code changes');
   else if (total) parts.push('did not complete');
   if (receipt.savings.caughtStalls > 0) {
@@ -195,6 +207,14 @@ function headline(receipt) {
 }
 
 function num(v) { return Number.isFinite(v) ? v : 0; }
+function timeMs(v) {
+  if (Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : 0;
+  }
+  return 0;
+}
 function round2(v) { return Math.round((Number.isFinite(v) ? v : 0) * 100) / 100; }
 
 module.exports = {

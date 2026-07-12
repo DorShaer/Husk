@@ -47,7 +47,7 @@ test('detectLanguage: extension match is case-insensitive', () => {
 });
 
 test('detectLanguage: full paths resolve by basename extension', () => {
-  assert.equal(detectLanguage('/home/dor/Desktop/husk/src/main.js', ''), 'javascript');
+  assert.equal(detectLanguage('/opt/projects/husk/src/main.js', ''), 'javascript');
 });
 
 test('detectLanguage: shebang inference when no extension match', () => {
@@ -60,6 +60,15 @@ test('detectLanguage: shebang inference when no extension match', () => {
   assert.equal(detectLanguage('runme', '#!/usr/bin/env ruby'), 'ruby');
 });
 
+test('detectLanguage: shebang inference strips glued interpreter versions', () => {
+  assert.equal(detectLanguage('runme', '#!/usr/bin/python3.11'), 'python');
+});
+
+test('detectLanguage: unknown or incomplete shebang falls back to text', () => {
+  assert.equal(detectLanguage('runme', '#!/usr/bin/env perl'), 'text');
+  assert.equal(detectLanguage('runme', '#!/usr/bin/env'), 'text');
+});
+
 test('detectLanguage: extension wins over shebang', () => {
   assert.equal(detectLanguage('script.py', '#!/bin/bash'), 'python');
 });
@@ -67,6 +76,12 @@ test('detectLanguage: extension wins over shebang', () => {
 test('detectLanguage: default is text', () => {
   assert.equal(detectLanguage('unknown.xyz', ''), 'text');
   assert.equal(detectLanguage('noextension', ''), 'text');
+  assert.equal(detectLanguage('.bashrc', '# not a shebang'), 'text');
   assert.equal(detectLanguage('plain', 'just a normal first line'), 'text');
+  assert.equal(detectLanguage('plain', null), 'text');
   assert.equal(detectLanguage('', ''), 'text');
+});
+
+test('detectLanguage: non-string filename still allows shebang inference', () => {
+  assert.equal(detectLanguage(null, '#!/usr/bin/env node'), 'javascript');
 });

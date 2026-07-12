@@ -1,10 +1,8 @@
 'use strict';
 
 // Lifecycle guard: closing the last window must terminate the main process.
-// Closed-but-alive instances used to stack up because a stray timer pinned the
-// event loop after app.quit(). This asserts that closing the window actually
-// ends the process (window-all-closed -> quit, with a force-exit fallback),
-// so a future change that reintroduces a quit-blocking handle is caught.
+// The assertion covers window-all-closed -> quit plus the force-exit fallback,
+// so quit-blocking handles are detected.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');

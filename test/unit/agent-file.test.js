@@ -12,6 +12,10 @@ test('agentFileName slugifies and stays traversal-free', () => {
   assert.equal(agentFileName('  weird  /\\ name '), 'weird-name.md');
 });
 
+test('agentFileName caps long slugs at 64 characters', () => {
+  assert.equal(agentFileName('A'.repeat(80)), `${'a'.repeat(64)}.md`);
+});
+
 test('renderAgentMd builds frontmatter + body', () => {
   const md = renderAgentMd({ name: 'Sec', description: 'Finds bugs', systemPrompt: 'You are Sec.\nBe careful.' });
   assert.ok(md.startsWith('---\nname: Sec\ndescription: Finds bugs\n---\n'));

@@ -18,6 +18,10 @@ test('resolveInside: nested name resolves under root', () => {
   assert.equal(resolveInside(ROOT, 'sub/a.md'), path.join(ROOT, 'sub', 'a.md'));
 });
 
+test('resolveInside: dot name resolves to root itself', () => {
+  assert.equal(resolveInside(ROOT, '.'), ROOT);
+});
+
 test('resolveInside: a parent-relative name throws', () => {
   assert.throws(() => resolveInside(ROOT, '../sibling'), /outside root/);
 });
@@ -42,6 +46,11 @@ test('resolveInside: a missing root throws', () => {
   assert.throws(() => resolveInside('', 'a.md'), /root required/);
 });
 
+test('resolveInside: non-string root or name throws', () => {
+  assert.throws(() => resolveInside(null, 'a.md'), /root required/);
+  assert.throws(() => resolveInside(ROOT, null), /name required/);
+});
+
 test('isInside: a target inside root returns true', () => {
   assert.equal(isInside(ROOT, path.join(ROOT, 'a', 'b.md')), true);
 });
@@ -56,6 +65,15 @@ test('isInside: a target built with ../ returns false', () => {
 
 test('isInside: root itself returns true', () => {
   assert.equal(isInside(ROOT, ROOT), true);
+});
+
+test('isInside: similar path prefix is not considered inside', () => {
+  assert.equal(isInside(ROOT, ROOT + '-sibling'), false);
+});
+
+test('isInside: non-string root or target returns false', () => {
+  assert.equal(isInside(null, ROOT), false);
+  assert.equal(isInside(ROOT, null), false);
 });
 
 // Symlink-escape guard: the composition the fs:readFile handler uses to refuse

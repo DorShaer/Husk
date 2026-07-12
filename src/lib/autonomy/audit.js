@@ -82,6 +82,30 @@ function readLastLineSync(filePath) {
   return buf.slice(start, end).toString('utf8');
 }
 
+function healAuditTailSync(filePath) {
+  let buf;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under sessionDir
+    buf = fs.readFileSync(filePath);
+  } catch (_) {
+    return;
+  }
+  if (!buf || !buf.length) return;
+  const last = buf[buf.length - 1];
+  if (last === 0x0a || last === 0x0d) return;
+  let start = buf.length;
+  while (start > 0 && buf[start - 1] !== 0x0a) start--;
+  const tail = buf.slice(start).toString('utf8');
+  try {
+    JSON.parse(tail);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under sessionDir
+    fs.appendFileSync(filePath, '\n');
+  } catch (_) {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under sessionDir
+    fs.truncateSync(filePath, start);
+  }
+}
+
 // createAuditLog opens (or resumes) the audit log for one session.
 // Returns { ok: true, writer } on success, or { ok: false, error }
 // on validation failure. The writer is single-process, single-thread;
@@ -99,6 +123,7 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
     return { ok: false, error: `could not create audit dir: ${err.message}` };
   }
   const ap = auditPath(storageRoot, sessionId);
+  healAuditTailSync(ap);
   const lastLine = readLastLineSync(ap);
   let prevHash = lastLine ? sha256Hex(lastLine) : GENESIS_HASH;
   let seq = countLinesSync(ap);

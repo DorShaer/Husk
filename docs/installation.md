@@ -84,6 +84,9 @@ Any third-party script the installer fetches (currently just the bun installer) 
 ```
 
 The project directory and `node_modules/` are always left intact so `./install.sh` can re-run.
+If the checkout itself lives inside a path the uninstaller would normally clean
+(for example `~/.local/share/husk`), that cleanup is skipped and a warning is
+printed rather than deleting the project.
 
 ## Updates
 

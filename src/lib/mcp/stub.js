@@ -1,7 +1,7 @@
 'use strict';
 
-// Stub adapter for agents Husk does not yet integrate with for MCP
-// management (codex, aider, gemini, anything else on PATH). Returns
+// Stub adapter for agents Husk does not integrate with for MCP
+// management (codex, aider, anything else on PATH). Returns
 // an empty server list and refuses writes so the renderer can show
 // a clear "not supported yet" empty state.
 function makeStub(agentName) {

@@ -1,8 +1,7 @@
 'use strict';
 
-// Regression: the plugin editor modal must render wide and left-aligned.
-// The base .modal-card rule (460px, centered) used to win the cascade over
-// .plugin-editor-card, squeezing the file list and editor into a sliver.
+// The plugin editor modal renders wide and left-aligned so the file list and
+// editor both have usable space.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -29,6 +28,46 @@ function makeIsolatedHome() {
   }));
   fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({
     enabledPlugins: { 'caveman@local': true },
+  }));
+  return dir;
+}
+
+function makeCopilotHome() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-copilot-'));
+  fs.mkdirSync(path.join(dir, '.config', 'husk'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, agentCommand: 'copilot' }));
+
+  const installPath = path.join(dir, '.copilot', 'installed-plugins', 'copilot-plugins', 'spark');
+  fs.mkdirSync(path.join(installPath, 'skills', 'spark-app-template'), { recursive: true });
+  fs.writeFileSync(path.join(installPath, 'README.md'), '# spark\n');
+  fs.writeFileSync(path.join(installPath, 'skills', 'spark-app-template', 'SKILL.md'), '# Spark\n');
+  fs.writeFileSync(path.join(dir, '.copilot', 'config.json'), `// User settings belong in settings.json.
+// This file is managed automatically.
+{
+  "installedPlugins": [
+    {
+      "name": "spark",
+      "marketplace": "copilot-plugins",
+      "version": "1.0.0",
+      "installed_at": "2026-01-01T00:00:00.000Z",
+      "cache_path": ${JSON.stringify(installPath)},
+      "enabled": true
+    }
+  ]
+}
+`);
+  fs.writeFileSync(path.join(dir, '.copilot', 'settings.json'), JSON.stringify({
+    enabledPlugins: { 'spark@copilot-plugins': true },
+  }));
+
+  const marketplaceDir = path.join(dir, '.cache', 'copilot', 'marketplaces', 'github-copilot-plugins', '.github', 'plugin');
+  fs.mkdirSync(marketplaceDir, { recursive: true });
+  fs.writeFileSync(path.join(marketplaceDir, 'marketplace.json'), JSON.stringify({
+    name: 'copilot-plugins',
+    plugins: [
+      { name: 'spark', version: '1.0.0', description: 'Spark plugin for GitHub Copilot.' },
+      { name: 'advanced-security', version: '2.0.0', description: 'Advanced Security plugin for GitHub Copilot.' },
+    ],
   }));
   return dir;
 }
@@ -88,6 +127,50 @@ test('plugin editor modal opens wide with a usable file list and editor', async 
   await win.waitForSelector('#plugin-editor', { state: 'hidden', timeout: 5_000 });
   state = await win.evaluate(() => document.getElementById('plugin-editor').hidden);
   expect(state).toBe(true); // discarded and closed
+
+  await app.close();
+});
+
+test('plugins page treats Copilot as plugin-capable', async () => {
+  const homeDir = makeCopilotHome();
+  const app = await electron.launch({
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+      COPILOT_HOME: path.join(homeDir, '.copilot'),
+      COPILOT_CACHE_HOME: path.join(homeDir, '.cache', 'copilot'),
+      ELECTRON_DISABLE_SANDBOX: '1',
+      HUSK_E2E: '1',
+    },
+    timeout: 30_000,
+  });
+  const win = await app.firstWindow({ timeout: 30_000 });
+  await win.waitForLoadState('domcontentloaded');
+
+  await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  await win.evaluate(() => setPage('plugins'));
+  await win.waitForSelector('.plugin-row', { timeout: 10_000 });
+
+  const state = await win.evaluate(() => ({
+    unsupportedHidden: document.getElementById('plugins-unsupported').hidden,
+    bodyHidden: document.getElementById('plugins-body').hidden,
+    installedText: document.querySelector('.plugin-row')?.textContent || '',
+    updateText: document.querySelector('.plugin-row [data-act="update"]')?.textContent || '',
+    updateDisabled: document.querySelector('.plugin-row [data-act="update"]')?.disabled || false,
+    toggleCount: document.querySelectorAll('.plugin-row .toggle').length,
+    catalogText: document.getElementById('plugins-catalog')?.textContent || '',
+  }));
+  expect(state.unsupportedHidden).toBe(true);
+  expect(state.bodyHidden).toBe(false);
+  expect(state.installedText).toContain('spark');
+  expect(state.installedText).toContain('latest v1.0.0');
+  expect(state.updateText).toBe('Up to date');
+  expect(state.updateDisabled).toBe(true);
+  expect(state.toggleCount).toBe(0);
+  expect(state.catalogText).toContain('advanced-security');
 
   await app.close();
 });

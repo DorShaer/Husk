@@ -129,14 +129,14 @@ The full `window.husk.*` API exposed through `src/preload.js`:
 
 ### MCP adapter pattern
 
-`mcp:*` IPC handlers do not talk to a single config file. They look at the active agent (`config.agentCommand`) and dispatch through `getAdapter(agentCommand)` in `src/lib/mcp/index.js`. The adapters:
+`mcp:*` IPC handlers expose one Husk-level MCP registry. Mutating handlers go through `src/lib/mcp/shared.js`, which mirrors add/update/toggle/remove to every write-capable adapter and backfills entries that exist in only one vendor config. Live health still uses the active agent's adapter (`getAdapter(config.agentCommand)`) because only that CLI can report its connection state. The adapters:
 
 | Agent | Config file | Live status probe |
 |-------|-------------|------------------|
 | `claude` | `~/.claude.json` | yes, parses `claude mcp list` via `src/lib/mcp-status.js` |
 | `copilot` | `~/.copilot/mcp-config.json` | no, returns `configured` for every entry |
 | `gemini` | `~/.gemini/settings.json` | no, returns `configured` for every entry |
-| `codex`, `aider`, any other binary | none | empty list; writes refused with a clear "not yet supported" message |
+| `codex`, `aider`, any other binary | snippet-only / unsupported write path | empty list for automatic writes; repo install can emit pasteable snippets |
 
 The on-disk shape (`mcpServers` plus the Husk-private `_huskMcpDisabled`) is identical across adapters, so a config written by Husk is readable by the agent CLI directly.
 

@@ -101,8 +101,12 @@ function createBudgetMeter(opts = {}) {
   const rates = Object.assign({}, DEFAULT_RATES, opts.rates || {});
   // Mutable: the run may not know its model until the first transcript turn
   // reports it; setModel() re-pins the rate to what actually ran.
+  // Identity and billing are tracked separately: rawModelId is the model as
+  // reported (what the UI shows), rateKey is the pricing-table entry it maps
+  // to (possibly '_default'). Collapsing them loses the real model name.
+  let rawModelId = String(opts.modelId || '').trim();
   let resolved = resolveRate(opts.modelId, rates);
-  let modelId = resolved.id;
+  let rateKey = resolved.id;
   let rate = resolved.rate;
 
   const startedAt = Number.isFinite(opts.startedAt) ? opts.startedAt : Date.now();
@@ -187,6 +191,10 @@ function createBudgetMeter(opts = {}) {
     // explicit deltas, a blended rate over a reported cumulative
     // (chat-style runs average ~70/30 output/input), output rate for
     // the chars/4 estimate.
+    const exactDollars = (inputTokens / 1e6) * rate.in
+      + (outputTokens / 1e6) * rate.out
+      + (cacheCreateTokens / 1e6) * (rate.in * CACHE_CREATE_MULT)
+      + (cacheReadTokens / 1e6) * (rate.in * CACHE_READ_MULT);
     let dollars;
     if (source === 'reported') {
       // A status-line cumulative counter conflates cache reads, re-sent
@@ -194,27 +202,25 @@ function createBudgetMeter(opts = {}) {
       // 715 real agent messages, that mix is ~97% cache-read tokens (billed
       // at 0.1x input) -- the measured effective rate is ~$0.49/Mtok for a
       // Sonnet-class model, NOT the $11.40/Mtok a fresh 30/70 blend implies.
-      // Charging the fresh rate over-stated cost ~23x and could SIGINT a
-      // healthy run on a phantom dollar cap. This cache-weighted rate tracks
+      // Charging the fresh rate over-states cost ~23x and can SIGINT a healthy
+      // run on a dollar cap it never reached. This cache-weighted rate tracks
       // the measured cost and is biased slightly low on purpose: under-
       // charging just fires the cap a little late (benign), while over-
-      // charging kills a cheap run (the failure we are removing).
+      // charging kills a cheap run.
       const reportedRate = (rate.in * 0.13) + (rate.out * 0.01);
-      dollars = (reportedTotal / 1e6) * reportedRate;
+      dollars = Math.max(exactDollars, (reportedTotal / 1e6) * reportedRate);
     } else if (source === 'estimate') {
       dollars = (estOutputTokens / 1e6) * rate.out;
     } else {
       // Exact cache-aware cost from structured transcript deltas: fresh input
       // and output at their rates, cache writes at 1.25x input, cache reads
       // at 0.1x input. This is the precise dollar figure, not an estimate.
-      dollars = (inputTokens / 1e6) * rate.in
-        + (outputTokens / 1e6) * rate.out
-        + (cacheCreateTokens / 1e6) * (rate.in * CACHE_CREATE_MULT)
-        + (cacheReadTokens / 1e6) * (rate.in * CACHE_READ_MULT);
+      dollars = exactDollars;
     }
     return {
       caps: { ...caps },
-      modelId,
+      modelId: rawModelId || rateKey,
+      rateKey,
       rate: { ...rate },
       elapsedMs,
       elapsedMinutes,
@@ -245,9 +251,11 @@ function createBudgetMeter(opts = {}) {
   // Idempotent: a no-op when the resolved id is unchanged, so feeding it on
   // every turn is cheap.
   function setModel(id) {
+    const clean = String(id || '').trim();
+    if (clean) rawModelId = clean;
     const next = resolveRate(id, rates);
-    if (next.id === modelId) return;
-    modelId = next.id;
+    if (next.id === rateKey) return;
+    rateKey = next.id;
     rate = next.rate;
   }
 

@@ -12,10 +12,11 @@
 //     hidden behind a single "success". This mirrors the snapshot/revert
 //     contract elsewhere in the codebase.
 //   - Deterministic and side-effect-scoped: only the paths named in `changes`
-//     are touched; a bug here can only ever affect files the run itself changed.
+//     are touched.
 
 const fs = require('fs');
 const path = require('path');
+const { STATUS_FILE } = require('./autopilot-status');
 
 // A change entry is { path: <relative>, status: 'added'|'modified'|'deleted' },
 // exactly the shape diffWorkspace/diffWorkspaceAsync already emit.
@@ -83,6 +84,7 @@ function applyWorktreeChanges(worktreePath, workspaceRoot, changes) {
   const failed = [];
   for (const c of changes) {
     const rel = c && c.path;
+    if (rel === STATUS_FILE) continue;
     if (!isSafeRelPath(rel)) {
       failed.push({ path: String(rel), ok: false, reason: 'unsafe or non-relative path' });
       continue;

@@ -1,15 +1,9 @@
 'use strict';
 
-// Recap voice: read the agent's spoken-summary line from the rendered grid and
-// speak it cleanly, once per turn.
-//
-// A full-screen agent (copilot) streams its reply while redrawing the screen
-// with cursor positioning, which interleaves UI chrome (status bar, prompt)
-// into the raw byte stream. Reading the byte stream therefore used to speak the
-// recap WITH chrome bleed ("~ / commands ? help ... nice to meet you"). The fix
-// reads the rendered grid, where each line is on its own clean row. This drives
-// a fixture that paints recap + chrome on separate rows (interleaved in the
-// byte stream) and asserts the spoken text is the clean recap, exactly once.
+// Recap voice reads the rendered terminal grid, where a full-screen agent's
+// spoken-summary line is separated from status bars and prompts. The fixture
+// paints recap text and UI chrome on separate rows and asserts that only the
+// clean recap is spoken once.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -69,8 +63,7 @@ test('recap is read from the grid, cleanly (no chrome), exactly once', async () 
   });
   await win.evaluate(() => window.husk.pty.start({ cols: 100, rows: 30 }));
 
-  // Wait past the settle window AND past the fixture's 3s redraw, so a second
-  // read would have happened if the guard were broken.
+  // Wait past the settle window and the fixture's redraw interval.
   await win.waitForTimeout(5000);
 
   const spoken = await win.evaluate(() => window.__spoken);

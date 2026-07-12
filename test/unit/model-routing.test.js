@@ -3,7 +3,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { modelArgsFor, classifyTier, normalizeTier } = require('../../src/lib/model-routing');
+const { DEFAULT_VENDOR_MODELS, modelArgsFor, classifyTier, normalizeTier } = require('../../src/lib/model-routing');
+
+test('DEFAULT_VENDOR_MODELS exposes the safe built-in routing contract', () => {
+  assert.equal(Object.isFrozen(DEFAULT_VENDOR_MODELS), true);
+  assert.deepEqual(DEFAULT_VENDOR_MODELS.claude, { flag: '--model', cheap: 'haiku', smart: 'opus' });
+  assert.deepEqual(DEFAULT_VENDOR_MODELS.gemini, { flag: '-m', cheap: null, smart: null });
+  assert.deepEqual(DEFAULT_VENDOR_MODELS.copilot, { flag: '--model', cheap: null, smart: null });
+});
 
 test('claude routes both tiers with stable aliases', () => {
   assert.deepEqual(modelArgsFor('claude', 'cheap'), ['--model', 'haiku']);
@@ -32,6 +39,11 @@ test('overrides let a user map any vendor to real model names', () => {
   const ov = { codex: { flag: '--model', cheap: 'gpt-5-mini', smart: 'gpt-5' } };
   assert.deepEqual(modelArgsFor('codex', 'cheap', ov), ['--model', 'gpt-5-mini']);
   assert.deepEqual(modelArgsFor('codex', 'smart', ov), ['--model', 'gpt-5']);
+});
+
+test('modelArgsFor normalizes CLI casing and trims override model names', () => {
+  const ov = { claude: { cheap: '  sonnet  ' } };
+  assert.deepEqual(modelArgsFor('CLAUDE', 'cheap', ov), ['--model', 'sonnet']);
 });
 
 test('an override of null disables routing for a vendor', () => {

@@ -51,6 +51,36 @@ test('classify buckets each outcome correctly', () => {
   assert.equal(classify(fromSummary(summary({ status: 'cancelled', haltReason: 'user' }))), 'stopped');
 });
 
+test('agent idle with changed files is incomplete, not landed', () => {
+  const s = summary({ status: 'ended', haltReason: 'natural', files: 1 });
+  s.endReason = 'agent_idle';
+  s.summary.haltDetail = { reason: 'agent_idle' };
+  const row = fromSummary(s);
+  assert.equal(classify(row), 'incomplete');
+  const r = buildFleetReceipt([row]);
+  assert.equal(r.counts.landed, 0);
+  assert.equal(r.counts.incomplete, 1);
+  assert.equal(r.outcome, 'incomplete');
+  assert.match(r.headline, /did not complete/);
+});
+
+test('agent blocked with changed files is incomplete, not landed', () => {
+  const s = summary({ status: 'ended', haltReason: 'natural', files: 2 });
+  s.endReason = 'agent_blocked';
+  s.summary.haltDetail = { reason: 'agent_blocked' };
+  const row = fromSummary(s);
+  assert.equal(classify(row), 'incomplete');
+  const r = buildFleetReceipt([row]);
+  assert.equal(r.counts.landed, 0);
+  assert.equal(r.outcome, 'incomplete');
+});
+
+test('fromSummary maps a missing run summary to running', () => {
+  const row = fromSummary({ ok: true, diff: [] });
+  assert.equal(row.status, 'running');
+  assert.equal(classify(row), 'running');
+});
+
 test('estimateSavings projects the run OWN realized rate forward', () => {
   const row = fromSummary(summary({ haltReason: 'stall', signal: 'spinning', dollars: 0.50, tokens: 10000, caps: { dollars: 5, tokens: 100000 } }));
   const sv = estimateSavings(row);
@@ -61,8 +91,8 @@ test('estimateSavings projects the run OWN realized rate forward', () => {
 });
 
 test('CRITICAL: a flat-rate/$0 run never fabricates dollar savings', () => {
-  // Copilot-style: dollars always 0, but the default $5 cap is present. The
-  // old code returned $5 here out of thin air. Must be $0, tokens only.
+  // Copilot-style billing reports dollars as 0 even when a dollar cap exists.
+  // Savings therefore come from the remaining token budget only.
   const row = fromSummary(summary({ haltReason: 'stall', signal: 'loop', dollars: 0, tokens: 9000, caps: { dollars: 5, tokens: 200000 } }), { agent: 'copilot' });
   const sv = estimateSavings(row);
   assert.equal(sv.dollars, 0, 'no dollar claim on a run that cost nothing');
@@ -107,6 +137,26 @@ test('buildFleetReceipt aggregates spend, counts, and honest savings', () => {
   assert.equal(r.totalDurationMs, 60000);      // parallel: max
   assert.equal(r.savings.caughtStalls, 2);
   assert.equal(r.savings.dollars, 4.5);        // only the real-cost stall contributes
+});
+
+test('buildFleetReceipt uses earliest start to latest end when timestamps exist', () => {
+  const a = summary({ status: 'ended', files: 1, durationMs: 1000 });
+  a.summary.startedAt = '2026-01-01T00:00:00.000Z';
+  a.summary.endedAt = '2026-01-01T00:03:00.000Z';
+  const b = summary({ status: 'ended', files: 1, durationMs: 1000 });
+  b.summary.startedAt = '2026-01-01T00:02:00.000Z';
+  b.summary.endedAt = '2026-01-01T00:10:00.000Z';
+  const r = buildFleetReceipt([fromSummary(a), fromSummary(b)]);
+  assert.equal(r.totalDurationMs, 10 * 60 * 1000);
+});
+
+test('fromSummary can use fleet start metadata earlier than run start', () => {
+  const s = summary({ status: 'ended', files: 1, durationMs: 1000 });
+  s.summary.startedAt = '2026-01-01T00:05:00.000Z';
+  s.summary.endedAt = '2026-01-01T00:10:00.000Z';
+  const row = fromSummary(s, { fleetStartedAt: Date.parse('2026-01-01T00:00:00.000Z') });
+  const r = buildFleetReceipt([row]);
+  assert.equal(r.totalDurationMs, 10 * 60 * 1000);
 });
 
 test('headline shows saved dollars only when they are real', () => {

@@ -14,10 +14,13 @@ const crypto = require('crypto');
 
 const {
   DEFAULT_IGNORE,
+  DEFAULT_MAX_ENTRIES,
   captureSnapshot,
   captureSnapshotAsync,
   restoreFromSnapshot,
   diffWorkspace,
+  diffWorkspaceAsync,
+  hasSnapshot,
   _internal,
 } = require('../../src/lib/autonomy/snapshot');
 
@@ -254,6 +257,15 @@ test('ISC-21: capture twice on unchanged workspace produces identical manifest e
   assert.deepEqual(r1.manifest.entries, r2.manifest.entries);
 });
 
+test('hasSnapshot reflects whether a valid manifest exists', () => {
+  assert.equal(hasSnapshot(store, SID), false);
+  writeFile('a.txt', 'A');
+  const res = captureSnapshot(work, store, SID);
+  assert.equal(res.ok, true);
+  assert.equal(hasSnapshot(store, SID), true);
+  assert.equal(hasSnapshot(store, '../escape'), false);
+});
+
 // ─── Anti-criteria (security boundaries) ─────────────────────────────────
 
 test('ISC-A1: capture never writes outside storageRoot/sessions/<sid>/', () => {
@@ -460,6 +472,30 @@ test('captureSnapshotAsync aborts when workspace exceeds maxEntries', async () =
   const res = await captureSnapshotAsync(work, store, SID, { maxEntries: 5 });
   assert.equal(res.ok, false);
   assert.match(res.error || '', /exceeds 5 files/);
+});
+
+test('DEFAULT_MAX_ENTRIES exposes the async snapshot safety limit', () => {
+  assert.equal(DEFAULT_MAX_ENTRIES, 50000);
+});
+
+test('diffWorkspaceAsync reports added, modified and deleted paths', async () => {
+  writeFile('same.txt', 'same');
+  writeFile('change.txt', 'before');
+  writeFile('delete.txt', 'gone soon');
+  const cap = captureSnapshot(work, store, SID);
+  assert.equal(cap.ok, true);
+
+  writeFile('change.txt', 'after');
+  fs.unlinkSync(path.join(work, 'delete.txt'));
+  writeFile('added.txt', 'fresh');
+
+  const res = await diffWorkspaceAsync(work, store, SID);
+  assert.equal(res.ok, true);
+  const byPath = Object.fromEntries(res.changes.map((c) => [c.path, c.status]));
+  assert.equal(byPath['added.txt'], 'added');
+  assert.equal(byPath['change.txt'], 'modified');
+  assert.equal(byPath['delete.txt'], 'deleted');
+  assert.equal(byPath['same.txt'], undefined);
 });
 
 // ─── restore safety: workspaceRoot must match the manifest ────────────────

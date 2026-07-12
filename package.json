@@ -20,7 +20,7 @@
     "dist:linux": "electron-builder --linux --publish never",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
-    "test": "node --test test/unit/",
+    "test": "node --test \"test/unit/*.test.js\"",
     "test:e2e": "playwright test",
     "test:all": "npm run test && npm run test:e2e"
   },
@@ -30,14 +30,14 @@
     "@xterm/xterm": "^6.0.0",
     "drawflow": "^0.0.60",
     "electron-updater": "^6.8.9",
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.1.0",
+    "@electron/rebuild": "^4.2.0",
     "@playwright/test": "^1.61.1",
     "electron": "^41.10.0",
     "electron-builder": "^26.15.3",
-    "playwright": "^1.60.0"
+    "playwright": "^1.61.1"
   },
   "build": {
     "appId": "com.husk.app",

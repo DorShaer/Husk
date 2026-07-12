@@ -159,6 +159,9 @@ For pure dev mode without system registration:
 ./uninstall.sh --keep-data # preserve config and Piper voices
 ```
 
+The source checkout and `node_modules/` are protected; if the checkout is inside
+a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
+
 ## Usage
 
 1. Launch Husk from your applications menu, or run `husk` from a terminal after installing.

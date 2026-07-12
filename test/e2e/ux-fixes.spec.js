@@ -36,11 +36,15 @@ test('AI tool selector sits at the bottom, above Preferences (issue 7)', async (
       autopilot: idx('#rail-autopilot'),
       toolPill: idx('#rail-agent-pill'),
       prefs: idx('#btn-open-prefs'),
+      betaText: document.querySelector('#rail-autopilot .rail-beta-tag')?.textContent || '',
+      headerAutopilotExists: !!document.getElementById('btn-autopilot'),
     };
   });
-  // Tool pill is now after the nav items and immediately before Preferences.
+  // Tool pill sits after the nav items and immediately before Preferences.
   expect(order.toolPill).toBeGreaterThan(order.autopilot);
   expect(order.prefs).toBeGreaterThan(order.toolPill);
+  expect(order.betaText).toBe('BETA');
+  expect(order.headerAutopilotExists).toBe(false);
   await app.close();
 });
 
@@ -77,29 +81,216 @@ test('autopilot wizard has an optional snapshot toggle and unlimited-cap hints (
   await app.close();
 });
 
-test('rapid theme toggling coalesces config writes and never throws (issue 3)', async () => {
+test('workflows empty state includes the workflow icon', async () => {
   const app = await launch();
   const win = await ready(app);
-  const result = await win.evaluate(async () => {
-    // Spy on the persisted write so we can prove rapid clicks coalesce.
-    let calls = 0;
-    const orig = window.husk.config.set;
-    window.husk.config.set = (patch) => { calls += 1; return orig(patch); };
-    const start = document.body.dataset.theme;
-    // The dark/light topbar toggle was removed; theme changes now go through the
-    // Preferences theme select. Fire rapid changes to prove the writes coalesce.
-    const sel = document.getElementById('pref-theme');
-    for (let i = 0; i < 12; i++) { sel.value = (i % 2 === 0) ? 'light' : 'dark'; sel.dispatchEvent(new Event('change')); }
-    const afterClicks = document.body.dataset.theme;
-    await new Promise((r) => setTimeout(r, 400));
-    window.husk.config.set = orig;
-    return { start, afterClicks, calls, sel: document.getElementById('pref-theme').value };
+  const info = await win.evaluate(async () => {
+    setPage('workflows');
+    for (let i = 0; i < 40 && !document.querySelector('#wf-grid .empty-state'); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const icon = document.querySelector('#wf-grid .empty-state .es-icon');
+    return {
+      hasSvg: !!(icon && icon.querySelector('svg')),
+      text: document.getElementById('wf-grid').textContent.replace(/\s+/g, ' ').trim(),
+    };
   });
-  // 12 fast clicks -> at most a couple of disk writes, not 12.
-  expect(result.calls).toBeLessThanOrEqual(2);
-  // UI stayed responsive and consistent.
-  expect(['dark', 'light']).toContain(result.afterClicks);
-  expect(result.sel).toBe(result.afterClicks);
+  expect(info.hasSvg).toBe(true);
+  expect(info.text).toContain('No workflows yet');
+  await app.close();
+});
+
+test('orchestrator model picker uses provider catalog without overflowing', async () => {
+  const app = await launch();
+  const win = await ready(app);
+  const info = await win.evaluate(async () => {
+    cfg = {
+      ...(cfg || {}),
+      agentCommand: 'copilot',
+      modelRouting: { copilot: { cheap: 'DorShaer:~ +0 -0Session: 0 AIC usedYou must be logged in to select a model. Use /login to authenticate.Plan: no limit, 18 agentsGPT-5.5 1.1M Context', smart: 'claude-sonnet-5' } },
+    };
+    orchCatalog = {
+      loading: true,
+      vendor: 'copilot',
+      providerLabel: 'GitHub Copilot',
+      command: 'copilot',
+      flag: '--model',
+      source: 'loading',
+      sourceLabel: '',
+      error: '',
+      models: [],
+    };
+    document.getElementById('aut-orch-modal').hidden = false;
+    bindOrchestratorConfig();
+    const loadingState = {
+      status: document.getElementById('aut-model-status').textContent,
+      simpleDisabled: document.getElementById('aut-mr-simple').disabled,
+      complexDisabled: document.getElementById('aut-mr-complex').disabled,
+      saveDisabled: document.getElementById('aut-mr-save').disabled,
+    };
+    orchCatalog = {
+      loading: false,
+      vendor: 'copilot',
+      providerLabel: 'GitHub Copilot',
+      command: 'copilot',
+      flag: '--model',
+      source: 'slash-model',
+      sourceLabel: 'Read from /model',
+      error: '',
+      models: [
+        { value: 'gpt-5.5', label: 'GPT-5.5' },
+        { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+        { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+      ],
+    };
+    bindOrchestratorConfig();
+    const modal = document.getElementById('aut-orch-modal');
+    const card = modal.querySelector('.modal-card');
+    const cardRect = card.getBoundingClientRect();
+    const visibleControls = Array.from(card.querySelectorAll('select,input')).filter((el) => !el.hidden);
+    const overflow = visibleControls.some((el) => {
+      const r = el.getBoundingClientRect();
+      return r.left < cardRect.left - 1 || r.right > cardRect.right + 1;
+    });
+    return {
+      title: card.querySelector('.modal-title').textContent,
+      provider: document.getElementById('aut-orch-vendor').textContent,
+      command: document.getElementById('aut-model-command').textContent,
+      status: document.getElementById('aut-model-status').textContent,
+      loadingState,
+      simpleValue: document.getElementById('aut-mr-simple').value,
+      complexValue: document.getElementById('aut-mr-complex').value,
+      simpleDisabled: document.getElementById('aut-mr-simple').disabled,
+      complexDisabled: document.getElementById('aut-mr-complex').disabled,
+      saveDisabled: document.getElementById('aut-mr-save').disabled,
+      options: Array.from(document.getElementById('aut-mr-simple').options).map((o) => o.value),
+      customValue: document.getElementById('aut-mr-simple-custom').value,
+      overflow,
+    };
+  });
+  expect(info.title).toContain('orchestrator models');
+  expect(info.provider).toBe('GitHub Copilot');
+  expect(info.command).toContain('--model');
+  expect(info.loadingState.status).toContain('Checking available models');
+  expect(info.loadingState.simpleDisabled).toBe(true);
+  expect(info.loadingState.complexDisabled).toBe(true);
+  expect(info.loadingState.saveDisabled).toBe(true);
+  expect(info.status).toContain('Loaded 3 available models');
+  expect(info.simpleValue).toBe('');
+  expect(info.complexValue).toBe('claude-sonnet-5');
+  expect(info.customValue).toBe('');
+  expect(info.simpleDisabled).toBe(false);
+  expect(info.complexDisabled).toBe(false);
+  expect(info.saveDisabled).toBe(false);
+  expect(info.options).toEqual(expect.arrayContaining(['gpt-5.5', 'gpt-5.4-mini', 'claude-sonnet-5']));
+  expect(info.options.join(' ')).not.toContain('Session');
+  expect(info.overflow).toBe(false);
+  await app.close();
+});
+
+test('Ctrl+R reloads in place without starting a chat', async () => {
+  const app = await launch();
+  const win = await ready(app);
+  const viewMenu = await app.evaluate(async ({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    const view = menu.items.find((item) => item.label === 'View');
+    return view.submenu.items.map((item) => ({
+      label: item.label,
+      role: item.role || '',
+      accelerator: item.accelerator || '',
+    }));
+  });
+  expect(viewMenu.some((item) => item.role === 'reload')).toBe(false);
+  expect(viewMenu.some((item) => item.label === 'Reload' && item.accelerator === 'CmdOrCtrl+R')).toBe(true);
+
+  await win.evaluate(async () => {
+    cfg = await window.husk.config.set({ skipWelcome: true });
+    setPage('mcp');
+    window.__huskReloadSentinel = 'before';
+  });
+  await win.addInitScript(() => {
+    window.__huskPageTransitions = [];
+    const attach = () => {
+      if (!document.body) { requestAnimationFrame(attach); return; }
+      const record = () => window.__huskPageTransitions.push(document.body.dataset.page || '');
+      record();
+      new MutationObserver(record).observe(document.body, { attributes: true, attributeFilter: ['data-page'] });
+    };
+    attach();
+  });
+  await app.evaluate(async ({ BrowserWindow }) => {
+    // Ctrl+R on non-chat pages still reloads in place and must not create a chat.
+    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    for (let i = 0; i < 5; i++) wc.send('app:reload-shortcut');
+  });
+  await win.waitForFunction(() => window.__huskReloadSentinel !== 'before' && document.body && document.body.dataset.page === 'mcp', null, { timeout: 10_000 });
+  const result = await win.evaluate(async () => {
+    const live = await window.husk.pty.list();
+    return {
+      page: document.body.dataset.page,
+      currentPage,
+      transitions: window.__huskPageTransitions || [],
+      tabCount: TABS.size,
+      liveSessions: live && live.ok ? live.sessions.length : -1,
+    };
+  });
+  expect(result.page).toBe('mcp');
+  expect(result.currentPage).toBe('mcp');
+  expect(result.transitions).not.toContain('chat');
+  expect(result.tabCount).toBe(0);
+  expect(result.liveSessions).toBe(0);
+  await app.close();
+});
+
+test('appearance changes require refresh confirmation before saving', async () => {
+  const app = await launch();
+  const win = await ready(app);
+  await win.evaluate(() => {
+    const onboarding = document.getElementById('onboarding');
+    if (onboarding) onboarding.hidden = true;
+    cfg = { ...cfg, theme: 'midnight', accent: 'orange', railExpanded: true };
+    applyTheme('midnight');
+    applyAccent('orange');
+    document.body.dataset.rail = 'expanded';
+    bindPrefs();
+    window.__appearanceReloads = 0;
+    reloadRendererPreservingPlace = () => { window.__appearanceReloads += 1; };
+  });
+
+  await win.evaluate(() => {
+    const sel = document.getElementById('pref-theme');
+    sel.value = 'light';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await win.waitForSelector('#confirm-modal:not([hidden])', { timeout: 5_000 });
+  await win.evaluate(() => { document.getElementById('onboarding')?.remove(); });
+  await win.click('#confirm-cancel');
+  await win.waitForFunction(() => document.getElementById('confirm-modal').hidden && !appearancePromptActive);
+  const cancelled = await win.evaluate(() => ({
+    theme: document.body.dataset.theme,
+    savedTheme: cfg.theme,
+    selectValue: document.getElementById('pref-theme').value,
+    reloads: window.__appearanceReloads,
+  }));
+  expect(cancelled.theme).toBe('midnight');
+  expect(cancelled.savedTheme).toBe('midnight');
+  expect(cancelled.selectValue).toBe('midnight');
+  expect(cancelled.reloads).toBe(0);
+
+  await win.evaluate(() => {
+    const swatch = document.querySelector('.accent-swatch[data-c="cyan"]');
+    swatch.click();
+  });
+  await win.waitForSelector('#confirm-modal:not([hidden])', { timeout: 5_000 });
+  await win.evaluate(() => { document.getElementById('onboarding')?.remove(); });
+  await win.click('#confirm-ok');
+  await win.waitForFunction(() => window.__appearanceReloads === 1);
+  const saved = await win.evaluate(() => ({
+    accent: cfg.accent,
+    reloads: window.__appearanceReloads,
+  }));
+  expect(saved.accent).toBe('cyan');
+  expect(saved.reloads).toBe(1);
   await app.close();
 });
 
@@ -204,6 +395,113 @@ test('Revert is hidden for runs with no snapshot, shown otherwise (review + end 
   expect(r.reviewRevertShownWithSnap).toBe(true);
   expect(r.endRevertHiddenNoSnap).toBe(true);
   expect(r.endRevertShownWithSnap).toBe(true);
+  await app.close();
+});
+
+test('Autopilot review preserves original mission and marks idle runs incomplete', async () => {
+  const app = await launch();
+  const win = await ready(app);
+  const r = await win.evaluate(() => {
+    setPage('autopilot');
+    const summary = {
+      ok: true,
+      originalGoal: 'Bump dependencies safely',
+      goal: "Integrate the team's parallel work: Bump dependencies safely",
+      endReason: 'agent_idle',
+      summary: {
+        status: 'ended',
+        haltReason: 'natural',
+        haltDetail: { reason: 'agent_idle' },
+        durationMs: 1000,
+        meter: { totalTokens: 2100, dollars: 0.03, tokensPartial: true },
+      },
+      diff: [{ path: 'package-lock.json', status: 'modified' }],
+      eventCount: 3,
+      chain: { valid: true },
+    };
+    enterReviewMode({ sessionId: 's', workspaceRoot: '/w', summary, retained: true, runId: 'r' });
+    const status = document.getElementById('aut-page-status');
+    const tokenValue = document.getElementById('aut-page-val-tokens');
+    const out = {
+      mission: document.getElementById('aut-page-goal-text').textContent,
+      statusText: document.getElementById('aut-page-status-text').textContent,
+      statusIncomplete: status.classList.contains('is-incomplete'),
+      tokenTitle: tokenValue.getAttribute('title') || '',
+      conclusion: document.querySelector('.aut-conclusion-title')?.textContent || '',
+    };
+    autopilotReview = false;
+    autopilotReviewData = null;
+    paintAutopilotBanner();
+    return out;
+  });
+  expect(r.mission).toBe('Bump dependencies safely');
+  expect(r.statusText).toBe('Incomplete');
+  expect(r.statusIncomplete).toBe(true);
+  expect(r.tokenTitle).toContain('Partial token accounting');
+  expect(r.conclusion).toContain('went idle');
+  await app.close();
+});
+
+test('Autopilot integrator start keeps ended worker fleet totals', async () => {
+  const app = await launch();
+  const win = await ready(app);
+  const r = await win.evaluate(() => {
+    activeRuns.clear();
+    plannedAgents = [];
+    activeRuns.set('worker-a', {
+      groupId: 'g1',
+      ended: true,
+      budget: { totalTokens: 3200, dollars: 0.02 },
+      startedAt: Date.now() - 5000,
+    });
+    activeRuns.set('worker-b', {
+      groupId: 'g1',
+      ended: true,
+      budget: { totalTokens: 900, dollars: 0.01 },
+      startedAt: Date.now() - 4000,
+    });
+    const sameGroupResets = shouldResetAutopilotForStarted({ groupId: 'g1', role: 'integrator' });
+    const newRunResets = shouldResetAutopilotForStarted({ groupId: 'g2', role: 'other' });
+    renderUsageStripLive();
+    const tokensBefore = document.getElementById('aut-page-val-tokens').textContent;
+    return { sameGroupResets, newRunResets, tokensBefore };
+  });
+  expect(r.sameGroupResets).toBe(false);
+  expect(r.newRunResets).toBe(true);
+  expect(r.tokensBefore).toContain('4.1k');
+  await app.close();
+});
+
+test('Autopilot token source label does not flicker after partial accounting appears', async () => {
+  const app = await launch();
+  const win = await ready(app);
+  const r = await win.evaluate(() => {
+    activeRuns.clear();
+    plannedAgents = [];
+    const run = {
+      runId: 'r',
+      groupId: 'g',
+      ended: false,
+      budget: { totalTokens: 1000, outputTokens: 1000, dollars: 0.01, tokensReported: true },
+      startedAt: Date.now() - 1000,
+    };
+    activeRuns.set('r', run);
+    renderUsageStripLive();
+    const first = document.getElementById('aut-tb-src').textContent;
+    run.budget = { totalTokens: 1200, outputTokens: 1200, dollars: 0.02, tokensPartial: true };
+    run.tokensPartialSeen = true;
+    renderUsageStripLive();
+    const second = document.getElementById('aut-tb-src').textContent;
+    run.budget = { totalTokens: 1300, outputTokens: 1300, dollars: 0.03, tokensReported: true };
+    if (run.tokensPartialSeen) run.budget.tokensPartial = true;
+    renderUsageStripLive();
+    const third = document.getElementById('aut-tb-src').textContent;
+    activeRuns.clear();
+    return { first, second, third };
+  });
+  expect(r.first).toBe('approx · status line');
+  expect(r.second).toBe('partial · output/cache only');
+  expect(r.third).toBe('partial · output/cache only');
   await app.close();
 });
 

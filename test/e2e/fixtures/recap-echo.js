@@ -2,10 +2,8 @@
 
 // E2E fixture standing in for a full-screen agent like copilot: it draws the
 // recap line and UI chrome on SEPARATE grid rows using cursor positioning, so
-// the raw byte stream interleaves them (no newline between recap and chrome,
-// which is what used to pollute the spoken recap) while the rendered grid keeps
-// each on its own clean row. It also redraws the recap later to exercise the
-// once-per-turn / no-re-read guarantee.
+// the raw byte stream interleaves them while the rendered grid keeps each row
+// clean. It also redraws the recap later to exercise the once-per-turn rule.
 
 const w = (s) => process.stdout.write(s);
 const RECAP = '\u{1F5E3}\u{FE0F} Husk: Nice to meet you too, happy to help with anything you need.';

@@ -1,10 +1,7 @@
 'use strict';
 
-// Regression: on a short window the rail's bottom group (tool selector +
-// Preferences) and the status panel footer (check for updates) must stay
-// visible, with the rail middle and status content scrolling. The root cause
-// was #main using an implicit auto grid row that grew to the tallest column
-// and pushed everyone's bottom past the viewport.
+// On a short window the rail bottom group and status footer remain visible.
+// The middle rail content and status body scroll independently.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -32,7 +29,7 @@ test('short window keeps the rail bottom and status footer visible (issue 4)', a
   await win.waitForTimeout(200);
 
   const info = await win.evaluate(() => {
-    // Make the rail tall so it would overflow without the fix.
+    // Make the rail tall enough to require middle-section scrolling.
     const rec = document.getElementById('rail-recent');
     const list = document.getElementById('rail-recent-list');
     if (rec) rec.hidden = false;

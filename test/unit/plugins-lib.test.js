@@ -88,15 +88,17 @@ test('readCatalog unions marketplaces and skips malformed entries', (t) => {
     name: 'official',
     plugins: [
       { name: 'good', description: 'd', category: 'c', author: { name: 'a' } },
+      { name: 'alpha', description: 'first', category: 'tools', author: { name: 'z' } },
       { description: 'no name, skipped' },
       null,
     ],
   }));
   const cat = P.readCatalog(dir);
-  assert.equal(cat.length, 1);
-  assert.equal(cat[0].id, 'good@official');
+  assert.equal(cat.length, 2);
+  assert.deepEqual(cat.map((p) => p.name), ['alpha', 'good']);
+  assert.equal(cat[1].id, 'good@official');
   assert.equal(cat[0].marketplace, 'official');
-  assert.equal(cat[0].author, 'a');
+  assert.equal(cat[1].author, 'a');
 });
 
 test('readMarketplaces lists known marketplaces with repo', (t) => {
@@ -112,7 +114,13 @@ test('readMarketplaces lists known marketplaces with repo', (t) => {
 // ─── editor guard rails ─────────────────────────────────────────────────────
 
 test('isEditableFile allows small text files, blocks binaries and giants', () => {
+  assert.ok(P.isEditableName('.env'));
+  assert.ok(P.isEditableName('.gitignore'));
+  assert.ok(P.isEditableName('hooks/run.SH'));
+  assert.equal(P.isEditableName('README'), false);
+  assert.equal(P.isEditableName('archive.zip'), false);
   assert.ok(P.isEditableFile('README.md', 100));
+  assert.ok(P.isEditableFile('README.md', P.MAX_FILE_BYTES));
   assert.ok(P.isEditableFile('hooks/run.sh', 100));
   assert.equal(P.isEditableFile('logo.png', 100), false);
   assert.equal(P.isEditableFile('big.md', P.MAX_FILE_BYTES + 1), false);

@@ -105,7 +105,7 @@ function notify(message, opts = {}) {
 // Back-compatible API used across the renderer.
 function toast(msg, kind = '') { notify(msg, { kind }); }
 // Toast with a single action button. Used when the message alone is a dead
-// end and the fix is one click away (e.g. missing agent binary → open setup).
+// end and the next action is explicit (e.g. missing agent binary -> open setup).
 function toastAction(msg, actionLabel, onAction, kind = 'error') {
   const card = notify(msg, { kind, ttl: 30000 });
   if (!card) return;
@@ -196,8 +196,72 @@ let lastStats = null;
 // Last non-empty context-window reading, kept so the Usage panel never flickers
 // the block out on a transient poll (see refreshStatusline).
 let lastGoodCtx = null;
-let currentPage = 'chat';
+const RELOAD_STATE_KEY = 'husk:reload-state';
+const ROUTE_STATE_KEY = 'husk:route-state';
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins']);
+let bootingFromReloadState = null;
+
+function normalizePageName(name) {
+  return VALID_PAGES.has(name) ? name : 'chat';
+}
+
+function readStoredState(key, remove = false) {
+  try {
+    const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
+    if (remove) {
+      try { sessionStorage.removeItem(key); } catch (_) {}
+      try { localStorage.removeItem(key); } catch (_) {}
+    }
+    if (!raw) return null;
+    const state = JSON.parse(raw);
+    if (!state || Date.now() - Number(state.ts || 0) > 60_000) return null;
+    state.page = normalizePageName(state.page);
+    return state;
+  } catch (_) { return null; }
+}
+
+function writeStoredState(key, state) {
+  try {
+    const restorePage = bootingFromReloadState && bootingFromReloadState.page;
+    const page = normalizePageName(restorePage || currentPage);
+    const tabId = restorePage ? (bootingFromReloadState.activeTabId || activeTabId) : activeTabId;
+    const payload = JSON.stringify({
+      page,
+      activeTabId: tabId,
+      ts: Date.now(),
+      suppressAutoChat: !!(state && state.suppressAutoChat),
+    });
+    sessionStorage.setItem(key, payload);
+    localStorage.setItem(key, payload);
+    if (key === ROUTE_STATE_KEY && window.husk && window.husk.ui && window.husk.ui.setRouteState) {
+      window.husk.ui.setRouteState({ page, activeTabId: tabId }).catch(() => {});
+    }
+  } catch (_) {}
+}
+
+function saveRouteState() { writeStoredState(ROUTE_STATE_KEY, { suppressAutoChat: false }); }
+function saveReloadState() { writeStoredState(RELOAD_STATE_KEY, { suppressAutoChat: true }); }
+
+function takeReloadState() {
+  return readStoredState(RELOAD_STATE_KEY, true);
+}
+
+function reloadRendererPreservingPlace() {
+  saveReloadState();
+  window.location.reload();
+}
+
+const initialRouteState = readStoredState(RELOAD_STATE_KEY, false) || readStoredState(ROUTE_STATE_KEY, false);
+let currentPage = normalizePageName((initialRouteState && initialRouteState.page) || 'chat');
 let chatHasInput = false;
+
+function applyPageShell(name) {
+  const page = normalizePageName(name);
+  document.body.dataset.page = page;
+  $$('.page').forEach((p) => { p.hidden = p.dataset.page !== page; });
+  $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === page));
+}
+applyPageShell(currentPage);
 
 // ─── Tabs: one PTY-backed terminal per chat tab, all live in parallel ────────
 // Each tab owns its own xterm instance + FitAddon + DOM pane, keyed by the
@@ -283,6 +347,10 @@ function createTab(idOverride) {
   });
   t.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key || '').toLowerCase() === 'r') {
+      refreshFromShortcut();
+      return false;
+    }
     const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
     if (meta && (e.key === 'c' || e.key === 'C')) {
       if (t.hasSelection()) { copyTerminalSelection(); return false; }
@@ -313,8 +381,7 @@ function activateTab(id) {
   // Refresh the status panel for the newly focused tab. The main process must
   // switch the active session FIRST so stats:get resolves THIS tab's
   // transcript, then we fetch fresh stats (not the previous tab's cached
-  // numbers) and render. Without the re-fetch the panel kept showing the prior
-  // chat's context until the next poll.
+  // numbers) and render.
   Promise.resolve(window.husk.pty.setActive(id))
     .then(() => refreshStats())
     .then(() => refreshStatusline())
@@ -441,6 +508,16 @@ const MAC_TRUST_CMD = 'xattr -dr com.apple.quarantine /Applications/Husk.app';
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.8.9': {
+    items: [
+      "<strong>Every agent shows its real model.</strong> The Autopilot lineup names the model each agent actually ran, with per-agent time, tokens, cost, and cache split.",
+      "<strong>One history entry per team run.</strong> A team's agents now group into a single run with combined files, tokens, and spend.",
+      "<strong>Pick models like a dispatcher.</strong> A Configure wizard sets Simple and Complex models per CLI, and the run log explains every routing decision.",
+      "<strong>Runs that stall end themselves.</strong> A progress governor halts idle or looping agents before they burn through your budget.",
+      "<strong>Preview themes live.</strong> Browse every theme and accent in Preferences and only save what you like; Cancel puts everything back.",
+      "<strong>Bug fixes.</strong> Cleaner workflow naming, readable usage limits, agent cards that never clip, and a smooth refresh after saving a theme.",
+    ],
+  },
   '2.8.8': {
     items: [
       "<strong>Install in one line.</strong> A single command sets Husk up on Linux and macOS, with checksums verified.",
@@ -575,11 +652,84 @@ function persistConfig(patch) {
   _flushCfgPatch();
 }
 
+function appearanceSnapshot() {
+  return {
+    theme: cfg.theme || 'midnight',
+    accent: cfg.accent || 'orange',
+    railExpanded: cfg.railExpanded !== false,
+  };
+}
+function restoreAppearanceSnapshot(snap) {
+  applyTheme(snap.theme);
+  applyAccent(snap.accent);
+  document.body.dataset.rail = snap.railExpanded ? 'expanded' : 'collapsed';
+  syncRailToggleTitle();
+  bindPrefs();
+  setTimeout(fitNow, 120);
+}
+// Appearance changes preview live and stay unsaved until the user commits.
+// Every theme/accent/rail change applies to the DOM immediately (so themes can
+// be browsed freely) and accumulates in pendingAppearance; Save persists the
+// merged patch, Revert (or navigating away from Preferences) restores the
+// saved appearance.
+let pendingAppearance = null;
+function syncAppearanceActionsBar() {
+  const el = $('#pref-appearance-actions');
+  if (el) el.hidden = !pendingAppearance;
+}
+function previewAppearance(patch) {
+  pendingAppearance = Object.assign(pendingAppearance || {}, patch);
+  if ('theme' in patch) applyTheme(patch.theme);
+  if ('accent' in patch) applyAccent(patch.accent);
+  if ('railExpanded' in patch) {
+    document.body.dataset.rail = patch.railExpanded ? 'expanded' : 'collapsed';
+    syncRailToggleTitle();
+    setTimeout(fitNow, 120);
+  }
+  // A preview that lands back on every saved value is not pending anymore.
+  const saved = appearanceSnapshot();
+  if (Object.keys(pendingAppearance).every((k) => pendingAppearance[k] === saved[k])) {
+    pendingAppearance = null;
+  }
+  syncAppearanceActionsBar();
+}
+function revertAppearancePreview() {
+  if (!pendingAppearance) return;
+  pendingAppearance = null;
+  restoreAppearanceSnapshot(appearanceSnapshot());
+  syncAppearanceActionsBar();
+}
+async function saveAppearancePreview() {
+  if (!pendingAppearance) return;
+  const patch = pendingAppearance;
+  pendingAppearance = null;
+  try {
+    cfg = await window.husk.config.set(patch);
+    // Refresh with the same semantics as the Ctrl+R shortcut
+    // (refreshFromShortcut): on the chat page restart the agent so the
+    // conversation keeps running; every other page gets the full renderer
+    // reload.
+    if (currentPage === 'chat') {
+      bindPrefs();
+      syncAppearanceActionsBar();
+      closePrefsModal();
+      await restartPty();
+    } else {
+      reloadRendererPreservingPlace();
+    }
+    return;
+  } catch (err) {
+    restoreAppearanceSnapshot(appearanceSnapshot());
+    toast(`Could not save appearance: ${(err && err.message) || err}`, 'error');
+  }
+  bindPrefs();
+  syncAppearanceActionsBar();
+}
+
 // Coalesce a tab's PTY output into one xterm write per animation frame. A
-// chatty agent emits many chunks in quick succession; writing each one
-// separately (with its own scroll callback and speech scan) burned CPU
-// and janked scrolling. Buffering to the next frame collapses a burst
-// into a single write + single scroll + single speech scan. Each tab owns
+// chatty agent emits many chunks in quick succession, and each separate write
+// costs its own scroll callback and speech scan. Buffering to the next frame
+// collapses a burst into a single write, scroll, and speech scan. Each tab owns
 // its own buffer so a background agent's output never bleeds into another.
 function _flushTabWrite(tab) {
   tab.flushScheduled = false;
@@ -615,8 +765,7 @@ window.husk.pty.onExit((sessionId, code) => {
   // purpose, otherwise the line stitches into the new PTY's welcome banner.
   if (!tab || tab.restarting) return;
   if (code === 127) {
-    // 127 = shell could not find the agent binary. Restart can never fix
-    // that, so route the user to the installer instead.
+    // 127 = shell could not find the agent binary; route the user to setup.
     const cmd = (cfg && cfg.agentCommand || 'the agent').split(/\s+/)[0];
     tab.term.writeln(`\r\n\x1b[38;2;244;63;94m[${cmd} was not found on this system]\x1b[0m`);
     tab.term.writeln(`\x1b[38;2;106;115;133mInstall it or pick a different CLI from the setup wizard.\x1b[0m`);
@@ -711,7 +860,7 @@ async function startPty() {
 }
 
 // Open a brand-new chat in its own tab, leaving every existing tab's agent
-// running. This is what "+ New Chat" now does instead of restarting.
+// running. Backs the "+ New Chat" action.
 async function openNewChatTab(opts = {}) {
   const tab = createTab();
   activateTab(tab.id);
@@ -768,6 +917,33 @@ async function restartPty(opts = {}) {
   tab.term.focus();
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
   if (!opts.silent) toast('New session', 'success');
+}
+
+let lastShortcutReloadAt = 0;
+function reloadFromShortcut() {
+  const now = Date.now();
+  if (now - lastShortcutReloadAt < 750) return;
+  lastShortcutReloadAt = now;
+  reloadRendererPreservingPlace();
+}
+function refreshFromShortcut() {
+  const now = Date.now();
+  if (now - lastShortcutReloadAt < 750) return;
+  lastShortcutReloadAt = now;
+  if (currentPage === 'chat') restartPty();
+  else reloadRendererPreservingPlace();
+}
+function markReloadInPlace() {
+  saveReloadState();
+}
+if (window.husk.shortcuts && window.husk.shortcuts.onReload) {
+  window.husk.shortcuts.onReload(refreshFromShortcut);
+}
+if (window.husk.shortcuts && window.husk.shortcuts.onReloadInPlace) {
+  window.husk.shortcuts.onReloadInPlace(markReloadInPlace);
+}
+if (window.husk.shortcuts && window.husk.shortcuts.onRestartAgent) {
+  window.husk.shortcuts.onRestartAgent(() => { restartPty(); });
 }
 
 // Close one chat tab and reap its agent. Never drops to zero tabs: closing the
@@ -967,16 +1143,15 @@ function applyAccent(accent) {
 let pageHistory = [];
 let pageForwardStack = [];
 function setPage(name, opts = {}) {
-  if (!['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins'].includes(name)) name = 'chat';
+  name = normalizePageName(name);
   if (!opts._nav && currentPage && currentPage !== name) {
     pageHistory.push(currentPage);
     if (pageHistory.length > 64) pageHistory.shift();
     pageForwardStack = [];
   }
   currentPage = name;
-  document.body.dataset.page = name;
-  $$('.page').forEach((p) => { p.hidden = p.dataset.page !== name; });
-  $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === name));
+  saveRouteState();
+  applyPageShell(name);
   if (name === 'chat') { renderChatsPanelSessions(); setTimeout(fitNow, 30); if (term) term.focus(); }
   if (name === 'agents') renderAgents();
   if (name === 'workflows') renderWorkflows();
@@ -985,12 +1160,19 @@ function setPage(name, opts = {}) {
   if (name === 'prompts') renderPrompts();
   if (name === 'skills') renderSkills();
   if (name === 'sessions') renderSessions();
-  if (name === 'files') { fxSetOpenFolderLabel(cfg.treeRoot); $('#files-hidden').checked = !!cfg.showHidden; fxLoad(cfg.treeRoot); }
+  if (name === 'files') {
+    const c = cfg || {};
+    fxSetOpenFolderLabel(c.treeRoot);
+    $('#files-hidden').checked = !!c.showHidden;
+    fxLoad(c.treeRoot);
+  }
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
 }
 
-$$('.rail-item').forEach((b) => b.addEventListener('click', () => setPage(b.dataset.page)));
+// Only rail items that name a page navigate; the Preferences gear (no
+// data-page) opens its modal over whatever page is currently shown.
+$$('.rail-item').forEach((b) => b.addEventListener('click', () => { if (b.dataset.page) setPage(b.dataset.page); }));
 // Sidebar collapse/expand toggle: switches between the labeled rail (names) and
 // the icon-only rail. Persists the choice and refits the terminal.
 $('#rail-toggle')?.addEventListener('click', async () => {
@@ -1043,7 +1225,7 @@ function syncStatusToggleTitle() {
   if (!t) return;
   t.title = document.body.dataset.status === 'collapsed' ? 'Expand status panel' : 'Collapse status panel';
 }
-// Rail is permanently icon-only; toggle button removed from HTML.
+// Rail is permanently icon-only.
 
 const spToggle = $('#sp-toggle');
 if (spToggle) {
@@ -1061,10 +1243,8 @@ async function refreshStats() {
   try {
     const s = await window.husk.stats.get();
     lastStats = s;
-    // The Skills subtitle is owned entirely by applyPromptsLabels (agent
-    // aware). refreshStats used to also write it on a timer, clobbering
-    // that text with a hardcoded claude path for every agent. Refresh it
-    // here so the count stays current without reintroducing the conflict.
+    // The Skills subtitle is owned by applyPromptsLabels so labels stay
+    // agent-aware while the count remains current.
     applyPromptsLabels();
     // Sessions subheader is refined by renderSessions once the active agent's
     // sessions are read; show an agent-appropriate hint until then.
@@ -1103,6 +1283,13 @@ function fmtThousands(n) {
   if (v >= 1000) return (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
   return String(v);
 }
+function fmtMs(ms) {
+  const v = Number(ms) || 0;
+  if (v <= 0) return '';
+  if (v >= 60000) return `${Math.round(v / 6000) / 10}m`;
+  if (v >= 1000) return `${Math.round(v / 100) / 10}s`;
+  return `${Math.round(v)}ms`;
+}
 // Compact token count for the context readout: 330K, 1M, 1.5M.
 function fmtCtx(n) {
   const v = Number(n) || 0;
@@ -1133,7 +1320,7 @@ function sparkHTML(values, timestamps) {
   }
   return `<div class="sp-spark">${bars}</div>${axis}`;
 }
-// Info icons removed per preference; helper kept as a no-op so call sites stay intact.
+// No-op: retained so existing call sites stay valid.
 function spInfo(_tip) { return ''; }
 
 // ─── PAI-style context meter ───────────────────────────────────────────────────
@@ -1205,7 +1392,7 @@ async function refreshStatusline() {
   // what we know, never blank a section.
   let tz = '';
   try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
-  // Pretty fallback: "Asia/Jerusalem" -> "Jerusalem", "America/New_York" -> "New York".
+  // Pretty fallback: "Europe/London" -> "London", "America/New_York" -> "New York".
   const tzPretty = tz.includes('/') ? tz.split('/').pop().replace(/_/g, ' ') : tz;
   const headline = here || tzPretty || '';
   const weatherStr = s.weather && s.weather.temp
@@ -1238,6 +1425,7 @@ async function refreshStatusline() {
   // The active agent CLI (claude, codex, copilot, ...) and its version, so the
   // Build section reflects whichever agent is selected, not a fixed one.
   const agentLabel = (s.agent || 'claude').replace(/^\w/, (c) => c.toUpperCase());
+  const isCopilotAgent = String(s.agent || '').toLowerCase() === 'copilot';
   // Workspace + git: vendor-neutral, the most glanceable state for a coding
   // session. Branch with ahead/behind arrows and a dirty-file count.
   const ws = s.workspace || {};
@@ -1314,12 +1502,22 @@ async function refreshStatusline() {
         `) : (u.agentSession ? `
         <div class="sp-row"><span class="sp-muted">${escapeHtml(u.agentSession.label)} ${spInfo('Session usage reported by your CLI in its own status line.')}</span><span class="sp-mono sp-accent">${escapeHtml(fmtThousands(u.agentSession.value))}</span></div>
         ` : `
-        <div class="sp-row sp-tiny sp-muted">Plan usage limits appear here when your CLI reports them.</div>
+        <div class="sp-row sp-tiny sp-muted">${isCopilotAgent ? 'Copilot does not expose plan-limit percentages; showing session usage from its event log.' : 'Plan usage limits appear here when your CLI reports them.'}</div>
         `)}
         ${u.session ? `
         <div class="sp-divider"></div>
         <div class="sp-row"><span class="sp-muted">Session turns ${spInfo('Number of user and assistant messages exchanged in this session.')}</span><span class="sp-mono sp-accent">${escapeHtml(u.session.turns)}</span></div>
         ${u.session.partialTokens ? '' : `<div class="sp-row"><span class="sp-muted">Session tokens ${spInfo('Estimated total tokens processed across this whole session (cumulative odometer, not the current context window).')}</span><span class="sp-mono sp-accent">~${escapeHtml(fmtThousands(u.session.tokens))}</span></div>`}
+        ${isCopilotAgent ? `
+        ${u.session.currentTokens ? `<div class="sp-row"><span class="sp-muted">Current tokens ${spInfo('Copilot-reported current token footprint for this session.')}</span><span class="sp-mono sp-accent">${escapeHtml(fmtThousands(u.session.currentTokens))}</span></div>` : ''}
+        ${u.session.conversationTokens ? `<div class="sp-row"><span class="sp-muted">Conversation tokens ${spInfo('Copilot-reported conversation tokens at last shutdown checkpoint.')}</span><span class="sp-mono">${escapeHtml(fmtThousands(u.session.conversationTokens))}</span></div>` : ''}
+        ${u.session.outputTokens ? `<div class="sp-row"><span class="sp-muted">Output tokens ${spInfo('Assistant output tokens recorded by Copilot.')}</span><span class="sp-mono">${escapeHtml(fmtThousands(u.session.outputTokens))}</span></div>` : ''}
+        ${u.session.reasoningTokens ? `<div class="sp-row"><span class="sp-muted">Reasoning tokens ${spInfo('Reasoning tokens recorded by Copilot for supported models.')}</span><span class="sp-mono">${escapeHtml(fmtThousands(u.session.reasoningTokens))}</span></div>` : ''}
+        ${u.session.cacheReadTokens || u.session.cacheWriteTokens ? `<div class="sp-row"><span class="sp-muted">Cache read/write ${spInfo('Prompt-cache tokens recorded by Copilot.')}</span><span class="sp-mono">${escapeHtml(fmtThousands(u.session.cacheReadTokens || 0))} / ${escapeHtml(fmtThousands(u.session.cacheWriteTokens || 0))}</span></div>` : ''}
+        ${u.session.systemTokens || u.session.toolDefinitionsTokens ? `<div class="sp-row"><span class="sp-muted">System/tools ${spInfo('System prompt and tool-definition token footprint Copilot reports.')}</span><span class="sp-mono">${escapeHtml(fmtThousands(u.session.systemTokens || 0))} / ${escapeHtml(fmtThousands(u.session.toolDefinitionsTokens || 0))}</span></div>` : ''}
+        ${u.session.premiumRequests ? `<div class="sp-row"><span class="sp-muted">Premium requests ${spInfo('Premium request count reported by Copilot.')}</span><span class="sp-mono sp-accent">${escapeHtml(fmtThousands(u.session.premiumRequests))}</span></div>` : ''}
+        ${u.session.apiDurationMs ? `<div class="sp-row"><span class="sp-muted">API time ${spInfo('Total API duration reported by Copilot.')}</span><span class="sp-mono">${escapeHtml(fmtMs(u.session.apiDurationMs))}</span></div>` : ''}
+        ` : ''}
         ` : ''}
         ${(u.api_cost || u.extra_used || u.session_cost) ? `
         <div class="sp-divider"></div>
@@ -1571,11 +1769,10 @@ async function deleteProject(id, name) {
   const pickEl = document.getElementById('npj-pick');
   const cancelBtn = document.getElementById('npj-cancel');
   const createBtn = document.getElementById('npj-create');
-  // Renamed from `open` / `close` because in non-strict mode a function
-  // declaration in a block hoists to the script scope and shadows the
-  // global window.open / window.close. xterm's link click path calls
-  // window.open(), so without the rename the local function was running
-  // in place of the browser builtin and opening the project modal.
+  // Named openProjectModal / closeProjectModal rather than open / close: in
+  // non-strict mode a function declaration in a block hoists to the script
+  // scope and shadows the global window.open / window.close that xterm's link
+  // click path calls.
   function openProjectModal() {
     if (!modal) return;
     if (nameEl) nameEl.value = '';
@@ -1660,7 +1857,7 @@ function paintWorkflowList() {
   if (!grid) return;
   if (!workflowsCache.length) {
     // eslint-disable-next-line no-unsanitized/property
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon"></div><div class="es-title">No workflows yet</div><div class="es-msg">Build a pipeline by chaining agents together. Each step feeds its output to the next.</div></div>`;
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.workflows}</div><div class="es-title">No workflows yet</div><div class="es-msg">Build a pipeline by chaining agents together. Each step feeds its output to the next.</div></div>`;
     return;
   }
   // eslint-disable-next-line no-unsanitized/property
@@ -1887,10 +2084,21 @@ function wfSyncPanelToNode() {
   if (metaEl) metaEl.textContent = data.agentCommand || 'default agent';
 }
 
+function wfSyncNameCount() {
+  const inp = $('#wf-name-input');
+  const count = $('#wf-name-count');
+  if (!inp || !count) return;
+  const max = parseInt(inp.getAttribute('maxlength'), 10) || 80;
+  const len = (inp.value || '').length;
+  count.textContent = `${len}/${max}`;
+  count.classList.toggle('near-limit', len >= max * 0.9);
+}
+
 function openWorkflowBuilder(editId) {
   editingWorkflowId = editId || null;
   const existing = editId ? workflowsCache.find((w) => w.id === editId) : null;
   if ($('#wf-name-input')) $('#wf-name-input').value = existing ? existing.name : '';
+  wfSyncNameCount();
   if ($('#wf-trigger-select')) $('#wf-trigger-select').value = existing ? (existing.trigger || 'manual') : 'manual';
   wfShowView('builder');
   hideNodePanel();
@@ -2179,6 +2387,7 @@ window.husk.workflows.onRunDone((d) => {
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
 $('#btn-wf-builder-back') && $('#btn-wf-builder-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
 $('#btn-save-workflow') && $('#btn-save-workflow').addEventListener('click', saveWorkflow);
+$('#wf-name-input') && $('#wf-name-input').addEventListener('input', wfSyncNameCount);
 $('#btn-add-wf-node') && $('#btn-add-wf-node').addEventListener('click', () => wfAddCanvasNode(null));
 $('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => { wfShowView('list'); });
 // Node config panel
@@ -3343,9 +3552,13 @@ async function renderSessions() {
   // Reflect which agent's sessions are shown, and where they live.
   const subEl = $('#sessions-sub');
   if (subEl) {
+    const hidden = Number(res.hiddenAutopilotSessions) || 0;
+    const hiddenText = hidden
+      ? ` · ${hidden} Autopilot ${hidden === 1 ? 'session is' : 'sessions are'} hidden here and kept under Autopilot Recent runs`
+      : '';
     subEl.textContent = res.supported === false
       ? `Session history for ${sessionsAgent} is not available yet`
-      : `${sessionsAgent} sessions at ${sessionsDir || ''} · click to preview, Resume to continue`;
+      : `${sessionsAgent} sessions at ${sessionsDir || ''} · click to preview, Resume to continue${hiddenText}`;
   }
   if (res.supported === false) {
     // eslint-disable-next-line no-unsanitized/property -- Static, agent name escaped.
@@ -3430,8 +3643,8 @@ function toggleSessionSelection(p) {
   const wasSelected = sessionsSelected.has(p);
   if (wasSelected) sessionsSelected.delete(p);
   else sessionsSelected.add(p);
-  // Update only the affected row in place. Repainting the whole list on
-  // every checkbox click was an O(n) DOM teardown and listener rebind.
+  // Update only the affected row in place: repainting the whole list on every
+  // checkbox click costs an O(n) DOM teardown and listener rebind.
   const ul = $('#sessions-list');
   if (ul) {
     for (const row of ul.querySelectorAll('.session-row')) {
@@ -4511,6 +4724,9 @@ function closePrefsModal() {
   if (!modal) return;
   modal.hidden = true;
   backdrop.hidden = true;
+  // Closing Preferences abandons any unsaved appearance preview, so the UI
+  // never keeps wearing a theme that was not committed.
+  revertAppearancePreview();
 }
 (function wirePrefsModal() {
   // Gear icon in rail opens modal
@@ -4545,38 +4761,108 @@ function closePrefsModal() {
 })();
 
 // Orchestrator model routing, configured from the "Configure" button next to
-// Start a run. Dropdowns are populated from the active agent's model catalog;
-// "Custom" reveals a free-text field. Only claude/gemini ship known names;
-// other vendors offer Automatic + Custom only.
-const ORCH_MODEL_CATALOG = {
-  claude: [
-    { value: 'haiku', label: 'Haiku (cheapest)' },
-    { value: 'sonnet', label: 'Sonnet (balanced)' },
-    { value: 'opus', label: 'Opus (most capable)' },
-    { value: 'claude-fable-5', label: 'Fable 5 (max, premium)' },
-  ],
-  gemini: [
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (cheap)' },
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (smart)' },
-  ],
-  codex: [],
-  aider: [],
-  copilot: [],
+// Start a run. The catalog is loaded from the active provider instead of a
+// hardcoded list (Copilot/Claude/Gemini via /model, Aider via --list-models).
+let orchCatalog = {
+  loading: false,
+  vendor: '',
+  providerLabel: '',
+  command: '',
+  flag: '',
+  models: [],
+  source: 'none',
+  sourceLabel: '',
+  error: '',
 };
 function orchVendor() {
   return (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude')
     .trim().split(/\s+/)[0].split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
 }
+function orchModelFlagFor(vendor) {
+  return vendor === 'gemini' ? '-m'
+    : ['claude', 'copilot', 'codex', 'aider'].includes(vendor) ? '--model'
+    : '';
+}
+function isUsableModelValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 90) return false;
+  if (/\s/.test(raw)) return false;
+  if (/not logged in|use \/login|authenticate|plan:|session:|aic used|context\b/i.test(raw)) return false;
+  // Reject config-path and doc tokens (claude/settings.json, claude-api)
+  // so garbage saved by older parses cannot re-enter the dropdown or save.
+  if (/\.(json|jsonc|ya?ml|md|txt|log|lock|toml|ini|cfg|conf|sh|mjs|cjs|js|ts)$/i.test(raw)) return false;
+  if (/(^|[-./_])(api|sdk|cli|docs?|settings|config|readme|help)$/i.test(raw)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(raw);
+}
+function orchSavedModels(vendor) {
+  const mr = ((cfg && cfg.modelRouting) || {})[vendor] || {};
+  return [mr.cheap, mr.smart].filter(isUsableModelValue).map((value) => ({ value, label: prettyModel(value) || value }));
+}
+function orchMergedModels(vendor) {
+  const source = Array.isArray(orchCatalog.models) ? orchCatalog.models : [];
+  const seen = new Set();
+  const out = [];
+  for (const m of source.concat(orchSavedModels(vendor))) {
+    const value = String((m && m.value) || '').trim();
+    if (!value || seen.has(value.toLowerCase())) continue;
+    seen.add(value.toLowerCase());
+    out.push({ value, label: String((m && m.label) || prettyModel(value) || value) });
+  }
+  return out;
+}
+function updateOrchCatalogStatus() {
+  const status = $('#aut-model-status');
+  if (!status) return;
+  status.className = 'aut-model-status';
+  if (orchCatalog.loading) {
+    status.classList.add('is-loading');
+    status.textContent = 'Checking available models...';
+    return;
+  }
+  const count = Array.isArray(orchCatalog.models) ? orchCatalog.models.length : 0;
+  if (count) {
+    status.classList.add('is-live');
+    status.textContent = `Loaded ${count} available model${count === 1 ? '' : 's'}`;
+    return;
+  }
+  if (orchCatalog.error) {
+    status.classList.add('is-error');
+    status.textContent = orchCatalog.error;
+    return;
+  }
+  status.textContent = 'No model catalog yet. Use Refresh models, or enter an exact model id manually.';
+}
+function orchCatalogReady() {
+  return !orchCatalog.loading && Array.isArray(orchCatalog.models) && orchCatalog.models.length > 0;
+}
+function orchCatalogBusy() {
+  return !!orchCatalog.loading;
+}
 function fillOrchSelect(sel, customInput, vendor, current) {
   if (!sel) return;
+  current = isUsableModelValue(current) ? current : '';
   sel.replaceChildren();
   const add = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; sel.appendChild(o); };
-  add('', 'Automatic (Husk decides)');
-  for (const m of (ORCH_MODEL_CATALOG[vendor] || [])) add(m.value, m.label);
-  add('__custom__', 'Custom…');
-  const known = (ORCH_MODEL_CATALOG[vendor] || []).some((m) => m.value === current);
+  const ready = orchCatalogReady();
+  add('', ready ? 'Automatic (Husk decides)' : (orchCatalog.loading ? 'Loading models...' : 'No models loaded'));
+  const models = orchMergedModels(vendor);
+  if (models.length) {
+    const group = document.createElement('optgroup');
+    group.label = `${orchCatalog.providerLabel || vendor} models`;
+    for (const m of models) {
+      const o = document.createElement('option');
+      o.value = m.value;
+      o.textContent = m.label === m.value ? m.value : `${m.label}: ${m.value}`;
+      group.appendChild(o);
+    }
+    sel.appendChild(group);
+  }
+  add('__custom__', 'Enter model id…');
+  const known = models.some((m) => m.value === current);
   if (current && !known) { sel.value = '__custom__'; if (customInput) { customInput.value = current; customInput.hidden = false; } }
   else { sel.value = current || ''; if (customInput) { customInput.hidden = true; customInput.value = ''; } }
+  sel.disabled = orchCatalogBusy();
+  if (customInput) customInput.disabled = orchCatalogBusy();
 }
 function readOrchValue(sel, customInput) {
   if (!sel) return '';
@@ -4584,10 +4870,62 @@ function readOrchValue(sel, customInput) {
 }
 function bindOrchestratorConfig() {
   const vendor = orchVendor();
-  const label = $('#aut-orch-vendor'); if (label) label.textContent = vendor + (vendor === 'copilot' ? ' (no model switch)' : '');
+  const label = $('#aut-orch-vendor'); if (label) label.textContent = orchCatalog.providerLabel || vendor;
+  const cmd = $('#aut-model-command');
+  const flag = orchCatalog.flag || orchModelFlagFor(vendor);
+  if (cmd) cmd.textContent = `${(cfg && cfg.agentCommand) || vendor}${flag ? ` · ${flag}` : ''}`;
   const mr = ((cfg && cfg.modelRouting) || {})[vendor] || {};
   fillOrchSelect($('#aut-mr-simple'), $('#aut-mr-simple-custom'), vendor, mr.cheap || '');
   fillOrchSelect($('#aut-mr-complex'), $('#aut-mr-complex-custom'), vendor, mr.smart || '');
+  updateOrchCatalogStatus();
+  const save = $('#aut-mr-save');
+  if (save) save.disabled = orchCatalogBusy();
+}
+async function loadOrchModelCatalog(refresh = false) {
+  const vendor = orchVendor();
+  orchCatalog = {
+    loading: true,
+    vendor,
+    providerLabel: vendor,
+    command: (cfg && cfg.agentCommand) || vendor,
+    flag: '',
+    models: [],
+    source: 'loading',
+    sourceLabel: '',
+    error: '',
+  };
+  bindOrchestratorConfig();
+  const refreshBtn = $('#aut-model-refresh');
+  if (refreshBtn) refreshBtn.disabled = true;
+  try {
+    const res = await window.husk.models.list({ refresh });
+    orchCatalog = Object.assign({
+      loading: false,
+      vendor,
+      providerLabel: vendor,
+      command: (cfg && cfg.agentCommand) || vendor,
+      flag: '',
+      models: [],
+      source: 'none',
+      sourceLabel: '',
+      error: '',
+    }, res || {}, { loading: false });
+  } catch (err) {
+    orchCatalog = {
+      loading: false,
+      vendor,
+      providerLabel: vendor,
+      command: (cfg && cfg.agentCommand) || vendor,
+      flag: '',
+      models: [],
+      source: 'error',
+      sourceLabel: '',
+      error: (err && err.message) || 'Could not read models.',
+    };
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+    bindOrchestratorConfig();
+  }
 }
 function wireOrchCustomToggle(sel, customInput) {
   if (!sel || !customInput) return;
@@ -4600,7 +4938,11 @@ function wireOrchCustomToggle(sel, customInput) {
 wireOrchCustomToggle($('#aut-mr-simple'), $('#aut-mr-simple-custom'));
 wireOrchCustomToggle($('#aut-mr-complex'), $('#aut-mr-complex-custom'));
 function openOrchestratorModal() {
-  bindOrchestratorConfig();
+  if (autopilotActive) {
+    toast('Model routing can only be changed before starting a run', 'info');
+    return;
+  }
+  loadOrchModelCatalog(false);
   const m = $('#aut-orch-modal'); if (m) m.hidden = false;
 }
 function closeOrchestratorModal() {
@@ -4609,13 +4951,19 @@ function closeOrchestratorModal() {
 $('#aut-configure-orch') && $('#aut-configure-orch').addEventListener('click', openOrchestratorModal);
 $('#aut-orch-close') && $('#aut-orch-close').addEventListener('click', closeOrchestratorModal);
 $('#aut-orch-cancel') && $('#aut-orch-cancel').addEventListener('click', closeOrchestratorModal);
+$('#aut-model-refresh') && $('#aut-model-refresh').addEventListener('click', () => loadOrchModelCatalog(true));
 if ($('#aut-mr-save')) {
   $('#aut-mr-save').addEventListener('click', async () => {
     const vendor = orchVendor();
     const cheap = readOrchValue($('#aut-mr-simple'), $('#aut-mr-simple-custom'));
     const smart = readOrchValue($('#aut-mr-complex'), $('#aut-mr-complex-custom'));
+    if ((cheap && !isUsableModelValue(cheap)) || (smart && !isUsableModelValue(smart))) {
+      toast('Enter a model id only, not status text or CLI output.', 'error');
+      return;
+    }
     const mr = Object.assign({}, (cfg && cfg.modelRouting) || {});
-    const entry = Object.assign({}, cheap ? { cheap } : {}, smart ? { smart } : {});
+    const flag = orchCatalog.flag || orchModelFlagFor(vendor);
+    const entry = Object.assign({}, (cheap || smart) && flag ? { flag } : {}, cheap ? { cheap } : {}, smart ? { smart } : {});
     if (Object.keys(entry).length) mr[vendor] = entry; else delete mr[vendor];
     cfg = await window.husk.config.set({ modelRouting: mr });
     closeOrchestratorModal();
@@ -4652,20 +5000,16 @@ $('#pref-save').addEventListener('click', async () => {
   }
 }
 $('#pref-theme').addEventListener('change', (e) => {
-  const theme = e.target.value;
-  applyTheme(theme);
-  persistConfig({ theme });
+  previewAppearance({ theme: e.target.value });
 });
 $$('.accent-swatch').forEach((sw) => sw.addEventListener('click', () => {
-  applyAccent(sw.dataset.c);
-  persistConfig({ accent: sw.dataset.c });
+  previewAppearance({ accent: sw.dataset.c });
 }));
-$('#pref-rail').addEventListener('change', async (e) => {
-  cfg = await window.husk.config.set({ railExpanded: e.target.checked });
-  document.body.dataset.rail = cfg.railExpanded ? 'expanded' : 'collapsed';
-  setTimeout(fitNow, 200);
-  toast('Saved', 'success');
+$('#pref-rail').addEventListener('change', (e) => {
+  previewAppearance({ railExpanded: e.target.checked });
 });
+$('#pref-appearance-save')?.addEventListener('click', saveAppearancePreview);
+$('#pref-appearance-revert')?.addEventListener('click', revertAppearancePreview);
 $('#pref-replay-onboarding')?.addEventListener('click', () => runOnboarding({ replay: true }));
 $('#pref-root').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ treeRoot: e.target.value.trim() || cfg.treeRoot });
@@ -4851,8 +5195,7 @@ window.husk.updates.onStatus((s) => {
 
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
 $('#btn-restart').addEventListener('click', restartPty);
-// The topbar dark/light quick-toggle was removed: it overrode the user's
-// chosen theme. Theme selection now lives only in Preferences (full picker).
+// Theme selection lives only in Preferences (full picker).
 // Attach the file to the user's PENDING message rather than firing a separate
 // "please read this" turn. We drop the (quoted) path into the agent's input
 // with NO trailing newline, so it is not submitted: the user adds their own
@@ -5560,9 +5903,8 @@ async function submitMcpModal() {
   const op = mcpModalState.mode === 'edit'
     ? await window.husk.mcp.update(payload)
     : await window.husk.mcp.add(payload);
-  // Surface adapter-side failures (name collision, unreadable config, write
-  // error) inline on the form rather than as a transient toast that's easy
-  // to miss. Collisions point at the name field since that's the fixable bit.
+  // Surface adapter-side failures inline on the form. Name collisions point at
+  // the name field because that is the field the user can correct.
   if (!op || !op.ok) {
     const err = (op && op.error) || 'Save failed';
     return setMcpFormError(err, /exists|server name|server id/i.test(err) ? 'mig-custom-id' : null);
@@ -5659,15 +6001,45 @@ $('#btn-mcp-add-custom').addEventListener('click', openMcpCustomModal);
 // refreshes from disk so the UI never invents state.
 let pluginsInstalledCache = [];
 let pluginsCatalogCache = [];
+let pluginsCapabilities = { canEnableDisable: true, canEdit: true, canBrowse: true };
 // Set of in-flight plugin ids so a slow install cannot be double-clicked.
 const pluginsBusy = new Set();
+
+function pluginCatalogById() {
+  return new Map(pluginsCatalogCache.map((p) => [p.id, p]));
+}
+
+function versionParts(version) {
+  return String(version || '').match(/\d+/g)?.map((n) => Number(n)) || [];
+}
+
+function compareVersions(a, b) {
+  const av = versionParts(a);
+  const bv = versionParts(b);
+  if (!av.length || !bv.length) return null;
+  const len = Math.max(av.length, bv.length);
+  for (let i = 0; i < len; i++) {
+    const d = (av[i] || 0) - (bv[i] || 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function pluginUpdateState(plugin, catalog) {
+  const latest = catalog && catalog.version ? catalog.version : '';
+  if (!latest || !plugin.version) return { latest, state: 'unknown', label: 'Update', disabled: false, title: 'Check for plugin updates' };
+  const cmp = compareVersions(plugin.version, latest);
+  if (cmp == null) return { latest, state: 'unknown', label: 'Update', disabled: false, title: `Latest listed version: ${latest}` };
+  if (cmp >= 0) return { latest, state: 'current', label: 'Up to date', disabled: true, title: `Latest version installed (${latest})` };
+  return { latest, state: 'available', label: `Update to v${latest}`, disabled: false, title: `Installed v${plugin.version}; latest is v${latest}` };
+}
 
 async function renderPlugins() {
   const body = $('#plugins-body');
   const unsupported = $('#plugins-unsupported');
   const installedEl = $('#plugins-installed');
   // eslint-disable-next-line no-unsanitized/property -- Static loading template.
-  installedEl.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading…</div></div>';
+  installedEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">Loading...</div></div>`;
   const [li, cat] = await Promise.all([window.husk.plugins.list(), window.husk.plugins.catalog()]);
   if (!li.supported) {
     body.hidden = true;
@@ -5678,6 +6050,7 @@ async function renderPlugins() {
   unsupported.hidden = true;
   pluginsInstalledCache = li.plugins || [];
   pluginsCatalogCache = (cat.catalog || []);
+  pluginsCapabilities = li.capabilities || cat.capabilities || pluginsCapabilities;
   paintPlugins($('#plugins-search').value);
 }
 
@@ -5686,6 +6059,9 @@ function paintPlugins(query) {
   const installedEl = $('#plugins-installed');
   const catalogEl = $('#plugins-catalog');
   const installedIds = new Set(pluginsInstalledCache.map((p) => p.id));
+  const catalogById = pluginCatalogById();
+  const canToggle = pluginsCapabilities.canEnableDisable !== false;
+  const canEdit = pluginsCapabilities.canEdit !== false;
 
   const inst = q
     ? pluginsInstalledCache.filter((p) => (p.name + ' ' + p.marketplace).toLowerCase().includes(q))
@@ -5693,22 +6069,25 @@ function paintPlugins(query) {
   if (!inst.length) {
     const msg = pluginsInstalledCache.length ? `No installed plugins match "${escapeHtml(query)}"` : 'No plugins installed yet. Pick one below.';
     // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
-    installedEl.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
+    installedEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">${msg}</div></div>`;
   } else {
     // eslint-disable-next-line no-unsanitized/property -- Plugin fields are escaped via escapeHtml/escapeAttr.
-    installedEl.innerHTML = inst.map((p) => `
+    installedEl.innerHTML = inst.map((p) => {
+      const update = pluginUpdateState(p, catalogById.get(p.id));
+      return `
       <div class="plugin-row${p.enabled ? '' : ' disabled'}" data-id="${escapeAttr(p.id)}">
         <div class="plugin-row-main">
-          <div class="plugin-row-name">${escapeHtml(p.name)}<span class="plugin-badge">${escapeHtml(p.marketplace)}</span></div>
-          <div class="plugin-row-meta">v${escapeHtml(p.version || '?')}${p.lastUpdated ? ' · updated ' + escapeHtml(fmtRelTime(p.lastUpdated)) : ''}</div>
+          <div class="plugin-row-name">${escapeHtml(p.name)}${p.marketplace ? `<span class="plugin-badge">${escapeHtml(p.marketplace)}</span>` : ''}</div>
+          <div class="plugin-row-meta">v${escapeHtml(p.version || '?')}${update.latest ? ` · latest v${escapeHtml(update.latest)}` : ''}${p.lastUpdated ? ' · updated ' + escapeHtml(fmtRelTime(p.lastUpdated)) : ''}</div>
         </div>
         <div class="plugin-row-actions">
-          <button class="ghost-btn" data-act="edit" title="Browse and edit this plugin's files">Edit</button>
-          <button class="ghost-btn" data-act="update" title="Update to the latest version">Update</button>
+          ${canEdit ? '<button class="ghost-btn" data-act="edit" title="Browse and edit this plugin\'s files">Edit</button>' : ''}
+          <button class="ghost-btn plugin-update-btn ${update.state === 'current' ? 'is-current' : ''}" data-act="update" title="${escapeAttr(update.title)}" ${update.disabled ? 'disabled' : ''}>${escapeHtml(update.label)}</button>
           <button class="ghost-btn ghost-btn-danger" data-act="uninstall" title="Uninstall">Remove</button>
-          <button class="toggle ${p.enabled ? 'on' : ''}" data-act="toggle" title="${p.enabled ? 'Disable' : 'Enable'}"></button>
+          ${canToggle ? `<button class="toggle ${p.enabled ? 'on' : ''}" data-act="toggle" title="${p.enabled ? 'Disable' : 'Enable'}"></button>` : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   const avail = pluginsCatalogCache.filter((c) => !installedIds.has(c.id));
@@ -5719,7 +6098,7 @@ function paintPlugins(query) {
   if (head) head.textContent = `Browse marketplaces · ${found.length} available`;
   if (!found.length) {
     // eslint-disable-next-line no-unsanitized/property -- Static empty-state template.
-    catalogEl.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Nothing matches.</div></div>';
+    catalogEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">Nothing matches.</div></div>`;
   } else {
     // Grid renders at most 120 cards to keep the DOM light; the trailing
     // hint makes the cut explicit and search reaches everything.
@@ -5748,6 +6127,7 @@ function paintPlugins(query) {
 // redundant IPC, no loading flash).
 async function runPluginAction(action, id, btn) {
   if (pluginsBusy.has(id)) return;
+  const before = pluginsInstalledCache.find((p) => p.id === id) || null;
   pluginsBusy.add(id);
   const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
@@ -5757,10 +6137,22 @@ async function runPluginAction(action, id, btn) {
       toast(r.error || `plugin ${action} failed`, 'error');
       return;
     }
-    const verbed = { install: 'installed', uninstall: 'removed', enable: 'enabled', disable: 'disabled', update: 'updated' }[action] || action;
-    toast(`${id.split('@')[0]} ${verbed} · restart agent to apply`, 'success');
     const li = await window.husk.plugins.list();
     if (li.supported) pluginsInstalledCache = li.plugins || [];
+    const after = pluginsInstalledCache.find((p) => p.id === id) || null;
+    if (action === 'update') {
+      const output = String(r.output || '');
+      if (before && after && before.version && after.version && before.version !== after.version) {
+        toast(`${id.split('@')[0]} updated to v${after.version} · restart agent to apply`, 'success');
+      } else if (/already|latest|up[- ]?to[- ]?date|no update/i.test(output)) {
+        toast(`${id.split('@')[0]} is already on the latest version`, 'info');
+      } else {
+        toast(`${id.split('@')[0]} update completed; no version change reported`, 'warn');
+      }
+    } else {
+      const verbed = { install: 'installed', uninstall: 'removed', enable: 'enabled', disable: 'disabled' }[action] || action;
+      toast(`${id.split('@')[0]} ${verbed} · restart agent to apply`, 'success');
+    }
     paintPlugins($('#plugins-search').value);
   } finally {
     pluginsBusy.delete(id);
@@ -6153,6 +6545,16 @@ document.addEventListener('keydown', (e) => {
   }
 }, true);
 window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 'r') {
+    e.preventDefault();
+    refreshFromShortcut();
+    return;
+  }
+  if (e.key === 'F5') {
+    e.preventDefault();
+    reloadFromShortcut();
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
@@ -6214,14 +6616,14 @@ function renderMarkdown(src) {
   // Fenced code blocks: stash, restore last so inner content is untouched.
   s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => {
     codeBlocks.push(`<pre class="md-pre"><code>${code.replace(/\n$/, '')}</code></pre>`);
-    return ` CB${codeBlocks.length - 1} `;
+    return `__HUSK_MD_CODE_BLOCK_${codeBlocks.length - 1}__`;
   });
   const lines = s.split('\n');
   const out = [];
   let listType = null;
   const closeList = () => { if (listType) { out.push(`</${listType}>`); listType = null; } };
   for (const line of lines) {
-    if (/^ CB\d+ $/.test(line.trim())) { closeList(); out.push(line.trim()); continue; }
+    if (/^__HUSK_MD_CODE_BLOCK_\d+__$/.test(line.trim())) { closeList(); out.push(line.trim()); continue; }
     let m;
     if ((m = line.match(/^### (.+)/))) { closeList(); out.push(`<h3 class="md-h3">${inlineMd(m[1])}</h3>`); continue; }
     if ((m = line.match(/^## (.+)/)))  { closeList(); out.push(`<h2 class="md-h2">${inlineMd(m[1])}</h2>`); continue; }
@@ -6240,7 +6642,7 @@ function renderMarkdown(src) {
   }
   closeList();
   let html = out.join('\n');
-  html = html.replace(/ CB(\d+) /g, (_m, i) => codeBlocks[Number(i)] || '');
+  html = html.replace(/__HUSK_MD_CODE_BLOCK_(\d+)__/g, (_m, i) => codeBlocks[Number(i)] || '');
   return html;
 }
 function inlineMd(s) {
@@ -6456,6 +6858,11 @@ async function runOnboarding({ replay = false } = {}) {
 }
 
 async function boot() {
+  const localReloadState = takeReloadState();
+  let mainReloadState = null;
+  try { mainReloadState = await window.husk.ui.takeReloadState(); } catch (_) {}
+  const reloadState = localReloadState || mainReloadState;
+  bootingFromReloadState = reloadState || null;
   cfg = await window.husk.config.get();
   try { huskHome = await window.husk.fs.home() || '~'; } catch (_) {}
   profilesCache = await window.husk.profiles.list();
@@ -6472,14 +6879,14 @@ async function boot() {
   // shown at most once per version.
   let curVer = '';
   try { curVer = ((await window.husk.updates.get()) || {}).current || ''; } catch (_) {}
-  if (!cfg.firstRunDone) {
+  if (!reloadState && !cfg.firstRunDone) {
     await runOnboarding();
     // Non-blocking: float the What's new page on top while the app renders.
     if (curVer) showWhatsNew(curVer);
-  } else if (curVer && cfg.lastSeenVersion !== curVer) {
+  } else if (!reloadState && curVer && cfg.lastSeenVersion !== curVer) {
     showWhatsNew(curVer);
   }
-  if (curVer && cfg.lastSeenVersion !== curVer) {
+  if (!reloadState && curVer && cfg.lastSeenVersion !== curVer) {
     try { cfg = await window.husk.config.set({ lastSeenVersion: curVer }); } catch (_) {}
   }
 
@@ -6498,6 +6905,11 @@ async function boot() {
   refreshContextList();
   refreshRecentList();
   refreshProjectsState();
+  if (reloadState && reloadState.page) {
+    setPage(reloadState.page, { _nav: true });
+  } else {
+    saveRouteState();
+  }
   // Pause polling when the window is hidden so we don't burn frames or
   // recompute the status panel for an invisible UI.
   setInterval(async () => {
@@ -6517,10 +6929,11 @@ async function boot() {
   // through to the cold-boot behavior (welcome state, or an immediate fresh
   // chat if the user opted to skip the welcome).
   const reattached = await reattachSessions();
-  if (!reattached && cfg.skipWelcome) {
+  if (!reattached && cfg.skipWelcome && !(reloadState && reloadState.suppressAutoChat)) {
     $('#chat-empty').classList.remove('show');
     await startPty();
   }
+  bootingFromReloadState = null;
 }
 
 async function launchAgent({ initialPrompt = null } = {}) {
@@ -6568,6 +6981,7 @@ let autopilotStarting = false;
 // Swarm: all currently active runs. N=1 → existing single-run UX unchanged (ISC-33).
 const activeRuns = new Map(); // runId → { runId, sessionId, workspaceRoot, goal, startedAt, caps, budget }
 let focusedRunId = null;      // which run the detail pane displays
+const autopilotModelDecisions = new Map(); // runId/role → { model, tier, reason }
 // '_solo' is a renderer-side placeholder key for legacy starts that carried no
 // runId; never send it to main, which expects a real pool key or nothing.
 function focusedRealRunId() {
@@ -6652,8 +7066,7 @@ async function startAutopilot() {
   // decides the team size; the user never picks a count).
   const mode = autopilotStartMode;
   if (mode === 'collab') {
-    // Planning takes tens of seconds; a frozen wizard reads as broken. Close
-    // it immediately and show planning progress on the live page instead.
+    // Planning can take tens of seconds, so progress is shown on the live page.
     autopilotStarting = false;
     if (goBtn) { goBtn.disabled = false; goBtn.textContent = goLabelBefore; }
     if (cancelBtn) cancelBtn.disabled = false;
@@ -6662,6 +7075,8 @@ async function startAutopilot() {
     try { setPage('autopilot'); } catch (_) {}
     autopilotActive = true;
     autopilotState.startedAt = Date.now();
+    resetAutopilotRunScope();
+    autopilotFleetId = `planning-${Date.now()}`;
     resetAutopilotPanel();
     setAutopilotGoal(goal);
     setAutopilotCaps(caps);
@@ -6677,7 +7092,7 @@ async function startAutopilot() {
       const msg = (err && err.message) || String(err);
       pushActivity([`Team start failed: ${msg}`], '_orch');
       toast(`Team start failed: ${msg}`, 'error');
-      autopilotActive = liveRunCount() > 0;
+      autopilotActive = liveRunCount() > 0 || plannedAgents.length > 0;
       paintAutopilotBanner();
     }
     return;
@@ -6695,8 +7110,10 @@ async function startAutopilot() {
       // The autopilot:started event usually lands before this resolves and
       // creates the full entry (color, files, telemetry); do not clobber it.
       if (!activeRuns.has(runKey)) {
+        resetAutopilotRunScope();
+        autopilotFleetId = runId || runKey;
         activeRuns.set(runKey, {
-          runId, sessionId: r.sessionId, workspaceRoot: r.workspaceRoot, goal,
+          runId, sessionId: r.sessionId, workspaceRoot: r.workspaceRoot, goal, originalGoal: goal,
           startedAt: Date.now(), caps, budget: null, feed: [],
           colorIdx: activeRuns.size % AP_LANE_COLORS, files: [],
           state: 'starting', nudges: 0, lastTool: null, lastToolAt: 0, quietMs: 0,
@@ -6891,19 +7308,27 @@ function rerunFromPastRun(run) {
 
 async function deleteRun(run) {
   if (!run || !run.sessionId) return;
+  const sessionIds = Array.isArray(run.sessionIds) && run.sessionIds.length ? run.sessionIds : [run.sessionId];
+  const label = sessionIds.length > 1 ? 'fleet run' : 'run';
   const ok = await openConfirmDialog({
-    title: 'Delete this run?',
-    bodyHtml: "This permanently removes the run's snapshot, audit log, and saved file versions. You will no longer be able to review or revert it.",
-    confirmLabel: 'Delete run',
+    title: `Delete this ${label}?`,
+    bodyHtml: "This permanently removes the snapshot, audit log, and saved file versions. You will no longer be able to review or revert it.",
+    confirmLabel: `Delete ${label}`,
     cancelLabel: 'Keep',
   });
   if (!ok) return;
-  const r = await window.husk.autopilot.deleteRun({ sessionId: run.sessionId });
-  if (!r || !r.ok) { toast((r && r.error) || 'Could not delete run', 'error'); return; }
-  toast('Run deleted', 'success');
+  let deleted = 0;
+  let firstError = '';
+  for (const sessionId of sessionIds) {
+    const r = await window.husk.autopilot.deleteRun({ sessionId });
+    if (r && r.ok) deleted += 1;
+    else if (!firstError) firstError = (r && r.error) || 'Could not delete run';
+  }
+  if (firstError) { toast(`Deleted ${deleted}; ${firstError}`, 'error'); return; }
+  toast(sessionIds.length > 1 ? 'Fleet run deleted' : 'Run deleted', 'success');
   // If the deleted run is the one currently under review, leave review
   // mode; otherwise just refresh the list in place.
-  if (autopilotReview && autopilotReviewData && autopilotReviewData.sessionId === run.sessionId) {
+  if (autopilotReview && autopilotReviewData && sessionIds.includes(autopilotReviewData.sessionId)) {
     exitReviewMode();
   } else {
     refreshAutopilotHistory();
@@ -7245,9 +7670,9 @@ async function refreshAutopilotHistory() {
     return;
   }
   // Selection survives a refresh only for sessions that still exist.
-  const present = new Set(runs.map((r) => r.sessionId));
+  const present = new Set(runs.flatMap((r) => Array.isArray(r.sessionIds) ? r.sessionIds : [r.sessionId]));
   for (const sid of [...selectedRunSessions]) if (!present.has(sid)) selectedRunSessions.delete(sid);
-  lastHistorySessions = runs.map((r) => r.sessionId);
+  lastHistorySessions = [...present];
   let totalFiles = 0;
   let totalSpend = 0;
   for (const run of runs) {
@@ -7255,14 +7680,15 @@ async function refreshAutopilotHistory() {
     totalSpend += Number(run.dollars) || 0;
     const row = document.createElement('div');
     row.className = 'aut-recent-row';
-    row.dataset.session = run.sessionId;
+    const rowSessionIds = Array.isArray(run.sessionIds) && run.sessionIds.length ? run.sessionIds : [run.sessionId];
+    row.dataset.session = run.historyId || run.sessionId;
     const check = document.createElement('input');
     check.type = 'checkbox';
     check.className = 'aut-recent-check';
-    check.checked = selectedRunSessions.has(run.sessionId);
+    check.checked = rowSessionIds.every((sid) => selectedRunSessions.has(sid));
     check.addEventListener('change', () => {
-      if (check.checked) selectedRunSessions.add(run.sessionId);
-      else selectedRunSessions.delete(run.sessionId);
+      if (check.checked) for (const sid of rowSessionIds) selectedRunSessions.add(sid);
+      else for (const sid of rowSessionIds) selectedRunSessions.delete(sid);
       updateBulkDeleteUi();
     });
     // Generous hit zone: a full-height label strip on the row's left
@@ -7283,7 +7709,8 @@ async function refreshAutopilotHistory() {
     const m2 = document.createElement('div');
     m2.className = 'aut-recent-meta';
     const when = run.endedAt || run.capturedAt;
-    m2.textContent = `${fmtRelTime(when)} · ${run.sessionId.slice(5, 17)}`;
+    const memberText = run.memberCount && run.memberCount > 1 ? `${run.memberCount} agents · ` : '';
+    m2.textContent = `${fmtRelTime(when)} · ${memberText}${run.sessionId.slice(5, 17)}`;
     main.appendChild(goal);
     main.appendChild(m2);
     const files = document.createElement('div');
@@ -7341,7 +7768,7 @@ async function refreshAutopilotHistory() {
     row.appendChild(pill);
     row.appendChild(rerun);
     row.appendChild(del);
-    row.addEventListener('click', () => openAutopilotRunReview(run.sessionId, run.workspaceRoot));
+    row.addEventListener('click', () => openAutopilotHistoryRun(run));
     list.appendChild(row);
   }
   if (meta) meta.textContent = `${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`;
@@ -7412,6 +7839,57 @@ async function openAutopilotRunReview(sessionId, workspaceRoot) {
   }
 }
 
+function summaryDiffWithSource(sum, fallback = {}) {
+  const diff = Array.isArray(sum && sum.diff) ? sum.diff
+    : (sum && sum.summary && Array.isArray(sum.summary.diff) ? sum.summary.diff : []);
+  return diff.map((c) => ({
+    ...c,
+    sessionId: (sum && sum.sessionId) || fallback.sessionId || null,
+    workspaceRoot: (sum && sum.workspaceRoot) || fallback.workspaceRoot || null,
+  }));
+}
+
+async function openAutopilotHistoryRun(run) {
+  const members = Array.isArray(run && run.members) && run.members.length ? run.members : [run];
+  if (members.length <= 1) return openAutopilotRunReview(run.sessionId, run.workspaceRoot);
+  try { setPage('autopilot'); } catch (_) {}
+  try {
+    const summaries = [];
+    for (const member of members) {
+      const sum = await window.husk.autopilot.summary({ sessionId: member.sessionId, workspaceRoot: member.workspaceRoot });
+      if (sum && sum.ok) {
+        sum.sessionId = sum.sessionId || member.sessionId;
+        sum.workspaceRoot = sum.workspaceRoot || member.workspaceRoot;
+        sum.role = sum.role || member.role || null;
+        sum.agent = sum.agent || member.agent || null;
+        summaries.push({ member, sum });
+      }
+    }
+    if (!summaries.length) { toast('Could not load fleet run', 'error'); return; }
+    const preferred = summaries.find((x) => x.member.sessionId === run.sessionId) || summaries[0];
+    const aggregateDiff = summaries.flatMap((x) => summaryDiffWithSource(x.sum, x.member));
+    if (!Array.isArray(preferred.sum.diff) || preferred.sum.diff.length === 0) preferred.sum.diff = aggregateDiff;
+    if (preferred.sum.summary && (!Array.isArray(preferred.sum.summary.diff) || preferred.sum.summary.diff.length === 0)) {
+      preferred.sum.summary.diff = aggregateDiff;
+    }
+    const fleet = summaries.map((x) => finishedAgentFromSummary(x.sum, { sessionId: x.member.sessionId }));
+    enterReviewMode({
+      sessionId: preferred.member.sessionId,
+      workspaceRoot: preferred.member.workspaceRoot,
+      summary: preferred.sum,
+      members: fleet,
+    });
+    showFleetReceipt(summaries.map((x) => ({
+      sessionId: x.member.sessionId,
+      agent: x.member.agent || x.sum.agent || null,
+      model: x.member.model || x.sum.modelObserved || null,
+      fleetStartedAt: x.member.fleetStartedAt || x.sum.fleetStartedAt || null,
+    })));
+  } catch (err) {
+    toast(`Could not load fleet run: ${err && err.message || err}`, 'error');
+  }
+}
+
 // Autopilot live state. Driven by autopilot:started / autopilot:budget /
 // autopilot:activity IPC events plus a 4s poll of autopilot:liveDiff. The
 // activity stream is produced in the main process from each run's OWN
@@ -7464,6 +7942,7 @@ function renderRunCards() {
     const cLabel = document.createElement('span');
     cLabel.className = 'aut-chip-label';
     cLabel.textContent = (run.role || run.agent || (run.goal || 'run').slice(0, 24));
+    cLabel.title = cLabel.textContent;
     const cState = document.createElement('span');
     cState.className = 'aut-chip-state';
     nameRow.appendChild(cDot);
@@ -7491,6 +7970,12 @@ function renderRunCards() {
     });
     row.appendChild(nameRow);
     row.appendChild(action);
+    appendModelDecision(row, {
+      model: bestRunModel(run),
+      observedModel: run.modelObserved,
+      tier: run.tier,
+      reason: run.reason,
+    });
     row.appendChild(metaEl);
     row.appendChild(cancelBtn);
     list.appendChild(row);
@@ -7506,6 +7991,7 @@ function renderRunCards() {
     const cLabel = document.createElement('span');
     cLabel.className = 'aut-chip-label';
     cLabel.textContent = p.role || 'agent';
+    cLabel.title = cLabel.textContent;
     const cState = document.createElement('span');
     cState.className = 'aut-chip-state';
     cState.textContent = 'queued';
@@ -7514,9 +8000,11 @@ function renderRunCards() {
     nameRow.appendChild(cState);
     const action = document.createElement('div');
     action.className = 'aut-chip-action';
-    action.textContent = String(p.subgoal || 'waiting for a free slot').slice(0, 70);
+    action.textContent = String(p.subgoal || 'waiting for a free slot');
+    action.title = p.subgoal || 'waiting for a free slot';
     row.appendChild(nameRow);
     row.appendChild(action);
+    appendModelDecision(row, p);
     list.appendChild(row);
   }
   // Post-run: no live or queued agents, but a finished fleet to keep on screen.
@@ -7540,6 +8028,7 @@ function buildFinishedAgentCard(f) {
   const label = document.createElement('span');
   label.className = 'aut-chip-label';
   label.textContent = f.role;
+  label.title = f.role;
   const state = document.createElement('span');
   state.className = 'aut-chip-state';
   state.dataset.state = f.endedOk ? 'done' : 'stopped';
@@ -7549,8 +8038,8 @@ function buildFinishedAgentCard(f) {
   nameRow.appendChild(state);
   const action = document.createElement('div');
   action.className = 'aut-chip-action';
-  const model = prettyModel(f.model);
-  action.textContent = (model ? model + ' · ' : '') + (f.finalMessage || `${f.files} file${f.files === 1 ? '' : 's'} changed`);
+  action.textContent = f.finalMessage || `${f.files} file${f.files === 1 ? '' : 's'} changed`;
+  action.title = action.textContent;
   const meta = document.createElement('div');
   meta.className = 'aut-swarm-card-meta';
   const secs = Math.round((f.durationMs || 0) / 1000);
@@ -7563,6 +8052,7 @@ function buildFinishedAgentCard(f) {
   split.textContent = `in ${formatTokens(f.input)} · out ${formatTokens(f.output)} · cache r ${formatTokens(f.cacheRead)}/w ${formatTokens(f.cacheWrite)}`;
   row.appendChild(nameRow);
   row.appendChild(action);
+  appendModelDecision(row, { model: f.model, observedModel: f.modelObserved, tier: f.tier, reason: f.reason, fallbackLabel: f.agent || null });
   row.appendChild(meta);
   row.appendChild(split);
   return row;
@@ -7600,14 +8090,26 @@ function updateRunCardsLive() {
     const actionEl = row.querySelector('.aut-chip-action');
     if (actionEl) {
       if (run.ended && run.endSummary && run.endSummary.finalMessage) {
-        actionEl.textContent = String(run.endSummary.finalMessage).slice(0, 70);
+        actionEl.textContent = String(run.endSummary.finalMessage).slice(0, 220);
       } else if (run.lastTool) {
-        actionEl.textContent = `▸ ${run.lastTool.slice(0, 66)}`;
+        actionEl.textContent = `▸ ${run.lastTool.slice(0, 220)}`;
       } else {
-        actionEl.textContent = (run.goal || '').slice(0, 70);
+        const model = prettyModel(bestRunModel(run));
+        actionEl.textContent = `${model ? model + ' · ' : ''}${(run.goal || '').slice(0, 220)}`;
       }
+      actionEl.title = actionEl.textContent;
     }
+    const oldModel = row.querySelector('.aut-chip-model');
+    if (oldModel) oldModel.remove();
     const metaEl = row.querySelector('.aut-swarm-card-meta');
+    appendModelDecision(row, {
+      model: bestRunModel(run),
+      observedModel: run.modelObserved,
+      tier: run.tier,
+      reason: run.reason,
+    });
+    const modelEl = row.querySelector('.aut-chip-model');
+    if (modelEl && metaEl) row.insertBefore(modelEl, metaEl);
     if (metaEl) {
       const elapsed = run.startedAt ? Math.floor((Date.now() - run.startedAt) / 1000) : 0;
       const elTag = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m`;
@@ -7624,12 +8126,10 @@ function switchFocusedRun(runId) {
   if (!run) return;
   focusedRunId = runId;
   autopilotLastSession = { sessionId: run.sessionId, workspaceRoot: run.workspaceRoot };
-  if (run.goal) setAutopilotGoal(run.goal);
   if (run.caps) setAutopilotCaps(run.caps);
   toggleLaneMax(runId);
 }
 function paintAutopilotBanner() {
-  const label = $('#autopilot-label');
   const pulse = $('#rail-aut-pulse');
   const empty = $('#aut-page-empty');
   const live = $('#aut-page-live');
@@ -7641,12 +8141,12 @@ function paintAutopilotBanner() {
   const backBtn = $('#aut-review-back');
   const pageEl = document.querySelector('.page-autopilot');
   const showLive = autopilotActive || autopilotReview;
-  if (label) label.textContent = autopilotActive ? 'Autopilot ON' : 'Autopilot';
   if (pulse) pulse.hidden = !autopilotActive;
   if (empty) empty.hidden = showLive;
   if (live) live.hidden = !showLive;
   if (status) status.hidden = !showLive;
   if (pageEl) pageEl.classList.toggle('is-live', !!showLive);
+  if (pageEl) pageEl.classList.toggle('is-review-mode', !!autopilotReview);
   // While a run is active OR a review is open, the header Start
   // button is replaced by the status pill; showing both is
   // contradictory.
@@ -7662,23 +8162,50 @@ function paintAutopilotBanner() {
   // are hidden in favor of Apply/Discard. Historical reviews (worktree already
   // gone) keep the snapshot-era buttons.
   const isRetained = !!(autopilotReview && autopilotReviewData && autopilotReviewData.retained);
+  const reviewDiff = autopilotReviewData && autopilotReviewData.summary
+    ? ((Array.isArray(autopilotReviewData.summary.diff) && autopilotReviewData.summary.diff.length)
+      || (autopilotReviewData.summary.summary && Array.isArray(autopilotReviewData.summary.summary.diff) && autopilotReviewData.summary.summary.diff.length)
+      || 0)
+    : 0;
   reviewButtons.forEach((b) => {
     const isRevert = b.id === 'aut-review-revert';
     b.hidden = !autopilotReview || isRetained || (isRevert && !reviewHasSnapshot);
   });
-  document.querySelectorAll('.aut-retained-only').forEach((b) => { b.hidden = !isRetained; });
+  const applyBtn = $('#aut-review-apply');
+  const discardBtn = $('#aut-review-discard');
+  if (applyBtn) {
+    applyBtn.hidden = !isRetained || reviewDiff === 0;
+    applyBtn.disabled = reviewDiff === 0;
+    applyBtn.textContent = reviewDiff > 0 ? `Apply ${reviewDiff} change${reviewDiff === 1 ? '' : 's'}` : 'No changes to apply';
+  }
+  if (discardBtn) {
+    discardBtn.hidden = !isRetained;
+    discardBtn.textContent = reviewDiff > 0 ? 'Discard run' : 'Dismiss run';
+  }
+  const fileActions = document.querySelector('.aut-files-actions');
+  if (fileActions) fileActions.dataset.empty = reviewDiff === 0 ? '1' : '0';
   if (backBtn) backBtn.hidden = !autopilotReview;
   // Status pill content shifts by mode.
   if (statusText) {
     if (autopilotActive) statusText.textContent = 'Running';
     else if (autopilotReview && autopilotReviewData) {
-      const s = autopilotReviewData.summary && autopilotReviewData.summary.summary;
-      const haltReason = (s && s.haltReason) || 'ended';
-      statusText.textContent = haltReason === 'natural' ? 'Ended' : (haltReason.charAt(0).toUpperCase() + haltReason.slice(1));
+      const reason = summaryEndReason(autopilotReviewData.summary) || 'ended';
+      statusText.textContent = summaryCompletedSuccessfully(autopilotReviewData.summary)
+        ? 'Succeeded'
+        : (reason === 'agent_idle' || reason === 'agent_unverified') ? 'Incomplete'
+        : reason === 'agent_blocked' ? 'Blocked'
+        : reason === 'agent_failed' ? 'Failed'
+        : (reason.charAt(0).toUpperCase() + reason.slice(1));
     } else statusText.textContent = '';
   }
   // Re-style the status pill in review mode (no accent pulse).
   if (status) status.classList.toggle('is-review', !autopilotActive && autopilotReview);
+  if (status) {
+    const reviewSuccess = !autopilotActive && autopilotReview && summaryCompletedSuccessfully(autopilotReviewData && autopilotReviewData.summary);
+    const reviewIncomplete = !autopilotActive && autopilotReview && !reviewSuccess;
+    status.classList.toggle('is-success', !!reviewSuccess);
+    status.classList.toggle('is-incomplete', !!reviewIncomplete);
+  }
   if (autopilotActive) {
     if (!autopilotState.tickerId) {
       autopilotState.tickerId = setInterval(updateAutopilotElapsed, 1000);
@@ -7699,6 +8226,10 @@ function exitReviewMode() {
   }
   autopilotReview = false;
   autopilotReviewData = null;
+  if (finishedFleetBeforeHistory) {
+    finishedFleet = finishedFleetBeforeHistory;
+    finishedFleetBeforeHistory = null;
+  }
   resetAutopilotPanel();
   paintAutopilotBanner();
   refreshAutopilotHistory();
@@ -7790,7 +8321,7 @@ window.addEventListener('keydown', (e) => {
     if (globalForward()) e.preventDefault();
   }
 });
-function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, runId = null }) {
+function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, runId = null, members = null }) {
   // Remember the hub scroll position so back returns to the same spot
   // in the runs list.
   const pageEl0 = document.querySelector('.page-autopilot');
@@ -7798,12 +8329,23 @@ function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, 
   autopilotActive = false;
   autopilotReview = true;
   autopilotReviewData = { sessionId, workspaceRoot, summary, retained, runId };
+  if (Array.isArray(members) && members.length) {
+    if (finishedFleet.length && !finishedFleetBeforeHistory) finishedFleetBeforeHistory = finishedFleet.slice();
+    finishedFleet = members;
+  } else if (!activeRuns.size) {
+    const sid = sessionId || (summary && summary.sessionId) || null;
+    const hasCurrent = sid && finishedFleet.some((f) => f && f.sessionId === sid);
+    if (!hasCurrent) {
+      if (finishedFleet.length && !finishedFleetBeforeHistory) finishedFleetBeforeHistory = finishedFleet.slice();
+      finishedFleet = [finishedAgentFromSummary(summary, { sessionId: sid })];
+    }
+  }
   resetAutopilotPanel();
   const s = summary && summary.summary;
   // Goal lives in the start_run row (summary.goal). The run_summary
   // payload (s) carries final meter/diff but not the goal. Use the
   // start_run goal as truth; fall back ONLY if even that is missing.
-  const realGoal = (summary && typeof summary.goal === 'string' && summary.goal) || (s && s.goal) || null;
+  const realGoal = missionGoalFromSummary(summary) || null;
   setAutopilotGoal(realGoal || '(no goal recorded for this run)');
   // Caps: start_run row first, then meter.caps, then current defaults.
   const caps = (summary && summary.caps) || (s && s.meter && s.meter.caps) || autopilotState.caps;
@@ -7859,6 +8401,10 @@ function renderRunConclusion(sum) {
   title.textContent =
     reason === 'agent_complete' ? 'Run complete: the agent declared the goal finished'
     : reason === 'agent_idle' ? 'Run ended: the agent went idle without declaring completion'
+    : reason === 'agent_startup_stall' ? 'Run stopped: the agent never got past startup'
+    : reason === 'agent_blocked' ? 'Run blocked: the agent reported it could not continue'
+    : reason === 'agent_failed' ? 'Run failed: the agent reported failure'
+    : reason === 'agent_unverified' ? 'Run incomplete: the agent reported completion without verification'
     : (reason === 'user' || halt === 'user') ? 'Run stopped by you'
     : (reason === 'budget' || halt === 'budget') ? 'Run stopped at a budget cap'
     : reason === 'agent-exited' ? 'Run ended: the agent process exited'
@@ -7910,6 +8456,15 @@ async function showFleetReceipt(members) {
           dollars: res.receipt.totalDollars,
           tokensReported: !!res.receipt.tokensEstimated,
         });
+        const ms = Number(res.receipt.totalDurationMs) || 0;
+        if (ms > 0) {
+          autopilotState.startedAt = Date.now() - ms;
+          const sec = Math.floor(ms / 1000);
+          const min = Math.floor(sec / 60);
+          const elapsed = min === 0 ? `${sec}s` : `${min}m ${String(sec % 60).padStart(2, '0')}s`;
+          const headEl = $('#aut-page-elapsed');
+          if (headEl) headEl.textContent = elapsed;
+        }
       } catch (_) {}
     }
   } catch (_) { /* a receipt is a bonus; never let it break review */ }
@@ -7964,6 +8519,7 @@ function renderFleetReceipt(receipt) {
     `$${(receipt.totalDollars || 0).toFixed(2)}`,
   ];
   if (c.landed) bits.push(`${c.landed} landed`);
+  if (c.incomplete) bits.push(`${c.incomplete} incomplete`);
   if (c.saved) bits.push(`${c.saved} runaway${c.saved === 1 ? '' : 's'} caught`);
   if (c.capped) bits.push(`${c.capped} capped`);
   meta.textContent = bits.join('  ·  ');
@@ -7979,7 +8535,6 @@ function renderFleetReceipt(receipt) {
   const copy = document.createElement('button');
   copy.textContent = 'Copy receipt';
   copy.className = 'aut-receipt-copy';
-  copy.style.cssText = 'margin-top:10px;padding:4px 10px;font-size:12px;border-radius:6px;cursor:pointer;background:var(--accent,#67e8f9);color:#04121a;border:none;';
   copy.addEventListener('click', () => {
     const s$ = receipt.savings && receipt.savings.dollars > 0 ? ` Governor caught ${receipt.savings.caughtStalls} runaway run${receipt.savings.caughtStalls === 1 ? '' : 's'} (up to $${receipt.savings.dollars.toFixed(2)} saved).` : '';
     const text = `Ran my backlog across ${receipt.runCount} agents in Husk: ${receipt.headline}.${s$}`;
@@ -7991,6 +8546,27 @@ function renderFleetReceipt(receipt) {
   feed.appendChild(card);
   feed.scrollTop = feed.scrollHeight;
 }
+function summaryEndReason(sum) {
+  const s = (sum && sum.summary) || {};
+  return (sum && sum.endReason)
+    || (s.haltDetail && s.haltDetail.reason)
+    || s.haltReason
+    || '';
+}
+function summaryCompletedSuccessfully(sum) {
+  const reason = summaryEndReason(sum);
+  if (['agent_idle', 'agent_startup_stall', 'agent-exited', 'agent_blocked', 'agent_failed', 'agent_unverified', 'budget', 'stall', 'user'].includes(reason)) return false;
+  const s = (sum && sum.summary) || {};
+  return reason === 'agent_complete' || reason === 'natural' || (reason === 'ended' && s.haltReason === 'natural');
+}
+function missionGoalFromSummary(sum) {
+  const s = (sum && sum.summary) || {};
+  return (sum && typeof sum.originalGoal === 'string' && sum.originalGoal.trim())
+    || (sum && typeof sum.fleetGoal === 'string' && sum.fleetGoal.trim())
+    || (sum && typeof sum.goal === 'string' && sum.goal.trim())
+    || (s && typeof s.goal === 'string' && s.goal.trim())
+    || '';
+}
 function setAutopilotGoal(goal) {
   autopilotState.goal = goal || '(no goal provided)';
   const el = $('#aut-page-goal-text');
@@ -8001,7 +8577,7 @@ function setAutopilotCaps(caps) {
   const c = autopilotState.caps;
   const tc = $('#aut-page-cap-time'); if (tc) tc.textContent = c.minutes > 0 ? `of ${c.minutes}m` : 'no time limit';
   const ko = $('#aut-page-cap-tokens'); if (ko) ko.textContent = c.tokens > 0 ? `of ${formatTokens(c.tokens)}` : 'no token limit';
-  const dc = $('#aut-page-cap-dollars'); if (dc) dc.textContent = c.dollars > 0 ? `of ${formatDollars(c.dollars)}` : 'no $ limit';
+  const dc = $('#aut-page-cap-dollars'); if (dc) dc.textContent = c.dollars > 0 ? `of ${formatDollars(c.dollars)}` : 'no budget limit';
 }
 function formatTokens(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + 'M';
@@ -8013,6 +8589,8 @@ function formatTokens(n) {
 function prettyModel(id) {
   const s = String(id || '').trim();
   if (!s) return '';
+  const gpt = s.match(/^gpt[-_\s]?([0-9](?:\.[0-9]+)?)(?:[-_\s]?([A-Za-z0-9.]+))?$/i);
+  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? '-' + gpt[2] : ''}`;
   const bare = s.replace(/^claude-/, '').replace(/-\d{8}$/, '');
   const cap = (w) => w ? w[0].toUpperCase() + w.slice(1) : w;
   const m = bare.match(/^(opus|sonnet|haiku|fable|mythos)-?(\d+(?:[-.]\d+)?)?$/);
@@ -8049,10 +8627,13 @@ function updateAutopilotBudget(b) {
   // approximation (per-turn / context-relative depending on the agent),
   // so mark it as approximate rather than presenting an exact count.
   const approx = !!(b.tokensReported || b.tokensEstimated);
+  const partial = !!b.tokensPartial;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
     tv2.textContent = (approx && tk > 0 ? '~' : '') + formatTokens(tk);
-    tv2.title = approx ? 'Approximate, read from the agent status line' : '';
+    tv2.title = partial
+      ? 'Partial token accounting: this agent did not expose full input/context totals'
+      : (approx ? 'Approximate, read from the agent status line' : '');
   }
   updateRing('aut-page-ring-tokens', caps.tokens > 0 ? tk / caps.tokens : 0, meters[1]);
   const usd = Number(b.dollars) || 0;
@@ -8073,7 +8654,7 @@ function renderUsageStripLive() {
   let warnTokens = false;
   let warnDollars = false;
   let earliest = 0;
-  let brk = { input: 0, output: 0, cw: 0, cr: 0, exact: false, approx: false };
+  let brk = { input: 0, output: 0, cw: 0, cr: 0, exact: false, approx: false, partial: false };
   for (const run of activeRuns.values()) {
     const b = run.budget;
     if (run.startedAt && (!earliest || run.startedAt < earliest)) earliest = run.startedAt;
@@ -8086,6 +8667,7 @@ function renderUsageStripLive() {
     brk.cr += Number(b.cacheReadTokens) || 0;
     if (b.tokensExact) brk.exact = true;
     if (b.tokensReported || b.tokensEstimated) { anyApprox = true; brk.approx = true; }
+    if (b.tokensPartial) brk.partial = true;
     if (caps.tokens > 0 && (Number(b.totalTokens) || 0) / caps.tokens >= 0.8) warnTokens = true;
     if (caps.dollars > 0 && (Number(b.dollars) || 0) / caps.dollars >= 0.8) warnDollars = true;
   }
@@ -8095,7 +8677,10 @@ function renderUsageStripLive() {
   const tv = $('#aut-page-val-time');
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
   const tv2 = $('#aut-page-val-tokens');
-  if (tv2) tv2.textContent = (anyApprox && tokens > 0 ? '~' : '') + formatTokens(tokens);
+  if (tv2) {
+    tv2.textContent = (anyApprox && tokens > 0 ? '~' : '') + formatTokens(tokens);
+    tv2.title = brk.partial ? 'Partial token accounting: at least one agent did not expose full input/context totals' : '';
+  }
   const dv = $('#aut-page-val-dollars');
   if (dv) dv.textContent = formatDollars(dollars);
   if (meters[0]) meters[0].classList.toggle('is-warn', warnTime);
@@ -8120,7 +8705,10 @@ function renderTokenBreakdown(brk) {
   set('aut-tb-cr', brk.cr);
   const src = document.getElementById('aut-tb-src');
   if (src) {
-    src.textContent = brk.exact ? 'exact · from transcript' : brk.approx ? 'approx · status line' : '';
+    src.textContent = brk.partial ? 'partial · output/cache only'
+      : brk.exact ? 'exact · from transcript'
+      : brk.approx ? 'approx · status line'
+      : '';
     src.dataset.exact = brk.exact ? '1' : '0';
   }
 }
@@ -8160,6 +8748,19 @@ let autopilotTimeline = [];
 let autopilotRunStart = 0;
 let plannedAgents = []; // orchestrator-planned roles not yet started
 let finishedFleet = []; // per-agent records that survive activeRuns.clear() into review
+let autopilotFleetId = null;
+let finishedFleetBeforeHistory = null;
+
+function resetAutopilotRunScope() {
+  activeRuns.clear();
+  focusedRunId = null;
+  autopilotTimeline = [];
+  autopilotRunStart = 0;
+  plannedAgents = [];
+  finishedFleet = [];
+  finishedFleetBeforeHistory = null;
+  autopilotModelDecisions.clear();
+}
 
 // Snapshot every active run's final state before activeRuns is cleared, so the
 // SPAWNED AGENTS panel keeps showing what each agent did (model, tokens, cost,
@@ -8169,10 +8770,15 @@ function snapshotFinishedFleet() {
     const b = run.budget || {};
     const sum = run.endSummary || null;
     return {
+      sessionId: run.sessionId || (sum && sum.sessionId) || null,
       role: run.role || run.agent || (run.goal ? run.goal.slice(0, 24) : 'agent'),
       agent: run.agent || null,
-      model: b.modelObserved || b.modelId || run.model || null,
+      model: bestRunModel(run) || null,
+      modelObserved: run.modelObserved || b.modelObserved || null,
+      tier: run.tier || null,
+      reason: run.reason || null,
       goal: run.goal || null,
+      originalGoal: run.originalGoal || run.goal || null,
       colorIdx: run.colorIdx || 0,
       endedOk: !!run.endedOk,
       endReason: (sum && sum.endReason) || (run.endedOk ? 'agent_complete' : 'ended'),
@@ -8190,11 +8796,110 @@ function snapshotFinishedFleet() {
     };
   });
 }
+function finishedAgentFromSummary(sum, fallback = {}) {
+  const s = (sum && sum.summary) || {};
+  const meter = s.meter || {};
+  const diff = Array.isArray(sum && sum.diff) ? sum.diff
+    : (Array.isArray(s.diff) ? s.diff : []);
+  const secs = Number(s.durationMs) || 0;
+  return {
+    sessionId: (sum && sum.sessionId) || fallback.sessionId || null,
+    role: (sum && (sum.role || sum.agent)) || 'reviewed run',
+    agent: (sum && sum.agent) || null,
+    model: meter.modelId || null,
+    modelObserved: (sum && sum.modelObserved) || null,
+    tier: null,
+    reason: null,
+    goal: (sum && sum.goal) || null,
+    originalGoal: missionGoalFromSummary(sum) || null,
+    colorIdx: 0,
+    endedOk: summaryCompletedSuccessfully(sum),
+    endReason: (sum && sum.endReason) || s.haltReason || 'ended',
+    finalMessage: (sum && sum.finalMessage) ? String(sum.finalMessage).slice(0, 200) : null,
+    durationMs: secs,
+    files: diff.length,
+    dollars: Number(meter.dollars) || 0,
+    tokens: Number(meter.totalTokens) || 0,
+    input: Number(meter.inputTokens) || 0,
+    output: Number(meter.outputTokens) || 0,
+    cacheWrite: Number(meter.cacheCreateTokens) || 0,
+    cacheRead: Number(meter.cacheReadTokens) || 0,
+    exact: !!meter.tokensExact,
+    approx: !!(meter.tokensReported || meter.tokensEstimated),
+  };
+}
 
 function liveRunCount() {
   let n = 0;
   for (const r of activeRuns.values()) if (!r.ended) n++;
   return n;
+}
+function shouldResetAutopilotForStarted(info) {
+  const continuingGroup = !!(info && info.groupId
+    && [...activeRuns.values()].some((r) => r && r.groupId === info.groupId));
+  return !continuingGroup && !liveRunCount() && !plannedAgents.length;
+}
+function isModelFallback(id) {
+  const raw = String(id || '').trim();
+  if (!raw) return true;
+  if (/\(default\)$/i.test(raw)) return true;
+  // '_default' is the budget meter's pricing-table fallback key; older run
+  // summaries persisted it as the model id, so never show it as a model name.
+  if (/^_?default$/i.test(raw)) return true;
+  return /^(claude|copilot|codex|aider|gemini)$/i.test(raw);
+}
+function bestRunModel(run) {
+  if (!run) return '';
+  const b = run.budget || {};
+  const observed = run.modelObserved || b.modelObserved || '';
+  if (observed && !isModelFallback(observed)) return observed;
+  const planned = run.model || b.modelId || '';
+  return isModelFallback(planned) ? '' : planned;
+}
+function appendModelDecision(parent, data = {}) {
+  const observed = data.modelObserved || data.observedModel || '';
+  const planned = data.model || data.modelId || '';
+  const rawModel = observed && !isModelFallback(observed)
+    ? observed
+    : (!isModelFallback(planned) ? planned : '');
+  const model = rawModel ? prettyModel(rawModel) : '';
+  const tier = data.tier ? String(data.tier) : '';
+  const reason = data.reason ? String(data.reason) : '';
+  const row = document.createElement('div');
+  row.className = 'aut-chip-model';
+  row.title = [rawModel, tier, reason].filter(Boolean).join(' | ');
+  const label = document.createElement('span');
+  label.className = 'aut-chip-model-k';
+  label.textContent = 'model';
+  row.appendChild(label);
+  if (model) {
+    const pill = document.createElement('span');
+    pill.className = 'aut-model-pill';
+    pill.textContent = model;
+    pill.title = rawModel;
+    row.appendChild(pill);
+  } else {
+    const pending = document.createElement('span');
+    pending.className = 'aut-model-pill is-pending';
+    pending.textContent = data.fallbackLabel || 'detecting...';
+    row.appendChild(pending);
+  }
+  if (tier) {
+    const tierEl = document.createElement('span');
+    tierEl.className = 'aut-tier-pill';
+    tierEl.textContent = tier;
+    row.appendChild(tierEl);
+  }
+  if (reason) {
+    const why = document.createElement('span');
+    why.className = 'aut-chip-model-reason';
+    why.textContent = reason;
+    why.title = reason;
+    if (model) why.hidden = true;
+    row.appendChild(why);
+  }
+  parent.appendChild(row);
+  return row;
 }
 function tlPush(kind, label, colorIdx) {
   autopilotTimeline.push({
@@ -8275,6 +8980,9 @@ function ensureLane(key, opts = {}) {
   const name = document.createElement('span');
   name.className = 'aut-lane-name';
   name.textContent = opts.title || laneTitleFor(key);
+  const model = document.createElement('span');
+  model.className = 'aut-lane-model';
+  model.hidden = true;
   const state = document.createElement('span');
   state.className = 'aut-lane-state';
   state.dataset.state = 'starting';
@@ -8284,6 +8992,7 @@ function ensureLane(key, opts = {}) {
   tool.hidden = true;
   head.appendChild(dot);
   head.appendChild(name);
+  head.appendChild(model);
   head.appendChild(state);
   head.appendChild(tool);
   head.addEventListener('click', () => toggleLaneMax(key));
@@ -8332,7 +9041,7 @@ function toggleLaneMax(key) {
   if (activeRuns.has(key)) {
     focusedRunId = key;
     const run = activeRuns.get(key);
-    if (run && run.goal) setAutopilotGoal(run.goal);
+    if (run && run.originalGoal) setAutopilotGoal(run.originalGoal);
   }
   renderRunCards();
 }
@@ -8379,6 +9088,7 @@ function updateLaneHead(key) {
   const lane = lanes.querySelector(`.aut-lane[data-key="${CSS.escape(key)}"]`);
   if (!lane) return;
   const stateEl = lane.querySelector('.aut-lane-state');
+  const modelEl = lane.querySelector('.aut-lane-model');
   const toolEl = lane.querySelector('.aut-lane-tool');
   let state = run.ended ? (run.endedOk ? 'done' : 'stopped') : (run.state || 'starting');
   let stateText = state;
@@ -8388,6 +9098,12 @@ function updateLaneHead(key) {
   if (stateEl) {
     stateEl.dataset.state = state;
     stateEl.textContent = stateText;
+  }
+  if (modelEl) {
+    const model = bestRunModel(run);
+    modelEl.hidden = !model;
+    modelEl.textContent = model ? prettyModel(model) : '';
+    modelEl.title = model || '';
   }
   if (toolEl) {
     if (!run.ended && run.lastTool && (state === 'tool' || state === 'working')) {
@@ -8475,7 +9191,16 @@ function renderTouchedFiles(changes) {
   if (!Array.isArray(changes) || !changes.length) {
     const empty = document.createElement('div');
     empty.className = 'aut-page-feed-empty';
-    empty.textContent = 'No file changes yet.';
+    const title = document.createElement('div');
+    title.className = 'aut-empty-title';
+    title.textContent = autopilotReview ? 'No code changes to apply' : 'No file changes yet';
+    const sub = document.createElement('div');
+    sub.className = 'aut-empty-sub';
+    sub.textContent = autopilotReview
+      ? 'This run produced output only. Keep the report, rerun with an edit-focused goal, or dismiss the retained worktree.'
+      : 'Files touched by the agent will appear here with inline diffs.';
+    empty.appendChild(title);
+    empty.appendChild(sub);
     pane.appendChild(empty);
     if (counter) counter.textContent = '0';
     return;
@@ -8495,7 +9220,10 @@ function renderTouchedFiles(changes) {
     p.textContent = c.path || '';
     row.appendChild(badge);
     row.appendChild(p);
-    row.addEventListener('click', () => openFileDiffModal(c.path, c.status));
+    row.addEventListener('click', () => openFileDiffModal(c.path, c.status, {
+      sessionId: c.sessionId || undefined,
+      workspaceRoot: c.workspaceRoot || undefined,
+    }));
     pane.appendChild(row);
   }
   if (counter) counter.textContent = String(changes.length);
@@ -8767,9 +9495,7 @@ function openAutopilotEndModal(sum) {
 }
 function closeAutopilotEndModal() { $('#autopilot-end-modal').hidden = true; }
 // Report a revert honestly: a non-empty warnings list means some files
-// were NOT restored (decrypt failure, blob mismatch, fs error). The old
-// unconditional "success" toast hid partial reverts, which is the exact
-// trust violation the feature exists to prevent.
+// were NOT restored (decrypt failure, blob mismatch, fs error).
 function reportRevertResult(r) {
   const restored = (r.restored || []).length;
   const warned = (r.warnings || []).length;
@@ -8835,14 +9561,23 @@ try {
     window.husk.autopilot.onStarted((info) => {
       const runId = (info && info.runId) || null;
       const key = runId || '_solo';
+      if (info && info.groupId) autopilotFleetId = info.groupId;
+      else if (runId) autopilotFleetId = runId;
+      const incomingDecision = runId ? autopilotModelDecisions.get(runId) : null;
       // Fresh dashboard when nothing is live: drop ended lanes and the
-      // previous run's timeline before this one paints.
-      if (!liveRunCount()) {
+      // previous run's timeline before this one paints. A collab integrator
+      // starts after all workers ended, so liveRunCount() is briefly zero;
+      // keep those ended workers or fleet tokens/files collapse to "integrator
+      // only" mid-run.
+      if (shouldResetAutopilotForStarted(info)) {
         activeRuns.clear();
         autopilotTimeline = [];
         autopilotRunStart = 0;
         plannedAgents = [];
         finishedFleet = [];
+        finishedFleetBeforeHistory = null;
+        autopilotModelDecisions.clear();
+        if (incomingDecision && runId) autopilotModelDecisions.set(runId, incomingDecision);
         autopilotState.eventCount = 0;
         const lanes = $('#aut-lanes');
         if (lanes) {
@@ -8855,10 +9590,20 @@ try {
         }
       }
       const colorIdx = activeRuns.size % AP_LANE_COLORS;
+      const planned = plannedAgents.find((p) => p.role === (info && info.role)) || null;
+      const decision = (runId && autopilotModelDecisions.get(runId))
+        || (planned && autopilotModelDecisions.get(planned.role))
+        || planned
+        || null;
       activeRuns.set(key, {
         runId, sessionId: info && info.sessionId, workspaceRoot: info && info.workspaceRoot,
-        goal: info && info.goal, role: (info && info.role) || null, groupId: (info && info.groupId) || null,
+        goal: info && info.goal, originalGoal: (info && info.originalGoal) || (info && info.goal) || null,
+        fleetStartedAt: (info && info.fleetStartedAt) || null,
+        role: (info && info.role) || null, groupId: (info && info.groupId) || null,
         startedAt: Date.now(), caps: null, budget: null, feed: [],
+        model: decision && decision.model || null,
+        tier: decision && decision.tier || null,
+        reason: decision && decision.reason || null,
         colorIdx, files: [], state: 'starting', nudges: 0, lastTool: null, lastToolAt: 0, quietMs: 0,
         ended: false, endedOk: false,
       });
@@ -8868,7 +9613,7 @@ try {
       autopilotActive = true;
       autopilotState.startedAt = activeRuns.get(key).startedAt;
       if (!autopilotLastSession && info) autopilotLastSession = { sessionId: info.sessionId, workspaceRoot: info.workspaceRoot };
-      if (info && typeof info.goal === 'string' && info.goal && key === focusedRunId) setAutopilotGoal(info.goal);
+      if (info && typeof info.originalGoal === 'string' && info.originalGoal) setAutopilotGoal(info.originalGoal);
       ensureLane(key);
       tlPush('start', `${laneTitleFor(key)} started`, colorIdx);
       paintAutopilotBanner();
@@ -8884,8 +9629,9 @@ try {
       const groupPending = !!(sum && sum.groupPending);
       if (run) {
         run.ended = true;
-        run.endedOk = !!(sum && sum.endReason === 'agent_complete');
+        run.endedOk = summaryCompletedSuccessfully(sum);
         run.endSummary = sum || null;
+        if (sum && sum.modelObserved && !run.modelObserved) run.modelObserved = sum.modelObserved;
         tlPush('end', `${laneTitleFor(key)} ended (${(sum && sum.endReason) || 'ended'})`, run.colorIdx);
         if (groupPending || liveRunCount() > 0) {
           const items = [{ kind: 'status', text: `Run ended: ${(sum && sum.endReason) || 'ended'}.` }];
@@ -8915,22 +9661,31 @@ try {
           const fleetMembers = [...activeRuns.values()].map((r) => ({
             sessionId: r.sessionId || (r.endSummary && r.endSummary.sessionId) || null,
             agent: r.agent || (r.endSummary && r.endSummary.agent) || null,
+            model: bestRunModel(r) || null,
+            fleetStartedAt: r.fleetStartedAt || (r.endSummary && r.endSummary.fleetStartedAt) || null,
           })).filter((m) => m.sessionId);
           // A just-finished run retains its worktree, so this review offers
           // Apply/Discard rather than the snapshot-era Revert.
           snapshotFinishedFleet();
           activeRuns.clear();
+          plannedAgents = [];
           enterReviewMode({ sessionId: sid, workspaceRoot: wr, summary: sum, retained: true, runId });
           showFleetReceipt(fleetMembers);
           const halt = (sum.summary && sum.summary.haltReason) || 'natural';
           if (sum.endReason === 'agent_complete') runEndBanner('Run complete: goal declared finished', '');
+          else if (sum.endReason === 'agent_blocked') runEndBanner('Run blocked: agent reported a blocker', 'stopped');
+          else if (sum.endReason === 'agent_failed') runEndBanner('Run failed: agent reported failure', 'stopped');
+          else if (sum.endReason === 'agent_unverified') runEndBanner('Run incomplete: completion was not verified', 'stopped');
+          else if (sum.endReason === 'agent_startup_stall') runEndBanner('Run stopped: agent never got past startup', 'stopped');
           else if (halt === 'budget') runEndBanner('Run stopped at a budget cap', 'budget');
+          else if (halt === 'stall') runEndBanner('Run stopped after stalling', 'stopped');
           else if (halt === 'user' || sum.endReason === 'user') runEndBanner('Run stopped', 'stopped');
           else if (halt === 'agent-exited') runEndBanner('Run ended: agent exited', 'stopped');
           else runEndBanner('Run complete', '');
         } else {
           snapshotFinishedFleet();
           activeRuns.clear();
+          plannedAgents = [];
           paintAutopilotBanner();
         }
       }
@@ -8989,20 +9744,32 @@ try {
     if (window.husk.autopilot.onCollabPlan) {
       window.husk.autopilot.onCollabPlan((info) => {
         if (!info) return;
+        if (info.groupId && autopilotFleetId && autopilotFleetId.startsWith('collab-') && info.groupId !== autopilotFleetId) return;
+        if (info.groupId) autopilotFleetId = info.groupId;
         if (info.note) {
           pushActivity([info.note], '_orch');
-          toast(info.note, 'info');
+          if (!info.cancelled) toast(info.note, 'info');
+          if (info.role) plannedAgents = plannedAgents.filter((p) => p.role !== info.role);
+          if (info.terminal) plannedAgents = [];
           // Notes can mean the team ended without an integrator (nothing to
           // integrate, or it failed to start). Re-derive live state so the
           // page cannot stay stuck in a runless "running" limbo.
-          autopilotActive = liveRunCount() > 0;
+          autopilotActive = liveRunCount() > 0 || plannedAgents.length > 0;
           paintAutopilotBanner();
           return;
         }
         const agents = Array.isArray(info.agents) ? info.agents : [];
+        if (!activeRuns.size && !plannedAgents.length && !autopilotTimeline.length) {
+          finishedFleet = [];
+          finishedFleetBeforeHistory = null;
+          autopilotModelDecisions.clear();
+        }
         // Planned-but-not-started agents appear as queued chips in the
         // fleet strip until their started event replaces them.
-        plannedAgents = agents.map((a) => ({ role: a.role, subgoal: a.subgoal, tier: a.tier, model: a.model }));
+        plannedAgents = agents.map((a) => ({ role: a.role, subgoal: a.subgoal, tier: a.tier, model: a.model, reason: a.reason }));
+        for (const a of plannedAgents) {
+          if (a.role) autopilotModelDecisions.set(a.role, { model: a.model, tier: a.tier, reason: a.reason });
+        }
         // Persistent run-log entries, one per agent, explaining the model
         // choice. No toast -- the user wants a durable, readable record.
         const auto = agents.some((a) => a.autoSelected);
@@ -9026,8 +9793,17 @@ try {
     if (window.husk.autopilot.onOrchestrator) {
       window.husk.autopilot.onOrchestrator((info) => {
         if (!info || !info.reason) return;
+        if (info.runId) autopilotModelDecisions.set(info.runId, { model: info.model, tier: info.tier, reason: info.reason });
+        const key = info.runId && activeRuns.has(info.runId) ? info.runId : null;
+        const run = key ? activeRuns.get(key) : null;
+        if (run) {
+          run.model = info.model || run.model || null;
+          run.tier = info.tier || run.tier || null;
+          run.reason = info.reason || run.reason || null;
+        }
         tlPush('plan', `ORCHESTRATOR: ${info.reason}${info.autoSelected ? ' (auto-selected)' : ''}`, 3);
         pushActivity([info.reason], '_orch');
+        renderRunCards();
       });
     }
     if (window.husk.autopilot.onBudget) {
@@ -9044,6 +9820,12 @@ try {
           if (typeof b.quietMs === 'number') run.quietMs = b.quietMs;
           if (b.lastTool !== undefined) { run.lastTool = b.lastTool; run.lastToolAt = b.lastToolAt || 0; }
           if (b.agent && !run.agent) run.agent = b.agent;
+          if (b.modelObserved) run.modelObserved = b.modelObserved;
+          if (b.modelId && !run.model) run.model = b.modelId;
+          run.tokensPartialSeen = !!(run.tokensPartialSeen || b.tokensPartial);
+          run.tokensApproxSeen = !!(run.tokensApproxSeen || b.tokensReported || b.tokensEstimated);
+          if (run.tokensPartialSeen) run.budget.tokensPartial = true;
+          if (run.tokensApproxSeen) run.budget.tokensReported = true;
           updateLaneHead(key);
         }
         if (!autopilotActive) return;

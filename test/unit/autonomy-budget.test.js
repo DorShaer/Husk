@@ -170,7 +170,7 @@ test('cache reads are billed but EXCLUDED from the token cap basis', () => {
 
 test('reported dollars use the cache-weighted rate, not the fresh blend', () => {
   // Calibrated from real usage: a status-line cumulative is ~97% cache reads,
-  // so 1M reported tokens costs ~$0.54 for Sonnet, not the old ~$11.40.
+  // so 1M reported tokens costs ~$0.54 for Sonnet, not the ~$11.40 a fresh blend implies.
   const m = createBudgetMeter({ startedAt: T0, modelId: 'claude-sonnet-4-7' });
   m.setReportedTokens(1_000_000);
   const s = m.state(T0);
@@ -217,6 +217,20 @@ test('explicit transcript deltas outgrow a stale early report', () => {
   const s = m.state(T0);
   assert.equal(s.totalTokens, 700);
   assert.equal(s.tokensEstimated, false);
+});
+
+test('exact dollars still guard the cap when reported tokens are larger', () => {
+  const m = createBudgetMeter({
+    startedAt: T0,
+    modelId: 'claude-sonnet-4-7',
+    caps: { minutes: 1e9, tokens: 1e9, dollars: 5 },
+  });
+  m.tick({ now: T0, inputTokens: 2_000_000, outputTokens: 0 });
+  m.setReportedTokens(5_000_000);
+  const s = m.state(T0);
+  assert.equal(s.totalTokens, 5_000_000);
+  assert.ok(s.dollars >= 6, `dollars ${s.dollars}`);
+  assert.equal(s.hitCap, 'dollars');
 });
 
 test('a larger reported cumulative still beats smaller explicit deltas', () => {

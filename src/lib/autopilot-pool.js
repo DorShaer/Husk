@@ -56,7 +56,15 @@ function drainPending(maxConcurrent, startFn) {
   if (getActiveCount() >= cap) return false;
   const next = pendingRuns.shift();
   if (!next) return false;
-  startFn(next.runId, next.payload, next.workspaceRoot).catch(() => {});
+  try {
+    Promise.resolve(startFn(next.runId, next.payload, next.workspaceRoot))
+      .then((res) => {
+        if (res && res.ok === false) drainPending(maxConcurrent, startFn);
+      })
+      .catch(() => { drainPending(maxConcurrent, startFn); });
+  } catch (_) {
+    drainPending(maxConcurrent, startFn);
+  }
   return true;
 }
 

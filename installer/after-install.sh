@@ -15,6 +15,15 @@ if [ -f "$SANDBOX" ]; then
   chmod 4755 "$SANDBOX" || true
 fi
 
+# Expose a `husk` command on PATH. electron-builder installs the binary to
+# /opt/Husk and registers only a .desktop entry, so a fresh package gives no
+# terminal launcher. Symlink into /usr/local/bin so `husk` works from a shell,
+# matching the wrapper the source installer (install.sh) creates.
+if [ -x "/opt/Husk/husk" ]; then
+  mkdir -p /usr/local/bin
+  ln -sf /opt/Husk/husk /usr/local/bin/husk || true
+fi
+
 # Install icon at standard hicolor sizes GNOME/KDE recognise,
 # then refresh caches so the icon appears immediately without a logout.
 SRC="/usr/share/icons/hicolor/1024x1024/apps/husk.png"

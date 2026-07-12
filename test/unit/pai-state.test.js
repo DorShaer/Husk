@@ -147,6 +147,17 @@ test('ISC-10: recap=false appends the recap-suppression sentence regardless of P
   assert.match(on, /disabled recaps/);
 });
 
+test('ISC-10c: recap=false suppression covers the speech-balloon line and beats memory files', () => {
+  const out = buildHuskPrompt({ agentName: 'Husk', paiEnabled: true, recap: false });
+  assert.match(out, /"🗣️ Husk:" summary line/);
+  assert.match(out, /even if CLAUDE\.md or a memory file asks for one/);
+});
+
+test('ISC-10d: PAI-on prompt endorses "recap behavior" only while recaps are enabled', () => {
+  assert.match(buildHuskPrompt({ agentName: 'Husk', paiEnabled: true, recap: true }), /and recap behavior/);
+  assert.doesNotMatch(buildHuskPrompt({ agentName: 'Husk', paiEnabled: true, recap: false }), /and recap behavior/);
+});
+
 test('ISC-10b: recap defaulted (undefined) does NOT append the recap-suppression sentence', () => {
   const out = buildHuskPrompt({ agentName: 'Husk', paiEnabled: true });
   assert.doesNotMatch(out, /disabled recaps/);

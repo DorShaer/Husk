@@ -15,8 +15,8 @@ test('reads the speech-balloon summary from its own row', () => {
 });
 
 test('does NOT pick up UI chrome from other rows', () => {
-  // The bug: a full-screen agent draws the status bar and prompt on separate
-  // rows; the recap must contain none of it.
+  // A full-screen agent draws status bars and prompts on separate rows; the
+  // recap must contain none of that UI chrome.
   const rows = [
     row('\u{1F5E3}\u{FE0F} Husk: Nice to meet you too, happy to help with anything you need.'),
     row('~'),

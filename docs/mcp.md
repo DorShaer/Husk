@@ -15,16 +15,18 @@ The agents Husk runs can already read files, write files, run shell, fetch URLs,
 | Fetch | URL fetcher with HTML-to-text extraction. Cleaner than parsing raw HTML. |
 | Brave Search | Structured web search results without scraping a search page. |
 
-## The page is per-agent
+## One Husk MCP registry, mirrored to agent configs
 
-The MCP page reads from whichever agent is active. Each agent has its own config file, and Husk routes reads and writes through an adapter that knows that agent's on-disk shape:
+The MCP page is intentionally **not** per-agent. Husk treats the page as one shared MCP registry and mirrors every create, edit, toggle, and delete into every write-capable agent config. That means you can install a server once, then switch between Claude, Copilot, and Gemini without reinstalling it.
 
-| Active agent | Config file Husk writes | Live status probe |
+Husk also backfills: if it finds an MCP server that exists in only one vendor config, opening the MCP page copies it into the missing write-capable configs without overwriting same-name entries that already exist elsewhere.
+
+| Agent config mirrored by Husk | Config file Husk writes | Live status probe |
 |--------------|-------------------------|-------------------|
 | `claude` | `~/.claude.json` | yes (`claude mcp list`) |
 | `copilot` | `~/.copilot/mcp-config.json` | no, the page shows `configured` for every entry |
 | `gemini` | `~/.gemini/settings.json` (only `mcpServers` and the disabled sidecar are touched; other settings are preserved) | no, the page shows `configured` for every entry |
-| `codex`, `aider` | not wired up yet | the page is empty with a clear "not yet supported" state |
+| `codex`, `aider` | snippet-only today | repo install shows a TOML / CLI snippet because Husk does not yet own a safe automatic merge path for those formats |
 
 The adapter pattern lives in `src/lib/mcp/`. The on-disk shape is the same across all wired-up agents (`mcpServers` plus the Husk-private `_huskMcpDisabled`), so a config Husk wrote can be loaded by the agent CLI directly, and an MCP entry someone else dropped in is readable by Husk.
 
@@ -57,9 +59,9 @@ Plus a per-row connection state pill: `connected` / `failed` / `needs auth` / `c
 Click any catalog card. If the server needs configuration (a folder for Filesystem, an API key for GitHub or Brave Search), the modal prompts inline. Submit, and Husk:
 
 1. Validates the inputs.
-2. Writes a clean entry into the active agent's `mcpServers` config.
+2. Writes a clean entry into every mirrored agent's `mcpServers` config.
 3. chmods the file to `0600` (it now holds your token).
-4. Silently restarts the agent so the new server loads.
+4. Marks the running chat as pending until the agent is restarted, so unsent drafts are never killed.
 5. Re-runs `mcp:health` and flips the row's status pill from `checking…` to `connected` (claude) or `configured` (copilot / gemini) once the write lands.
 
 You never touch JSON.

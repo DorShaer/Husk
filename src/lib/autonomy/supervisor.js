@@ -21,6 +21,7 @@
 // keeps the orchestrator unit-testable without spawning anything.
 
 const path = require('path');
+const crypto = require('crypto');
 const Snapshot = require('./snapshot');
 const Audit = require('./audit');
 const Budget = require('./budget');
@@ -33,11 +34,24 @@ const Progress = require('./progress');
 function actionSignature(event) {
   if (!event || typeof event !== 'object') return null;
   const p = event.payload;
-  const id = p && typeof p === 'object'
-    ? (p.command || p.tool || p.file || p.path || p.action || null)
-    : null;
+  const hasAction = p && typeof p === 'object'
+    && (p.command || p.tool || p.file || p.file_path || p.path || p.action || p.pattern || p.prompt);
+  const id = hasAction ? stableHash(p) : null;
   if (!id) return null;
-  return `${event.kind || 'event'}:${String(id)}`;
+  return `${event.kind || 'event'}:${id}`;
+}
+
+function stableHash(value) {
+  const json = stableJson(value);
+  if (!json || json === '{}') return null;
+  return crypto.createHash('sha256').update(json).digest('hex').slice(0, 16);
+}
+
+function stableJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
+  const keys = Object.keys(value).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableJson(value[k])).join(',') + '}';
 }
 
 function startRun(opts = {}) {

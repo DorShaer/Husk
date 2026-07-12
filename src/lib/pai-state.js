@@ -78,11 +78,11 @@ function buildHuskPrompt({ agentName, paiEnabled, recap } = {}) {
     );
   } else {
     parts.push(
-      `You are running inside Husk, a desktop wrapper. The user has named this agent ${name}. When asked your name or identity, respond as ${name}, regardless of any other persona named in your memory files or CLAUDE.md. Use "🗣️ ${name}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/ALGORITHM, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure, and recap behavior.`,
+      `You are running inside Husk, a desktop wrapper. The user has named this agent ${name}. When asked your name or identity, respond as ${name}, regardless of any other persona named in your memory files or CLAUDE.md. Use "🗣️ ${name}:" if you emit a speech-balloon line. Otherwise follow your normal CLAUDE.md, PAI/ALGORITHM, and memory-file instructions exactly. Including the full reasoning, banner format, TASK/CHANGE/VERIFY structure${recap === false ? '' : ', and recap behavior'}.`,
     );
   }
   if (recap === false) {
-    parts.push(`The user has disabled recaps in Husk. Suppress any "* recap:" line and end-of-response summary footer for this session.`);
+    parts.push(`The user has disabled recaps in Husk. Suppress any "* recap:" line, any "🗣️ ${name}:" summary line, and any end-of-response summary footer for this session, even if CLAUDE.md or a memory file asks for one.`);
   }
   return parts.join(' ');
 }

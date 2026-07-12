@@ -67,6 +67,20 @@ test('loop: four identical actions with no progress halt with stall/loop', () =>
   assert.equal(st.haltDetail.signal, 'loop');
 });
 
+test('NO false-kill: chunked reads of one file are distinct actions', () => {
+  const runner = start({ governor: true, caps: BIG_CAPS });
+  for (let i = 0; i < 4; i++) {
+    clock = T0 + i * 1000;
+    runner.recordEvent({
+      kind: 'tool_use',
+      tokens: { chars: 40 },
+      payload: { tool: 'Read', file_path: 'large.js', offset: i * 1000, limit: 1000 },
+    });
+  }
+  assert.equal(runner.getState().status, 'running');
+  assert.equal(runner.governorState().stalled, null);
+});
+
 test('NO false-kill: a long silent run is never stall-halted', () => {
   const runner = start({ governor: true, caps: BIG_CAPS });
   runner.reportProgress('files=1;churn=10');

@@ -12,7 +12,7 @@
 //         .env.example        optional: lines like KEY=description
 //         dist/               optional: present when build has already run
 //
-// The scanner is forgiving. Missing files, missing fields, weird casing -
+// The scanner is forgiving. Missing files, missing fields, inconsistent casing -
 // each branch produces a sensible status rather than throwing.
 
 const fs = require('fs');

@@ -1,9 +1,7 @@
 'use strict';
 
-// Regression guard: an active autopilot run must survive the user navigating
-// to the Chat page and opening/using a chat session. The run owns a dedicated
-// PTY and worktree; nothing in the chat lifecycle may finish, cancel, or kill
-// it, and the renderer must still show the run as live afterwards.
+// An active autopilot run owns a dedicated PTY and worktree. Navigating to Chat
+// and opening a chat session must not affect that run's lifecycle or live view.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -67,9 +65,8 @@ test('an active autopilot run survives navigating to chat', async () => {
     window.husk.autopilot.onHalt((p) => window.__apEvents.push({ ev: 'halt', p }));
   });
 
-  // Race: fire the start and immediately navigate to chat + open a chat
-  // session, all before the autopilot:started event lands. This models
-  // "starts a run and in the meantime goes to chat".
+  // Start the run and immediately exercise chat navigation before the
+  // autopilot:started event is delivered.
   const started = await win.evaluate(async () => {
     const p = window.husk.autopilot.start({
       goal: 'e2e: keep working, never finish',

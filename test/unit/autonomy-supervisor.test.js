@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { startRun, revertRun, summarizeRun } = require('../../src/lib/autonomy/supervisor');
+const { startRun, revertRun, summarizeRun, summarizeRunAsync } = require('../../src/lib/autonomy/supervisor');
 const Audit = require('../../src/lib/autonomy/audit');
 
 const SID = 'sup-test-001';
@@ -155,6 +155,20 @@ test('summarizeRun returns event count + chain validity + diff', () => {
   assert.equal(s.chain.valid, true);
   assert.ok(s.diff.find((d) => d.path === 'a.txt' && d.status === 'modified'));
   assert.equal(s.summary.status, 'ended');
+});
+
+test('endRunAsync writes run_summary and summarizeRunAsync returns it', async () => {
+  fs.writeFileSync(path.join(work, 'a.txt'), 'original');
+  const runner = start();
+  fs.writeFileSync(path.join(work, 'a.txt'), 'changed');
+  await runner.endRunAsync({ note: 'async end' });
+
+  const s = await summarizeRunAsync({ sessionId: SID, workspaceRoot: work, storageRoot: store });
+  assert.equal(s.ok, true);
+  assert.equal(s.summary.status, 'ended');
+  assert.equal(s.summary.haltDetail.note, 'async end');
+  assert.ok(s.summary.diff.find((d) => d.path === 'a.txt' && d.status === 'modified'));
+  assert.ok(s.diff.find((d) => d.path === 'a.txt' && d.status === 'modified'));
 });
 
 // ─── encrypted round-trip via callbacks ─────────────────────────────────

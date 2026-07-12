@@ -1,5 +1,13 @@
 #!/bin/bash
 # Post-remove: clean up icon copies at standard sizes, then refresh caches.
+
+# Remove the PATH launcher created in after-install, but only if it still
+# points at our binary (guards against clobbering an unrelated husk).
+LINK="/usr/local/bin/husk"
+if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "/opt/Husk/husk" ]; then
+  rm -f "$LINK" || true
+fi
+
 for SIZE in 512x512 256x256 128x128 64x64 48x48; do
   rm -f "/usr/share/icons/hicolor/$SIZE/apps/husk.png"
 done

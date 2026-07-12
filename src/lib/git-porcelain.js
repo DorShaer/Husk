@@ -119,19 +119,23 @@ function parsePorcelain(text) {
       status = labelFor(primary);
     }
 
+    let oldPath;
     if (status === 'renamed' || status === 'copied') {
       const arrow = field.indexOf(' -> ');
       if (arrow !== -1) {
+        oldPath = unquote(field.slice(0, arrow));
         field = field.slice(arrow + 4);
       }
     }
 
-    out.push({
+    const entry = {
       path: unquote(field),
       status,
       staged,
       unstaged,
-    });
+    };
+    if (oldPath) entry.oldPath = oldPath;
+    out.push(entry);
   }
 
   return out;

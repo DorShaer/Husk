@@ -80,7 +80,7 @@ test('parseEnvExample: ignores lines without =', () => {
 
 test('parseEnvExample: rejects keys with invalid characters', () => {
   // Spaces and lowercase-start are tolerated by some tools but we follow
-  // the strict dotenv convention to avoid emitting weird env names.
+  // the strict dotenv convention to avoid emitting malformed env names.
   assert.deepEqual(parseEnvExample('bad key=v\n9LEADING=v\nOK_KEY=v\n'), [
     { key: 'OK_KEY', hint: 'v' },
   ]);
@@ -184,8 +184,7 @@ test('describeServer: env-example keys land in envVars[]', () => {
 // ─── buildServerSpec ───────────────────────────────────────────────────────
 
 test('ISC-10: buildServerSpec ALWAYS returns command + args separately (no joined string)', () => {
-  // This is the regression guard for the joined-command bug. The spec
-  // must never lose the structural split between command and args.
+  // The generated spec must preserve command and args as separate fields.
   mkServer('alpha', {
     pkg: { name: 'alpha', main: 'dist/index.js', scripts: { build: 'tsc' } },
     distMain: '//',
@@ -335,8 +334,7 @@ test('renderAiderSnippet: includes env object when env is non-empty', () => {
 
 test('ISC-A1: a freshly built spec is structurally always { command: string, args: array }', () => {
   // Loop a handful of shapes through the builder and confirm the
-  // structural invariant holds every time. This is the regression
-  // guard the user explicitly called out.
+  // structural invariant holds every time.
   const cases = [
     { pkg: { name: 'a', main: 'dist/i.js', scripts: { build: 'tsc' } }, distMain: '//' },
     { pkg: { name: 'b', scripts: { start: 'node main.js' } } },

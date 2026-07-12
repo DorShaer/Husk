@@ -5,27 +5,19 @@
 // work (bump deps, format, find TODOs) should not burn a frontier model;
 // hard work should not get a weak one.
 //
-// Two-tier per vendor. Vendors where the model is subscription- or
-// config-bound (copilot, aider) default to no flag -- the CLI's own model --
-// because injecting an unknown --model would break the run, which is worse
-// than not routing. Every default is overridable from settings, keyed by the
-// CLI base name, so a user on any CLI version can point the tiers at the
-// exact model names their install accepts.
-// Per-vendor flag + tier model names. claude/gemini ship working defaults;
-// codex/aider know the flag but not the model names (version/account bound),
-// so they stay unrouted until the user supplies names in settings. copilot
-// has no model switch at all.
-// Only claude ships model-name defaults, because its --model aliases (haiku,
-// opus) are documented-stable and verified. Every other CLI knows its flag
-// but ships NO default names: a wrong model id fails the whole run, so the
-// user confirms the exact name in settings (placeholders suggest them). This
-// keeps routing safe on every CLI and automatic on claude.
+// Two tiers per vendor. Only claude ships model-name defaults, because its
+// --model aliases (haiku, opus) are documented-stable. Every other CLI knows
+// its flag but ships null names: a wrong model id fails the whole run, which
+// is worse than not routing, so those stay unrouted until the UI discovers
+// names or the user supplies them. Every default is overridable from settings,
+// keyed by the CLI base name, so a user on any CLI version can point the tiers
+// at the exact model names their install accepts.
 const DEFAULT_VENDOR_MODELS = Object.freeze({
   claude:  { flag: '--model', cheap: 'haiku', smart: 'opus' },
+  copilot: { flag: '--model', cheap: null, smart: null },
   gemini:  { flag: '-m', cheap: null, smart: null },
   codex:   { flag: '--model', cheap: null, smart: null },
   aider:   { flag: '--model', cheap: null, smart: null },
-  copilot: null,
 });
 
 // Return the argv fragment that selects `tier`'s model for this CLI, or []
@@ -42,7 +34,21 @@ function modelArgsFor(agentBaseName, tier, overrides = {}) {
   if (!entry || !entry.flag) return [];
   const model = tier === 'cheap' ? entry.cheap : entry.smart;
   if (!model || typeof model !== 'string' || !model.trim()) return [];
-  return [entry.flag, model.trim()];
+  const clean = model.trim();
+  if (!isExplicitModelValueUsable(clean)) return [];
+  return [entry.flag, clean];
+}
+
+function isExplicitModelValueUsable(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 90) return false;
+  if (/\s/.test(raw)) return false;
+  if (/not logged in|use \/login|authenticate|plan:|session:|aic used|context\b/i.test(raw)) return false;
+  // A saved value that is really a config path or doc token (a residue of
+  // older catalog parsing) must never reach the CLI as --model.
+  if (/\.(json|jsonc|ya?ml|md|txt|log|lock|toml|ini|cfg|conf|sh|mjs|cjs|js|ts)$/i.test(raw)) return false;
+  if (/(^|[-./_])(api|sdk|cli|docs?|settings|config|readme|help)$/i.test(raw)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(raw);
 }
 
 // Classify a goal into a model tier. Conservative by design: only route DOWN
@@ -50,10 +56,11 @@ function modelArgsFor(agentBaseName, tier, overrides = {}) {
 // lands on a weak model (routing wrong toward cheap costs quality; routing
 // wrong toward smart only costs tokens).
 const CHEAP_RE = new RegExp(
-  '\\b(bump|upgrade|update)\\b[^.]*\\b(dep|deps|dependenc\\w*|version\\w*|package\\w*)'
+  '\\b(bump|upgrade)\\b[^.]*\\b(dep|deps|dependenc\\w*|version\\w*|package\\w*)'
+  + '|\\bupdate\\b[^.]*\\b(dep|deps|dependenc\\w*|version\\w*|package\\w*)\\b(?!\\s+injection)'
   + '|\\b(re)?format\\b|\\blint\\b|prettier|eslint --fix'
-  + '|\\brename\\b|\\btypo\\b|sort imports|organize imports'
-  + '|\\b(find|list|scan|hunt|locate|collect|gather|catalog|audit|search|grep)\\b[^.]*\\b(todo|fixme|comment)'
+  + '|\\brename\\b[^.]*\\b(helper|variable|function|class|method|symbol|file|identifier)\\b|\\btypo\\b|sort imports|organize imports'
+  + '|\\b(find|list|scan|hunt|locate|collect|gather|catalog|audit|search|grep)\\b[^.]*\\b(todo|fixme)\\b'
   + '|inventory of|add (a )?(comment|docstring|jsdoc)|changelog', 'i');
 
 function classifyTier(goal) {
