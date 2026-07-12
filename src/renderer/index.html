@@ -35,48 +35,136 @@
       <div class="ob-stage">
         <!-- Step 1: Welcome -->
         <section class="ob-step" data-step="welcome">
-          <!-- Kernel: the husk splits and the agent inside looks out. The mark is
-               drawn rather than an image so the shell can open and the eyes can move. -->
+          <!-- Kernel, the Husk character. The pod is the Husk mark split in two, so the
+               shell can hinge open and the seed inside can look around. -->
           <div class="ob-logo-wrap">
-            <svg class="hk" viewBox="0 0 120 128" role="img" aria-label="Husk" id="ob-kernel">
+            <svg class="hk" viewBox="0 0 200 214" role="img" aria-label="Husk" id="ob-kernel">
               <defs>
-                <linearGradient id="hk-shell-l" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stop-color="#e07a3e" /><stop offset="1" stop-color="#b34e1d" />
+                <linearGradient id="hk-rind-l" x1="0" y1="0" x2="1" y2="0.7">
+                  <stop offset="0" stop-color="#c96a33" /><stop offset="0.55" stop-color="#b0521c" />
+                  <stop offset="1" stop-color="#8e3d12" />
                 </linearGradient>
-                <linearGradient id="hk-shell-r" x1="1" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#f0913f" /><stop offset="1" stop-color="#c25f22" />
+                <linearGradient id="hk-rind-r" x1="1" y1="0" x2="0" y2="0.7">
+                  <stop offset="0" stop-color="#e2822f" /><stop offset="0.55" stop-color="#c25f1f" />
+                  <stop offset="1" stop-color="#9c4514" />
                 </linearGradient>
-                <radialGradient id="hk-core" cx="50%" cy="42%" r="62%">
-                  <stop offset="0" stop-color="#fff3d6" />
-                  <stop offset="0.45" stop-color="#ffc46b" />
-                  <stop offset="1" stop-color="#f47a25" />
+                <linearGradient id="hk-face-l" x1="0.2" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#f5a349" /><stop offset="1" stop-color="#d1701f" />
+                </linearGradient>
+                <linearGradient id="hk-face-r" x1="0.8" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#fdb257" /><stop offset="1" stop-color="#dd7a26" />
+                </linearGradient>
+                <linearGradient id="hk-sheen" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#fff" stop-opacity="0.35" />
+                  <stop offset="1" stop-color="#fff" stop-opacity="0" />
+                </linearGradient>
+                <linearGradient id="hk-pit" x1="0.5" y1="0" x2="0.5" y2="1">
+                  <stop offset="0" stop-color="#6b3316" /><stop offset="1" stop-color="#38180a" />
+                </linearGradient>
+                <!-- userSpaceOnUse so the blink lids can reuse this fill and match the
+                     body exactly instead of resampling the gradient over their own box. -->
+                <radialGradient id="hk-body" gradientUnits="userSpaceOnUse" cx="88" cy="58" r="108">
+                  <stop offset="0" stop-color="#fff6e2" />
+                  <stop offset="0.4" stop-color="#fdd191" />
+                  <stop offset="1" stop-color="#e79447" />
                 </radialGradient>
-                <filter id="hk-soft" x="-60%" y="-60%" width="220%" height="220%">
-                  <feGaussianBlur stdDeviation="4" />
-                </filter>
+                <radialGradient id="hk-iris" cx="0.35" cy="0.3" r="0.8">
+                  <stop offset="0" stop-color="#5c3114" /><stop offset="0.55" stop-color="#331a09" />
+                  <stop offset="1" stop-color="#1d0d04" />
+                </radialGradient>
+                <radialGradient id="hk-cheek" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0" stop-color="#ff7f4d" stop-opacity="0.45" />
+                  <stop offset="1" stop-color="#ff7f4d" stop-opacity="0" />
+                </radialGradient>
+                <linearGradient id="hk-sprout" x1="0" y1="1" x2="0.3" y2="0">
+                  <stop offset="0" stop-color="#3d7c47" /><stop offset="1" stop-color="#97d888" />
+                </linearGradient>
+                <radialGradient id="hk-glow" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0" stop-color="#ffb066" stop-opacity="0.45" />
+                  <stop offset="1" stop-color="#ffb066" stop-opacity="0" />
+                </radialGradient>
+                <clipPath id="hk-clip-l"><ellipse cx="79" cy="83" rx="13.5" ry="16" /></clipPath>
+                <clipPath id="hk-clip-r"><ellipse cx="121" cy="83" rx="13.5" ry="16" /></clipPath>
               </defs>
 
-              <ellipse class="hk-halo" cx="60" cy="66" rx="30" ry="34" fill="#ff8b3d" filter="url(#hk-soft)" />
+              <ellipse class="hk-glow" cx="100" cy="105" rx="88" ry="84" fill="url(#hk-glow)" />
+              <ellipse class="hk-shadow" cx="100" cy="205" rx="42" ry="6" fill="#7a3d16" opacity="0.2" />
 
-              <g class="hk-kernel">
-                <ellipse class="hk-core" cx="60" cy="66" rx="19" ry="24" fill="url(#hk-core)" />
-                <g class="hk-face">
-                  <g class="hk-eyes">
-                    <ellipse class="hk-eye" cx="52" cy="62" rx="4.2" ry="5.6" />
-                    <ellipse class="hk-eye" cx="68" cy="62" rx="4.2" ry="5.6" />
-                  </g>
-                  <circle class="hk-glint" cx="53.4" cy="60" r="1.5" />
-                  <circle class="hk-glint" cx="69.4" cy="60" r="1.5" />
-                  <path class="hk-smile" d="M54 74 Q60 79 66 74" fill="none" stroke-linecap="round" />
+              <!-- the pod's inner cavity, so the opening reads as depth and not a hole -->
+              <path class="hk-pit" d="M46 52 C 58 96, 78 150, 100 202 C 122 150, 142 96, 154 52 C 132 84, 68 84, 46 52 Z" fill="url(#hk-pit)" />
+
+              <g class="hk-seed">
+                <g class="hk-sprout-g">
+                  <path d="M99 34 C 96 18, 88 8, 73 3 C 84 -4, 100 4, 105 18 C 110 4, 122 -3, 135 2 C 129 20, 115 32, 102 35 Z" fill="url(#hk-sprout)" />
+                  <path d="M101 38 C 100 30, 99 22, 96 14" stroke="#31673a" stroke-width="2.4" fill="none" stroke-linecap="round" />
+                </g>
+
+                <path class="hk-arm" d="M64 92 C 50 96, 44 108, 51 118 C 58 128, 74 125, 76 112 Z" fill="#e29147" />
+                <path class="hk-arm" d="M136 92 C 150 96, 156 108, 149 118 C 142 128, 126 125, 124 112 Z" fill="#e29147" />
+
+                <path class="hk-torso" d="M100 32 C 131 32, 143 56, 142 83 C 141 114, 123 142, 100 150 C 77 142, 59 114, 58 83 C 57 56, 69 32, 100 32 Z" fill="url(#hk-body)" />
+                <path d="M100 150 C 77 142, 59 114, 58 87 C 66 116, 80 134, 100 142 C 120 134, 134 116, 142 87 C 141 114, 123 142, 100 150 Z" fill="#c9762f" opacity="0.26" />
+                <path d="M72 54 C 79 42, 89 36, 99 36" stroke="#fff8ea" stroke-width="3.4" fill="none" stroke-linecap="round" opacity="0.72" />
+
+                <ellipse cx="70" cy="99" rx="12" ry="7.5" fill="url(#hk-cheek)" />
+                <ellipse cx="130" cy="99" rx="12" ry="7.5" fill="url(#hk-cheek)" />
+
+                <g class="hk-brows">
+                  <path d="M64 60 C 71 52, 84 51, 91 58" stroke="#7b3a11" stroke-width="3.8" fill="none" stroke-linecap="round" opacity="0.9" />
+                  <path d="M109 58 C 116 51, 129 52, 136 61" stroke="#7b3a11" stroke-width="3.8" fill="none" stroke-linecap="round" opacity="0.9" />
+                </g>
+
+                <g class="hk-eyes">
+                  <ellipse cx="79" cy="83" rx="13.5" ry="16" fill="url(#hk-iris)" />
+                  <ellipse cx="121" cy="83" rx="13.5" ry="16" fill="url(#hk-iris)" />
+                  <g clip-path="url(#hk-clip-l)"><ellipse cx="79" cy="70" rx="14" ry="7" fill="#000" opacity="0.35" /></g>
+                  <g clip-path="url(#hk-clip-r)"><ellipse cx="121" cy="70" rx="14" ry="7" fill="#000" opacity="0.35" /></g>
+                  <circle class="hk-glint" cx="74" cy="76" r="5" fill="#fff" opacity="0.96" />
+                  <circle class="hk-glint" cx="116" cy="76" r="5" fill="#fff" opacity="0.96" />
+                  <circle class="hk-glint" cx="84.5" cy="92" r="2.4" fill="#ffd9a8" opacity="0.6" />
+                  <circle class="hk-glint" cx="126.5" cy="92" r="2.4" fill="#ffd9a8" opacity="0.6" />
+                </g>
+
+                <!-- lids ride down over the eyes to blink, filled with the body gradient -->
+                <g clip-path="url(#hk-clip-l)"><rect class="hk-lid" x="63" y="35" width="34" height="34" fill="url(#hk-body)" /></g>
+                <g clip-path="url(#hk-clip-r)"><rect class="hk-lid" x="105" y="35" width="34" height="34" fill="url(#hk-body)" /></g>
+
+                <path class="hk-mouth" d="M92 112 C 96 117.5, 104 117.5, 108 112" stroke="#8f4816" stroke-width="3.4" fill="none" stroke-linecap="round" />
+              </g>
+
+              <g class="hk-petal hk-petal-l">
+                <path d="M100 12 C 60 46, 30 76, 30 108 C 30 142, 60 178, 100 202 Z" fill="url(#hk-rind-l)" />
+                <path d="M100 12 C 90 52, 79 92, 81 130 C 83 166, 92 186, 100 202 Z" fill="url(#hk-face-l)" />
+                <path d="M96 24 C 66 54, 44 82, 44 110 C 50 84, 72 54, 96 30 Z" fill="url(#hk-sheen)" />
+              </g>
+              <g class="hk-petal hk-petal-r">
+                <path d="M100 12 C 140 46, 170 76, 170 108 C 170 142, 140 178, 100 202 Z" fill="url(#hk-rind-r)" />
+                <path d="M100 12 C 110 52, 121 92, 119 130 C 117 166, 108 186, 100 202 Z" fill="url(#hk-face-r)" />
+                <path d="M104 24 C 134 54, 156 82, 156 110 C 150 84, 128 54, 104 30 Z" fill="url(#hk-sheen)" />
+              </g>
+
+              <!-- hands drawn last so the fingers wrap in front of the shell -->
+              <g class="hk-hands" stroke="#b0601c" stroke-width="1.3" stroke-linejoin="round">
+                <g class="hk-hand hk-hand-l" transform="translate(68 112) rotate(70)">
+                  <path d="M-11 -4 C -13 4, -11 11, -4 13 C 4 15, 11 12, 12 4 C 13 -3, 8 -6, 0 -6 Z" fill="#e29147" />
+                  <rect x="-10.5" y="-4" width="5" height="11" rx="2.5" fill="#f8bd77" />
+                  <rect x="-4.6" y="-4" width="5" height="13.5" rx="2.5" fill="#f8bd77" />
+                  <rect x="1.3" y="-4" width="5" height="13" rx="2.5" fill="#f8bd77" />
+                  <rect x="7.2" y="-4" width="5" height="10" rx="2.5" fill="#f8bd77" />
+                </g>
+                <g class="hk-hand hk-hand-r" transform="translate(132 112) rotate(-70)">
+                  <path d="M11 -4 C 13 4, 11 11, 4 13 C -4 15, -11 12, -12 4 C -13 -3, -8 -6, 0 -6 Z" fill="#e29147" />
+                  <rect x="5.5" y="-4" width="5" height="11" rx="2.5" fill="#f8bd77" />
+                  <rect x="-0.4" y="-4" width="5" height="13.5" rx="2.5" fill="#f8bd77" />
+                  <rect x="-6.3" y="-4" width="5" height="13" rx="2.5" fill="#f8bd77" />
+                  <rect x="-12.2" y="-4" width="5" height="10" rx="2.5" fill="#f8bd77" />
                 </g>
               </g>
 
-              <path class="hk-half hk-half-l" d="M60 5 C 40 24, 20 47, 20 71 C 20 98, 42 118, 60 122 Z" fill="url(#hk-shell-l)" />
-              <path class="hk-half hk-half-r" d="M60 5 C 80 24, 100 47, 100 71 C 100 98, 78 118, 60 122 Z" fill="url(#hk-shell-r)" />
-
-              <g class="hk-sparks">
-                <circle cx="60" cy="60" r="2" /><circle cx="60" cy="60" r="1.6" />
-                <circle cx="60" cy="60" r="1.3" /><circle cx="60" cy="60" r="1.8" />
+              <g class="hk-sparks" fill="#ffc46b">
+                <circle cx="100" cy="60" r="2.6" /><circle cx="100" cy="60" r="2" />
+                <circle cx="100" cy="60" r="1.6" /><circle cx="100" cy="60" r="2.2" />
+                <circle cx="100" cy="60" r="1.4" /><circle cx="100" cy="60" r="1.9" />
               </g>
             </svg>
           </div>

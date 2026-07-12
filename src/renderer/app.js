@@ -7031,13 +7031,21 @@ async function runOnboarding({ replay = false } = {}) {
     const hk = overlay.querySelector('#ob-kernel');
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+    // With motion off the pod still opens, it just does not animate getting there.
+    if (hk && still) hk.classList.add('is-open');
+
     if (hk && !still) {
-      // Hatch once the wordmark has landed, so the eye is already on the mark.
+      // Hatch once the wordmark has landed. The pod shakes, then cracks open.
+      let crack = 0;
       const hatch = setTimeout(() => {
-        hk.classList.add('is-open', 'is-pop');
-        setTimeout(() => hk.classList.remove('is-pop'), 950);
-      }, 900);
-      ac.signal.addEventListener('abort', () => clearTimeout(hatch));
+        hk.classList.add('is-wiggle');
+        crack = setTimeout(() => {
+          hk.classList.remove('is-wiggle');
+          hk.classList.add('is-open', 'is-pop');
+          setTimeout(() => hk.classList.remove('is-pop'), 1000);
+        }, 620);
+      }, 700);
+      ac.signal.addEventListener('abort', () => { clearTimeout(hatch); clearTimeout(crack); });
 
       // Blink at irregular intervals. A fixed cadence reads as a machine.
       let blinkTimer = 0;
@@ -7066,7 +7074,7 @@ async function runOnboarding({ replay = false } = {}) {
         // Reflow, or re-adding the class in the same frame does not restart it.
         void hk.offsetWidth;
         hk.classList.add('is-open', 'is-pop');
-        setTimeout(() => hk.classList.remove('is-pop'), 950);
+        setTimeout(() => hk.classList.remove('is-pop'), 1000);
       });
 
       // It watches the Get Started button when you go for it.
@@ -7074,7 +7082,7 @@ async function runOnboarding({ replay = false } = {}) {
       if (cta) {
         on(cta, 'pointerenter', () => {
           hk.style.setProperty('--hk-x', '0px');
-          hk.style.setProperty('--hk-y', '3px');
+          hk.style.setProperty('--hk-y', '5px');
           hk.classList.add('is-peek');
         });
         on(cta, 'pointerleave', () => hk.classList.remove('is-peek'));
@@ -7084,7 +7092,9 @@ async function runOnboarding({ replay = false } = {}) {
     if (wrap && welcome && !still) {
       let frame = 0;
       const MAX_DEG = 9;
-      const EYE_PX = 2.6;
+      // The eye offset lands on an element inside the SVG, so it is measured in
+      // viewBox units, not screen pixels.
+      const EYE_PX = 4.5;
       on(welcome, 'pointermove', (e) => {
         if (frame) return; // one update per painted frame, not one per event
         frame = requestAnimationFrame(() => {

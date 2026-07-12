@@ -20,7 +20,7 @@
     "dist:linux": "electron-builder --linux --publish never -c.productName=husk",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
-    "test": "node --test test/unit/",
+    "test": "node --test \"test/unit/**/*.test.js\"",
     "test:e2e": "playwright test --config test/playwright.config.js",
     "test:all": "npm run test && npm run test:e2e",
     "test:perf": "playwright test --config test/playwright.perf.config.js"
