@@ -15,18 +15,16 @@ if [ -f "$SANDBOX" ]; then
   chmod 4755 "$SANDBOX" || true
 fi
 
-# Expose a `husk` command on PATH. electron-builder installs the binary to
-# /opt/husk and registers only a .desktop entry, so a fresh package gives no
-# terminal launcher. Symlink into /usr/local/bin so `husk` works from a shell,
-# matching the wrapper the source installer (install.sh) creates.
-# `ln -sf` also repoints the symlink left by pre-2.8.9 packages, which installed
-# to the capitalised /opt/Husk and would otherwise dangle after this upgrade.
+# Expose a `husk` command on PATH. electron-builder installs the binary under
+# /opt and registers only a .desktop entry, so the package alone leaves no
+# terminal launcher. Symlink into /usr/local/bin to match the wrapper the source
+# installer creates. `ln -sf` also repoints a symlink left by an earlier package.
 if [ -x "/opt/husk/husk" ]; then
   mkdir -p /usr/local/bin
   ln -sf /opt/husk/husk /usr/local/bin/husk || true
 fi
 
-# Drop the old capitalised install dir if an upgrade left it behind.
+# Remove the capitalised install dir an earlier package may have left behind.
 if [ -d "/opt/Husk" ] && [ -d "/opt/husk" ]; then
   rm -rf "/opt/Husk" || true
 fi

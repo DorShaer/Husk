@@ -353,7 +353,7 @@
 <section id="trust" style="padding-top:0;">
   <div class="wrap trust">
     <div class="t"><div class="big">1 line</div><div class="lbl">Install, any OS</div></div>
-    <div class="t"><div class="big">Verified</div><div class="lbl">Signed apt repo, checksums on every build</div></div>
+    <div class="t"><div class="big">Signed</div><div class="lbl">apt repo + Sigstore provenance</div></div>
     <div class="t"><div class="big">No Node</div><div class="lbl">Bundled Electron runtime</div></div>
     <div class="t"><div class="big">MIT</div><div class="lbl">Open source, yours to fork</div></div>
   </div>
@@ -475,7 +475,7 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
       <a href="https://github.com/DorShaer/Husk/tree/main/docs">Docs</a>
       <a href="husk.gpg">Signing key</a>
     </div>
-    <div>Debian packages are signed with the Husk signing key; the Windows and macOS builds are not code-signed yet, and every release publishes SHA256SUMS. Released under the MIT license.</div>
+    <div>Debian packages are signed with the <a href="husk.gpg">Husk signing key</a>, and every release artifact carries Sigstore build provenance and a published SHA256SUM. The Windows and macOS apps are not code-signed yet. Released under the MIT license.</div>
   </div>
 </footer>
 

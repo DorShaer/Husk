@@ -512,9 +512,8 @@ if (isMac) document.documentElement.setAttribute('data-platform', 'mac');
 // so Gatekeeper will open it (we have no Apple Developer ID yet).
 const MAC_TRUST_CMD = 'xattr -dr com.apple.quarantine /Applications/Husk.app';
 
-// What to tell the user to run when the in-app update cannot install itself.
-// Keyed by how Husk was installed, so the command we hand over actually works
-// on their machine instead of being generic advice.
+// Manual update command per install type, shown when the in-app update cannot
+// complete. Keyed by package type so the command matches how Husk was installed.
 const MANUAL_UPDATE_CMD = {
   deb: 'sudo apt update && sudo apt install --only-upgrade husk',
   rpm: 'sudo dnf upgrade husk',
@@ -5234,10 +5233,9 @@ function openUpdatePop() {
     }
   } else if (s.status === 'ready') {
     title.textContent = `Husk ${next} is ready`;
-    // On deb/rpm the install shells out to the package manager as root, so the
-    // desktop throws up a password prompt. Users who were not told to expect it
-    // read the prompt as malware and dismissed it, which looked like the update
-    // silently doing nothing. Set the expectation before it appears.
+    // On deb/rpm the install runs through the package manager as root, so the
+    // desktop raises a password prompt. Say so before it appears, otherwise an
+    // unexplained prompt reads as something to dismiss.
     const needsAuth = s.packageType === 'deb' || s.packageType === 'rpm';
     body.textContent = needsAuth
       ? 'Husk will ask for your password to install the update, then close and reopen. Your current chat will end.'
@@ -5265,8 +5263,8 @@ function openUpdatePop() {
       cta.disabled = false;
     };
   } else if (s.status === 'error' && s.phase === 'install') {
-    // A failed install is not a failed check, and it must never be silent. Say
-    // what broke and hand over the exact command that finishes the job.
+    // A failed install reports what went wrong and hands over the exact command
+    // that completes the update by hand.
     title.textContent = 'Could not install the update';
     const manual = MANUAL_UPDATE_CMD[s.packageType] || '';
     let html = `Husk downloaded ${escapeHtml(next || 'the update')} but could not install it: <strong>${escapeHtml(s.error || 'unknown error')}</strong>.`;

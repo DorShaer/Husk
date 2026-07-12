@@ -11,8 +11,7 @@
 #   - macOS                 -> download the latest .dmg and copy Husk.app in
 #   - anything else         -> explain what to run instead
 #
-# Everything here is idempotent: re-running is safe, and a failure never leaves
-# the machine half-configured.
+# Every path here is idempotent, and any failure reverts what it changed.
 set -euo pipefail
 
 OWNER="DorShaer"
@@ -28,18 +27,16 @@ die()  { warn "$1"; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1; }
 
-# One temp dir for the whole run, declared at global scope on purpose. A
-# `local tmp` inside a function is already out of scope when the EXIT trap
-# fires, and under `set -u` that made the trap itself abort with
-# "tmp: unbound variable" - turning every SUCCESSFUL install into exit 1.
+# One temp dir for the whole run, at global scope so the EXIT trap can still
+# see it. A function-local would be out of scope by the time the trap fires,
+# and under `set -u` an unset name aborts the trap itself.
 TMP=""
 cleanup() { [ -n "${TMP:-}" ] && rm -rf "$TMP"; return 0; }
 trap cleanup EXIT
 mktmp() { TMP="$(mktemp -d)"; }
 
-# Root access is optional, not assumed. When neither root nor sudo exists we
-# do not die with a raw "sudo: command not found"; callers fall back to a
-# user-space install instead.
+# Root is optional. Callers check have_root first and pick a user-space path
+# when it is unavailable, so as_root only runs where privileges exist.
 have_root() { [ "$(id -u)" -eq 0 ] || need sudo; }
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then "$@"
@@ -47,8 +44,7 @@ as_root() {
   else die "this step needs root, but neither root nor sudo is available"; fi
 }
 
-# macOS ships `shasum`, not GNU coreutils' `sha256sum`. Calling the wrong one
-# blew up the checksum step on every Mac before it ever reached the install.
+# Linux ships `sha256sum`, macOS ships `shasum`. Accept whichever is present.
 sha256_of() {
   if need sha256sum; then sha256sum "$1" | awk '{print $1}'
   elif need shasum;    then shasum -a 256 "$1" | awk '{print $1}'
@@ -58,10 +54,9 @@ sha256_of() {
 # --------------------------------------------------------------------------
 # Release resolution
 #
-# Deliberately avoids api.github.com: unauthenticated it allows 60 requests
-# per hour per IP, which quietly breaks installs behind corporate NAT, on CI,
-# and on shared networks. The /releases/latest redirect is unmetered and hands
-# us the tag directly.
+# Resolve the tag from the /releases/latest redirect rather than api.github.com.
+# The JSON API allows 60 unauthenticated requests per hour per IP, a budget that
+# is easily exhausted behind NAT or on CI. The redirect is unmetered.
 # --------------------------------------------------------------------------
 TAG=""
 resolve_tag() {
@@ -77,9 +72,8 @@ resolve_tag() {
 
 asset_url() { printf '%s/download/%s/%s\n' "$RELEASES" "$TAG" "$1"; }
 
-# Download an asset and verify it against the release's SHA256SUMS. A missing
-# checksum is now fatal rather than a shrug: the install page promises
-# "checksums verified", so skipping verification silently would make that a lie.
+# Download an asset and verify it against the release's SHA256SUMS. A missing or
+# unmatched checksum is fatal: we never install bytes we could not verify.
 fetch_verified() {
   local name="$1" dest="$2" sums want got
   info "Downloading ${name}"
@@ -105,11 +99,9 @@ install_apt() {
 
   curl -fsSL "${PAGES}/husk.gpg" -o "$raw" || die "could not fetch the signing key from ${PAGES}/husk.gpg"
 
-  # The key is published dearmored, which apt consumes as-is. Older published
-  # keys were ASCII-armored, so handle both and pull in gnupg only when we
-  # actually have to convert. Unconditionally piping through `gpg --dearmor`
-  # is what made a bare debian/ubuntu image die with "gpg: command not found"
-  # before doing any work at all.
+  # apt consumes a dearmored (binary) keyring directly, which is how the key is
+  # published. Accept an ASCII-armored key too, and only then pull in gnupg to
+  # convert it, since a minimal Debian or Ubuntu image ships without gpg.
   if head -c 30 "$raw" | grep -q 'BEGIN PGP'; then
     if ! need gpg; then
       info "Installing gnupg (needed to convert the ASCII-armored signing key)"
@@ -126,9 +118,8 @@ install_apt() {
   printf 'deb [signed-by=%s] %s/apt stable main\n' "$keyring" "$PAGES" > "$TMP/husk.list"
   as_root install -m 0644 "$TMP/husk.list" "$list"
 
-  # If the repo is unreachable or the package will not install, put the machine
-  # back exactly as we found it. A stale husk.list otherwise poisons every
-  # future `apt update` the user runs, for every package they own.
+  # Revert the repo change if apt cannot read it or the package will not install.
+  # A stale husk.list would otherwise fail every later `apt update` on the box.
   if ! as_root apt-get update; then
     as_root rm -f "$list" "$keyring"
     die "apt could not read the Husk repository; reverted the change. Try the AppImage: ${RELEASES}"
@@ -143,7 +134,7 @@ install_apt() {
 }
 
 # --------------------------------------------------------------------------
-# Fedora / RHEL: the .rpm we were publishing but never installing
+# Fedora / RHEL
 # --------------------------------------------------------------------------
 install_rpm() {
   info "Fedora/RHEL detected, installing the .rpm"
@@ -165,20 +156,19 @@ install_appimage() {
   name="husk-${TAG}-linux-x86_64.AppImage"
   fetch_verified "$name" "$TMP/$name"
 
-  # Install under a STABLE, version-less filename. This is load bearing:
-  # electron-updater only overwrites the AppImage in place when the existing
-  # filename carries no version (AppImageUpdater.doInstall). Given a versioned
-  # name it writes the new build beside the old one, deletes the old file, and
-  # every launcher pointing at it breaks. A stable name is what makes in-app
-  # auto-update actually work.
+  # Install under a stable, version-less filename. electron-updater replaces the
+  # AppImage in place only when the existing filename carries no version
+  # (AppImageUpdater.doInstall); given a versioned name it writes the new build
+  # under a new name and unlinks the old one, orphaning every launcher that
+  # points at it. The stable name is what keeps in-app updates working.
   dest="$HOME/.local/share/husk/Husk.AppImage"
   bindir="$HOME/.local/bin"
   mkdir -p "$(dirname "$dest")" "$bindir"
   install -m 0755 "$TMP/$name" "$dest"
   ln -sf "$dest" "$bindir/husk"
 
-  # Give AppImage users a launcher. Without this, Husk installed as a command
-  # only, so anyone expecting a desktop app found nothing in their menu.
+  # Register a launcher, so the AppImage is reachable from the applications menu
+  # and not only from the shell.
   icon="$HOME/.local/share/icons/hicolor/256x256/apps/husk.png"
   desktop="$HOME/.local/share/applications/husk.desktop"
   mkdir -p "$(dirname "$icon")" "$(dirname "$desktop")"
@@ -204,9 +194,8 @@ EOF
   ok "Installed to $dest"
   ok "Launcher added: search 'Husk' in your applications menu"
 
-  # AppImages need libfuse2 specifically. Testing for the `fusermount` binary
-  # was a false negative on Ubuntu 24.04, which ships fusermount3 (libfuse3) and
-  # no libfuse2: the check passed, then the app refused to launch.
+  # AppImages need libfuse2 specifically. Probe for the library rather than the
+  # fusermount binary, since a system can ship fusermount3 (libfuse3) without it.
   if ! ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; then
     warn "AppImages need libfuse2. If Husk will not start, install it:"
     warn "  Debian/Ubuntu: sudo apt install libfuse2"
@@ -230,9 +219,8 @@ install_macos() {
   name="husk-${TAG}-mac-${arch}.dmg"
   fetch_verified "$name" "$TMP/$name"
 
-  # `awk '{print $3}'` broke on the real volume name: electron-builder titles the
-  # volume "Husk <version>", and the space made awk hand back "/Volumes/Husk".
-  # Take the whole /Volumes/... path instead of a whitespace-delimited field.
+  # Take the whole /Volumes/... path rather than a whitespace-delimited field,
+  # so a volume name containing a space still resolves to the full mount point.
   mnt="$(hdiutil attach -nobrowse -readonly "$TMP/$name" | grep -o '/Volumes/.*' | tail -n1)"
   [ -n "$mnt" ] || die "could not mount ${name}"
   # shellcheck disable=SC2064
@@ -241,8 +229,8 @@ install_macos() {
   app="$(find "$mnt" -maxdepth 1 -name '*.app' | head -n1)"
   [ -n "$app" ] || die "no .app inside the dmg"
 
-  # Prefer /Applications but fall back to ~/Applications rather than dying on a
-  # managed or non-admin Mac, where /Applications is not user-writable.
+  # /Applications is not writable for non-admin or managed accounts, so fall back
+  # to the per-user Applications folder.
   if [ -w /Applications ]; then
     target="/Applications"
   else
@@ -256,10 +244,9 @@ install_macos() {
   hdiutil detach -quiet "$mnt" >/dev/null 2>&1 || true
   trap cleanup EXIT
 
-  # Husk is not notarized yet, so Gatekeeper quarantines the download and shows
-  # "Husk is damaged and can't be opened". Clearing the flag on a binary whose
-  # checksum we just verified is the difference between a working install and
-  # one that looks broken on first launch.
+  # The build is not notarized, so Gatekeeper quarantines it on download and
+  # refuses to open it. Clear the flag, which is safe here because the bytes were
+  # checksum-verified above.
   xattr -dr com.apple.quarantine "$target/Husk.app" 2>/dev/null || true
 
   ok "Installed to $target/Husk.app"
@@ -283,31 +270,28 @@ main() {
       install_macos
       ;;
     Linux)
-      # Only x86_64 Linux builds exist today. Every other arch previously got an
-      # x86_64 binary and an "exec format error" at launch, or an apt repo with
-      # no installation candidate. Say so once, clearly.
+      # Only x86_64 Linux builds are published. Stop early on anything else rather
+      # than installing a binary the machine cannot execute.
       case "$arch" in
         x86_64|amd64) : ;;
         *) die "Husk has no ${arch} Linux build yet (x86_64 only). Watch ${RELEASES} for arm64, or build from source: https://github.com/${OWNER}/${REPO}" ;;
       esac
 
-      # WSL runs a Linux kernel, but the GUI belongs to Windows. Installing the
-      # Linux build here yields a desktop app that may never render a window.
+      # WSL reports a Linux kernel, but the desktop belongs to Windows, so the
+      # Windows build is the one that can render a window.
       if grep -qi microsoft /proc/version 2>/dev/null; then
         warn "This looks like WSL. Husk is a desktop app, so install the Windows build instead."
         warn "In PowerShell, run:  irm ${PAGES}/install.ps1 | iex"
         die "aborting the WSL install"
       fi
 
-      # Our Linux binaries are glibc-linked, so musl distros cannot run them no
-      # matter how we install. Alpine used to get an AppImage it could never exec.
+      # The Linux binaries are glibc-linked and cannot run against musl.
       if [ -f /etc/alpine-release ]; then
         die "Husk's Linux builds are glibc-only and cannot run on musl (Alpine). Use a glibc distro, or run Husk inside a distrobox/container."
       fi
 
-      # System package managers need root. Rather than dying with a raw
-      # "sudo: command not found", fall back to the AppImage, which installs
-      # entirely inside $HOME and needs no privileges at all.
+      # System package managers need root. Without it, use the AppImage, which
+      # installs entirely inside $HOME.
       if ! have_root; then
         warn "No root access (no sudo). Falling back to a user-space AppImage install."
         install_appimage

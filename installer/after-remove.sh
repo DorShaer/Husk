@@ -3,7 +3,7 @@
 
 # Remove the PATH launcher created in after-install, but only if it still
 # points at our binary (guards against clobbering an unrelated husk).
-# /opt/Husk is the pre-2.8.9 path; accept either so an old symlink is cleaned up.
+# Accept either install dir so a symlink from an earlier package is cleaned up too.
 LINK="/usr/local/bin/husk"
 if [ -L "$LINK" ]; then
   TARGET="$(readlink "$LINK")"

@@ -20,24 +20,22 @@ or set the environment variables the script also honours:
 What it does: resolve the latest release tag, download the NSIS installer built
 for this machine, verify it against the release SHA256SUMS, then run it.
 
-This file is deliberately standalone. The repo root install.ps1 builds Husk from
-source and dot-sources installer/lib/verify.ps1, which cannot work when a script
-is piped into iex: there is no file on disk, so $PSScriptRoot and
-$MyInvocation.MyCommand.Definition are both empty and the dot-source resolves to
-nothing. Nothing in this file may reference either of them, and nothing here may
-dot-source a repo file.
+This file must stay standalone. When a script is piped into iex there is no file
+on disk, so $PSScriptRoot and $MyInvocation.MyCommand.Definition are both empty.
+Nothing here may reference either, and nothing here may dot-source a repo file.
+(The repo root install.ps1 is the separate from-source installer.)
 #>
 
 $ErrorActionPreference = 'Stop'
 
-# Windows 10 stock PowerShell (5.1) still offers TLS 1.0 first on some builds and
-# github.com refuses it. Add TLS 1.2 rather than assigning it, so we do not strip
-# TLS 1.3 back off on hosts that already negotiate it.
+# Some Windows 10 builds of PowerShell 5.1 still offer TLS 1.0 first, which
+# github.com refuses. Add TLS 1.2 rather than assigning it, so TLS 1.3 stays
+# available on hosts that already negotiate it.
 [Net.ServicePointManager]::SecurityProtocol =
     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # Invoke-WebRequest repaints a progress bar on every read, which makes a ~100 MB
-# download roughly 10x slower. Suppress it and print our own progress lines.
+# download roughly 10x slower. Suppress it and print plain progress lines instead.
 $ProgressPreference = 'SilentlyContinue'
 
 $Owner     = 'DorShaer'
@@ -50,12 +48,10 @@ function Write-Warn2 ($msg) { Write-Host ('[!] '  + $msg) -ForegroundColor Yello
 
 # ─── Release tag resolution ──────────────────────────────────────────
 function Get-LatestTag {
-    # Deliberately NOT api.github.com. The JSON API is rate limited to 60 requests
-    # per hour per IP for unauthenticated callers, and behind a corporate NAT that
-    # budget is routinely already spent, which fails the install for a reason the
-    # user cannot see or fix. The plain /releases/latest URL is a redirect served
-    # by github.com itself with no such limit, so we read the tag out of the
-    # Location header and never touch the API.
+    # Read the tag from the /releases/latest redirect rather than api.github.com.
+    # The JSON API allows 60 unauthenticated requests per hour per IP, a budget
+    # that is easily exhausted behind a corporate NAT. The redirect has no such
+    # limit, so take the tag from the Location header.
     $url = "https://github.com/$Owner/$Repo/releases/latest"
 
     $req = [System.Net.HttpWebRequest]::Create($url)
@@ -90,8 +86,8 @@ function Get-LatestTag {
 
     $tag = $location.TrimEnd('/').Split('/')[-1]
 
-    # Validate the shape before trusting it. If GitHub ever changes the redirect
-    # target we want a clear error here, not a 404 on a nonsense asset URL later.
+    # Validate the shape before trusting it, so a changed redirect target fails
+    # here with a clear message rather than as a 404 on the asset URL later.
     if ($tag -notmatch '^v\d+\.\d+\.\d+') {
         throw "Could not parse a release tag out of '$location' (got '$tag')."
     }
@@ -143,19 +139,18 @@ function Format-Size ([int64] $bytes) {
 }
 
 function ConvertTo-Text ($content) {
-    # GitHub serves SHA256SUMS as application/octet-stream. Windows PowerShell 5.1
-    # hands that back from Invoke-WebRequest as a string, but PowerShell 7 hands
-    # back a byte[] for any content type it does not consider text. Without this,
-    # the checksum lookup silently matches nothing on PS 7 and every install fails
-    # with "no entry for husk-...exe".
+    # GitHub serves SHA256SUMS as application/octet-stream. PowerShell 5.1 returns
+    # that from Invoke-WebRequest as a string, while PowerShell 7 returns a byte[]
+    # for any content type it does not consider text. Decode so the checksum lookup
+    # sees text on both.
     if ($content -is [byte[]]) { return [System.Text.Encoding]::UTF8.GetString($content) }
     return [string] $content
 }
 
 function Get-ExpectedSha256 ($sumsText, $fileName) {
-    # SHA256SUMS lines look like "<64 hex><space><space><filename>", with an
-    # optional leading * on the name for binary mode. Match the filename exactly
-    # so a different asset with a similar name can never satisfy the check.
+    # SHA256SUMS lines are "<64 hex><space><space><filename>", with an optional
+    # leading * on the name for binary mode. Match the filename exactly, so a
+    # similarly named asset (.zip, .blockmap) cannot satisfy the check.
     foreach ($line in ($sumsText -split '\r?\n')) {
         if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$') {
             if ($matches[2] -eq $fileName) { return $matches[1] }
@@ -202,8 +197,8 @@ try {
     Invoke-WebRequest -Uri $assetUrl -OutFile $installerPath -UseBasicParsing -UserAgent $UserAgent
     Write-Ok "Downloaded $assetName"
 
-    # The site promises "checksums verified", so a missing or unreachable
-    # SHA256SUMS is a hard failure, never a silently skipped step.
+    # A missing or unreachable SHA256SUMS is a hard failure. We never run bytes we
+    # could not verify.
     Write-Info 'Verifying checksum...'
     try {
         $sums = ConvertTo-Text (Invoke-WebRequest -Uri $sumsUrl -UseBasicParsing -UserAgent $UserAgent).Content
@@ -222,11 +217,10 @@ try {
     }
     Write-Ok "Checksum verified ($($expected.ToLowerInvariant().Substring(0, 16))...)"
 
-    # Files downloaded from the internet carry a Mark-of-the-Web alternate data
-    # stream. Because the build is not code-signed, launching it with that mark
-    # still attached makes SmartScreen block it outright. We have just verified
-    # the bytes against the published checksum, so strip the mark and let the
-    # installer run.
+    # Downloaded files carry a Mark-of-the-Web alternate data stream, and with the
+    # build not yet code-signed, launching it with that mark attached makes
+    # SmartScreen block it outright. The bytes were verified against the published
+    # checksum above, so clear the mark.
     Unblock-File -LiteralPath $installerPath
     Write-Warn2 'This build is not code-signed yet. Windows SmartScreen may still warn about an unknown publisher, and the UAC prompt will show no verified publisher name.'
 
@@ -253,8 +247,8 @@ catch {
     Write-Host ''
     Write-Host ('[x] ' + $_.Exception.Message) -ForegroundColor Red
     Write-Host ''
-    # Signal failure without calling exit: when this script is piped into iex it
-    # runs in the user's own shell, and exit would close their session.
+    # Signal failure without calling exit. Piped into iex, this runs in the user's
+    # own shell, where exit would close their session.
     $global:LASTEXITCODE = 1
 }
 finally {

@@ -9,8 +9,8 @@ name: APT Repository
 on:
   release:
     types: [published]
-  # Republish when the installers or the landing page change. Without this, a
-  # fix to install.sh sat unpublished until the next release cut.
+  # Republish whenever the installers or the landing page change, so a fix to
+  # either reaches Pages without waiting for the next release.
   push:
     branches: [main]
     paths:
@@ -123,26 +123,18 @@ jobs:
 
       - name: Stage public key, installers and landing page
         run: |
-          # Publish the key DEARMORED (binary). apt consumes a binary keyring
-          # directly, so the client no longer has to run `gpg --dearmor` itself.
-          # That single client-side call was fatal on any bare Debian/Ubuntu
-          # image, which ships without gnupg: the installer died on
-          # "gpg: command not found" before it touched anything.
+          # Publish the key dearmored (binary), which apt consumes as-is. This keeps
+          # gnupg off the client, where a minimal Debian or Ubuntu image has none.
           # husk.asc keeps the armored form available for humans.
           gpg --dearmor < installer/husk-apt.gpg > site/husk.gpg
           cp installer/husk-apt.gpg site/husk.asc
 
-          # Serve the installers from Pages rather than a CDN. jsdelivr caches
-          # @main for up to 12 hours, so a broken installer stayed broken
-          # worldwide long after the fix was pushed. Pages updates on deploy.
+          # Serve the installers from Pages, which updates on deploy, rather than a
+          # CDN that would cache them for hours after a fix ships.
           cp scripts/install.sh site/install.sh
           cp scripts/install.ps1 site/install.ps1
 
-          # installer/index.html is the real landing page. It previously lived
-          # ONLY on the gh-pages branch while this step copied installer/apt-index.html
-          # over it, so the next release would have silently replaced the site with
-          # a much older, apt-only page. The page is now versioned in the repo and
-          # this is the single source of truth for it.
+          # installer/index.html is the source of truth for the landing page.
           cp installer/index.html site/index.html
           touch site/.nojekyll
 

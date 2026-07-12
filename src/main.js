@@ -7431,10 +7431,10 @@ function sendUpdateStatus(extra = {}) {
   if (mainWindow) mainWindow.webContents.send('update:status', updateState);
 }
 
-// How this copy of Husk was installed. electron-builder writes this file next
+// How this copy of Husk was installed. electron-builder writes package-type next
 // to the app for deb/rpm/pacman targets; its absence plus an APPIMAGE env var
-// means AppImage. The renderer uses it to give an accurate manual-update
-// command when the automatic path fails.
+// means AppImage. The renderer uses this to name the right manual update command
+// when the automatic path cannot complete.
 function huskPackageType() {
   try {
     return fs.readFileSync(path.join(process.resourcesPath, 'package-type'), 'utf8').trim();
@@ -7459,9 +7459,8 @@ function setupAutoUpdater() {
   autoUpdater.autoDownload = false;       // we choose when to download
   autoUpdater.autoInstallOnAppQuit = false;
 
-  // electron-updater defaults its logger to `console`, and a GUI-launched app
-  // has nowhere for console output to go. Every update failure in the field was
-  // therefore invisible and undiagnosable. Route it to a file the user can send.
+  // Route the updater's log to a file. It defaults to `console`, whose output is
+  // unreachable for a GUI-launched app, leaving field failures undiagnosable.
   try {
     const log = require('electron-log');
     log.transports.file.level = 'info';
@@ -7469,10 +7468,10 @@ function setupAutoUpdater() {
     updaterLogPath = log.transports.file.getFile().path;
   } catch (_) { /* logging is best effort, never block the updater */ }
 
-  // The AppImage updater renames the file on disk when the old name carries a
-  // version (see AppImageUpdater.doInstall). Our installer deliberately uses a
-  // stable name so this should not fire, but if a user installed an older,
-  // versioned AppImage by hand, re-point their launcher instead of orphaning it.
+  // electron-updater renames the AppImage on disk when the existing filename
+  // carries a version (AppImageUpdater.doInstall). The installer uses a stable
+  // name so this rarely fires, but a hand-installed versioned AppImage still
+  // needs its launcher repointed at the new file.
   autoUpdater.on('appimage-filename-updated', (newPath) => {
     try {
       const link = path.join(os.homedir(), '.local', 'bin', 'husk');
@@ -7500,9 +7499,9 @@ function setupAutoUpdater() {
     status: 'ready',
     version: info.version,
   }));
-  // Distinguish a failed CHECK from a failed INSTALL. They need completely
-  // different copy: one is "we could not reach GitHub", the other is "the
-  // package manager refused, here is the command to run yourself".
+  // Tag which phase failed. A failed check and a failed install need different
+  // copy: one cannot reach GitHub, the other was refused by the package manager
+  // and has a manual command the user can run instead.
   autoUpdater.on('error', (err) => sendUpdateStatus({
     status: 'error',
     error: (err && err.message) || String(err),
@@ -7540,22 +7539,19 @@ ipcMain.handle('update:download', async () => {
 
 ipcMain.handle('update:install', () => {
   if (!updaterInstance) return { ok: false, error: 'no updater' };
-  // Quit, install, relaunch. forceRunAfter true so the user does not have to
+  // Quit, install, relaunch, with forceRunAfter so the user does not have to
   // relaunch by hand.
   //
-  // This used to run inside `setImmediate(() => { try { ... } catch (_) {} })`
-  // and return {ok:true} unconditionally. That is why "install update" appeared
-  // to do nothing for everyone: on Linux the install is a synchronous shell out
-  // to dpkg/rpm via pkexec, and when it failed (no polkit agent, user dismissed
-  // the password prompt) the throw was swallowed, the renderer was told the
-  // install succeeded, and no error ever reached a human. Call it inline and
-  // report what actually happened.
+  // Call this inline and report what it does. On Linux the install is a
+  // synchronous shell out to the package manager through pkexec, which fails
+  // when there is no polkit agent or the password prompt is dismissed. Those
+  // failures must reach the renderer rather than being swallowed here.
   updateInstallAttempted = true;
   try {
     updaterInstance.quitAndInstall(false, true);
-    // A successful install quits the app, so reaching the next line at all
-    // means the package manager declined. electron-updater reports that via its
-    // 'error' event rather than a throw, which the handler above surfaces.
+    // A successful install quits the app, so reaching this line means the package
+    // manager declined. electron-updater reports that through its 'error' event,
+    // which the handler above turns into an 'install' phase failure.
     return { ok: true };
   } catch (err) {
     const message = (err && err.message) || String(err);
