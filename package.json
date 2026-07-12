@@ -1,6 +1,6 @@
 {
   "name": "husk",
-  "version": "2.8.8",
+  "version": "2.8.9",
   "description": "A desktop home for your CLI agent. Wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop context, sessions, voice, and a live status panel.",
   "main": "src/main.js",
   "license": "MIT",

@@ -60,7 +60,7 @@ function load(home) {
   return ctx;
 }
 
-const HUSK = '/home/dor/Desktop/husk';
+const HUSK = '/home/user/code/husk';
 
 test('lists gemini sessions with the name the CLI generated', () => {
   const home = makeGeminiHome({
@@ -144,14 +144,14 @@ test('resume index matches gemini --list-sessions, which is oldest first', () =>
 test('sessions are scoped to the project they belong to', () => {
   const home = makeGeminiHome({
     husk: { cwd: HUSK, sessions: [{ id: 'cccccccc-0000-0000-0000-00000000000d', startTime: '2026-07-07T07:00:00.000Z', userMessage: 'in husk', summaries: ['Husk work'] }] },
-    dor: { cwd: '/home/dor', sessions: [{ id: 'dddddddd-0000-0000-0000-00000000000e', startTime: '2026-07-07T08:00:00.000Z', userMessage: 'in home', summaries: ['Home work'] }] },
+    home: { cwd: '/home/user', sessions: [{ id: 'dddddddd-0000-0000-0000-00000000000e', startTime: '2026-07-07T08:00:00.000Z', userMessage: 'in home', summaries: ['Home work'] }] },
   });
   const { listGeminiSessions, geminiResumeIndex } = load(home);
   const all = listGeminiSessions();
   assert.equal(all.length, 2);
   // The index is per project, so the home session is #1 of its own project and
   // must not be numbered behind the husk one.
-  assert.equal(geminiResumeIndex('dddddddd-0000-0000-0000-00000000000e', '/home/dor'), 1);
+  assert.equal(geminiResumeIndex('dddddddd-0000-0000-0000-00000000000e', '/home/user'), 1);
   assert.equal(geminiResumeIndex('cccccccc-0000-0000-0000-00000000000d', HUSK), 1);
   fs.rmSync(home, { recursive: true, force: true });
 });

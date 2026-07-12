@@ -525,12 +525,14 @@ const MANUAL_UPDATE_CMD = {
 const WHATS_NEW = {
   '2.8.9': {
     items: [
+      "<strong>Meet Kernel.</strong> Husk has a face. The pod cracks open on the welcome tour and the seed inside looks back at you. Poke it and see what happens.",
+      "<strong>Install in one line, on any machine.</strong> The installer was rebuilt end to end for Linux, macOS and Windows, and Install updates from inside Husk now really does install and restart.",
       "<strong>Every agent shows its real model.</strong> The Autopilot lineup names the model each agent actually ran, with per-agent time, tokens, cost, and cache split.",
-      "<strong>One history entry per team run.</strong> A team's agents now group into a single run with combined files, tokens, and spend.",
-      "<strong>Pick models like a dispatcher.</strong> A Configure wizard sets Simple and Complex models per CLI, and the run log explains every routing decision.",
+      "<strong>Pick models like a dispatcher.</strong> A Configure wizard sets Simple and Complex models per CLI, and the run log explains every routing decision. Trivial jobs stop going to the expensive model.",
       "<strong>Runs that stall end themselves.</strong> A progress governor halts idle or looping agents before they burn through your budget.",
-      "<strong>Preview themes live.</strong> Browse every theme and accent in Preferences and only save what you like; Cancel puts everything back.",
-      "<strong>Bug fixes.</strong> Cleaner workflow naming, readable usage limits, agent cards that never clip, and a smooth refresh after saving a theme.",
+      "<strong>Chats name themselves again.</strong> Titles land promptly, and Gemini sessions now carry history, naming and resume alongside the rest.",
+      "<strong>Themes you can try on.</strong> A new install opens in light, every theme previews live in Preferences, and the old one no longer flashes at startup.",
+      "<strong>Bug fixes.</strong> Agents installed through nvm are found, the icon is sharp at every size, light mode is readable, and a team run is one history entry.",
     ],
   },
   '2.8.8': {
