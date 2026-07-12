@@ -6350,15 +6350,15 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
    seed rather than waiting for it to disappear first. */
 .hk.is-shut .hk-seed {
   transition:
-    transform 1.1s cubic-bezier(.45,.05,.55,.95) 0.1s,
-    opacity 0.45s ease 0.85s;
+    transform 1.9s cubic-bezier(.4,.02,.5,1) 0.15s,
+    opacity 1.5s ease-in 0.55s;
 }
-.hk.is-shut .hk-petal { transition: transform 1.15s cubic-bezier(.4,0,.6,1) 0.35s; }
-.hk.is-shut .hk-hand { transition: opacity 0.25s ease; }
+.hk.is-shut .hk-petal { transition: transform 1.6s cubic-bezier(.4,0,.55,1) 0.55s; }
+.hk.is-shut .hk-hand { transition: opacity 0.35s ease; }
 /* The cavity holds its fill until the halves have met over it, or the page
    shows through the closing seam. */
-.hk.is-shut .hk-pit { transition: opacity 0.25s ease 1.5s; }
-.hk.is-shut .hk-glow { transition: opacity 0.8s ease 0.5s; }
+.hk.is-shut .hk-pit { transition: opacity 0.3s ease 2.2s; }
+.hk.is-shut .hk-glow { transition: opacity 1.3s ease 0.7s; }
 
 .hk-pit { opacity: 0; transition: opacity 0.5s ease 0.15s; }
 .hk.is-open .hk-pit { opacity: 1; }
@@ -6366,7 +6366,7 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 /* Only wanted while the halves are closing. Once they meet they cover it, and
    while the pod is open it would darken the gap the seed is sitting in. */
 .hk-seam { opacity: 0; transition: opacity 0.25s ease; }
-.hk.is-shut .hk-seam { opacity: 1; transition: opacity 0.3s ease 0.8s; }
+.hk.is-shut .hk-seam { opacity: 1; transition: opacity 0.5s ease 1.2s; }
 
 .hk-glow {
   opacity: 0;

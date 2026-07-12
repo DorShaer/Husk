@@ -7084,7 +7084,7 @@ async function runOnboarding({ replay = false } = {}) {
           settle = setTimeout(() => {
             hk.classList.add('is-wiggle');
             setTimeout(() => hk.classList.remove('is-wiggle'), 640);
-          }, 1560);
+          }, 2200);
           return;
         }
         hk.classList.remove('is-shut', 'is-pop', 'is-wiggle');
