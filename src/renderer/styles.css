@@ -6224,26 +6224,42 @@ input[type="checkbox"]:disabled {
   animation: ob-rise-in 0.62s var(--ease-out) forwards;
 }
 
-/* Two soft light fields drifting behind the content, on their own layer so they
-   never affect layout or intercept the pointer. */
-.ob-aurora {
-  position: absolute; inset: -30% -20%; z-index: -1;
+/* Ambience layer: covers the whole overlay, sits under the content, and never
+   takes the pointer. It is masked to nothing at every edge, so the fields fade
+   into the page instead of ending on the layer's boundary. */
+.ob-ambient {
+  position: absolute; inset: 0; z-index: 0;
   pointer-events: none; overflow: hidden;
-  opacity: 1; animation: none;
+  opacity: 0;
+  transition: opacity 0.7s var(--ease-out);
+  /* The radii are under 50% of the box, so the mask is fully transparent before it
+     reaches any edge. A larger ellipse would still be part-opaque at the boundary,
+     and the layer would end on a visible straight line. */
+  -webkit-mask-image: radial-gradient(48% 46% at 50% 42%, #000 20%, rgba(0,0,0,0.45) 58%, transparent 100%);
+  mask-image: radial-gradient(48% 46% at 50% 42%, #000 20%, rgba(0,0,0,0.45) 58%, transparent 100%);
+}
+/* Only the welcome step is dressed; the setup steps stay plain. */
+.onboarding[data-step="0"] .ob-ambient { opacity: 1; }
+/* Content rides above the ambience. */
+.ob-topbar, .ob-stage, .ob-dots { position: relative; z-index: 1; }
+
+.ob-aurora {
+  position: absolute; inset: 0;
+  pointer-events: none;
 }
 .ob-aurora i {
   position: absolute; display: block;
-  width: 46rem; height: 46rem; border-radius: 50%;
-  filter: blur(70px);
+  width: 52rem; height: 52rem; border-radius: 50%;
+  filter: blur(90px);
   opacity: 0.5;
 }
 .ob-aurora i:nth-child(1) {
-  left: -6rem; top: -8rem;
+  left: 4%; top: 2%;
   background: radial-gradient(circle, color-mix(in srgb, var(--accent) 42%, transparent), transparent 68%);
   animation: ob-drift-a 22s ease-in-out infinite;
 }
 .ob-aurora i:nth-child(2) {
-  right: -8rem; bottom: -10rem;
+  right: 2%; bottom: 0%;
   background: radial-gradient(circle, color-mix(in srgb, var(--accent-2) 32%, transparent), transparent 68%);
   animation: ob-drift-b 27s ease-in-out infinite;
 }
@@ -6260,9 +6276,8 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 /* Embers: a few motes lifting through the frame, seeded with different delays so
    they never march in step. */
 .ob-embers {
-  position: absolute; inset: 0; z-index: -1;
-  pointer-events: none; overflow: hidden;
-  opacity: 1; animation: none;
+  position: absolute; inset: 0;
+  pointer-events: none;
 }
 .ob-embers i {
   position: absolute; bottom: -12px; display: block;

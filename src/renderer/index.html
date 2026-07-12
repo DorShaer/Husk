@@ -15,7 +15,14 @@
   <body data-theme="midnight" data-mode="dark" data-accent="orange" data-page="boot" data-rail="expanded">
 
     <!-- First-run onboarding -->
-    <div id="onboarding" class="onboarding" hidden>
+    <div id="onboarding" class="onboarding" hidden data-step="0">
+      <!-- Ambience sits outside .ob-stage: that stage scrolls, so it clips, and a
+           clipped blur ends on a straight edge that is plainly visible on a pale
+           background. -->
+      <div class="ob-ambient" aria-hidden="true">
+        <div class="ob-aurora"><i></i><i></i></div>
+        <div class="ob-embers"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
       <header class="ob-topbar">
         <button class="ob-nav" id="ob-back" type="button" hidden>
           <span class="ob-nav-arrow">←</span> Back
@@ -28,9 +35,6 @@
       <div class="ob-stage">
         <!-- Step 1: Welcome -->
         <section class="ob-step" data-step="welcome">
-          <!-- Decorative: two drifting light fields and a few rising embers. -->
-          <div class="ob-aurora" aria-hidden="true"><i></i><i></i></div>
-          <div class="ob-embers" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="ob-logo-wrap">
             <img class="ob-logo" src="assets/husk-logo.png" alt="Husk" />
           </div>

@@ -6890,6 +6890,8 @@ async function runOnboarding({ replay = false } = {}) {
 
   function showStep(i) {
     step = Math.max(0, Math.min(steps.length - 1, i));
+    // The ambience layer keys off this: only the welcome step is dressed.
+    overlay.dataset.step = String(step);
     steps.forEach((s, idx) => { s.hidden = idx !== step; });
     dots.forEach((d, idx) => d.classList.toggle('active', idx === step));
     backBtn.hidden = step === 0;
