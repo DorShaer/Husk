@@ -19,7 +19,7 @@ TMP_DIR="${HUSK_UNINSTALL_TMP_DIR:-/tmp/$APP_ID}"
 
 # Linux-specific
 DESKTOP_FILE="$HOME/.local/share/applications/$APP_ID.desktop"
-LINUX_ICON_FILE="$HOME/.local/share/icons/hicolor/256x256/apps/$APP_ID.png"
+LINUX_ICON_DIRS="$HOME/.local/share/icons/hicolor"
 
 # macOS-specific
 MAC_APP_BUNDLE="$HOME/Applications/$APP_NAME.app"
@@ -69,7 +69,9 @@ remove_path "$TMP_DIR"
 case "$PLATFORM" in
     Linux)
         remove_path "$DESKTOP_FILE"
-        remove_path "$LINUX_ICON_FILE"
+        for SIZE in 1024x1024 512x512 256x256 128x128 64x64 48x48 32x32 24x24 16x16; do
+            remove_path "$LINUX_ICON_DIRS/$SIZE/apps/$APP_ID.png"
+        done
         # Drop GNOME favorite if present
         if command -v gsettings >/dev/null 2>&1; then
             CURRENT=$(gsettings get org.gnome.shell favorite-apps 2>/dev/null || echo "")

@@ -268,13 +268,21 @@ fi
 case "$PLATFORM" in
     Linux)
         DESKTOP_DIR="$HOME/.local/share/applications"
-        ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
         DESKTOP_FILE="$DESKTOP_DIR/$APP_ID.desktop"
-        ICON_FILE="$ICON_DIR/$APP_ID.png"
+        ICON_FILE="$HOME/.local/share/icons/hicolor/256x256/apps/$APP_ID.png"
 
-        mkdir -p "$ICON_DIR"
-        cp "$APP_DIR/installer/husk-icon.png" "$ICON_FILE"
-        ok "Icon installed: $ICON_FILE"
+        # Install each size into the directory that claims it. Dropping the 1024px
+        # source into a 256x256 directory, as this once did, means the desktop
+        # downscales a megabyte for a dock icon and a size-strict environment
+        # ignores it. The sized icons are in the repo, so no image tooling is needed.
+        for SIZE in 1024x1024 512x512 256x256 128x128 64x64 48x48 32x32 24x24 16x16; do
+            SRC="$APP_DIR/installer/icons/$SIZE.png"
+            [ -f "$SRC" ] || continue
+            DIR="$HOME/.local/share/icons/hicolor/$SIZE/apps"
+            mkdir -p "$DIR"
+            cp "$SRC" "$DIR/$APP_ID.png"
+        done
+        ok "Icons installed under $HOME/.local/share/icons/hicolor"
 
         mkdir -p "$DESKTOP_DIR"
         cat > "$DESKTOP_FILE" <<EOF
@@ -284,12 +292,12 @@ Version=1.0
 Name=$APP_NAME
 GenericName=AI Agent Shell
 Comment=Visual desktop shell for Claude Code and other terminal AI agents
-Icon=$ICON_FILE
+Icon=$APP_ID
 Exec=$WRAPPER
 Terminal=false
 Categories=Development;Utility;Network;
 StartupNotify=true
-StartupWMClass=Husk
+StartupWMClass=$APP_ID
 Keywords=ai;claude;agent;chat;terminal;husk;
 EOF
         chmod +x "$DESKTOP_FILE"

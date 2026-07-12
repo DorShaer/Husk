@@ -29,21 +29,31 @@ if [ -d "/opt/Husk" ] && [ -d "/opt/husk" ]; then
   rm -rf "/opt/Husk" || true
 fi
 
-# Install icon at standard hicolor sizes GNOME/KDE recognise,
-# then refresh caches so the icon appears immediately without a logout.
-SRC="/usr/share/icons/hicolor/1024x1024/apps/husk.png"
-if [ -f "$SRC" ]; then
-  for SIZE in 512x512 256x256 128x128 64x64 48x48; do
-    DIR="/usr/share/icons/hicolor/$SIZE/apps"
-    mkdir -p "$DIR"
-    cp "$SRC" "$DIR/husk.png"
-  done
-fi
+# The package ships a real icon at every hicolor size, so none is generated here.
+# An icon directory whose image is a different size than the directory claims is
+# not a working icon: the desktop downscales a megabyte for a 48px dock slot, and
+# a size-strict environment ignores it entirely.
+#
+# Restore any size that is missing. dpkg runs the OLD package's post-remove AFTER
+# unpacking the new files, so upgrading from a package whose post-remove deleted
+# these would otherwise leave the icon gone. The sized icons ship inside the app,
+# so restoring one needs no image tooling on this machine.
+ICON_SRC="/opt/husk/resources/icons"
+for SIZE in 1024x1024 512x512 256x256 128x128 64x64 48x48 32x32 24x24 16x16; do
+  DEST_DIR="/usr/share/icons/hicolor/$SIZE/apps"
+  DEST="$DEST_DIR/husk.png"
+  [ -f "$DEST" ] && continue
+  [ -f "$ICON_SRC/$SIZE.png" ] || continue
+  mkdir -p "$DEST_DIR"
+  cp "$ICON_SRC/$SIZE.png" "$DEST" || true
+done
 if command -v update-desktop-database &>/dev/null; then
   update-desktop-database /usr/share/applications/ || true
 fi
 if command -v gtk-update-icon-cache &>/dev/null; then
-  gtk-update-icon-cache -q /usr/share/icons/hicolor/ || true
+  # -f, so a cache built against the previous package's icons is rewritten rather
+  # than kept because its timestamp still looks current.
+  gtk-update-icon-cache -qf /usr/share/icons/hicolor/ || true
 fi
 
 # Pin to GNOME Dash. Runs as root via sudo so we need the real user's session.

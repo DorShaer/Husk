@@ -69,6 +69,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "installer/icons",
+        "to": "icons",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "linux": {
@@ -78,7 +85,7 @@
         "rpm"
       ],
       "category": "Development",
-      "icon": "installer/husk-icon.png",
+      "icon": "installer/icons",
       "synopsis": "Desktop home for CLI AI agents",
       "description": "Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.",
       "maintainer": "DorShaer <85877103+DorShaer@users.noreply.github.com>",
