@@ -7066,21 +7066,40 @@ async function runOnboarding({ replay = false } = {}) {
       scheduleBlink();
       ac.signal.addEventListener('abort', () => clearTimeout(blinkTimer));
 
-      // Poke it: it pops, leans out, and blinks at you.
-      on(hk, 'pointerenter', () => hk.classList.add('is-peek'));
+      // Poke it: it pops, leans out, and blinks at you. Only when it is out,
+      // though. Hovering a shut pod should not prise it open.
+      on(hk, 'pointerenter', () => {
+        if (hk.classList.contains('is-open')) hk.classList.add('is-peek');
+      });
       on(hk, 'pointerleave', () => hk.classList.remove('is-peek'));
+
+      // Click toggles: out of the husk, or back into it.
+      let settle = 0;
       on(hk, 'click', () => {
-        hk.classList.remove('is-pop');
+        clearTimeout(settle);
+        if (hk.classList.contains('is-open')) {
+          hk.classList.remove('is-open', 'is-peek', 'is-pop');
+          hk.classList.add('is-shut');
+          // The pod rocks once the halves have met, which lands the close.
+          settle = setTimeout(() => {
+            hk.classList.add('is-wiggle');
+            setTimeout(() => hk.classList.remove('is-wiggle'), 640);
+          }, 1020);
+          return;
+        }
+        hk.classList.remove('is-shut', 'is-pop', 'is-wiggle');
         // Reflow, or re-adding the class in the same frame does not restart it.
         void hk.offsetWidth;
         hk.classList.add('is-open', 'is-pop');
         setTimeout(() => hk.classList.remove('is-pop'), 1000);
       });
+      ac.signal.addEventListener('abort', () => clearTimeout(settle));
 
       // It watches the Get Started button when you go for it.
       const cta = $('#ob-start');
       if (cta) {
         on(cta, 'pointerenter', () => {
+          if (!hk.classList.contains('is-open')) return;
           hk.style.setProperty('--hk-x', '0px');
           hk.style.setProperty('--hk-y', '5px');
           hk.classList.add('is-peek');

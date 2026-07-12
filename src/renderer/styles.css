@@ -6329,8 +6329,8 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 .hk-petal-r { filter: drop-shadow(3px 5px 7px rgba(90,40,10,0.3)); }
 .hk.is-open .hk-petal-l { transform: rotate(-20deg); }
 .hk.is-open .hk-petal-r { transform: rotate(20deg); }
-.hk.is-peek .hk-petal-l { transform: rotate(-25deg); }
-.hk.is-peek .hk-petal-r { transform: rotate(25deg); }
+.hk.is-open.is-peek .hk-petal-l { transform: rotate(-25deg); }
+.hk.is-open.is-peek .hk-petal-r { transform: rotate(25deg); }
 
 /* The seed sits down inside the closed pod, then climbs out once it cracks. */
 .hk-seed {
@@ -6342,8 +6342,23 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
     opacity 0.4s ease 0.25s;
 }
 .hk.is-open .hk-seed { transform: translateY(0) scale(1) rotate(-3deg); opacity: 1; }
-.hk.is-peek .hk-seed { transform: translateY(-7px) scale(1.05) rotate(-3deg); }
+.hk.is-open.is-peek .hk-seed { transform: translateY(-7px) scale(1.05) rotate(-3deg); }
 .hk.is-open .hk-seed { animation: hk-breathe 4.4s ease-in-out 1.2s infinite; }
+
+/* Going back in reverses the order: the hands let go, the seed ducks down, and
+   only then do the halves swing shut over it. Closing eases in rather than
+   overshooting, so the pod gathers speed and meets with a snap. */
+.hk.is-shut .hk-seed {
+  transition:
+    transform 0.5s cubic-bezier(.5,0,.85,.5) 0.12s,
+    opacity 0.3s ease 0.3s;
+}
+.hk.is-shut .hk-petal { transition: transform 0.62s cubic-bezier(.55,0,.9,.55) 0.42s; }
+.hk.is-shut .hk-hand { transition: opacity 0.2s ease; }
+/* The cavity holds its fill until the halves have met over it, or the page
+   shows through the closing seam. */
+.hk.is-shut .hk-pit { transition: opacity 0.2s ease 0.95s; }
+.hk.is-shut .hk-glow { transition: opacity 0.5s ease 0.3s; }
 
 .hk-pit { opacity: 0; transition: opacity 0.5s ease 0.15s; }
 .hk.is-open .hk-pit { opacity: 1; }
@@ -6354,7 +6369,7 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
   transition: opacity 0.9s ease 0.3s;
 }
 .hk.is-open .hk-glow { opacity: 1; animation: hk-glow-pulse 3.8s ease-in-out infinite; }
-.hk.is-peek .hk-glow { opacity: 1.4; }
+.hk.is-open.is-peek .hk-glow { opacity: 1.4; }
 
 /* The hands only find the rim once the shell is actually open, and they ride
    outward with it when it opens wider, so the fingers keep their grip. */
@@ -6365,6 +6380,7 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
 .hk.is-open .hk-hand { opacity: 1; }
 .hk.is-open.is-peek .hk-hand-l { translate: -9px -4px; }
 .hk.is-open.is-peek .hk-hand-r { translate: 9px -4px; }
+.hk.is-shut .hk-hand-l, .hk.is-shut .hk-hand-r { translate: 0 0; }
 
 /* Eyes drift toward the pointer: JS writes the offset, CSS eases it. */
 .hk-eyes {
