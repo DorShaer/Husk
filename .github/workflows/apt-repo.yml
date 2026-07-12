@@ -16,7 +16,7 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/install.ps1'
-      - 'installer/apt-index.html'
+      - 'installer/index.html'
       - 'installer/husk-apt.gpg'
       - '.github/workflows/apt-repo.yml'
   workflow_dispatch:
@@ -138,7 +138,12 @@ jobs:
           cp scripts/install.sh site/install.sh
           cp scripts/install.ps1 site/install.ps1
 
-          cp installer/apt-index.html site/index.html
+          # installer/index.html is the real landing page. It previously lived
+          # ONLY on the gh-pages branch while this step copied installer/apt-index.html
+          # over it, so the next release would have silently replaced the site with
+          # a much older, apt-only page. The page is now versioned in the repo and
+          # this is the single source of truth for it.
+          cp installer/index.html site/index.html
           touch site/.nojekyll
 
       - name: Publish to gh-pages
