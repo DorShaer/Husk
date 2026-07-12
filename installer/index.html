@@ -17,6 +17,7 @@
     --text: #eceef3; --muted: #9aa1ad; --muted-2: #6f7681;
     --accent: #f74a1d; --accent-2: #ff7a4d; --accent-soft: rgba(247,74,29,.14);
     --radius: 14px; --radius-lg: 20px;
+    --ease-out: cubic-bezier(.2,.8,.2,1);
     --maxw: 68rem;
     color-scheme: dark;
   }
@@ -68,18 +69,37 @@
 
   /* ── Hero ────────────────────────────────────────── */
   header { text-align: center; padding: 5rem 0 2.5rem; }
-  .eyebrow {
-    display: inline-flex; align-items: center; gap: .5rem;
-    font-size: .78rem; color: var(--muted); font-weight: 600;
-    border: 1px solid var(--line-2); border-radius: 999px;
-    padding: .3rem .8rem; margin-bottom: 1.6rem; background: rgba(20,22,29,.6);
+  .hero-mark { display: flex; justify-content: center; margin-bottom: .5rem; }
+  /* The rig below sizes the mark for the app's welcome step; the hero wants it
+     bigger, and fluid. */
+  .hero-mark .hk { width: clamp(190px, 23vw, 270px); height: auto; aspect-ratio: 200 / 214; }
+
+  /* The gradient sits on each letter, not the row: a transformed child breaks a
+     background-clip on its parent and the word disappears. */
+  h1.wordmark {
+    display: flex; justify-content: center;
+    font-size: clamp(3.2rem, 9vw, 6rem); line-height: 1;
+    font-weight: 800; letter-spacing: .17em; text-indent: .17em;
+    margin: 0 0 1rem;
   }
-  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-  h1 {
-    font-size: clamp(2.5rem, 6vw, 4.3rem); line-height: 1.04; margin: 0 0 1.1rem;
-    font-weight: 850; letter-spacing: -.02em;
+  h1.wordmark span {
+    background: linear-gradient(180deg, #ffffff 0%, #dfe2e7 40%, #98a0aa 76%, #d3d7dd 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: mark-in .8s cubic-bezier(.2,.9,.3,1) backwards;
   }
-  h1 .grad {
+  h1.wordmark span:nth-child(1) { animation-delay: .05s; }
+  h1.wordmark span:nth-child(2) { animation-delay: .12s; }
+  h1.wordmark span:nth-child(3) { animation-delay: .19s; }
+  h1.wordmark span:nth-child(4) { animation-delay: .26s; }
+  @keyframes mark-in {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .lede {
+    font-size: clamp(1.4rem, 3.2vw, 2.1rem); line-height: 1.2;
+    font-weight: 750; letter-spacing: -.015em; margin: 0 0 1.2rem;
+  }
+  .lede .grad {
     background: linear-gradient(100deg, var(--accent) 10%, var(--accent-2) 60%, #ffb08a);
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
@@ -130,6 +150,163 @@
   }
   .mini-copy:hover { color: var(--text); border-color: var(--accent); }
   .os-note { margin-top: .8rem; color: var(--muted-2); font-size: .82rem; }
+
+/* ── Kernel: the Husk pod, and the seed that lives in it ─────────────── */
+.hk {
+  width: 196px; height: 210px; display: block;
+  overflow: visible;
+  cursor: pointer;
+}
+/* Every animated part is positioned in viewBox units, so transform-origin is
+   read against the viewBox rather than each element's own tight bounding box. */
+.hk-petal, .hk-seed, .hk-sprout-g, .hk-eyes, .hk-lid,
+.hk-brows, .hk-hand, .hk-glow, .hk-sparks circle {
+  transform-box: view-box;
+}
+
+/* The pod hinges on its bottom apex, so it splits at the tip and opens like a bud. */
+.hk-petal {
+  transform-origin: 100px 200px;
+  transition: transform 1.15s cubic-bezier(.16,1.3,.3,1);
+}
+.hk-petal-l { filter: drop-shadow(-3px 5px 7px rgba(90,40,10,0.3)); }
+.hk-petal-r { filter: drop-shadow(3px 5px 7px rgba(90,40,10,0.3)); }
+.hk.is-open .hk-petal-l { transform: rotate(-20deg); }
+.hk.is-open .hk-petal-r { transform: rotate(20deg); }
+.hk.is-open.is-peek .hk-petal-l { transform: rotate(-25deg); }
+.hk.is-open.is-peek .hk-petal-r { transform: rotate(25deg); }
+
+/* The seed sits down inside the closed pod, then climbs out once it cracks. It
+   rests deep enough that the shell alone hides it, with no fade needed. */
+.hk-seed {
+  transform-origin: 100px 150px;
+  transform: translateY(56px) scale(0.7);
+  opacity: 0;
+  transition:
+    transform 1s cubic-bezier(.18,1.45,.32,1) 0.25s,
+    opacity 0.4s ease 0.25s;
+}
+.hk.is-open .hk-seed { transform: translateY(0) scale(1) rotate(-3deg); opacity: 1; }
+.hk.is-open.is-peek .hk-seed { transform: translateY(-7px) scale(1.05) rotate(-3deg); }
+
+/* Breathing lives on its own group. Put it on the seed and it would be animating
+   the very property the sink transitions, and an animation wins that fight: the
+   seed would jump to the bottom the instant the animation came off. */
+.hk-breath { transform-box: view-box; transform-origin: 100px 150px; }
+.hk.is-open .hk-breath { animation: hk-breathe 4.4s ease-in-out 1.2s infinite; }
+
+/* Going back in: the hands let go and the seed sinks slowly, while the halves
+   swing shut over it. The two overlap on purpose, so the husk closes ON the
+   seed rather than waiting for it to disappear first. */
+/* He stays solid the whole way down, and he descends on exactly the same clock
+   and curve as the halves. Given a faster curve than theirs he reaches the
+   bottom while the husk is still wide open, which reads as him diving in on his
+   own rather than the husk closing over him. Keep these two in step. */
+.hk.is-shut .hk-seed {
+  transition:
+    transform 1.15s cubic-bezier(.35,0,.5,1) 0.08s,
+    opacity 0.3s ease 1.05s;
+}
+.hk.is-shut .hk-petal { transition: transform 1.15s cubic-bezier(.35,0,.5,1) 0.08s; }
+.hk.is-shut .hk-hand { transition: opacity 0.35s ease; }
+/* The cavity holds its fill until the halves have met over it, or the page
+   shows through the closing seam. */
+.hk.is-shut .hk-pit { transition: opacity 0.3s ease 1.4s; }
+.hk.is-shut .hk-glow { transition: opacity 1.3s ease 0.7s; }
+
+.hk-pit { opacity: 0; transition: opacity 0.5s ease 0.15s; }
+.hk.is-open .hk-pit { opacity: 1; }
+
+/* The liners carry the same petal classes, so they hinge on the same timings.
+   They want no shadow of their own: they are the inside of the husk, not a
+   surface with light on it. */
+.hk-liner { filter: none; }
+
+.hk-glow {
+  opacity: 0;
+  transform-origin: 100px 105px;
+  transition: opacity 0.9s ease 0.3s;
+}
+.hk.is-open .hk-glow { opacity: 1; animation: hk-glow-pulse 3.8s ease-in-out infinite; }
+.hk.is-open.is-peek .hk-glow { opacity: 1.4; }
+
+/* The hands only find the rim once the shell is actually open, and they ride
+   outward with it when it opens wider, so the fingers keep their grip. */
+.hk-hand {
+  opacity: 0;
+  transition: opacity 0.4s ease 0.7s, translate 0.35s var(--ease-out);
+}
+.hk.is-open .hk-hand { opacity: 1; }
+.hk.is-open.is-peek .hk-hand-l { translate: -9px -4px; }
+.hk.is-open.is-peek .hk-hand-r { translate: 9px -4px; }
+.hk.is-shut .hk-hand-l, .hk.is-shut .hk-hand-r { translate: 0 0; }
+
+/* Eyes drift toward the pointer: JS writes the offset, CSS eases it. */
+.hk-eyes {
+  transform: translate(var(--hk-x, 0px), var(--hk-y, 0px));
+  transition: transform 0.32s var(--ease-out);
+}
+.hk-glint { transition: transform 0.32s var(--ease-out); }
+.hk-brows {
+  transform-origin: 100px 58px;
+  transition: transform 0.3s var(--ease-out);
+}
+.hk.is-peek .hk-brows { transform: translateY(-3px); }
+
+/* A blink drops the lid over the eye, so it closes downward like a real one. */
+.hk-lid {
+  transform-origin: 100px 52px;
+  transform: translateY(0);
+  transition: transform 0.09s ease-in;
+}
+.hk.is-blink .hk-lid { transform: translateY(32px); }
+
+.hk-sprout-g {
+  transform-origin: 100px 36px;
+  animation: hk-sway 5.2s ease-in-out infinite;
+}
+
+/* The pod rocks in place, then splits. */
+.hk.is-wiggle { animation: hk-wiggle 0.62s ease-in-out; }
+@keyframes hk-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  15%      { transform: rotate(-1.4deg); }
+  32%      { transform: rotate(2deg); }
+  50%      { transform: rotate(-2.6deg); }
+  68%      { transform: rotate(2.6deg); }
+  84%      { transform: rotate(-1.4deg); }
+}
+
+@keyframes hk-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.022); }
+}
+@keyframes hk-glow-pulse {
+  0%, 100% { opacity: 0.75; scale: 1; }
+  50%      { opacity: 1;    scale: 1.07; }
+}
+@keyframes hk-sway {
+  0%, 100% { transform: rotate(-4deg); }
+  50%      { transform: rotate(5deg); }
+}
+
+/* Sparks fly off the seam when the pod cracks, and again whenever it is poked. */
+.hk-sparks circle {
+  opacity: 0;
+  transform-origin: 100px 60px;
+}
+.hk.is-pop .hk-sparks circle { animation: hk-spark 1s ease-out forwards; }
+.hk.is-pop .hk-sparks circle:nth-child(1) { --sx: -46px; --sy: -34px; animation-delay: 0s; }
+.hk.is-pop .hk-sparks circle:nth-child(2) { --sx:  42px; --sy: -40px; animation-delay: 0.05s; }
+.hk.is-pop .hk-sparks circle:nth-child(3) { --sx: -22px; --sy: -56px; animation-delay: 0.1s; }
+.hk.is-pop .hk-sparks circle:nth-child(4) { --sx:  26px; --sy: -52px; animation-delay: 0.15s; }
+.hk.is-pop .hk-sparks circle:nth-child(5) { --sx: -58px; --sy: -12px; animation-delay: 0.2s; }
+.hk.is-pop .hk-sparks circle:nth-child(6) { --sx:  54px; --sy: -16px; animation-delay: 0.25s; }
+@keyframes hk-spark {
+  0%   { opacity: 0;    translate: 0 0;                 scale: 0.3; }
+  20%  { opacity: 0.95; }
+  100% { opacity: 0;    translate: var(--sx) var(--sy); scale: 1.2; }
+}
 
   /* ── Hero shot ───────────────────────────────────── */
   .hero-shot {
@@ -280,7 +457,6 @@
 <nav id="nav">
   <div class="wrap nav-inner">
     <div class="nav-brand">
-      <img src="https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/src/renderer/assets/husk-logo.png" alt="" />
       <span>HUSK</span>
     </div>
     <div class="nav-links">
@@ -298,8 +474,154 @@
 <!-- ── Hero ── -->
 <header>
   <div class="wrap">
-    <div class="eyebrow"><span class="dot"></span> Open source · MIT · Linux · macOS · Windows</div>
-    <h1>A desktop home for<br /><span class="grad">your CLI agent</span></h1>
+    <div class="hero-mark">
+      <svg class="hk" viewBox="0 0 200 214" role="img" aria-label="Husk" id="hk">
+                    <defs>
+                      <linearGradient id="hk-rind-l" x1="0" y1="0" x2="1" y2="0.7">
+                        <stop offset="0" stop-color="#c96a33" /><stop offset="0.55" stop-color="#b0521c" />
+                        <stop offset="1" stop-color="#8e3d12" />
+                      </linearGradient>
+                      <linearGradient id="hk-rind-r" x1="1" y1="0" x2="0" y2="0.7">
+                        <stop offset="0" stop-color="#e2822f" /><stop offset="0.55" stop-color="#c25f1f" />
+                        <stop offset="1" stop-color="#9c4514" />
+                      </linearGradient>
+                      <linearGradient id="hk-face-l" x1="0.2" y1="0" x2="1" y2="1">
+                        <stop offset="0" stop-color="#f5a349" /><stop offset="1" stop-color="#d1701f" />
+                      </linearGradient>
+                      <linearGradient id="hk-face-r" x1="0.8" y1="0" x2="0" y2="1">
+                        <stop offset="0" stop-color="#fdb257" /><stop offset="1" stop-color="#dd7a26" />
+                      </linearGradient>
+                      <linearGradient id="hk-sheen" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stop-color="#fff" stop-opacity="0.35" />
+                        <stop offset="1" stop-color="#fff" stop-opacity="0" />
+                      </linearGradient>
+                      <linearGradient id="hk-pit" x1="0.5" y1="0" x2="0.5" y2="1">
+                        <stop offset="0" stop-color="#6b3316" /><stop offset="1" stop-color="#38180a" />
+                      </linearGradient>
+                      <!-- userSpaceOnUse so the blink lids can reuse this fill and match the
+                           body exactly instead of resampling the gradient over their own box. -->
+                      <radialGradient id="hk-body" gradientUnits="userSpaceOnUse" cx="88" cy="58" r="108">
+                        <stop offset="0" stop-color="#fff6e2" />
+                        <stop offset="0.4" stop-color="#fdd191" />
+                        <stop offset="1" stop-color="#e79447" />
+                      </radialGradient>
+                      <radialGradient id="hk-iris" cx="0.35" cy="0.3" r="0.8">
+                        <stop offset="0" stop-color="#5c3114" /><stop offset="0.55" stop-color="#331a09" />
+                        <stop offset="1" stop-color="#1d0d04" />
+                      </radialGradient>
+                      <radialGradient id="hk-cheek" cx="0.5" cy="0.5" r="0.5">
+                        <stop offset="0" stop-color="#ff7f4d" stop-opacity="0.45" />
+                        <stop offset="1" stop-color="#ff7f4d" stop-opacity="0" />
+                      </radialGradient>
+                      <linearGradient id="hk-sprout" x1="0" y1="1" x2="0.3" y2="0">
+                        <stop offset="0" stop-color="#3d7c47" /><stop offset="1" stop-color="#97d888" />
+                      </linearGradient>
+                      <radialGradient id="hk-glow" cx="0.5" cy="0.5" r="0.5">
+                        <stop offset="0" stop-color="#ffb066" stop-opacity="0.45" />
+                        <stop offset="1" stop-color="#ffb066" stop-opacity="0" />
+                      </radialGradient>
+                      <clipPath id="hk-clip-l"><ellipse cx="79" cy="83" rx="13.5" ry="16" /></clipPath>
+                      <clipPath id="hk-clip-r"><ellipse cx="121" cy="83" rx="13.5" ry="16" /></clipPath>
+                    </defs>
+      
+                    <ellipse class="hk-glow" cx="100" cy="105" rx="88" ry="84" fill="url(#hk-glow)" />
+                    <ellipse class="hk-shadow" cx="100" cy="205" rx="42" ry="6" fill="#7a3d16" opacity="0.2" />
+      
+                    <!-- the pod's inner cavity, so the opening reads as depth and not a hole -->
+                    <path class="hk-pit" d="M46 52 C 58 96, 78 150, 100 202 C 122 150, 142 96, 154 52 C 132 84, 68 84, 46 52 Z" fill="url(#hk-pit)" />
+                    <!-- Each half carries a dark liner shaped like the opposite half, so the
+                         two together always fill the gap between them however far they swing.
+                         They hinge on the same point as the halves and are drawn under both,
+                         so a shut pod covers them and they never spill past its outline. -->
+                    <g class="hk-petal hk-petal-l hk-liner">
+                      <path d="M100 12 C 140 46, 170 76, 170 108 C 170 142, 140 178, 100 202 Z" fill="url(#hk-pit)" />
+                    </g>
+                    <g class="hk-petal hk-petal-r hk-liner">
+                      <path d="M100 12 C 60 46, 30 76, 30 108 C 30 142, 60 178, 100 202 Z" fill="url(#hk-pit)" />
+                    </g>
+      
+                    <!-- The breath rides its own group. A CSS animation outranks a transition
+                         on the same property, so breathing on the seed itself would make the
+                         seed snap to the bottom the moment the animation is dropped. -->
+                    <g class="hk-seed"><g class="hk-breath">
+                      <g class="hk-sprout-g">
+                        <path d="M99 34 C 96 18, 88 8, 73 3 C 84 -4, 100 4, 105 18 C 110 4, 122 -3, 135 2 C 129 20, 115 32, 102 35 Z" fill="url(#hk-sprout)" />
+                        <path d="M101 38 C 100 30, 99 22, 96 14" stroke="#31673a" stroke-width="2.4" fill="none" stroke-linecap="round" />
+                      </g>
+      
+                      <path class="hk-arm" d="M64 92 C 50 96, 44 108, 51 118 C 58 128, 74 125, 76 112 Z" fill="#e29147" />
+                      <path class="hk-arm" d="M136 92 C 150 96, 156 108, 149 118 C 142 128, 126 125, 124 112 Z" fill="#e29147" />
+      
+                      <path class="hk-torso" d="M100 32 C 131 32, 143 56, 142 83 C 141 114, 123 142, 100 150 C 77 142, 59 114, 58 83 C 57 56, 69 32, 100 32 Z" fill="url(#hk-body)" />
+                      <path d="M100 150 C 77 142, 59 114, 58 87 C 66 116, 80 134, 100 142 C 120 134, 134 116, 142 87 C 141 114, 123 142, 100 150 Z" fill="#c9762f" opacity="0.26" />
+                      <path d="M72 54 C 79 42, 89 36, 99 36" stroke="#fff8ea" stroke-width="3.4" fill="none" stroke-linecap="round" opacity="0.72" />
+      
+                      <ellipse cx="70" cy="99" rx="12" ry="7.5" fill="url(#hk-cheek)" />
+                      <ellipse cx="130" cy="99" rx="12" ry="7.5" fill="url(#hk-cheek)" />
+      
+                      <g class="hk-brows">
+                        <path d="M64 60 C 71 52, 84 51, 91 58" stroke="#7b3a11" stroke-width="3.8" fill="none" stroke-linecap="round" opacity="0.9" />
+                        <path d="M109 58 C 116 51, 129 52, 136 61" stroke="#7b3a11" stroke-width="3.8" fill="none" stroke-linecap="round" opacity="0.9" />
+                      </g>
+      
+                      <g class="hk-eyes">
+                        <ellipse cx="79" cy="83" rx="13.5" ry="16" fill="url(#hk-iris)" />
+                        <ellipse cx="121" cy="83" rx="13.5" ry="16" fill="url(#hk-iris)" />
+                        <g clip-path="url(#hk-clip-l)"><ellipse cx="79" cy="70" rx="14" ry="7" fill="#000" opacity="0.35" /></g>
+                        <g clip-path="url(#hk-clip-r)"><ellipse cx="121" cy="70" rx="14" ry="7" fill="#000" opacity="0.35" /></g>
+                        <circle class="hk-glint" cx="74" cy="76" r="5" fill="#fff" opacity="0.96" />
+                        <circle class="hk-glint" cx="116" cy="76" r="5" fill="#fff" opacity="0.96" />
+                        <circle class="hk-glint" cx="84.5" cy="92" r="2.4" fill="#ffd9a8" opacity="0.6" />
+                        <circle class="hk-glint" cx="126.5" cy="92" r="2.4" fill="#ffd9a8" opacity="0.6" />
+                      </g>
+      
+                      <!-- lids ride down over the eyes to blink, filled with the body gradient -->
+                      <g clip-path="url(#hk-clip-l)"><rect class="hk-lid" x="63" y="35" width="34" height="34" fill="url(#hk-body)" /></g>
+                      <g clip-path="url(#hk-clip-r)"><rect class="hk-lid" x="105" y="35" width="34" height="34" fill="url(#hk-body)" /></g>
+      
+                      <path class="hk-mouth" d="M92 112 C 96 117.5, 104 117.5, 108 112" stroke="#8f4816" stroke-width="3.4" fill="none" stroke-linecap="round" />
+                    </g></g>
+      
+                    <g class="hk-petal hk-petal-l">
+                      <path d="M100 12 C 60 46, 30 76, 30 108 C 30 142, 60 178, 100 202 Z" fill="url(#hk-rind-l)" />
+                      <path d="M100 12 C 90 52, 79 92, 81 130 C 83 166, 92 186, 100 202 Z" fill="url(#hk-face-l)" />
+                      <path d="M96 24 C 66 54, 44 82, 44 110 C 50 84, 72 54, 96 30 Z" fill="url(#hk-sheen)" />
+                    </g>
+                    <g class="hk-petal hk-petal-r">
+                      <path d="M100 12 C 140 46, 170 76, 170 108 C 170 142, 140 178, 100 202 Z" fill="url(#hk-rind-r)" />
+                      <path d="M100 12 C 110 52, 121 92, 119 130 C 117 166, 108 186, 100 202 Z" fill="url(#hk-face-r)" />
+                      <path d="M104 24 C 134 54, 156 82, 156 110 C 150 84, 128 54, 104 30 Z" fill="url(#hk-sheen)" />
+                    </g>
+      
+                    <!-- hands drawn last so the fingers wrap in front of the shell -->
+                    <g class="hk-hands" stroke="#b0601c" stroke-width="1.3" stroke-linejoin="round">
+                      <g class="hk-hand hk-hand-l" transform="translate(68 112) rotate(70)">
+                        <path d="M-11 -4 C -13 4, -11 11, -4 13 C 4 15, 11 12, 12 4 C 13 -3, 8 -6, 0 -6 Z" fill="#e29147" />
+                        <rect x="-10.5" y="-4" width="5" height="11" rx="2.5" fill="#f8bd77" />
+                        <rect x="-4.6" y="-4" width="5" height="13.5" rx="2.5" fill="#f8bd77" />
+                        <rect x="1.3" y="-4" width="5" height="13" rx="2.5" fill="#f8bd77" />
+                        <rect x="7.2" y="-4" width="5" height="10" rx="2.5" fill="#f8bd77" />
+                      </g>
+                      <g class="hk-hand hk-hand-r" transform="translate(132 112) rotate(-70)">
+                        <path d="M11 -4 C 13 4, 11 11, 4 13 C -4 15, -11 12, -12 4 C -13 -3, -8 -6, 0 -6 Z" fill="#e29147" />
+                        <rect x="5.5" y="-4" width="5" height="11" rx="2.5" fill="#f8bd77" />
+                        <rect x="-0.4" y="-4" width="5" height="13.5" rx="2.5" fill="#f8bd77" />
+                        <rect x="-6.3" y="-4" width="5" height="13" rx="2.5" fill="#f8bd77" />
+                        <rect x="-12.2" y="-4" width="5" height="10" rx="2.5" fill="#f8bd77" />
+                      </g>
+                    </g>
+      
+                    <g class="hk-sparks" fill="#ffc46b">
+                      <circle cx="100" cy="60" r="2.6" /><circle cx="100" cy="60" r="2" />
+                      <circle cx="100" cy="60" r="1.6" /><circle cx="100" cy="60" r="2.2" />
+                      <circle cx="100" cy="60" r="1.4" /><circle cx="100" cy="60" r="1.9" />
+                    </g>
+                  </svg>
+    </div>
+    <h1 class="wordmark" aria-label="Husk">
+      <span aria-hidden="true">H</span><span aria-hidden="true">U</span><span aria-hidden="true">S</span><span aria-hidden="true">K</span>
+    </h1>
+    <p class="lede">A desktop home for <span class="grad">your CLI agent</span></p>
     <p class="sub">Husk wraps any terminal-based AI coding agent in a clean window: a real PTY, drag-drop file context, workflows, skills, and MCP. Bring your own agent. Install in one line.</p>
     <div class="hero-cta">
       <a class="btn btn-primary" href="#install">
@@ -533,6 +855,76 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
 </footer>
 
 <script>
+/* ── Kernel ─────────────────────────────────────────────
+   The pod hatches, watches the pointer, and goes back inside when it is poked.
+   Same rig as the app's welcome tour. */
+(function () {
+  const hk = document.getElementById('hk');
+  if (!hk) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    hk.classList.add('is-open');
+    return;
+  }
+
+  setTimeout(() => {
+    hk.classList.add('is-wiggle');
+    setTimeout(() => {
+      hk.classList.remove('is-wiggle');
+      hk.classList.add('is-open', 'is-pop');
+      setTimeout(() => hk.classList.remove('is-pop'), 1000);
+    }, 620);
+  }, 550);
+
+  // Irregular, because a fixed cadence reads as a machine.
+  (function blink() {
+    setTimeout(() => {
+      hk.classList.add('is-blink');
+      setTimeout(() => hk.classList.remove('is-blink'), 130);
+      if (Math.random() < 0.25) {
+        setTimeout(() => {
+          hk.classList.add('is-blink');
+          setTimeout(() => hk.classList.remove('is-blink'), 120);
+        }, 260);
+      }
+      blink();
+    }, 2600 + Math.random() * 4200);
+  })();
+
+  hk.addEventListener('pointerenter', () => {
+    if (hk.classList.contains('is-open')) hk.classList.add('is-peek');
+  });
+  hk.addEventListener('pointerleave', () => hk.classList.remove('is-peek'));
+
+  hk.addEventListener('click', () => {
+    if (hk.classList.contains('is-open')) {
+      hk.classList.remove('is-open', 'is-peek', 'is-pop');
+      hk.classList.add('is-shut');
+      return;
+    }
+    hk.classList.remove('is-shut', 'is-pop', 'is-wiggle');
+    void hk.offsetWidth;
+    hk.classList.add('is-open', 'is-pop');
+    setTimeout(() => hk.classList.remove('is-pop'), 1000);
+  });
+
+  // The eyes lead the head: they travel further than the pointer offset.
+  let frame = 0;
+  const EYE = 4.5;
+  window.addEventListener('pointermove', (e) => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      const b = hk.getBoundingClientRect();
+      if (b.bottom < 0 || b.top > window.innerHeight) return;
+      const clamp = (n) => Math.max(-1, Math.min(1, n));
+      const x = clamp((e.clientX - (b.left + b.width / 2)) / (b.width * 2));
+      const y = clamp((e.clientY - (b.top + b.height / 2)) / (b.height * 2));
+      hk.style.setProperty('--hk-x', (x * EYE).toFixed(2) + 'px');
+      hk.style.setProperty('--hk-y', (y * EYE).toFixed(2) + 'px');
+    });
+  }, { passive: true });
+})();
+
   // Nav shadow on scroll
   var nav = document.getElementById('nav');
   addEventListener('scroll', function () { nav.classList.toggle('scrolled', scrollY > 8); }, { passive: true });
