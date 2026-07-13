@@ -4791,6 +4791,10 @@ function saveWorkflows(list) {
 
 // In-memory active runs: runId -> { workflow, steps state, currentChild }
 const activeRuns = new Map();
+// A finished run keeps its scrollback so its nodes can still be opened and read
+// after the flow ends. Bounded: the last few runs, not every run forever.
+const finishedRuns = new Map();
+const WF_FINISHED_RUNS_MAX = 5;
 
 ipcMain.handle('workflows:list', () => loadWorkflows().map(migrateWorkflow));
 
@@ -4931,12 +4935,105 @@ ipcMain.handle('workflows:stop', (_e, runId) => {
   return { ok: true };
 });
 
+// The scrollback for one node. Opening a node's terminal replays this before it
+// starts following the live stream, so a node opened late still shows what it
+// did, and closing the terminal loses nothing.
+ipcMain.handle('workflows:nodeLog', (_e, payload) => {
+  const { runId, nodeId } = payload || {};
+  const run = activeRuns.get(runId) || finishedRuns.get(runId);
+  if (!run) return { ok: false, error: 'run not found' };
+  const log = (run.logs && run.logs.get(nodeId)) || { entries: [], dropped: 0 };
+  const state = run.stepStates[nodeId] || { status: 'pending' };
+  return {
+    ok: true,
+    entries: log.entries,
+    dropped: log.dropped,
+    status: state.status,
+    output: state.output || '',
+    running: run.currentNodeId === nodeId,
+  };
+});
+
+// Re-attach to a run already in flight. The renderer can be reloaded (or the
+// user can navigate away and back) while the agent keeps working in the main
+// process; without this the run would continue with nothing watching it.
+ipcMain.handle('workflows:activeRun', () => {
+  const run = [...activeRuns.values()].find((r) => r.status === 'running');
+  if (!run) return { ok: true, run: null };
+  return {
+    ok: true,
+    run: {
+      id: run.id,
+      workflowId: run.workflowId,
+      status: run.status,
+      startedAt: run.startedAt,
+      currentNodeId: run.currentNodeId || null,
+      stepStates: Object.fromEntries(
+        Object.entries(run.stepStates).map(([id, s]) => [id, { status: s.status }]),
+      ),
+      edgesTaken: run.edgesTaken || [],
+      startedNodes: run.startedNodes || [],
+    },
+  };
+});
+
 // ─── Workflow graph model ─────────────────────────────────────────────────────
 // A workflow is a graph of step nodes connected by edges. Edges carry a
 // routing condition (used by the 2b branch engine; 2a treats all as 'always').
 
+// Per-node scrollback. A run outlives the window that started it: the renderer
+// can be reloaded, and a node's terminal can be opened long after the node has
+// finished, so the output has to live here rather than only in the event that
+// announced it. Bounded, because a chatty agent would otherwise grow forever.
+const WF_LOG_MAX_ENTRIES = 4000;
+const WF_LOG_MAX_CHARS = 400000;
+
+function wfLogFor(run, nodeId) {
+  if (!run.logs) run.logs = new Map();
+  let log = run.logs.get(nodeId);
+  if (!log) { log = { entries: [], chars: 0, dropped: 0 }; run.logs.set(nodeId, log); }
+  return log;
+}
+
+function wfRecord(run, nodeId, entry) {
+  const log = wfLogFor(run, nodeId);
+  run.seq = (run.seq || 0) + 1;
+  entry.seq = run.seq;
+  log.entries.push(entry);
+  log.chars += (entry.text || '').length;
+  while (log.entries.length > WF_LOG_MAX_ENTRIES || log.chars > WF_LOG_MAX_CHARS) {
+    const gone = log.entries.shift();
+    if (!gone) break;
+    log.chars -= (gone.text || '').length;
+    log.dropped += 1;
+  }
+}
+
+// Broadcast, not point-to-point. Sending only to event.sender means a renderer
+// reload leaves the run executing with no way to see it: the window that asked
+// for the run is not necessarily the window that needs to watch it.
 function wfEmit(event, channel, data) {
-  try { if (!event.sender.isDestroyed()) event.sender.send(channel, data); } catch (_) {}
+  const run = data && data.runId ? activeRuns.get(data.runId) : null;
+  if (run) {
+    if (channel === 'wf:node:activity' && data.nodeId) {
+      const entry = { t: Date.now(), kind: data.kind || 'text', text: String(data.text || '') };
+      wfRecord(run, data.nodeId, entry);
+      data.seq = entry.seq;   // the listener dedupes against the replayed buffer
+    } else if (channel === 'wf:node:start' && data.nodeId) {
+      run.currentNodeId = data.nodeId;
+      wfLogFor(run, data.nodeId);
+      if (!run.startedNodes) run.startedNodes = [];
+      run.startedNodes.push({ nodeId: data.nodeId, at: Date.now() });
+    } else if (channel === 'wf:node:done' && data.nodeId) {
+      if (run.currentNodeId === data.nodeId) run.currentNodeId = null;
+    } else if (channel === 'wf:edge:taken') {
+      if (!run.edgesTaken) run.edgesTaken = [];
+      run.edgesTaken.push({ edgeId: data.edgeId, from: data.from, to: data.to });
+    }
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(channel, data); } catch (_) {}
+  }
 }
 
 async function executeWorkflow(event, workflow, run) {
@@ -5110,8 +5207,16 @@ async function executeWorkflow(event, workflow, run) {
 
   if (run.status === 'running') run.status = 'done';
   run.finishedAt = new Date().toISOString();
+  run.currentNodeId = null;
   wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
+  // Retire rather than discard: the run's node terminals stay readable after it
+  // ends. wfEmit looks the run up in activeRuns, so retire only after emitting.
   activeRuns.delete(run.id);
+  run.currentChild = null;
+  finishedRuns.set(run.id, run);
+  while (finishedRuns.size > WF_FINISHED_RUNS_MAX) {
+    finishedRuns.delete(finishedRuns.keys().next().value);
+  }
 }
 
 // Translates one claude stream-json event into activity feed lines.

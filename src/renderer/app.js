@@ -2026,10 +2026,16 @@ function wfShowView(name) {
 }
 
 async function renderWorkflows() {
-  wfShowView('list');
   const grid = $('#wf-grid');
   if (!grid) return;
   workflowsCache = await window.husk.workflows.list();
+  // A run in flight owns this page: opening Workflows while one is going (or
+  // after a reload) drops you back into watching it, rather than showing a list
+  // that pretends nothing is happening.
+  if (activeRunId) { wfShowView('run'); return; }
+  const adopted = await wfReattachRun();
+  if (adopted) return;
+  wfShowView('list');
   paintWorkflowList();
 }
 
@@ -2356,62 +2362,6 @@ function wfActIcon(kind) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>`;
 }
 
-function wfAppendActivity(nodeId, kind, text) {
-  const feed = document.getElementById(`wf-activity-${nodeId}`);
-  if (!feed) return;
-
-  // Suppress PAI voice-notification tool calls outright.
-  if (kind === 'tool' && /curl .*localhost:8888\/notify/.test(text)) return;
-  if (kind === 'text') {
-    text = stripPaiNoise(text);
-    if (!text) return;
-  }
-
-  const emptyEl = feed.querySelector('.wf-activity-empty');
-  if (emptyEl) emptyEl.remove();
-
-  const row = document.createElement('div');
-  row.className = `wf-act wf-act-${kind}`;
-  const icon = document.createElement('div');
-  icon.className = 'wf-act-icon';
-  // eslint-disable-next-line no-unsanitized/property -- static SVG markup, no user input
-  icon.innerHTML = wfActIcon(kind);
-  const body = document.createElement('div');
-  body.className = 'wf-act-body';
-
-  if (kind === 'tool') {
-    // "Bash  git diff" -> chip with tool name + muted args.
-    const sp = text.indexOf('  ');
-    const chip = document.createElement('span');
-    chip.className = 'wf-tool-chip';
-    chip.textContent = sp > 0 ? text.slice(0, sp) : text;
-    body.appendChild(chip);
-    if (sp > 0) {
-      const arg = document.createElement('span');
-      arg.className = 'wf-tool-arg';
-      arg.textContent = text.slice(sp + 2);
-      body.appendChild(arg);
-    }
-  } else if (kind === 'text') {
-    // eslint-disable-next-line no-unsanitized/property -- renderMarkdown escapes all HTML first
-    body.innerHTML = renderMarkdown(text);
-  } else {
-    body.textContent = text;
-  }
-
-  row.appendChild(icon);
-  row.appendChild(body);
-  feed.appendChild(row);
-  // Auto-scroll only while the step is the live one.
-  const node = document.getElementById(`wf-node-${nodeId}`);
-  if (node && node.classList.contains('is-running')) feed.scrollTop = feed.scrollHeight;
-}
-
-function wfToggleNode(nodeId) {
-  const node = document.getElementById(`wf-node-${nodeId}`);
-  if (node) node.classList.toggle('is-collapsed');
-}
-
 function wfSetProgress(done, total, pctOverride) {
   const fill = $('#wf-progress-fill');
   const label = $('#wf-progress-label');
@@ -2422,135 +2372,431 @@ function wfSetProgress(done, total, pctOverride) {
 
 let wfActiveRun = { total: 0, done: 0 };
 
-async function runWorkflow(workflowId) {
-  const workflow = workflowsCache.find((w) => w.id === workflowId);
-  if (!workflow) return;
+// ─── Live run: the flow, played out on its own graph ─────────────────────────
+// The run is watched on the same canvas the flow was drawn on. A node lights up
+// while it runs, edges fire as they are taken, and clicking any node opens its
+// terminal. The terminal is a view onto a buffer held in the main process, so
+// opening it late still shows everything, and closing it stops nothing.
 
+let wfRunEditor = null;        // read-only Drawflow for the run canvas
+let wfRunDfId = {};            // husk node id -> drawflow node id
+let wfRunGraph = null;
+let wfRunWorkflow = null;
+let wfNodeStatus = {};         // husk node id -> pending|running|done|failed|cancelled|skipped
+let wfNodeStartedAt = {};
+
+function wfRunNodeEl(nodeId) {
+  const df = wfRunDfId[nodeId];
+  return df ? document.getElementById(`node-${df}`) : null;
+}
+
+// Read-only canvas: the same graph, not editable. Drawflow's own selection
+// events are unreliable in fixed mode, so node clicks are wired by hand.
+function wfBuildRunCanvas(workflow) {
+  const container = $('#wf-run-canvas');
+  if (!container || typeof Drawflow === 'undefined') return;
+  if (wfRunEditor) { try { wfRunEditor.clear(); } catch (_) {} }
+  else {
+    wfRunEditor = new Drawflow(container);
+    wfRunEditor.reroute = true;
+    wfRunEditor.start();
+    wfRunEditor.editor_mode = 'fixed';
+  }
+  wfRunDfId = {};
+  const graph = workflow.graph || { nodes: [], edges: [] };
+  wfRunGraph = graph;
+
+  (graph.nodes || []).forEach((n) => {
+    const html = `
+      <div class="wf-rn">
+        <div class="wf-rn-ring"></div>
+        <div class="wf-rn-main">
+          <div class="wf-rn-name">${escapeHtml(n.name || 'Step')}</div>
+          <div class="wf-rn-sub" data-sub="${escapeAttr(n.id)}">Pending</div>
+        </div>
+        <div class="wf-rn-meta">
+          <span class="wf-rn-timer" data-timer="${escapeAttr(n.id)}"></span>
+          <span class="wf-rn-open" title="Open this step's terminal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+          </span>
+        </div>
+      </div>`;
+    const dfId = wfRunEditor.addNode(
+      'step', 1, 1, n.x || 60, n.y || 60, 'wf-rn-node', { huskId: n.id }, html,
+    );
+    wfRunDfId[n.id] = dfId;
+  });
+
+  (graph.edges || []).forEach((e) => {
+    const a = wfRunDfId[e.from];
+    const b = wfRunDfId[e.to];
+    if (a && b) { try { wfRunEditor.addConnection(a, b, 'output_1', 'input_1'); } catch (_) {} }
+  });
+
+  // Clicking anywhere on a node opens its terminal.
+  (graph.nodes || []).forEach((n) => {
+    const el = wfRunNodeEl(n.id);
+    if (el) el.addEventListener('click', () => wfOpenTerm(n.id));
+  });
+
+  wfNodeStatus = {};
+  wfNodeStartedAt = {};
+  (graph.nodes || []).forEach((n) => wfSetNodeState(n.id, 'pending'));
+  wfFitRunCanvas(graph);
+}
+
+// Frame the whole graph. A flow laid out wider than the canvas would otherwise
+// run off the edge, and the step you care about could be the one you cannot see.
+let wfFitPending = 0;
+window.addEventListener('resize', () => {
+  if (wfFitPending) cancelAnimationFrame(wfFitPending);
+  wfFitPending = requestAnimationFrame(() => { wfFitPending = 0; wfFitRunCanvas(wfRunGraph); });
+});
+
+function wfFitRunCanvas(graph) {
+  const host = $('#wf-run-canvas');
+  const pre = host && host.querySelector('.drawflow');
+  const nodes = (graph && graph.nodes) || [];
+  if (!host || !pre || !nodes.length) return;
+  const NODE_W = 216;
+  const NODE_H = 64;
+  const PAD = 28;
+  const xs = nodes.map((n) => n.x || 0);
+  const ys = nodes.map((n) => n.y || 0);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const w = (Math.max(...xs) + NODE_W) - minX;
+  const h = (Math.max(...ys) + NODE_H) - minY;
+  const bw = host.clientWidth - PAD * 2;
+  const bh = host.clientHeight - PAD * 2;
+  if (bw <= 0 || bh <= 0) return;
+  const zoom = Math.min(1, bw / w, bh / h);
+  // Centre what is left over, so a small flow sits in the middle rather than
+  // hugging the corner.
+  const x = PAD + (bw - w * zoom) / 2 - minX * zoom;
+  const y = PAD + (bh - h * zoom) / 2 - minY * zoom;
+  wfRunEditor.zoom = zoom;
+  wfRunEditor.zoom_last_value = zoom;
+  wfRunEditor.canvas_x = x;
+  wfRunEditor.canvas_y = y;
+  pre.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
+}
+
+const WF_STATE_LABEL = {
+  pending: 'Pending', running: 'Running', done: 'Done',
+  failed: 'Failed', cancelled: 'Cancelled', skipped: 'Skipped',
+};
+
+function wfSetNodeState(nodeId, state) {
+  wfNodeStatus[nodeId] = state;
+  const el = wfRunNodeEl(nodeId);
+  if (!el) return;
+  ['pending', 'running', 'done', 'failed', 'cancelled', 'skipped']
+    .forEach((s) => el.classList.toggle(`is-${s}`, s === state));
+  const sub = el.querySelector(`[data-sub="${CSS.escape(nodeId)}"]`);
+  if (sub) sub.textContent = WF_STATE_LABEL[state] || state;
+  if (wfTermNodeId === nodeId) wfRenderTermStatus();
+  wfRenderTermTabs();
+}
+
+// The edge that was just taken. The dash animation runs on the connection's own
+// path, so the pulse follows whatever curve Drawflow drew, reroutes included.
+function wfPulseEdge(from, to) {
+  const a = wfRunDfId[from];
+  const b = wfRunDfId[to];
+  if (!a || !b) return;
+  // Drawflow tags each connection with the node ids it joins, prefixed:
+  // class="connection node_in_node-2 node_out_node-1 ...".
+  const conn = document.querySelector(
+    `#wf-run-canvas .connection.node_out_node-${a}.node_in_node-${b}`,
+  );
+  if (!conn) return;
+  conn.classList.add('is-taken');
+  conn.classList.remove('is-firing');
+  void conn.getBoundingClientRect();
+  conn.classList.add('is-firing');
+  setTimeout(() => conn.classList.remove('is-firing'), 1200);
+}
+
+// ─── The step terminal ───────────────────────────────────────────────────────
+
+let wfTerm = null;
+let wfTermFit = null;
+let wfTermNodeId = null;
+let wfTermSeq = 0;             // highest entry seq written, so live appends never repeat
+let wfTermOpenToken = 0;       // guards against a slow open writing into a newer one
+let wfTermLoading = false;
+let wfTermQueue = [];          // live entries that land while the buffer is replaying
+
+function wfEnsureTerm() {
+  if (wfTerm) return wfTerm;
+  const host = $('#wf-term-body');
+  if (!host || typeof Terminal === 'undefined') return null;
+  wfTerm = new Terminal({
+    fontSize: 12,
+    fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+    convertEol: true,
+    cursorStyle: 'bar',
+    cursorBlink: false,
+    disableStdin: true,
+    scrollback: 5000,
+    theme: { background: 'rgba(0,0,0,0)' },
+    allowTransparency: true,
+  });
+  try {
+    wfTermFit = new FitAddon.FitAddon();
+    wfTerm.loadAddon(wfTermFit);
+  } catch (_) { wfTermFit = null; }
+  wfTerm.open(host);
+  try { if (wfTermFit) wfTermFit.fit(); } catch (_) {}
+  window.addEventListener('resize', () => { try { if (wfTermFit && !$('#wf-term').hidden) wfTermFit.fit(); } catch (_) {} });
+  return wfTerm;
+}
+
+// One activity entry, dressed the way a terminal would show it. The agent's own
+// text is left alone; the scaffolding around it (tool calls, status, errors) is
+// what gets colour, so the output still reads as the agent's.
+function wfTermLine(entry) {
+  const raw = String(entry.text || '');
+  if (entry.kind === 'tool' && /localhost:\d+\/notify/.test(raw)) return '';
+  const text = raw.replace(/\r?\n/g, '\r\n');
+  if (entry.kind === 'tool') return `\x1b[38;5;80m  ⏵ ${text}\x1b[0m\r\n`;
+  if (entry.kind === 'error') return `\x1b[38;5;203m  ✖ ${text}\x1b[0m\r\n`;
+  if (entry.kind === 'status') return `\x1b[38;5;244m  · ${text}\x1b[0m\r\n`;
+  return `${text}\r\n`;
+}
+
+function wfRenderTermStatus() {
+  const el = $('#wf-term-status');
+  if (!el || !wfTermNodeId) return;
+  const st = wfNodeStatus[wfTermNodeId] || 'pending';
+  const started = wfNodeStartedAt[wfTermNodeId];
+  const secs = started ? Math.floor((Date.now() - started) / 1000) : null;
+  const node = (wfRunGraph && (wfRunGraph.nodes || []).find((n) => n.id === wfTermNodeId)) || {};
+  const cmd = (node.agentCommand || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
+  const bits = [`<span class="wf-ts-dot is-${st}"></span>${WF_STATE_LABEL[st] || st}`, `<code>${escapeHtml(cmd)}</code>`];
+  if (secs !== null && st === 'running') bits.push(`${secs}s`);
+  // eslint-disable-next-line no-unsanitized/property -- all interpolations escaped
+  el.innerHTML = bits.join('<span class="wf-ts-sep">&middot;</span>');
+}
+
+function wfRenderTermTabs() {
+  const wrap = $('#wf-term-tabs');
+  if (!wrap || !wfRunGraph) return;
+  wrap.innerHTML = '';
+  (wfRunGraph.nodes || []).forEach((n) => {
+    const st = wfNodeStatus[n.id] || 'pending';
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `wf-term-tab is-${st}` + (n.id === wfTermNodeId ? ' active' : '');
+    b.textContent = n.name || 'Step';
+    b.title = n.name || 'Step';
+    b.addEventListener('click', () => wfOpenTerm(n.id, { manual: true }));
+    wrap.appendChild(b);
+  });
+}
+
+// Open (or switch) the terminal onto one node. Replays that node's buffer from
+// the main process first, then follows it live.
+async function wfOpenTerm(nodeId, opts = {}) {
+  const drawer = $('#wf-term');
+  const term = wfEnsureTerm();
+  if (!drawer || !term) return;
+  if (opts.manual) {
+    // Picking a step by hand means you want that step, not whatever runs next.
+    const follow = $('#wf-term-follow');
+    if (follow && follow.checked && nodeId !== wfRunCurrentNode) follow.checked = false;
+  }
+
+  // Opening is async (the buffer comes from the main process) and can be
+  // superseded mid-flight, by follow mode moving to the next node or by another
+  // click. Without a token, the slower open finishes last and paints the wrong
+  // node's output into the terminal.
+  const token = ++wfTermOpenToken;
+  wfTermNodeId = nodeId;
+  wfTermLoading = true;
+  wfTermQueue = [];
+  drawer.hidden = false;
+  document.querySelectorAll('#wf-run-canvas .wf-rn-node').forEach((el) => el.classList.remove('is-open'));
+  const el = wfRunNodeEl(nodeId);
+  if (el) el.classList.add('is-open');
+
+  term.reset();
+  wfTermSeq = 0;
+  const runId = activeRunId || wfLastRunId;
+  const res = runId ? await window.husk.workflows.nodeLog(runId, nodeId) : null;
+  if (token !== wfTermOpenToken) return;   // a newer open owns the terminal now
+
+  if (res && res.ok) {
+    if (res.dropped) term.write(`\x1b[38;5;244m  · ${res.dropped} earlier lines trimmed\x1b[0m\r\n`);
+    (res.entries || []).forEach((e) => {
+      term.write(wfTermLine(e));
+      if (e.seq && e.seq > wfTermSeq) wfTermSeq = e.seq;
+    });
+    if (!res.entries || !res.entries.length) {
+      term.write('\x1b[38;5;244m  waiting for this step to start...\x1b[0m\r\n');
+    }
+  }
+  // Anything the agent emitted while the buffer was in transit, in order and
+  // exactly once.
+  wfTermQueue.forEach((q) => {
+    if (q.nodeId !== nodeId) return;
+    if (q.seq && q.seq <= wfTermSeq) return;
+    if (q.seq) wfTermSeq = q.seq;
+    term.write(wfTermLine(q));
+  });
+  wfTermQueue = [];
+  wfTermLoading = false;
+
+  try { if (wfTermFit) wfTermFit.fit(); } catch (_) {}
+  term.scrollToBottom();
+  wfRenderTermStatus();
+  wfRenderTermTabs();
+  const hint = $('#wf-run-hint');
+  if (hint) hint.hidden = true;
+  // The canvas just lost height to the terminal. Refit after the layout settles.
+  requestAnimationFrame(() => wfFitRunCanvas(wfRunGraph));
+}
+
+function wfCloseTerm() {
+  const drawer = $('#wf-term');
+  wfTermOpenToken += 1;   // an open still in flight must not reopen this
+  wfTermLoading = false;
+  wfTermQueue = [];
+  if (drawer) drawer.hidden = true;
+  document.querySelectorAll('#wf-run-canvas .wf-rn-node').forEach((el) => el.classList.remove('is-open'));
+  wfTermNodeId = null;
+  wfRenderTermTabs();
+  requestAnimationFrame(() => wfFitRunCanvas(wfRunGraph));   // it got its height back
+}
+
+// ─── Run lifecycle ───────────────────────────────────────────────────────────
+
+let wfRunCurrentNode = null;
+let wfLastRunId = null;
+
+function wfResetRunUi(workflow) {
   wfClearTimers();
-  wfLastRunningNode = null;
+  wfRunWorkflow = workflow;
   const nameEl = $('#wf-run-name');
   const badge = $('#wf-run-status-badge');
   const stopBtn = $('#btn-stop-wf');
-  const stepsEl = $('#wf-run-steps');
   if (nameEl) nameEl.textContent = workflow.name;
   if (badge) { badge.textContent = 'Running'; badge.className = 'wf-run-status-badge'; }
   if (stopBtn) stopBtn.hidden = false;
+  wfCloseTerm();
   wfShowView('run');
+  const hint = $('#wf-run-hint');
+  if (hint) hint.hidden = false;
+  wfBuildRunCanvas(workflow);
+  const total = wfAllNodes(workflow.graph).length;
+  wfActiveRun = { total, done: 0 };
+  wfSetProgress(0, total);
+}
 
-  const allNodes = wfAllNodes(workflow.graph);
-
-  if (stepsEl) {
-    wfActiveRun = { total: allNodes.length, done: 0 };
-    wfSetProgress(0, allNodes.length);
-    const caret = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`;
-    const connArrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 16l7 7 7-7"/></svg>`;
-    // eslint-disable-next-line no-unsanitized/property -- node name/prompt escaped via escapeHtml
-    stepsEl.innerHTML = allNodes.map((step, i) => `
-      ${i > 0 ? `<div class="wf-step-connector"><div class="wf-connector-arrow">${connArrow}</div></div>` : ''}
-      <div class="wf-run-node is-pending is-collapsed" id="wf-node-${escapeAttr(step.id)}">
-        <div class="wf-run-node-head" data-toggle="${escapeAttr(step.id)}">
-          <div class="wf-run-node-status"></div>
-          <div class="wf-run-node-titlewrap">
-            <div class="wf-run-node-title">${escapeHtml(step.name)}</div>
-            <div class="wf-run-node-prompt">${escapeHtml((step.prompt || '').split('\n')[0] || 'No prompt set')}</div>
-          </div>
-          <div class="wf-run-node-timer" id="wf-timer-${escapeAttr(step.id)}"></div>
-          <div class="wf-run-node-state-label">Pending</div>
-          <div class="wf-run-node-caret">${caret}</div>
-        </div>
-        <div class="wf-run-node-body">
-          <div class="wf-run-activity" id="wf-activity-${escapeAttr(step.id)}">
-            <div class="wf-activity-empty">Waiting...</div>
-          </div>
-          <div class="wf-run-result" id="wf-result-${escapeAttr(step.id)}" hidden>
-            <div class="wf-run-result-label">Result</div>
-            <div class="wf-run-result-body" id="wf-result-body-${escapeAttr(step.id)}"></div>
-          </div>
-        </div>
-      </div>
-    `).join('');
-    stepsEl.querySelectorAll('[data-toggle]').forEach((head) =>
-      head.addEventListener('click', () => wfToggleNode(head.dataset.toggle)));
-  }
-
+async function runWorkflow(workflowId) {
+  const workflow = workflowsCache.find((w) => w.id === workflowId);
+  if (!workflow) return;
+  wfResetRunUi(workflow);
   const res = await window.husk.workflows.run(workflowId);
   if (!res || !res.ok) { toast(res ? res.error : 'Could not start workflow', 'error'); wfShowView('list'); return; }
   activeRunId = res.runId;
+  wfLastRunId = res.runId;
 }
 
-// IPC event handlers for live run updates (keyed by node id)
+// A run keeps executing in the main process across a renderer reload, so on
+// boot we adopt whatever is still in flight instead of leaving it unwatched.
+async function wfReattachRun() {
+  let res = null;
+  try { res = await window.husk.workflows.activeRun(); } catch (_) { return false; }
+  if (!res || !res.ok || !res.run) return false;
+  const run = res.run;
+  const workflow = workflowsCache.find((w) => w.id === run.workflowId);
+  if (!workflow) return false;
+  wfResetRunUi(workflow);
+  activeRunId = run.id;
+  wfLastRunId = run.id;
+  (run.startedNodes || []).forEach((s) => { wfNodeStartedAt[s.nodeId] = s.at; });
+  Object.entries(run.stepStates || {}).forEach(([id, s]) => wfSetNodeState(id, s.status));
+  (run.edgesTaken || []).forEach((e) => wfPulseEdge(e.from, e.to));
+  const done = Object.values(run.stepStates || {}).filter((s) => s.status !== 'running' && s.status !== 'pending').length;
+  wfActiveRun.done = done;
+  wfSetProgress(done, wfActiveRun.total);
+  if (run.currentNodeId) {
+    wfRunCurrentNode = run.currentNodeId;
+    wfStartNodeTimer(run.currentNodeId, wfNodeStartedAt[run.currentNodeId] || Date.now());
+  }
+  toast('Rejoined a workflow already running', 'info');
+  return true;
+}
+
+function wfStartNodeTimer(nodeId, startedAt) {
+  wfNodeStartedAt[nodeId] = startedAt;
+  const el = wfRunNodeEl(nodeId);
+  const timerEl = el && el.querySelector(`[data-timer="${CSS.escape(nodeId)}"]`);
+  const tick = () => {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    if (timerEl) timerEl.textContent = `${s}s`;
+    if (wfTermNodeId === nodeId) wfRenderTermStatus();
+  };
+  tick();
+  wfStepTimers[nodeId] = { interval: setInterval(tick, 1000), startedAt };
+}
+
+// ─── Run events ──────────────────────────────────────────────────────────────
+
 window.husk.workflows.onNodeStart((d) => {
   if (d.runId !== activeRunId) return;
-  // Collapse whichever node was running so the new active one is the focus.
-  if (wfLastRunningNode) {
-    const prev = document.getElementById(`wf-node-${wfLastRunningNode}`);
-    if (prev) prev.classList.add('is-collapsed');
-  }
-  wfLastRunningNode = d.nodeId;
-  const node = document.getElementById(`wf-node-${d.nodeId}`);
-  const label = node && node.querySelector('.wf-run-node-state-label');
-  if (node) node.className = 'wf-run-node is-running';
-  if (label) label.textContent = 'Running';
-  const feed = document.getElementById(`wf-activity-${d.nodeId}`);
-  if (feed) { const e = feed.querySelector('.wf-activity-empty'); if (e) e.remove(); }
-  const startedAt = Date.now();
-  const timerEl = document.getElementById(`wf-timer-${d.nodeId}`);
-  const interval = setInterval(() => {
-    if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - startedAt) / 1000)}s`;
-  }, 1000);
-  wfStepTimers[d.nodeId] = { interval, startedAt };
-  if (timerEl) timerEl.textContent = '0s';
+  wfRunCurrentNode = d.nodeId;
+  wfSetNodeState(d.nodeId, 'running');
+  wfStartNodeTimer(d.nodeId, Date.now());
+  const el = wfRunNodeEl(d.nodeId);
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  // Follow mode: the terminal rides along with the run.
+  const follow = $('#wf-term-follow');
+  if (!$('#wf-term').hidden && follow && follow.checked) wfOpenTerm(d.nodeId);
 });
 
 window.husk.workflows.onNodeActivity((d) => {
   if (d.runId !== activeRunId) return;
-  wfAppendActivity(d.nodeId, d.kind || 'status', d.text || '');
+  if (d.nodeId !== wfTermNodeId || !wfTerm || $('#wf-term').hidden) return;
+  // While the buffer is still being replayed, hold the line rather than racing
+  // it into the terminal out of order.
+  if (wfTermLoading) { wfTermQueue.push({ nodeId: d.nodeId, kind: d.kind, text: d.text, seq: d.seq }); return; }
+  if (d.seq && d.seq <= wfTermSeq) return;
+  if (d.seq) wfTermSeq = d.seq;
+  wfTerm.write(wfTermLine({ kind: d.kind, text: d.text }));
 });
 
 window.husk.workflows.onNodeDone((d) => {
   if (d.runId !== activeRunId) return;
-  const node = document.getElementById(`wf-node-${d.nodeId}`);
-  const label = node && node.querySelector('.wf-run-node-state-label');
-  const cls = d.status === 'done' ? 'is-done' : d.status === 'cancelled' ? 'is-cancelled' : 'is-failed';
-  const lbl = d.status === 'done' ? 'Done' : d.status === 'cancelled' ? 'Cancelled' : 'Failed';
-  if (node) node.className = `wf-run-node ${cls}`;
-  if (label) label.textContent = lbl;
+  wfSetNodeState(d.nodeId, d.status || 'done');
   const t = wfStepTimers[d.nodeId];
   if (t) {
     clearInterval(t.interval);
-    const timerEl = document.getElementById(`wf-timer-${d.nodeId}`);
+    const el = wfRunNodeEl(d.nodeId);
+    const timerEl = el && el.querySelector(`[data-timer="${CSS.escape(d.nodeId)}"]`);
     if (timerEl) timerEl.textContent = `${Math.floor((Date.now() - t.startedAt) / 1000)}s`;
     delete wfStepTimers[d.nodeId];
   }
-  const cleaned = stripPaiNoise(d.output || '');
-  if (cleaned) {
-    const resWrap = document.getElementById(`wf-result-${d.nodeId}`);
-    const resBody = document.getElementById(`wf-result-body-${d.nodeId}`);
-    if (resBody) {
-      // eslint-disable-next-line no-unsanitized/property -- renderMarkdown escapes all HTML first
-      resBody.innerHTML = renderMarkdown(cleaned);
-    }
-    if (resWrap) resWrap.hidden = false;
-  }
+  if (wfRunCurrentNode === d.nodeId) wfRunCurrentNode = null;
   wfActiveRun.done += 1;
   wfSetProgress(wfActiveRun.done, wfActiveRun.total);
 });
 
-// A branch was taken: the routing decision. The vertical run list does not
-// draw edges, so this is informational; 2c surfaces it on the canvas.
-window.husk.workflows.onEdgeTaken(() => {});
+window.husk.workflows.onEdgeTaken((d) => {
+  if (d.runId !== activeRunId) return;
+  wfPulseEdge(d.from, d.to);
+});
 
 window.husk.workflows.onRunDone((d) => {
   if (d.runId !== activeRunId) return;
   activeRunId = null;
+  wfRunCurrentNode = null;
   wfClearTimers();
-  // Any node never reached by the taken path is a skipped branch.
-  document.querySelectorAll('#wf-run-steps .wf-run-node.is-pending').forEach((node) => {
-    node.className = 'wf-run-node is-skipped is-collapsed';
-    const label = node.querySelector('.wf-run-node-state-label');
-    if (label) label.textContent = 'Skipped';
-    const feed = node.querySelector('.wf-run-activity');
-    if (feed) { const e = feed.querySelector('.wf-activity-empty'); if (e) e.textContent = 'Skipped by a branch condition.'; }
+  // Anything the taken path never reached was skipped by a branch.
+  Object.keys(wfRunDfId).forEach((id) => {
+    if ((wfNodeStatus[id] || 'pending') === 'pending') wfSetNodeState(id, 'skipped');
   });
   wfSetProgress(wfActiveRun.done, wfActiveRun.total, 100);
   const badge = $('#wf-run-status-badge');
@@ -2562,7 +2808,35 @@ window.husk.workflows.onRunDone((d) => {
     badge.textContent = lbl;
     badge.className = `wf-run-status-badge ${cls}`;
   }
+  if (wfTermNodeId) wfRenderTermStatus();
 });
+
+// ─── Terminal controls ───────────────────────────────────────────────────────
+
+$('#wf-term-close') && $('#wf-term-close').addEventListener('click', wfCloseTerm);
+
+$('#wf-term-copy') && $('#wf-term-copy').addEventListener('click', async () => {
+  if (!wfTermNodeId) return;
+  const res = await window.husk.workflows.nodeLog(activeRunId || wfLastRunId, wfTermNodeId);
+  if (!res || !res.ok) return;
+  const text = (res.entries || []).map((e) => e.text).join('\n');
+  try { await navigator.clipboard.writeText(text); toast('Step output copied', 'success'); } catch (_) {}
+});
+
+// The step's result, dropped into a real chat so the work can be carried on by
+// hand. Written without a newline: it is a starting point, not a submission.
+$('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () => {
+  if (!wfTermNodeId) return;
+  const res = await window.husk.workflows.nodeLog(activeRunId || wfLastRunId, wfTermNodeId);
+  const body = (res && res.ok && (res.output || (res.entries || []).map((e) => e.text).join('\n'))) || '';
+  if (!body.trim()) { toast('This step has no output yet', 'info'); return; }
+  const node = (wfRunGraph.nodes || []).find((n) => n.id === wfTermNodeId) || {};
+  setPage('chat');
+  const tab = await openNewChatTab();
+  const primer = `Here is the output of the workflow step "${node.name || 'Step'}":\n\n${body}\n\n`;
+  setTimeout(() => { try { window.husk.pty.write(primer, tab.id); } catch (_) {} }, 700);
+});
+
 
 // Button wiring
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));

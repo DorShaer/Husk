@@ -620,7 +620,34 @@
                 <div class="wf-progress-track"><div class="wf-progress-fill" id="wf-progress-fill"></div></div>
                 <span class="wf-progress-label" id="wf-progress-label"></span>
               </div>
-              <div id="wf-run-steps" class="wf-run-steps"></div>
+
+              <!-- The run plays out on the graph itself: a read-only Drawflow of
+                   the same layout the flow was drawn in, lit up as it executes. -->
+              <div class="wf-run-stage">
+                <div id="wf-run-canvas" class="wf-run-canvas"></div>
+                <div class="wf-run-hint" id="wf-run-hint">Click a step to watch its terminal</div>
+              </div>
+
+              <!-- One step's terminal. Closing it never stops the run: the output
+                   is recorded in the main process, so this only shows and hides. -->
+              <aside class="wf-term" id="wf-term" hidden aria-label="Step terminal">
+                <div class="wf-term-head">
+                  <div class="wf-term-tabs" id="wf-term-tabs"></div>
+                  <div class="wf-term-actions">
+                    <label class="wf-term-follow" title="Jump to whichever step is running">
+                      <input type="checkbox" id="wf-term-follow" checked />
+                      <span>Follow</span>
+                    </label>
+                    <button class="wf-term-btn" id="wf-term-copy" title="Copy this step's output">Copy</button>
+                    <button class="wf-term-btn" id="wf-term-tochat" title="Open this output in a new chat">Send to chat</button>
+                    <button class="wf-term-btn wf-term-x" id="wf-term-close" title="Close. The run keeps going." aria-label="Close terminal">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="wf-term-status" id="wf-term-status"></div>
+                <div class="wf-term-body" id="wf-term-body"></div>
+              </aside>
             </div>
           </div>
 

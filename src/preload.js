@@ -145,6 +145,10 @@ contextBridge.exposeInMainWorld('husk', {
     stop: (runId) => ipcRenderer.invoke('workflows:stop', runId),
     generateStepPrompt: (desc) => ipcRenderer.invoke('workflows:generateStepPrompt', desc),
     getSessionContext: () => ipcRenderer.invoke('workflows:getSessionContext'),
+    // Scrollback for one node, and the run in flight. Together these let the run
+    // survive a reload and let a node's terminal be opened at any time.
+    nodeLog: (runId, nodeId) => ipcRenderer.invoke('workflows:nodeLog', { runId, nodeId }),
+    activeRun: () => ipcRenderer.invoke('workflows:activeRun'),
     onNodeStart: (cb) => ipcRenderer.on('wf:node:start', (_e, d) => cb(d)),
     onNodeActivity: (cb) => ipcRenderer.on('wf:node:activity', (_e, d) => cb(d)),
     onNodeDone: (cb) => ipcRenderer.on('wf:node:done', (_e, d) => cb(d)),

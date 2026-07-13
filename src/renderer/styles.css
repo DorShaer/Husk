@@ -7579,3 +7579,136 @@ kbd {
   background: rgba(122, 166, 255, 0.35);
   color: white;
 }
+
+/* ── Workflow run: the flow played out on its own graph ────────────────────── */
+.wf-run-body { display: flex; flex-direction: column; min-height: 0; }
+.wf-run-stage { position: relative; flex: 1; min-height: 340px; margin-top: 12px; }
+.wf-run-canvas {
+  position: absolute; inset: 0;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 8%, transparent) 1px, transparent 0)
+    0 0 / 22px 22px,
+    var(--panel);
+  overflow: hidden;
+}
+.wf-run-hint {
+  position: absolute; right: 10px; bottom: 10px;
+  font-size: 11px; color: var(--muted); pointer-events: none;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+  transition: opacity .3s ease;
+}
+.wf-run-hint[hidden] { display: none; }
+
+/* Node. The ring is a separate layer so it can pulse without moving the card. */
+.wf-run-canvas .drawflow-node.wf-rn-node {
+  background: var(--panel-2); border: 1px solid var(--line-2);
+  border-radius: 12px; padding: 0; width: 216px; height: auto; min-height: 0;
+  /* The node's own content must not spill onto the canvas: without this the
+     meta column escapes the box and the open icon floats between nodes. */
+  overflow: hidden; box-sizing: border-box;
+  cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+.wf-run-canvas .drawflow-node.wf-rn-node .drawflow_content_node { width: 100%; }
+/* Fit maths below assumes the canvas scales from its top-left corner. */
+.wf-run-canvas .drawflow { transform-origin: 0 0; }
+.wf-run-canvas .drawflow-node.wf-rn-node:hover { transform: translateY(-1px); border-color: var(--muted-2); }
+.wf-run-canvas .drawflow-node.wf-rn-node.is-open { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.wf-rn {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; width: 100%; box-sizing: border-box;
+}
+.wf-rn-main { min-width: 0; flex: 1; text-align: left; }
+.wf-rn-name { font-size: 13px; font-weight: 650; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wf-rn-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.wf-rn-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.wf-rn-timer { font-size: 11px; color: var(--muted-2); font-variant-numeric: tabular-nums; }
+.wf-rn-open {
+  width: 14px; height: 14px; flex: 0 0 14px; display: block;
+  color: var(--muted-2); opacity: 0; transition: opacity .15s ease;
+}
+.wf-rn-open svg { width: 100%; height: 100%; }
+.wf-run-canvas .drawflow-node.wf-rn-node:hover .wf-rn-open { opacity: 1; }
+
+.wf-rn-ring {
+  position: absolute; inset: -1px; border-radius: 12px; pointer-events: none;
+  border: 1px solid transparent;
+}
+/* Running: a breathing ring plus a sweep, so the live node is unmistakable
+   even in a graph full of nodes. */
+.wf-rn-node.is-running { border-color: var(--accent); }
+.wf-rn-node.is-running .wf-rn-ring {
+  border-color: var(--accent);
+  animation: wf-pulse 1.6s ease-in-out infinite;
+}
+.wf-rn-node.is-running .wf-rn-sub { color: var(--accent); }
+@keyframes wf-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  50%      { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+.wf-rn-node.is-done { border-color: color-mix(in srgb, #34d399 55%, var(--line-2)); }
+.wf-rn-node.is-done .wf-rn-sub { color: #34d399; }
+.wf-rn-node.is-failed { border-color: color-mix(in srgb, #fb7185 60%, var(--line-2)); }
+.wf-rn-node.is-failed .wf-rn-sub { color: #fb7185; }
+.wf-rn-node.is-cancelled .wf-rn-sub { color: var(--muted-2); }
+.wf-rn-node.is-skipped { opacity: 0.45; }
+.wf-rn-node.is-pending { opacity: 0.72; }
+
+/* Edges. A taken edge stays lit; the moment it is taken, a dash runs along it. */
+.wf-run-canvas .connection .main-path { stroke: var(--line-2); stroke-width: 2px; }
+.wf-run-canvas .connection.is-taken .main-path { stroke: var(--accent); }
+.wf-run-canvas .connection.is-firing .main-path {
+  stroke-dasharray: 10 14;
+  animation: wf-flow .9s linear;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 70%, transparent));
+}
+@keyframes wf-flow { from { stroke-dashoffset: 120; } to { stroke-dashoffset: 0; } }
+
+/* ── The step terminal ─────────────────────────────────────────────────────── */
+.wf-term {
+  margin-top: 12px; height: 300px; display: flex; flex-direction: column;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: var(--term-bg, #0b0c10); overflow: hidden;
+  animation: wf-term-in .22s var(--ease-out);
+}
+.wf-term[hidden] { display: none; }
+@keyframes wf-term-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.wf-term-head {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.wf-term-tabs { display: flex; gap: 4px; overflow-x: auto; flex: 1; scrollbar-width: none; }
+.wf-term-tabs::-webkit-scrollbar { display: none; }
+.wf-term-tab {
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  border-radius: 7px; padding: 3px 9px; font-size: 11px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; font-family: inherit;
+}
+.wf-term-tab:hover { color: var(--text); }
+.wf-term-tab.active { color: var(--text); background: var(--panel); border-color: var(--line-2); }
+.wf-term-tab.is-running { color: var(--accent); }
+.wf-term-tab.is-failed { color: #fb7185; }
+.wf-term-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.wf-term-follow { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.wf-term-btn {
+  border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
+  border-radius: 7px; padding: 3px 8px; font-size: 11px; cursor: pointer; font-family: inherit;
+}
+.wf-term-btn:hover { color: var(--text); border-color: var(--muted-2); }
+.wf-term-x { display: grid; place-items: center; padding: 4px; }
+.wf-term-x svg { width: 13px; height: 13px; }
+.wf-term-status {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+  font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
+}
+.wf-term-status code { color: var(--text); font-size: 11px; }
+.wf-ts-sep { color: var(--muted-2); margin: 0 2px; }
+.wf-ts-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); display: inline-block; margin-right: 6px; }
+.wf-ts-dot.is-running { background: var(--accent); animation: wf-pulse-dot 1.4s ease-in-out infinite; }
+.wf-ts-dot.is-done { background: #34d399; }
+.wf-ts-dot.is-failed { background: #fb7185; }
+@keyframes wf-pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.wf-term-body { flex: 1; min-height: 0; padding: 6px 8px; }
+.wf-term-body .xterm { height: 100%; }
