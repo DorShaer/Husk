@@ -7350,15 +7350,18 @@ async function boot() {
     refreshRecentList();
   }, 30000);
 
-  $('#chat-empty').classList.add('show');
+  // With skipWelcome on, boot goes straight to a chat, so the welcome screen
+  // must never paint. Adding it unconditionally here made it flash for the
+  // duration of the reattachSessions() IPC roundtrip before being removed.
+  const autoChat = cfg.skipWelcome && !(reloadState && reloadState.suppressAutoChat);
+  if (!autoChat) $('#chat-empty').classList.add('show');
 
   // A renderer reload keeps the main-process PTYs alive; reattach to any open
   // chats so a refresh does not wipe them. Only when there are none do we fall
   // through to the cold-boot behavior (welcome state, or an immediate fresh
   // chat if the user opted to skip the welcome).
   const reattached = await reattachSessions();
-  if (!reattached && cfg.skipWelcome && !(reloadState && reloadState.suppressAutoChat)) {
-    $('#chat-empty').classList.remove('show');
+  if (!reattached && autoChat) {
     await startPty();
   }
   bootingFromReloadState = null;
