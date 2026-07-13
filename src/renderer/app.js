@@ -1023,16 +1023,18 @@ if (window.husk.shortcuts && window.husk.shortcuts.onRestartAgent) {
   window.husk.shortcuts.onRestartAgent(() => { restartPty(); });
 }
 
-// Close one chat tab and reap its agent. Never drops to zero tabs: closing the
-// last remaining tab restarts it instead.
+// Close one chat tab and reap its agent. The window never ends up with no chat
+// in it: closing the last one opens a fresh chat behind it. That is a new
+// session with a new name, not the old one restarted in place, so the chat the
+// user just closed does not stay on screen under its old title.
 async function closeTab(id) {
   const tab = TABS.get(id);
   if (!tab) return;
-  if (TABS.size <= 1) { await restartPty(); return; }
   try { await window.husk.pty.close(id); } catch (_) {}
   try { tab.term.dispose(); } catch (_) {}
   try { tab.el.remove(); } catch (_) {}
   TABS.delete(id);
+  if (TABS.size === 0) { await openNewChatTab(); return; }
   if (activeTabId === id) {
     const next = TABS.keys().next();
     if (!next.done) activateTab(next.value);
@@ -1123,8 +1125,8 @@ function beginRename(tab, labelEl) {
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
-// Confirm, then close a chat tab. Closing the only remaining chat starts a
-// fresh one (closeTab never drops to zero), so the prompt reflects that.
+// Confirm, then close a chat tab. Closing the only remaining chat leaves a
+// fresh chat in its place, so the prompt reflects that.
 async function confirmCloseTab(id) {
   const tab = TABS.get(id);
   if (!tab) return;
