@@ -1296,6 +1296,7 @@ setInterval(syncTabTitles, 5000);
 function retintAllTabs() {
   const theme = themeForXterm();
   for (const t of TABS.values()) { try { t.term.options.theme = theme; } catch (_) {} }
+  try { if (wfTerm) wfTerm.options.theme = theme; } catch (_) {}
 }
 function applyTheme(theme) {
   document.body.dataset.theme = theme;
@@ -2384,6 +2385,7 @@ let wfRunGraph = null;
 let wfRunWorkflow = null;
 let wfNodeStatus = {};         // husk node id -> pending|running|done|failed|cancelled|skipped
 let wfNodeStartedAt = {};
+let wfNodeLive = {};           // husk node id -> what the step is doing right now
 
 function wfRunNodeEl(nodeId) {
   const df = wfRunDfId[nodeId];
@@ -2406,16 +2408,17 @@ function wfBuildRunCanvas(workflow) {
   const graph = workflow.graph || { nodes: [], edges: [] };
   wfRunGraph = graph;
 
-  (graph.nodes || []).forEach((n) => {
+  (graph.nodes || []).forEach((n, i) => {
     const html = `
       <div class="wf-rn">
-        <div class="wf-rn-ring"></div>
-        <div class="wf-rn-main">
-          <div class="wf-rn-name">${escapeHtml(n.name || 'Step')}</div>
-          <div class="wf-rn-sub" data-sub="${escapeAttr(n.id)}">Pending</div>
-        </div>
-        <div class="wf-rn-meta">
+        <div class="wf-rn-top">
+          <span class="wf-rn-idx">${i + 1}</span>
+          <span class="wf-rn-name">${escapeHtml(n.name || 'Step')}</span>
           <span class="wf-rn-timer" data-timer="${escapeAttr(n.id)}"></span>
+        </div>
+        <div class="wf-rn-foot">
+          <span class="wf-rn-dot"></span>
+          <span class="wf-rn-live" data-live="${escapeAttr(n.id)}">Pending</span>
           <span class="wf-rn-open" title="Open this step's terminal">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
           </span>
@@ -2441,6 +2444,7 @@ function wfBuildRunCanvas(workflow) {
 
   wfNodeStatus = {};
   wfNodeStartedAt = {};
+  wfNodeLive = {};
   (graph.nodes || []).forEach((n) => wfSetNodeState(n.id, 'pending'));
   wfFitRunCanvas(graph);
 }
@@ -2482,6 +2486,24 @@ function wfFitRunCanvas(graph) {
   pre.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
 }
 
+// The one line a step shows on the canvas: the tool it is running, or its last
+// word. Truncated hard, because a node is not a log.
+function wfSetNodeLive(nodeId, kind, text) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return;
+  let line = raw;
+  if (kind === 'tool') line = raw;
+  else if (kind === 'error') line = raw;
+  else if (kind === 'status') line = raw;
+  else line = raw;
+  wfNodeLive[nodeId] = line;
+  const el = wfRunNodeEl(nodeId);
+  const live = el && el.querySelector(`[data-live="${CSS.escape(nodeId)}"]`);
+  if (live && wfNodeStatus[nodeId] === 'running') {
+    live.textContent = line.length > 42 ? `${line.slice(0, 41)}\u2026` : line;
+  }
+}
+
 const WF_STATE_LABEL = {
   pending: 'Pending', running: 'Running', done: 'Done',
   failed: 'Failed', cancelled: 'Cancelled', skipped: 'Skipped',
@@ -2493,8 +2515,9 @@ function wfSetNodeState(nodeId, state) {
   if (!el) return;
   ['pending', 'running', 'done', 'failed', 'cancelled', 'skipped']
     .forEach((s) => el.classList.toggle(`is-${s}`, s === state));
-  const sub = el.querySelector(`[data-sub="${CSS.escape(nodeId)}"]`);
-  if (sub) sub.textContent = WF_STATE_LABEL[state] || state;
+  const live = el.querySelector(`[data-live="${CSS.escape(nodeId)}"]`);
+  if (live && state !== 'running') live.textContent = WF_STATE_LABEL[state] || state;
+  if (live && state === 'running' && !wfNodeLive[nodeId]) live.textContent = 'Starting...';
   if (wfTermNodeId === nodeId) wfRenderTermStatus();
   wfRenderTermTabs();
 }
@@ -2540,7 +2563,7 @@ function wfEnsureTerm() {
     cursorBlink: false,
     disableStdin: true,
     scrollback: 5000,
-    theme: { background: 'rgba(0,0,0,0)' },
+    theme: themeForXterm(),
     allowTransparency: true,
   });
   try {
@@ -2560,9 +2583,9 @@ function wfTermLine(entry) {
   const raw = String(entry.text || '');
   if (entry.kind === 'tool' && /localhost:\d+\/notify/.test(raw)) return '';
   const text = raw.replace(/\r?\n/g, '\r\n');
-  if (entry.kind === 'tool') return `\x1b[38;5;80m  ⏵ ${text}\x1b[0m\r\n`;
-  if (entry.kind === 'error') return `\x1b[38;5;203m  ✖ ${text}\x1b[0m\r\n`;
-  if (entry.kind === 'status') return `\x1b[38;5;244m  · ${text}\x1b[0m\r\n`;
+  if (entry.kind === 'tool') return `\x1b[36m  ⏵ ${text}\x1b[0m\r\n`;
+  if (entry.kind === 'error') return `\x1b[31m  ✖ ${text}\x1b[0m\r\n`;
+  if (entry.kind === 'status') return `\x1b[90m  · ${text}\x1b[0m\r\n`;
   return `${text}\r\n`;
 }
 
@@ -2593,6 +2616,11 @@ function wfRenderTermTabs() {
     b.title = n.name || 'Step';
     b.addEventListener('click', () => wfOpenTerm(n.id, { manual: true }));
     wrap.appendChild(b);
+    // Follow mode can move the terminal to a step whose tab has scrolled out of
+    // reach, so bring the active one back into view.
+    if (n.id === wfTermNodeId) {
+      requestAnimationFrame(() => { try { b.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {} });
+    }
   });
 }
 
@@ -2628,13 +2656,13 @@ async function wfOpenTerm(nodeId, opts = {}) {
   if (token !== wfTermOpenToken) return;   // a newer open owns the terminal now
 
   if (res && res.ok) {
-    if (res.dropped) term.write(`\x1b[38;5;244m  · ${res.dropped} earlier lines trimmed\x1b[0m\r\n`);
+    if (res.dropped) term.write(`\x1b[90m  · ${res.dropped} earlier lines trimmed\x1b[0m\r\n`);
     (res.entries || []).forEach((e) => {
       term.write(wfTermLine(e));
       if (e.seq && e.seq > wfTermSeq) wfTermSeq = e.seq;
     });
     if (!res.entries || !res.entries.length) {
-      term.write('\x1b[38;5;244m  waiting for this step to start...\x1b[0m\r\n');
+      term.write('\x1b[90m  waiting for this step to start...\x1b[0m\r\n');
     }
   }
   // Anything the agent emitted while the buffer was in transit, in order and
@@ -2759,6 +2787,7 @@ window.husk.workflows.onNodeStart((d) => {
 
 window.husk.workflows.onNodeActivity((d) => {
   if (d.runId !== activeRunId) return;
+  wfSetNodeLive(d.nodeId, d.kind, d.text);
   if (d.nodeId !== wfTermNodeId || !wfTerm || $('#wf-term').hidden) return;
   // While the buffer is still being replayed, hold the line rather than racing
   // it into the terminal out of order.

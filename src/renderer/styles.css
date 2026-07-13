@@ -7581,134 +7581,243 @@ kbd {
 }
 
 /* ── Workflow run: the flow played out on its own graph ────────────────────── */
-.wf-run-body { display: flex; flex-direction: column; min-height: 0; }
-.wf-run-stage { position: relative; flex: 1; min-height: 340px; margin-top: 12px; }
+/* Built on the glass language: --bg-N surfaces, --line-N borders, --elev-N
+   shadows, state told in --accent / --emerald / --rose. */
+.wf-run-body { display: flex; flex-direction: column; min-height: 0; gap: 14px; }
+
+.wf-run-stage { position: relative; flex: 1; min-height: 300px; }
 .wf-run-canvas {
   position: absolute; inset: 0;
-  border: 1px solid var(--line); border-radius: var(--radius);
+  border: 1px solid var(--line); border-radius: 16px;
   background:
-    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 8%, transparent) 1px, transparent 0)
-    0 0 / 22px 22px,
-    var(--panel);
+    radial-gradient(120% 90% at 50% 0%, rgba(255,120,71,0.05), transparent 60%),
+    radial-gradient(circle at 1px 1px, var(--line-2) 1px, transparent 0) 0 0 / 24px 24px,
+    var(--bg);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 8px 32px -12px rgba(0,0,0,0.5);
   overflow: hidden;
 }
 .wf-run-hint {
-  position: absolute; right: 10px; bottom: 10px;
-  font-size: 11px; color: var(--muted); pointer-events: none;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
-  transition: opacity .3s ease;
+  position: absolute; right: 12px; bottom: 12px;
+  font-size: 11px; color: var(--text-3); pointer-events: none;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 11px;
+  backdrop-filter: blur(8px);
 }
 .wf-run-hint[hidden] { display: none; }
 
-/* Node. The ring is a separate layer so it can pulse without moving the card. */
+/* ── A step ─────────────────────────────────────────────────────────────────
+   Same anatomy as an Autopilot lane: a card with a state-coloured bar across
+   the top, so the run reads from across the room. */
 .wf-run-canvas .drawflow-node.wf-rn-node {
-  background: var(--panel-2); border: 1px solid var(--line-2);
-  border-radius: 12px; padding: 0; width: 216px; height: auto; min-height: 0;
-  /* The node's own content must not spill onto the canvas: without this the
-     meta column escapes the box and the open icon floats between nodes. */
-  overflow: hidden; box-sizing: border-box;
-  cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+  width: 244px; height: auto; min-height: 0; padding: 0;
+  box-sizing: border-box; overflow: hidden;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  box-shadow: var(--elev-2);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: transform .25s var(--ease-out), box-shadow .25s var(--ease-out),
+              border-color .25s var(--ease-out), opacity .3s var(--ease-out);
 }
 .wf-run-canvas .drawflow-node.wf-rn-node .drawflow_content_node { width: 100%; }
-/* Fit maths below assumes the canvas scales from its top-left corner. */
 .wf-run-canvas .drawflow { transform-origin: 0 0; }
-.wf-run-canvas .drawflow-node.wf-rn-node:hover { transform: translateY(-1px); border-color: var(--muted-2); }
-.wf-run-canvas .drawflow-node.wf-rn-node.is-open { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
-.wf-rn {
-  position: relative; display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; width: 100%; box-sizing: border-box;
+.wf-run-canvas .drawflow-node.wf-rn-node:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-3);
+  box-shadow: var(--elev-3);
 }
-.wf-rn-main { min-width: 0; flex: 1; text-align: left; }
-.wf-rn-name { font-size: 13px; font-weight: 650; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wf-rn-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
-.wf-rn-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.wf-rn-timer { font-size: 11px; color: var(--muted-2); font-variant-numeric: tabular-nums; }
+.wf-run-canvas .drawflow-node.wf-rn-node.is-open {
+  border-color: var(--accent);
+  box-shadow: var(--elev-3), 0 0 0 3px var(--accent-glow);
+}
+/* Drawflow's ports: kept, but quietened to dots that belong to the card. */
+.wf-run-canvas .drawflow-node.wf-rn-node .input,
+.wf-run-canvas .drawflow-node.wf-rn-node .output {
+  width: 9px; height: 9px; border: 2px solid var(--bg);
+  background: var(--line-3); box-shadow: none; cursor: default;
+}
+
+.wf-rn { position: relative; width: 100%; box-sizing: border-box; padding: 12px 13px 11px; }
+/* The state bar. */
+.wf-rn::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--line-2);
+  transition: background .3s var(--ease-out);
+}
+.wf-rn-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.wf-rn-idx {
+  flex: 0 0 auto; display: grid; place-items: center;
+  width: 18px; height: 18px; border-radius: 6px;
+  background: var(--bg-3); color: var(--text-3);
+  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.wf-rn-name {
+  flex: 1; min-width: 0;
+  font-size: 13px; font-weight: 650; color: var(--text); letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wf-rn-timer { flex: 0 0 auto; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.wf-rn-foot { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.wf-rn-dot {
+  flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--line-3);
+}
+/* The live line: the tool the step is using right now. This is what makes the
+   graph feel alive without opening anything. */
+.wf-rn-live {
+  flex: 1; min-width: 0;
+  font-size: 11px; color: var(--text-3);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .wf-rn-open {
-  width: 14px; height: 14px; flex: 0 0 14px; display: block;
-  color: var(--muted-2); opacity: 0; transition: opacity .15s ease;
+  flex: 0 0 13px; width: 13px; height: 13px; display: block;
+  color: var(--text-3); opacity: 0; transition: opacity .2s var(--ease-out);
 }
 .wf-rn-open svg { width: 100%; height: 100%; }
 .wf-run-canvas .drawflow-node.wf-rn-node:hover .wf-rn-open { opacity: 1; }
 
-.wf-rn-ring {
-  position: absolute; inset: -1px; border-radius: 12px; pointer-events: none;
-  border: 1px solid transparent;
+/* Running: accent bar that travels, a glow, and a live dot. */
+.wf-rn-node.is-running {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2));
+  box-shadow: var(--elev-3), 0 0 0 1px var(--accent-glow), 0 0 28px -6px var(--accent-glow);
+  animation: wf-breathe 2.4s var(--ease-out) infinite;
 }
-/* Running: a breathing ring plus a sweep, so the live node is unmistakable
-   even in a graph full of nodes. */
-.wf-rn-node.is-running { border-color: var(--accent); }
-.wf-rn-node.is-running .wf-rn-ring {
-  border-color: var(--accent);
-  animation: wf-pulse 1.6s ease-in-out infinite;
+.wf-rn-node.is-running .wf-rn::before {
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent);
+  background-size: 200% 100%;
+  animation: wf-sweep 1.4s linear infinite;
 }
-.wf-rn-node.is-running .wf-rn-sub { color: var(--accent); }
-@keyframes wf-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
-  50%      { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent); }
+.wf-rn-node.is-running .wf-rn-idx { background: var(--accent); color: #fff; }
+.wf-rn-node.is-running .wf-rn-dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); animation: wf-blip 1.4s ease-in-out infinite; }
+.wf-rn-node.is-running .wf-rn-live { color: var(--text-2); }
+@keyframes wf-sweep { from { background-position: 200% 0; } to { background-position: -100% 0; } }
+@keyframes wf-blip { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes wf-breathe {
+  0%, 100% { box-shadow: var(--elev-3), 0 0 0 1px var(--accent-glow), 0 0 24px -8px var(--accent-glow); }
+  50%      { box-shadow: var(--elev-3), 0 0 0 1px var(--accent-glow), 0 0 40px -6px var(--accent-glow); }
 }
-.wf-rn-node.is-done { border-color: color-mix(in srgb, #34d399 55%, var(--line-2)); }
-.wf-rn-node.is-done .wf-rn-sub { color: #34d399; }
-.wf-rn-node.is-failed { border-color: color-mix(in srgb, #fb7185 60%, var(--line-2)); }
-.wf-rn-node.is-failed .wf-rn-sub { color: #fb7185; }
-.wf-rn-node.is-cancelled .wf-rn-sub { color: var(--muted-2); }
-.wf-rn-node.is-skipped { opacity: 0.45; }
-.wf-rn-node.is-pending { opacity: 0.72; }
 
-/* Edges. A taken edge stays lit; the moment it is taken, a dash runs along it. */
-.wf-run-canvas .connection .main-path { stroke: var(--line-2); stroke-width: 2px; }
-.wf-run-canvas .connection.is-taken .main-path { stroke: var(--accent); }
-.wf-run-canvas .connection.is-firing .main-path {
-  stroke-dasharray: 10 14;
-  animation: wf-flow .9s linear;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 70%, transparent));
+.wf-rn-node.is-done .wf-rn::before { background: var(--emerald); }
+.wf-rn-node.is-done .wf-rn-dot { background: var(--emerald); }
+.wf-rn-node.is-done .wf-rn-idx { background: color-mix(in srgb, var(--emerald) 22%, transparent); color: var(--emerald); }
+
+.wf-rn-node.is-failed { border-color: color-mix(in srgb, var(--rose) 45%, var(--line-2)); }
+.wf-rn-node.is-failed .wf-rn::before { background: var(--rose); }
+.wf-rn-node.is-failed .wf-rn-dot { background: var(--rose); }
+.wf-rn-node.is-failed .wf-rn-idx { background: color-mix(in srgb, var(--rose) 22%, transparent); color: var(--rose); }
+.wf-rn-node.is-failed .wf-rn-live { color: var(--rose); }
+
+.wf-rn-node.is-cancelled { opacity: 0.6; }
+.wf-rn-node.is-cancelled .wf-rn::before { background: var(--amber); }
+
+/* Never reached. Present, but plainly not part of the story. */
+.wf-rn-node.is-skipped {
+  opacity: 0.4; border-style: dashed; box-shadow: none; backdrop-filter: none;
 }
-@keyframes wf-flow { from { stroke-dashoffset: 120; } to { stroke-dashoffset: 0; } }
+.wf-rn-node.is-pending { opacity: 0.66; box-shadow: var(--elev-1); }
+
+/* ── Edges ────────────────────────────────────────────────────────────────── */
+.wf-run-canvas .connection .main-path {
+  stroke: var(--line-2); stroke-width: 2px; fill: none;
+  transition: stroke .35s var(--ease-out);
+}
+.wf-run-canvas .connection.is-taken .main-path {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 5px var(--accent-glow));
+}
+/* The moment an edge is taken, a dash runs the length of it. */
+.wf-run-canvas .connection.is-firing .main-path {
+  stroke-width: 3px;
+  stroke-dasharray: 8 16;
+  animation: wf-flow 1s linear;
+}
+@keyframes wf-flow { from { stroke-dashoffset: 140; } to { stroke-dashoffset: 0; } }
 
 /* ── The step terminal ─────────────────────────────────────────────────────── */
 .wf-term {
-  margin-top: 12px; height: 300px; display: flex; flex-direction: column;
-  border: 1px solid var(--line-2); border-radius: var(--radius);
-  background: var(--term-bg, #0b0c10); overflow: hidden;
-  animation: wf-term-in .22s var(--ease-out);
+  position: relative;
+  height: 320px; display: flex; flex-direction: column; min-height: 0;
+  border: 1px solid var(--line-2); border-radius: 16px;
+  background: var(--term-bg);
+  box-shadow: 0 8px 32px -8px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+  overflow: hidden;
+  animation: wf-term-in .26s var(--ease-out);
 }
 .wf-term[hidden] { display: none; }
-@keyframes wf-term-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.wf-term-head {
-  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
-  border-bottom: 1px solid var(--line); background: var(--panel-2);
+.wf-term::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  opacity: 0.85;
 }
-.wf-term-tabs { display: flex; gap: 4px; overflow-x: auto; flex: 1; scrollbar-width: none; }
+@keyframes wf-term-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.995); }
+  to   { opacity: 1; transform: none; }
+}
+
+.wf-term-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 10px 9px; border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+}
+/* The strip scrolls; the actions never give up their room. */
+.wf-term-head > .wf-term-tabs { flex: 1 1 auto; min-width: 0; }
+.wf-term-head > .wf-term-actions { flex: 0 0 auto; }
+.wf-term-tabs { display: flex; gap: 3px; overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: none; }
 .wf-term-tabs::-webkit-scrollbar { display: none; }
 .wf-term-tab {
-  border: 1px solid transparent; background: transparent; color: var(--muted);
-  border-radius: 7px; padding: 3px 9px; font-size: 11px; font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid transparent; background: transparent; color: var(--text-3);
+  border-radius: 8px; padding: 4px 10px; font-size: 11.5px; font-weight: 600;
   cursor: pointer; white-space: nowrap; font-family: inherit;
+  transition: background .18s var(--ease-out), color .18s var(--ease-out);
 }
-.wf-term-tab:hover { color: var(--text); }
-.wf-term-tab.active { color: var(--text); background: var(--panel); border-color: var(--line-2); }
-.wf-term-tab.is-running { color: var(--accent); }
-.wf-term-tab.is-failed { color: #fb7185; }
-.wf-term-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.wf-term-follow { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.wf-term-tab::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--line-3); flex: 0 0 auto;
+}
+.wf-term-tab:hover { color: var(--text); background: var(--bg-2); }
+.wf-term-tab.active { color: var(--text); background: var(--bg-3); border-color: var(--line-2); }
+.wf-term-tab.is-running::before { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.wf-term-tab.is-done::before { background: var(--emerald); }
+.wf-term-tab.is-failed::before { background: var(--rose); }
+.wf-term-tab.is-skipped { opacity: 0.5; }
+
+.wf-term-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.wf-term-follow {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-3); cursor: pointer; user-select: none;
+}
+.wf-term-follow input { accent-color: var(--accent); cursor: pointer; }
 .wf-term-btn {
-  border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
-  border-radius: 7px; padding: 3px 8px; font-size: 11px; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text-2);
+  border-radius: 8px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+  transition: background .18s var(--ease-out), color .18s var(--ease-out), border-color .18s var(--ease-out);
 }
-.wf-term-btn:hover { color: var(--text); border-color: var(--muted-2); }
-.wf-term-x { display: grid; place-items: center; padding: 4px; }
+.wf-term-btn:hover { color: var(--text); background: var(--bg-3); border-color: var(--line-3); }
+.wf-term-x { display: grid; place-items: center; padding: 5px; }
 .wf-term-x svg { width: 13px; height: 13px; }
+
 .wf-term-status {
-  display: flex; align-items: center; gap: 8px; padding: 5px 12px;
-  font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px; font-size: 11px; color: var(--text-3);
+  border-bottom: 1px solid var(--line);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
-.wf-term-status code { color: var(--text); font-size: 11px; }
-.wf-ts-sep { color: var(--muted-2); margin: 0 2px; }
-.wf-ts-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); display: inline-block; margin-right: 6px; }
-.wf-ts-dot.is-running { background: var(--accent); animation: wf-pulse-dot 1.4s ease-in-out infinite; }
-.wf-ts-dot.is-done { background: #34d399; }
-.wf-ts-dot.is-failed { background: #fb7185; }
-@keyframes wf-pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-.wf-term-body { flex: 1; min-height: 0; padding: 6px 8px; }
+.wf-term-status code { color: var(--text-2); font-size: 11px; }
+.wf-ts-sep { color: var(--line-3); margin: 0 3px; }
+.wf-ts-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--line-3);
+  display: inline-block; margin-right: 7px;
+}
+.wf-ts-dot.is-running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); animation: wf-blip 1.4s ease-in-out infinite; }
+.wf-ts-dot.is-done { background: var(--emerald); }
+.wf-ts-dot.is-failed { background: var(--rose); }
+.wf-ts-dot.is-cancelled { background: var(--amber); }
+
+.wf-term-body { flex: 1; min-height: 0; padding: 10px 12px 8px; }
 .wf-term-body .xterm { height: 100%; }
+.wf-term-body .xterm-viewport { background: transparent !important; }

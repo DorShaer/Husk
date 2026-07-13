@@ -118,8 +118,12 @@ test('the run plays out on the graph and each node has its own terminal', async 
     // A finished node still opens: the buffer outlives the run.
     await win.click('#wf-run-canvas .wf-rn-node');
     await win.waitForSelector('#wf-term:not([hidden])', { timeout: 8000 });
-    const after = await win.evaluate(() => document.querySelector('#wf-term-body .xterm-rows').innerText);
-    expect(after).toMatch(/hello from the fake agent/);
+    // The buffer comes back from the main process, so wait for it to land rather
+    // than reading the terminal the instant it opens.
+    await win.waitForFunction(() => {
+      const t = document.querySelector('#wf-term-body .xterm-rows');
+      return t && /hello from the fake agent/.test(t.innerText || '');
+    }, null, { timeout: 15000 });
   } finally {
     await app.close();
   }
