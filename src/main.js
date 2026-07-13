@@ -5471,6 +5471,12 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const resolved = resolveRepoAgentsDir(root);
   if (!resolved) return { ok: false, error: 'No agents directory found in that repo.' };
   const agentsDir = resolved.dir;
+  // Containment baseline for the picks below: the real (symlink-resolved)
+  // agents dir, so the per-file check compares real paths on both sides.
+  let realAgentsDir;
+  try { realAgentsDir = fs.realpathSync(agentsDir); } catch (_) {
+    return { ok: false, error: 'No agents directory found in that repo.' };
+  }
   const claudeAgentsDir = path.join(CLAUDE_DIR, 'agents');
   try { fs.mkdirSync(claudeAgentsDir, { recursive: true }); } catch (_) {}
   const list = getProfiles().slice();
@@ -5478,12 +5484,13 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const copiedToClaude = [];
   for (const pick of picks) {
     // filename may be nested relative to the agents dir (core/reviewer.md);
-    // resolve it and require the result to stay inside that dir.
+    // resolve it, including any symlinks, and require the real file to live
+    // inside the agents dir.
     const fname = String((pick && pick.filename) || '');
     if (!fname.endsWith('.md') || fname.includes('\\') || fname.includes('..') || path.isAbsolute(fname)) continue;
-    const src = path.resolve(agentsDir, fname);
-    if (!src.startsWith(agentsDir + path.sep)) continue;
-    if (!fs.existsSync(src)) continue;
+    let src;
+    try { src = fs.realpathSync(path.resolve(agentsDir, fname)); } catch (_) { continue; }
+    if (!src.startsWith(realAgentsDir + path.sep)) continue;
     const basename = path.basename(fname);
     try {
       const text = fs.readFileSync(src, 'utf8');

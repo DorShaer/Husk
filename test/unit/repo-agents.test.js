@@ -196,3 +196,14 @@ test('friendlyScanError falls back to a generic message without leaking raw erro
   assert.ok(!msg.includes('/home/'));
   assert.match(msg, /could not read/i);
 });
+
+// ─── main.js wiring assertions (same convention as the plugins editor test) ──
+
+test('repoAgents:install resolves real paths and confines picks to the agents dir', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
+  const block = src.slice(src.indexOf("ipcMain.handle('repoAgents:install'"), src.indexOf('// ─── MCP install-from-repo flow'));
+  assert.ok(block.includes('realpathSync'), 'install must resolve picks to their real path');
+  assert.ok(block.includes('realAgentsDir'), 'install must compare against the real agents dir');
+  assert.ok(block.includes("startsWith(realAgentsDir + path.sep)"), 'install must confine real paths to the agents dir');
+  assert.ok(block.includes('validateLocalRoot'), 'install must validate the repo root');
+});
