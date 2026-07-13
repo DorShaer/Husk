@@ -569,17 +569,68 @@ function whatsNewFor(version) {
   // entry, so the page never shows in dev or e2e and cannot cover the UI.
   return WHATS_NEW[version] || null;
 }
+// Highest version key in WHATS_NEW, for showing release notes on demand when
+// the running version has no entry of its own.
+function latestWhatsNewVersion() {
+  const bySemver = (a, b) => {
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0); }
+    return 0;
+  };
+  return Object.keys(WHATS_NEW).sort(bySemver).pop() || '';
+}
+// Clone Kernel out of the onboarding SVG into the What's new header. Ids on
+// the clone (gradients, clip paths) are re-prefixed so its url(#...) refs
+// stay self-contained instead of pointing into the hidden onboarding
+// subtree, where clip paths do not resolve. The mouth is swapped for an
+// open smile, the pod is posed open, and a spark burst repeats while the
+// modal is up.
+function mountWhatsNewKernel(slot) {
+  const src = $('#ob-kernel');
+  if (!src || !slot) return null;
+  const markup = src.outerHTML
+    .replaceAll('id="hk-', 'id="wnhk-')
+    .replaceAll('url(#hk-', 'url(#wnhk-')
+    .replace('id="ob-kernel"', '');
+  // eslint-disable-next-line no-unsanitized/property -- own static SVG markup, id-prefixed
+  slot.innerHTML = markup;
+  const hk = slot.querySelector('svg');
+  if (!hk) return null;
+  hk.removeAttribute('style');
+  hk.className.baseVal = 'hk';
+  const mouth = hk.querySelector('.hk-mouth');
+  if (mouth) {
+    mouth.setAttribute('d', 'M89 109 C 95 123, 105 123, 111 109 Z');
+    mouth.setAttribute('fill', '#6b2f10');
+  }
+  hk.classList.add('is-open', 'is-peek');
+  hk.classList.add('is-pop');
+  const sparks = setInterval(() => {
+    hk.classList.remove('is-pop');
+    void hk.getBoundingClientRect();
+    hk.classList.add('is-pop');
+  }, 4200);
+  return () => { clearInterval(sparks); };
+}
 function showWhatsNew(version) {
   return new Promise((resolve) => {
     const entry = whatsNewFor(version);
     const modal = $('#whatsnew');
     if (!entry || !modal) { resolve(); return; }
     const v = $('#wn-version'); if (v) v.textContent = version ? `Version ${version}` : 'Latest update';
+    // Each item is wrapped in a span so the bold lead-in flows inline with
+    // the rest of the text instead of becoming its own flex column.
     // eslint-disable-next-line no-unsanitized/property -- Items are trusted static strings.
-    $('#wn-list').innerHTML = entry.items.map((t) => `<li>${t}</li>`).join('');
+    $('#wn-list').innerHTML = entry.items.map((t) => `<li><span>${t}</span></li>`).join('');
+    const unmountKernel = mountWhatsNewKernel($('#wn-kernel-slot'));
     modal.hidden = false;
     const cta = $('#wn-cta');
-    const done = () => { modal.hidden = true; resolve(); };
+    const done = () => {
+      if (unmountKernel) unmountKernel();
+      modal.hidden = true;
+      resolve();
+    };
     if (cta) cta.onclick = done;
   });
 }
@@ -2894,7 +2945,7 @@ $('#ai-cancel') && $('#ai-cancel').addEventListener('click', closeAgentsImportMo
 $('#ai-confirm') && $('#ai-confirm').addEventListener('click', confirmAgentsImport);
 $('#agents-import-modal') && $('#agents-import-modal').addEventListener('click', (e) => { if (e.target === $('#agents-import-modal')) closeAgentsImportModal(); });
 
-// ─── Install agents from a cloned repo ───────────────────────────────────────────
+// ─── Install agents from a repo (local folder or https URL) ─────────────────────
 // The repo is expected to ship agents/*.md (Claude-style frontmatter) and
 // optionally skills/*.md. Husk copies each picked agent to ~/.claude/agents/
 // (Claude path), writes the body into <repo>/.github/copilot-instructions.md
@@ -2902,10 +2953,23 @@ $('#agents-import-modal') && $('#agents-import-modal').addEventListener('click',
 // profile with repoRoot. spawnPty consumes repoRoot as the cwd, so the agent's
 // relative skills/<test_id>.md reads resolve when the chat launches.
 let lastRepoScan = null;
+// Two entry points share the scan/install flow below: a GitHub URL row and a
+// local folder row. Picking a source reveals its row; local also opens the
+// folder picker right away.
+function setRepoSource(src) {
+  $('#ra-src-github')?.classList.toggle('selected', src === 'github');
+  $('#ra-src-local')?.classList.toggle('selected', src === 'local');
+  const gh = $('#ra-row-github');
+  const lo = $('#ra-row-local');
+  if (gh) gh.hidden = src !== 'github';
+  if (lo) lo.hidden = src !== 'local';
+}
 function openRepoAgentsModal() {
   const modal = $('#repo-agents-modal');
   if (!modal) return;
   if ($('#ra-root')) $('#ra-root').value = '';
+  if ($('#ra-url')) $('#ra-url').value = '';
+  setRepoSource(null);
   if ($('#ra-list')) $('#ra-list').innerHTML = '';
   const status = $('#ra-status');
   if (status) { status.hidden = true; status.textContent = ''; status.className = 'ra-status'; }
@@ -2916,7 +2980,6 @@ function openRepoAgentsModal() {
   if ($('#ra-activate')) $('#ra-activate').checked = true;
   lastRepoScan = null;
   modal.hidden = false;
-  setTimeout(() => { try { $('#ra-root').focus(); } catch (_) {} }, 0);
 }
 function closeRepoAgentsModal() {
   const m = $('#repo-agents-modal');
@@ -2927,8 +2990,20 @@ function setRepoStatus(text, kind) {
   if (!el) return;
   if (!text) { el.hidden = true; el.textContent = ''; el.className = 'ra-status'; return; }
   el.hidden = false;
-  el.textContent = text;
   el.className = 'ra-status' + (kind ? ' ra-status-' + kind : '');
+  if (kind === 'error') {
+    el.textContent = '';
+    const icon = document.createElement('span');
+    icon.className = 'ra-status-icon';
+    // eslint-disable-next-line no-unsanitized/property -- static SVG
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>';
+    const msg = document.createElement('span');
+    msg.textContent = text;
+    el.appendChild(icon);
+    el.appendChild(msg);
+    return;
+  }
+  el.textContent = text;
 }
 async function browseForRepoRoot() {
   const picked = await window.husk.repoAgents.pickDir();
@@ -2940,16 +3015,16 @@ async function scanRepoRoot(root) {
   const listEl = $('#ra-list');
   const confirmBtn = $('#ra-confirm');
   if (!listEl || !confirmBtn) return;
-  setRepoStatus('Scanning…');
+  const isUrl = /^https?:\/\//i.test(String(root || '').trim());
+  setRepoStatus(isUrl ? 'Cloning repository…' : 'Scanning…');
   // eslint-disable-next-line no-unsanitized/property -- static loading placeholder
   listEl.innerHTML = `<div class="ai-empty">Looking for agents/*.md…</div>`;
   confirmBtn.disabled = true;
   confirmBtn.textContent = 'Install 0 agents';
   const res = await window.husk.repoAgents.scan(root);
   if (!res || !res.ok) {
-    setRepoStatus(res && res.error ? res.error : 'Scan failed', 'error');
-    // eslint-disable-next-line no-unsanitized/property -- error from local fs read, no html
-    listEl.innerHTML = `<div class="ai-empty">${escapeHtml((res && res.error) || 'Could not scan that folder')}</div>`;
+    setRepoStatus(res && res.error ? res.error : 'Scan failed. Try again.', 'error');
+    listEl.innerHTML = '';
     lastRepoScan = null;
     return;
   }
@@ -3052,13 +3127,33 @@ async function confirmRepoAgentsInstall() {
 $('#btn-install-from-repo') && $('#btn-install-from-repo').addEventListener('click', openRepoAgentsModal);
 $('#ra-close') && $('#ra-close').addEventListener('click', closeRepoAgentsModal);
 $('#ra-cancel') && $('#ra-cancel').addEventListener('click', closeRepoAgentsModal);
+$('#ra-src-github') && $('#ra-src-github').addEventListener('click', () => {
+  setRepoSource('github');
+  setTimeout(() => { try { $('#ra-url').focus(); } catch (_) {} }, 0);
+});
+$('#ra-src-local') && $('#ra-src-local').addEventListener('click', () => {
+  setRepoSource('local');
+  browseForRepoRoot();
+});
 $('#ra-browse') && $('#ra-browse').addEventListener('click', browseForRepoRoot);
 $('#ra-confirm') && $('#ra-confirm').addEventListener('click', confirmRepoAgentsInstall);
+const scanRepoUrlInput = () => {
+  let v = ($('#ra-url').value || '').trim();
+  if (!v) { setRepoStatus('Enter a repository URL first.', 'error'); return; }
+  // A pasted "github.com/dev/repo" is clearly a URL; fill in the scheme.
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) v = 'https://' + v;
+  scanRepoRoot(v);
+};
+$('#ra-fetch') && $('#ra-fetch').addEventListener('click', scanRepoUrlInput);
+$('#ra-url') && $('#ra-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); scanRepoUrlInput(); }
+});
 $('#ra-root') && $('#ra-root').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
     const v = ($('#ra-root').value || '').trim();
     if (v) scanRepoRoot(v);
+    else setRepoStatus('Enter a folder path first.', 'error');
   }
 });
 $('#repo-agents-modal') && $('#repo-agents-modal').addEventListener('click', (e) => { if (e.target === $('#repo-agents-modal')) closeRepoAgentsModal(); });
@@ -4883,18 +4978,26 @@ function closePrefsModal() {
     if (e.key === 'Escape' && !$('#prefs-modal')?.hidden) closePrefsModal();
   });
 
-  // Nav switching
+  // Nav switching. Items without a section (Release Notes) act as commands
+  // and leave the active panel untouched.
   const nav = $('#prefs-nav');
   if (nav) {
     nav.addEventListener('click', (e) => {
       const item = e.target.closest('.prefs-nav-item');
       if (!item) return;
       const section = item.dataset.prefsSection;
+      if (!section) return;
       $$('.prefs-nav-item').forEach((el) => el.classList.remove('active'));
       item.classList.add('active');
       $$('.pref-section').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
     });
   }
+  $('#prefs-release-notes')?.addEventListener('click', async () => {
+    let ver = '';
+    try { ver = ((await window.husk.updates.get()) || {}).current || ''; } catch (_) {}
+    if (!whatsNewFor(ver)) ver = latestWhatsNewVersion();
+    if (ver) showWhatsNew(ver);
+  });
 })();
 
 // Orchestrator model routing, configured from the "Configure" button next to
@@ -7539,6 +7642,41 @@ const AUTOPILOT_PRESETS = [
     body: 'Review outdated dependencies. Bump patch and minor versions where safe. Run the test suite after each batch. Do not bump major versions without explicit confirmation.',
     caps: { minutes: 30, tokens: 100000, dollars: 2 },
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
+  },
+  {
+    id: 'fix-failing-tests',
+    title: 'Fix failing tests',
+    body: 'Run the test suite. Diagnose each failure and fix the code or the test, whichever is wrong. Re-run after each fix until green. Do not delete or skip tests.',
+    caps: { minutes: 60, tokens: 250000, dollars: 6 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4L3 18v3h3l5.3-5.3a4.5 4.5 0 0 0 6.4-6.4z"/><path d="M15 9l6-6"/></svg>',
+  },
+  {
+    id: 'remove-dead-code',
+    title: 'Remove dead code',
+    body: 'Find unused functions, exports, files, and dependencies. Confirm each is unreferenced before deleting. Run the test suite after removal.',
+    caps: { minutes: 45, tokens: 180000, dollars: 4 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+  },
+  {
+    id: 'harden-errors',
+    title: 'Harden error handling',
+    body: 'Find swallowed errors, empty catch blocks, and unchecked async results. Add proper handling with clear messages. Do not change behavior on the happy path.',
+    caps: { minutes: 45, tokens: 200000, dollars: 4 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  },
+  {
+    id: 'accessibility-pass',
+    title: 'Accessibility pass',
+    body: 'Review UI markup for accessibility: missing labels, keyboard navigation, focus states, contrast. Fix low-risk issues directly, report the rest inline.',
+    caps: { minutes: 45, tokens: 180000, dollars: 4 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M7 10.5l4 1v3l-1.5 4M17 10.5l-4 1v3l1.5 4"/></svg>',
+  },
+  {
+    id: 'release-notes',
+    title: 'Draft release notes',
+    body: 'Read the commits since the last tag. Draft release notes grouped by features, fixes, and breaking changes. Write to a file, do not tag or push.',
+    caps: { minutes: 20, tokens: 80000, dollars: 2 },
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L11 3H4v7l9.6 10.4a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8z"/><circle cx="8" cy="7" r="1.5"/></svg>',
   },
 ];
 

@@ -269,9 +269,16 @@
     <!-- What's new (shown once after an update, and in the first-run flow) -->
     <div id="whatsnew" class="modal whatsnew" hidden>
       <div class="modal-card whatsnew-card">
-        <img class="wn-logo" src="assets/husk-logo.png" alt="Husk" />
-        <div class="wn-eyebrow" id="wn-version">What's new</div>
-        <h2 class="wn-title">What's new in Husk</h2>
+        <div class="wn-head">
+          <!-- Kernel is cloned in from the onboarding SVG at show time; the
+               clone references the original's gradient defs, which resolve
+               even while the onboarding overlay is hidden. -->
+          <div class="wn-kernel-slot" id="wn-kernel-slot" aria-hidden="true"></div>
+          <div class="wn-head-text">
+            <div class="wn-eyebrow" id="wn-version">What's new</div>
+            <h2 class="wn-title">What's new in Husk</h2>
+          </div>
+        </div>
         <ul class="wn-list" id="wn-list"></ul>
         <button class="btn-primary wn-cta" id="wn-cta" type="button">Got it</button>
       </div>
@@ -808,7 +815,7 @@
               <span class="page-sub">all agents here are available to whichever AI you run · select agents to feature them in your chat header</span>
             </div>
             <div class="page-head-right">
-              <button class="ghost-btn" id="btn-install-from-repo" title="Install an agent pack from a cloned repo">
+              <button class="ghost-btn" id="btn-install-from-repo" title="Install an agent pack from a local repo folder or a repo URL">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>
                 Install from repo
               </button>
@@ -939,8 +946,24 @@
               <button class="modal-close" id="ra-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">Point Husk at a cloned repo that ships an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are installed into every AI tool you have (Claude, Copilot, ...) using each tool's native agents folder. Your working directory is unchanged; if an agent reads a relative <code>skills/&lt;id&gt;/SKILL.md</code>, point Preferences &rsaquo; Working directory at that repo.</p>
-              <div class="ra-pathrow">
+              <p class="ra-hint">The repo should ship an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are installed into every AI tool you have (Claude, Copilot, ...) using each tool's native agents folder. If an agent reads a relative <code>skills/&lt;id&gt;/SKILL.md</code>, point Preferences &rsaquo; Working directory at that repo.</p>
+              <div class="ra-sources">
+                <button type="button" class="ra-source" id="ra-src-github">
+                  <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+                  <span class="ra-source-title">Import from GitHub</span>
+                  <span class="ra-source-desc">Paste a repository URL, Husk clones it for you</span>
+                </button>
+                <button type="button" class="ra-source" id="ra-src-local">
+                  <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
+                  <span class="ra-source-title">Import locally</span>
+                  <span class="ra-source-desc">Pick a cloned repository folder on disk</span>
+                </button>
+              </div>
+              <div class="ra-pathrow" id="ra-row-github" hidden>
+                <input type="text" id="ra-url" class="ra-root" placeholder="https://github.com/dev/agent-repo" autocomplete="off" spellcheck="false" />
+                <button class="ghost-btn" id="ra-fetch">Fetch</button>
+              </div>
+              <div class="ra-pathrow" id="ra-row-local" hidden>
                 <input type="text" id="ra-root" class="ra-root" placeholder="/path/to/agent-pack-repo" autocomplete="off" spellcheck="false" />
                 <button class="ghost-btn" id="ra-browse">Browse…</button>
               </div>
@@ -1579,6 +1602,12 @@
         <button class="prefs-nav-item" data-prefs-section="files">
           <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
           Files
+        </button>
+        <!-- No data-prefs-section: this entry pops the What's new modal
+             instead of switching the settings panel. -->
+        <button class="prefs-nav-item" id="prefs-release-notes">
+          <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h7M9 11h7"/></svg></span>
+          Release Notes
         </button>
         <div class="prefs-nav-spacer"></div>
       </nav>

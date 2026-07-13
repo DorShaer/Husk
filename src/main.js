@@ -5325,7 +5325,8 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
 //
 // The renderer is expected to call repoAgents:pickDir first (or pass an
 // already-known root), then repoAgents:scan to populate the picker, then
-// repoAgents:install with the user's selection.
+// repoAgents:install with the user's selection. scan also accepts an https
+// repo URL; it is cloned into userData/agent-repos and scanned from there.
 
 // Resolve where importable agents live inside a pointed-at repo. The current
 // VSCode/Copilot-native layout keeps them in <root>/.github/agents/*.agent.md;
@@ -5361,6 +5362,38 @@ function stripAgentExt(filename) {
   return filename.replace(/\.agent\.md$/, '').replace(/\.md$/, '');
 }
 
+// Clone an https repo URL into a managed userData directory and return the
+// local path. The clone persists because installed agents keep repoRoot as
+// their working directory. An existing clone is refreshed with a best-effort
+// fast-forward pull instead of re-cloning. Validation and error wording live
+// in src/lib/repo-agents.js. GIT_TERMINAL_PROMPT=0 makes private repos fail
+// fast instead of hanging on a credential prompt.
+const RepoAgents = require('./lib/repo-agents');
+function cloneAgentRepo(url) {
+  return new Promise((resolve) => {
+    const v = RepoAgents.validateRepoUrl(url);
+    if (!v.ok) return resolve(v);
+    const clonesRoot = path.join(app.getPath('userData'), 'agent-repos');
+    const dest = path.join(clonesRoot, v.dirName);
+    const { execFile } = require('child_process');
+    const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+    if (fs.existsSync(path.join(dest, '.git'))) {
+      execFile('git', ['-C', dest, 'pull', '--ff-only'], { timeout: 60000, env: gitEnv }, () => resolve({ ok: true, root: dest }));
+      return;
+    }
+    try { fs.mkdirSync(clonesRoot, { recursive: true }); } catch (err) {
+      return resolve({ ok: false, error: 'Husk cannot write to its data folder (permission denied).' });
+    }
+    execFile('git', ['clone', '--depth', '1', v.url, dest], { timeout: 120000, env: gitEnv }, (err) => {
+      if (err) {
+        try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
+        return resolve({ ok: false, error: RepoAgents.friendlyCloneError(err) });
+      }
+      resolve({ ok: true, root: dest });
+    });
+  });
+}
+
 ipcMain.handle('repoAgents:pickDir', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
     title: 'Select an agent-pack repository',
@@ -5369,15 +5402,18 @@ ipcMain.handle('repoAgents:pickDir', async () => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
-ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
-  const root = String((payload && payload.root) || '').trim();
-  if (!root || !path.isAbsolute(root)) {
-    return { ok: false, error: 'absolute path required' };
+ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
+  let root = String((payload && payload.root) || '').trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(root)) {
+    const cloned = await cloneAgentRepo(root);
+    if (!cloned.ok) return cloned;
+    root = cloned.root;
+  } else {
+    const v = RepoAgents.validateLocalRoot(root);
+    if (!v.ok) return v;
+    root = v.root;
   }
   try {
-    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
-      return { ok: false, error: 'directory does not exist' };
-    }
     const resolved = resolveRepoAgentsDir(root);
     const skillsDir = resolveRepoSkillsDir(root);
     const existingProfileNames = new Set(
@@ -5385,23 +5421,34 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
     );
     const agents = [];
     if (resolved) {
-      for (const entry of fs.readdirSync(resolved.dir, { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.endsWith(resolved.ext)) continue;
-        try {
-          const fp = path.join(resolved.dir, entry.name);
-          const text = fs.readFileSync(fp, 'utf8');
-          const parsed = parseAgentMd(text);
-          const name = (parsed.name || stripAgentExt(entry.name)).slice(0, 64);
-          agents.push({
-            filename: entry.name,
-            name,
-            description: (parsed.description || '').slice(0, 256),
-            bodyLength: (parsed.body || '').length,
-            alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', entry.name)),
-            alreadyImported: existingProfileNames.has(name.toLowerCase()),
-          });
-        } catch (_) {}
-      }
+      // Walk up to two levels below the agents dir; packs commonly group
+      // agents in category subfolders (agents/core/*.md). filename is the
+      // path relative to the agents dir so install can locate nested files.
+      const walk = (dir, rel, depth) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) {
+            if (depth < 2) walk(path.join(dir, entry.name), entryRel, depth + 1);
+            continue;
+          }
+          if (!entry.isFile() || !entry.name.endsWith(resolved.ext)) continue;
+          try {
+            const fp = path.join(dir, entry.name);
+            const text = fs.readFileSync(fp, 'utf8');
+            const parsed = parseAgentMd(text);
+            const name = (parsed.name || stripAgentExt(entry.name)).slice(0, 64);
+            agents.push({
+              filename: entryRel,
+              name,
+              description: (parsed.description || '').slice(0, 256),
+              bodyLength: (parsed.body || '').length,
+              alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', entry.name)),
+              alreadyImported: existingProfileNames.has(name.toLowerCase()),
+            });
+          } catch (_) {}
+        }
+      };
+      walk(resolved.dir, '', 0);
       agents.sort((a, b) => a.name.localeCompare(b.name));
     }
     return {
@@ -5410,21 +5457,19 @@ ipcMain.handle('repoAgents:scan', (_e, payload = {}) => {
       agents,
       hasSkillsDir: !!skillsDir,
     };
-  } catch (err) { return { ok: false, error: err.message }; }
+  } catch (err) { return { ok: false, error: RepoAgents.friendlyScanError(err) }; }
 });
 
 ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
-  const root = String((payload && payload.root) || '').trim();
+  const rootCheck = RepoAgents.validateLocalRoot((payload && payload.root) || '');
+  if (!rootCheck.ok) return rootCheck;
+  const root = rootCheck.root;
   const picks = Array.isArray(payload && payload.picks) ? payload.picks : [];
   const installToClaudeAgents = payload.installToClaudeAgents !== false;
   const activate = !!payload.activate;
-  if (!root || !path.isAbsolute(root)) return { ok: false, error: 'absolute path required' };
-  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
-    return { ok: false, error: 'directory does not exist' };
-  }
-  if (!picks.length) return { ok: false, error: 'nothing selected' };
+  if (!picks.length) return { ok: false, error: 'Nothing selected. Tick at least one agent to install.' };
   const resolved = resolveRepoAgentsDir(root);
-  if (!resolved) return { ok: false, error: 'no agents directory found in repo' };
+  if (!resolved) return { ok: false, error: 'No agents directory found in that repo.' };
   const agentsDir = resolved.dir;
   const claudeAgentsDir = path.join(CLAUDE_DIR, 'agents');
   try { fs.mkdirSync(claudeAgentsDir, { recursive: true }); } catch (_) {}
@@ -5432,16 +5477,20 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const importedIds = [];
   const copiedToClaude = [];
   for (const pick of picks) {
+    // filename may be nested relative to the agents dir (core/reviewer.md);
+    // resolve it and require the result to stay inside that dir.
     const fname = String((pick && pick.filename) || '');
-    if (!fname.endsWith('.md') || fname.includes('/') || fname.includes('\\') || fname.includes('..')) continue;
-    const src = path.join(agentsDir, fname);
+    if (!fname.endsWith('.md') || fname.includes('\\') || fname.includes('..') || path.isAbsolute(fname)) continue;
+    const src = path.resolve(agentsDir, fname);
+    if (!src.startsWith(agentsDir + path.sep)) continue;
     if (!fs.existsSync(src)) continue;
+    const basename = path.basename(fname);
     try {
       const text = fs.readFileSync(src, 'utf8');
       const parsed = parseAgentMd(text);
-      const name = (parsed.name || stripAgentExt(fname)).slice(0, 64);
+      const name = (parsed.name || stripAgentExt(basename)).slice(0, 64);
       if (installToClaudeAgents) {
-        const dest = path.join(claudeAgentsDir, fname);
+        const dest = path.join(claudeAgentsDir, basename);
         try { fs.copyFileSync(src, dest); copiedToClaude.push(dest); } catch (_) {}
       }
       const id = `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;

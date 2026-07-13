@@ -394,6 +394,8 @@ body {
 /* macOS hiddenInset title bar places the close/minimize/zoom controls over the
    top-left, so shift the topbar content right to keep the logo clear of them. */
 [data-platform="mac"] #topbar { padding-left: 78px; }
+/* The New Chat action only applies to the chat page; hide it everywhere else. */
+body:not([data-page="chat"]) #btn-new-session { display: none; }
 .brand { display: flex; align-items: center; -webkit-app-region: no-drag; }
 .logo-img {
   width: 40px; height: 40px;
@@ -3670,7 +3672,9 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 /* ─── Canvas builder ──────────────────────────────────────────────────── */
 
-.wf-builder-page-body { display: flex; flex-direction: column; overflow: hidden; }
+/* overflow stays visible so the focus ring on the name input is not clipped
+   at the body's left edge; the canvas wrap below clips its own content. */
+.wf-builder-page-body { display: flex; flex-direction: column; overflow: visible; }
 .wf-canvas-wrap {
   flex: 1; min-height: 0;
   position: relative;
@@ -4151,6 +4155,32 @@ body[data-page="chat"] #chats-panel { display: flex; }
   padding: 1px 5px; border-radius: 4px;
   background: var(--bg-2); color: var(--text);
 }
+/* Source picker: two cards, GitHub URL vs local folder. The selected card
+   gets the accent treatment and reveals its input row below. */
+.ra-sources {
+  display: flex; gap: 10px;
+  margin-bottom: 12px;
+}
+.ra-source {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+}
+.ra-source:hover { border-color: var(--accent); }
+.ra-source.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-2));
+}
+.ra-source-icon { color: var(--accent); margin-bottom: 3px; }
+.ra-source-icon svg { width: 18px; height: 18px; display: block; }
+.ra-source-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.ra-source-desc { font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .ra-pathrow {
   display: flex; gap: 8px; align-items: stretch;
   margin-bottom: 10px;
@@ -4182,7 +4212,14 @@ body[data-page="chat"] #chats-panel { display: flex; }
   background: var(--bg-3); color: var(--text);
 }
 .ra-status.ra-status-info { border-color: var(--line-2); }
-.ra-status.ra-status-error { border-color: rgba(255, 92, 122, 0.35); color: var(--text); }
+.ra-status.ra-status-error {
+  flex-direction: row; align-items: flex-start; gap: 8px;
+  border-color: color-mix(in srgb, var(--rose) 35%, transparent);
+  background: color-mix(in srgb, var(--rose) 7%, var(--bg-2));
+  color: var(--text);
+}
+.ra-status-icon { flex: 0 0 auto; color: var(--rose); margin-top: 1px; }
+.ra-status-icon svg { width: 15px; height: 15px; display: block; }
 /* The footer of the repo-install modal has three toggles + two buttons;
    let it wrap on narrow window widths rather than stretching off-screen. */
 .modal-foot.ra-foot { flex-direction: column; align-items: stretch; gap: 12px; }
@@ -6739,16 +6776,39 @@ body[data-mode="light"] .ob-wordmark span {
 }
 .ob-dot.active { width: 22px; background: var(--accent); }
 
-/* What's new modal */
-.whatsnew-card { width: 460px; max-width: 92vw; text-align: center; padding: 32px 28px 24px; }
-.wn-logo { width: 56px; height: 56px; display: block; margin: 0 auto 14px; user-select: none; -webkit-user-drag: none; }
+/* What's new modal. Sits above the Preferences overlay (z 201) so the
+   Release Notes entry there can pop it on top. */
+.modal.whatsnew { z-index: 300; }
+.whatsnew-card { width: 660px; max-width: 92vw; text-align: left; padding: 28px 32px 24px; }
+.wn-head { display: flex; align-items: center; gap: 20px; margin-bottom: 18px; }
+.wn-head-text { min-width: 0; }
+.wn-kernel-slot { flex: 0 0 auto; width: 104px; height: 112px; }
+.wn-kernel-slot .hk {
+  width: 104px; height: 112px;
+  cursor: default;
+  animation: wn-excited 1.9s ease-in-out 0.4s infinite;
+}
+/* Excited: a double hop with a small tilt on each landing. */
+@keyframes wn-excited {
+  0%, 52%, 100% { translate: 0 0; rotate: 0deg; }
+  12%           { translate: 0 -9px; rotate: -3deg; }
+  26%           { translate: 0 0; rotate: 0deg; }
+  38%           { translate: 0 -5px; rotate: 3deg; }
+}
 .wn-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
-.wn-title { font-family: var(--font-display); font-weight: 600; font-size: 24px; color: var(--text); margin: 0 0 18px; letter-spacing: -0.01em; }
-.wn-list { list-style: none; margin: 0 0 24px; padding: 0; text-align: left; display: flex; flex-direction: column; gap: 12px; }
+.wn-title { font-family: var(--font-display); font-weight: 600; font-size: 24px; color: var(--text); margin: 0; letter-spacing: -0.01em; }
+.wn-list {
+  list-style: none; margin: 0 0 24px; padding: 0; text-align: left;
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: min(48vh, 460px); overflow-y: auto;
+}
 .wn-list li { display: flex; gap: 10px; font-size: 14px; color: var(--text-2); line-height: 1.5; }
 .wn-list li::before { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 7px; }
 .wn-list li strong { color: var(--text); font-weight: 600; }
 .wn-cta { width: 100%; height: var(--control-h-lg); font-size: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .wn-kernel-slot .hk { animation: none; }
+}
 .modal-card textarea {
   width: 100%; min-height: 160px; padding: 12px 14px;
   background: var(--bg-3); color: var(--text);
