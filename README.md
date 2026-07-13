@@ -159,6 +159,8 @@ For pure dev mode without system registration:
 ./scripts/run.sh
 ```
 
+The full walkthrough (prerequisites, building your own `.deb`/`.dmg`/`.exe`, troubleshooting) is in [docs/build-from-source.md](docs/build-from-source.md).
+
 ## Uninstall
 
 ```bash
@@ -180,7 +182,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 ### Pages
 
 - **Chat**: the PTY surface. Drag-drop files, status panel on the right.
-- **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir.
+- **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`).
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
 - **Autopilot**: hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across collaborating parallel runs. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run.

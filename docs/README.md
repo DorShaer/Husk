@@ -5,6 +5,7 @@ Deeper reading than the project README. Pick a topic.
 | Doc | What it covers |
 |-----|----------------|
 | [installation.md](installation.md) | Per-OS install, packaging, dev mode, auto-update behavior, uninstall. |
+| [build-from-source.md](build-from-source.md) | Step-by-step: prerequisites, clone, build, run, package, troubleshoot. |
 | [architecture.md](architecture.md) | Process model, IPC surface, packaging layout, where data lives on disk. |
 | [skills-and-prompts.md](skills-and-prompts.md) | The unified Skills page: claude skills, Husk-managed prompts, the `Use` button, the curated default set. |
 | [mcp.md](mcp.md) | MCP integration: catalog, custom install (stdio + HTTP/SSE), live health, the JSON paste path. |

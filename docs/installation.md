@@ -74,6 +74,8 @@ The provenance verifier checks that the artifact really came out of the GitHub A
 
 ## Install from source (developers)
 
+Full step-by-step guide, including building your own packages and troubleshooting: [build-from-source.md](build-from-source.md). Short version:
+
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
 cd husk
