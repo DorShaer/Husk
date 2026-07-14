@@ -362,12 +362,14 @@ test('wfRouteInstruction: includes all target names and END option', () => {
 
 // ─── Source-shape assertions ────────────────────────────────────────────────
 
-test('executeWorkflow in main.js gates the spawn behind isAllowedAgentCommand', () => {
+test('the workflow step runner gates the spawn behind isAllowedAgentCommand', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const text = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
-  const m = text.match(/async function executeWorkflow[\s\S]*?\n\}/);
-  assert.ok(m, 'executeWorkflow not found');
+  // The per-step runner owns the spawn; the scheduler (executeWorkflow) only
+  // orders steps. Guard the runner.
+  const m = text.match(/async function wfRunStep[\s\S]*?\n\}/);
+  assert.ok(m, 'wfRunStep not found');
   const body = m[0];
 
   // The allowlist call must appear before the spawn call inside the

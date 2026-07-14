@@ -42,6 +42,7 @@ function sanitizeNode(n) {
     // a new model works without a Husk update; the run engine only passes it when
     // the vendor exposes a model flag.
     model: n.model ? String(n.model).slice(0, 128) : null,
+    branchMode: n.branchMode === 'ai' ? 'ai' : 'parallel',
     prompt: String(n.prompt || '').slice(0, 8192),
     passContext: ['full', 'last50', 'none'].includes(n.passContext) ? n.passContext : 'full',
     x: Number.isFinite(n.x) ? n.x : 0,

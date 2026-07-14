@@ -581,6 +581,13 @@
                     <input class="form-input wf-np-model-custom" id="wf-np-model-custom" type="text" placeholder="model id, e.g. claude-fable-5[1m]" hidden />
                     <div class="wf-np-model-hint" id="wf-np-model-hint"></div>
                   </div>
+                  <div class="form-row" id="wf-np-branch-row" hidden>
+                    <label class="form-label">When this step has multiple next steps</label>
+                    <select class="wf-step-select" id="wf-np-branch">
+                      <option value="parallel">Run all of them (parallel)</option>
+                      <option value="ai">Let this agent pick one (AI routing)</option>
+                    </select>
+                  </div>
                   <div class="form-row">
                     <label class="form-label">Context from previous</label>
                     <select class="wf-step-select" id="wf-np-context">

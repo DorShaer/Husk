@@ -115,6 +115,7 @@ const {
   wfIsAiRouted,
   wfRouteInstruction,
   wfResolveNext,
+  wfEdgeMatches,
   isAllowedAgentCommand,
 } = wfLib;
 
@@ -4990,6 +4991,7 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
     status: 'running',
     stepStates: {},   // keyed by node id; branching means the path is dynamic
     currentChild: null,
+    children: new Set(),   // every concurrently-running step, so Stop kills them all
     startedAt: new Date().toISOString(),
   };
   activeRuns.set(runId, runState);
@@ -5014,7 +5016,7 @@ ipcMain.handle('workflows:stop', (_e, runId) => {
   const run = activeRuns.get(runId);
   if (!run) return { ok: false, error: 'run not found' };
   run.status = 'stopped';
-  try { if (run.currentChild) run.currentChild.kill('SIGTERM'); } catch (_) {}
+  for (const c of (run.children || [])) { try { c.kill('SIGTERM'); } catch (_) {} }
   return { ok: true };
 });
 
@@ -5133,197 +5135,289 @@ function wfEmit(event, channel, data) {
   }
 }
 
+// How many steps may run at once. Agents are heavy, so parallel branches are
+// bounded rather than unleashed.
+const WF_MAX_PARALLEL = 4;
+const WF_STEP_TIMEOUT_MS = 300000;
+
+// Run one step to completion: build the prompt from its incoming context, spawn
+// the agent, stream its output, and resolve with the result. Pure per-step; the
+// scheduler owns ordering.
+async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
+  const stepState = run.stepStates[step.id] || (run.stepStates[step.id] = { status: 'pending', output: '' });
+  stepState.status = 'running';
+  stepState.startedAt = Date.now();
+  wfEmit(event, 'wf:node:start', { runId: run.id, nodeId: step.id });
+
+  const activity = (kind, text) => {
+    wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: step.id, kind, text: String(text || '') });
+  };
+
+  const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  if (!isAllowedAgentCommand(cmd)) {
+    activity('error', `Step "${step.name}" needs one of ${Array.from(wfLib.ALLOWED_AGENT_COMMANDS).join(', ')}; got "${cmd}".`);
+    stepState.status = 'failed';
+    stepState.ms = Date.now() - stepState.startedAt;
+    wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: step.id, status: 'failed' });
+    return { status: 'failed', output: '' };
+  }
+
+  let prompt = step.prompt;
+  const prevOutput = incomingCtx && incomingCtx.text ? incomingCtx.text : '';
+  const prevName = incomingCtx && incomingCtx.from ? incomingCtx.from : '';
+  if (prevOutput) {
+    if (prompt.includes('{{previousOutput}}')) {
+      prompt = prompt.replace(/\{\{previousOutput\}\}/g, prevOutput);
+    } else if (step.passContext !== 'none') {
+      const ctx = step.passContext === 'last50'
+        ? prevOutput.split('\n').slice(-50).join('\n')
+        : prevOutput;
+      prompt = `${prompt}\n\n[Output from ${prevName ? `step "${prevName}"` : 'the previous steps'}]\n${ctx}`;
+    }
+  }
+
+  const useStreamJson = cmd === 'claude';
+  let wfSystem = 'You are running as an automated workflow step. Respond with only the direct result of the task. Do not use status banners, mode headers, structured output scaffolding, or voice notification commands. Plain, direct output only.';
+  if (step.branchMode === 'ai') {
+    const targets = graph.edges.filter((e) => e.from === step.id).map((e) => byId.get(e.to)).filter(Boolean).map((n) => n.name);
+    if (targets.length >= 2) wfSystem += wfRouteInstruction(targets);
+  }
+
+  let args;
+  if (cmd === 'claude') {
+    args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
+  } else {
+    args = AgentOneShot.oneShotArgs(cmd, `${wfSystem}\n\n${prompt}`);
+  }
+  if (step.model) {
+    const flag = modelFlagFor(cmd);
+    if (flag) args = [...args, flag, String(step.model)];
+  }
+
+  let resultText = '';
+  let lineBuf = '';
+  let sawAnyEvent = false;
+  const wfCwd = activePtyCwd || (config && config.treeRoot) || HOME;
+  const child = spawn(cmd, args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
+  run.children.add(child);
+  activity('status', step.model ? `Starting ${cmd} (${step.model})...` : `Starting ${cmd}...`);
+
+  child.stdout.on('data', (d) => {
+    if (!useStreamJson) { resultText += d.toString(); activity('text', d.toString()); return; }
+    lineBuf += d.toString();
+    let nl;
+    while ((nl = lineBuf.indexOf('\n')) >= 0) {
+      const line = lineBuf.slice(0, nl).trim();
+      lineBuf = lineBuf.slice(nl + 1);
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch (_) { activity('text', line); continue; }
+      sawAnyEvent = true;
+      handleStreamEvent(ev, activity, (txt) => { resultText = txt; });
+    }
+  });
+  child.stderr.on('data', (d) => { const t = d.toString().trim(); if (t) activity('error', t); });
+
+  const killTimer = setTimeout(() => {
+    activity('error', 'Step timed out after 5 minutes, killing the agent.');
+    try { child.kill('SIGKILL'); } catch (_) {}
+  }, WF_STEP_TIMEOUT_MS);
+
+  await new Promise((resolve) => {
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      run.children.delete(child);
+      if (useStreamJson && !sawAnyEvent && resultText === '') {
+        activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
+      }
+      stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
+      stepState.ms = Date.now() - stepState.startedAt;
+      stepState.output = resultText;
+      wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: step.id, status: stepState.status, output: resultText });
+      resolve();
+    });
+    child.on('error', (e) => {
+      clearTimeout(killTimer);
+      run.children.delete(child);
+      activity('error', e.message);
+      stepState.status = 'failed';
+      stepState.ms = Date.now() - stepState.startedAt;
+      wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: step.id, status: 'failed' });
+      resolve();
+    });
+  });
+
+  return { status: stepState.status, output: resultText };
+}
+
+// Which outgoing edges a finished step activates. Two plain edges from a node
+// both fire (parallel fan-out); conditional edges gate a branch. An AI-routed
+// node picks exactly one by its ROUTE directive.
+function wfActivatedEdges(graph, node, output, byId) {
+  const out = graph.edges.filter((e) => e.from === node.id);
+  if (!out.length) return { taken: [], decision: null };
+
+  // AI routing is opt-in per node. Plain edges fan out in parallel by default.
+  if (node.branchMode === 'ai' && out.length >= 2) {
+    const res = wfResolveNext(graph, node, output, byId);
+    if (res && res.edge) return { taken: [res.edge], decision: res.decision || (byId.get(res.edge.to) || {}).name };
+    return { taken: [], decision: res && res.decision === 'END' ? 'END' : null };
+  }
+
+  const conditional = out.filter((e) => e.condition && (e.condition.type === 'contains' || e.condition.type === 'regex'));
+  let anyCond = false;
+  const taken = [];
+  for (const e of conditional) {
+    if (wfEdgeMatches(e.condition, output)) { taken.push(e); anyCond = true; }
+  }
+  for (const e of out) {
+    const t = (e.condition && e.condition.type) || 'always';
+    if (t === 'always') taken.push(e);
+    else if (t === 'otherwise' && !anyCond) taken.push(e);
+  }
+  // Dedup, preserving order.
+  const seen = new Set();
+  return { taken: taken.filter((e) => (seen.has(e.id) ? false : seen.add(e.id))), decision: null };
+}
+
+// Dataflow scheduler. Nodes run when all their incoming edges have resolved and
+// at least one was taken; independent ready nodes run concurrently. This is what
+// gives parallel branches and join steps, on top of the conditional edges above.
 async function executeWorkflow(event, workflow, run) {
-  // Yield so ipcMain.handle can return the runId to the renderer before we
-  // emit any step events. Without this, wf:node:start fires before the
-  // renderer has set activeRunId and events get silently dropped.
+  // Yield so ipcMain.handle returns the runId before any event fires.
   await new Promise((resolve) => setImmediate(resolve));
 
   const graph = sanitizeGraph(workflow.graph);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const hasIncoming = new Set(graph.edges.map((e) => e.to));
-  let node = graph.nodes.find((n) => !hasIncoming.has(n.id)) || graph.nodes[0];
+  const incoming = new Map(graph.nodes.map((n) => [n.id, []]));
+  graph.edges.forEach((e) => { if (incoming.has(e.to)) incoming.get(e.to).push(e); });
 
-  let previousOutput = '';
-  let prevName = '';
-  const visited = new Set();
-  const MAX_NODES = 64; // cycle / runaway guard
+  const edgeState = new Map(graph.edges.map((e) => [e.id, 'pending']));  // pending|taken|skipped
+  const nodeDone = new Set();   // reached a terminal state (done|failed|skipped)
+  const running = new Set();
+  run.stepStates = {};
+  graph.nodes.forEach((n) => { run.stepStates[n.id] = { status: 'pending', output: '' }; });
 
-  while (node && !visited.has(node.id) && visited.size < MAX_NODES) {
-    if (run.status === 'stopped') break;
-    visited.add(node.id);
-    const step = node;
-    const stepState = run.stepStates[node.id] || (run.stepStates[node.id] = { status: 'pending', output: '' });
-    stepState.status = 'running';
-    stepState.startedAt = Date.now();
-    wfEmit(event, 'wf:node:start', { runId: run.id, nodeId: node.id });
+  let anyFailed = false;
+  let resolveAll;
+  const allSettled = new Promise((r) => { resolveAll = r; });
 
-    const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  const edgesInto = (nodeId) => incoming.get(nodeId) || [];
+  const nodeReady = (n) => {
+    if (nodeDone.has(n.id) || running.has(n.id)) return false;
+    const inc = edgesInto(n.id);
+    if (!inc.length) return true;                               // a root
+    return inc.every((e) => edgeState.get(e.id) !== 'pending'); // all inputs resolved
+  };
 
-    // The resolved cmd may come from step.agentCommand (already
-    // checked by sanitizeNode) or from config.agentCommand. Apply the
-    // same allowlist here so both paths agree.
-    if (!isAllowedAgentCommand(cmd)) {
-      wfEmit(event, 'wf:node:activity', {
-        runId: run.id,
-        nodeId: node.id,
-        kind: 'error',
-        text: `Step "${node.name}" needs one of ${Array.from(wfLib.ALLOWED_AGENT_COMMANDS).join(', ')}; got "${cmd}".`,
-      });
-      wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: node.id, ok: false });
-      wfEmit(event, 'wf:run:done', { runId: run.id, ok: false, error: 'unsupported_agent_command' });
+  // Context handed to a node: the outputs of its taken predecessors, joined.
+  const contextFor = (n) => {
+    const inc = edgesInto(n.id).filter((e) => edgeState.get(e.id) === 'taken');
+    const parts = inc.map((e) => {
+      const st = run.stepStates[e.from];
+      const from = (byId.get(e.from) || {}).name || '';
+      return st && st.output ? { from, text: st.output } : null;
+    }).filter(Boolean);
+    if (!parts.length) return { from: '', text: '' };
+    if (parts.length === 1) return parts[0];
+    return { from: '', text: parts.map((p) => `[${p.from}]\n${p.text}`).join('\n\n') };
+  };
+
+  const markSkipped = (n, reason) => {
+    if (nodeDone.has(n.id)) return;
+    run.stepStates[n.id].status = 'skipped';
+    nodeDone.add(n.id);
+    wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: n.id, status: 'skipped' });
+    // A skipped node takes none of its outgoing edges.
+    graph.edges.filter((e) => e.from === n.id).forEach((e) => { if (edgeState.get(e.id) === 'pending') edgeState.set(e.id, 'skipped'); });
+    if (reason) { /* reason reserved for future surfacing */ }
+  };
+
+  const finish = () => {
+    if (run.status === 'running') run.status = anyFailed ? 'failed' : 'done';
+    run.finishedAt = new Date().toISOString();
+    run.currentNodeId = null;
+    recordWorkflowRun(run, workflow);
+    wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
+    activeRuns.delete(run.id);
+    run.children = new Set();
+    finishedRuns.set(run.id, run);
+    while (finishedRuns.size > WF_FINISHED_RUNS_MAX) finishedRuns.delete(finishedRuns.keys().next().value);
+    resolveAll();
+  };
+
+  const pump = () => {
+    if (run.status === 'stopped') {
+      // Nothing new starts once stopped; wait for in-flight steps to settle.
+      if (!running.size) finish();
       return;
     }
-
-    let prompt = step.prompt;
-    if (previousOutput) {
-      if (prompt.includes('{{previousOutput}}')) {
-        prompt = prompt.replace(/\{\{previousOutput\}\}/g, previousOutput);
-      } else if (step.passContext !== 'none') {
-        const ctx = step.passContext === 'last50'
-          ? previousOutput.split('\n').slice(-50).join('\n')
-          : previousOutput;
-        prompt = `${prompt}\n\n[Output from previous step "${prevName}"]\n${ctx}`;
-      }
-    }
-
-    const useStreamJson = cmd === 'claude';
-    let wfSystem = 'You are running as an automated workflow step. Respond with only the direct result of the task. Do not use status banners, mode headers, structured output scaffolding, or voice notification commands. Plain, direct output only.';
-    // If this node has 2+ branches with no explicit conditions, it routes by
-    // its own decision: tell it to end with a ROUTE: directive.
-    if (wfIsAiRouted(graph, node.id)) {
-      const targets = graph.edges
-        .filter((e) => e.from === node.id)
-        .map((e) => byId.get(e.to))
-        .filter(Boolean)
-        .map((n) => n.name);
-      if (targets.length >= 2) wfSystem += wfRouteInstruction(targets);
-    }
-    // Only claude takes --append-system-prompt and stream-json output. Other
-    // CLIs reject those flags, so fold the workflow directive into the prompt
-    // and use each tool's own non-interactive form (codex takes a positional
-    // prompt via its exec subcommand).
-    let args;
-    if (cmd === 'claude') {
-      args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
-    } else {
-      const merged = `${wfSystem}\n\n${prompt}`;
-      // Per-CLI one-shot forms come from the shared module (aider needs
-      // --message, codex needs exec, the rest take -p).
-      args = AgentOneShot.oneShotArgs(cmd, merged);
-    }
-    // A step can pin its own model. Each CLI names the flag differently, so the
-    // catalog resolves it. Unknown or unsupported models are simply not passed,
-    // so a stale pin never makes a step un-runnable.
-    if (step.model) {
-      const flag = modelFlagFor(cmd);
-      if (flag) args = [...args, flag, String(step.model)];
-    }
-
-    const nid = node.id;
-    const activity = (kind, text) => {
-      wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: nid, kind, text: String(text || '') });
-    };
-
-    let resultText = '';
-    let lineBuf = '';
-    let sawAnyEvent = false;
-
-    // Run the step in the user's working directory, not Husk's process cwd.
-    // A packaged app launches from a read-only bundle dir (notably the macOS
-    // .app), which is not a writable or trusted location: codex then refuses
-    // with a git-repo trust error and other CLIs have nowhere sensible to
-    // work. Fall back to the configured tree root, then the home directory.
-    const wfCwd = activePtyCwd || (config && config.treeRoot) || HOME;
-    const child = spawn(cmd, args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
-    run.currentChild = child;
-    activity('status', 'Starting the CLI agent...');
-
-    child.stdout.on('data', (d) => {
-      if (!useStreamJson) {
-        resultText += d.toString();
-        activity('text', d.toString());
-        return;
-      }
-      lineBuf += d.toString();
-      let nl;
-      while ((nl = lineBuf.indexOf('\n')) >= 0) {
-        const line = lineBuf.slice(0, nl).trim();
-        lineBuf = lineBuf.slice(nl + 1);
-        if (!line) continue;
-        let ev;
-        try { ev = JSON.parse(line); } catch (_) { activity('text', line); continue; }
-        sawAnyEvent = true;
-        handleStreamEvent(ev, activity, (txt) => { resultText = txt; });
-      }
-    });
-    child.stderr.on('data', (d) => {
-      const t = d.toString().trim();
-      if (t) activity('error', t);
-    });
-
-    const killTimer = setTimeout(() => {
-      activity('error', 'Step timed out after 5 minutes, killing the agent.');
-      try { child.kill('SIGKILL'); } catch (_) {}
-    }, 300000);
-
-    await new Promise((resolve) => {
-      child.on('close', (code) => {
-        clearTimeout(killTimer);
-        if (useStreamJson && !sawAnyEvent && resultText === '') {
-          activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
+    // Skip any ready node whose inputs all resolved but none was taken.
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (const n of graph.nodes) {
+        if (!nodeReady(n)) continue;
+        const inc = edgesInto(n.id);
+        if (inc.length && !inc.some((e) => edgeState.get(e.id) === 'taken')) {
+          markSkipped(n);
+          progressed = true;
         }
-        stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
-        stepState.ms = Date.now() - (stepState.startedAt || Date.now());
-        stepState.output = resultText;
-        wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: nid, status: stepState.status, output: resultText });
-        resolve();
-      });
-      child.on('error', (e) => {
-        clearTimeout(killTimer);
-        activity('error', e.message);
-        stepState.status = 'failed';
-        wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: nid, status: 'failed' });
-        resolve();
-      });
-    });
-
-    if (stepState.status === 'failed') { run.status = 'failed'; break; }
-    if (run.status === 'stopped') break;
-
-    previousOutput = resultText;
-    prevName = step.name;
-
-    // Resolve the next step: AI-decided ROUTE directive, or text conditions.
-    const next = wfResolveNext(graph, node, resultText, byId);
-    if (next && next.edge) {
-      const target = byId.get(next.edge.to);
-      if (next.decision && target) {
-        wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: node.id, kind: 'status', text: `Routing decision: continue to "${target.name}"` });
       }
-      wfEmit(event, 'wf:edge:taken', { runId: run.id, edgeId: next.edge.id, from: next.edge.from, to: next.edge.to });
-      node = target || null;
-    } else {
-      if (next && next.decision === 'END') {
-        wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: node.id, kind: 'status', text: 'Routing decision: end the workflow' });
-      }
-      node = null;
     }
-  }
+    // Launch ready nodes up to the concurrency cap.
+    for (const n of graph.nodes) {
+      if (running.size >= WF_MAX_PARALLEL) break;
+      if (!nodeReady(n)) continue;
+      startNode(n);
+    }
+    if (!running.size && graph.nodes.every((n) => nodeDone.has(n.id))) finish();
+    else if (!running.size && !graph.nodes.some((n) => nodeReady(n))) finish(); // deadlock guard
+  };
 
-  if (run.status === 'running') run.status = 'done';
-  run.finishedAt = new Date().toISOString();
-  run.currentNodeId = null;
-  recordWorkflowRun(run, workflow);
-  wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
-  // Retire rather than discard: the run's node terminals stay readable after it
-  // ends. wfEmit looks the run up in activeRuns, so retire only after emitting.
-  activeRuns.delete(run.id);
-  run.currentChild = null;
-  finishedRuns.set(run.id, run);
-  while (finishedRuns.size > WF_FINISHED_RUNS_MAX) {
-    finishedRuns.delete(finishedRuns.keys().next().value);
-  }
+  const startNode = (n) => {
+    running.add(n.id);
+    const ctx = contextFor(n);
+    wfRunStep(event, run, graph, byId, n, ctx).then(({ status, output }) => {
+      try { wfSettleNode(n, status, output); } catch (err) {
+        wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'error', text: `scheduler error: ${err && err.message}` });
+        anyFailed = true;
+      }
+      pump();
+    }).catch((err) => {
+      running.delete(n.id); nodeDone.add(n.id); anyFailed = true;
+      wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'error', text: `step crashed: ${err && err.message}` });
+      pump();
+    });
+  };
+
+  const wfSettleNode = (n, status, output) => {
+    {
+      running.delete(n.id);
+      nodeDone.add(n.id);
+      if (status === 'failed') {
+        anyFailed = true;
+        graph.edges.filter((e) => e.from === n.id).forEach((e) => edgeState.set(e.id, 'skipped'));
+      } else if (status === 'done') {
+        const { taken, decision } = wfActivatedEdges(graph, n, output, byId);
+        const takenIds = new Set(taken.map((e) => e.id));
+        if (decision && decision !== 'END') {
+          wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'status', text: `Routing decision: continue to "${decision}"` });
+        } else if (decision === 'END') {
+          wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'status', text: 'Routing decision: end the workflow' });
+        }
+        graph.edges.filter((e) => e.from === n.id).forEach((e) => {
+          if (takenIds.has(e.id)) { edgeState.set(e.id, 'taken'); wfEmit(event, 'wf:edge:taken', { runId: run.id, edgeId: e.id, from: e.from, to: e.to }); }
+          else edgeState.set(e.id, 'skipped');
+        });
+      } else {
+        graph.edges.filter((e) => e.from === n.id).forEach((e) => edgeState.set(e.id, 'skipped'));
+      }
+    }
+  };
+
+  pump();
+  await allSettled;
 }
 
 // Translates one claude stream-json event into activity feed lines.

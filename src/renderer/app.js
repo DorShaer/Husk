@@ -2358,6 +2358,7 @@ function wfAddCanvasNode(data, x, y) {
     huskId: (data && data.huskId) || wfNewNodeId(),
     name: (data && data.name) || 'New Step',
     model: (data && data.model) || '',
+    branchMode: (data && data.branchMode) || 'parallel',
     agentCommand: (data && data.agentCommand) || '',
     prompt: (data && data.prompt) || '',
     passContext: (data && data.passContext) || 'full',
@@ -2380,6 +2381,7 @@ function wfLoadGraph(graph) {
       name: n.name || 'Step',
       agentCommand: n.agentCommand || '',
       model: n.model || '',
+      branchMode: n.branchMode || 'parallel',
       prompt: n.prompt || '',
       passContext: n.passContext || 'full',
     };
@@ -2414,6 +2416,7 @@ function wfExportGraph() {
       name: d.name || 'Step',
       agentCommand: d.agentCommand || null,
       model: d.model || null,
+      branchMode: d.branchMode === 'ai' ? 'ai' : 'parallel',
       prompt: d.prompt || '',
       passContext: d.passContext || 'full',
       x: n.pos_x, y: n.pos_y,
@@ -2443,8 +2446,23 @@ function showNodePanel(id) {
   $('#wf-np-agent').innerHTML = buildAgentOptions(d.agentCommand || '');
   $('#wf-np-context').value = d.passContext || 'full';
   $('#wf-np-prompt').value = d.prompt || '';
+  const branchSel = $('#wf-np-branch');
+  if (branchSel) branchSel.value = d.branchMode === 'ai' ? 'ai' : 'parallel';
+  const outCount = wfEditor.export ? wfCountOutgoing(id) : 0;
+  const branchRow = $('#wf-np-branch-row');
+  if (branchRow) branchRow.hidden = outCount < 2;
   $('#wf-node-panel').hidden = false;
   wfLoadNodeModels(d.agentCommand || '', d.model || '');
+}
+
+// Outgoing edges from a Drawflow node, so the branch-mode control only appears
+// where it means something (2+ next steps).
+function wfCountOutgoing(dfId) {
+  try {
+    const node = wfEditor.getNodeFromId(dfId);
+    const outs = (node && node.outputs) || {};
+    return Object.values(outs).reduce((n, o) => n + (((o || {}).connections || []).length), 0);
+  } catch (_) { return 0; }
 }
 
 // A step's model dropdown. Loads the chosen agent's real catalog, the same
@@ -2563,6 +2581,7 @@ function wfSyncPanelToNode() {
     name: ($('#wf-np-name').value || 'Step').slice(0, 64),
     agentCommand: $('#wf-np-agent').value || '',
     model: model || '',
+    branchMode: (($('#wf-np-branch') || {}).value === 'ai') ? 'ai' : 'parallel',
     prompt: $('#wf-np-prompt').value || '',
     passContext: $('#wf-np-context').value || 'full',
   };
@@ -3331,7 +3350,7 @@ function wfNodeStatusAsStates() {
   return out;
 }
 // Node config panel
-['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt', 'wf-np-model', 'wf-np-model-custom'].forEach((id) => {
+['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt', 'wf-np-model', 'wf-np-model-custom', 'wf-np-branch'].forEach((id) => {
   const el = $(`#${id}`);
   if (el) { el.addEventListener('input', wfSyncPanelToNode); el.addEventListener('change', wfSyncPanelToNode); }
 });
