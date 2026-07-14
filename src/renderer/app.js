@@ -2847,14 +2847,9 @@ function wfFitEditor(editor, hostSel, graph) {
 
 // The one line a step shows on the canvas: the tool it is running, or its last
 // word. Truncated hard, because a node is not a log.
-function wfSetNodeLive(nodeId, kind, text) {
-  const raw = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!raw) return;
-  let line = raw;
-  if (kind === 'tool') line = raw;
-  else if (kind === 'error') line = raw;
-  else if (kind === 'status') line = raw;
-  else line = raw;
+function wfSetNodeLive(nodeId, text) {
+  const line = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!line) return;
   wfNodeLive[nodeId] = line;
   const el = wfRunNodeEl(nodeId);
   const live = el && el.querySelector(`[data-live="${CSS.escape(nodeId)}"]`);
@@ -3227,7 +3222,7 @@ window.husk.workflows.onNodeStart((d) => {
 
 window.husk.workflows.onNodeActivity((d) => {
   if (d.runId !== activeRunId) return;
-  wfSetNodeLive(d.nodeId, d.kind, d.text);
+  wfSetNodeLive(d.nodeId, d.text);
   if (d.nodeId !== wfTermNodeId || !wfTerm || $('#wf-term').hidden) return;
   // While the buffer is still being replayed, hold the line rather than racing
   // it into the terminal out of order.

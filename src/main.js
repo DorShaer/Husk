@@ -112,7 +112,6 @@ const {
   sanitizeGraph,
   migrateWorkflow,
   graphToOrderedSteps,
-  wfIsAiRouted,
   wfRouteInstruction,
   wfResolveNext,
   wfEdgeMatches,
