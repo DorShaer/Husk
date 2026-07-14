@@ -10,7 +10,7 @@ function boot(env) {
     env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1', ...env }, timeout: 30_000 });
 }
 async function readCard(win) {
-  // inject a fake in-flight run matching the reported image tiers
+  // inject a fake in-flight run with representative cache-heavy token tiers
   await win.evaluate(() => {
     activeRuns.clear();
     activeRuns.set('r1', { runId: 'r1', startedAt: Date.now() - 300000, caps: { minutes: 0, tokens: 0, dollars: 0 },

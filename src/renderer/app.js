@@ -9945,11 +9945,9 @@ function applyDollarLabel() {
   }
 }
 
-// Total tokens the model actually processed = every tier summed, which is the
-// one figure that equals the breakdown below it. The headline used to be input
-// + output + cache writes and silently dropped cache reads, so it never matched
-// the parts. Cache reads are the bulk (billed at a tenth), so the total is large
-// on purpose; the breakdown shows where it comes from.
+// Total tokens the model processed: every tier summed, so the headline equals
+// the input + output + cache write + cache read breakdown beneath it. totalTokens
+// already holds the first three; cache reads are added here.
 function displayProcessed(b) {
   return (Number(b.totalTokens) || 0) + (Number(b.cacheReadTokens) || 0);
 }
