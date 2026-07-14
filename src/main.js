@@ -4014,8 +4014,11 @@ function runAiderModelProbe(agentCommand) {
   });
 }
 
-async function discoverModelCatalog({ refresh = false } = {}) {
-  const rawCommand = config.agentCommand || 'claude';
+async function discoverModelCatalog({ refresh = false, command = null } = {}) {
+  // `command` lets a caller ask for a specific vendor's models (a workflow step
+  // can run a different agent than the active one). Falls back to the active
+  // agent when omitted, which is what the Autopilot page wants.
+  const rawCommand = command || config.agentCommand || 'claude';
   const head = safeAgentCommandHead(rawCommand);
   const vendor = head ? head.base : agentBaseName(rawCommand);
   const flag = modelFlagFor(vendor);
@@ -4067,7 +4070,7 @@ async function discoverModelCatalog({ refresh = false } = {}) {
   return value;
 }
 
-ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ refresh: !!(opts && opts.refresh) }));
+ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ refresh: !!(opts && opts.refresh), command: opts && opts.command ? String(opts.command) : null }));
 
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 
@@ -5208,6 +5211,13 @@ async function executeWorkflow(event, workflow, run) {
       // Per-CLI one-shot forms come from the shared module (aider needs
       // --message, codex needs exec, the rest take -p).
       args = AgentOneShot.oneShotArgs(cmd, merged);
+    }
+    // A step can pin its own model. Each CLI names the flag differently, so the
+    // catalog resolves it. Unknown or unsupported models are simply not passed,
+    // so a stale pin never makes a step un-runnable.
+    if (step.model) {
+      const flag = modelFlagFor(cmd);
+      if (flag) args = [...args, flag, String(step.model)];
     }
 
     const nid = node.id;

@@ -571,6 +571,17 @@
                     <select class="wf-step-select" id="wf-np-agent"></select>
                   </div>
                   <div class="form-row">
+                    <label class="form-label">
+                      Model
+                      <button class="wf-np-model-refresh" id="wf-np-model-refresh" type="button" title="Reload this agent's models">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg>
+                      </button>
+                    </label>
+                    <select class="wf-step-select" id="wf-np-model"></select>
+                    <input class="form-input wf-np-model-custom" id="wf-np-model-custom" type="text" placeholder="model id, e.g. claude-fable-5[1m]" hidden />
+                    <div class="wf-np-model-hint" id="wf-np-model-hint"></div>
+                  </div>
+                  <div class="form-row">
                     <label class="form-label">Context from previous</label>
                     <select class="wf-step-select" id="wf-np-context">
                       <option value="full">Full output</option>

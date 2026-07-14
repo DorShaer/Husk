@@ -38,6 +38,10 @@ function sanitizeNode(n) {
     id: n.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: String(n.name || 'Step').slice(0, 64),
     agentCommand,
+    // A pinned model id, e.g. "claude-opus-4-8" or "gemini-2.5-pro". Free text so
+    // a new model works without a Husk update; the run engine only passes it when
+    // the vendor exposes a model flag.
+    model: n.model ? String(n.model).slice(0, 128) : null,
     prompt: String(n.prompt || '').slice(0, 8192),
     passContext: ['full', 'last50', 'none'].includes(n.passContext) ? n.passContext : 'full',
     x: Number.isFinite(n.x) ? n.x : 0,

@@ -76,7 +76,7 @@ contextBridge.exposeInMainWorld('husk', {
     set: (partial) => ipcRenderer.invoke('config:set', partial),
   },
   models: {
-    list: (opts) => ipcRenderer.invoke('models:list', opts || {}),
+    list: (opts) => ipcRenderer.invoke('models:list', opts || {}),   // opts.command targets a specific vendor
   },
   stats: { get: () => ipcRenderer.invoke('stats:get') },
   skills: {

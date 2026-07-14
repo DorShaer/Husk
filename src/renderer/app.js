@@ -2312,7 +2312,7 @@ function wfNodeHtml(data) {
       <div class="wf-cv-node-badge">${badge}</div>
       <div class="wf-cv-node-name">${escapeHtml(data.name || 'Step')}</div>
     </div>
-    <div class="wf-cv-node-meta">${escapeHtml(data.agentCommand || 'default agent')}</div>
+    <div class="wf-cv-node-meta">${escapeHtml(data.model ? `${data.agentCommand || 'default'} \u00b7 ${data.model}` : (data.agentCommand || 'default agent'))}</div>
   </div>`;
 }
 
@@ -2340,6 +2340,10 @@ function wfEnsureEditor() {
   // right target.
   wfEditor.force_first_input = true;
   wfEditor.start();
+  // Drawflow opens a delete popover on right-click. Suppress it: a node is
+  // removed from its config panel, and the popover rendered as a stray black box.
+  const cont = $('#wf-canvas');
+  if (cont) cont.addEventListener('contextmenu', (e) => e.preventDefault());
   wfEditor.on('nodeSelected', (id) => { hideEdgePanel(); showNodePanel(id); });
   wfEditor.on('nodeUnselected', () => hideNodePanel());
   wfEditor.on('nodeRemoved', () => hideNodePanel());
@@ -2353,6 +2357,7 @@ function wfAddCanvasNode(data, x, y) {
   const nodeData = {
     huskId: (data && data.huskId) || wfNewNodeId(),
     name: (data && data.name) || 'New Step',
+    model: (data && data.model) || '',
     agentCommand: (data && data.agentCommand) || '',
     prompt: (data && data.prompt) || '',
     passContext: (data && data.passContext) || 'full',
@@ -2374,6 +2379,7 @@ function wfLoadGraph(graph) {
       huskId: n.id || wfNewNodeId(),
       name: n.name || 'Step',
       agentCommand: n.agentCommand || '',
+      model: n.model || '',
       prompt: n.prompt || '',
       passContext: n.passContext || 'full',
     };
@@ -2407,6 +2413,7 @@ function wfExportGraph() {
       id: stable[id],
       name: d.name || 'Step',
       agentCommand: d.agentCommand || null,
+      model: d.model || null,
       prompt: d.prompt || '',
       passContext: d.passContext || 'full',
       x: n.pos_x, y: n.pos_y,
@@ -2437,6 +2444,68 @@ function showNodePanel(id) {
   $('#wf-np-context').value = d.passContext || 'full';
   $('#wf-np-prompt').value = d.prompt || '';
   $('#wf-node-panel').hidden = false;
+  wfLoadNodeModels(d.agentCommand || '', d.model || '');
+}
+
+// A step's model dropdown. Loads the chosen agent's real catalog, the same
+// source the Autopilot page uses, so a node can run gemini while the next runs
+// claude opus. Cached per vendor so switching nodes does not re-probe.
+const wfModelCache = new Map();   // command -> catalog
+let wfModelSeq = 0;
+
+function wfAgentCommandForPanel() {
+  const chosen = ($('#wf-np-agent') || {}).value || '';
+  return (chosen || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
+}
+
+function wfPaintModelOptions(catalog, pinned) {
+  const sel = $('#wf-np-model');
+  const custom = $('#wf-np-model-custom');
+  const hint = $('#wf-np-model-hint');
+  if (!sel) return;
+  const models = (catalog && catalog.models) || [];
+  const opts = ['<option value="">Default</option>'];
+  let matched = !pinned;
+  models.forEach((m) => {
+    const id = typeof m === 'string' ? m : (m.id || m.name || '');
+    const label = typeof m === 'string' ? m : (m.label || m.id || m.name || '');
+    if (!id) return;
+    if (id === pinned) matched = true;
+    opts.push(`<option value="${escapeAttr(id)}"${id === pinned ? ' selected' : ''}>${escapeHtml(label)}</option>`);
+  });
+  opts.push(`<option value="__custom__"${!matched && pinned ? ' selected' : ''}>Custom...</option>`);
+  // eslint-disable-next-line no-unsanitized/property -- ids/labels escaped above
+  sel.innerHTML = opts.join('');
+  if (!matched && pinned && custom) { custom.hidden = false; custom.value = pinned; }
+  else if (custom) { custom.hidden = true; custom.value = ''; }
+  if (hint) {
+    if (catalog && catalog.error) hint.textContent = catalog.error;
+    else if (catalog && !catalog.supported) hint.textContent = `${catalog.providerLabel || 'This agent'} does not expose a model flag; the default is used.`;
+    else if (models.length) hint.textContent = `${models.length} model${models.length === 1 ? '' : 's'} from ${catalog.sourceLabel || catalog.providerLabel || 'the CLI'}`;
+    else hint.textContent = '';
+  }
+}
+
+async function wfLoadNodeModels(command, pinned, opts = {}) {
+  const sel = $('#wf-np-model');
+  const hint = $('#wf-np-model-hint');
+  if (!sel) return;
+  const cmd = (command || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
+  const seq = ++wfModelSeq;
+
+  if (!opts.refresh && wfModelCache.has(cmd)) {
+    wfPaintModelOptions(wfModelCache.get(cmd), pinned);
+    return;
+  }
+  // eslint-disable-next-line no-unsanitized/property -- static
+  sel.innerHTML = '<option>Loading...</option>';
+  if (hint) hint.textContent = `Reading ${cmd}'s models...`;
+  let catalog = null;
+  try { catalog = await window.husk.models.list({ command: cmd, refresh: !!opts.refresh }); } catch (_) {}
+  if (seq !== wfModelSeq) return;   // a newer load won
+  catalog = catalog || { models: [], supported: false };
+  wfModelCache.set(cmd, catalog);
+  wfPaintModelOptions(catalog, pinned);
 }
 
 function hideNodePanel() {
@@ -2487,10 +2556,13 @@ function wfSyncPanelToNode() {
   // id through: dropping it would renumber the step and orphan its run history.
   let existing = {};
   try { existing = (wfEditor.getNodeFromId(wfSelectedNodeId) || {}).data || {}; } catch (_) {}
+  const modelSel = ($('#wf-np-model') || {}).value || '';
+  const model = modelSel === '__custom__' ? (($('#wf-np-model-custom') || {}).value || '').trim() : modelSel;
   const data = {
     huskId: existing.huskId || wfNewNodeId(),
     name: ($('#wf-np-name').value || 'Step').slice(0, 64),
     agentCommand: $('#wf-np-agent').value || '',
+    model: model || '',
     prompt: $('#wf-np-prompt').value || '',
     passContext: $('#wf-np-context').value || 'full',
   };
@@ -2498,7 +2570,14 @@ function wfSyncPanelToNode() {
   const nameEl = document.querySelector(`#node-${wfSelectedNodeId} .wf-cv-node-name`);
   const metaEl = document.querySelector(`#node-${wfSelectedNodeId} .wf-cv-node-meta`);
   if (nameEl) nameEl.textContent = data.name;
-  if (metaEl) metaEl.textContent = data.agentCommand || 'default agent';
+  // The node's own label now names its agent and model, so the graph shows the
+  // mix at a glance without opening anything.
+  if (metaEl) metaEl.textContent = wfNodeAgentLabel(data);
+}
+
+function wfNodeAgentLabel(d) {
+  const agent = (d.agentCommand || 'default agent');
+  return d.model ? `${agent} \u00b7 ${d.model}` : agent;
 }
 
 function wfSyncNameCount() {
@@ -2982,7 +3061,14 @@ function wfResetRunUi(workflow) {
 async function runWorkflow(workflowId) {
   const workflow = workflowsCache.find((w) => w.id === workflowId);
   if (!workflow) return;
-  if (activeRunId) { toast('A workflow is already running', 'info'); wfShowView('run'); return; }
+  // Only refuse if the backend actually has a live run. A stale activeRunId
+  // left over from a run this window did not see finish must never wedge Run.
+  if (activeRunId) {
+    let live = null;
+    try { const r = await window.husk.workflows.activeRun(); live = r && r.ok ? r.run : null; } catch (_) {}
+    if (live) { toast('A workflow is already running', 'info'); wfShowView('run'); return; }
+    activeRunId = null;
+  }
   wfResetRunUi(workflow);
   const res = await window.husk.workflows.run(workflowId);
   if (!res || !res.ok) {
@@ -3245,9 +3331,27 @@ function wfNodeStatusAsStates() {
   return out;
 }
 // Node config panel
-['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt'].forEach((id) => {
+['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt', 'wf-np-model', 'wf-np-model-custom'].forEach((id) => {
   const el = $(`#${id}`);
   if (el) { el.addEventListener('input', wfSyncPanelToNode); el.addEventListener('change', wfSyncPanelToNode); }
+});
+// Switching a step's agent loads that agent's models. Reset the pin, since a
+// claude model id means nothing to gemini.
+$('#wf-np-agent') && $('#wf-np-agent').addEventListener('change', () => {
+  wfLoadNodeModels(wfAgentCommandForPanel(), '');
+});
+// The model select toggles a free-text field for anything not in the catalog.
+$('#wf-np-model') && $('#wf-np-model').addEventListener('change', (e) => {
+  const custom = $('#wf-np-model-custom');
+  if (custom) {
+    custom.hidden = e.target.value !== '__custom__';
+    if (!custom.hidden) custom.focus();
+  }
+});
+$('#wf-np-model-refresh') && $('#wf-np-model-refresh').addEventListener('click', () => {
+  const node = wfEditor && wfSelectedNodeId != null ? wfEditor.getNodeFromId(wfSelectedNodeId) : null;
+  const pinned = (node && node.data && node.data.model) || '';
+  wfLoadNodeModels(wfAgentCommandForPanel(), pinned, { refresh: true });
 });
 $('#wf-node-panel-close') && $('#wf-node-panel-close').addEventListener('click', hideNodePanel);
 $('#wf-edge-panel-close') && $('#wf-edge-panel-close').addEventListener('click', hideEdgePanel);
