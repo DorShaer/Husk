@@ -4843,15 +4843,23 @@ function recordWorkflowRun(run, workflow) {
     const trimmed = list.slice(0, WF_RUNS_MAX).map((r, i) => (
       i < WF_RUNS_WITH_LOGS ? r : { ...r, steps: (r.steps || []).map((st) => ({ ...st, entries: undefined })) }
     ));
-    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(WORKFLOW_RUNS_PATH, JSON.stringify(trimmed, null, 2), { mode: 0o600 });
+    writeJsonAtomic(WORKFLOW_RUNS_PATH, trimmed);
   } catch (_) { /* history is a nicety; never fail a run over it */ }
+}
+
+// Write through a temp file and rename, so a crash mid-write cannot leave a
+// truncated file behind: rename is atomic within a filesystem.
+function writeJsonAtomic(target, value) {
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, target);
 }
 
 function saveWorkflows(list) {
   try {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(WORKFLOWS_PATH, JSON.stringify(list, null, 2), { mode: 0o600 });
+    writeJsonAtomic(WORKFLOWS_PATH, list);
   } catch (_) {}
 }
 
@@ -4953,12 +4961,18 @@ ipcMain.handle('workflows:update', (_e, payload = {}) => {
 });
 
 ipcMain.handle('workflows:delete', (_e, id) => {
+  const live = [...activeRuns.values()].find((r) => r.workflowId === id && r.status === 'running');
+  if (live) return { ok: false, error: 'this workflow is running; stop it first' };
   if (!id) return { ok: false, error: 'missing id' };
   saveWorkflows(loadWorkflows().filter((w) => w.id !== id));
   return { ok: true };
 });
 
 ipcMain.handle('workflows:run', (event, workflowId) => {
+  const already = [...activeRuns.values()].find((r) => r.status === 'running');
+  if (already) {
+    return { ok: false, error: 'a workflow is already running', runId: already.id, workflowId: already.workflowId };
+  }
   const raw = loadWorkflows().find((w) => w.id === workflowId);
   if (!raw) return { ok: false, error: 'workflow not found' };
   const workflow = migrateWorkflow(raw);

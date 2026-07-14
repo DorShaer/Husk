@@ -2350,6 +2350,7 @@ function wfEnsureEditor() {
 function wfAddCanvasNode(data, x, y) {
   if (!wfEditor) return;
   const nodeData = {
+    huskId: (data && data.huskId) || wfNewNodeId(),
     name: (data && data.name) || 'New Step',
     agentCommand: (data && data.agentCommand) || '',
     prompt: (data && data.prompt) || '',
@@ -2360,11 +2361,16 @@ function wfAddCanvasNode(data, x, y) {
   wfEditor.addNode('step', 1, 1, px, py, 'wf-cv', nodeData, wfNodeHtml(nodeData));
 }
 
+function wfNewNodeId() {
+  return `wfn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 function wfLoadGraph(graph) {
   if (!wfEditor) return;
   const idMap = {};
   (graph.nodes || []).forEach((n) => {
     const data = {
+      huskId: n.id || wfNewNodeId(),
       name: n.name || 'Step',
       agentCommand: n.agentCommand || '',
       prompt: n.prompt || '',
@@ -2388,11 +2394,16 @@ function wfExportGraph() {
   const data = (dump && dump.drawflow && dump.drawflow.Home && dump.drawflow.Home.data) || {};
   const nodes = [];
   const edges = [];
+  // Drawflow's id is a render detail; the husk id is what everything else keys on.
+  const stable = {};
+  Object.keys(data).forEach((id) => {
+    stable[id] = ((data[id] || {}).data || {}).huskId || wfNewNodeId();
+  });
   Object.keys(data).forEach((id) => {
     const n = data[id];
     const d = n.data || {};
     nodes.push({
-      id: String(id),
+      id: stable[id],
       name: d.name || 'Step',
       agentCommand: d.agentCommand || null,
       prompt: d.prompt || '',
@@ -2402,7 +2413,12 @@ function wfExportGraph() {
     Object.keys(n.outputs || {}).forEach((ok) => {
       ((n.outputs[ok] || {}).connections || []).forEach((c) => {
         const cond = wfEdgeConditions[wfEdgeKey(id, c.node)] || { type: 'always', value: '' };
-        edges.push({ id: `edge-${id}-${c.node}`, from: String(id), to: String(c.node), condition: cond });
+        edges.push({
+          id: `edge-${stable[id]}-${stable[c.node]}`,
+          from: stable[id],
+          to: stable[c.node],
+          condition: cond,
+        });
       });
     });
   });
@@ -2466,7 +2482,12 @@ function wfSyncEdgePanel() {
 
 function wfSyncPanelToNode() {
   if (!wfEditor || wfSelectedNodeId == null) return;
+  // updateNodeDataFromId replaces the node's data wholesale, so carry the stable
+  // id through: dropping it would renumber the step and orphan its run history.
+  let existing = {};
+  try { existing = (wfEditor.getNodeFromId(wfSelectedNodeId) || {}).data || {}; } catch (_) {}
   const data = {
+    huskId: existing.huskId || wfNewNodeId(),
     name: ($('#wf-np-name').value || 'Step').slice(0, 64),
     agentCommand: $('#wf-np-agent').value || '',
     prompt: $('#wf-np-prompt').value || '',
@@ -2489,7 +2510,10 @@ function wfSyncNameCount() {
   count.classList.toggle('near-limit', len >= max * 0.9);
 }
 
+let wfBuilderReady = false;
+
 function openWorkflowBuilder(editId) {
+  wfBuilderReady = false;
   editingWorkflowId = editId || null;
   const existing = editId ? workflowsCache.find((w) => w.id === editId) : null;
   if ($('#wf-name-input')) $('#wf-name-input').value = existing ? existing.name : '';
@@ -2498,22 +2522,26 @@ function openWorkflowBuilder(editId) {
   wfShowView('builder');
   hideNodePanel();
   hideEdgePanel();
-  // Drawflow needs the container visible and sized before start().
-  setTimeout(() => {
-    wfEnsureEditor();
-    const graph = (existing && existing.graph) ? existing.graph : { nodes: [], edges: [] };
-    wfLoadGraph(graph);
-    if (!graph.nodes || !graph.nodes.length) wfAddCanvasNode(null, 80, 80);
-    // Frame the whole flow on open, the way the run view does. A graph laid out
-    // wider than the canvas would otherwise open with steps off the edge.
-    wfFitEditor(wfEditor, '#wf-canvas', graph);
-    try { $('#wf-name-input').focus(); } catch (_) {}
-  }, 50);
+  // Drawflow needs the container visible and sized before start(). The view is
+  // on screen now, so force the layout and build it: a timer here meant the
+  // graph did not exist for the first frames, and anything that read it in that
+  // window (Run, Save) saw an empty canvas.
+  const host = $('#wf-canvas');
+  if (host) void host.offsetWidth;
+  wfEnsureEditor();
+  const graph = (existing && existing.graph) ? existing.graph : { nodes: [], edges: [] };
+  wfLoadGraph(graph);
+  if (!graph.nodes || !graph.nodes.length) wfAddCanvasNode(null, 80, 80);
+  // Frame the whole flow on open, the way the run view does.
+  wfFitEditor(wfEditor, '#wf-canvas', graph);
+  try { $('#wf-name-input').focus(); } catch (_) {}
+  wfBuilderReady = true;
 }
 
 // Returns the saved workflow's id. `stay` keeps the builder open (Run saves and
 // then runs, rather than bouncing the user back to the list first).
 async function saveWorkflow(opts = {}) {
+  if (!wfEditor || !wfBuilderReady) { toast('The canvas is not ready yet', 'error'); return null; }
   const name = (($('#wf-name-input') || {}).value || '').trim();
   if (!name) { toast('Workflow needs a name', 'error'); return null; }
   const graph = wfExportGraph();
@@ -2953,9 +2981,17 @@ function wfResetRunUi(workflow) {
 async function runWorkflow(workflowId) {
   const workflow = workflowsCache.find((w) => w.id === workflowId);
   if (!workflow) return;
+  if (activeRunId) { toast('A workflow is already running', 'info'); wfShowView('run'); return; }
   wfResetRunUi(workflow);
   const res = await window.husk.workflows.run(workflowId);
-  if (!res || !res.ok) { toast(res ? res.error : 'Could not start workflow', 'error'); wfShowView('list'); return; }
+  if (!res || !res.ok) {
+    toast((res && res.error) || 'Could not start workflow', 'error');
+    // The main process may be running something this window lost track of, so
+    // adopt it rather than dropping the user on a list that says nothing.
+    const adopted = await wfReattachRun();
+    if (!adopted) { wfShowView('list'); paintWorkflowList(); }
+    return;
+  }
   activeRunId = res.runId;
   wfLastRunId = res.runId;
 }
@@ -2965,6 +3001,7 @@ async function runWorkflow(workflowId) {
 async function wfOpenRun(workflowId, run) {
   const workflow = workflowsCache.find((w) => w.id === workflowId);
   if (!workflow || !run) return;
+  if (activeRunId) { toast('A workflow is running; watch it instead', 'info'); wfShowView('run'); return; }
   wfClearTimers();
   wfRunWorkflow = workflow;
   activeRunId = null;
@@ -2981,11 +3018,16 @@ async function wfOpenRun(workflowId, run) {
   wfShowView('run');
   wfBuildRunCanvas(workflow);
 
-  (run.steps || []).forEach((st) => {
+  const known = new Set(((workflow.graph && workflow.graph.nodes) || []).map((n) => n.id));
+  const matched = (run.steps || []).filter((st) => known.has(st.nodeId));
+  matched.forEach((st) => {
     wfNodeStatus[st.nodeId] = st.status;
     wfSetNodeState(st.nodeId, st.status);
   });
   (run.edgesTaken || []).forEach((e) => wfPulseEdge(e.from, e.to));
+  if ((run.steps || []).length && !matched.length) {
+    toast('This run was recorded before the flow was changed, so its steps no longer line up', 'info');
+  }
   (run.steps || []).forEach((st) => {
     const el = wfRunNodeEl(st.nodeId);
     const t = el && el.querySelector(`[data-timer="${CSS.escape(st.nodeId)}"]`);

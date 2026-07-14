@@ -286,3 +286,72 @@ test('running from the builder saves first, then runs', async () => {
     await app.close();
   }
 });
+
+test('editing a flow keeps its step ids, so run history stays attached', async () => {
+  test.setTimeout(120000);
+  const env = setup();
+  const wfFile = path.join(env.homeDir, '.config', 'husk', 'workflows.json');
+  const before = JSON.parse(fs.readFileSync(wfFile, 'utf8'))[0].graph.nodes.map((n) => n.id);
+
+  const app = await launch(env);
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await win.waitForLoadState('domcontentloaded');
+    await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20000 });
+    await win.evaluate(() => setPage('workflows'));
+    await win.waitForSelector('#wf-grid .wf-card', { timeout: 15000 });
+
+    // Open it in the builder and save it untouched.
+    await win.click('#wf-grid .wf-edit-btn');
+    await win.waitForSelector('#wf-canvas .drawflow-node', { timeout: 10000 });
+    await win.click('#btn-save-workflow');
+    await win.waitForSelector('#wf-list-view:not([hidden])', { timeout: 10000 });
+
+    const after = JSON.parse(fs.readFileSync(wfFile, 'utf8'))[0].graph.nodes.map((n) => n.id);
+    // Drawflow numbers its own nodes 1..n. If those leak into the saved graph the
+    // ids change on every save and old runs point at the wrong steps.
+    expect(after.sort()).toEqual(before.sort());
+    expect(after.some((id) => /^\d+$/.test(id))).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+test('a second run is refused while one is in flight', async () => {
+  test.setTimeout(120000);
+  const app = await launch(setup());
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await openRun(win);
+    await win.waitForFunction(() => document.querySelector('#wf-run-canvas .wf-rn-node.is-running'), null, { timeout: 20000 });
+    const first = await win.evaluate(() => activeRunId);
+
+    // Ask the main process directly: it must refuse, not start a second agent.
+    const second = await win.evaluate(() => window.husk.workflows.run('wf-test'));
+    expect(second.ok).toBe(false);
+    expect(second.error).toMatch(/already running/i);
+    expect(await win.evaluate(() => activeRunId)).toBe(first);
+
+    // ...and the flow it refused for is still the one running.
+    expect(second.runId).toBe(first);
+  } finally {
+    await app.close();
+  }
+});
+
+test('a running workflow cannot be deleted out from under itself', async () => {
+  test.setTimeout(120000);
+  const app = await launch(setup());
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await openRun(win);
+    await win.waitForFunction(() => document.querySelector('#wf-run-canvas .wf-rn-node.is-running'), null, { timeout: 20000 });
+    const res = await win.evaluate(() => window.husk.workflows.delete('wf-test'));
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/running/i);
+    const still = await win.evaluate(() => window.husk.workflows.list());
+    expect(still.length).toBe(1);
+  } finally {
+    await app.close();
+  }
+});
