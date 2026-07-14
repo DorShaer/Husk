@@ -5866,30 +5866,39 @@ input[type="checkbox"]:disabled {
   padding-top: var(--sp-top-offset, 64px);
 }
 .sp-toggle {
-  /* A clean rounded handle on the panel's left edge. It uses the sidebar's
-     chevron icon, but with a subtle chip background + border + shadow so it
-     reads as a control attached to the panel, not a stray arrow floating over
-     the chat. Vertically centered on the STATUS header; straddles the border
-     so it stays usable when the panel collapses to a sliver. */
-  position: absolute; top: calc(var(--sp-top-offset, 64px) + 6px); left: -14px; z-index: 6;
-  width: 28px; height: 28px;
-  background: var(--bg-1);
-  border: 1px solid var(--line-2);
+  /* Expanded: a quiet ghost button tucked into the panel's top-right corner,
+     aligned with the STATUS header, so it reads as part of the card rather than
+     a handle hanging off the edge. Collapsed (below) it re-centers in the sliver
+     so it stays reachable when the header is hidden. */
+  position: absolute; top: calc(var(--sp-top-offset, 64px) + 4px); right: 10px; left: auto; z-index: 6;
+  width: 26px; height: 26px;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--text-3); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
-.sp-toggle:hover { background: var(--bg-2); color: var(--text); border-color: var(--line-3); }
+.sp-toggle:hover { background: var(--bg-2); color: var(--text); border-color: var(--line-2); }
+/* Collapsed: the header is hidden and the panel is a 28px sliver, so float the
+   button centered in it with a chip background so it is obvious and clickable. */
+body[data-status="collapsed"] .sp-toggle {
+  top: calc(var(--sp-top-offset, 64px) + 6px);
+  left: 50%; right: auto; transform: translateX(-50%);
+  background: var(--bg-1);
+  border-color: var(--line-2);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+body[data-status="collapsed"] .sp-toggle:hover { background: var(--bg-2); }
 .sp-toggle svg {
   width: 16px; height: 16px; display: block;
   transition: transform var(--motion-base) var(--ease);
 }
 .sp-tiny { font-size: 12px; line-height: 1.4; padding-top: 4px; }
 .sp-head {
-  display: flex; align-items: center; justify-content: center;
-  padding: 6px 16px 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  /* Room on the right so the STATUS label never runs under the corner toggle. */
+  padding: 6px 40px 8px 16px;
   border-bottom: 1px solid var(--line);
 }
 .sp-head-label {
