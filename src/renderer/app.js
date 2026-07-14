@@ -2192,7 +2192,7 @@ function paintWorkflowList() {
           </button>
         </div>
         ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
-        <div class="wf-card-graph">${wfMiniGraph(w.graph, runs[0])}</div>
+        <div class="wf-card-graph"${runs.length ? ` data-open-run="${escapeAttr(w.id)}" title="Open the last run"` : ''}>${wfMiniGraph(w.graph, runs[0])}</div>
         <div class="wf-card-status">${runs.length
           ? `<button class="wf-lr-btn" data-open-run="${escapeAttr(w.id)}" title="Open the last run">${wfLastRunPill(runs)}</button>`
           : '<span class="wf-lr is-never"><i></i>Never run</span>'}</div>
@@ -2206,6 +2206,7 @@ function paintWorkflowList() {
         </div>
         <div class="wf-card-actions">
           <button class="ghost-link wf-edit-btn" data-id="${escapeAttr(w.id)}">Edit</button>
+          ${runs.length ? `<button class="ghost-link wf-last-btn" data-open-run="${escapeAttr(w.id)}">Last run</button>` : ''}
           <button class="card-cta wf-run-btn" data-id="${escapeAttr(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>`;
@@ -3091,7 +3092,17 @@ function wfStartNodeTimer(nodeId, startedAt) {
 
 // ─── Run events ──────────────────────────────────────────────────────────────
 
+let wfAdopting = false;
+async function wfAdoptIfStray(runId) {
+  if (activeRunId || wfAdopting) return;
+  wfAdopting = true;
+  try { await wfReattachRun(); } finally { wfAdopting = false; }
+}
+
 window.husk.workflows.onNodeStart((d) => {
+  // A run we are not watching is still a run: pick it up rather than showing a
+  // graph that never moves until the user reloads.
+  if (!activeRunId) { wfAdoptIfStray(d.runId); return; }
   if (d.runId !== activeRunId) return;
   wfRunCurrentNode = d.nodeId;
   wfSetNodeState(d.nodeId, 'running');
@@ -3187,8 +3198,19 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
   setPage('chat');
   $('#chat-empty').classList.remove('show');
   const tab = await openNewChatTab({ skipWelcome: true });
-  const primer = `Here is the output of the workflow step "${node.name || 'Step'}":\n\n${body}\n\n`;
-  setTimeout(() => { try { window.husk.pty.write(primer, tab.id); } catch (_) {} }, 700);
+  const primer = `Here is the output of the workflow step "${node.name || 'Step'}":\n\n${body}`;
+  // Bracketed paste: the agent's TUI reads a bare newline as "send", so writing
+  // this raw would submit the text a line at a time. Wrapped, it lands in the
+  // prompt as one block the user can still edit.
+  const paste = `\x1b[200~${primer.replace(/\r/g, '')}\x1b[201~`;
+  const deliver = (attempt = 0) => {
+    try { window.husk.pty.write(paste, tab.id); } catch (_) {
+      if (attempt < 3) { setTimeout(() => deliver(attempt + 1), 600); return; }
+    }
+    toast('Step output pasted into a new chat', 'success');
+  };
+  // The agent needs a moment to draw its prompt before it can accept a paste.
+  setTimeout(() => deliver(), 1200);
 });
 
 

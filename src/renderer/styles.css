@@ -7643,6 +7643,7 @@ kbd {
 .wf-rn::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
   background: var(--line-2);
+  border-radius: 14px 14px 0 0;
   transition: background .3s var(--ease-out);
 }
 .wf-rn-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
@@ -7964,6 +7965,9 @@ kbd {
   border: 1px solid var(--line-2);
   box-shadow: var(--elev-2);
   backdrop-filter: blur(12px);
+  /* The step bar is a square strip; without this it spills past the rounded
+     corners of the card it sits in. */
+  overflow: hidden;
   transition: transform .2s var(--ease-out), box-shadow .2s var(--ease-out), border-color .2s var(--ease-out);
 }
 .wf-canvas .drawflow .drawflow-node:hover { transform: translateY(-2px); box-shadow: var(--elev-3); border-color: var(--line-3); }
@@ -8017,3 +8021,6 @@ kbd {
 .wf-lr-btn:hover .wf-lr { text-decoration: underline; text-underline-offset: 2px; }
 /* Fit maths assumes the canvas scales from its top-left corner. */
 .wf-canvas .drawflow { transform-origin: 0 0; }
+.wf-card-graph[data-open-run] { cursor: pointer; }
+.wf-card-graph[data-open-run]:hover { border-color: var(--line-3); }
+.wf-last-btn { margin-right: auto; }
