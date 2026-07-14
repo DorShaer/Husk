@@ -534,16 +534,12 @@ body[data-rail="expanded"] #main { grid-template-columns: 232px 1fr 380px; }
 /* Status / detail variants. */
 body[data-detail="open"] #main { grid-template-columns: 48px 1fr 460px; }
 body[data-detail="open"] #status-panel { display: none; }
-body[data-status="collapsed"] #main { grid-template-columns: 48px 1fr 28px; }
+body[data-status="collapsed"] #main { grid-template-columns: 48px 1fr 0; }
 body[data-detail="open"][data-status="collapsed"] #main { grid-template-columns: 48px 1fr 460px; }
 body[data-rail="expanded"][data-detail="open"] #main { grid-template-columns: 232px 1fr 460px; }
-body[data-rail="expanded"][data-status="collapsed"] #main { grid-template-columns: 232px 1fr 28px; }
+body[data-rail="expanded"][data-status="collapsed"] #main { grid-template-columns: 232px 1fr 0; }
 body[data-rail="expanded"][data-detail="open"][data-status="collapsed"] #main { grid-template-columns: 232px 1fr 460px; }
-body[data-status="collapsed"] #status-panel .sp-head,
-body[data-status="collapsed"] #status-panel #sp-content,
-body[data-status="collapsed"] #status-panel .sp-foot { display: none; }
-body[data-status="collapsed"] #status-panel { background: var(--bg-2); }
-body[data-status="collapsed"] .sp-toggle svg { transform: rotate(180deg); }
+body[data-status="collapsed"] #status-panel { display: none; }
 
 /* ─── Rail ──────────────────────────────────────────────────────────────── */
 
@@ -5880,25 +5876,14 @@ input[type="checkbox"]:disabled {
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 .sp-toggle:hover { background: var(--bg-2); color: var(--text); border-color: var(--line-2); }
-/* Collapsed: the header is hidden and the panel is a 28px sliver, so float the
-   button centered in it with a chip background so it is obvious and clickable. */
-body[data-status="collapsed"] .sp-toggle {
-  top: calc(var(--sp-top-offset, 64px) + 6px);
-  left: 50%; right: auto; transform: translateX(-50%);
-  background: var(--bg-1);
-  border-color: var(--line-2);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-}
-body[data-status="collapsed"] .sp-toggle:hover { background: var(--bg-2); }
 .sp-toggle svg {
   width: 16px; height: 16px; display: block;
   transition: transform var(--motion-base) var(--ease);
 }
 .sp-tiny { font-size: 12px; line-height: 1.4; padding-top: 4px; }
 .sp-head {
-  display: flex; align-items: center; justify-content: space-between;
-  /* Room on the right so the STATUS label never runs under the corner toggle. */
-  padding: 6px 40px 8px 16px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 6px 16px 8px;
   border-bottom: 1px solid var(--line);
 }
 .sp-head-label {
@@ -8045,3 +8030,11 @@ kbd {
 .wf-np-model-refresh:hover { color: var(--text); background: var(--bg-3); }
 .wf-np-model-custom { margin-top: 6px; }
 .wf-np-model-hint { margin-top: 5px; font-size: 10.5px; color: var(--text-3); line-height: 1.35; }
+
+/* ── Top-bar status toggle ─────────────────────────────────────────────────── */
+.iconbtn-square { padding: 0; width: 32px; display: inline-grid; place-items: center; }
+.iconbtn-square svg { width: 16px; height: 16px; }
+#btn-status-toggle svg rect { transition: fill var(--motion-fast) var(--ease); }
+/* Open: the right pane of the glyph fills, echoing the visible panel. */
+body:not([data-status="collapsed"]) #btn-status-toggle { color: var(--text); background: var(--bg-2); border-color: var(--line-2); }
+body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--accent); }

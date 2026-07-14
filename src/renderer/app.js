@@ -1411,16 +1411,19 @@ function syncStatusToggleTitle() {
 }
 // Rail is permanently icon-only.
 
-const spToggle = $('#sp-toggle');
-if (spToggle) {
-  spToggle.addEventListener('click', async () => {
-    const collapsed = document.body.dataset.status === 'collapsed';
-    document.body.dataset.status = collapsed ? 'expanded' : 'collapsed';
-    syncStatusToggleTitle();
-    cfg = await window.husk.config.set({ statusCollapsed: !collapsed });
-    setTimeout(fitNow, 200);
-  });
+async function toggleStatusPanel() {
+  const collapsed = document.body.dataset.status === 'collapsed';
+  document.body.dataset.status = collapsed ? 'expanded' : 'collapsed';
+  syncStatusToggleTitle();
+  cfg = await window.husk.config.set({ statusCollapsed: !collapsed });
+  setTimeout(fitNow, 200);
 }
+// The in-panel chevron collapses; the top-bar button collapses too and is the
+// way back once the panel is hidden entirely.
+const spToggle = $('#sp-toggle');
+if (spToggle) spToggle.addEventListener('click', toggleStatusPanel);
+const topStatusToggle = $('#btn-status-toggle');
+if (topStatusToggle) topStatusToggle.addEventListener('click', toggleStatusPanel);
 
 // ─── Stats + status bar ──────────────────────────────────────────────────────────
 async function refreshStats() {
