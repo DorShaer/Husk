@@ -104,11 +104,24 @@ function createProgressMeter(opts = {}) {
       }
     }
 
-    // Loop accrual happens only while the diff is frozen (progress above
-    // resets it in the same tick if the diff just changed).
+    // A distinct action is also forward progress. The diff is not the only way
+    // a run moves: a read-only task (audit, review, report) never changes the
+    // workspace, but reading a new file or running a new command is real work.
+    // So a NEW action signature resets the waste timers exactly like a diff
+    // change, while the SAME action repeated accrues the loop count. This is
+    // what keeps a legitimate audit from being read as spinning: spinning now
+    // means loud, spending, AND doing the same thing, not merely that no files
+    // changed. The action signature hashes only the action's own fields (tool,
+    // command, path), so it stays stable across a genuine repeat.
     if (typeof input.signature === 'string' && input.signature.length) {
-      if (input.signature === lastSignature) repeatCount += 1;
-      else { lastSignature = input.signature; repeatCount = 1; }
+      if (input.signature === lastSignature) {
+        repeatCount += 1;
+      } else {
+        lastSignature = input.signature;
+        repeatCount = 1;
+        lastProgressAt = now;
+        tokensAtProgress = curTokens;
+      }
     }
 
     return state(now);

@@ -41,18 +41,38 @@ function haltKinds() {
   return Audit.readAuditLog(store, SID).records.map((r) => r.kind).filter((k) => k.startsWith('halt_'));
 }
 
-test('spinning: frozen diff + token burn past 5m halts with stall/spinning', () => {
+test('spinning: same action repeated + token burn past 5m halts with stall/spinning', () => {
   const runner = start({ governor: true, caps: BIG_CAPS });
   runner.reportProgress('files=1;churn=10');            // diff baseline at T0
+  // The same command re-run slowly, spaced so the 4x loop count never trips,
+  // with tokens climbing the whole time and the diff never advancing. This is
+  // busy-stall: loud, spending, and doing the same thing.
   clock = T0 + 1000;
+  runner.recordEvent({ kind: 'tool_use', tokens: { input: 1000, output: 1000 }, payload: { command: 'retry' } });
+  clock = T0 + 3 * MIN;
   runner.recordEvent({ kind: 'tool_use', tokens: { input: 4000, output: 4000 }, payload: { command: 'retry' } });
-  clock = T0 + 6 * MIN;                                  // 6 min frozen, 8000 tokens burned
+  clock = T0 + 6 * MIN;                                  // still frozen, well past 6000 tokens
   runner.tickClock();
   const st = runner.getState();
   assert.equal(st.status, 'halted');
   assert.equal(st.haltReason, 'stall');
   assert.equal(st.haltDetail.signal, 'spinning');
   assert.ok(haltKinds().includes('halt_stall'));
+});
+
+test('NO false-kill: a read-only audit reading distinct files is not spinning', () => {
+  const runner = start({ governor: true, caps: BIG_CAPS });
+  runner.reportProgress('files=0;churn=0');             // diff baseline; nothing changes
+  // Ten minutes of reading a DIFFERENT file each minute, tokens climbing, the
+  // workspace never changing. This is a legitimate audit, not waste.
+  for (let i = 0; i < 10; i++) {
+    clock = T0 + i * MIN;
+    runner.recordEvent({ kind: 'tool_use', tokens: { input: 3000, output: 3000 }, payload: { tool: 'Read', file_path: `src/mod-${i}.js` } });
+    runner.tickClock();
+  }
+  clock = T0 + 10 * MIN;
+  runner.tickClock();
+  assert.equal(runner.getState().status, 'running');   // never halted
 });
 
 test('loop: four identical actions with no progress halt with stall/loop', () => {
