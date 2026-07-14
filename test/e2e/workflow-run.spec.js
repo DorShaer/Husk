@@ -10,9 +10,10 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FAKE_AGENT = [
   '#!/usr/bin/env bash',
   `echo '{"type":"system","subtype":"init","model":"fake-1"}'`,
-  'sleep 0.8',
+  'sleep 0.3',
   `echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/main.js"}}]}}'`,
-  'sleep 1.2',
+  '# When gated, hold here (node stays running) until the test releases the file.',
+  'if [ -n "$HUSK_GATE" ]; then while [ ! -f "$HUSK_GATE" ]; do sleep 0.1; done; else sleep 0.9; fi',
   `echo '{"type":"assistant","message":{"content":[{"type":"text","text":"hello from the fake agent"}]}}'`,
   `echo '{"type":"result","subtype":"success","duration_ms":900,"result":"hello from the fake agent"}'`,
   '',
@@ -42,12 +43,13 @@ function setup() {
   return { homeDir, binDir };
 }
 
-function launch({ homeDir, binDir }) {
+function launch({ homeDir, binDir }, extraEnv = {}) {
   return electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
     env: {
       ...process.env,
+      ...extraEnv,
       HOME: homeDir,
       USERPROFILE: homeDir,
       ELECTRON_DISABLE_SANDBOX: '1',
@@ -68,7 +70,9 @@ async function openRun(win) {
 
 test('the run plays out on the graph and each node has its own terminal', async () => {
   test.setTimeout(120000);
-  const app = await launch(setup());
+  const env = setup();
+  const gate = path.join(env.homeDir, 'release-gate');
+  const app = await launch(env, { HUSK_GATE: gate });
   try {
     const win = await app.firstWindow({ timeout: 30_000 });
     await openRun(win);
@@ -106,6 +110,8 @@ test('the run plays out on the graph and each node has its own terminal', async 
     expect(post.hidden).toBe(true);    // the terminal actually closed
     expect(post.run).toBe(pre.run);    // ...and closing it did NOT stop the run
 
+    // Release the gate so the run finishes and the rest can be observed.
+    fs.writeFileSync(gate, '1');
     await win.waitForFunction(() => document.querySelector('#wf-run-canvas .connection.is-taken'), null, { timeout: 40000 });
 
     await win.waitForFunction(() => {
