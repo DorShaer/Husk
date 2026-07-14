@@ -4774,12 +4774,55 @@ ipcMain.handle('profiles:list', () => getProfiles());
 // ─── Workflows ────────────────────────────────────────────────────────────────
 
 const WORKFLOWS_PATH = path.join(CONFIG_DIR, 'workflows.json');
+// Runs outlive the process. Without this a workflow can never say whether it
+// worked last night, which is the first thing anyone wants to know about one.
+const WORKFLOW_RUNS_PATH = path.join(CONFIG_DIR, 'workflow-runs.json');
+const WF_RUNS_MAX = 200;
 
 function loadWorkflows() {
   try {
     if (!fs.existsSync(WORKFLOWS_PATH)) return [];
     return JSON.parse(fs.readFileSync(WORKFLOWS_PATH, 'utf8'));
   } catch (_) { return []; }
+}
+
+function loadWorkflowRuns() {
+  try {
+    if (!fs.existsSync(WORKFLOW_RUNS_PATH)) return [];
+    const list = JSON.parse(fs.readFileSync(WORKFLOW_RUNS_PATH, 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch (_) { return []; }
+}
+
+// Newest first, capped. A summary only: the step scrollbacks stay in memory,
+// since a history of every line every agent ever printed is not worth the disk.
+function recordWorkflowRun(run, workflow) {
+  try {
+    const nodes = ((workflow.graph && workflow.graph.nodes) || []);
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const steps = Object.entries(run.stepStates || {}).map(([id, st]) => ({
+      nodeId: id,
+      name: (byId.get(id) || {}).name || 'Step',
+      status: st.status,
+      ms: st.ms || 0,
+    }));
+    const failed = steps.find((st) => st.status === 'failed');
+    const entry = {
+      id: run.id,
+      workflowId: run.workflowId,
+      workflowName: workflow.name || '',
+      status: run.status,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      ms: run.startedAt ? (new Date(run.finishedAt) - new Date(run.startedAt)) : 0,
+      steps,
+      failedStep: failed ? failed.name : '',
+    };
+    const list = loadWorkflowRuns();
+    list.unshift(entry);
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(WORKFLOW_RUNS_PATH, JSON.stringify(list.slice(0, WF_RUNS_MAX), null, 2), { mode: 0o600 });
+  } catch (_) { /* history is a nicety; never fail a run over it */ }
 }
 
 function saveWorkflows(list) {
@@ -4957,6 +5000,8 @@ ipcMain.handle('workflows:nodeLog', (_e, payload) => {
 // Re-attach to a run already in flight. The renderer can be reloaded (or the
 // user can navigate away and back) while the agent keeps working in the main
 // process; without this the run would continue with nothing watching it.
+ipcMain.handle('workflows:runs', () => ({ ok: true, runs: loadWorkflowRuns() }));
+
 ipcMain.handle('workflows:activeRun', () => {
   const run = [...activeRuns.values()].find((r) => r.status === 'running');
   if (!run) return { ok: true, run: null };
@@ -5058,6 +5103,7 @@ async function executeWorkflow(event, workflow, run) {
     const step = node;
     const stepState = run.stepStates[node.id] || (run.stepStates[node.id] = { status: 'pending', output: '' });
     stepState.status = 'running';
+    stepState.startedAt = Date.now();
     wfEmit(event, 'wf:node:start', { runId: run.id, nodeId: node.id });
 
     const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
@@ -5169,6 +5215,7 @@ async function executeWorkflow(event, workflow, run) {
           activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
         }
         stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
+        stepState.ms = Date.now() - (stepState.startedAt || Date.now());
         stepState.output = resultText;
         wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: nid, status: stepState.status, output: resultText });
         resolve();
@@ -5208,6 +5255,7 @@ async function executeWorkflow(event, workflow, run) {
   if (run.status === 'running') run.status = 'done';
   run.finishedAt = new Date().toISOString();
   run.currentNodeId = null;
+  recordWorkflowRun(run, workflow);
   wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
   // Retire rather than discard: the run's node terminals stay readable after it
   // ends. wfEmit looks the run up in activeRuns, so retire only after emitting.

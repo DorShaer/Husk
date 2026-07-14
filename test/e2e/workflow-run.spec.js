@@ -157,3 +157,51 @@ test('a run in flight is picked back up after a reload', async () => {
     await app.close();
   }
 });
+
+test('a finished run is remembered, and the card reads it back', async () => {
+  test.setTimeout(120000);
+  const env = setup();
+  const runsFile = path.join(env.homeDir, '.config', 'husk', 'workflow-runs.json');
+  expect(fs.existsSync(runsFile)).toBe(false);   // nothing remembered yet
+
+  const app = await launch(env);
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await openRun(win);
+    await win.waitForFunction(() => {
+      const b = document.getElementById('wf-run-status-badge');
+      return b && /Completed/i.test(b.textContent || '');
+    }, null, { timeout: 90000 });
+
+    // The run is on disk, with per-step outcomes.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(fs.existsSync(runsFile)).toBe(true);
+    const runs = JSON.parse(fs.readFileSync(runsFile, 'utf8'));
+    expect(runs.length).toBe(1);
+    expect(runs[0].workflowId).toBe('wf-test');
+    expect(runs[0].status).toBe('done');
+    expect(runs[0].steps.filter((s) => s.status === 'done').length).toBe(2);
+    expect(runs[0].ms).toBeGreaterThan(0);
+
+    // ...and the list reads it back: the card knows it passed.
+    await win.evaluate(() => { activeRunId = null; });
+    await win.evaluate(() => setPage('chat'));
+    await win.evaluate(() => setPage('workflows'));
+    await win.waitForSelector('#wf-grid .wf-card', { timeout: 15000 });
+    const card = await win.evaluate(() => {
+      const c = document.querySelector('#wf-grid .wf-card');
+      return {
+        pill: (c.querySelector('.wf-lr') || {}).textContent || '',
+        dots: c.querySelectorAll('.wf-dot.is-done').length,
+        miniNodes: c.querySelectorAll('.wf-mini-node').length,
+        stats: (document.getElementById('wf-stats') || {}).textContent || '',
+      };
+    });
+    expect(card.pill).toMatch(/Passed/);
+    expect(card.dots).toBe(1);
+    expect(card.miniNodes).toBe(2);        // the flow's shape, drawn on the card
+    expect(card.stats).toMatch(/1 run this week/);
+  } finally {
+    await app.close();
+  }
+});

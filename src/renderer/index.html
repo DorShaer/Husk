@@ -498,12 +498,20 @@
               <div class="page-head-left">
                 <h1 class="page-title">Workflows</h1>
                 <span class="page-sub">chain agents into automated pipelines</span>
+                <span class="wf-stats" id="wf-stats"></span>
               </div>
               <div class="page-head-right">
                 <button class="btn-primary" id="btn-new-workflow">+ New Workflow</button>
               </div>
             </div>
             <div class="page-body">
+              <!-- A run in flight is announced here, with a way straight back into it. -->
+              <aside class="wf-band" id="wf-live-band" hidden>
+                <span class="wf-band-dot"></span>
+                <span class="wf-band-name"></span>
+                <span class="wf-band-meta"></span>
+                <button class="wf-band-btn" id="wf-band-watch">Watch</button>
+              </aside>
               <div id="wf-grid" class="wf-grid"></div>
             </div>
           </div>

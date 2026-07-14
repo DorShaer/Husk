@@ -149,6 +149,7 @@ contextBridge.exposeInMainWorld('husk', {
     // survive a reload and let a node's terminal be opened at any time.
     nodeLog: (runId, nodeId) => ipcRenderer.invoke('workflows:nodeLog', { runId, nodeId }),
     activeRun: () => ipcRenderer.invoke('workflows:activeRun'),
+    runs: () => ipcRenderer.invoke('workflows:runs'),
     onNodeStart: (cb) => ipcRenderer.on('wf:node:start', (_e, d) => cb(d)),
     onNodeActivity: (cb) => ipcRenderer.on('wf:node:activity', (_e, d) => cb(d)),
     onNodeDone: (cb) => ipcRenderer.on('wf:node:done', (_e, d) => cb(d)),

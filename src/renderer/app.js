@@ -2030,6 +2030,10 @@ async function renderWorkflows() {
   const grid = $('#wf-grid');
   if (!grid) return;
   workflowsCache = await window.husk.workflows.list();
+  try {
+    const res = await window.husk.workflows.runs();
+    wfRunsCache = (res && res.ok && res.runs) || [];
+  } catch (_) { wfRunsCache = []; }
   // A run in flight owns this page: opening Workflows while one is going (or
   // after a reload) drops you back into watching it, rather than showing a list
   // that pretends nothing is happening.
@@ -2038,49 +2042,242 @@ async function renderWorkflows() {
   if (adopted) return;
   wfShowView('list');
   paintWorkflowList();
+  wfPaintLiveBand(null);
+}
+
+let wfRunsCache = [];
+
+// ─── Reading a workflow at a glance ──────────────────────────────────────────
+
+function wfRunsFor(id) { return wfRunsCache.filter((r) => r.workflowId === id); }
+
+function wfRelTime(iso) {
+  const t = new Date(iso).getTime();
+  if (!t) return '';
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function wfDur(ms) {
+  const s = Math.round((ms || 0) / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// The flow's own shape, drawn small. A workflow is recognised by its topology,
+// which is why "2 steps" told you nothing. When there is a last run, the steps
+// are coloured by what happened, so the thumbnail carries the outcome too.
+function wfMiniGraph(graph, lastRun) {
+  const nodes = (graph && graph.nodes) || [];
+  const edges = (graph && graph.edges) || [];
+  if (!nodes.length) return '<div class="wf-mini is-empty">no steps yet</div>';
+
+  const W = 250;
+  const H = 74;
+  const PAD = 12;
+  const NW = 26;
+  const NH = 13;
+  const xs = nodes.map((n) => n.x || 0);
+  const ys = nodes.map((n) => n.y || 0);
+  const minX = Math.min(...xs); const maxX = Math.max(...xs);
+  const minY = Math.min(...ys); const maxY = Math.max(...ys);
+  const sx = (maxX - minX) || 1;
+  const sy = (maxY - minY) || 1;
+  // Single row or column flows would otherwise squash into a line.
+  const spanX = (maxX - minX) < 1 ? 1 : sx;
+  const spanY = (maxY - minY) < 1 ? 1 : sy;
+  const px = (n) => PAD + ((n.x || 0) - minX) / spanX * (W - PAD * 2 - NW);
+  const py = (n) => (maxY - minY) < 1
+    ? (H - NH) / 2
+    : PAD + ((n.y || 0) - minY) / spanY * (H - PAD * 2 - NH);
+
+  const statusOf = {};
+  if (lastRun) (lastRun.steps || []).forEach((st) => { statusOf[st.nodeId] = st.status; });
+
+  const pos = {};
+  nodes.forEach((n) => { pos[n.id] = { x: px(n), y: py(n) }; });
+
+  const lines = edges.map((e) => {
+    const a = pos[e.from]; const b = pos[e.to];
+    if (!a || !b) return '';
+    const x1 = a.x + NW; const y1 = a.y + NH / 2;
+    const x2 = b.x; const y2 = b.y + NH / 2;
+    const mx = (x1 + x2) / 2;
+    const taken = lastRun && statusOf[e.from] && statusOf[e.from] !== 'skipped'
+      && statusOf[e.to] && statusOf[e.to] !== 'skipped';
+    return `<path d="M${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" class="wf-mini-edge${taken ? ' is-taken' : ''}" />`;
+  }).join('');
+
+  const boxes = nodes.map((n) => {
+    const p = pos[n.id];
+    const st = statusOf[n.id] || '';
+    return `<rect x="${p.x.toFixed(1)}" y="${p.y.toFixed(1)}" width="${NW}" height="${NH}" rx="4"
+      class="wf-mini-node${st ? ` is-${st}` : ''}" />`;
+  }).join('');
+
+  return `<svg class="wf-mini" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${lines}${boxes}</svg>`;
+}
+
+// The last few outcomes, oldest to newest. The CI trick: reliability in one row.
+function wfHistoryDots(runs) {
+  if (!runs.length) return '<span class="wf-dots-none">not run yet</span>';
+  const recent = runs.slice(0, 8).reverse();
+  return `<span class="wf-dots">${recent.map((r) =>
+    `<i class="wf-dot is-${escapeAttr(r.status)}" title="${escapeAttr(`${r.status} · ${wfRelTime(r.finishedAt)}`)}"></i>`
+  ).join('')}</span>`;
+}
+
+function wfAgentsUsed(graph) {
+  const set = new Set();
+  ((graph && graph.nodes) || []).forEach((n) => {
+    const c = (n.agentCommand || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
+    if (c) set.add(c);
+  });
+  return [...set];
+}
+
+function wfLastRunPill(runs) {
+  if (!runs.length) return '';
+  const r = runs[0];
+  if (r.status === 'done') {
+    return `<span class="wf-lr is-done"><i></i>Passed<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfDur(r.ms))}<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfRelTime(r.finishedAt))}</span>`;
+  }
+  if (r.status === 'failed') {
+    const where = r.failedStep ? ` at "${r.failedStep}"` : '';
+    return `<span class="wf-lr is-failed"><i></i>Failed${escapeHtml(where)}<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfRelTime(r.finishedAt))}</span>`;
+  }
+  return `<span class="wf-lr is-stopped"><i></i>Stopped<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfRelTime(r.finishedAt))}</span>`;
 }
 
 function paintWorkflowList() {
   const grid = $('#wf-grid');
   if (!grid) return;
+
+  // Header stats: what this page is worth at a glance.
+  const statsEl = $('#wf-stats');
+  if (statsEl) {
+    const week = wfRunsCache.filter((r) => Date.now() - new Date(r.finishedAt).getTime() < 7 * 864e5);
+    const passed = week.filter((r) => r.status === 'done').length;
+    const rate = week.length ? Math.round((passed / week.length) * 100) : null;
+    const bits = [`${workflowsCache.length} flow${workflowsCache.length === 1 ? '' : 's'}`];
+    if (week.length) {
+      bits.push(`${week.length} run${week.length === 1 ? '' : 's'} this week`);
+      bits.push(`${rate}% passed`);
+    }
+    statsEl.textContent = bits.join('  ·  ');
+  }
+
   if (!workflowsCache.length) {
-    // eslint-disable-next-line no-unsanitized/property
+    // eslint-disable-next-line no-unsanitized/property -- static markup
     grid.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.workflows}</div><div class="es-title">No workflows yet</div><div class="es-msg">Build a pipeline by chaining agents together. Each step feeds its output to the next.</div></div>`;
     return;
   }
-  // eslint-disable-next-line no-unsanitized/property
-  grid.innerHTML = workflowsCache.map((w) => `
-    <div class="wf-card" data-id="${escapeHtml(w.id)}">
-      <button class="card-delete wf-card-delete" data-id="${escapeHtml(w.id)}" data-name="${escapeHtml(w.name)}" title="Delete workflow" aria-label="Delete workflow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
-      <div class="wf-card-head">
-        <div class="wf-card-title">${escapeHtml(w.name)}</div>
-        <div class="wf-card-meta">
-          ${(() => { const n = ((w.graph && w.graph.nodes) || []).length; return `<span class="wf-card-steps-count">${n} step${n !== 1 ? 's' : ''}</span>`; })()}
-          ${w.trigger === 'ai-suggested' ? `<span class="wf-card-trigger-pill">AI suggested</span>` : ''}
+
+  // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
+  grid.innerHTML = workflowsCache.map((w) => {
+    const runs = wfRunsFor(w.id);
+    const n = ((w.graph && w.graph.nodes) || []).length;
+    const agents = wfAgentsUsed(w.graph);
+    return `
+      <div class="wf-card" data-id="${escapeAttr(w.id)}">
+        <div class="wf-card-head">
+          <div class="wf-card-title">${escapeHtml(w.name)}</div>
+          <button class="wf-card-menu" data-menu="${escapeAttr(w.id)}" title="More" aria-label="More actions">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          </button>
         </div>
-      </div>
-      ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
-      <div class="wf-card-actions">
-        <button class="ghost-link wf-edit-btn" data-id="${escapeHtml(w.id)}">Edit</button>
-        <button class="card-cta wf-run-btn" data-id="${escapeHtml(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
-      </div>
-    </div>
-  `).join('');
-  grid.querySelectorAll('.wf-run-btn').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); runWorkflow(e.currentTarget.dataset.id); }));
-  grid.querySelectorAll('.wf-edit-btn').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openWorkflowBuilder(e.currentTarget.dataset.id); }));
-  grid.querySelectorAll('.wf-card-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteWorkflow(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
+        ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
+        <div class="wf-card-graph">${wfMiniGraph(w.graph, runs[0])}</div>
+        <div class="wf-card-status">${wfLastRunPill(runs) || '<span class="wf-lr is-never"><i></i>Never run</span>'}</div>
+        <div class="wf-card-foot">
+          ${wfHistoryDots(runs)}
+          <div class="wf-card-tags">
+            ${agents.map((a) => `<span class="wf-tag">${escapeHtml(a)}</span>`).join('')}
+            <span class="wf-tag is-quiet">${n} step${n !== 1 ? 's' : ''}</span>
+            ${w.trigger === 'ai-suggested' ? '<span class="wf-tag is-ai">AI</span>' : ''}
+          </div>
+        </div>
+        <div class="wf-card-actions">
+          <button class="ghost-link wf-edit-btn" data-id="${escapeAttr(w.id)}">Edit</button>
+          <button class="card-cta wf-run-btn" data-id="${escapeAttr(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+        </div>
+      </div>`;
+  }).join('');
+
+  grid.querySelectorAll('.wf-run-btn').forEach((btn) => btn.addEventListener('click', (e) => {
+    e.stopPropagation(); runWorkflow(e.currentTarget.dataset.id);
+  }));
+  grid.querySelectorAll('.wf-edit-btn').forEach((btn) => btn.addEventListener('click', (e) => {
+    e.stopPropagation(); openWorkflowBuilder(e.currentTarget.dataset.id);
+  }));
+  grid.querySelectorAll('.wf-card-menu').forEach((btn) => btn.addEventListener('click', (e) => {
+    e.stopPropagation(); wfOpenCardMenu(e.currentTarget, e.currentTarget.dataset.menu);
+  }));
+  grid.querySelectorAll('.wf-card').forEach((card) => card.addEventListener('click', () => {
+    openWorkflowBuilder(card.dataset.id);
+  }));
 }
 
-async function deleteWorkflow(id, name) {
-  const confirmed = await openConfirmDialog({
-    title: 'Delete workflow?',
-    bodyHtml: `Permanently delete <strong>${escapeHtml(name || 'this workflow')}</strong>.`,
-    confirmLabel: 'Delete workflow',
+// Duplicate / delete, on the card rather than a permanent delete button that
+// invites the wrong click.
+function wfOpenCardMenu(anchor, id) {
+  document.querySelectorAll('.wf-menu-pop').forEach((m) => m.remove());
+  const w = workflowsCache.find((x) => x.id === id);
+  if (!w) return;
+  const pop = document.createElement('div');
+  pop.className = 'wf-menu-pop';
+  pop.innerHTML = `
+    <button data-act="duplicate">Duplicate</button>
+    <button data-act="delete" class="is-danger">Delete</button>`;
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.top = `${r.bottom + 6}px`;
+  pop.style.left = `${Math.max(8, r.right - pop.offsetWidth)}px`;
+
+  const close = () => pop.remove();
+  pop.querySelector('[data-act="duplicate"]').addEventListener('click', async () => {
+    close();
+    const copy = JSON.parse(JSON.stringify(w));
+    delete copy.id;
+    copy.name = `${w.name} copy`;
+    await window.husk.workflows.create(copy);
+    await renderWorkflows();
+    toast('Workflow duplicated', 'success');
   });
-  if (!confirmed) return;
-  await window.husk.workflows.delete(id);
-  workflowsCache = workflowsCache.filter((w) => w.id !== id);
-  paintWorkflowList();
+  pop.querySelector('[data-act="delete"]').addEventListener('click', async () => {
+    close();
+    const ok = await openConfirmDialog({
+      title: 'Delete this workflow?',
+      bodyHtml: `<strong>${escapeHtml(w.name)}</strong> will be removed. Its run history is kept.`,
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+    });
+    if (!ok) return;
+    await window.husk.workflows.delete(id);
+    workflowsCache = workflowsCache.filter((x) => x.id !== id);
+    paintWorkflowList();
+    toast('Workflow deleted', 'success');
+  });
+  setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
+}
+
+// A run in flight is never lost: it is announced on the list too, with a way
+// straight back into it.
+function wfPaintLiveBand(run) {
+  const band = $('#wf-live-band');
+  if (!band) return;
+  if (!run) { band.hidden = true; return; }
+  const w = workflowsCache.find((x) => x.id === run.workflowId);
+  const total = w ? wfAllNodes(w.graph).length : 0;
+  const done = Object.values(run.stepStates || {}).filter((s) => s.status !== 'pending' && s.status !== 'running').length;
+  const nameEl = band.querySelector('.wf-band-name');
+  const metaEl = band.querySelector('.wf-band-meta');
+  if (nameEl) nameEl.textContent = (w && w.name) || 'Workflow';
+  if (metaEl) metaEl.textContent = `step ${Math.min(done + 1, total || 1)} of ${total || 1}`;
+  band.hidden = false;
 }
 
 // ─── Canvas builder (Drawflow) ──────────────────────────────────────────────
@@ -2838,6 +3035,12 @@ window.husk.workflows.onRunDone((d) => {
     badge.className = `wf-run-status-badge ${cls}`;
   }
   if (wfTermNodeId) wfRenderTermStatus();
+  // The run just became history: pull it in so the card behind this view is
+  // already correct when the user goes back.
+  window.husk.workflows.runs().then((res) => {
+    wfRunsCache = (res && res.ok && res.runs) || wfRunsCache;
+    if (!$('#wf-list-view').hidden) paintWorkflowList();
+  }).catch(() => {});
 });
 
 // ─── Terminal controls ───────────────────────────────────────────────────────
@@ -2873,7 +3076,20 @@ $('#btn-wf-builder-back') && $('#btn-wf-builder-back').addEventListener('click',
 $('#btn-save-workflow') && $('#btn-save-workflow').addEventListener('click', saveWorkflow);
 $('#wf-name-input') && $('#wf-name-input').addEventListener('input', wfSyncNameCount);
 $('#btn-add-wf-node') && $('#btn-add-wf-node').addEventListener('click', () => wfAddCanvasNode(null));
-$('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => { wfShowView('list'); });
+$('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => {
+  wfShowView('list');
+  paintWorkflowList();
+  // Leaving the run does not end it, so say so on the list.
+  wfPaintLiveBand(activeRunId ? { workflowId: (wfRunWorkflow || {}).id, stepStates: wfNodeStatusAsStates() } : null);
+});
+$('#wf-band-watch') && $('#wf-band-watch').addEventListener('click', () => { wfShowView('run'); });
+
+// The canvas holds node state as a flat map; the band wants the run's shape.
+function wfNodeStatusAsStates() {
+  const out = {};
+  Object.entries(wfNodeStatus).forEach(([id, status]) => { out[id] = { status }; });
+  return out;
+}
 // Node config panel
 ['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt'].forEach((id) => {
   const el = $(`#${id}`);
