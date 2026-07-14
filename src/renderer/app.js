@@ -8485,6 +8485,9 @@ const AUTOPILOT_PRESETS = [
 ];
 
 function renderAutopilotPage() {
+  // The dollar figure means different things on an API key vs a plan; learn
+  // which so the label is honest before any numbers paint.
+  refreshAutBilling();
   // Static parts: presets gallery. Re-rendered every visit so it
   // refreshes with workspace switches without bookkeeping.
   const grid = $('#aut-preset-grid');
@@ -9899,32 +9902,63 @@ function updateAutopilotBudget(b) {
   const tv = $('#aut-page-val-time');
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
   updateRing('aut-page-ring-time', caps.minutes > 0 ? elapsedMin / caps.minutes : 0, meters[0]);
-  const tk = Number(b.totalTokens) || 0;
-  // The token figure is read from the agent's own status line and is an
-  // approximation (per-turn / context-relative depending on the agent),
-  // so mark it as approximate rather than presenting an exact count.
+  const tk = Number(b.totalTokens) || 0;          // fresh work, for the cap ring
+  const processed = displayProcessed(b);          // every tier, for the headline
   const approx = !!(b.tokensReported || b.tokensEstimated);
   const partial = !!b.tokensPartial;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    tv2.textContent = (approx && tk > 0 ? '~' : '') + formatTokens(tk);
+    tv2.textContent = (approx && processed > 0 ? '~' : '') + formatTokens(processed);
     tv2.title = partial
       ? 'Partial token accounting: this agent did not expose full input/context totals'
-      : (approx ? 'Approximate, read from the agent status line' : '');
+      : 'Every token the model processed: input + output + cache writes + cache reads.';
   }
   updateRing('aut-page-ring-tokens', caps.tokens > 0 ? tk / caps.tokens : 0, meters[1]);
   const usd = Number(b.dollars) || 0;
   const dv = $('#aut-page-val-dollars');
   if (dv) dv.textContent = formatDollars(usd);
+  applyDollarLabel();
   updateRing('aut-page-ring-dollars', caps.dollars > 0 ? usd / caps.dollars : 0, meters[2]);
 }
+// Billing mode: whether the dollar figure is money the user actually pays
+// (claude on an API key) or a would-be API cost (a Pro/Max plan, which is flat
+// monthly and capped by usage, not billed per token).
+let autBilling = { metered: false, agent: 'claude', hasApiKey: false };
+async function refreshAutBilling() {
+  try { autBilling = await window.husk.autopilot.billingMode() || autBilling; } catch (_) {}
+  applyDollarLabel();
+}
+// Relabel the dollar stat so a plan user is never told they "spent" money they
+// did not. On a plan it is an API-equivalent reference; on an API key it is an
+// estimate of real spend.
+function applyDollarLabel() {
+  const lbl = document.getElementById('aut-page-lbl-dollars');
+  const val = document.getElementById('aut-page-val-dollars');
+  if (lbl) lbl.textContent = autBilling.metered ? 'Est. spend' : 'API-equivalent';
+  if (val) {
+    val.title = autBilling.metered
+      ? 'Estimated from the transcript at API list prices (cache writes 1.25x input, cache reads 0.1x, output ~5x). Close, not a bill.'
+      : `You are on a ${autBilling.agent === 'claude' ? 'Claude plan' : 'plan'}: a flat monthly fee with usage limits, not per-token billing. This is what these tokens would cost via the API, for reference only.`;
+  }
+}
+
+// Total tokens the model actually processed = every tier summed, which is the
+// one figure that equals the breakdown below it. The headline used to be input
+// + output + cache writes and silently dropped cache reads, so it never matched
+// the parts. Cache reads are the bulk (billed at a tenth), so the total is large
+// on purpose; the breakdown shows where it comes from.
+function displayProcessed(b) {
+  return (Number(b.totalTokens) || 0) + (Number(b.cacheReadTokens) || 0);
+}
+
 // Live usage strip across the whole fleet: tokens and spend sum over all
 // runs, time counts from the earliest start, warn when ANY run crosses
 // 80% of a cap.
 function renderUsageStripLive() {
   const caps = autopilotState.caps;
   const meters = document.querySelectorAll('.aut-page-meter');
-  let tokens = 0;
+  let tokens = 0;      // fresh work (input+output+cache write); drives the cap
+  let processed = 0;   // every tier summed; the honest, verifiable headline
   let dollars = 0;
   let anyApprox = false;
   let warnTime = false;
@@ -9937,6 +9971,7 @@ function renderUsageStripLive() {
     if (run.startedAt && (!earliest || run.startedAt < earliest)) earliest = run.startedAt;
     if (!b) continue;
     tokens += Number(b.totalTokens) || 0;
+    processed += displayProcessed(b);
     dollars += Number(b.dollars) || 0;
     brk.input += Number(b.inputTokens) || 0;
     brk.output += Number(b.outputTokens) || 0;
@@ -9955,11 +9990,14 @@ function renderUsageStripLive() {
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    tv2.textContent = (anyApprox && tokens > 0 ? '~' : '') + formatTokens(tokens);
-    tv2.title = brk.partial ? 'Partial token accounting: at least one agent did not expose full input/context totals' : '';
+    tv2.textContent = (anyApprox && processed > 0 ? '~' : '') + formatTokens(processed);
+    tv2.title = brk.partial
+      ? 'Partial token accounting: at least one agent did not expose full input/context totals'
+      : 'Every token the models processed: input + output + cache writes + cache reads. Cache reads are the bulk and bill at a tenth of input.';
   }
   const dv = $('#aut-page-val-dollars');
   if (dv) dv.textContent = formatDollars(dollars);
+  applyDollarLabel();
   if (meters[0]) meters[0].classList.toggle('is-warn', warnTime);
   if (meters[1]) meters[1].classList.toggle('is-warn', warnTokens);
   if (meters[2]) meters[2].classList.toggle('is-warn', warnDollars);

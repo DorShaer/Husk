@@ -183,6 +183,7 @@ contextBridge.exposeInMainWorld('husk', {
   autopilot: {
     start: (opts) => ipcRenderer.invoke('autopilot:start', opts || {}),
     startCollab: (opts) => ipcRenderer.invoke('autopilot:startCollab', opts || {}),
+    billingMode: () => ipcRenderer.invoke('autopilot:billingMode'),
     event: (event) => ipcRenderer.invoke('autopilot:event', event || {}),
     nudge: (payload) => ipcRenderer.invoke('autopilot:nudge', payload || {}),
     cancel: (detail) => ipcRenderer.invoke('autopilot:cancel', detail || {}),

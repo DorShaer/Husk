@@ -4905,6 +4905,20 @@ function buildAgentEnv() {
   return env;
 }
 
+// How the active agent is billed, so the UI can be honest about the dollar
+// figure. Claude bills per token only when ANTHROPIC_API_KEY is set; without it
+// the run goes through a Pro/Max subscription, which is a flat monthly fee with
+// usage limits, not a per-token charge. The other CLIs are metered by their own
+// account, which Husk cannot see, so they are reported as not-metered too.
+ipcMain.handle('autopilot:billingMode', () => {
+  const agent = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
+  const base = agent.split(/[\\/]/).pop();
+  const hasKey = !!(process.env.ANTHROPIC_API_KEY && String(process.env.ANTHROPIC_API_KEY).trim());
+  // Only claude-on-an-API-key is truly pay-per-token in a way Husk can price.
+  const metered = base === 'claude' && hasKey;
+  return { metered, agent: base, hasApiKey: hasKey };
+});
+
 ipcMain.handle('workflows:generateStepPrompt', async (_e, description) => {
   if (!description || typeof description !== 'string') return { ok: false, error: 'description required' };
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
