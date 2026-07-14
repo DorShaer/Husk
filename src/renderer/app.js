@@ -949,7 +949,9 @@ async function openNewChatTab(opts = {}) {
   await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   tab.term.focus();
   maybeShowTrustBanner();
-  if (!(cfg && cfg.skipWelcome)) $('#chat-empty').classList.add('show');
+  // skipWelcome: the caller is about to write into this chat, so painting the
+  // welcome screen for a frame and pulling it straight back reads as a glitch.
+  if (!(cfg && cfg.skipWelcome) && !opts.skipWelcome) $('#chat-empty').classList.add('show');
   // Do not inject the workflow-context primer into a resumed conversation: it
   // would land as a stray message mid-chat. Only fresh chats get it.
   if (!opts.skipContext) {
@@ -2191,7 +2193,9 @@ function paintWorkflowList() {
         </div>
         ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
         <div class="wf-card-graph">${wfMiniGraph(w.graph, runs[0])}</div>
-        <div class="wf-card-status">${wfLastRunPill(runs) || '<span class="wf-lr is-never"><i></i>Never run</span>'}</div>
+        <div class="wf-card-status">${runs.length
+          ? `<button class="wf-lr-btn" data-open-run="${escapeAttr(w.id)}" title="Open the last run">${wfLastRunPill(runs)}</button>`
+          : '<span class="wf-lr is-never"><i></i>Never run</span>'}</div>
         <div class="wf-card-foot">
           ${wfHistoryDots(runs)}
           <div class="wf-card-tags">
@@ -2215,6 +2219,12 @@ function paintWorkflowList() {
   }));
   grid.querySelectorAll('.wf-card-menu').forEach((btn) => btn.addEventListener('click', (e) => {
     e.stopPropagation(); wfOpenCardMenu(e.currentTarget, e.currentTarget.dataset.menu);
+  }));
+  grid.querySelectorAll('[data-open-run]').forEach((btn) => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = e.currentTarget.dataset.openRun;
+    const runs = wfRunsFor(id);
+    if (runs.length) wfOpenRun(id, runs[0]);
   }));
   grid.querySelectorAll('.wf-card').forEach((card) => card.addEventListener('click', () => {
     openWorkflowBuilder(card.dataset.id);
@@ -2494,26 +2504,41 @@ function openWorkflowBuilder(editId) {
     const graph = (existing && existing.graph) ? existing.graph : { nodes: [], edges: [] };
     wfLoadGraph(graph);
     if (!graph.nodes || !graph.nodes.length) wfAddCanvasNode(null, 80, 80);
+    // Frame the whole flow on open, the way the run view does. A graph laid out
+    // wider than the canvas would otherwise open with steps off the edge.
+    wfFitEditor(wfEditor, '#wf-canvas', graph);
     try { $('#wf-name-input').focus(); } catch (_) {}
   }, 50);
 }
 
-async function saveWorkflow() {
+// Returns the saved workflow's id. `stay` keeps the builder open (Run saves and
+// then runs, rather than bouncing the user back to the list first).
+async function saveWorkflow(opts = {}) {
   const name = (($('#wf-name-input') || {}).value || '').trim();
-  if (!name) { toast('Workflow needs a name', 'error'); return; }
+  if (!name) { toast('Workflow needs a name', 'error'); return null; }
   const graph = wfExportGraph();
-  if (!graph.nodes.length) { toast('Add at least one node', 'error'); return; }
+  if (!graph.nodes.length) { toast('Add at least one node', 'error'); return null; }
   const trigger = (($('#wf-trigger-select') || {}).value) || 'manual';
   const payload = { name, graph, trigger };
+  let id = editingWorkflowId;
   if (editingWorkflowId) {
     payload.id = editingWorkflowId;
     await window.husk.workflows.update(payload);
   } else {
-    await window.husk.workflows.create(payload);
+    const res = await window.husk.workflows.create(payload);
+    id = (res && (res.id || (res.workflow && res.workflow.id))) || null;
+    if (id) editingWorkflowId = id;
   }
   workflowsCache = await window.husk.workflows.list();
+  if (!id) {
+    // create() may not hand the id back; find it by name as a fallback.
+    const found = workflowsCache.find((w) => w.name === name);
+    id = found ? found.id : null;
+  }
+  if (opts.stay) return id;
   wfShowView('list');
   paintWorkflowList();
+  return id;
 }
 
 // Run view
@@ -2654,11 +2679,15 @@ window.addEventListener('resize', () => {
   wfFitPending = requestAnimationFrame(() => { wfFitPending = 0; wfFitRunCanvas(wfRunGraph); });
 });
 
-function wfFitRunCanvas(graph) {
-  const host = $('#wf-run-canvas');
+function wfFitRunCanvas(graph) { wfFitEditor(wfRunEditor, '#wf-run-canvas', graph); }
+
+// Frame a whole graph inside its canvas. Shared by the builder and the run view
+// so a flow is laid out the same way in both.
+function wfFitEditor(editor, hostSel, graph) {
+  const host = $(hostSel);
   const pre = host && host.querySelector('.drawflow');
   const nodes = (graph && graph.nodes) || [];
-  if (!host || !pre || !nodes.length) return;
+  if (!editor || !host || !pre || !nodes.length) return;
   const NODE_W = 216;
   const NODE_H = 64;
   const PAD = 28;
@@ -2676,10 +2705,10 @@ function wfFitRunCanvas(graph) {
   // hugging the corner.
   const x = PAD + (bw - w * zoom) / 2 - minX * zoom;
   const y = PAD + (bh - h * zoom) / 2 - minY * zoom;
-  wfRunEditor.zoom = zoom;
-  wfRunEditor.zoom_last_value = zoom;
-  wfRunEditor.canvas_x = x;
-  wfRunEditor.canvas_y = y;
+  editor.zoom = zoom;
+  editor.zoom_last_value = zoom;
+  editor.canvas_x = x;
+  editor.canvas_y = y;
   pre.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
 }
 
@@ -2903,6 +2932,8 @@ let wfLastRunId = null;
 function wfResetRunUi(workflow) {
   wfClearTimers();
   wfRunWorkflow = workflow;
+  const againBtn = $('#btn-run-again');
+  if (againBtn) againBtn.hidden = true;
   const nameEl = $('#wf-run-name');
   const badge = $('#wf-run-status-badge');
   const stopBtn = $('#btn-stop-wf');
@@ -2912,7 +2943,7 @@ function wfResetRunUi(workflow) {
   wfCloseTerm();
   wfShowView('run');
   const hint = $('#wf-run-hint');
-  if (hint) hint.hidden = false;
+  if (hint) { hint.hidden = false; hint.textContent = 'Click a step to watch its terminal'; }
   wfBuildRunCanvas(workflow);
   const total = wfAllNodes(workflow.graph).length;
   wfActiveRun = { total, done: 0 };
@@ -2927,6 +2958,54 @@ async function runWorkflow(workflowId) {
   if (!res || !res.ok) { toast(res ? res.error : 'Could not start workflow', 'error'); wfShowView('list'); return; }
   activeRunId = res.runId;
   wfLastRunId = res.runId;
+}
+
+// The last run, put back on the graph exactly as it ended. The step terminals
+// read from the stored scrollback, so this survives a restart.
+async function wfOpenRun(workflowId, run) {
+  const workflow = workflowsCache.find((w) => w.id === workflowId);
+  if (!workflow || !run) return;
+  wfClearTimers();
+  wfRunWorkflow = workflow;
+  activeRunId = null;
+  wfLastRunId = run.id;
+  wfRunCurrentNode = null;
+
+  const nameEl = $('#wf-run-name');
+  const stopBtn = $('#btn-stop-wf');
+  const againBtn = $('#btn-run-again');
+  if (nameEl) nameEl.textContent = workflow.name;
+  if (stopBtn) stopBtn.hidden = true;
+  if (againBtn) { againBtn.hidden = false; againBtn.dataset.id = workflowId; }
+  wfCloseTerm();
+  wfShowView('run');
+  wfBuildRunCanvas(workflow);
+
+  (run.steps || []).forEach((st) => {
+    wfNodeStatus[st.nodeId] = st.status;
+    wfSetNodeState(st.nodeId, st.status);
+  });
+  (run.edgesTaken || []).forEach((e) => wfPulseEdge(e.from, e.to));
+  (run.steps || []).forEach((st) => {
+    const el = wfRunNodeEl(st.nodeId);
+    const t = el && el.querySelector(`[data-timer="${CSS.escape(st.nodeId)}"]`);
+    if (t && st.ms) t.textContent = wfDur(st.ms);
+  });
+
+  const total = wfAllNodes(workflow.graph).length;
+  const done = (run.steps || []).filter((st) => st.status !== 'pending' && st.status !== 'skipped').length;
+  wfActiveRun = { total, done };
+  wfSetProgress(done, total, 100);
+
+  const badge = $('#wf-run-status-badge');
+  if (badge) {
+    const cls = run.status === 'done' ? 'is-done' : run.status === 'stopped' ? 'is-stopped' : 'is-failed';
+    const lbl = run.status === 'done' ? 'Completed' : run.status === 'stopped' ? 'Stopped' : 'Failed';
+    badge.textContent = `${lbl} \u00b7 ${wfRelTime(run.finishedAt)}`;
+    badge.className = `wf-run-status-badge ${cls}`;
+  }
+  const hint = $('#wf-run-hint');
+  if (hint) { hint.hidden = false; hint.textContent = 'Last run. Click a step to read its terminal.'; }
 }
 
 // A run keeps executing in the main process across a renderer reload, so on
@@ -3064,7 +3143,8 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
   if (!body.trim()) { toast('This step has no output yet', 'info'); return; }
   const node = (wfRunGraph.nodes || []).find((n) => n.id === wfTermNodeId) || {};
   setPage('chat');
-  const tab = await openNewChatTab();
+  $('#chat-empty').classList.remove('show');
+  const tab = await openNewChatTab({ skipWelcome: true });
   const primer = `Here is the output of the workflow step "${node.name || 'Step'}":\n\n${body}\n\n`;
   setTimeout(() => { try { window.husk.pty.write(primer, tab.id); } catch (_) {} }, 700);
 });
@@ -3074,6 +3154,12 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
 $('#btn-wf-builder-back') && $('#btn-wf-builder-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
 $('#btn-save-workflow') && $('#btn-save-workflow').addEventListener('click', saveWorkflow);
+$('#btn-run-from-builder') && $('#btn-run-from-builder').addEventListener('click', async () => {
+  const id = await saveWorkflow({ silent: true, stay: true });
+  if (!id) return;
+  workflowsCache = await window.husk.workflows.list();
+  runWorkflow(id);
+});
 $('#wf-name-input') && $('#wf-name-input').addEventListener('input', wfSyncNameCount);
 $('#btn-add-wf-node') && $('#btn-add-wf-node').addEventListener('click', () => wfAddCanvasNode(null));
 $('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => {
@@ -3083,6 +3169,10 @@ $('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => {
   wfPaintLiveBand(activeRunId ? { workflowId: (wfRunWorkflow || {}).id, stepStates: wfNodeStatusAsStates() } : null);
 });
 $('#wf-band-watch') && $('#wf-band-watch').addEventListener('click', () => { wfShowView('run'); });
+$('#btn-run-again') && $('#btn-run-again').addEventListener('click', (e) => {
+  const id = e.currentTarget.dataset.id;
+  if (id) runWorkflow(id);
+});
 
 // The canvas holds node state as a flat map; the band wants the run's shape.
 function wfNodeStatusAsStates() {

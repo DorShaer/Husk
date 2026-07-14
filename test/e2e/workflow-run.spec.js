@@ -205,3 +205,84 @@ test('a finished run is remembered, and the card reads it back', async () => {
     await app.close();
   }
 });
+
+test('the last run can be reopened, and its terminals still read back', async () => {
+  test.setTimeout(120000);
+  const env = setup();
+  const app = await launch(env);
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await openRun(win);
+    await win.waitForFunction(() => {
+      const b = document.getElementById('wf-run-status-badge');
+      return b && /Completed/i.test(b.textContent || '');
+    }, null, { timeout: 90000 });
+    await new Promise((r) => setTimeout(r, 600));
+
+    // Back to the list, then open the last run from the card.
+    await win.evaluate(() => { activeRunId = null; });
+    await win.evaluate(() => setPage('chat'));
+    await win.evaluate(() => setPage('workflows'));
+    await win.waitForSelector('#wf-grid [data-open-run]', { timeout: 15000 });
+    await win.click('#wf-grid [data-open-run]');
+
+    // The graph comes back as it ended, and Run again is offered.
+    await win.waitForSelector('#wf-run-canvas .wf-rn-node.is-done', { timeout: 15000 });
+    const replay = await win.evaluate(() => ({
+      done: document.querySelectorAll('#wf-run-canvas .wf-rn-node.is-done').length,
+      again: !document.getElementById('btn-run-again').hidden,
+      stop: !document.getElementById('btn-stop-wf').hidden,
+      badge: document.getElementById('wf-run-status-badge').textContent,
+      active: activeRunId,
+    }));
+    expect(replay.done).toBe(2);
+    expect(replay.again).toBe(true);
+    expect(replay.stop).toBe(false);      // a finished run cannot be stopped
+    expect(replay.active).toBe(null);     // it is a replay, not a live run
+    expect(replay.badge).toMatch(/Completed/);
+
+    // Its terminal still reads back, from the stored scrollback.
+    await win.click('#wf-run-canvas .wf-rn-node');
+    await win.waitForSelector('#wf-term:not([hidden])', { timeout: 8000 });
+    await win.waitForFunction(() => {
+      const t = document.querySelector('#wf-term-body .xterm-rows');
+      return t && /hello from the fake agent/.test(t.innerText || '');
+    }, null, { timeout: 15000 });
+  } finally {
+    await app.close();
+  }
+});
+
+test('running from the builder saves first, then runs', async () => {
+  test.setTimeout(120000);
+  const app = await launch(setup());
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await win.waitForLoadState('domcontentloaded');
+    await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20000 });
+    await win.evaluate(() => setPage('workflows'));
+    await win.waitForSelector('#wf-grid .wf-card', { timeout: 15000 });
+    await win.click('#wf-grid .wf-edit-btn');
+    await win.waitForSelector('#wf-builder-view:not([hidden])', { timeout: 10000 });
+    // The builder builds its canvas on a timeout, so wait for the graph to exist
+    // rather than racing it.
+    await win.waitForSelector('#wf-canvas .drawflow-node', { timeout: 10000 });
+    await win.click('#btn-run-from-builder');
+    // Straight into the run view, on the graph. A run that is already finished
+    // is still a run that happened, so accept either state rather than racing it.
+    await win.waitForSelector('#wf-run-view:not([hidden])', { timeout: 10000 });
+    await win.waitForFunction(() => {
+      const live = document.querySelector('#wf-run-canvas .wf-rn-node.is-running');
+      const badge = document.getElementById('wf-run-status-badge');
+      return live || (badge && /Completed|Failed/i.test(badge.textContent || ''));
+    }, null, { timeout: 30000 });
+    const state = await win.evaluate(() => ({
+      nodes: document.querySelectorAll('#wf-run-canvas .wf-rn-node').length,
+      builderClosed: document.getElementById('wf-builder-view').hidden,
+    }));
+    expect(state.nodes).toBe(2);        // the saved graph, running
+    expect(state.builderClosed).toBe(true);
+  } finally {
+    await app.close();
+  }
+});

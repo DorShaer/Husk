@@ -4778,6 +4778,10 @@ const WORKFLOWS_PATH = path.join(CONFIG_DIR, 'workflows.json');
 // worked last night, which is the first thing anyone wants to know about one.
 const WORKFLOW_RUNS_PATH = path.join(CONFIG_DIR, 'workflow-runs.json');
 const WF_RUNS_MAX = 200;
+// Only the newest runs keep their step output, so a long history does not turn
+// into a log archive on disk.
+const WF_RUNS_WITH_LOGS = 20;
+const WF_STEP_LOG_CHARS = 12000;
 
 function loadWorkflows() {
   try {
@@ -4800,12 +4804,27 @@ function recordWorkflowRun(run, workflow) {
   try {
     const nodes = ((workflow.graph && workflow.graph.nodes) || []);
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    const steps = Object.entries(run.stepStates || {}).map(([id, st]) => ({
-      nodeId: id,
-      name: (byId.get(id) || {}).name || 'Step',
-      status: st.status,
-      ms: st.ms || 0,
-    }));
+    const steps = Object.entries(run.stepStates || {}).map(([id, st]) => {
+      // Keep enough of the scrollback to replay the step's terminal after a
+      // restart, trimmed from the front so the tail (the result) survives.
+      const log = (run.logs && run.logs.get(id)) || { entries: [] };
+      const entries = [];
+      let chars = 0;
+      for (let i = log.entries.length - 1; i >= 0; i -= 1) {
+        const e = log.entries[i];
+        chars += (e.text || '').length;
+        if (chars > WF_STEP_LOG_CHARS) break;
+        entries.unshift({ kind: e.kind, text: e.text, seq: e.seq });
+      }
+      return {
+        nodeId: id,
+        name: (byId.get(id) || {}).name || 'Step',
+        status: st.status,
+        ms: st.ms || 0,
+        entries,
+        truncated: entries.length < log.entries.length,
+      };
+    });
     const failed = steps.find((st) => st.status === 'failed');
     const entry = {
       id: run.id,
@@ -4816,12 +4835,16 @@ function recordWorkflowRun(run, workflow) {
       finishedAt: run.finishedAt,
       ms: run.startedAt ? (new Date(run.finishedAt) - new Date(run.startedAt)) : 0,
       steps,
+      edgesTaken: (run.edgesTaken || []).map((e) => ({ from: e.from, to: e.to })),
       failedStep: failed ? failed.name : '',
     };
     const list = loadWorkflowRuns();
     list.unshift(entry);
+    const trimmed = list.slice(0, WF_RUNS_MAX).map((r, i) => (
+      i < WF_RUNS_WITH_LOGS ? r : { ...r, steps: (r.steps || []).map((st) => ({ ...st, entries: undefined })) }
+    ));
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(WORKFLOW_RUNS_PATH, JSON.stringify(list.slice(0, WF_RUNS_MAX), null, 2), { mode: 0o600 });
+    fs.writeFileSync(WORKFLOW_RUNS_PATH, JSON.stringify(trimmed, null, 2), { mode: 0o600 });
   } catch (_) { /* history is a nicety; never fail a run over it */ }
 }
 
@@ -4984,7 +5007,19 @@ ipcMain.handle('workflows:stop', (_e, runId) => {
 ipcMain.handle('workflows:nodeLog', (_e, payload) => {
   const { runId, nodeId } = payload || {};
   const run = activeRuns.get(runId) || finishedRuns.get(runId);
-  if (!run) return { ok: false, error: 'run not found' };
+  if (!run) {
+    const stored = loadWorkflowRuns().find((r) => r.id === runId);
+    const step = stored && (stored.steps || []).find((st) => st.nodeId === nodeId);
+    if (!step) return { ok: false, error: 'run not found' };
+    return {
+      ok: true,
+      entries: step.entries || [],
+      dropped: step.truncated ? 1 : 0,
+      status: step.status,
+      output: '',
+      running: false,
+    };
+  }
   const log = (run.logs && run.logs.get(nodeId)) || { entries: [], dropped: 0 };
   const state = run.stepStates[nodeId] || { status: 'pending' };
   return {

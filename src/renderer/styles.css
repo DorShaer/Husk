@@ -7946,3 +7946,74 @@ kbd {
 }
 .wf-menu-pop button:hover { background: var(--bg-3); color: var(--text); }
 .wf-menu-pop button.is-danger:hover { background: color-mix(in srgb, var(--rose) 18%, transparent); color: var(--rose); }
+
+/* ── Builder canvas: the same surface the run plays out on ─────────────────── */
+/* A workflow should not look like one thing while you build it and another
+   while it runs. These match .wf-run-canvas / .wf-rn-node. */
+.wf-canvas-wrap { border-radius: 16px; overflow: hidden; }
+.wf-canvas {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255,120,71,0.05), transparent 60%),
+    radial-gradient(circle at 1px 1px, var(--line-2) 1px, transparent 0) 0 0 / 24px 24px,
+    var(--bg);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.wf-canvas .drawflow .drawflow-node {
+  width: 244px; border-radius: 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--elev-2);
+  backdrop-filter: blur(12px);
+  transition: transform .2s var(--ease-out), box-shadow .2s var(--ease-out), border-color .2s var(--ease-out);
+}
+.wf-canvas .drawflow .drawflow-node:hover { transform: translateY(-2px); box-shadow: var(--elev-3); border-color: var(--line-3); }
+.wf-canvas .drawflow .drawflow-node.selected {
+  border-color: var(--accent);
+  box-shadow: var(--elev-3), 0 0 0 3px var(--accent-glow);
+}
+.wf-cv-node { position: relative; padding: 12px 13px 11px; cursor: grab; }
+/* The same bar the run view uses for state; here it just says "step". */
+.wf-cv-node::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--line-2);
+  border-radius: 14px 14px 0 0;
+}
+.wf-canvas .drawflow .drawflow-node.selected .wf-cv-node::before {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+.wf-cv-node-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.wf-cv-node-badge {
+  width: 18px; height: 18px; border-radius: 6px;
+  background: var(--bg-3); color: var(--text-3);
+  display: grid; place-items: center; flex: 0 0 auto;
+}
+.wf-canvas .drawflow .drawflow-node.selected .wf-cv-node-badge { background: var(--accent); color: #fff; }
+.wf-cv-node-badge svg { width: 11px; height: 11px; }
+.wf-cv-node-name {
+  flex: 1; min-width: 0;
+  font-size: 13px; font-weight: 650; color: var(--text); letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wf-cv-node-meta {
+  margin-top: 0;
+  font-size: 11px; color: var(--text-3);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wf-canvas .drawflow .drawflow-node .input,
+.wf-canvas .drawflow .drawflow-node .output {
+  width: 10px; height: 10px;
+  background: var(--line-3); border: 2px solid var(--bg);
+}
+.wf-canvas .drawflow .connection .main-path { stroke: var(--line-2); stroke-width: 2px; }
+.wf-canvas .drawflow .connection .main-path:hover { stroke: var(--accent); }
+
+/* The last-run pill is a way into that run, so it looks like one. */
+.wf-lr-btn {
+  border: none; background: transparent; padding: 0; margin: 0;
+  cursor: pointer; font: inherit; text-align: left;
+  border-radius: 6px;
+}
+.wf-lr-btn:hover .wf-lr { text-decoration: underline; text-underline-offset: 2px; }
+/* Fit maths assumes the canvas scales from its top-left corner. */
+.wf-canvas .drawflow { transform-origin: 0 0; }
