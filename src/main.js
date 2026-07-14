@@ -4015,7 +4015,7 @@ function runAiderModelProbe(agentCommand) {
   });
 }
 
-async function discoverModelCatalog({ refresh = false, command = null } = {}) {
+async function discoverModelCatalog({ refresh = false, command = null, fast = false } = {}) {
   // `command` lets a caller ask for a specific vendor's models (a workflow step
   // can run a different agent than the active one). Falls back to the active
   // agent when omitted, which is what the Autopilot page wants.
@@ -4038,6 +4038,23 @@ async function discoverModelCatalog({ refresh = false, command = null } = {}) {
     return Object.assign(base, {
       ok: false,
       error: head ? `${providerLabel(vendor)} does not expose a model flag Husk can route yet.` : 'Active agent command is not supported.',
+    });
+  }
+
+  // Fast path: the known catalog plus any saved selections, with no live probe.
+  // The live probe spawns the CLI in a PTY and drives its /model picker, which
+  // takes seconds and can hang; a builder switching agents must not wait on that.
+  // Callers use fast for the dropdown and pass refresh only on an explicit reload.
+  if (fast && !refresh) {
+    const cached = modelCatalogCache.get(`${vendor}:${head.exe}`);
+    if (cached && cached.value && (cached.value.models || []).length) {
+      return Object.assign({}, cached.value, { cached: true });
+    }
+    const known = uniqueModels([...fallbackModelsFor(vendor), ...savedRoutingModels(vendor)]);
+    return Object.assign(base, {
+      models: known,
+      source: known.length ? 'fallback' : 'none',
+      sourceLabel: known.length ? 'Known models. Refresh to read the live list.' : 'No models known; Refresh to read the live list.',
     });
   }
 
@@ -4071,7 +4088,7 @@ async function discoverModelCatalog({ refresh = false, command = null } = {}) {
   return value;
 }
 
-ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ refresh: !!(opts && opts.refresh), command: opts && opts.command ? String(opts.command) : null }));
+ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ refresh: !!(opts && opts.refresh), fast: !!(opts && opts.fast), command: opts && opts.command ? String(opts.command) : null }));
 
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 

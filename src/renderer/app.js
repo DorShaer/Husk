@@ -2485,8 +2485,9 @@ function wfPaintModelOptions(catalog, pinned) {
   const opts = ['<option value="">Default</option>'];
   let matched = !pinned;
   models.forEach((m) => {
-    const id = typeof m === 'string' ? m : (m.id || m.name || '');
-    const label = typeof m === 'string' ? m : (m.label || m.id || m.name || '');
+    // Catalog entries come as {value,label}, {id,...}, or a bare string.
+    const id = typeof m === 'string' ? m : (m.value || m.id || m.name || '');
+    const label = typeof m === 'string' ? m : (m.label || m.value || m.id || m.name || '');
     if (!id) return;
     if (id === pinned) matched = true;
     opts.push(`<option value="${escapeAttr(id)}"${id === pinned ? ' selected' : ''}>${escapeHtml(label)}</option>`);
@@ -2516,10 +2517,10 @@ async function wfLoadNodeModels(command, pinned, opts = {}) {
     return;
   }
   // eslint-disable-next-line no-unsanitized/property -- static
-  sel.innerHTML = '<option>Loading...</option>';
+  sel.innerHTML = '<option value="">Loading...</option>';
   if (hint) hint.textContent = `Reading ${cmd}'s models...`;
   let catalog = null;
-  try { catalog = await window.husk.models.list({ command: cmd, refresh: !!opts.refresh }); } catch (_) {}
+  try { catalog = await window.husk.models.list({ command: cmd, refresh: !!opts.refresh, fast: !opts.refresh }); } catch (_) {}
   if (seq !== wfModelSeq) return;   // a newer load won
   catalog = catalog || { models: [], supported: false };
   wfModelCache.set(cmd, catalog);
@@ -2575,7 +2576,9 @@ function wfSyncPanelToNode() {
   let existing = {};
   try { existing = (wfEditor.getNodeFromId(wfSelectedNodeId) || {}).data || {}; } catch (_) {}
   const modelSel = ($('#wf-np-model') || {}).value || '';
-  const model = modelSel === '__custom__' ? (($('#wf-np-model-custom') || {}).value || '').trim() : modelSel;
+  const model = modelSel === '__custom__'
+    ? (($('#wf-np-model-custom') || {}).value || '').trim()
+    : (modelSel === 'Loading...' ? '' : modelSel);
   const data = {
     huskId: existing.huskId || wfNewNodeId(),
     name: ($('#wf-np-name').value || 'Step').slice(0, 64),
