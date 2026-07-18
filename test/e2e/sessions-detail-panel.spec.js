@@ -62,6 +62,80 @@ test('session detail panel stays full width when status panel is collapsed', asy
   await app.close();
 });
 
+test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', async () => {
+  // Husk shells out to `claude --print` for background scoring and drives the
+  // autopilot/workflow orchestrators over the SDK; each leaves an auto-titled
+  // transcript in the same projects dir. One real chat used to show up beside a
+  // crowd of these look-alikes. The first turn's origin is the tell: human-typed
+  // chats carry origin.kind "human"/promptSource "typed"; background runs carry
+  // promptSource "sdk". Old files predate the field and must be kept.
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-claude-sessions-'));
+  fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
+  const proj = path.join(homeDir, '.claude', 'projects', '-home-test-proj');
+  fs.mkdirSync(proj, { recursive: true });
+  const now = () => new Date().toISOString();
+  const write = (id, lines) => fs.writeFileSync(path.join(proj, `${id}.jsonl`), lines.join('\n') + '\n');
+
+  // A real chat the user typed.
+  write('aaaaaaaa-0000-0000-0000-000000000001', [
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', promptSource: 'typed', origin: { kind: 'human' }, message: { content: 'REAL typed conversation about widgets' } }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'sure' }] } }),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Discuss the widget design' }),
+  ]);
+  // A `claude --print` background run: has an assistant turn, so the old
+  // receipt-skip would not catch it -- the origin filter must.
+  write('bbbbbbbb-0000-0000-0000-000000000002', [
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'queue-operation', operation: 'enqueue', content: 'SENTIMENT: score this' }),
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', promptSource: 'sdk', message: { content: 'SENTIMENT: score this' } }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: '7' }] } }),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Background sentiment scoring run' }),
+  ]);
+  // An SDK orchestrator run, likewise auto-titled and otherwise chat-shaped.
+  write('cccccccc-0000-0000-0000-000000000003', [
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', promptSource: 'sdk', message: { content: 'You are an orchestrator planning a team of autonomous coding agents' } }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'planning' }] } }),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Orchestrator planning run' }),
+  ]);
+  // A pre-promptSource file: no origin signal, so it must be kept, not hidden.
+  write('dddddddd-0000-0000-0000-000000000004', [
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', message: { content: 'OLD chat from before origin tracking' } }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }),
+  ]);
+  // A real chat that OPENS with a prepended SDK context turn (a PAI hook fired
+  // early) but continues with human-typed turns. Keying on the first turn alone
+  // would wrongly hide it; one human turn anywhere must keep it.
+  write('eeeeeeee-0000-0000-0000-000000000005', [
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', promptSource: 'sdk', message: { content: 'PREVIOUS AI RESPONSE: injected context' } }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'noted' }] } }),
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', promptSource: 'typed', origin: { kind: 'human' }, message: { content: 'REAL follow-up I actually typed' } }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Chat that opened with injected context' }),
+  ]);
+
+  const app = await electron.launch({
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    cwd: REPO_ROOT,
+    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
+    timeout: 30_000,
+  });
+  const win = await app.firstWindow({ timeout: 30_000 });
+  await win.waitForLoadState('domcontentloaded');
+  await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  await win.evaluate(() => setPage('sessions'));
+  await win.waitForSelector('.session-row', { timeout: 10_000 });
+
+  const rows = await win.evaluate(() => Array.from(document.querySelectorAll('.session-row')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+  const joined = rows.join(' ');
+  expect(joined).toContain('Discuss the widget design');       // typed chat kept
+  expect(joined).toContain('OLD chat from before origin tracking'); // fail-open kept
+  expect(joined).toContain('Chat that opened with injected context'); // human turn anywhere kept
+  expect(joined).not.toContain('Background sentiment scoring run'); // --print hidden
+  expect(joined).not.toContain('Orchestrator planning run');        // SDK orchestrator hidden
+  expect(rows.length).toBe(3);
+  await app.close();
+});
+
 test('copilot sessions use the first prompt when workspace name is null', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-copilot-sessions-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });

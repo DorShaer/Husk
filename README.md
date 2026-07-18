@@ -40,6 +40,11 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <br /><br />
 
+<img src="docs/images/husk-workflow-run.png" alt="A workflow running on the graph" width="900" />
+<br /><sub><i>Run a workflow and watch it play out on the graph: each step lights up as it runs, the edge fires to the next, and every node keeps its own terminal.</i></sub>
+
+<br /><br />
+
 <img src="docs/images/husk-projects.png" alt="Pin a project folder" width="450" />
 <img src="docs/images/husk-prompts.png" alt="Prompts library" width="450" />
 <br /><sub><i>Pin folders as Projects so the agent always starts in the right cwd. Save reusable prompts and fire them with one click.</i></sub>
