@@ -6791,6 +6791,12 @@ body[data-mode="light"] .ob-wordmark span {
 }
 .wn-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
 .wn-title { font-family: var(--font-display); font-weight: 600; font-size: 24px; color: var(--text); margin: 0; letter-spacing: -0.01em; }
+.wn-hero {
+  display: block; width: 100%; height: auto; max-height: 300px; object-fit: cover;
+  object-position: center top;
+  border: 1px solid var(--line-2); border-radius: 12px;
+  margin-bottom: 18px; background: var(--bg-2);
+}
 .wn-list {
   list-style: none; margin: 0 0 24px; padding: 0; text-align: left;
   display: flex; flex-direction: column; gap: 12px;

@@ -138,6 +138,49 @@ function Format-Size ([int64] $bytes) {
     return ('{0:N0} MB' -f [math]::Round($bytes / 1MB))
 }
 
+function Get-Download ($url, $outFile, [int64] $knownSize) {
+    # Stream the asset to disk and print a single, rewritten progress line.
+    # Invoke-WebRequest's own bar is suppressed ($ProgressPreference) because it
+    # repaints per read and drags a 100 MB download to a crawl; a manual copy is
+    # both fast and honest. Without this the terminal sits silent for the whole
+    # download and looks hung, which is exactly what users reported.
+    $req = [System.Net.HttpWebRequest]::Create($url)
+    $req.UserAgent        = $UserAgent
+    $req.Timeout          = 30000     # initial response only
+    $req.ReadWriteTimeout = 300000    # a slow-but-alive stream must not be killed mid-download
+    $resp = $req.GetResponse()
+    $total = if ($knownSize -gt 0) { $knownSize } else { [int64] $resp.ContentLength }
+    $in  = $resp.GetResponseStream()
+    $out = [System.IO.File]::Create($outFile)
+    try {
+        $buffer  = New-Object byte[] (1MB)
+        $sofar   = [int64] 0
+        $lastPct = -1
+        $read    = 0
+        while (($read = $in.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $out.Write($buffer, 0, $read)
+            $sofar += $read
+            if ($total -gt 0) {
+                # Repaint only on a percent change, so the line updates smoothly
+                # without flooding the console.
+                $pct = [int] (($sofar * 100) / $total)
+                if ($pct -ne $lastPct) {
+                    $lastPct = $pct
+                    Write-Host ("`r    {0,3}%  {1:N0} / {2:N0} MB   " -f $pct, [math]::Round($sofar / 1MB), [math]::Round($total / 1MB)) -NoNewline
+                }
+            } else {
+                # No Content-Length: show bytes pulled so far instead of a percent.
+                Write-Host ("`r    {0:N0} MB   " -f [math]::Round($sofar / 1MB)) -NoNewline
+            }
+        }
+        Write-Host ''   # close the rewritten line so the next message starts clean
+    } finally {
+        $out.Close()
+        $in.Close()
+        $resp.Close()
+    }
+}
+
 function ConvertTo-Text ($content) {
     # GitHub serves SHA256SUMS as application/octet-stream. PowerShell 5.1 returns
     # that from Invoke-WebRequest as a string, while PowerShell 7 returns a byte[]
@@ -191,10 +234,11 @@ try {
 
     $installerPath = Join-Path $env:TEMP $assetName
 
-    $size  = Format-Size (Get-RemoteSize $assetUrl)
+    $remoteBytes = Get-RemoteSize $assetUrl
+    $size  = Format-Size $remoteBytes
     $label = if ($size) { "Husk $tag ($size)" } else { "Husk $tag" }
     Write-Info "Downloading $label..."
-    Invoke-WebRequest -Uri $assetUrl -OutFile $installerPath -UseBasicParsing -UserAgent $UserAgent
+    Get-Download $assetUrl $installerPath $remoteBytes
     Write-Ok "Downloaded $assetName"
 
     # A missing or unreachable SHA256SUMS is a hard failure. We never run bytes we
@@ -224,12 +268,17 @@ try {
     Unblock-File -LiteralPath $installerPath
     Write-Warn2 'This build is not code-signed yet. Windows SmartScreen may still warn about an unknown publisher, and the UAC prompt will show no verified publisher name.'
 
-    Write-Info 'Running the installer...'
     if ($Silent) {
         # The NSIS config sets oneClick:false, so /S is what makes it install with
         # its defaults and no UI.
+        Write-Info 'Running the installer silently...'
         $proc = Start-Process -FilePath $installerPath -ArgumentList '/S' -Wait -PassThru
     } else {
+        # -Wait blocks on the NSIS GUI wizard. Without saying so, the terminal
+        # looks frozen and users guess at pressing Enter; tell them a window
+        # opened and that this shell waits until they finish it.
+        Write-Info 'A Husk Setup window has opened. Click through it to finish (Next/Install/Finish).'
+        Write-Warn2 'If it is hidden, check the taskbar. If SmartScreen warns, choose "More info" then "Run anyway" -- this shell waits here until Setup closes.'
         $proc = Start-Process -FilePath $installerPath -Wait -PassThru
     }
 

@@ -345,6 +345,64 @@ test('a second run is refused while one is in flight', async () => {
   }
 });
 
+test('a flow built and run in one sitting lights up on its first run', async () => {
+  // Regression: the builder and run canvases each hold a Drawflow that numbers
+  // its nodes from 1, so running from the builder puts duplicate node-N ids in
+  // the document. An unscoped lookup then paints every state change onto the
+  // hidden builder canvas: nodes stay "Pending" forever while the run works.
+  test.setTimeout(120000);
+  const env = setup();
+  // The user starts from nothing: no stored workflows, straight into the builder.
+  fs.writeFileSync(path.join(env.homeDir, '.config', 'husk', 'workflows.json'), '[]');
+  // Gate the agent so the first step stays running while we click it.
+  const gate = path.join(env.homeDir, 'release-gate');
+  const app = await launch(env, { HUSK_GATE: gate });
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await win.waitForLoadState('domcontentloaded');
+    await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20000 });
+    await win.evaluate(() => setPage('workflows'));
+
+    await win.click('#btn-new-workflow');
+    await win.waitForSelector('#wf-builder-view:not([hidden])', { timeout: 10000 });
+    await win.waitForSelector('#wf-canvas .drawflow-node', { timeout: 10000 });
+    await win.fill('#wf-name-input', 'First run flow');
+    // Spread the steps out the way a user would drag them: the add button drops
+    // nodes near the same spot, and a covered node cannot be clicked.
+    await win.evaluate(() => {
+      wfAddCanvasNode(null, 380, 80);
+      wfAddCanvasNode(null, 700, 80);
+    });
+    await win.evaluate(() => {
+      const data = wfEditor.export().drawflow.Home.data;
+      const ids = Object.keys(data).map(Number).sort((a, b) => a - b);
+      wfEditor.addConnection(ids[0], ids[1], 'output_1', 'input_1');
+      wfEditor.addConnection(ids[1], ids[2], 'output_1', 'input_1');
+    });
+
+    await win.click('#btn-run-from-builder');
+    await win.waitForSelector('#wf-run-view:not([hidden])', { timeout: 10000 });
+
+    // The heart of the regression: a RUN-CANVAS node must visibly run...
+    await win.waitForFunction(() => document.querySelector('#wf-run-canvas .wf-rn-node.is-running'), null, { timeout: 20000 });
+    // ...and clicking it must open its terminal (same lookup, same collision).
+    await win.click('#wf-run-canvas .wf-rn-node.is-running');
+    await win.waitForSelector('#wf-term:not([hidden])', { timeout: 10000 });
+    // Let the run move on, and the taken edge fires its dash on the run canvas.
+    fs.writeFileSync(gate, '1');
+    await win.waitForFunction(() => document.querySelector('#wf-run-canvas .connection.is-firing'), null, { timeout: 40000 });
+
+    await win.waitForFunction(() => {
+      const b = document.getElementById('wf-run-status-badge');
+      return b && /Completed/i.test(b.textContent || '');
+    }, null, { timeout: 60000 });
+    const done = await win.evaluate(() => document.querySelectorAll('#wf-run-canvas .wf-rn-node.is-done').length);
+    expect(done).toBe(3);
+  } finally {
+    await app.close();
+  }
+});
+
 test('a running workflow cannot be deleted out from under itself', async () => {
   test.setTimeout(120000);
   const app = await launch(setup());

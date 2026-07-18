@@ -124,3 +124,32 @@ test('install.ps1: pins BunInstallerSha256 to a 64-hex value', () => {
   const m = text.match(/BunInstallerSha256\s*=\s*'([0-9a-f]{64})'/);
   assert.ok(m, "expected $Script:BunInstallerSha256 = '<64-hex>' in install.ps1");
 });
+
+// scripts/install.ps1 is the piped one-liner (irm ... | iex). It downloads the
+// release. Two UX regressions were reported: the download printed nothing (the
+// terminal looked hung) and the GUI-wizard wait was never announced (users
+// guessed at pressing Enter). Guard both, plus the security-critical checksum.
+test('scripts/install.ps1: streams the asset with a live progress line', () => {
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'install.ps1'), 'utf8');
+  // A dedicated streaming downloader, used for the release asset.
+  assert.match(text, /function Get-Download/);
+  assert.match(text, /Get-Download\s+\$assetUrl\s+\$installerPath/);
+  // It rewrites one progress line (carriage return + a percent field).
+  assert.ok(text.includes('`r'), 'expected a carriage-return progress line');
+  assert.match(text, /\{0,3\}%/);
+});
+
+test('scripts/install.ps1: announces the GUI Setup window before the blocking wait', () => {
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'install.ps1'), 'utf8');
+  const announceIdx = text.indexOf('Husk Setup window has opened');
+  const waitIdx = text.indexOf('Start-Process -FilePath $installerPath -Wait -PassThru');
+  assert.ok(announceIdx > -1, 'expected an explicit "Setup window has opened" message');
+  // The announcement must come before the interactive -Wait it explains.
+  assert.ok(announceIdx < waitIdx, 'the announcement must precede the blocking Start-Process -Wait');
+});
+
+test('scripts/install.ps1: still verifies the download against SHA256SUMS', () => {
+  const text = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'install.ps1'), 'utf8');
+  assert.match(text, /Get-FileHash -LiteralPath \$installerPath -Algorithm SHA256/);
+  assert.match(text, /Refusing to run an unverified installer/);
+});

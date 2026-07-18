@@ -523,6 +523,16 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.9.0': {
+    media: 'assets/whatsnew-workflows.png',
+    mediaAlt: 'A workflow of Plan, Implement, Review and Ship steps on the graph canvas',
+    items: [
+      "<strong>Workflows come alive as they run.</strong> Chain steps on the canvas, hit Run, and watch each one light up and pass the baton down the graph, live from the first run.",
+      "<strong>Every step keeps its own terminal.</strong> Click any node to read exactly what that step did, during the run or long after it finishes.",
+      "<strong>Sessions list only your real chats.</strong> Background work no longer clutters Recent and Sessions with look-alike entries, so one conversation is one row.",
+      "<strong>One-line Windows install shows its work.</strong> The installer now reports download progress and tells you when the Setup window is waiting for you.",
+    ],
+  },
   '2.8.9': {
     items: [
       "<strong>Meet Kernel.</strong> Husk has a face. The pod cracks open on the welcome tour and the seed inside looks back at you. Poke it and see what happens.",
@@ -619,6 +629,13 @@ function showWhatsNew(version) {
     const modal = $('#whatsnew');
     if (!entry || !modal) { resolve(); return; }
     const v = $('#wn-version'); if (v) v.textContent = version ? `Version ${version}` : 'Latest update';
+    // A release can lead with a hero image (bundled under assets/, so it loads
+    // under the 'self' CSP). Entries without one keep the image slot hidden.
+    const hero = $('#wn-hero');
+    if (hero) {
+      if (entry.media) { hero.src = entry.media; hero.alt = entry.mediaAlt || ''; hero.hidden = false; }
+      else { hero.hidden = true; hero.removeAttribute('src'); }
+    }
     // Each item is wrapped in a span so the bold lead-in flows inline with
     // the rest of the text instead of becoming its own flex column.
     // eslint-disable-next-line no-unsanitized/property -- Items are trusted static strings.
@@ -2592,8 +2609,8 @@ function wfSyncPanelToNode() {
     passContext: $('#wf-np-context').value || 'full',
   };
   wfEditor.updateNodeDataFromId(wfSelectedNodeId, data);
-  const nameEl = document.querySelector(`#node-${wfSelectedNodeId} .wf-cv-node-name`);
-  const metaEl = document.querySelector(`#node-${wfSelectedNodeId} .wf-cv-node-meta`);
+  const nameEl = document.querySelector(`#wf-canvas [id="node-${wfSelectedNodeId}"] .wf-cv-node-name`);
+  const metaEl = document.querySelector(`#wf-canvas [id="node-${wfSelectedNodeId}"] .wf-cv-node-meta`);
   if (nameEl) nameEl.textContent = data.name;
   // The node's own label now names its agent and model, so the graph shows the
   // mix at a glance without opening anything.
@@ -2744,7 +2761,10 @@ let wfNodeLive = {};           // husk node id -> what the step is doing right n
 
 function wfRunNodeEl(nodeId) {
   const df = wfRunDfId[nodeId];
-  return df ? document.getElementById(`node-${df}`) : null;
+  // Scoped to the run canvas: the builder's Drawflow numbers its nodes from 1
+  // too, so when a run starts from the builder the document holds two elements
+  // per id and a global lookup would paint the run onto the hidden builder.
+  return df ? document.querySelector(`#wf-run-canvas [id="node-${df}"]`) : null;
 }
 
 // Read-only canvas: the same graph, not editable. Drawflow's own selection

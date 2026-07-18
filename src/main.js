@@ -6626,6 +6626,21 @@ function readHead(filePath, bytes) {
   return buf.toString('utf8', 0, n);
 }
 
+// Whether a transcript holds any human-typed turn. Used to tell a real chat
+// (keep) from a purely SDK-driven background transcript (hide) when the 32KB
+// head was inconclusive. A real chat's first human turn can sit past the head
+// when an SDK context turn was prepended (PAI hooks inject one), so the whole
+// file is scanned before anything is hidden. Bounded: past the cap a file is
+// too big to verify cheaply and is kept, never hidden -- false-show is safe,
+// false-hide loses a real conversation.
+const HUMAN_SCAN_CAP = 4 * 1024 * 1024;
+function transcriptHasHumanTurn(fullPath, fileSize) {
+  if (fileSize > HUMAN_SCAN_CAP) return true;
+  let text = '';
+  try { text = fs.readFileSync(fullPath, 'utf8'); } catch (_) { return true; }
+  return text.includes('"kind":"human"') || text.includes('"promptSource":"typed"');
+}
+
 // Agents append a title entry to the transcript once the conversation earns a
 // name, and further entries as they refine it. Both land wherever the
 // conversation had reached, which in a long session is hundreds of kilobytes past
@@ -7159,6 +7174,14 @@ ipcMain.handle('sessions:list', () => {
       let originalCwd = '';
       let sawAssistant = false;
       let headComplete = false;
+      // How this session's turns were authored. A human-typed chat carries
+      // promptSource "typed" / origin.kind "human" on at least one turn; a
+      // purely SDK-driven background transcript carries only "sdk". Accumulated
+      // across every turn in the head, not just the first: an SDK context turn
+      // can be prepended to a real chat, so one human turn anywhere keeps it.
+      let sawHumanTurn = false;
+      let sawSdkTurn = false;
+      let sawPromptSource = false;
       try {
         const text = readHead(fullPath, 32768);
         headComplete = st.size <= 32768;
@@ -7170,6 +7193,13 @@ ipcMain.handle('sessions:list', () => {
           if (!sawAssistant && obj.type === 'assistant') sawAssistant = true;
           if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
           if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
+          if (obj.type === 'user') {
+            const originKind = obj.origin && typeof obj.origin === 'object' ? obj.origin.kind : null;
+            const ps = typeof obj.promptSource === 'string' ? obj.promptSource : null;
+            if (ps) sawPromptSource = true;
+            if (originKind === 'human' || ps === 'typed') sawHumanTurn = true;
+            else if (ps === 'sdk') sawSdkTurn = true;
+          }
           if (!userMessage && obj.type === 'user' && obj.message) {
             const c = obj.message.content;
             if (typeof c === 'string') userMessage = c.trim();
@@ -7196,6 +7226,21 @@ ipcMain.handle('sessions:list', () => {
       // head fits in the read window AND carries no assistant turn is such a
       // receipt: skip it. Real conversations always have assistant output.
       if (headComplete && !sawAssistant) continue;
+
+      // The Sessions list is for chats the user actually held. Husk also spawns
+      // claude over the SDK for its own background work -- PAI hooks that shell
+      // out to `claude --print` for sentiment/context scoring, and the autopilot
+      // and workflow orchestrators -- and every one of those leaves a transcript
+      // in this same projects dir, each auto-titled differently, so one real
+      // conversation used to show up alongside a crowd of look-alike SDK runs.
+      // A transcript with SDK turns and no human turn anywhere is such a
+      // background run: skip it. If the head was inconclusive on a larger file,
+      // scan the whole file first -- a real chat can open with a prepended SDK
+      // context turn. Files that predate promptSource carry no signal and are
+      // kept, so real history is never hidden.
+      let background = sawSdkTurn && !sawHumanTurn && sawPromptSource;
+      if (background && !headComplete) background = !transcriptHasHumanTurn(fullPath, st.size);
+      if (background) continue;
 
       const firstMessage = (aiTitle || userMessage || queueContent || '').slice(0, 220);
 
