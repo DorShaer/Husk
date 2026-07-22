@@ -22,6 +22,7 @@ const { agentFileName, renderAgentMd } = require('./lib/agent-file');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { pickResumeSessionId } = require('./lib/claude-session');
 const { parsePorcelain } = require('./lib/git-porcelain');
+const { parseGitStatus, groupBoard } = require('./lib/workspace-state');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 const SharedMcp = require('./lib/mcp/shared');
 const { deriveCopilotSessionTitleFromEventsText } = require('./lib/copilot-session-title');
@@ -6277,6 +6278,78 @@ ipcMain.handle('projects:delete', (_e, id) => {
   const remaining = projects.filter((p) => p && p.id !== id);
   const newActive = config.activeProjectId === id ? null : config.activeProjectId;
   config = { ...config, projects: remaining, activeProjectId: newActive };
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  return { ok: true };
+});
+
+// Newest transcript activity for a folder, best effort. Transcripts are keyed
+// by encoded cwd on disk, so the mtime of the newest one is a cheap and honest
+// "last session here" signal without opening a single file.
+function lastSessionMsForCwd(cwd) {
+  try {
+    const dir = path.join(CLAUDE_DIR, 'projects', claudeProjectDirName(cwd));
+    let newest = 0;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.jsonl')) continue;
+      try {
+        const st = fs.statSync(path.join(dir, f));
+        if (st.size > 0 && st.mtimeMs > newest) newest = st.mtimeMs;
+      } catch (_) {}
+    }
+    return newest || null;
+  } catch (_) { return null; }
+}
+
+// Derived, per-project signal for the Projects board: what is going on in each
+// folder right now. Computed on demand (page open, window focus), returned in
+// one round trip, and NEVER persisted; the stored project record stays the
+// small thing the user created. The renderer paints the list first and
+// enriches when this lands, so a slow git call cannot hold the page hostage.
+ipcMain.handle('projects:state', () => {
+  const projects = _projectsList();
+  const retainedRuns = Object.values(readRetained());
+  const liveCwds = new Set();
+  for (const [, s] of sessions) { if (s && s.pty && s.cwd) liveCwds.add(s.cwd); }
+  const states = {};
+  for (const p of projects) {
+    if (!p || !p.id) continue;
+    const st = {
+      available: false, isGit: false, branch: null, ahead: 0, behind: 0,
+      dirty: 0, conflicts: 0, live: false, retainedCount: 0, lastSessionMs: null,
+    };
+    states[p.id] = st;
+    try { st.available = fs.existsSync(p.path) && fs.statSync(p.path).isDirectory(); } catch (_) {}
+    if (!st.available) continue;
+    st.live = liveCwds.has(p.path);
+    // Retained runs are worktrees kept alive for an Apply/Discard decision;
+    // each one is an open loop for the workspace it came from.
+    st.retainedCount = retainedRuns.filter((r) => r && r.workspaceRoot === p.path).length;
+    st.lastSessionMs = lastSessionMsForCwd(p.path);
+    // .git can be a directory or, for worktrees and submodules, a file.
+    try { st.isGit = fs.existsSync(path.join(p.path, '.git')); } catch (_) {}
+    if (st.isGit) {
+      try {
+        const txt = execFileSync('git', ['-C', p.path, 'status', '--porcelain=v1', '--branch'], {
+          encoding: 'utf8', stdio: 'pipe', timeout: 4000, maxBuffer: 4 * 1024 * 1024,
+        });
+        Object.assign(st, parseGitStatus(txt));
+      } catch (_) {
+        // A repo mid-rebase, or a machine without git, degrades to the
+        // plain-folder display rather than an error.
+      }
+    }
+  }
+  return { ok: true, states, groups: groupBoard(projects, states, Date.now()) };
+});
+
+// Stamp when the user last looked at a project's workspace. Separate from
+// lastUsedAt (which means "launched the agent here") so a future
+// since-you-were-here digest has an honest baseline to diff against.
+ipcMain.handle('projects:markViewed', (_e, id) => {
+  const projects = _projectsList();
+  if (!projects.some((p) => p && p.id === id)) return { ok: false, error: 'Project not found.' };
+  const stamped = projects.map((p) => p && p.id === id ? { ...p, lastViewedAt: new Date().toISOString() } : p);
+  config = { ...config, projects: stamped };
   try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
   return { ok: true };
 });

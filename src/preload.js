@@ -111,6 +111,8 @@ contextBridge.exposeInMainWorld('husk', {
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
+    state: () => ipcRenderer.invoke('projects:state'),
+    markViewed: (id) => ipcRenderer.invoke('projects:markViewed', id),
     create: (payload) => ipcRenderer.invoke('projects:create', payload),
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     clearActive: () => ipcRenderer.invoke('projects:clearActive'),
