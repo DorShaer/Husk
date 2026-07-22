@@ -1971,20 +1971,38 @@ if ($('#sp-content')) spFitObserver.observe($('#sp-content'));
 let projectsCache = [];
 let activeProjectId = null;
 
+// ─── Projects: board + per-project workspace ─────────────────────────────────
+// A project is a folder context. The board answers "which folder needs me",
+// the workspace answers "what is going on in this one". Clicking a row opens
+// the workspace; launching the agent is always the explicit button, never a
+// side effect of looking around.
+let projectStates = {};   // derived per-project signal, keyed by id
+let projectGroups = null; // { needsYou, active, quiet } id lists from main
+let wsOpenId = null;      // non-null while a workspace view is open
+
 async function renderProjects() {
-  const grid = $('#projects-grid');
-  if (!grid) return;
-  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
-  grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading projects…</div></div>';
+  const board = $('#projects-board');
+  if (!board) return;
   const res = await window.husk.projects.list();
   if (!res || !res.ok) {
     // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml((res && res.error) || 'Unknown error')}</div></div>`;
+    board.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml((res && res.error) || 'Unknown error')}</div></div>`;
     return;
   }
   projectsCache = res.projects || [];
   activeProjectId = res.activeProjectId || null;
-  paintProjects(projectsCache, ($('#projects-search') || {}).value || '');
+  if (wsOpenId && !projectsCache.some((p) => p.id === wsOpenId)) wsOpenId = null;
+  // Paint immediately from the cheap list, then enrich once derived state
+  // lands. The page never waits on a git call.
+  paintProjectsSurface();
+  try {
+    const st = await window.husk.projects.state();
+    if (st && st.ok) {
+      projectStates = st.states || {};
+      projectGroups = st.groups || null;
+      paintProjectsSurface();
+    }
+  } catch (_) {}
 }
 
 function fmtRelTime(iso) {
@@ -2007,47 +2025,216 @@ function fmtRelTime(iso) {
   return new Date(t).toLocaleDateString();
 }
 
-function paintProjects(items, filter) {
-  const grid = $('#projects-grid');
-  if (!grid) return;
+function wsStateOf(id) { return projectStates[id] || {}; }
+
+// Most recent thing that happened here: a session transcript or a launch.
+function wsActivityMs(p) {
+  const st = wsStateOf(p.id);
+  return Math.max(st.lastSessionMs || 0, Date.parse(p.lastUsedAt || '') || 0) || null;
+}
+
+// Board or workspace, one entry point so every caller repaints the right one.
+function paintProjectsSurface() {
+  const board = $('#projects-board');
+  const ws = $('#project-workspace');
+  if (!board || !ws) return;
+  if (wsOpenId) { board.hidden = true; ws.hidden = false; paintWorkspace(wsOpenId); return; }
+  ws.hidden = true;
+  board.hidden = false;
+  paintBoard(($('#projects-search') || {}).value || '');
+}
+
+const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
+const WS_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+
+// Status chips for one project, shared by board rows and the workspace header.
+function wsStatChips(p) {
+  const st = wsStateOf(p.id);
+  const chips = [];
+  if (st.live) chips.push('<span class="ws-stat is-live"><span class="tv-dot"></span>agent live</span>');
+  if (st.branch) {
+    const ab = `${st.ahead ? ` <span class="ws-ab" title="commits ahead of upstream">&uarr;${Number(st.ahead)}</span>` : ''}${st.behind ? ` <span class="ws-ab" title="commits behind upstream">&darr;${Number(st.behind)}</span>` : ''}`;
+    chips.push(`<span class="ws-stat" title="git branch">${WS_BRANCH_SVG}${escapeHtml(st.branch)}${ab}</span>`);
+  }
+  if (st.conflicts) chips.push(`<span class="ws-stat is-warn">${Number(st.conflicts)} conflicted</span>`);
+  else if (st.dirty) chips.push(`<span class="ws-stat is-dirty">${Number(st.dirty)} uncommitted</span>`);
+  if (st.retainedCount) chips.push(`<span class="ws-stat is-attn">${Number(st.retainedCount)} to review</span>`);
+  if (projectGroups && st.available === false) chips.push('<span class="ws-stat is-warn">folder missing</span>');
+  return chips.join('');
+}
+
+function wsRowHtml(p, attn) {
+  const isActive = p.id === activeProjectId;
+  return `
+    <div class="ws-row${isActive ? ' is-active' : ''}${attn ? ' is-attn' : ''}" data-id="${escapeHtml(p.id)}" tabindex="0" role="button" aria-label="Open workspace ${escapeHtml(p.name)}">
+      <div class="ws-row-main">
+        <div class="ws-row-title">${escapeHtml(p.name)}${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
+        <div class="ws-row-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
+      </div>
+      <div class="ws-row-chips">${wsStatChips(p)}<span class="ws-row-time">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</span></div>
+      <div class="ws-row-actions">
+        <button class="card-cta ws-launch" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this folder' : 'Launch the agent in this folder'}">${isActive ? 'Reopen' : 'Launch'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+        <button class="card-delete project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project" aria-label="Delete project">${WS_TRASH_SVG}</button>
+      </div>
+    </div>`;
+}
+
+function wsChipHtml(p) {
+  const st = wsStateOf(p.id);
+  const missing = projectGroups && st.available === false;
+  return `<button class="ws-chip${missing ? ' is-warn' : ''}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.path)}">${escapeHtml(p.name)}<span class="ws-chip-time">${missing ? 'missing' : escapeHtml(fmtRelTime(wsActivityMs(p)))}</span></button>`;
+}
+
+function paintBoard(filter) {
+  const board = $('#projects-board');
+  if (!board) return;
   const q = (filter || '').toLowerCase().trim();
-  const filtered = q
-    ? items.filter((p) => (p.name + ' ' + p.path).toLowerCase().includes(q))
-    : items;
-  if (!filtered.length) {
-    const msg = q
-      ? `No projects match "${escapeHtml(q)}"`
-      : `No projects yet. Click + Add project to pin a folder.`;
-    // eslint-disable-next-line no-unsanitized/property -- escapeHtml on dynamic part.
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-msg">${msg}</div></div>`;
+  const match = (p) => !q || (p.name + ' ' + p.path).toLowerCase().includes(q);
+  if (!projectsCache.length) {
+    // eslint-disable-next-line no-unsanitized/property -- Static markup.
+    board.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-title">No projects yet</div><div class="es-msg">Pin a folder so the agent can launch into it with one click, and this board can tell you what is going on inside it.</div></div>`;
     return;
   }
-  const cards = filtered.map((p) => {
-    const isActive = p.id === activeProjectId;
-    return `
-      <div class="project-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}" tabindex="0">
-        <button class="card-delete project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project" aria-label="Delete project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
-        <div class="project-card-head">
-          <div class="project-card-title">${escapeHtml(p.name)}</div>
-          ${isActive ? '<span class="project-card-pill">active</span>' : ''}
-        </div>
-        <div class="project-card-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
-        <div class="project-card-meta">last used ${escapeHtml(fmtRelTime(p.lastUsedAt))}</div>
-        <div class="project-card-actions">
-          ${isActive ? `<button class="card-cta project-leave" title="Work with no project; the agent runs in your home folder">Switch to no project</button>` : ''}
-          <button class="card-cta project-open" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this project' : 'Switch to this project'}">${isActive ? 'Reopen' : 'Open'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
-        </div>
-      </div>
-    `;
-  }).join('');
+  // Until derived state lands, everything renders as one plain section; the
+  // grouped board takes over on the second paint.
+  const groups = projectGroups || { needsYou: [], active: projectsCache.map((p) => p.id), quiet: [] };
+  const byId = new Map(projectsCache.map((p) => [p.id, p]));
+  const pick = (idList) => idList.map((id) => byId.get(id)).filter(Boolean).filter(match);
+  const needs = pick(groups.needsYou);
+  const act = pick(groups.active);
+  const quiet = pick(groups.quiet);
+  const secs = [];
+  if (needs.length) secs.push(`<div class="ws-sec is-attn"><div class="ws-sec-head">Needs you<span class="ws-sec-count">${needs.length}</span></div><div class="ws-rows">${needs.map((p) => wsRowHtml(p, true)).join('')}</div></div>`);
+  if (act.length) secs.push(`<div class="ws-sec"><div class="ws-sec-head">${projectGroups ? 'Active' : 'Projects'}<span class="ws-sec-count">${act.length}</span></div><div class="ws-rows">${act.map((p) => wsRowHtml(p, false)).join('')}</div></div>`);
+  if (quiet.length) secs.push(`<div class="ws-sec"><div class="ws-sec-head">Quiet<span class="ws-sec-count">${quiet.length}</span></div><div class="ws-chips">${quiet.map(wsChipHtml).join('')}</div></div>`);
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
-  grid.innerHTML = cards;
-  grid.querySelectorAll('.project-open').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
-  grid.querySelectorAll('.project-leave').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); clearActiveProject(); }));
-  grid.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
-  grid.querySelectorAll('.project-card').forEach((card) => card.addEventListener('click', (e) => {
-    if (e.target.closest('.project-card-actions') || e.target.closest('.card-delete')) return;
-    openProject(card.dataset.id);
+  board.innerHTML = secs.join('') || `<div class="empty-state"><div class="es-msg">No projects match "${escapeHtml(q)}"</div></div>`;
+  board.querySelectorAll('.ws-launch').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
+  board.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
+  board.querySelectorAll('.ws-row').forEach((row) => row.addEventListener('click', (e) => {
+    if (e.target.closest('.ws-row-actions')) return;
+    openWorkspaceView(row.dataset.id);
+  }));
+  board.querySelectorAll('.ws-chip').forEach((chip) => chip.addEventListener('click', () => openWorkspaceView(chip.dataset.id)));
+}
+
+function openWorkspaceView(id) {
+  if (!id) return;
+  wsOpenId = id;
+  // Fire and forget: the stamp feeds a future since-you-were-here digest and
+  // must never hold up opening the view.
+  try { window.husk.projects.markViewed(id); } catch (_) {}
+  paintProjectsSurface();
+}
+
+function closeWorkspaceView() {
+  wsOpenId = null;
+  paintProjectsSurface();
+}
+
+function paintWorkspace(id) {
+  const ws = $('#project-workspace');
+  const p = projectsCache.find((x) => x.id === id);
+  if (!ws || !p) { wsOpenId = null; paintProjectsSurface(); return; }
+  const st = wsStateOf(id);
+  const isActive = p.id === activeProjectId;
+  const missing = projectGroups && st.available === false;
+
+  const loops = [];
+  if (st.retainedCount) {
+    loops.push(`<div class="ws-loop"><div class="ws-loop-text"><strong>${Number(st.retainedCount)} autopilot run${st.retainedCount === 1 ? '' : 's'} waiting for review</strong><span>finished work stays parked in a worktree until you apply or discard it</span></div><button class="ghost-btn" id="ws-review-runs">Review</button></div>`);
+  }
+  if (st.conflicts) {
+    loops.push(`<div class="ws-loop is-warn"><div class="ws-loop-text"><strong>${Number(st.conflicts)} conflicted file${st.conflicts === 1 ? '' : 's'}</strong><span>a merge is blocked until these are resolved</span></div></div>`);
+  }
+  if (st.dirty && !st.conflicts) {
+    loops.push(`<div class="ws-loop"><div class="ws-loop-text"><strong>${Number(st.dirty)} uncommitted change${st.dirty === 1 ? '' : 's'}${st.branch ? ` on ${escapeHtml(st.branch)}` : ''}</strong><span>${isActive ? 'review them on the Files page' : 'launch here to review them on the Files page'}</span></div>${isActive ? '<button class="ghost-btn" id="ws-open-files">Files</button>' : ''}</div>`);
+  }
+  const loopsHtml = loops.length ? loops.join('') : '<div class="ws-empty">Nothing waiting on you here.</div>';
+
+  const details = [
+    ['Path', `<span class="ws-mono">${escapeHtml(p.path)}</span>`],
+    ['Git', st.isGit ? `${escapeHtml(st.branch || 'repository')}` : (projectGroups ? 'not a git repository' : '&hellip;')],
+    ['Added', escapeHtml(fmtRelTime(p.addedAt))],
+    ['Last launched', escapeHtml(fmtRelTime(p.lastUsedAt))],
+    ['Last session', escapeHtml(fmtRelTime(st.lastSessionMs))],
+  ].map(([k, v]) => `<div class="ws-detail"><span class="ws-detail-k">${k}</span><span class="ws-detail-v">${v}</span></div>`).join('');
+
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
+  ws.innerHTML = `
+    <button class="ghost-btn ws-back" id="ws-back"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> All projects</button>
+    ${missing ? `<div class="ws-missing"><strong>This folder no longer exists.</strong> The path may be renamed, moved, or on a disconnected drive. Remove the project, or restore the folder and come back.<button class="ghost-btn" id="ws-remove-missing">Remove project</button></div>` : ''}
+    <div class="ws-title-row">
+      <div class="ws-title">${escapeHtml(p.name)}${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
+      <div class="ws-title-actions">
+        ${isActive ? '<button class="ghost-btn" id="ws-leave" title="Work with no project; the agent runs in your home folder">Switch to no project</button>' : ''}
+        ${missing ? '' : `<button class="btn-primary" id="ws-launch">${isActive ? 'Reopen' : 'Launch'}<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
+      </div>
+    </div>
+    <div class="ws-meta-row">${wsStatChips(p)}</div>
+    <div class="ws-panels">
+      <section class="ws-panel">
+        <div class="ws-panel-head">Open loops</div>
+        ${loopsHtml}
+      </section>
+      <section class="ws-panel">
+        <div class="ws-panel-head">Recent sessions</div>
+        <div id="ws-sessions-list"><div class="ws-empty">Loading&hellip;</div></div>
+      </section>
+      <section class="ws-panel ws-panel-wide">
+        <div class="ws-panel-head">Details</div>
+        <div class="ws-details">${details}</div>
+        <div class="ws-danger"><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button><span class="ws-danger-hint">removes it from Husk; the folder itself is not touched</span></div>
+      </section>
+    </div>`;
+
+  $('#ws-back').addEventListener('click', closeWorkspaceView);
+  const launch = $('#ws-launch');
+  if (launch) launch.addEventListener('click', () => openProject(p.id));
+  const leave = $('#ws-leave');
+  if (leave) leave.addEventListener('click', () => clearActiveProject());
+  const review = $('#ws-review-runs');
+  if (review) review.addEventListener('click', () => setPage('autopilot'));
+  const filesBtn = $('#ws-open-files');
+  if (filesBtn) filesBtn.addEventListener('click', () => setPage('files'));
+  const del = $('#ws-delete');
+  if (del) del.addEventListener('click', () => deleteProject(p.id, p.name));
+  const removeMissing = $('#ws-remove-missing');
+  if (removeMissing) removeMissing.addEventListener('click', () => deleteProject(p.id, p.name));
+  wsFillSessions(p);
+}
+
+// The sessions panel fills in after the view paints; a slow transcript scan
+// must not block the workspace opening.
+async function wsFillSessions(p) {
+  let res = null;
+  try { res = await window.husk.sessions.list(); } catch (_) {}
+  // The user may have navigated away while the list loaded.
+  if (wsOpenId !== p.id) return;
+  const list = $('#ws-sessions-list');
+  if (!list) return;
+  const norm = (s) => String(s || '').replace(/\/+$/, '');
+  const here = norm(p.path);
+  const rows = ((res && res.sessions) || [])
+    .filter((s) => [s.projectPath, s.originalCwd, s.cwd].some((v) => v && norm(v) === here))
+    .sort((a, b) => (b.mtime || b.startedMs || 0) - (a.mtime || a.startedMs || 0))
+    .slice(0, 8);
+  if (!rows.length) {
+    // eslint-disable-next-line no-unsanitized/property -- Static markup.
+    list.innerHTML = '<div class="ws-empty">No sessions in this folder yet.</div>';
+    return;
+  }
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
+  list.innerHTML = rows.map((s) => `
+    <div class="ws-sess">
+      <div class="ws-sess-main">
+        <div class="ws-sess-title" title="${escapeHtml(s.title || '')}">${escapeHtml(s.title || '(untitled)')}</div>
+        <div class="ws-sess-meta">${escapeHtml(fmtRelTime(s.mtime || s.startedMs))}</div>
+      </div>
+      <button class="ghost-btn ws-sess-resume">Resume</button>
+    </div>`).join('');
+  list.querySelectorAll('.ws-sess-resume').forEach((btn, i) => btn.addEventListener('click', () => {
+    resumeSessionInChat({ id: rows[i].id, project: p.path, owner: rows[i].owner });
   }));
 }
 
@@ -2085,7 +2272,7 @@ async function refreshProjectsState() {
   projectsCache = res.projects || [];
   activeProjectId = res.activeProjectId || null;
   updateActiveProjectChip();
-  if (currentPage === 'projects') paintProjects(projectsCache, ($('#projects-search') || {}).value || '');
+  if (currentPage === 'projects') paintProjectsSurface();
   // Refresh chat-sub since the agent cwd may have changed.
   try { cfg = await window.husk.config.get(); } catch (_) {}
   updateAgentPill && updateAgentPill();
@@ -2133,7 +2320,10 @@ async function deleteProject(id, name) {
 // Wire Projects page controls + Add Project modal.
 {
   const search = document.getElementById('projects-search');
-  if (search) search.addEventListener('input', debounce(() => paintProjects(projectsCache, search.value), 120));
+  if (search) search.addEventListener('input', debounce(() => { if (!wsOpenId) paintBoard(search.value); }, 120));
+  // Derived state ages while the window is unfocused (commits from a terminal,
+  // runs finishing); refresh on focus so the board is honest when eyes return.
+  window.addEventListener('focus', () => { if (currentPage === 'projects') renderProjects(); });
 
   const newBtn = document.getElementById('btn-projects-new');
   const modal = document.getElementById('new-project-modal');

@@ -1175,14 +1175,15 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Projects</h1>
-              <span class="page-sub">click a project to launch the agent there; click again or use Restart to switch</span>
+              <span class="page-sub">every folder you work in, with what is going on inside it</span>
             </div>
             <div class="page-head-right">
               <input type="search" id="projects-search" class="ghost-input" placeholder="Filter projects…" />
               <button class="btn-primary" id="btn-projects-new" title="Add a new project"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Add project</button>
             </div>
           </div>
-          <div class="projects-grid" id="projects-grid"></div>
+          <div class="ws-board" id="projects-board"></div>
+          <div class="ws-view" id="project-workspace" hidden></div>
         </div>
 
         <!-- Create project modal -->
