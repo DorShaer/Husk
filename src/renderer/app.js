@@ -1979,6 +1979,7 @@ let activeProjectId = null;
 let projectStates = {};   // derived per-project signal, keyed by id
 let projectGroups = null; // { needsYou, active, quiet } id lists from main
 let wsOpenId = null;      // non-null while a workspace view is open
+let wsStateError = null;  // last projects:state failure, rendered by paintBoard
 
 async function renderProjects() {
   const board = $('#projects-board');
@@ -1995,31 +1996,19 @@ async function renderProjects() {
   // Paint immediately from the cheap list, then enrich once derived state
   // lands. The page never waits on a git call.
   paintProjectsSurface();
-  let stateErr = null;
+  wsStateError = null;
   try {
     const st = await window.husk.projects.state();
     if (st && st.ok) {
       projectStates = st.states || {};
       projectGroups = st.groups || null;
     } else {
-      stateErr = (st && st.error) || 'the call returned no data';
+      wsStateError = (st && st.error) || 'the call returned no data';
     }
   } catch (err) {
-    stateErr = (err && err.message) || String(err);
+    wsStateError = (err && err.message) || String(err);
   }
-  if (stateErr) {
-    // Without derived state the board still works, minus git and run signal.
-    // The note carries the actual error so a screenshot of it is diagnostic.
-    console.warn('[projects] derived state unavailable:', stateErr);
-    const board = $('#projects-board');
-    if (board && !$('#ws-state-note')) {
-      const note = document.createElement('div');
-      note.id = 'ws-state-note';
-      note.className = 'ws-state-note';
-      note.textContent = `Live project state is unavailable, so branch and status are blank. Error: ${stateErr}`;
-      board.prepend(note);
-    }
-  }
+  if (wsStateError) console.warn('[projects] derived state unavailable:', wsStateError);
   paintProjectsSurface();
 }
 
@@ -2072,6 +2061,8 @@ function paintProjectsSurface() {
   if (!board || !ws) return;
   const search = $('#projects-search');
   if (search) search.hidden = !!wsOpenId;
+  const addBtn = $('#btn-projects-new');
+  if (addBtn) addBtn.hidden = !!wsOpenId;
   if (wsOpenId) { board.hidden = true; ws.hidden = false; paintWorkspace(wsOpenId); return; }
   ws.hidden = true;
   board.hidden = false;
@@ -2116,7 +2107,7 @@ function wsRowHtml(p, attn) {
       <div class="ws-col-state">${statusCell}</div>
       <div class="ws-col-time">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
       <div class="ws-col-actions">
-        <button class="ghost-btn ws-launch" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this folder' : 'Launch the agent in this folder'}">${isActive ? 'Reopen' : 'Open'}</button>
+        ${isActive ? '' : `<button class="ghost-btn ws-launch" data-id="${escapeHtml(p.id)}" title="Launch the agent in this folder">Open</button>`}
         <button class="card-delete project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project" aria-label="Delete project">${WS_TRASH_SVG}</button>
       </div>
     </div>`;
@@ -2148,8 +2139,13 @@ function paintBoard(filter) {
   // short list stays a clean flat table.
   const nonEmpty = [needs, act, quiet].filter((g) => g.length).length;
   const groupRow = (label, n) => (nonEmpty > 1 ? `<div class="ws-group"><span>${label}</span><span class="ws-sec-count">${n}</span></div>` : '');
+  // The failure note lives inside the paint so it survives every repaint and
+  // carries the actual error; a screenshot of it is a diagnosis.
+  const stateNote = wsStateError
+    ? `<div class="ws-state-note">Live project state is unavailable, so branch and status are blank. Error: ${escapeHtml(wsStateError)}</div>`
+    : '';
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
-  board.innerHTML = `
+  board.innerHTML = `${stateNote}
     <div class="ws-table">
       <div class="ws-thead"><span>Project</span><span>Path</span><span>Branch</span><span>Status</span><span class="ws-th-right">Activity</span><span></span></div>
       ${needs.length ? groupRow('Needs you', needs.length) + needs.map((p) => wsRowHtml(p, true)).join('') : ''}
@@ -2217,7 +2213,7 @@ function paintWorkspace(id) {
       </div>
       <div class="ws-title-actions">
         ${isActive ? '<button class="ghost-btn" id="ws-leave" title="Work with no project; the agent runs in your home folder">Switch to no project</button>' : ''}
-        ${missing ? '' : `<button class="btn-primary" id="ws-launch">${isActive ? 'Reopen' : 'Launch'}<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
+        ${(missing || isActive) ? '' : `<button class="btn-primary" id="ws-launch">Launch<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
       </div>
     </div>
     <div class="ws-tiles">
@@ -2226,7 +2222,7 @@ function paintWorkspace(id) {
         <div class="ws-tile-body">
           <div class="ws-tile-label">Branch</div>
           <div class="ws-tile-value ws-tile-ellipsis" title="${escapeHtml(st.branch || '')}">${st.branch ? escapeHtml(st.branch) : (projectGroups ? (st.isGit ? 'repository' : 'no repo') : '&hellip;')}</div>
-          <div class="ws-tile-sub${st.conflicts ? ' is-warn' : (st.dirty ? ' is-dirty' : '')}">${st.conflicts ? `${Number(st.conflicts)} conflicted` : (st.dirty ? `${Number(st.dirty)} uncommitted` : (st.isGit ? 'working tree clean' : 'plain folder'))}</div>
+          <div class="ws-tile-sub${st.conflicts ? ' is-warn' : (st.dirty ? ' is-dirty' : '')}">${!projectGroups ? 'checking&hellip;' : (st.conflicts ? `${Number(st.conflicts)} conflicted` : (st.dirty ? `${Number(st.dirty)} uncommitted` : (st.isGit ? 'working tree clean' : 'plain folder')))}</div>
         </div>
       </div>
       <div class="ws-tile${loops.length ? ' is-attn' : ''}">

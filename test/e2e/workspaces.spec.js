@@ -139,3 +139,32 @@ test('a non-git folder degrades to a plain workspace, not an error', async () =>
   expect(info.loops).toContain('Nothing waiting on you here');
   await app.close();
 });
+
+test('the active project offers no launch button, and Add project hides in a workspace', async () => {
+  const { app, win } = await launchApp();
+  await openBoard(win);
+  await win.evaluate(async () => {
+    await window.husk.projects.setActive('p-alpha'); // eslint-disable-line no-undef
+    await renderProjects(); // eslint-disable-line no-undef
+  });
+  await win.waitForSelector('#projects-board .ws-row', { timeout: 10_000 });
+  const board = await win.evaluate(() => ({
+    activeRowButtons: [...document.querySelectorAll('#projects-board .ws-row[data-id="p-alpha"] .ws-launch')].length,
+    otherRowButtons: [...document.querySelectorAll('#projects-board .ws-row[data-id="p-plain"] .ws-launch')].length,
+  }));
+  expect(board.activeRowButtons).toBe(0);
+  expect(board.otherRowButtons).toBe(1);
+  await win.click('#projects-board .ws-row[data-id="p-alpha"]');
+  await win.waitForSelector('#project-workspace:not([hidden])', { timeout: 10_000 });
+  const ws = await win.evaluate(() => ({
+    hasLaunch: !!document.getElementById('ws-launch'),
+    addHidden: document.getElementById('btn-projects-new').hidden,
+  }));
+  expect(ws.hasLaunch).toBe(false);
+  expect(ws.addHidden).toBe(true);
+  await win.click('#ws-back');
+  await win.waitForSelector('#projects-board:not([hidden])', { timeout: 10_000 });
+  const addBack = await win.evaluate(() => document.getElementById('btn-projects-new').hidden);
+  expect(addBack).toBe(false);
+  await app.close();
+});

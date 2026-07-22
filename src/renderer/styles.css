@@ -8328,13 +8328,8 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .ws-missing strong { color: var(--warn); }
 .ws-missing .ghost-btn { margin-left: auto; }
-.ws-hero { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; position: relative; }
-.ws-hero::before {
-  content: ''; position: absolute; inset: -28px -24px auto -24px; height: 150px;
-  background: radial-gradient(420px 130px at 8% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
-  pointer-events: none;
-}
-.ws-hero-main { position: relative; z-index: 1; min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; }
+.ws-hero { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ws-hero-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; }
 .ws-title { font-size: 22px; font-weight: 680; letter-spacing: -.015em; color: var(--text); display: flex; align-items: center; gap: 10px; }
 .ws-title .tv-dot { width: 8px; height: 8px; }
 .ws-hero-meta { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
