@@ -578,6 +578,14 @@ function applyPaiState(active) {
 // to put its own output.
 const LIFEOS_MEMORY_SUBDIRS = ['WORK', 'KNOWLEDGE', 'LEARNING', 'STATE', 'OBSERVABILITY', 'SKILLS'];
 
+// The vendored bundle carries no bun lockfiles, by rule. Nothing here ever
+// installs from them: the per-skill tools are optional and the user resolves
+// them if and when they want one. A lockfile we never install from still pins
+// exact versions, so all it can do over time is hold the tree to dependency
+// versions that have since had advisories filed against them. Dropping them
+// means a user who does opt in resolves current versions instead. Keep the
+// package.json files, they are what makes that resolve possible.
+
 function bootstrapPaiIfNeeded() {
   // Hard opt-out: when the user has disabled the framework in Preferences, we
   // do not touch ~/.claude/ on launch. Pre-existing files stay where they are
