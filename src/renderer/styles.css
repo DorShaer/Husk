@@ -4603,7 +4603,6 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .ws-board, .ws-view {
   flex: 1; min-height: 0; overflow-y: auto;
   padding-right: 4px;
-  max-width: 1120px;
 }
 .project-card-pill {
   font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
@@ -8210,14 +8209,9 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
    The board is three priority zones (Needs you / Active / Quiet); each active
    project is a row, quiet ones collapse to chips. Clicking a row opens the
    workspace view in place; launching stays an explicit button. */
-.ws-board { display: flex; flex-direction: column; gap: 28px; }
-.ws-sec-head {
-  display: flex; align-items: baseline; gap: 8px;
-  font-size: 11px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
-  color: var(--text-3); margin-bottom: 10px;
-}
-.ws-sec.is-attn .ws-sec-head { color: var(--warn); }
+.ws-board { display: flex; flex-direction: column; }
 .ws-sec-count { color: var(--text-dim); font-weight: 500; }
+
 .ws-table {
   background: var(--bg-1);
   border: 1px solid var(--line);
@@ -8227,19 +8221,36 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .ws-sec.is-attn .ws-table { border-color: color-mix(in srgb, var(--warn) 30%, var(--line)); }
 
-/* Column template shared by every row in a table. */
-.ws-row {
+/* Column template shared by the header row and every project row. */
+.ws-thead, .ws-row {
   display: grid;
-  grid-template-columns: minmax(150px, 220px) minmax(120px, 1fr) minmax(0, 175px) minmax(0, 190px) 74px max-content;
+  grid-template-columns: minmax(170px, 250px) minmax(150px, 1fr) minmax(120px, 200px) minmax(120px, 210px) 90px minmax(130px, max-content);
   grid-template-areas: "name path git state time act";
   align-items: center;
-  gap: 16px;
-  padding: 12px 18px;
+  gap: 18px;
+  padding: 12px 20px;
+}
+.ws-thead {
+  padding-top: 11px; padding-bottom: 11px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ws-th-right { text-align: right; }
+.ws-group {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 20px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--line);
+  font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.ws-row {
+  border-top: 1px solid var(--line);
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease-out);
 }
-.ws-row + .ws-row { border-top: 1px solid var(--line); }
 .ws-row:hover, .ws-row:focus-visible { background: var(--bg-2); outline: none; }
+.ws-cell-dim { color: var(--text-dim); font-size: 12px; }
 .ws-col-name { grid-area: name; display: flex; align-items: center; gap: 9px; min-width: 0; }
 .ws-col-name .tv-dot { flex: 0 0 auto; }
 .ws-row-title {
@@ -8260,12 +8271,15 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-row:hover .card-delete, .ws-row:focus-within .card-delete { opacity: 1; }
 .ws-stat-txt { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1020px) {
+  .ws-thead { display: none; }
   .ws-row {
     grid-template-columns: minmax(0, 1fr) auto max-content;
     grid-template-areas: "name time act" "path path path" "git state state";
     row-gap: 5px;
   }
   .ws-col-git:empty, .ws-col-state:empty { display: none; }
+  .ws-tiles { grid-template-columns: repeat(2, 1fr); }
+  .ws-cols { grid-template-columns: 1fr; }
 }
 
 /* Status chips: one visual system on rows, the workspace header, and details. */
@@ -8283,19 +8297,6 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-stat.is-attn { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line-2)); background: color-mix(in srgb, var(--accent) 8%, var(--bg-2)); }
 .ws-ab { color: var(--text-3); }
 
-/* Quiet zone renders as compact chips. */
-.ws-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.ws-chip {
-  display: inline-flex; align-items: center; gap: 8px;
-  font-size: 12.5px; color: var(--text-2);
-  background: var(--bg-1); border: 1px solid var(--line); border-radius: 999px;
-  padding: 6px 13px; cursor: pointer;
-  transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
-}
-.ws-chip:hover { color: var(--text); border-color: var(--line-3); background: var(--bg-2); }
-.ws-chip.is-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); }
-.ws-chip-time { font-size: 11px; color: var(--text-dim); }
-
 /* ── Workspace view ── */
 .ws-back { margin-bottom: 16px; }
 .ws-missing {
@@ -8310,10 +8311,24 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-title-row { display: flex; align-items: center; gap: 14px; justify-content: space-between; flex-wrap: wrap; }
 .ws-title { font-size: 21px; font-weight: 650; color: var(--text); display: flex; align-items: center; gap: 10px; }
 .ws-title-actions { display: flex; align-items: center; gap: 8px; }
-.ws-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.ws-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }
-.ws-panel-wide { grid-column: 1 / -1; }
-@media (max-width: 1080px) { .ws-panels { grid-template-columns: 1fr; } .ws-panel-wide { grid-column: auto; } }
+.ws-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
+.ws-tile {
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  padding: 14px 18px 13px; box-shadow: var(--hl-top);
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.ws-tile-label {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ws-tile-value { font-size: 22px; font-weight: 650; color: var(--text); line-height: 1.2; }
+.ws-tile-ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-tile-sub { font-size: 12px; color: var(--text-3); }
+.ws-tile-sub.is-warn { color: var(--warn); }
+.ws-tile-sub.is-dirty { color: var(--amber); }
+.ws-tile-sub.is-live { color: var(--accent); }
+.ws-cols { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); gap: 14px; align-items: start; margin-top: 14px; }
+.ws-col-l, .ws-col-r { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .ws-panel {
   background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg);
   padding: 16px 18px; box-shadow: var(--hl-top);

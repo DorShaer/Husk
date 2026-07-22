@@ -2077,37 +2077,27 @@ function wsWorkChips(p) {
   return chips.join('');
 }
 
-// The full chip set for the workspace header, where there is room to spell
-// liveness out; board rows show it as a dot next to the name instead.
-function wsStatChips(p) {
-  const st = wsStateOf(p.id);
-  const live = st.live ? '<span class="ws-stat is-live"><span class="tv-dot"></span>agent live</span>' : '';
-  return live + wsBranchChip(st) + wsWorkChips(p);
-}
-
 // One table row. The full path lives in the tooltip; the cell shows the
-// home-relative form.
+// home-relative form. Empty cells carry a dim placeholder so the columns keep
+// their rhythm; an ellipsis placeholder means derived state has not landed yet.
 function wsRowHtml(p, attn) {
   const st = wsStateOf(p.id);
   const isActive = p.id === activeProjectId;
+  const pending = !projectGroups;
+  const branchCell = wsBranchChip(st) || `<span class="ws-cell-dim">${pending ? '&hellip;' : '&middot;'}</span>`;
+  const statusCell = wsWorkChips(p) || `<span class="ws-cell-dim">${pending ? '&hellip;' : (st.isGit ? 'clean' : '&middot;')}</span>`;
   return `
     <div class="ws-row${isActive ? ' is-active' : ''}${attn ? ' is-attn' : ''}" data-id="${escapeHtml(p.id)}" tabindex="0" role="button" aria-label="Open workspace ${escapeHtml(p.name)}">
       <div class="ws-col-name">${st.live ? '<span class="tv-dot" title="agent live"></span>' : ''}<span class="ws-row-title">${escapeHtml(p.name)}</span>${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
       <div class="ws-col-path" title="${escapeHtml(p.path)}">${escapeHtml(wsShortPath(p.path))}</div>
-      <div class="ws-col-git">${wsBranchChip(st)}</div>
-      <div class="ws-col-state">${wsWorkChips(p)}</div>
+      <div class="ws-col-git">${branchCell}</div>
+      <div class="ws-col-state">${statusCell}</div>
       <div class="ws-col-time">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
       <div class="ws-col-actions">
         <button class="ghost-btn ws-launch" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this folder' : 'Launch the agent in this folder'}">${isActive ? 'Reopen' : 'Open'}</button>
         <button class="card-delete project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project" aria-label="Delete project">${WS_TRASH_SVG}</button>
       </div>
     </div>`;
-}
-
-function wsChipHtml(p) {
-  const st = wsStateOf(p.id);
-  const missing = projectGroups && st.available === false;
-  return `<button class="ws-chip${missing ? ' is-warn' : ''}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.path)}">${escapeHtml(p.name)}<span class="ws-chip-time">${missing ? 'missing' : escapeHtml(fmtRelTime(wsActivityMs(p)))}</span></button>`;
 }
 
 function paintBoard(filter) {
@@ -2120,27 +2110,36 @@ function paintBoard(filter) {
     board.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-title">No projects yet</div><div class="es-msg">Pin a folder so the agent can launch into it with one click, and this board can tell you what is going on inside it.</div></div>`;
     return;
   }
-  // Until derived state lands, everything renders as one plain section; the
-  // grouped board takes over on the second paint.
   const groups = projectGroups || { needsYou: [], active: projectsCache.map((p) => p.id), quiet: [] };
   const byId = new Map(projectsCache.map((p) => [p.id, p]));
   const pick = (idList) => idList.map((id) => byId.get(id)).filter(Boolean).filter(match);
   const needs = pick(groups.needsYou);
   const act = pick(groups.active);
   const quiet = pick(groups.quiet);
-  const secs = [];
-  if (needs.length) secs.push(`<div class="ws-sec is-attn"><div class="ws-sec-head">Needs you<span class="ws-sec-count">${needs.length}</span></div><div class="ws-table">${needs.map((p) => wsRowHtml(p, true)).join('')}</div></div>`);
-  if (act.length) secs.push(`<div class="ws-sec"><div class="ws-sec-head">${projectGroups ? 'Active' : 'Projects'}<span class="ws-sec-count">${act.length}</span></div><div class="ws-table">${act.map((p) => wsRowHtml(p, false)).join('')}</div></div>`);
-  if (quiet.length) secs.push(`<div class="ws-sec"><div class="ws-sec-head">Quiet<span class="ws-sec-count">${quiet.length}</span></div><div class="ws-chips">${quiet.map(wsChipHtml).join('')}</div></div>`);
+  if (!needs.length && !act.length && !quiet.length) {
+    // eslint-disable-next-line no-unsanitized/property -- escapeHtml on the query.
+    board.innerHTML = `<div class="empty-state"><div class="es-msg">No projects match "${escapeHtml(q)}"</div></div>`;
+    return;
+  }
+  // One continuous table: a header row, then the groups as separator rows.
+  // Separators appear only when there is more than one non-empty group, so a
+  // short list stays a clean flat table.
+  const nonEmpty = [needs, act, quiet].filter((g) => g.length).length;
+  const groupRow = (label, n) => (nonEmpty > 1 ? `<div class="ws-group"><span>${label}</span><span class="ws-sec-count">${n}</span></div>` : '');
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
-  board.innerHTML = secs.join('') || `<div class="empty-state"><div class="es-msg">No projects match "${escapeHtml(q)}"</div></div>`;
+  board.innerHTML = `
+    <div class="ws-table">
+      <div class="ws-thead"><span>Project</span><span>Path</span><span>Branch</span><span>Status</span><span class="ws-th-right">Activity</span><span></span></div>
+      ${needs.length ? groupRow('Needs you', needs.length) + needs.map((p) => wsRowHtml(p, true)).join('') : ''}
+      ${act.length ? groupRow(projectGroups ? 'Active' : 'Projects', act.length) + act.map((p) => wsRowHtml(p, false)).join('') : ''}
+      ${quiet.length ? groupRow('Quiet', quiet.length) + quiet.map((p) => wsRowHtml(p, false)).join('') : ''}
+    </div>`;
   board.querySelectorAll('.ws-launch').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
   board.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
   board.querySelectorAll('.ws-row').forEach((row) => row.addEventListener('click', (e) => {
     if (e.target.closest('.ws-row-actions')) return;
     openWorkspaceView(row.dataset.id);
   }));
-  board.querySelectorAll('.ws-chip').forEach((chip) => chip.addEventListener('click', () => openWorkspaceView(chip.dataset.id)));
 }
 
 function openWorkspaceView(id) {
@@ -2196,21 +2195,46 @@ function paintWorkspace(id) {
         ${missing ? '' : `<button class="btn-primary" id="ws-launch">${isActive ? 'Reopen' : 'Launch'}<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
       </div>
     </div>
-    <div class="ws-meta-row">${wsStatChips(p)}</div>
-    <div class="ws-panels">
-      <section class="ws-panel">
-        <div class="ws-panel-head">Open loops</div>
-        ${loopsHtml}
-      </section>
-      <section class="ws-panel">
-        <div class="ws-panel-head">Recent sessions</div>
-        <div id="ws-sessions-list"><div class="ws-empty">Loading&hellip;</div></div>
-      </section>
-      <section class="ws-panel ws-panel-wide">
-        <div class="ws-panel-head">Details</div>
-        <div class="ws-details">${details}</div>
-        <div class="ws-danger"><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button><span class="ws-danger-hint">removes it from Husk; the folder itself is not touched</span></div>
-      </section>
+    <div class="ws-tiles">
+      <div class="ws-tile">
+        <div class="ws-tile-label">Branch</div>
+        <div class="ws-tile-value ws-tile-ellipsis" title="${escapeHtml(st.branch || '')}">${st.branch ? escapeHtml(st.branch) : (projectGroups ? (st.isGit ? 'repository' : 'no repo') : '&hellip;')}</div>
+        <div class="ws-tile-sub${st.conflicts ? ' is-warn' : (st.dirty ? ' is-dirty' : '')}">${st.conflicts ? `${Number(st.conflicts)} conflicted` : (st.dirty ? `${Number(st.dirty)} uncommitted` : (st.isGit ? 'working tree clean' : 'plain folder'))}</div>
+      </div>
+      <div class="ws-tile">
+        <div class="ws-tile-label">Open loops</div>
+        <div class="ws-tile-value">${loops.length}</div>
+        <div class="ws-tile-sub${loops.length ? ' is-warn' : ''}">${loops.length ? 'waiting on you' : 'all clear'}</div>
+      </div>
+      <div class="ws-tile">
+        <div class="ws-tile-label">Sessions</div>
+        <div class="ws-tile-value" id="ws-tile-sessions">&hellip;</div>
+        <div class="ws-tile-sub" id="ws-tile-sessions-sub">in this folder</div>
+      </div>
+      <div class="ws-tile">
+        <div class="ws-tile-label">Last activity</div>
+        <div class="ws-tile-value">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
+        <div class="ws-tile-sub${st.live ? ' is-live' : ''}">${st.live ? 'agent live here' : 'agent idle'}</div>
+      </div>
+    </div>
+    <div class="ws-cols">
+      <div class="ws-col-l">
+        <section class="ws-panel">
+          <div class="ws-panel-head">Open loops</div>
+          ${loopsHtml}
+        </section>
+        <section class="ws-panel">
+          <div class="ws-panel-head">Recent sessions</div>
+          <div id="ws-sessions-list"><div class="ws-empty">Loading&hellip;</div></div>
+        </section>
+      </div>
+      <div class="ws-col-r">
+        <section class="ws-panel">
+          <div class="ws-panel-head">Details</div>
+          <div class="ws-details">${details}</div>
+          <div class="ws-danger"><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button><span class="ws-danger-hint">removes it from Husk; the folder itself is not touched</span></div>
+        </section>
+      </div>
     </div>`;
 
   $('#ws-back').addEventListener('click', closeWorkspaceView);
@@ -2240,10 +2264,16 @@ async function wsFillSessions(p) {
   if (!list) return;
   const norm = (s) => String(s || '').replace(/\/+$/, '');
   const here = norm(p.path);
-  const rows = ((res && res.sessions) || [])
+  const matches = ((res && res.sessions) || [])
     .filter((s) => [s.projectPath, s.originalCwd, s.cwd].some((v) => v && norm(v) === here))
-    .sort((a, b) => (b.mtime || b.startedMs || 0) - (a.mtime || a.startedMs || 0))
-    .slice(0, 8);
+    .sort((a, b) => (b.mtime || b.startedMs || 0) - (a.mtime || a.startedMs || 0));
+  const rows = matches.slice(0, 8);
+  // The sessions tile shares this fetch. It counts every session in this
+  // folder; the list below shows only the newest few.
+  const tile = $('#ws-tile-sessions');
+  const tileSub = $('#ws-tile-sessions-sub');
+  if (tile) tile.textContent = String(matches.length);
+  if (tileSub && matches.length) tileSub.textContent = `last ${fmtRelTime(matches[0].mtime || matches[0].startedMs)}`;
   if (!rows.length) {
     // eslint-disable-next-line no-unsanitized/property -- Static markup.
     list.innerHTML = '<div class="ws-empty">No sessions in this folder yet.</div>';

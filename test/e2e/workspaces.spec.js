@@ -73,16 +73,17 @@ test('the board groups a dirty repo as Active and an idle folder as Quiet', asyn
   await win.waitForSelector('#projects-board .ws-stat', { timeout: 15_000 });
   const info = await win.evaluate(() => ({
     rows: [...document.querySelectorAll('#projects-board .ws-row .ws-row-title')].map((n) => n.textContent.trim()),
-    chips: [...document.querySelectorAll('#projects-board .ws-chip')].map((n) => n.textContent.trim()),
     stats: [...document.querySelectorAll('#projects-board .ws-stat')].map((n) => n.textContent.trim()),
-    heads: [...document.querySelectorAll('#projects-board .ws-sec-head')].map((n) => n.textContent.trim()),
+    groups: [...document.querySelectorAll('#projects-board .ws-group')].map((n) => n.textContent.trim()),
+    header: (document.querySelector('#projects-board .ws-thead') || {}).textContent || '',
   }));
   expect(info.rows.join(' ')).toContain('Alpha');
-  expect(info.chips.join(' ')).toContain('Plain');
+  expect(info.rows.join(' ')).toContain('Plain');
   expect(info.stats.join(' ')).toContain('main');
   expect(info.stats.join(' ')).toContain('1 uncommitted');
-  expect(info.heads.join(' ')).toMatch(/Active/);
-  expect(info.heads.join(' ')).toMatch(/Quiet/);
+  expect(info.groups.join(' ')).toMatch(/Active/);
+  expect(info.groups.join(' ')).toMatch(/Quiet/);
+  expect(info.header).toContain('Branch');
   await app.close();
 });
 
@@ -117,8 +118,8 @@ test('clicking a row opens the workspace in place; launching stays a button', as
 test('a non-git folder degrades to a plain workspace, not an error', async () => {
   const { app, win } = await launchApp();
   await openBoard(win);
-  await win.waitForSelector('#projects-board .ws-chip', { timeout: 15_000 });
-  await win.click('#projects-board .ws-chip');
+  await win.waitForSelector('#projects-board .ws-group', { timeout: 15_000 });
+  await win.click('#projects-board .ws-row[data-id="p-plain"]');
   await win.waitForSelector('#project-workspace:not([hidden])', { timeout: 10_000 });
   const info = await win.evaluate(() => ({
     title: document.querySelector('#project-workspace .ws-title').textContent.trim(),
