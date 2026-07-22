@@ -106,12 +106,19 @@ test('clicking a row opens the workspace in place; launching stays a button', as
   expect(info.hasLaunch).toBe(true);
   expect(info.panelHeads).toContain('Open loops');
   expect(info.panelHeads).toContain('Recent sessions');
+  expect(info.panelHeads).toContain('Autopilot runs');
+  expect(info.panelHeads).toContain('MCP servers in this folder');
+  // The board filter has no meaning inside one project.
+  const filterHidden = await win.evaluate(() => document.getElementById('projects-search').hidden);
+  expect(filterHidden).toBe(true);
   // The dirty tree surfaces as an open loop.
   const loops = await win.evaluate(() => document.querySelector('#project-workspace .ws-panel').textContent);
   expect(loops).toContain('1 uncommitted change');
-  // Back returns to the board.
+  // Back returns to the board, and the filter comes back with it.
   await win.click('#ws-back');
   await win.waitForSelector('#projects-board:not([hidden])', { timeout: 10_000 });
+  const filterBack = await win.evaluate(() => document.getElementById('projects-search').hidden);
+  expect(filterBack).toBe(false);
   await app.close();
 });
 

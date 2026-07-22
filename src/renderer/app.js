@@ -2004,8 +2004,17 @@ async function renderProjects() {
     }
   } catch (err) {
     // Without derived state the board still works, minus git and run signal.
-    // Log it: the usual cause is a main process older than the renderer.
+    // Surface it: the usual cause is a main process older than the renderer,
+    // and a silent console line was not being seen.
     console.warn('[projects] derived state unavailable:', err && err.message);
+    const board = $('#projects-board');
+    if (board && !$('#ws-state-note')) {
+      const note = document.createElement('div');
+      note.id = 'ws-state-note';
+      note.className = 'ws-state-note';
+      note.textContent = 'Live project state is unavailable, so branch and status are blank. Fully quit and relaunch Husk; if this note stays, check the devtools console for [projects].';
+      board.prepend(note);
+    }
   }
 }
 
@@ -2046,14 +2055,18 @@ function wsActivityMs(p) {
 }
 
 // Board or workspace, one entry point so every caller repaints the right one.
+// The filter input scopes the board list, so it hides while a workspace is
+// open; Add project stays, it is global either way.
 function paintProjectsSurface() {
   const board = $('#projects-board');
   const ws = $('#project-workspace');
   if (!board || !ws) return;
+  const search = $('#projects-search');
+  if (search) search.hidden = !!wsOpenId;
   if (wsOpenId) { board.hidden = true; ws.hidden = false; paintWorkspace(wsOpenId); return; }
   ws.hidden = true;
   board.hidden = false;
-  paintBoard(($('#projects-search') || {}).value || '');
+  paintBoard(search ? search.value || '' : '');
 }
 
 const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
@@ -2231,7 +2244,18 @@ function paintWorkspace(id) {
       <div class="ws-col-r">
         <section class="ws-panel">
           <div class="ws-panel-head">Details</div>
-          <div class="ws-details">${details}</div>
+          <div class="ws-details">${details}<div class="ws-detail" id="ws-commit-row" hidden><span class="ws-detail-k">Last commit</span><span class="ws-detail-v" id="ws-commit-v"></span></div></div>
+        </section>
+        <section class="ws-panel">
+          <div class="ws-panel-head">Autopilot runs</div>
+          <div id="ws-runs"><div class="ws-empty">Loading&hellip;</div></div>
+        </section>
+        <section class="ws-panel">
+          <div class="ws-panel-head">MCP servers in this folder</div>
+          <div id="ws-mcp"><div class="ws-empty">Loading&hellip;</div></div>
+        </section>
+        <section class="ws-panel">
+          <div class="ws-panel-head">Danger zone</div>
           <div class="ws-danger"><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button><span class="ws-danger-hint">removes it from Husk; the folder itself is not touched</span></div>
         </section>
       </div>
@@ -2251,6 +2275,67 @@ function paintWorkspace(id) {
   const removeMissing = $('#ws-remove-missing');
   if (removeMissing) removeMissing.addEventListener('click', () => deleteProject(p.id, p.name));
   wsFillSessions(p);
+  wsFillInspect(p);
+}
+
+// Right-rail extras: latest commit, run history and folder-scoped MCP servers.
+// Each panel fills independently and degrades to its own empty line.
+async function wsFillInspect(p) {
+  let ins = null;
+  let hist = null;
+  try { ins = await window.husk.projects.inspect(p.id); } catch (_) {}
+  try { hist = await window.husk.autopilot.history({ workspaceRoot: p.path }); } catch (_) {}
+  if (wsOpenId !== p.id) return;
+
+  const commitRow = $('#ws-commit-row');
+  if (commitRow && ins && ins.ok && ins.lastCommit) {
+    commitRow.hidden = false;
+    const v = $('#ws-commit-v');
+    if (v) v.textContent = `${ins.lastCommit.subject} (${fmtRelTime(ins.lastCommit.ms)})`;
+  }
+
+  const runsEl = $('#ws-runs');
+  if (runsEl) {
+    const runs = ((hist && hist.runs) || []).slice(0, 5);
+    if (!runs.length) {
+      // eslint-disable-next-line no-unsanitized/property -- Static markup.
+      runsEl.innerHTML = '<div class="ws-empty">No autopilot runs in this folder yet.</div>';
+    } else {
+      // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
+      runsEl.innerHTML = runs.map((r) => {
+        const cost = [];
+        if (r.dollars) cost.push(`$${Number(r.dollars).toFixed(2)}`);
+        if (r.tokens) cost.push(`${formatTokens(Number(r.tokens))} tokens`);
+        return `
+        <div class="ws-run">
+          <div class="ws-run-main">
+            <div class="ws-run-goal" title="${escapeHtml(r.goal || '')}">${escapeHtml(r.goal || '(no goal recorded)')}</div>
+            <div class="ws-run-meta">${escapeHtml(fmtRelTime(r.endedAt))}${cost.length ? ' &middot; ' + escapeHtml(cost.join(' + ')) : ''}${r.status && r.status !== 'unknown' ? ` &middot; ${escapeHtml(r.status)}` : ''}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    const more = ((hist && hist.runs) || []).length > 5;
+    if (more) {
+      const link = document.createElement('button');
+      link.className = 'ghost-btn ws-runs-all';
+      link.textContent = 'All runs';
+      link.addEventListener('click', () => setPage('autopilot'));
+      runsEl.appendChild(link);
+    }
+  }
+
+  const mcpEl = $('#ws-mcp');
+  if (mcpEl) {
+    const names = (ins && ins.ok && ins.mcpServers) || [];
+    if (!names.length) {
+      // eslint-disable-next-line no-unsanitized/property -- Static markup.
+      mcpEl.innerHTML = '<div class="ws-empty">None configured for this folder.</div>';
+    } else {
+      // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
+      mcpEl.innerHTML = names.map((n) => `<span class="ws-stat">${escapeHtml(n)}</span>`).join(' ');
+    }
+  }
 }
 
 // The sessions panel fills in after the view paints; a slow transcript scan

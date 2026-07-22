@@ -6342,6 +6342,31 @@ ipcMain.handle('projects:state', () => {
   return { ok: true, states, groups: groupBoard(projects, states, Date.now()) };
 });
 
+// Workspace-only detail for one project: the latest commit and the MCP
+// servers scoped to this folder. Kept out of projects:state because the board
+// never shows these; one git call per project would be paid for nothing.
+ipcMain.handle('projects:inspect', (_e, id) => {
+  const p = _projectsList().find((x) => x && x.id === id);
+  if (!p) return { ok: false, error: 'Project not found.' };
+  const out = { ok: true, lastCommit: null, mcpServers: [] };
+  try {
+    if (fs.existsSync(path.join(p.path, '.git'))) {
+      const raw = execFileSync('git', ['-C', p.path, 'log', '-1', '--format=%s%x1f%ct'], {
+        encoding: 'utf8', stdio: 'pipe', timeout: 4000,
+      }).trim();
+      const [subject, epoch] = raw.split('\x1f');
+      if (subject) out.lastCommit = { subject: subject.slice(0, 200), ms: (Number(epoch) || 0) * 1000 };
+    }
+  } catch (_) { /* a repo with no commits yet has no latest commit */ }
+  try {
+    // Project-scoped MCP servers live under projects[cwd].mcpServers in the
+    // CLI's own config; names only, the MCP page owns the editing.
+    const entry = ((readClaudeJson() || {}).projects || {})[p.path] || {};
+    out.mcpServers = Object.keys(entry.mcpServers || {}).slice(0, 24);
+  } catch (_) {}
+  return out;
+});
+
 // Stamp when the user last looked at a project's workspace. Separate from
 // lastUsedAt (which means "launched the agent here") so a future
 // since-you-were-here digest has an honest baseline to diff against.
