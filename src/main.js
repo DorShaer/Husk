@@ -569,8 +569,31 @@ function bootstrapHuskPromptsIfNeeded() {
 // Implementation lives in src/lib/pai-state.js so it can be unit-tested
 // without spinning up Electron.
 const PaiState = require('./lib/pai-state');
+
+// Digests of every CLAUDE.md template Husk has shipped. The toggle parks the
+// live file only when it still matches one of these, which is how we tell our
+// own untouched scaffold apart from a file the user wrote or edited. Older
+// entries stay listed forever so an install that never upgraded its scaffold
+// is still recognised as ours.
+const SHIPPED_CLAUDE_MD_DIGESTS = [
+  // LifeOS 7.1.1, the template in the current bundle. Read at call time rather
+  // than hard-coded so it cannot drift from the file we actually ship.
+];
+function shippedClaudeMdDigests() {
+  const digests = [...SHIPPED_CLAUDE_MD_DIGESTS];
+  try {
+    const bundle = findBundledFramework();
+    if (bundle) {
+      const tpl = path.join(bundle, 'CLAUDE.template.md');
+      if (fs.existsSync(tpl)) digests.push(PaiState.digestOf(fs.readFileSync(tpl, 'utf8')));
+    }
+  } catch (_) {}
+  return digests;
+}
 function applyPaiState(active) {
-  PaiState.applyPaiState(path.join(HOME, '.claude'), active);
+  PaiState.applyPaiState(path.join(HOME, '.claude'), active, {
+    templateDigests: shippedClaudeMdDigests(),
+  });
 }
 
 // Per-install state the runtime writes into but the bundle never ships. The
@@ -585,6 +608,21 @@ const LIFEOS_MEMORY_SUBDIRS = ['WORK', 'KNOWLEDGE', 'LEARNING', 'STATE', 'OBSERV
 // versions that have since had advisories filed against them. Dropping them
 // means a user who does opt in resolves current versions instead. Keep the
 // package.json files, they are what makes that resolve possible.
+
+// Locate the bundled framework.
+// Packaged: app.isPackaged && process.resourcesPath/lifeos/ exists.
+// Dev:      <repo>/libs/lifeos/ relative to __dirname (which is <repo>/src/).
+function findBundledFramework() {
+  const candidates = [];
+  if (app.isPackaged && process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'lifeos'));
+  }
+  candidates.push(path.join(__dirname, '..', 'libs', 'lifeos'));
+  for (const c of candidates) {
+    if (fs.existsSync(c) && fs.existsSync(path.join(c, 'CLAUDE.template.md'))) return c;
+  }
+  return null;
+}
 
 function bootstrapPaiIfNeeded() {
   // Hard opt-out: when the user has disabled the framework in Preferences, we
@@ -602,21 +640,7 @@ function bootstrapPaiIfNeeded() {
     // Removing it is the user's call, not ours.
     if (fs.existsSync(path.join(claudeDir, 'PAI'))) return;
 
-    // Locate the bundled framework.
-    // Packaged: app.isPackaged && process.resourcesPath/lifeos/ exists.
-    // Dev:      <repo>/libs/lifeos/ relative to __dirname (which is <repo>/src/).
-    const candidates = [];
-    if (app.isPackaged && process.resourcesPath) {
-      candidates.push(path.join(process.resourcesPath, 'lifeos'));
-    }
-    candidates.push(path.join(__dirname, '..', 'libs', 'lifeos'));
-
-    let bundle = null;
-    for (const c of candidates) {
-      if (fs.existsSync(c) && fs.existsSync(path.join(c, 'CLAUDE.template.md'))) {
-        bundle = c; break;
-      }
-    }
+    const bundle = findBundledFramework();
     if (!bundle) return;
 
     fs.mkdirSync(claudeDir, { recursive: true });
@@ -668,6 +692,7 @@ function bootstrapPaiIfNeeded() {
 // already-present skills are never touched.
 function copyMissingChildrenSync(src, dst) {
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.isFile() && BUNDLE_INSTRUCTION_FILES.has(entry.name)) continue;
     const s = path.join(src, entry.name);
     const d = path.join(dst, entry.name);
     if (fs.existsSync(d)) continue;
@@ -681,9 +706,17 @@ function copyMissingChildrenSync(src, dst) {
   }
 }
 
+// Agent-instruction files carried inside the bundle. The upstream project
+// keeps these for its own repo, where they steer whoever is editing the
+// framework. Copied into a user's ~/.claude/ they become standing orders that
+// person never wrote, in the exact place the CLI looks for their own. Writing
+// their instructions is their business, so these stay in the bundle.
+const BUNDLE_INSTRUCTION_FILES = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']);
+
 function copyDirRecursiveSync(src, dst) {
   fs.mkdirSync(dst, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.isFile() && BUNDLE_INSTRUCTION_FILES.has(entry.name)) continue;
     const s = path.join(src, entry.name);
     const d = path.join(dst, entry.name);
     if (entry.isDirectory()) copyDirRecursiveSync(s, d);

@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const PARKED_BASENAME = 'CLAUDE.md.husk-disabled';
 const HUSK_AGENTS_START = '<!-- HUSK-AGENTS:START -->';
@@ -18,9 +19,33 @@ function parkedPath(claudeDir) {
   return path.join(claudeDir, PARKED_BASENAME);
 }
 
+function digestOf(text) {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+// Whether a CLAUDE.md is one Husk put there and the user has left alone.
+// A file is ours only while it still matches, byte for byte, a template we
+// ship. The moment someone edits it, it is their file and their words, and
+// nothing here may move it again.
+//
+// Matching on content rather than on a recorded flag is what makes this work
+// for installs that predate the check: there is no state to migrate, an old
+// untouched copy still matches its template.
+function isHuskAuthoredClaudeMd(claudeDir, templateDigests) {
+  const digests = Array.isArray(templateDigests) ? templateDigests.filter(Boolean) : [];
+  if (!digests.length) return false;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- path scoped to claudeDir/CLAUDE.md
+    const body = fs.readFileSync(path.join(claudeDir, 'CLAUDE.md'), 'utf8');
+    return digests.includes(digestOf(body));
+  } catch (_) {
+    return false;
+  }
+}
+
 // Rename ~/.claude/CLAUDE.md to/from the parked sibling based on whether
-// PAI is supposed to be active. Renames only; never deletes. All four
-// presence combinations are handled deliberately:
+// the framework is supposed to be active. Renames only; never deletes. All
+// four presence combinations are handled deliberately:
 //
 //   active=false, live present, parked absent  → rename live → parked
 //   active=false, live present, parked present → leave both alone
@@ -31,7 +56,18 @@ function parkedPath(claudeDir) {
 //
 // The "leave both alone" cases protect a user-edited file from being
 // silently overwritten. The caller can surface a toast if needed.
-function applyPaiState(claudeDir, active) {
+//
+// Parking is gated on the file being ours. ~/.claude/CLAUDE.md belongs to
+// the user: plenty of people wrote one long before they ever installed Husk,
+// and a toggle in our Preferences must not move it. Without the gate, turning
+// the framework off renamed whatever was there, so someone's hand-written
+// config silently disappeared from the path the CLI reads. Pass the digests
+// of the templates we ship via opts.templateDigests; anything that does not
+// match one of them is left exactly where it is.
+//
+// Restoring is unconditional: the parked file only exists because we put it
+// there, so moving it back is always returning our own file.
+function applyPaiState(claudeDir, active, opts = {}) {
   if (typeof claudeDir !== 'string' || !claudeDir) {
     throw new TypeError('applyPaiState: claudeDir must be a non-empty string');
   }
@@ -46,7 +82,8 @@ function applyPaiState(claudeDir, active) {
   try {
     if (!active) {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- path scoped to claudeDir/CLAUDE.md, validated input
-      if (fs.existsSync(live) && !fs.existsSync(parked)) {
+      if (fs.existsSync(live) && !fs.existsSync(parked)
+          && isHuskAuthoredClaudeMd(claudeDir, opts.templateDigests)) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- rename target is the parked sibling, fixed basename
         fs.renameSync(live, parked);
       }
@@ -139,6 +176,8 @@ module.exports = {
   HUSK_AGENTS_START,
   HUSK_AGENTS_END,
   parkedPath,
+  digestOf,
+  isHuskAuthoredClaudeMd,
   applyPaiState,
   buildHuskPrompt,
   renderHuskAgentsBlock,
