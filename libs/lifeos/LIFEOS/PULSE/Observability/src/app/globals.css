@@ -1,0 +1,286 @@
+/* ── LifeOS Official Font System (Butterick) ──
+ * Body sans:     concourse-t3 (replaces Share Tech Mono)
+ * Display:       advocate-c14 (replaces Orbitron)
+ * Narrow heads:  advocate-n34
+ * Tab display:   advocate-c41
+ * Caps labels:   heliotrope-caps
+ * Serif text:    heliotrope-t3
+ * Serif accent:  valkyrie-text
+ * Monospace:     triplicate-a-code (replaces JetBrains Mono)
+ * Serif body:    equity-text
+ * Caps sans:     concourse-c3
+ */
+
+@font-face { font-family: 'concourse-t3'; src: url('/fonts/concourse_t3_regular-webfont.woff') format('woff'); font-display: swap; }
+@font-face { font-family: 'concourse-c3'; src: url('/fonts/concourse_c3_regular.woff') format('woff'); font-display: swap; }
+@font-face { font-family: 'advocate-c14'; src: url('/fonts/advocate_14_cond_reg.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'advocate-n34'; src: url('/fonts/advocate_34_narr_reg.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'advocate-c41'; src: url('/fonts/advocate_c41_tab_regular-webfont.woff') format('woff'); font-display: swap; }
+@font-face { font-family: 'heliotrope-caps'; src: url('/fonts/heliotrope_3_caps_regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'heliotrope-t3'; src: url('/fonts/heliotrope_3_regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'valkyrie-text'; src: url('/fonts/valkyrie_a_regular.woff2') format('woff2'); font-weight: normal; font-display: swap; size-adjust: 105%; }
+@font-face { font-family: 'valkyrie-text'; src: url('/fonts/valkyrie_a_bold.woff2') format('woff2'); font-weight: bold; font-display: swap; }
+@font-face { font-family: 'valkyrie-text'; src: url('/fonts/valkyrie_a_italic.woff2') format('woff2'); font-weight: normal; font-style: italic; font-display: swap; }
+@font-face { font-family: 'triplicate-a-code'; src: url('/fonts/triplicate_a_code_regular.woff2') format('woff2'); font-weight: normal; font-display: swap; }
+@font-face { font-family: 'triplicate-a-code'; src: url('/fonts/triplicate_a_code_bold.woff2') format('woff2'); font-weight: bold; font-display: swap; }
+@font-face { font-family: 'equity-text'; src: url('/fonts/equity_text_b_regular-webfont.woff') format('woff'); font-display: swap; size-adjust: 102%; }
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ══════════════════════════════════════════════════════════════
+     PULSE DESIGN TOKENS — the one palette (telos-v7 navy canon).
+     Every page and component consumes these; no page defines its own.
+     Raw tokens are hex; the shadcn/Tailwind vars below them are the
+     same colors as HSL triplets so bg-card/border-border/etc. resolve
+     to this palette everywhere. Chrome primitives live in
+     src/components/ui/chrome.tsx (PageShell/PageHeader/Panel/…).
+     ══════════════════════════════════════════════════════════════ */
+  :root, .dark {
+    /* Ground + surfaces */
+    --ground: #060B1A;        /* page background */
+    --surface-1: #0F1A33;     /* raised bars, toolbars, table headers */
+    --surface-2: #141C38;     /* the card */
+    --surface-3: #1A2444;     /* card hover / elevated */
+    /* Lines */
+    --line-1: #1A2A4D;        /* subtle hairline */
+    --line-2: #23305A;        /* card border */
+    --line-3: #2E3E6E;        /* hover border */
+    /* Ink */
+    --ink-1: #E8EFFF;         /* primary text */
+    --ink-2: #A8A5C8;         /* muted text */
+    --ink-3: #6B80AB;         /* faint labels */
+    /* Accent */
+    --accent-blue: #3B82F6;
+    --accent-soft: #9ACBFF;
+    /* Status */
+    --ok: #4ADE80;
+    --warn: #FBBF24;
+    --err: #F87171;
+    /* Life dimensions (canonical; telos theme variants may override locally) */
+    --health: #34D399;
+    --money: #E0A458;
+    --freedom: #7DD3FC;
+    --creative: #F87B7B;
+    --relationships: #B794F4;
+    --rhythms: #2DD4BF;
+    /* Legacy alias kept while stragglers migrate (was the neon set) */
+    --neon-blue: #3B82F6;
+
+    /* shadcn vars — same palette as HSL triplets */
+    --background: 225 63% 6%;         /* #060B1A */
+    --foreground: 222 100% 95%;       /* #E8EFFF */
+    --card: 227 47% 15%;              /* #141C38 */
+    --card-foreground: 222 100% 95%;
+    --popover: 222 55% 13%;           /* #0F1A33 */
+    --popover-foreground: 222 100% 95%;
+    --primary: 217 91% 60%;           /* #3B82F6 */
+    --primary-foreground: 222 100% 95%;
+    --secondary: 226 45% 18%;         /* #1A2444 */
+    --secondary-foreground: 222 100% 95%;
+    --muted: 226 45% 18%;             /* #1A2444 */
+    --muted-foreground: 245 24% 72%;  /* #A8A5C8 */
+    --accent: 226 45% 18%;
+    --accent-foreground: 222 100% 95%;
+    --destructive: 0 86% 71%;         /* #F87171 */
+    --destructive-foreground: 225 63% 6%;
+    --border: 226 44% 25%;            /* #23305A */
+    --input: 226 44% 25%;
+    --ring: 217 91% 60%;
+    --radius: 0.75rem;
+    --chart-1: 217 91% 60%;
+    --chart-2: 160 64% 52%;
+    --chart-3: 35 69% 61%;
+    --chart-4: 262 78% 77%;
+    --chart-5: 0 91% 73%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html, body {
+    overflow-x: hidden; /* Prevent horizontal scroll on mobile */
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'concourse-t3', 'Concourse T3', system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.55;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    text-shadow: 0 0 1px currentColor;
+  }
+
+  /* LifeOS heading hierarchy (Butterick) */
+  h1 {
+    font-family: 'valkyrie-text', Georgia, serif;
+    font-size: 2rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  h2 {
+    font-family: 'advocate-n34', sans-serif;
+    font-size: 1.6rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+  }
+  h3 {
+    font-family: 'heliotrope-caps', sans-serif;
+    font-size: 1.3rem;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    text-transform: lowercase;
+  }
+  h4, h5, h6 {
+    font-family: 'advocate-c14', sans-serif;
+    font-size: 1.15rem;
+    font-weight: 200;
+    letter-spacing: 0.05em;
+    text-transform: lowercase;
+  }
+}
+
+/* Custom scrollbar - thin & dark */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.4);
+}
+
+/* Kanban — make horizontal scroll obvious so users see there's more */
+.kanban-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.kanban-scroll::-webkit-scrollbar-track {
+  background: hsl(var(--muted-foreground) / 0.06);
+  border-radius: 6px;
+}
+.kanban-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.5);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.kanban-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.8);
+  background-clip: content-box;
+}
+.kanban-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.5) transparent;
+}
+
+/* Mono text */
+.mono {
+  font-family: 'triplicate-a-code', monospace;
+}
+
+/* Small uppercase metric label (legacy consumer; prefer PanelHeader/StatTile) */
+.metric-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+
+/* Progress bar */
+.progress-bar {
+  height: 3px;
+  background: var(--line-1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease-out;
+}
+
+/* Skeleton loading states */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    var(--surface-3) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-line {
+  height: 12px;
+  width: 100%;
+  margin: 0.5rem 0;
+}
+
+.skeleton-line.short { width: 60%; }
+.skeleton-line.medium { width: 80%; }
+
+.skeleton-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.skeleton-chart {
+  height: 200px;
+  width: 100%;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Observer Mode — masks sensitive data (finances, health, business) */
+[data-sensitive] {
+  transition: filter 0.3s ease;
+}
+
+body.observer-active [data-sensitive] {
+  filter: blur(4px) saturate(0.3);
+  user-select: none;
+  pointer-events: none;
+  position: relative;
+}
+
+body.observer-active [data-sensitive]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 41, 59, 0.15);
+  border-radius: inherit;
+  pointer-events: none;
+}

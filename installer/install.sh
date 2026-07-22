@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Husk, production installer. Detects the OS and registers Husk the way
 # that OS expects: a .desktop entry on Linux, a Husk.app bundle on macOS.
-# Everything else (deps, native rebuild, wrapper, PAI bootstrap) is shared.
+# Everything else (deps, native rebuild, wrapper, LifeOS bootstrap) is shared.
 set -e
 
 # This script lives in installer/, so the project root is its parent.
@@ -66,14 +66,14 @@ fi
 ok "Node.js v${NODE_VER}"
 
 # ─── 0. Prerequisites: jq + bun ────────────────────────────────────
-# jq: bundled PAI statusline parses Anthropic OAuth usage with it; without
+# jq: the bundled statusline parses Anthropic OAuth usage with it; without
 #     jq the 5h/7d limits never get cached.
-# bun: PAI hooks are #!/usr/bin/env bun (RatingCapture, LearningSync, etc).
+# bun: LifeOS hooks are #!/usr/bin/env bun (RatingCapture, LearningSync, etc).
 #     Without bun, no rating capture, learning is empty.
 #
 # Both are auto-installed when missing using the platform's native package
 # manager. Failures here are logged but never abort the rest of the install,
-# Husk's core still works without them, just with degraded PAI features.
+# Husk's core still works without them, just with degraded LifeOS features.
 
 # Decide whether to prefix install commands with sudo. Skip when already
 # running as root (containers, restricted CI) or when sudo isn't on PATH.
@@ -109,7 +109,7 @@ ensure_jq() {
         ok "jq present ($(jq --version 2>/dev/null || echo unknown))"
         return 0
     fi
-    info "Installing jq (PAI statusline needs it for the Anthropic usage cache)..."
+    info "Installing jq (the statusline needs it for the Anthropic usage cache)..."
     case "$PLATFORM" in
         Linux)  _install_jq_linux ;;
         Darwin) _install_jq_mac ;;
@@ -118,7 +118,7 @@ ensure_jq() {
     if command -v jq >/dev/null 2>&1; then
         ok "jq installed"
     else
-        warn "jq install command finished but jq is still not on PATH; continuing without it. PAI usage cache will not refresh until you install it."
+        warn "jq install command finished but jq is still not on PATH; continuing without it. The usage cache will not refresh until you install it."
         return 1
     fi
 }
@@ -150,7 +150,7 @@ ensure_bun() {
         ok "bun present ($(bun --version 2>/dev/null || echo unknown))"
         return 0
     fi
-    info "Installing bun (PAI hooks need it for rating capture and learning)..."
+    info "Installing bun (LifeOS hooks need it for rating capture and learning)..."
     if ! command -v curl >/dev/null 2>&1; then
         warn "curl is required to install bun. Install curl, or install bun manually from https://bun.sh"
         return 1
@@ -169,7 +169,7 @@ ensure_bun() {
         return 1
     fi
     if ! bash "$installer_tmp"; then
-        warn "bun installer reported a failure; continuing without bun. PAI hooks will not run until bun is installed."
+        warn "bun installer reported a failure; continuing without bun. LifeOS hooks will not run until bun is installed."
         rm -f "$installer_tmp"
         return 1
     fi
@@ -178,7 +178,7 @@ ensure_bun() {
         export PATH="$HOME/.bun/bin:$PATH"
         ok "bun installed at $HOME/.bun/bin (added to PATH for this session)"
     else
-        warn "bun install completed but $HOME/.bun/bin/bun is missing; PAI hooks will not run until you install bun manually."
+        warn "bun install completed but $HOME/.bun/bin/bun is missing; LifeOS hooks will not run until you install bun manually."
         return 1
     fi
 }
@@ -234,34 +234,51 @@ case ":$PATH:" in
     *) warn "$BIN_DIR is not on your PATH. Add it to your shell rc to launch Husk by name." ;;
 esac
 
-# ─── 4. PAI bootstrap (all platforms) ──────────────────────────────
-# Husk ships with a copy of PAI by Daniel Miessler. We copy the framework,
-# agents, hooks, lib, skills, and a CLAUDE.md template into ~/.claude/ on
-# first install. Existing files are never overwritten, if you have your
-# own ~/.claude/, we only add what is missing.
-PAI_BUNDLE="$APP_DIR/libs/pai"
+# ─── 4. LifeOS bootstrap (all platforms) ───────────────────────────
+# Husk ships with a copy of LifeOS by Daniel Miessler. We copy the runtime,
+# agents, commands, hooks, skills, and a CLAUDE.md template into ~/.claude/
+# on first install. Existing files are never overwritten, if you have your
+# own ~/.claude/, we only add what is missing. Keep this in step with
+# bootstrapPaiIfNeeded() in src/main.js, which is the same install for
+# packaged builds.
+LIFEOS_BUNDLE="$APP_DIR/libs/lifeos"
 CLAUDE_DIR="$HOME/.claude"
-if [ -d "$PAI_BUNDLE" ]; then
-    info "Bootstrapping PAI into $CLAUDE_DIR (only adds missing files)..."
+if [ -d "$CLAUDE_DIR/PAI" ]; then
+    # An install predating this version keeps the older framework under PAI/
+    # with a CLAUDE.md addressing it. Adding the new tree alongside would leave
+    # two frameworks and a routing file naming only the old one, so leave it be.
+    info "Existing PAI install found at $CLAUDE_DIR/PAI, leaving it untouched"
+elif [ -d "$LIFEOS_BUNDLE" ]; then
+    info "Bootstrapping LifeOS into $CLAUDE_DIR (only adds missing files)..."
     mkdir -p "$CLAUDE_DIR"
     if [ ! -f "$CLAUDE_DIR/CLAUDE.md" ]; then
-        cp "$PAI_BUNDLE/CLAUDE.md.template" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null \
-            || cp "$PAI_BUNDLE/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null || true
+        cp "$LIFEOS_BUNDLE/CLAUDE.template.md" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null || true
         ok "Installed CLAUDE.md (you can edit it any time)"
     fi
-    for SUBDIR in PAI agents hooks lib skills; do
-        if [ -d "$PAI_BUNDLE/$SUBDIR" ]; then
+    # LIFEOS is spelled in caps to match the @LIFEOS/... imports CLAUDE.md
+    # carries: on a case-sensitive filesystem any other spelling dangles.
+    for SUBDIR in LIFEOS agents commands hooks skills; do
+        if [ -d "$LIFEOS_BUNDLE/$SUBDIR" ]; then
             if [ ! -d "$CLAUDE_DIR/$SUBDIR" ]; then
-                cp -R "$PAI_BUNDLE/$SUBDIR" "$CLAUDE_DIR/$SUBDIR"
+                cp -R "$LIFEOS_BUNDLE/$SUBDIR" "$CLAUDE_DIR/$SUBDIR"
                 ok "Installed $SUBDIR/"
             else
-                cp -Rn "$PAI_BUNDLE/$SUBDIR/." "$CLAUDE_DIR/$SUBDIR/" 2>/dev/null || true
+                cp -Rn "$LIFEOS_BUNDLE/$SUBDIR/." "$CLAUDE_DIR/$SUBDIR/" 2>/dev/null || true
             fi
         fi
     done
-    [ ! -f "$CLAUDE_DIR/blocklist.json" ] && cp "$PAI_BUNDLE/blocklist.json" "$CLAUDE_DIR/blocklist.json" 2>/dev/null || true
-    [ ! -f "$CLAUDE_DIR/statusline-command.sh" ] && cp "$PAI_BUNDLE/statusline-command.sh" "$CLAUDE_DIR/statusline-command.sh" 2>/dev/null && chmod +x "$CLAUDE_DIR/statusline-command.sh" || true
-    ok "PAI ready"
+    # The identity scaffold lands inside the runtime tree so the
+    # @LIFEOS/USER/... imports resolve without a symlink. Every shipped file is
+    # a blank template, and -n means an answered one is never overwritten.
+    if [ -d "$LIFEOS_BUNDLE/USER" ]; then
+        mkdir -p "$CLAUDE_DIR/LIFEOS/USER"
+        cp -Rn "$LIFEOS_BUNDLE/USER/." "$CLAUDE_DIR/LIFEOS/USER/" 2>/dev/null || true
+    fi
+    # Per-install state the runtime writes into but the bundle never ships.
+    for MEMDIR in WORK KNOWLEDGE LEARNING STATE OBSERVABILITY SKILLS; do
+        mkdir -p "$CLAUDE_DIR/LIFEOS/MEMORY/$MEMDIR"
+    done
+    ok "LifeOS ready"
 fi
 
 # ─── 5. Platform-specific app registration ─────────────────────────

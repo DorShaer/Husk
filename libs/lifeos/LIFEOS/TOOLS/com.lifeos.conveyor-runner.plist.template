@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.lifeos.conveyor-runner.plist.template — Source template. Install via:
+    bun ~/.claude/LIFEOS/TOOLS/InstallConveyorRunner.ts
+
+  The installer reads $HOME at install time, substitutes {{HOME}} placeholders,
+  writes the materialized plist to ~/Library/LaunchAgents/, and bootstraps it
+  with launchctl. This template stays clean of principal-specific paths so it
+  ships in the public LifeOS release.
+
+  Behavior:
+    Long-running Conveyor stage engine (KeepAlive daemon).
+    Polls the content-pipeline ledger and advances claimable INBOX items to
+    PREP via transcription (one item per tick, lease-guarded). PRODUCE/REVIEW/
+    PUBLISH stages are follow-on phases and are NOT run here.
+    Crash-loop rate-limited (ThrottleInterval 30s).
+    stdout/stderr captured to MEMORY/STATE/com.lifeos.conveyor-runner.log.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.lifeos.conveyor-runner</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{BUN}}</string>
+    <string>{{HOME}}/.claude/LIFEOS/TOOLS/Conveyor/Runner.ts</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/STATE/com.lifeos.conveyor-runner.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/STATE/com.lifeos.conveyor-runner.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/.claude</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{BUN_DIR}}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>{{HOME}}</string>
+  </dict>
+</dict>
+</plist>

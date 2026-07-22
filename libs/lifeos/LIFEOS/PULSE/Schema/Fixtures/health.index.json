@@ -1,0 +1,36 @@
+{
+  "kind": "index",
+  "title": "Health",
+  "category": "domain",
+  "description": "Vitals, sleep, exercise, conditions.",
+  "children": [
+    {
+      "path": "LIFEOS/USER/Health/Vitals.md",
+      "title": "Vitals",
+      "kind": "narrative",
+      "preview": "Recent labs and what they mean.",
+      "category": "domain"
+    },
+    {
+      "path": "LIFEOS/USER/Health/Sleep.md",
+      "title": "Sleep",
+      "kind": "narrative",
+      "preview": "Patterns, interventions, current routine.",
+      "category": "domain"
+    }
+  ],
+  "meta": {
+    "schemaVersion": "1.0.0",
+    "pageId": "health",
+    "lastBuildAt": "2026-05-03T01:00:00.000Z",
+    "sourceHashes": {
+      "LIFEOS/USER/Health/README.md": "jkl012"
+    },
+    "adapterVersion": "health-index-v1",
+    "model": "claude-sonnet-4-6",
+    "costUSD": 0.008,
+    "latencyMs": 3200,
+    "provenance": "customized",
+    "warnings": []
+  }
+}

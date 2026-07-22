@@ -1,0 +1,205 @@
+# LifeOS Pulse — Unified Daemon Configuration
+#
+# Pulse is THE daemon for every LifeOS installation.
+# One process handles: cron jobs, voice, chat, observability, hooks, DA.
+#
+# type = "script" → runs command, $0 cost
+# type = "claude" → spawns claude --print, costs tokens
+# output = voice | telegram | ntfy | email | log
+# Sentinels: NO_ACTION, NO_URGENT, NO_EVENTS → suppress dispatch
+
+# ── Module Configuration ──
+
+[voice]
+enabled = true
+
+[telegram]
+enabled = true
+# Spoken summary of each text reply as a Telegram voice note (PR #1458, author anikin-xyz).
+# Requires ELEVENLABS_API_KEY. Set false to keep text replies but suppress voice notes.
+voice_summaries = true
+
+[imessage]
+enabled = false
+
+[observability]
+enabled = true
+dashboard_dir = "Observability/out"
+
+[observability.server]
+port = 31337
+enabled = true
+
+[notifications.ntfy]
+enabled = true
+topic = "${NTFY_TOPIC}"
+server = "ntfy.sh"
+
+[notifications.discord]
+enabled = true
+webhook = "${DISCORD_WEBHOOK}"
+
+[notifications.twilio]
+enabled = true
+to_number = "${TWILIO_TO_NUMBER}"
+
+[notifications.thresholds]
+long_task_minutes = 5
+
+[notifications.routing]
+task_complete = []
+long_task = ["ntfy"]
+background_agent = ["ntfy"]
+error = ["ntfy", "discord"]
+security = ["ntfy", "discord"]
+
+[performance]
+enabled = true
+
+[hooks]
+enabled = true
+blocked_skills = ["keybindings-help"]
+
+[work]
+enabled = true
+# Reads WORK.REPO from LIFEOS/USER/WORK/config.yaml.
+# When unset, the module starts in idle mode and serves a setup-template
+# response at /api/work instead of erroring. Polling cadence is also
+# config-driven via WORK.POLL_INTERVAL_SECONDS (default 60s).
+
+[bunker]
+enabled = true
+# Reads the app registry from ~/Projects/bunker via its CLI (`bunker data`).
+# Override the harness location with the BUNKER_DIR env var.
+
+[syslog]
+enabled = true
+port = 5514
+# Captures UniFi syslog to ~/.claude/LIFEOS/MEMORY/OBSERVABILITY/unifi-syslog.jsonl.
+# See _NETWORK/Workflows/CaptureLogs.md for controller-side setup.
+
+[local_intelligence]
+enabled = true
+# Reads LIFEOS/USER/PRINCIPAL/PRINCIPAL_IDENTITY.md Hometown line.
+# Daily digest at MEMORY/DATA/LocalIntelligence/latest.json.
+# Read-only — fetching happens in skills/LocalIntelligence/Tools/Refresh.ts.
+
+[telos]
+enabled = true
+# Reads LIFEOS/USER/TELOS/TELOS.md frontmatter + per-section <!-- updated --> markers
+# via LIFEOS/TOOLS/TelosFreshness.ts.
+# Endpoints: /api/telos/freshness, /api/telos/freshness/stale,
+#            /api/telos/freshness/summary, /api/telos/health.
+# Read-only — bumps go through skills/Interview which calls bumpTelosTimestamp().
+
+[da]
+enabled = true
+# DA display name (placeholder). Canonical name lives in LIFEOS/USER/CONFIG/LIFEOS_CONFIG.toml [da].name.
+primary = "Aria"
+heartbeat_schedule = "*/30 * * * *"
+heartbeat_model = "haiku"
+heartbeat_cost_ceiling = 0.01
+diary_schedule = "0 23 * * *"
+growth_schedule = "0 4 * * 0"
+
+# ── Cron Jobs ──
+# NOTE: Time-sensitive cron jobs (email triage, calendar reminders, morning
+# brief, schedule review, intel brief) may run on a worker-DA Pulse instance
+# on a separate host. The primary-DA Pulse here handles: healthcheck, memory
+# consolidation, DA subsystem.
+
+[[job]]
+name = "cost-aggregation"
+schedule = "*/15 * * * *"
+type = "script"
+command = "bun run Performance/cost-aggregator.ts"
+output = "log"
+enabled = true
+
+[[job]]
+name = "healthcheck"
+schedule = "*/5 * * * *"
+type = "script"
+command = "bun run checks/health.ts"
+output = "ntfy"
+enabled = true
+
+[[job]]
+name = "airgradient-poll"
+schedule = "*/5 * * * *"
+type = "script"
+command = "bun run checks/airgradient-poll.ts"
+output = "log"
+enabled = true
+
+# NOTE: cost-tracker moved to LIFEOS/USER/CONFIG/PULSE.user.toml on 2026-05-03 —
+# scans {{PRINCIPAL_NAME}}-specific call-site fingerprint, doesn't belong in public template.
+
+[[job]]
+name = "memory-consolidation"
+schedule = "0 3 * * *"
+type = "claude"
+prompt = "Run learning consolidation: execute `bun run ~/.claude/LIFEOS/TOOLS/SessionHarvester.ts --recent 20` then `bun run ~/.claude/LIFEOS/TOOLS/LearningPatternSynthesis.ts --week`. Summarize what was learned and any patterns found."
+model = "sonnet"
+output = "log"
+enabled = true
+
+# ── DA Subsystem Jobs ──
+# Default-disabled in the public template: these scripts live under
+# LIFEOS/PULSE/Assistant/, a private directory stripped from the public release
+# payload. Scheduling them on a fresh install would spawn broken jobs every
+# tick. Re-enable via LIFEOS/USER/CONFIG/PULSE.user.toml (merged by name) once
+# the Assistant subsystem is present. #1392.
+
+[[job]]
+name = "assistant-heartbeat"
+schedule = "*/30 * * * *"
+type = "script"
+command = "bun run Assistant/checks/heartbeat.ts"
+output = "voice"
+enabled = false
+
+[[job]]
+name = "assistant-tasks"
+schedule = "* * * * *"
+type = "script"
+command = "bun run Assistant/checks/tasks.ts"
+output = "voice"
+enabled = false
+
+[[job]]
+name = "assistant-diary"
+schedule = "0 23 * * *"
+type = "script"
+command = "bun run Assistant/checks/diary.ts"
+output = "log"
+enabled = false
+
+[[job]]
+name = "assistant-growth"
+schedule = "0 4 * * 0"
+type = "script"
+command = "bun run Assistant/checks/growth.ts"
+output = "log"
+enabled = false
+
+# ── Life Dashboard (Phase 0) ──
+
+[[job]]
+name = "life-morning-brief"
+schedule = "0 7 * * *"
+type = "script"
+command = "bun run checks/life-morning-brief.ts"
+output = "voice"
+enabled = true
+
+# ── Migration note (2026-05-03) ──
+# All personal/{{PRINCIPAL_NAME}}-specific jobs (cost-tracker, monitor-*, lifelog-digest,
+# apple-health-ingest, local-intelligence-refresh, update-pai-state, the
+# disabled monitoring-spine scaffolding) moved to LIFEOS/USER/CONFIG/PULSE.user.toml.
+# Loader (lib.ts loadConfig) merges both files at runtime; user-tier overrides
+# system-tier by name. LIFEOS/USER/** is a containment-deletion zone, so shadow
+# releases automatically ship without personal jobs.
+#
+# This file (PULSE.toml) is the public template. Add only generic, framework-
+# default cron jobs here. User-specific monitors belong in PULSE.user.toml.

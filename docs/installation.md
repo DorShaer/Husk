@@ -79,7 +79,7 @@ Full step-by-step guide, including building your own packages and troubleshootin
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
 cd husk
-./installer/install.sh   # registers Husk with the OS and bootstraps PAI into ~/.claude/
+./installer/install.sh   # registers Husk with the OS and bootstraps LifeOS into ~/.claude/
 # or
 ./scripts/run.sh         # dev mode, no system registration
 ```

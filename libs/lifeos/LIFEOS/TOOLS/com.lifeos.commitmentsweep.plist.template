@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.lifeos.commitmentsweep.plist.template — Source template. Install via:
+    bun ~/.claude/LIFEOS/TOOLS/InstallCommitmentSweep.ts
+
+  The installer reads $HOME at install time, substitutes /Users/__USER__ placeholders,
+  writes the materialized plist to ~/Library/LaunchAgents/, and bootstraps it
+  with launchctl. This template stays clean of principal-specific paths so it
+  ships in the public LifeOS release.
+
+  Behavior:
+    Runs CommitmentSweep.ts daily at 7am local (StartCalendarInterval Hour=7).
+    Crash-loop rate-limited (ThrottleInterval 60s).
+    stdout/stderr captured to MEMORY/STATE/com.lifeos.commitmentsweep.log.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.lifeos.commitmentsweep</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/bun</string>
+    <string>__HOME__/.claude/LIFEOS/TOOLS/CommitmentSweep.ts</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.claude/LIFEOS/MEMORY/STATE/com.lifeos.commitmentsweep.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.claude/LIFEOS/MEMORY/STATE/com.lifeos.commitmentsweep.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__/.claude</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+</dict>
+</plist>

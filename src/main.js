@@ -294,11 +294,12 @@ const DEFAULT_CONFIG = {
   voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
   skipWelcome: false,
   recap: true,
-  // PAI is the bundled Claude-Code-only assistant framework Husk drops into
+  // LifeOS is the bundled Claude-Code-only assistant framework Husk drops into
   // ~/.claude/. Defaults to enabled so existing Claude users get it on
   // first run, but Copilot-only users can switch it off to skip the
-  // bootstrap, kill the statusline tick, and drop the PAI/ALGORITHM
-  // reference from the Husk identity prompt.
+  // bootstrap, kill the statusline tick, and drop the framework reference
+  // from the Husk identity prompt. The key keeps its original name: renaming
+  // it would silently re-enable the framework for anyone who had turned it off.
   paiEnabled: true,
   profiles: DEFAULT_PROFILES,
   activeProfileId: null,
@@ -354,9 +355,9 @@ function saveConfig(cfg) {
 
 let config = loadConfig();
 
-// ─── PAI bootstrap (packaged binaries) ───────────────────────────────────────
+// ─── Framework bootstrap (packaged binaries) ─────────────────────────────────
 // When Husk runs from a packaged binary (electron-builder output), there is no
-// install.sh to copy libs/pai into ~/.claude/. We do it here on first launch.
+// install.sh to copy libs/lifeos into ~/.claude/. We do it here on first launch.
 // In dev mode the bundle path won't exist; install.sh handles it.
 // Seed ~/.config/husk/prompts/ from the bundled curated set on first launch.
 // Never overwrites: a file that already exists in the destination is left
@@ -370,8 +371,11 @@ let config = loadConfig();
 let statuslineTimer = null;
 function refreshStatuslineCacheOnce() {
   try {
-    // v5 ships the statusline inside PAI/; older layouts kept it at the root.
+    // Current layout ships the statusline inside LIFEOS/; the two older ones
+    // kept it under PAI/ and at the root. An install upgraded in place can be
+    // on any of them, so probe newest first and take whichever exists.
     const slPath = [
+      path.join(CLAUDE_DIR, 'LIFEOS', 'LIFEOS_StatusLine.sh'),
       path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
       path.join(CLAUDE_DIR, 'statusline-command.sh'),
     ].find((p) => fs.existsSync(p));
@@ -392,8 +396,8 @@ function refreshStatuslineCacheOnce() {
 }
 function startStatuslineRefresh() {
   if (statuslineTimer) return;
-  // statusline-command.sh is PAI's status feeder. Skip the tick entirely
-  // when the user has disabled PAI: no script, no caches, no need to run.
+  // The statusline script is the framework's status feeder. Skip the tick
+  // entirely when the user has disabled it: no script, no caches, no need.
   if (config.paiEnabled === false) return;
   // Kick off once on startup, then every 30s.
   refreshStatuslineCacheOnce();
@@ -569,27 +573,39 @@ function applyPaiState(active) {
   PaiState.applyPaiState(path.join(HOME, '.claude'), active);
 }
 
+// Per-install state the runtime writes into but the bundle never ships. The
+// directories have to exist before the first run or the framework has nowhere
+// to put its own output.
+const LIFEOS_MEMORY_SUBDIRS = ['WORK', 'KNOWLEDGE', 'LEARNING', 'STATE', 'OBSERVABILITY', 'SKILLS'];
+
 function bootstrapPaiIfNeeded() {
-  // Hard opt-out: when the user has disabled PAI in Preferences, we do not
-  // touch ~/.claude/ on launch. Pre-existing files stay where they are
+  // Hard opt-out: when the user has disabled the framework in Preferences, we
+  // do not touch ~/.claude/ on launch. Pre-existing files stay where they are
   // (Husk never removes user files behind their back); the user can clean
-  // ~/.claude/{PAI,agents,skills,hooks}/ manually if they want.
+  // ~/.claude/{LIFEOS,agents,skills,hooks}/ manually if they want.
   if (config.paiEnabled === false) return;
   try {
     const claudeDir = path.join(HOME, '.claude');
 
-    // Locate the bundled PAI tree.
-    // Packaged: app.isPackaged && process.resourcesPath/pai/ exists.
-    // Dev:      <repo>/libs/pai/ relative to __dirname (which is <repo>/src/).
+    // An install predating this version has the older framework laid out under
+    // ~/.claude/PAI/ with a CLAUDE.md whose imports point into it. Dropping the
+    // new tree beside it would leave two frameworks side by side and a routing
+    // file addressing only the old one, so leave that install alone entirely.
+    // Removing it is the user's call, not ours.
+    if (fs.existsSync(path.join(claudeDir, 'PAI'))) return;
+
+    // Locate the bundled framework.
+    // Packaged: app.isPackaged && process.resourcesPath/lifeos/ exists.
+    // Dev:      <repo>/libs/lifeos/ relative to __dirname (which is <repo>/src/).
     const candidates = [];
     if (app.isPackaged && process.resourcesPath) {
-      candidates.push(path.join(process.resourcesPath, 'pai'));
+      candidates.push(path.join(process.resourcesPath, 'lifeos'));
     }
-    candidates.push(path.join(__dirname, '..', 'libs', 'pai'));
+    candidates.push(path.join(__dirname, '..', 'libs', 'lifeos'));
 
     let bundle = null;
     for (const c of candidates) {
-      if (fs.existsSync(c) && fs.existsSync(path.join(c, 'CLAUDE.md.template'))) {
+      if (fs.existsSync(c) && fs.existsSync(path.join(c, 'CLAUDE.template.md'))) {
         bundle = c; break;
       }
     }
@@ -601,9 +617,7 @@ function bootstrapPaiIfNeeded() {
     // protects user customizations across upgrades.
     const claudemdDst = path.join(claudeDir, 'CLAUDE.md');
     if (!fs.existsSync(claudemdDst)) {
-      const tpl = fs.existsSync(path.join(bundle, 'CLAUDE.md.template'))
-        ? path.join(bundle, 'CLAUDE.md.template')
-        : path.join(bundle, 'CLAUDE.md');
+      const tpl = path.join(bundle, 'CLAUDE.template.md');
       if (fs.existsSync(tpl)) fs.copyFileSync(tpl, claudemdDst);
     }
 
@@ -612,7 +626,9 @@ function bootstrapPaiIfNeeded() {
     // user who already has ~/.claude/CLAUDE.md (claude code creates it) still
     // receives the bundled skills, agents, and hooks. Missing entries are
     // added without ever overwriting a file the user already has.
-    for (const sub of ['PAI', 'agents', 'hooks', 'skills']) {
+    // LIFEOS is spelled in caps to match the @LIFEOS/... imports CLAUDE.md
+    // carries: on a case-sensitive filesystem any other spelling dangles.
+    for (const sub of ['LIFEOS', 'agents', 'commands', 'hooks', 'skills']) {
       const src = path.join(bundle, sub);
       const dst = path.join(claudeDir, sub);
       if (!fs.existsSync(src)) continue;
@@ -620,17 +636,21 @@ function bootstrapPaiIfNeeded() {
       else copyMissingChildrenSync(src, dst);
     }
 
-    const blockSrc = path.join(bundle, 'blocklist.json');
-    const blockDst = path.join(claudeDir, 'blocklist.json');
-    if (fs.existsSync(blockSrc) && !fs.existsSync(blockDst)) fs.copyFileSync(blockSrc, blockDst);
-    const slSrc = path.join(bundle, 'statusline-command.sh');
-    const slDst = path.join(claudeDir, 'statusline-command.sh');
-    if (fs.existsSync(slSrc) && !fs.existsSync(slDst)) {
-      fs.copyFileSync(slSrc, slDst);
-      try { fs.chmodSync(slDst, 0o755); } catch (_) {}
+    // The identity scaffold lands inside the runtime tree so the @LIFEOS/USER/...
+    // imports resolve without a symlink. Every shipped file is a blank template;
+    // copyMissingChildren means an answered one is never overwritten.
+    const userSrc = path.join(bundle, 'USER');
+    const userDst = path.join(claudeDir, 'LIFEOS', 'USER');
+    if (fs.existsSync(userSrc)) {
+      if (!fs.existsSync(userDst)) copyDirRecursiveSync(userSrc, userDst);
+      else copyMissingChildrenSync(userSrc, userDst);
+    }
+
+    for (const sub of LIFEOS_MEMORY_SUBDIRS) {
+      fs.mkdirSync(path.join(claudeDir, 'LIFEOS', 'MEMORY', sub), { recursive: true });
     }
   } catch (err) {
-    console.error('[husk] PAI bootstrap failed:', err && err.message);
+    console.error('[husk] framework bootstrap failed:', err && err.message);
   }
 }
 

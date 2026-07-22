@@ -2,8 +2,9 @@
 useDefault = true
 
 [allowlist]
-description = "Ignore vendored PAI docs with placeholder/example tokens (current libs/pai path and the pre-move pai/ history path)"
+description = "Ignore the vendored assistant framework, whose docs and fixtures carry placeholder and example tokens. Covers the current libs/lifeos path plus the two it has lived at before (libs/pai, and pai/ further back), since a history scan still reaches them."
 paths = [
+  '''libs/lifeos/.*''',
   '''libs/pai/.*''',
   '''^pai/.*''',
 ]

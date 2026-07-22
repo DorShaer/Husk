@@ -1,0 +1,35 @@
+{
+  "kind": "narrative",
+  "title": "Beliefs",
+  "category": "mind",
+  "lede": "What I take to be true after twenty-five years of paying attention.",
+  "sections": [
+    {
+      "heading": "On consciousness",
+      "body": "Consciousness is what it feels like to be a sufficiently complex information-processing system observing itself.",
+      "level": 2
+    },
+    {
+      "heading": "On meaning",
+      "body": "Meaning is not given. It is constructed, and the construction is the point.",
+      "level": 2
+    }
+  ],
+  "pullQuotes": [
+    "Meaning is not given. It is constructed."
+  ],
+  "meta": {
+    "schemaVersion": "1.0.0",
+    "pageId": "beliefs",
+    "lastBuildAt": "2026-05-03T01:00:00.000Z",
+    "sourceHashes": {
+      "LIFEOS/USER/Beliefs.md": "def456"
+    },
+    "adapterVersion": "beliefs-v1",
+    "model": "claude-sonnet-4-6",
+    "costUSD": 0.018,
+    "latencyMs": 5100,
+    "provenance": "customized",
+    "warnings": []
+  }
+}

@@ -57,8 +57,8 @@
     ],
     "extraResources": [
       {
-        "from": "libs/pai",
-        "to": "pai",
+        "from": "libs/lifeos",
+        "to": "lifeos",
         "filter": [
           "**/*",
           "!skills/**/Examples/**"

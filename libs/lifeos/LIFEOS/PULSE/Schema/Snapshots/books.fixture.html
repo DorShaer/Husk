@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Books · Pulse v2</title>
+<style>
+    :root { --c-bg: #FAFAF7; --c-bgElevated: #FFFFFF; --c-bgSubtle: #F1F0EA; --c-border: #E5E3DA; --c-text: #1B1B18; --c-textMuted: #6F6E66; --c-accent: #1F6FEB; --c-accentHover: #1858C4; --c-success: #2D9D6F; --c-warn: #C68B17; --c-error: #C0392B; --c-pillTemplate: #C68B17; --c-pillCustomized: #2D9D6F; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--c-bg); color: var(--c-text); font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 16px; line-height: 1.55; }
+    a { color: var(--c-accent); text-decoration: none; }
+    a:hover { color: var(--c-accentHover); text-decoration: underline; }
+    code { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-size: 0.92em; background: var(--c-bgSubtle); padding: 0 4px; border-radius: 4px; }
+    .layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+    header.app-header { grid-column: 1 / -1; height: 56px; background: var(--c-bgElevated); border-bottom: 1px solid var(--c-border); display: flex; align-items: center; padding: 0 24px; gap: 16px; position: sticky; top: 0; z-index: 10; }
+    header.app-header .brand { font-weight: 600; font-size: 18px; letter-spacing: -0.01em; }
+    header.app-header .meta { color: var(--c-textMuted); font-size: 14px; margin-left: auto; }
+    aside.sidebar { background: var(--c-bgElevated); border-right: 1px solid var(--c-border); padding: 16px 0; overflow-y: auto; }
+    aside.sidebar nav { display: flex; flex-direction: column; gap: 4px; }
+    aside.sidebar a.nav-item { color: var(--c-text); padding: 8px 16px; display: flex; align-items: center; gap: 8px; font-size: 14px; transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1); border-left: 2px solid transparent; }
+    aside.sidebar a.nav-item:hover { background: var(--c-bgSubtle); text-decoration: none; }
+    aside.sidebar a.nav-item.active { background: var(--c-bgSubtle); border-left-color: var(--c-accent); font-weight: 500; }
+    .pill { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+    .pill.template { background: var(--c-pillTemplate); color: white; }
+    .pill.customized { background: var(--c-pillCustomized); color: white; }
+    main.content { padding: 48px 32px; max-width: 880px; margin: 0 auto; width: 100%; }
+    main.content h1 { font-size: 36px; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; margin-bottom: 16px; }
+    main.content h2 { font-size: 28px; font-weight: 600; line-height: 1.2; margin-top: 48px; margin-bottom: 12px; letter-spacing: -0.015em; }
+    main.content h3 { font-size: 22px; font-weight: 600; margin-top: 24px; margin-bottom: 8px; }
+    main.content p { margin-bottom: 12px; color: var(--c-text); }
+    main.content ul, main.content ol { margin-left: 24px; margin-bottom: 12px; }
+    main.content li { margin-bottom: 4px; }
+    .lede { font-size: 22px; color: var(--c-textMuted); font-family: "Iowan Old Style", "Source Serif Pro", Georgia, serif; line-height: 1.35; margin-bottom: 32px; }
+    .pull-quote { font-family: "Iowan Old Style", "Source Serif Pro", Georgia, serif; font-size: 22px; font-style: italic; padding: 16px 24px; border-left: 3px solid var(--c-accent); margin: 24px 0; color: var(--c-text); background: var(--c-bgSubtle); }
+    .meta-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; color: var(--c-textMuted); font-size: 14px; }
+    .stale-banner { background: var(--c-warn); color: white; padding: 8px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+    .template-banner { background: var(--c-bgSubtle); border: 1px dashed var(--c-pillTemplate); padding: 12px 16px; border-radius: 8px; margin-bottom: 24px; color: var(--c-text); font-size: 14px; }
+    .empty-state { padding: 48px 16px; text-align: center; color: var(--c-textMuted); }
+    .empty-state h2 { color: var(--c-text); margin-bottom: 12px; }
+    .item-card { padding: 12px 16px; border: 1px solid var(--c-border); border-radius: 8px; margin-bottom: 8px; background: var(--c-bgElevated); }
+    .item-card .name { font-weight: 500; }
+    .item-card .creator { color: var(--c-textMuted); margin-left: 8px; }
+    .item-card .rating { color: var(--c-warn); margin-left: 8px; }
+    .item-card .notes { color: var(--c-textMuted); margin-top: 4px; font-size: 14px; }
+    .ref-table { width: 100%; border-collapse: collapse; }
+    .ref-table th, .ref-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--c-border); font-size: 14px; }
+    .ref-table th { font-weight: 600; color: var(--c-textMuted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ref-table td.key { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-size: 14px; color: var(--c-text); }
+    .index-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .index-tile { padding: 16px; border: 1px solid var(--c-border); border-radius: 12px; background: var(--c-bgElevated); }
+    .index-tile h3 { margin: 0 0 4px 0; }
+    .index-tile .preview { color: var(--c-textMuted); font-size: 14px; }
+    button.rebuild-btn { background: var(--c-bgElevated); border: 1px solid var(--c-border); color: var(--c-text); padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: all 120ms cubic-bezier(0.4, 0, 0.2, 1); }
+    button.rebuild-btn:hover { background: var(--c-bgSubtle); border-color: var(--c-accent); }
+    button.rebuild-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+    .page-header .actions { display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <header class="app-header">
+    <span class="brand">Pulse</span>
+    <span class="meta">4 pages · last build 2026-05-03T19:37</span>
+  </header>
+  <aside class="sidebar">
+    <nav><a class="nav-item " href="/v2/health">Health </a>
+<a class="nav-item " href="/v2/beliefs">Beliefs </a>
+<a class="nav-item active" href="/v2/books">Books </a>
+<a class="nav-item " href="/v2/pronunciations">Pronunciations </a></nav>
+  </aside>
+  <main class="content">
+    <div class="page-header"><div><h1>Books </h1></div><div class="actions"><button class="rebuild-btn" onclick="fetch('/api/pulse/rebuild/books',{method:'POST'}).then(()=>location.reload())">🔄 Rebuild</button></div></div>
+<p class="lede">What I&#39;m reading and what landed.</p>
+<div class="item-card"><span class="name">Meditations</span><span class="creator">— Marcus Aurelius</span><span class="rating">★10</span><div class="notes">stoic operating system</div></div>
+<div class="item-card"><span class="name">Antifragile</span><span class="creator">— Nassim Taleb</span><span class="rating">★9</span><div class="notes">systems that gain from disorder</div></div>
+<div class="item-card"><span class="name">Deep Work</span><span class="creator">— Cal Newport</span><span class="rating">★8</span></div>
+  </main>
+</div>
+</body>
+</html>

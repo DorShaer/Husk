@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.lifeos.blogdiscovery.plist.template — Source template. Install via:
+    bun ~/.claude/LIFEOS/TOOLS/InstallBlogDiscovery.ts
+
+  The installer reads $HOME at install time, substitutes {{HOME}}/{{BUN}} placeholders,
+  writes the materialized plist to ~/Library/LaunchAgents/, and bootstraps it.
+
+  Behavior:
+    Runs BlogDiscovery harvest ONCE A DAY at 04:30 (StartCalendarInterval).
+    Harvest-only: scores new indie-blog candidates into the LOCAL review queue.
+    NOTHING is promoted to the production feed without `approve` — option B.
+    Review with: bun BlogDiscovery.ts top --n 50
+    Crash-loop rate-limited (ThrottleInterval 60s).
+    stdout/stderr captured to MEMORY/STATE/com.lifeos.blogdiscovery.log.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.lifeos.blogdiscovery</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{BUN}}</string>
+    <string>{{HOME}}/.claude/LIFEOS/TOOLS/BlogDiscovery.ts</string>
+    <string>harvest</string>
+    <string>--batch</string>
+    <string>300</string>
+    <string>--level</string>
+    <string>low</string>
+    <string>--sources</string>
+    <string>kagi,indieblog,bear</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/STATE/com.lifeos.blogdiscovery.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/STATE/com.lifeos.blogdiscovery.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/.claude</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{BUN_DIR}}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>{{HOME}}</string>
+  </dict>
+</dict>
+</plist>

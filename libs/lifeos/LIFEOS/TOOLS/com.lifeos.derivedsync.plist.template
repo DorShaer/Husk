@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.lifeos.derivedsync.plist.template - Source template. Install via:
+    bun ~/.claude/LIFEOS/TOOLS/InstallDerivedSync.ts
+  The installer reads $HOME at install time, resolves LIFEOS/USER to the real
+  USER directory for launchd WatchPaths, substitutes placeholders, writes the
+  materialized plist to ~/Library/LaunchAgents/, and bootstraps it with
+  launchctl. This template stays clean of principal-specific paths so it ships
+  in the public LifeOS release.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.lifeos.derivedsync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{BUN}}</string>
+    <string>{{HOME}}/.claude/LIFEOS/TOOLS/DerivedSync.ts</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>WatchPaths</key>
+  <array>
+    <string>{{USER_DIR}}</string>
+    <string>{{USER_DIR}}/TELOS</string>
+    <string>{{USER_DIR}}/TELOS/IDEAL_STATE</string>
+    <string>{{USER_DIR}}/TELOS/CURRENT_STATE</string>
+    <string>{{USER_DIR}}/PRINCIPAL</string>
+    <string>{{USER_DIR}}/DIGITAL_ASSISTANT</string>
+    <string>{{USER_DIR}}/CONFIG</string>
+  </array>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/OBSERVABILITY/derived-sync-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/OBSERVABILITY/derived-sync-launchd.log</string>
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/.claude</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{BUN_DIR}}:{{HOME}}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>{{HOME}}</string>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<style>
+{{CSS}}
+</style>
+</head>
+<body>
+<div id="root">
+
+  <header class="brand-bar">
+    <div class="brand-left">
+      <img class="brand-logo" alt="LifeOS" src="data:image/png;base64,{{BRAND_LOGO_B64}}">
+      <div class="brand-wordmark">LifeOS</div>
+      <span class="brand-divider">·</span>
+      <div class="brand-context">ISA</div>
+    </div>
+    <div class="brand-tag">{{EFFORT_DISPLAY}}</div>
+  </header>
+
+  <div class="doc-header">Ideal State Artifact</div>
+
+  <h1>{{TASK}}</h1>
+
+  <dl class="metadata">
+    <div class="meta-line"><dt>slug</dt><dd class="mono">{{SLUG}}</dd></div>
+    <div class="meta-line"><dt>updated</dt><dd class="mono">{{UPDATED}}</dd></div>
+    <div class="meta-line"><dt>state</dt><dd>{{HERO_BADGES}}</dd></div>
+    <div class="meta-line meta-progress"><dt>progress</dt><dd>{{PROGRESS_RAIL}}</dd></div>
+  </dl>
+
+{{HERO_CALLOUT}}
+
+  <nav class="phase-bar" aria-label="Algorithm phase progression">{{PHASE_BAR}}</nav>
+
+  <div class="toc">
+    <div class="toc-label">Contents</div>
+    <ul class="toc-list">{{TOC}}</ul>
+  </div>
+
+{{WARNINGS}}
+
+{{SECTIONS}}
+
+  <footer class="footer">
+    <div class="left">{{FOOTER_LEFT}}</div>
+    <div class="right">Rendered · {{RENDERED_AT}}</div>
+  </footer>
+
+</div>
+</body>
+</html>
