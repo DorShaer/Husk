@@ -264,6 +264,37 @@ husk/
 - `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
 - `installer/` holds the source installers (`install.sh`, `install.ps1`, `uninstall.sh`) alongside the packaging assets they use. `scripts/` holds the published one-line installers and the dev launcher (`run.sh`). The repo root stays free of loose scripts.
 
+### Updating what we vendor
+
+```bash
+./scripts/update-vendor.sh            # framework + dependencies, every gate
+./scripts/update-vendor.sh --fast     # skip the package build and the e2e run
+./scripts/update-vendor.sh --commit   # commit once everything passes
+```
+
+Refreshes `libs/lifeos/` from the latest upstream release and the npm tree
+within the ranges `package.json` already allows, then refuses to leave anything
+staged unless it passes:
+
+- **Privacy.** The whole vendored tree, plus every line the run added elsewhere,
+  is searched for identifiers belonging to the machine running it: home
+  directory, username, hostname, git name and email. Those are read from the
+  environment at run time and never written to a file, because hard-coding them
+  is the thing being guarded against. The framework is always taken from the
+  published release tarball, never from a local `~/.claude`, which is where a
+  maintainer's own notes and answered templates live.
+- **Secrets and CVEs.** gitleaks over full history and trivy over the manifests,
+  both pinned to the versions CI uses so a local pass means a CI pass.
+- **Package size.** Builds the `.deb` and fails below the 100 MiB ceiling that
+  the apt channel silently breaks at.
+- **Tests.** Unit always, end-to-end unless `--fast`.
+
+A failing gate restores the working tree, so a bad run leaves nothing behind.
+Local corrections to vendored files (a dependency range moved off an
+unpatchable version, say) live in `VENDOR_FIXUPS` inside the script and are
+re-applied after each refresh, since re-vendoring would otherwise revert them
+silently.
+
 ### Testing
 
 ```bash
