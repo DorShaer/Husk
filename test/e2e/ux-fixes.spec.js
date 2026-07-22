@@ -88,7 +88,10 @@ test('autopilot wizard has an optional snapshot toggle and unlimited-cap hints (
   await app.close();
 });
 
-test('workflows empty state includes the workflow icon', async () => {
+// The empty state carries an illustration: a graph of node cards plus the
+// mascot cloned into its slot. Assert both, so neither half can quietly stop
+// rendering and leave a bare block of text.
+test('workflows empty state renders its illustration', async () => {
   const app = await launch();
   const win = await ready(app);
   const info = await win.evaluate(async () => {
@@ -96,13 +99,15 @@ test('workflows empty state includes the workflow icon', async () => {
     for (let i = 0; i < 40 && !document.querySelector('#wf-grid .empty-state'); i++) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    const icon = document.querySelector('#wf-grid .empty-state .es-icon');
+    const stage = document.querySelector('#wf-grid .empty-state .ek-stage');
     return {
-      hasSvg: !!(icon && icon.querySelector('svg')),
+      hasGraph: !!(stage && stage.querySelector('svg.ek-graph')),
+      hasMascot: !!(stage && stage.querySelector('.ek-slot svg')),
       text: document.getElementById('wf-grid').textContent.replace(/\s+/g, ' ').trim(),
     };
   });
-  expect(info.hasSvg).toBe(true);
+  expect(info.hasGraph).toBe(true);
+  expect(info.hasMascot).toBe(true);
   expect(info.text).toContain('No workflows yet');
   await app.close();
 });
