@@ -250,35 +250,45 @@
   --accent-2: #ff5a3c;
   --accent-3: #d4471c;
   --accent-glow: rgba(255, 120, 71, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
   --grad: linear-gradient(135deg, #ff7847 0%, #ff5a3c 100%);
+  --on-accent: #ffffff;
 }
 [data-accent="cyan"] {
   --accent: #67e8f9;
   --accent-2: #5eead4;
   --accent-3: #06b6d4;
   --accent-glow: rgba(103, 232, 249, 0.35);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
   --grad: linear-gradient(135deg, #67e8f9, #5eead4);
+  --on-accent: #06343d;
 }
 [data-accent="indigo"] {
   --accent: #818cf8;
   --accent-2: #a78bfa;
   --accent-3: #4f46e5;
   --accent-glow: rgba(129, 140, 248, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
   --grad: linear-gradient(135deg, #818cf8, #a78bfa);
+  --on-accent: #ffffff;
 }
 [data-accent="emerald"] {
   --accent: #34d399;
   --accent-2: #6ee7b7;
   --accent-3: #059669;
   --accent-glow: rgba(52, 211, 153, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
   --grad: linear-gradient(135deg, #34d399, #6ee7b7);
+  --on-accent: #043a2b;
 }
 [data-accent="rose"] {
   --accent: #fb7185;
   --accent-2: #f9a8d4;
   --accent-3: #e11d48;
   --accent-glow: rgba(251, 113, 133, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
   --grad: linear-gradient(135deg, #fb7185, #f9a8d4);
+  --on-accent: #ffffff;
 }
 
 /* Cross-theme control, radius and motion tokens. Linear/Vercel-style
@@ -297,7 +307,7 @@
   --motion-fast: 0.12s;
   --motion-base: 0.18s;
   --motion-slow: 0.28s;
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -310,9 +320,9 @@
   --fs-display: 28px;
   --fs-h1: 22px;
   --fs-h2: 16px;
-  --fs-body: 13px;
-  --fs-small: 12px;
-  --fs-micro: 11px;
+  --fs-body: 14px;
+  --fs-small: 13px;
+  --fs-micro: 12px;
   --lh-tight: 1.15;
   --lh-snug: 1.3;
   --lh-base: 1.5;
@@ -366,7 +376,7 @@ body {
   background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: 14px;
   font-feature-settings: 'cv11', 'ss03';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -481,13 +491,16 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
   color: var(--text-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  /* Top-heavy padding drops the label 1px; with line-height 1 the
-     centered text box reads optically high in this font. */
-  padding: 2px 12px 0;
+  padding: 0 12px;
   height: var(--control-h);
   display: inline-flex; align-items: center; justify-content: center;
   gap: 6px;
-  font-size: 13px; line-height: 1;
+  /* Not line-height: 1. That clamps the line box below the font's own content
+     area, and the overflow lands asymmetrically, so flex centring puts the
+     label about 1px above the icon and the leading icon reads as sitting low.
+     `normal` lets the line box match the font and the two share a centreline.
+     The button height is fixed above, so this changes alignment only. */
+  font-size: 13px; line-height: normal;
   cursor: pointer;
   font-family: inherit;
   font-weight: 500;
@@ -496,18 +509,25 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
 }
 .iconbtn:hover { color: var(--text); border-color: var(--line-3); background: var(--bg-2); box-shadow: none; }
 .iconbtn svg { width: 16px; height: 16px; display: block; }
-.btn-primary .btn-icon { width: 14px; height: 14px; flex: 0 0 auto; display: block; }
+/* Every labelled action button uses the same 14px leading icon, whatever the
+   button variant, so the primary actions across pages stay one size. The
+   .iconbtn override is needed because `.iconbtn svg` sizes bare icons at 16px. */
+.btn-icon { width: 14px; height: 14px; flex: 0 0 auto; display: block; }
+.iconbtn .btn-icon { width: 14px; height: 14px; }
 body[data-theme="dark"] #btn-theme .theme-sun { display: none; }
 body[data-theme="light"] #btn-theme .theme-moon { display: none; }
 .iconbtn-primary {
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent, #ffffff);
   border-color: var(--accent);
   font-weight: 500;
+  /* Match .btn-primary so the topbar primary and the page-header primaries
+     read as the same button. */
+  padding: 0 14px;
 }
 .iconbtn-primary:hover {
   background: color-mix(in srgb, var(--accent) 90%, white);
-  color: #ffffff;
+  color: var(--on-accent, #ffffff);
   border-color: color-mix(in srgb, var(--accent) 90%, white);
   box-shadow: none;
 }
@@ -1035,7 +1055,8 @@ body[data-page="boot"] .page { display: none !important; }
   padding: 0 14px;
   height: var(--control-h);
   font-size: 13px;
-  line-height: 1;
+  /* See .iconbtn: line-height 1 misaligns the leading icon against the label. */
+  line-height: normal;
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -1047,7 +1068,6 @@ body[data-page="boot"] .page { display: none !important; }
   transition: background 0.14s var(--ease), color 0.14s var(--ease), border-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
 }
 .ghost-btn:hover { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg-3)); }
-.ghost-btn .btn-icon { width: 14px; height: 14px; flex: 0 0 auto; display: block; }
 .ghost-btn-danger { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 30%, var(--line)); }
 .ghost-btn-danger:hover { color: #fff; background: var(--rose); border-color: var(--rose); }
 
@@ -1522,6 +1542,30 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   pointer-events: none;
   filter: blur(8px);
 }
+/* Autopilot hero: the real Kernel flying a little plane. Funny, on-brand,
+   and it uses the actual mascot art instead of a hand-drawn face. */
+.aut-hero-art {
+  position: absolute; right: 3%; top: 50%; z-index: 0;
+  width: 340px; height: 230px; pointer-events: none;
+  transform: translateY(-50%);
+  animation: apk-float 6s ease-in-out infinite;
+}
+@media (max-width: 1080px) { .aut-hero-art { display: none; } }
+.aut-plane { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.42)); }
+/* The fuselage front lip sits ABOVE Kernel so his lower body tucks inside. */
+.aut-plane-front { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 3; pointer-events: none; }
+.aut-p-body { fill: url(#aut-fuse); }
+.aut-p-accent { fill: var(--accent); }
+/* Clouds must read on both skies: white on the dark hero, soft slate on light. */
+.aut-clouds { fill: #ffffff; }
+[data-mode="light"] .aut-clouds { fill: #9db4d4; }
+/* Kernel sits DOWN in the cockpit; the front lip hides his lower half. */
+.aut-kernel-slot { position: absolute; left: 55%; top: 26px; transform: translateX(-50%); z-index: 2; line-height: 0; }
+.aut-kernel-slot .hk { width: 96px; height: auto; cursor: default; }
+/* Pilot cap overlaid on the real Kernel's head. */
+.aut-hat { position: absolute; left: 55%; top: 44px; transform: translateX(-50%); width: 108px; height: auto; z-index: 4; overflow: visible; }
+@keyframes apk-float { 0%, 100% { transform: translateY(-50%) rotate(0deg); } 50% { transform: translateY(-56%) rotate(1.2deg); } }
+@media (prefers-reduced-motion: reduce) { .aut-hero-art { animation: none; } }
 .aut-hero-eyebrow {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
@@ -3455,6 +3499,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .term-pane.show { display: block; }
 .xterm-viewport { background-color: transparent !important; }
 
+
 /* ─── Workflows page ──────────────────────────────────────────────────── */
 
 /* List */
@@ -3769,6 +3814,101 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .wf-node-panel-close:hover { color: var(--text); background: var(--bg-3); }
 .wf-node-panel #wf-np-delete { margin-top: 4px; align-self: flex-start; }
+
+/* Node config: right-side drawer with a rich single-column form + mini-IDE. */
+.wf-drawer { position: fixed; inset: 0; z-index: 200; display: flex; justify-content: flex-end; }
+.wf-drawer[hidden] { display: none; }
+.wf-drawer-scrim { position: absolute; inset: 0; background: rgba(0,0,0,0.42); backdrop-filter: blur(2px); animation: wf-scrim-in 0.2s ease; }
+.wf-drawer-panel {
+  position: relative; width: min(560px, 94vw); height: 100%;
+  display: flex; flex-direction: column;
+  background-color: var(--bg); background-image: linear-gradient(var(--bg-1), var(--bg-1));
+  border-left: 1px solid var(--line); box-shadow: -26px 0 60px -24px rgba(0,0,0,0.6);
+  animation: wf-drawer-in 0.24s cubic-bezier(.16,1,.3,1);
+}
+@keyframes wf-drawer-in { from { transform: translateX(26px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes wf-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+.wf-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
+.wf-nm-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.wf-nm-head-title { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.wf-nm-head-badge {
+  display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
+}
+.wf-nm-head-badge svg { width: 15px; height: 15px; }
+.wf-nm-head .wf-node-panel-title { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; text-transform: none; color: var(--text); }
+.wf-nm-editor { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1; min-height: 0; }
+.wf-nm-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wf-nm-editor-head .form-label { margin: 0; }
+.wf-nm-generate { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; font-size: var(--fs-small); white-space: nowrap; border-radius: 8px; }
+.wf-nm-generate svg { color: var(--accent); }
+.wf-nm-generate:disabled { opacity: 0.55; cursor: default; }
+/* Mini IDE: line-number gutter + a monospace editor, styled as a code surface. */
+.wf-ide {
+  position: relative; flex: 1; display: flex; min-height: 220px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px; line-height: 1.7;
+}
+/* Single accent outline on focus. --focus-ring layers a --bg gap ring under the
+   accent, which read as two lines in two colors; use one accent border + a soft
+   same-hue glow instead. */
+.wf-ide:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.wf-ide.field-invalid { border-color: var(--rose); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rose) 26%, transparent); }
+/* The inner textarea must stay flat: the .wf-ide wrapper owns the focus ring
+   via :focus-within. Global textarea:focus rules otherwise paint their own
+   border + box-shadow + dark background on it, which the wrapper's
+   overflow:hidden clips into a stray highlighted line down the left edge. */
+.wf-ide-input:focus,
+.wf-ide-input:focus-visible,
+[data-mode="dark"] .wf-ide-input:focus,
+[data-mode="light"] .wf-ide-input:focus {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+.wf-ide-gutter {
+  flex: none; width: 42px; padding: 14px 8px 14px 0; text-align: right;
+  color: var(--text-3); background: color-mix(in srgb, var(--text) 3%, transparent);
+  user-select: none; overflow: hidden;
+  white-space: pre; font-variant-numeric: tabular-nums;
+}
+.wf-ide-input {
+  flex: 1; min-width: 0; border: 0; outline: none; resize: none;
+  background: transparent; color: var(--text); padding: 14px 16px;
+  font: inherit; line-height: inherit; white-space: pre;
+}
+.wf-ide-input::placeholder { color: var(--text-3); white-space: pre-wrap; }
+/* AI suggestion review overlay: approve or discard before it touches the editor. */
+.wf-gen-review {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+  border-radius: 12px;
+  /* Opaque: the --bg-N tokens are translucent white overlays, so paint a solid
+     base first or the editor bleeds through the suggestion. */
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--bg-2), var(--bg-2));
+}
+.wf-gen-review-head {
+  display: flex; align-items: center; gap: 7px; padding: 12px 14px;
+  font-size: var(--fs-small); font-weight: 600; color: var(--text-2);
+  border-bottom: 1px solid var(--line);
+}
+.wf-gen-review-head svg { color: var(--accent); }
+.wf-gen-review-text {
+  flex: 1; overflow: auto; padding: 14px 16px; margin: 0; white-space: pre-wrap;
+  color: var(--text);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px; line-height: 1.7;
+}
+.wf-gen-review-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); }
+.wf-nm-gen-status { font-size: var(--fs-small); color: var(--text-3); min-height: 1em; }
+.wf-nm-gen-status.is-error { color: var(--rose); }
+.wf-nm-foot { display: flex; align-items: center; justify-content: space-between; padding: 13px 20px; border-top: 1px solid var(--line); }
+.wf-nm-foot #wf-np-delete { border: 0; background: transparent; color: var(--text-3); padding: 7px 10px; font-size: var(--fs-small); }
+.wf-nm-foot #wf-np-delete:hover { background: color-mix(in srgb, var(--rose) 14%, transparent); color: var(--rose); }
+/* Beat the .modal-card .btn-primary { width:100% } rule so Done stays compact. */
+.wf-drawer .btn-primary { width: auto; min-width: 96px; height: var(--control-h); padding: 0 18px; font-size: var(--fs-small); }
 .wf-edge-panel-hint {
   font-size: 11.5px; line-height: 1.6; color: var(--text-3);
   margin: 0; padding: 8px 10px;
@@ -4339,7 +4479,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
   flex: 0 0 auto;
 }
 .agent-card-desc {
-  font-size: 12.5px; color: var(--text-2); line-height: 1.5;
+  font-size: 13.5px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
   margin: 0;
@@ -4360,7 +4500,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 /* Prompt preview: muted italic, 2-line clamp. */
 .agent-card-prompt {
-  font-size: 11.5px; color: var(--text-3); line-height: 1.55;
+  font-size: 12.5px; color: var(--text-3); line-height: 1.55;
   font-style: italic;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
@@ -4589,7 +4729,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
   padding: 2px 8px;
 }
 .prompt-card-body {
-  font-size: 12px; color: var(--text-2);
+  font-size: 13px; color: var(--text-2);
   line-height: 1.5;
   display: -webkit-box;
   -webkit-line-clamp: 3; line-clamp: 3;
@@ -4731,7 +4871,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
   font-size: 16px;
 }
 .skill-card .sk-desc {
-  font-size: 13px; color: var(--text-2); line-height: 1.55;
+  font-size: 14px; color: var(--text-2); line-height: 1.55;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -5825,14 +5965,15 @@ input[type="checkbox"]:disabled {
 
 .btn-primary {
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent, #ffffff);
   border: 0;
   border-radius: var(--radius-md);
   padding: 0 14px;
   height: var(--control-h);
   font-size: 13px;
   font-weight: 500;
-  line-height: 1;
+  /* See .iconbtn: line-height 1 misaligns the leading icon against the label. */
+  line-height: normal;
   cursor: pointer; font-family: inherit;
   display: inline-flex;
   align-items: center;
@@ -5893,8 +6034,13 @@ input[type="checkbox"]:disabled {
   letter-spacing: -0.02em;
   text-transform: uppercase;
   font-weight: 850;
-  color: var(--accent);
-  background: linear-gradient(90deg, var(--accent-2) 0%, var(--accent) 58%, #ffb08f 100%);
+  /* Fixed identity. Accent is a separate axis from theme, so painting this in
+     accent made the title a different colour for every accent and clash on most
+     of them. It reads only from the theme text ramp now: same wordmark under
+     every accent, still legible on the light-family themes. The vertical fade
+     to --text-2 keeps the weight from going flat. */
+  color: var(--text);
+  background: linear-gradient(180deg, var(--text) 0%, var(--text-2) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -6129,6 +6275,9 @@ input[type="checkbox"]:disabled {
 }
 .modal-section { text-align: left; margin-bottom: 16px; }
 .modal-label { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-3); margin-bottom: 8px; font-weight: 700; }
+.req { color: var(--danger, #ef4444); margin-left: 3px; font-weight: 700; font-size: 16px; line-height: 0; vertical-align: -2px; }
+input.field-invalid,
+textarea.field-invalid { border-color: var(--danger, #ef4444); box-shadow: 0 0 0 1px var(--danger, #ef4444); }
 .modal-card input[type="text"] {
   width: 100%; padding: 10px 12px; font-size: 13px;
   background: var(--bg); color: var(--text);
@@ -6137,7 +6286,7 @@ input[type="checkbox"]:disabled {
   transition: border-color 0.12s var(--ease), box-shadow 0.12s var(--ease);
 }
 .modal-card input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
-.modal-hint { color: var(--text-3); font-size: 12px; margin: 12px 0 18px; }
+.modal-hint { color: var(--text-3); font-size: 13px; margin: 12px 0 18px; }
 .modal-hint code { background: var(--bg-3); padding: 1px 6px; border-radius: 4px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
 .modal-card .btn-primary { width: 100%; height: var(--control-h-lg); padding: 0 16px; font-size: 14px; }
 /* Footer buttons use standard sizing, overriding the stacked default above. */
@@ -6343,6 +6492,54 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
   width: 196px; height: 210px; display: block;
   overflow: visible;
   cursor: pointer;
+}
+/* ── Kernel in empty states ──────────────────────────────────────────────
+   A standalone, static Kernel wired to workflow node cards, with a signal
+   flowing along each wire toward its node. */
+.empty-state.es-kernel { gap: 4px; }
+.es-kernel .ek-stage {
+  position: relative; width: 480px; height: 280px; max-width: 100%;
+  display: grid; place-items: center;
+  margin-bottom: 4px;
+}
+/* Bare Kernel: hide the pod/husk shell, hands, glow and sparks and show only
+   the seed character, at rest, with every animation and transition off. */
+.hk.is-bare .hk-petal, .hk.is-bare .hk-pit, .hk.is-bare .hk-shadow,
+.hk.is-bare .hk-glow, .hk.is-bare .hk-hands, .hk.is-bare .hk-sparks { display: none; }
+.hk.is-bare .hk-seed { transform: none; opacity: 1; }
+.hk.is-bare, .hk.is-bare * { animation: none !important; transition: none !important; }
+.es-kernel .ek-slot { position: relative; z-index: 1; line-height: 0; }
+.es-kernel .ek-slot .hk { width: 104px; height: auto; cursor: default; }
+/* Workflow graph: curved wires from Kernel to faint node cards, each carrying a
+   bright signal dot that flows out toward its node. */
+.es-kernel .ek-graph { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.es-kernel .ek-wire {
+  fill: none; stroke-width: 2; stroke-linecap: round;
+  stroke: color-mix(in srgb, var(--accent) 32%, var(--line));
+}
+.es-kernel .ek-wire-2 { stroke-width: 1.5; stroke: color-mix(in srgb, var(--accent) 20%, var(--line)); }
+.es-kernel .ek-flow {
+  fill: none; stroke-width: 3; stroke-linecap: round; stroke: var(--accent);
+  stroke-dasharray: 6 100; stroke-dashoffset: 106;
+  filter: drop-shadow(0 0 3px var(--accent-glow));
+  animation: ek-flow 2.4s linear infinite;
+}
+.es-kernel .ek-flow:nth-of-type(10) { animation-delay: 0.6s; }
+.es-kernel .ek-flow:nth-of-type(11) { animation-delay: 1.2s; }
+.es-kernel .ek-flow:nth-of-type(12) { animation-delay: 1.8s; }
+/* Mini workflow-node cards: gradient icon badge, title + meta lines, floating. */
+.es-kernel .ek-node { filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.38)); }
+.es-kernel .ek-card { fill: var(--bg-4); stroke: var(--line-2); stroke-width: 1; }
+.es-kernel .ek-node-icon { fill: url(#ek-ic); }
+.es-kernel .ek-node-l1 { fill: color-mix(in srgb, var(--text) 52%, transparent); }
+.es-kernel .ek-node-l2 { fill: color-mix(in srgb, var(--text) 22%, transparent); }
+.ek-ic0 { stop-color: var(--accent); }
+.ek-ic1 { stop-color: var(--accent-2); }
+.es-kernel .ek-dot { fill: var(--accent); }
+.es-kernel .ek-dot-2 { fill: color-mix(in srgb, var(--accent) 70%, transparent); }
+@keyframes ek-flow { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .es-kernel .ek-flow { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; opacity: 0; }
 }
 /* Every animated part is positioned in viewBox units, so transform-origin is
    read against the viewBox rather than each element's own tight bounding box. */
@@ -7089,6 +7286,14 @@ kbd {
    keeps the resting state visible even if the compositor is not animating. */
 .toast.is-enter { opacity: 0; transform: translateX(16px); }
 .toast.is-out { opacity: 0; transform: translateX(16px); }
+/* A keyed card that was rewritten in place. The card does not move or re-enter,
+   so a short pulse is what tells the eye the value changed. */
+.toast.is-bump { animation: toast-bump 220ms var(--ease-out); }
+@keyframes toast-bump {
+  0% { transform: scale(1); }
+  38% { transform: scale(1.035); }
+  100% { transform: scale(1); }
+}
 .toast-icon { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-top: 1px; color: var(--text-3); flex: none; }
 .toast-icon svg { width: 18px; height: 18px; }
 .toast-body { min-width: 0; }
@@ -7361,21 +7566,27 @@ kbd {
 [data-mode="dark"] .btn-primary,
 [data-mode="dark"] .iconbtn-primary {
   background: var(--grad);
-  color: white;
+  color: var(--on-accent, white);
   border: 1px solid transparent;
   border-radius: 10px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 10px 30px -10px rgba(255, 120, 71, 0.55);
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 6px 16px -8px rgba(0, 0, 0, 0.45);
   font-weight: 600;
   letter-spacing: -0.005em;
   transition: box-shadow 180ms ease, transform 180ms ease;
 }
 [data-mode="dark"] .btn-primary:hover,
 [data-mode="dark"] .iconbtn-primary:hover {
+  /* Keep the gradient + on-accent text on hover. Without this, the shared
+     [data-mode="dark"] .iconbtn:hover rule (higher specificity) repaints the
+     background translucent-white while the text stays near-black on-accent,
+     which reads as invisible text. */
+  background: var(--grad);
+  color: var(--on-accent, white);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    0 14px 36px -12px rgba(255, 120, 71, 0.75);
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 10px 24px -10px rgba(0, 0, 0, 0.55);
   transform: translateY(-1px);
 }
 
@@ -7972,12 +8183,14 @@ kbd {
   border-color: var(--accent);
   box-shadow: var(--elev-3), 0 0 0 3px var(--accent-glow);
 }
-.wf-cv-node { position: relative; padding: 12px 13px 11px; cursor: grab; }
+/* border-radius + overflow clip the top accent bar to the card's rounded top so
+   its straight ends can't poke past the corners. The connector dots live on the
+   node, not this content box, so clipping here never hides them. */
+.wf-cv-node { position: relative; padding: 12px 13px 11px; cursor: grab; border-radius: 13px; overflow: hidden; }
 /* The same bar the run view uses for state; here it just says "step". */
 .wf-cv-node::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
   background: var(--line-2);
-  border-radius: 14px 14px 0 0;
 }
 .wf-canvas .drawflow .drawflow-node.selected .wf-cv-node::before {
   background: linear-gradient(90deg, var(--accent), var(--accent-2));

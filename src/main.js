@@ -1470,7 +1470,17 @@ ipcMain.handle('pty:list', () => {
   const list = [];
   for (const [id, s] of sessions) {
     if (!s.pty) continue;
-    list.push({ sessionId: id, cwd: s.cwd || null, claudeSessionId: s.claudeSessionId || null, active: id === activeSessionId });
+    // Only mark a claude session resumable if its transcript actually exists. A
+    // chat whose claude exited 0 before writing leaves no .jsonl, and
+    // `claude --resume <id>` on it fails with "No conversation found".
+    let resumable = false;
+    if (s.claudeSessionId && s.cwd) {
+      try {
+        const enc = s.cwd.replace(/[^a-zA-Z0-9]/g, '-');
+        resumable = fs.existsSync(path.join(CLAUDE_DIR, 'projects', enc, `${s.claudeSessionId}.jsonl`));
+      } catch (_) {}
+    }
+    list.push({ sessionId: id, cwd: s.cwd || null, claudeSessionId: s.claudeSessionId || null, resumable, active: id === activeSessionId });
   }
   return { ok: true, sessions: list, activeSessionId };
 });
@@ -6876,12 +6886,20 @@ function parseSessionHead(fullPath) {
   let aiTitle = latestAiTitle(fullPath);
   let userMessage = ''; let queueContent = '';
   let startedISO = ''; let originalCwd = '';
+  // An interactive session opens with the terminal preamble the CLI writes when
+  // a person is driving it. One-shot helper runs (title generation, hooks that
+  // summarise a conversation) land in the same project directory with the same
+  // cwd and a fresh timestamp, but never emit that preamble. Without this the
+  // two are indistinguishable, and a helper transcript can be mistaken for a
+  // chat the user just started.
+  let interactive = false;
   try {
     const text = readHead(fullPath, 32768);
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       let obj;
       try { obj = JSON.parse(line); } catch (_) { continue; }
+      if (obj.type === 'mode' || obj.type === 'permission-mode' || obj.type === 'file-history-snapshot') interactive = true;
       if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
       if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
       if (!userMessage && obj.type === 'user' && obj.message) {
@@ -6898,10 +6916,10 @@ function parseSessionHead(fullPath) {
         if (text && !isCommandWrapperText(text)) userMessage = text;
       }
       if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') queueContent = obj.content.trim();
-      if (aiTitle && startedISO && userMessage && originalCwd) break;
+      if (interactive && aiTitle && startedISO && userMessage && originalCwd) break;
     }
   } catch (_) { return null; }
-  return { aiTitle, userMessage, queueContent, startedISO, originalCwd };
+  return { aiTitle, userMessage, queueContent, startedISO, originalCwd, interactive };
 }
 
 // The display title a session would show, given its parsed head fields. Same
@@ -7491,6 +7509,11 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       if (st.mtimeMs < startedAt - 10_000) continue;
       const info = parseSessionHead(full);
       if (!info) continue;
+      // Only a real chat can back a tab. Helper runs share this directory, this
+      // cwd and this minute, and they carry a title describing whatever chat
+      // they were summarising, so binding to one renames the tab after a
+      // different conversation.
+      if (!info.interactive) continue;
       if (info.originalCwd && info.originalCwd !== s.cwd) continue;
       const startedMs = info.startedISO ? Date.parse(info.startedISO) : st.mtimeMs;
       // Must have begun around or after this tab launched (not a resumed older
