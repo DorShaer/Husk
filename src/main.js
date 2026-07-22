@@ -1681,8 +1681,10 @@ function retainedRegistryPath() {
   return path.join(app.getPath('userData'), 'autopilot-retained.json');
 }
 function readRetained() {
-  try { return JSON.parse(fs.readFileSync(retainedRegistryPath(), 'utf8')); }
-  catch (_) { return {}; }
+  try {
+    const j = JSON.parse(fs.readFileSync(retainedRegistryPath(), 'utf8'));
+    return j && typeof j === 'object' ? j : {};
+  } catch (_) { return {}; }
 }
 function writeRetained(map) {
   try { fs.writeFileSync(retainedRegistryPath(), JSON.stringify(map, null, 2)); } catch (_) {}

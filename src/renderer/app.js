@@ -1995,27 +1995,32 @@ async function renderProjects() {
   // Paint immediately from the cheap list, then enrich once derived state
   // lands. The page never waits on a git call.
   paintProjectsSurface();
+  let stateErr = null;
   try {
     const st = await window.husk.projects.state();
     if (st && st.ok) {
       projectStates = st.states || {};
       projectGroups = st.groups || null;
-      paintProjectsSurface();
+    } else {
+      stateErr = (st && st.error) || 'the call returned no data';
     }
   } catch (err) {
+    stateErr = (err && err.message) || String(err);
+  }
+  if (stateErr) {
     // Without derived state the board still works, minus git and run signal.
-    // Surface it: the usual cause is a main process older than the renderer,
-    // and a silent console line was not being seen.
-    console.warn('[projects] derived state unavailable:', err && err.message);
+    // The note carries the actual error so a screenshot of it is diagnostic.
+    console.warn('[projects] derived state unavailable:', stateErr);
     const board = $('#projects-board');
     if (board && !$('#ws-state-note')) {
       const note = document.createElement('div');
       note.id = 'ws-state-note';
       note.className = 'ws-state-note';
-      note.textContent = 'Live project state is unavailable, so branch and status are blank. Fully quit and relaunch Husk; if this note stays, check the devtools console for [projects].';
+      note.textContent = `Live project state is unavailable, so branch and status are blank. Error: ${stateErr}`;
       board.prepend(note);
     }
   }
+  paintProjectsSurface();
 }
 
 // Home-relative display form of a project path. The full path stays in the
@@ -2046,7 +2051,11 @@ function fmtRelTime(iso) {
   return new Date(t).toLocaleDateString();
 }
 
-function wsStateOf(id) { return projectStates[id] || {}; }
+function wsStateOf(id) {
+  const st = projectStates[id] || {};
+  if (!st.live && id === activeProjectId && TABS.size > 0) return { ...st, live: true };
+  return st;
+}
 
 // Most recent thing that happened here: a session transcript or a launch.
 function wsActivityMs(p) {
@@ -2194,7 +2203,7 @@ function paintWorkspace(id) {
     ['Git', st.isGit ? `${escapeHtml(st.branch || 'repository')}` : (projectGroups ? 'not a git repository' : '&hellip;')],
     ['Added', escapeHtml(fmtRelTime(p.addedAt))],
     ['Last launched', escapeHtml(fmtRelTime(p.lastUsedAt))],
-    ['Last session', escapeHtml(fmtRelTime(st.lastSessionMs))],
+    ['Last session', `<span id="ws-detail-lastsession">${escapeHtml(fmtRelTime(st.lastSessionMs))}</span>`],
   ].map(([k, v]) => `<div class="ws-detail"><span class="ws-detail-k">${k}</span><span class="ws-detail-v">${v}</span></div>`).join('');
 
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
@@ -2240,7 +2249,7 @@ function paintWorkspace(id) {
         <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Last activity</div>
-          <div class="ws-tile-value">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
+          <div class="ws-tile-value" id="ws-tile-activity">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
           <div class="ws-tile-sub${st.live ? ' is-live' : ''}">${st.live ? 'agent live here' : 'agent idle'}</div>
         </div>
       </div>
@@ -2374,6 +2383,15 @@ async function wsFillSessions(p) {
   const tileSub = $('#ws-tile-sessions-sub');
   if (tile) tile.textContent = String(matches.length);
   if (tileSub && matches.length) tileSub.textContent = `last ${fmtRelTime(matches[0].mtime || matches[0].startedMs)}`;
+  if (matches.length) {
+    const newestMs = matches[0].mtime || matches[0].startedMs || 0;
+    if (newestMs > (wsActivityMs(p) || 0)) {
+      const act = $('#ws-tile-activity');
+      if (act) act.textContent = fmtRelTime(newestMs);
+    }
+    const lastSess = $('#ws-detail-lastsession');
+    if (lastSess) lastSess.textContent = fmtRelTime(newestMs);
+  }
   if (!rows.length) {
     // eslint-disable-next-line no-unsanitized/property -- Static markup.
     list.innerHTML = '<div class="ws-empty">No sessions in this folder yet.</div>';
