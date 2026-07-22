@@ -63,8 +63,15 @@ test('recap is read from the grid, cleanly (no chrome), exactly once', async () 
   });
   await win.evaluate(() => window.husk.pty.start({ cols: 100, rows: 30 }));
 
-  // Wait past the settle window and the fixture's redraw interval.
-  await win.waitForTimeout(5000);
+  // A repaint re-arms the settle window, so the earliest a recap can be read is
+  // agent-spawn plus the fixture's redraw plus the settle. That total is close
+  // enough to any fixed budget that a slow machine loses the race, so wait for
+  // the read itself instead of guessing how long it takes.
+  await win.waitForFunction(() => window.__spoken.length > 0, null, { timeout: 30_000 });
+  // Then hold past the fixture's LATER repaint, which lands after the recap has
+  // been read. That is what proves the once-per-turn rule: a redraw of a recap
+  // already spoken must not speak it again.
+  await win.waitForTimeout(3500);
 
   const spoken = await win.evaluate(() => window.__spoken);
   await app.close();

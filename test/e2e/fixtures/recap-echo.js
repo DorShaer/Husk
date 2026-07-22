@@ -16,6 +16,9 @@ function paint() {
 }
 
 paint();
-// Redraw later (a TUI repaint): must NOT cause a second read.
+// Redraw twice (TUI repaints): neither may cause a second read. The first lands
+// while the recap is still being settled, the second lands after it has been
+// spoken, so both sides of the once-per-turn rule are exercised.
 setTimeout(paint, 3000);
-setTimeout(() => process.exit(0), 10000);
+setTimeout(paint, 6000);
+setTimeout(() => process.exit(0), 14000);
