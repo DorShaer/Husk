@@ -322,7 +322,7 @@
       </button>
       <div class="topbar-spacer"></div>
       <button class="iconbtn" id="btn-palette" title="Command palette (Ctrl+K)">⌘K</button>
-      <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)">+ New Chat</button>
+      <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Chat</button>
       <button class="iconbtn iconbtn-square" id="btn-status-toggle" title="Toggle status panel" aria-label="Toggle status panel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>
@@ -507,7 +507,7 @@
                 <span class="wf-stats" id="wf-stats"></span>
               </div>
               <div class="page-head-right">
-                <button class="btn-primary" id="btn-new-workflow">+ New Workflow</button>
+                <button class="btn-primary" id="btn-new-workflow"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Workflow</button>
               </div>
             </div>
             <div class="page-body">
@@ -563,51 +563,83 @@
               <div class="wf-canvas-wrap">
                 <div id="wf-canvas" class="wf-canvas"></div>
                 <div class="wf-canvas-hint" id="wf-canvas-hint">Drag from a node's right dot to another node's left dot to connect them. Click a node to edit it.</div>
-                <aside class="wf-node-panel" id="wf-node-panel" hidden>
-                  <div class="wf-node-panel-head">
-                    <span class="wf-node-panel-title">Step</span>
-                    <button class="wf-node-panel-close" id="wf-node-panel-close" aria-label="Close">&times;</button>
+                <div class="wf-drawer" id="wf-node-panel" hidden>
+                  <div class="wf-drawer-scrim" aria-hidden="true"></div>
+                  <div class="wf-drawer-panel" role="dialog" aria-label="Configure step">
+                    <div class="wf-nm-head">
+                      <div class="wf-nm-head-title">
+                        <span class="wf-nm-head-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v10l-7 4-7-4V7z"/></svg></span>
+                        <span class="wf-node-panel-title">Configure step</span>
+                      </div>
+                      <button class="wf-node-panel-close" id="wf-node-panel-close" aria-label="Close">&times;</button>
+                    </div>
+                    <div class="wf-drawer-body">
+                      <div class="form-row">
+                        <label class="form-label">Name</label>
+                        <input class="form-input" id="wf-np-name" type="text" maxlength="64" />
+                      </div>
+                      <div class="form-row">
+                        <label class="form-label">Agent</label>
+                        <select class="wf-step-select" id="wf-np-agent"></select>
+                      </div>
+                      <div class="form-row">
+                        <label class="form-label">
+                          Model
+                          <button class="wf-np-model-refresh" id="wf-np-model-refresh" type="button" title="Reload this agent's models">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg>
+                          </button>
+                        </label>
+                        <select class="wf-step-select" id="wf-np-model"></select>
+                        <input class="form-input wf-np-model-custom" id="wf-np-model-custom" type="text" placeholder="model id, e.g. claude-fable-5[1m]" hidden />
+                        <div class="wf-np-model-hint" id="wf-np-model-hint"></div>
+                      </div>
+                      <div class="form-row" id="wf-np-branch-row" hidden>
+                        <label class="form-label">When this step has multiple next steps</label>
+                        <select class="wf-step-select" id="wf-np-branch">
+                          <option value="parallel">Run all of them (parallel)</option>
+                          <option value="ai">Let this agent pick one (AI routing)</option>
+                        </select>
+                      </div>
+                      <div class="form-row">
+                        <label class="form-label">Context from previous</label>
+                        <select class="wf-step-select" id="wf-np-context">
+                          <option value="full">Full output</option>
+                          <option value="last50">Last 50 lines</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div class="wf-nm-editor">
+                        <div class="wf-nm-editor-head">
+                          <label class="form-label" for="wf-np-prompt">Prompt</label>
+                          <button class="ghost-btn wf-nm-generate" id="wf-np-generate" type="button" title="Improve this prompt with AI">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>
+                            Generate with AI
+                          </button>
+                        </div>
+                        <div class="wf-ide" id="wf-ide">
+                          <div class="wf-ide-gutter" id="wf-np-gutter" aria-hidden="true">1</div>
+                          <textarea class="wf-ide-input" id="wf-np-prompt" wrap="off" maxlength="8192" spellcheck="false" placeholder="What should this step do? Write a rough idea, then Generate with AI to polish it."></textarea>
+                          <div class="wf-gen-review" id="wf-gen-review" hidden>
+                            <div class="wf-gen-review-head">
+                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>
+                              AI suggestion
+                            </div>
+                            <div class="wf-gen-review-text" id="wf-gen-review-text"></div>
+                            <div class="wf-gen-review-foot">
+                              <button class="ghost-btn" id="wf-gen-discard" type="button">Discard</button>
+                              <button class="btn-primary" id="wf-gen-use" type="button">Use this prompt</button>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="wf-nm-gen-status" id="wf-np-gen-status" hidden></div>
+                      </div>
+                    </div>
+                    <div class="wf-nm-foot">
+                      <button class="ghost-btn ghost-btn-danger" id="wf-np-delete">Delete node</button>
+                      <button class="btn-primary" id="wf-node-panel-done">Done</button>
+                    </div>
                   </div>
-                  <div class="form-row">
-                    <label class="form-label">Name</label>
-                    <input class="form-input" id="wf-np-name" type="text" maxlength="64" />
-                  </div>
-                  <div class="form-row">
-                    <label class="form-label">Agent</label>
-                    <select class="wf-step-select" id="wf-np-agent"></select>
-                  </div>
-                  <div class="form-row">
-                    <label class="form-label">
-                      Model
-                      <button class="wf-np-model-refresh" id="wf-np-model-refresh" type="button" title="Reload this agent's models">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg>
-                      </button>
-                    </label>
-                    <select class="wf-step-select" id="wf-np-model"></select>
-                    <input class="form-input wf-np-model-custom" id="wf-np-model-custom" type="text" placeholder="model id, e.g. claude-fable-5[1m]" hidden />
-                    <div class="wf-np-model-hint" id="wf-np-model-hint"></div>
-                  </div>
-                  <div class="form-row" id="wf-np-branch-row" hidden>
-                    <label class="form-label">When this step has multiple next steps</label>
-                    <select class="wf-step-select" id="wf-np-branch">
-                      <option value="parallel">Run all of them (parallel)</option>
-                      <option value="ai">Let this agent pick one (AI routing)</option>
-                    </select>
-                  </div>
-                  <div class="form-row">
-                    <label class="form-label">Context from previous</label>
-                    <select class="wf-step-select" id="wf-np-context">
-                      <option value="full">Full output</option>
-                      <option value="last50">Last 50 lines</option>
-                      <option value="none">None</option>
-                    </select>
-                  </div>
-                  <div class="form-row">
-                    <label class="form-label">Prompt</label>
-                    <textarea class="form-input form-textarea" id="wf-np-prompt" rows="7" maxlength="8192" placeholder="What should this step do?"></textarea>
-                  </div>
-                  <button class="ghost-btn ghost-btn-danger" id="wf-np-delete">Delete node</button>
-                </aside>
+                </div>
                 <aside class="wf-node-panel" id="wf-edge-panel" hidden>
                   <div class="wf-node-panel-head">
                     <span class="wf-node-panel-title">Connection</span>
@@ -728,6 +760,35 @@
 
           <div class="aut-page-empty" id="aut-page-empty">
             <section class="aut-hero">
+              <div class="aut-hero-art" aria-hidden="true">
+                <svg class="aut-plane" viewBox="0 0 340 230">
+                  <defs><linearGradient id="aut-fuse" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbeecb"/><stop offset="1" stop-color="#e4cc95"/></linearGradient><g id="aut-cloud"><ellipse cx="0" cy="7" rx="30" ry="9"/><circle cx="-17" cy="3" r="10"/><circle cx="-3" cy="-5" r="13"/><circle cx="13" cy="-1" r="11"/><circle cx="24" cy="4" r="8"/></g></defs>
+                  <g class="aut-speed" stroke="var(--accent)" stroke-width="3.5" stroke-linecap="round" opacity="0.5"><line x1="14" y1="122" x2="48" y2="122"/><line x1="4" y1="144" x2="42" y2="144"/><line x1="22" y1="166" x2="50" y2="166"/></g>
+                  <g class="aut-clouds"><use href="#aut-cloud" transform="translate(56,188)" opacity="0.55"/><use href="#aut-cloud" transform="translate(300,70) scale(1)" opacity="0.4"/><use href="#aut-cloud" transform="translate(152,206) scale(0.66)" opacity="0.34"/></g>
+                  <path class="aut-p-accent" d="M92,152 L70,114 L90,126 L104,150 Z"/>
+                  <path class="aut-p-accent" d="M150,168 L124,198 L182,180 Z"/>
+                  <path class="aut-p-body" d="M78,152 Q88,128 134,125 L236,125 Q274,127 292,152 Q274,180 236,182 L134,180 Q86,178 78,152 Z"/>
+                  <circle cx="150" cy="152" r="6.5" fill="#7fb7c9"/><circle cx="150" cy="152" r="6.5" fill="none" stroke="#d8c290" stroke-width="1.5"/>
+                  <circle cx="172" cy="154" r="5.5" fill="#7fb7c9"/><circle cx="172" cy="154" r="5.5" fill="none" stroke="#d8c290" stroke-width="1.5"/>
+                  <ellipse class="aut-p-accent" cx="298" cy="152" rx="4" ry="26" opacity="0.32"/>
+                  <circle cx="292" cy="152" r="6" fill="#c9762f"/>
+                  <path class="aut-scarf" d="M188,120 Q158,131 133,124 Q121,120 129,137 Q153,143 184,133 Z" fill="#f3f0e6"/>
+                  <ellipse cx="200" cy="130" rx="33" ry="9" fill="#d7bd86"/>
+                </svg>
+                <div class="aut-kernel-slot"></div>
+                <svg class="aut-hat" viewBox="150 44 100 94">
+                  <path d="M177,86 C 177,100 177,112 176,124 C 174,131 168,131 165,126 C 160,116 160,100 161,86 C 160,66 182,52 200,52 C 218,52 240,66 239,86 C 240,100 240,116 235,126 C 232,131 226,131 224,124 C 223,112 223,100 223,86 C 214,80 186,80 177,86 Z" fill="#7c4a26"/>
+                  <path d="M176,64 Q200,55 224,64" stroke="#4a2c14" stroke-width="5" fill="none" stroke-linecap="round"/>
+                  <circle cx="185" cy="64" r="8.5" fill="#2b3340"/><circle cx="185" cy="64" r="8.5" fill="none" stroke="#cfa66a" stroke-width="2.5"/>
+                  <circle cx="215" cy="64" r="8.5" fill="#2b3340"/><circle cx="215" cy="64" r="8.5" fill="none" stroke="#cfa66a" stroke-width="2.5"/>
+                  <circle cx="182" cy="61" r="2.2" fill="#8fb3c9" opacity="0.85"/><circle cx="212" cy="61" r="2.2" fill="#8fb3c9" opacity="0.85"/>
+                </svg>
+                <svg class="aut-plane-front" viewBox="0 0 340 230">
+                  <path class="aut-p-body" d="M118,146 Q188,137 258,146 Q266,160 258,176 Q188,186 122,180 Q112,162 118,146 Z"/>
+                  <circle cx="150" cy="156" r="6" fill="#7fb7c9"/><circle cx="150" cy="156" r="6" fill="none" stroke="#d8c290" stroke-width="1.5"/>
+                  <circle cx="172" cy="158" r="5" fill="#7fb7c9"/><circle cx="172" cy="158" r="5" fill="none" stroke="#d8c290" stroke-width="1.5"/>
+                </svg>
+              </div>
               <div class="aut-hero-eyebrow">AUTOPILOT</div>
               <h2 class="aut-hero-title">Hand off entire tasks.<br/>Reach further while you focus.</h2>
               <p class="aut-hero-body">Husk snapshots your workspace, audits every agent step in a hash-chained log, and caps the run on time, tokens, or dollars. Stop anytime. Revert anything.</p>
@@ -890,7 +951,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
                 Import
               </button>
-              <button class="btn-primary" id="btn-new-agent">+ New Agent</button>
+              <button class="btn-primary" id="btn-new-agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Agent</button>
             </div>
           </div>
           <div class="page-body">
@@ -1086,8 +1147,8 @@
             <!-- Step 2: review / edit -->
             <div id="agent-edit-step" class="modal-body" hidden>
               <div class="form-row">
-                <label class="form-label">Name</label>
-                <input class="form-input" id="agent-name" type="text" maxlength="64" placeholder="Code Reviewer" />
+                <label class="form-label">Name <span class="req" aria-hidden="true">*</span></label>
+                <input class="form-input" id="agent-name" type="text" maxlength="64" placeholder="Code Reviewer" required aria-required="true" />
               </div>
               <div class="form-row">
                 <label class="form-label">Description</label>
@@ -1136,9 +1197,9 @@
               <div class="modal-hint">Short, human-readable. Appears in the Projects grid and the topbar.</div>
             </div>
             <div class="modal-section">
-              <div class="modal-label">Folder</div>
+              <div class="modal-label">Folder <span class="req" aria-hidden="true">*</span></div>
               <span style="display:inline-flex; gap:6px; width:100%;">
-                <input type="text" id="npj-path" placeholder="/path/to/project" autocomplete="off" spellcheck="false" style="flex:1; min-width:0;" />
+                <input type="text" id="npj-path" placeholder="/path/to/project" autocomplete="off" spellcheck="false" required aria-required="true" style="flex:1; min-width:0;" />
                 <button class="ghost-btn" id="npj-pick" type="button">Pick&hellip;</button>
               </span>
               <div class="modal-hint">Must exist. The agent will <code>cd</code> here when this project is active.</div>
@@ -1174,15 +1235,15 @@
             <div class="modal-sub">Saved as <code>~/.config/husk/prompts/&lt;name&gt;.md</code> and shown on the Prompts page.</div>
 
             <div class="modal-section">
-              <div class="modal-label">Name</div>
-              <input type="text" id="np-name" placeholder="my-new-prompt" autocomplete="off" spellcheck="false" />
-              <div class="modal-hint">Lowercase, dashes ok. Becomes the filename and the frontmatter <code>name</code>.</div>
+              <div class="modal-label">Name <span class="req" aria-hidden="true">*</span></div>
+              <input type="text" id="np-name" placeholder="my-new-prompt" autocomplete="off" spellcheck="false" required aria-required="true" />
+              <div class="modal-hint">Lowercase letters, numbers, and dashes; must start with a letter. Used as the prompt's file name.</div>
             </div>
 
             <div class="modal-section">
-              <div class="modal-label">Description</div>
-              <input type="text" id="np-desc" placeholder="One-line summary of what this prompt does" autocomplete="off" />
-              <div class="modal-hint">Shown on the Prompts card. Required.</div>
+              <div class="modal-label">Description <span class="req" aria-hidden="true">*</span></div>
+              <input type="text" id="np-desc" placeholder="One-line summary of what this prompt does" autocomplete="off" required aria-required="true" />
+              <div class="modal-hint">Shown on the Prompts card.</div>
             </div>
 
             <div class="modal-section">
@@ -1456,18 +1517,18 @@
       <div class="modal-card modal-wide">
         <div class="modal-icon">⌬</div>
         <div class="modal-title">Create a skill</div>
-        <div class="modal-sub">Skills live in the shared library (<code>skills/&lt;name&gt;/SKILL.md</code>). Use one via <strong>Use</strong> on the Skills page; Claude also loads them automatically.</div>
+        <div class="modal-sub">Skills live in the shared library (<code>skills/&lt;name&gt;/SKILL.md</code>). Use one via <strong>Use</strong> on the Skills page; agents that support skills also load them automatically.</div>
 
         <div class="modal-section">
-          <div class="modal-label">Name</div>
-          <input type="text" id="ns-name" placeholder="my-new-skill" autocomplete="off" spellcheck="false" />
-          <div class="modal-hint">Lowercase, dashes ok. Becomes the folder and frontmatter <code>name</code>.</div>
+          <div class="modal-label">Name <span class="req" aria-hidden="true">*</span></div>
+          <input type="text" id="ns-name" placeholder="my-new-skill" autocomplete="off" spellcheck="false" required aria-required="true" />
+          <div class="modal-hint">Lowercase letters, numbers, and dashes; must start with a letter. Used as the skill's folder name.</div>
         </div>
 
         <div class="modal-section">
-          <div class="modal-label">Description</div>
-          <input type="text" id="ns-desc" placeholder="Short one-line summary of when to use this skill" autocomplete="off" />
-          <div class="modal-hint">Shown to the agent as the skill's purpose. Required.</div>
+          <div class="modal-label">Description <span class="req" aria-hidden="true">*</span></div>
+          <input type="text" id="ns-desc" placeholder="Short one-line summary of when to use this skill" autocomplete="off" required aria-required="true" />
+          <div class="modal-hint">Shown to the agent as the skill's purpose.</div>
         </div>
 
         <div class="modal-section">
@@ -1555,7 +1616,7 @@
           <div id="aut-start-body">
           <p class="ra-hint">Hand the agent a goal and walk away. Husk snapshots the workspace, audits every event in a hash-chained log, and caps the run. When it stops, you can review the diff and revert with one click.</p>
           <div class="mcp-input-group">
-            <label for="aut-goal">Goal</label>
+            <label for="aut-goal">Goal <span class="req" aria-hidden="true">*</span></label>
             <textarea id="aut-goal" class="aut-goal-input" rows="4" placeholder="e.g. find every TODO that mentions security, draft a fix per occurrence, do not push" spellcheck="false"></textarea>
             <div class="mig-hint">Plain text. The model sees this as the first message.</div>
           </div>

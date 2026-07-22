@@ -40,19 +40,28 @@ function notifSvg(name) {
   }
   return svg;
 }
+// Live cards that own a `key`. A repeat notification under the same key edits
+// that card in place instead of stacking another one, so a value the user is
+// stepping through (zoom, volume) reads as one readout that keeps changing.
+const keyedNotifs = new Map();
 function dismissNotif(card) {
   if (!card || card._dismissing) return;
   card._dismissing = true;
   if (card._timer) clearTimeout(card._timer);
+  if (card._key && keyedNotifs.get(card._key) === card) keyedNotifs.delete(card._key);
   card.classList.add('is-out');
   setTimeout(() => { try { card.remove(); } catch (_) {} }, 200);
 }
-// Core entry. opts: { title, kind, prominent, ttl }
+// Core entry. opts: { title, kind, prominent, ttl, key }
 function notify(message, opts = {}) {
   const stack = $('#toast-stack');
   if (!stack) return;
   const kind = opts.kind || '';
   const iconName = opts.icon || (opts.prominent ? 'done' : (kind || 'info'));
+  const existing = opts.key ? keyedNotifs.get(opts.key) : null;
+  if (existing && !existing._dismissing && existing.isConnected) {
+    return updateNotif(existing, message, { ...opts, kind, iconName });
+  }
   const card = document.createElement('div');
   card.className = 'toast is-enter' + (kind ? ' ' + kind : '') + (opts.prominent ? ' is-prominent' : '');
   const icon = document.createElement('span');
@@ -94,12 +103,34 @@ function notify(message, opts = {}) {
   // the loop always terminates.
   const live = Array.from(stack.children).filter((c) => !c._dismissing);
   for (let i = NOTIF_MAX; i < live.length; i++) dismissNotif(live[i]);
-  // Auto-dismiss with hover-to-pause.
-  const ttl = opts.ttl || NOTIF_TTL[kind] || NOTIF_TTL[''];
-  const arm = () => { card._timer = setTimeout(() => dismissNotif(card), ttl); };
+  // Auto-dismiss with hover-to-pause. The ttl lives on the card so an in-place
+  // update can restart the countdown with its own value.
+  card._ttl = opts.ttl || NOTIF_TTL[kind] || NOTIF_TTL[''];
+  const arm = () => { card._timer = setTimeout(() => dismissNotif(card), card._ttl); };
+  card._arm = arm;
   arm();
   card.addEventListener('mouseenter', () => { if (card._timer) clearTimeout(card._timer); });
   card.addEventListener('mouseleave', () => { if (!card._dismissing) arm(); });
+  if (opts.key) { card._key = opts.key; keyedNotifs.set(opts.key, card); }
+  return card;
+}
+// Re-use a keyed card: swap the text, the kind and the icon, restart the
+// countdown, and pulse once so a changed value is noticed without the card
+// moving or re-entering.
+function updateNotif(card, message, opts) {
+  const msg = card.querySelector('.toast-msg');
+  if (msg) msg.textContent = message;
+  const title = card.querySelector('.toast-title');
+  if (title && opts.title) title.textContent = opts.title;
+  for (const k of ['success', 'error', 'warn', 'info']) card.classList.toggle(k, opts.kind === k);
+  const icon = card.querySelector('.toast-icon');
+  if (icon) { icon.replaceChildren(notifSvg(opts.iconName)); }
+  card._ttl = opts.ttl || NOTIF_TTL[opts.kind] || NOTIF_TTL[''];
+  if (card._timer) clearTimeout(card._timer);
+  if (!card.matches(':hover')) card._arm();
+  card.classList.remove('is-bump');
+  void card.offsetWidth;
+  card.classList.add('is-bump');
   return card;
 }
 // Back-compatible API used across the renderer.
@@ -319,6 +350,7 @@ function createTab(idOverride) {
     fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace',
     fontSize: 13,
     theme: themeForXterm(),
+    minimumContrastRatio: contrastForXterm(),
   });
   const fa = new FitAddon.FitAddon();
   t.loadAddon(fa);
@@ -426,6 +458,98 @@ $('#terminal').addEventListener('wheel', (e) => {
   e.stopPropagation();
 }, { capture: true, passive: false });
 
+// Auto-scroll while drag-selecting. xterm only scrolls the viewport once the
+// pointer leaves the screen element: anywhere inside it the scroll amount is
+// zero, so holding at the top of a terminal that fills its pane selects nothing
+// further. Treat a band at each edge as if the pointer were already outside by
+// re-sending the move with a clamped Y. xterm then runs its own drag-scroll,
+// which extends the selection as it scrolls; a plain scrollLines call moves
+// the viewport but leaves the selection behind.
+// Which scroller moves depends on the agent. A TUI that draws its own viewport
+// (it prints its own jump-to-bottom hint and turns mouse reporting on) keeps no
+// terminal scrollback, so xterm has nothing to scroll and only wheel input the
+// agent understands moves it. Everything else scrolls xterm's own scrollback.
+const DRAG_EDGE_PX = 24;
+const DRAG_EDGE_MS = 60;
+let selDragging = false;
+let selSynthetic = false;
+let selEdge = null;          // { x, y, dir } while the pointer sits in an edge band
+let selEdgeTimer = null;
+
+function selEdgeStop() {
+  if (selEdgeTimer) { clearInterval(selEdgeTimer); selEdgeTimer = null; }
+  selEdge = null;
+}
+
+// One scroll step, repeated on a timer so holding still keeps scrolling: a
+// stationary pointer fires no further mousemove of its own.
+function selEdgeTick() {
+  if (!selDragging || !selEdge) { selEdgeStop(); return; }
+  const tab = TABS.get(activeTabId);
+  const screen = tab && tab.el.querySelector('.xterm-screen');
+  if (!screen || !term) return;
+  const r = screen.getBoundingClientRect();
+  // Prefer xterm's own scroller whenever it has somewhere to go: only xterm
+  // grows the selection as it scrolls. Forwarding to the agent instead makes it
+  // repaint the screen, which xterm never hears about, so the selection keeps
+  // its old anchor and the marked text scrolls out of the buffer entirely.
+  // The alternate screen a full-screen TUI runs in holds no scrollback, so
+  // there the agent is the only thing that can move.
+  const buf = term.buffer.active;
+  const xtermCanScroll = buf.type === 'normal'
+    && (selEdge.dir < 0 ? buf.viewportY > 0 : buf.viewportY < buf.baseY);
+  if (!xtermCanScroll && agentMouseOn) {
+    // Agent owns the viewport: hand it wheel input, the same path the wheel
+    // listener above uses, so it redraws one step further back.
+    const cw = r.width / term.cols || 1;
+    const ch = r.height / term.rows || 1;
+    let col = Math.floor((selEdge.x - r.left) / cw) + 1;
+    let row = Math.floor((selEdge.y - r.top) / ch) + 1;
+    col = Math.min(Math.max(col, 1), term.cols);
+    row = Math.min(Math.max(row, 1), term.rows);
+    window.husk.pty.wheel({ deltaY: selEdge.dir * 120, deltaMode: 0, col, row }, activeTabId);
+    return;
+  }
+  // Already past the edge: xterm scrolls on its own there, so leave it alone
+  // rather than driving it twice as fast.
+  if (selEdge.y < r.top || selEdge.y > r.bottom) return;
+  // xterm owns the scrollback: its drag-scroll amount is zero for any pointer
+  // inside the screen, so feed it one that reads as outside. Going through
+  // xterm keeps the selection growing as it scrolls; scrollLines would move the
+  // viewport and leave the selection behind.
+  const outsideY = selEdge.dir < 0
+    ? r.top - 1 - (DRAG_EDGE_PX - (selEdge.y - r.top))
+    : r.bottom + 1 + (DRAG_EDGE_PX - (r.bottom - selEdge.y));
+  selSynthetic = true;
+  try {
+    screen.ownerDocument.dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true, cancelable: true, clientX: selEdge.x, clientY: outsideY, buttons: 1, detail: 1,
+    }));
+  } finally { selSynthetic = false; }
+}
+
+// Capture phase: the drag must be registered even if something downstream
+// stops the event from bubbling.
+$('#terminal').addEventListener('mousedown', (e) => { if (e.button === 0) selDragging = true; }, true);
+window.addEventListener('mouseup', () => { selDragging = false; selEdgeStop(); });
+document.addEventListener('mousemove', (e) => {
+  if (!selDragging || selSynthetic) return;
+  const tab = TABS.get(activeTabId);
+  const screen = tab && tab.el.querySelector('.xterm-screen');
+  if (!screen) { selEdgeStop(); return; }
+  const r = screen.getBoundingClientRect();
+  const y = e.clientY;
+  // Open-ended on purpose: dragging "to the top" usually overshoots past the
+  // terminal into the tab strip above it. Anything at or beyond each edge keeps
+  // scrolling, which is what a text editor does.
+  let dir = 0;
+  if (y < r.top + DRAG_EDGE_PX) dir = -1;
+  else if (y > r.bottom - DRAG_EDGE_PX) dir = 1;
+  if (!dir) { selEdgeStop(); return; }
+  selEdge = { x: e.clientX, y, dir };
+  if (!selEdgeTimer) selEdgeTimer = setInterval(selEdgeTick, DRAG_EDGE_MS);
+});
+
 function themeForXterm() {
   // The terminal runs a TUI agent that themes its output through the 16 ANSI
   // colors. The canvas background/foreground come from the active theme's
@@ -457,6 +581,18 @@ function themeForXterm() {
         brightCyan: '#a5f3fc', brightWhite: '#f1f5f9',
       };
   return { background: bg, foreground: fg, cursor: accent, cursorAccent: bg, ...ansi };
+}
+
+// An agent CLI has no way to learn the terminal went light, so it keeps
+// emitting colours chosen for a dark background: pale greys for diff context
+// and, for some tokens, outright white. Those turn invisible on a light
+// terminal. Remapping the sixteen ANSI slots cannot help, because the text
+// arrives as 256-colour and truecolour codes that name their colour outright.
+// xterm re-tones any foreground that falls under this ratio against the real
+// background, which reaches those codes too. Dark themes already contrast, so
+// they keep xterm's default of 1 (off) and render exactly as before.
+function contrastForXterm() {
+  return getComputedStyle(document.body).getPropertyValue('--term-light').trim() === '1' ? 4.5 : 1;
 }
 
 function fitNow() {
@@ -622,6 +758,32 @@ function mountWhatsNewKernel(slot) {
     hk.classList.add('is-pop');
   }, 4200);
   return () => { clearInterval(sparks); };
+}
+// Clone Kernel into an empty-state stage, posed peeking from the open pod with
+// an idle blink and a wiggle+spark that lands as the page's prop animation
+// loops, so he reads as "doing" the task rather than just sitting there. Ids are
+// re-prefixed per mount so clones never collide with the onboarding original or
+// each other. Returns an unmount fn that stops the timers.
+let emptyKernelSeq = 0;
+function mountEmptyKernel(slot) {
+  const src = $('#ob-kernel');
+  if (!src || !slot) return null;
+  const prefix = `ek${++emptyKernelSeq}`;
+  const markup = src.outerHTML
+    .replaceAll('id="hk-', `id="${prefix}-`)
+    .replaceAll('url(#hk-', `url(#${prefix}-`)
+    .replace('id="ob-kernel"', '');
+  // eslint-disable-next-line no-unsanitized/property -- own static SVG markup, id-prefixed
+  slot.innerHTML = markup;
+  const hk = slot.querySelector('svg');
+  if (!hk) return null;
+  hk.removeAttribute('style');
+  // Bare, static Kernel: just the seed character, no pod/husk shell and no idle
+  // motion (CSS `.is-bare` hides the shell and disables animation). The viewBox
+  // is retightened around the seed so the hidden shell leaves no gap below him.
+  hk.className.baseVal = 'hk is-bare';
+  hk.setAttribute('viewBox', '40 -14 120 176');
+  return null;
 }
 function showWhatsNew(version) {
   return new Promise((resolve) => {
@@ -833,6 +995,7 @@ function _flushTabWrite(tab) {
   // Only the focused tab drives voice, so background agents stay silent.
   if (tab.id === activeTabId) detectAndSpeak();
 }
+
 window.husk.pty.onData((sessionId, d) => {
   const tab = TABS.get(sessionId) || TABS.get(activeTabId);
   if (!tab || tab.restarting) return;
@@ -884,7 +1047,10 @@ async function reattachSessions() {
     // form; otherwise the live PTY is kept and reattached below. Closing
     // first and failing to resume would destroy a healthy session.
     let resumeCmd = null;
-    if (sess.claudeSessionId) {
+    // Only resume when the transcript still exists. Resuming a session that was
+    // never written (claude exited 0 without a conversation) surfaces the
+    // "No conversation found with session ID" error and a dead tab.
+    if (sess.claudeSessionId && sess.resumable) {
       try {
         const r = await window.husk.sessions.resumeCommand({ agent, id: sess.claudeSessionId, cwd: sess.cwd || '' });
         if (r && r.ok && r.command) resumeCmd = r.command;
@@ -1314,8 +1480,11 @@ setInterval(syncTabTitles, 5000);
 // ─── Theme + accent ─────────────────────────────────────────────────────────────
 function retintAllTabs() {
   const theme = themeForXterm();
-  for (const t of TABS.values()) { try { t.term.options.theme = theme; } catch (_) {} }
-  try { if (wfTerm) wfTerm.options.theme = theme; } catch (_) {}
+  const contrast = contrastForXterm();
+  for (const t of TABS.values()) {
+    try { t.term.options.theme = theme; t.term.options.minimumContrastRatio = contrast; } catch (_) {}
+  }
+  try { if (wfTerm) { wfTerm.options.theme = theme; wfTerm.options.minimumContrastRatio = contrast; } } catch (_) {}
 }
 function applyTheme(theme) {
   document.body.dataset.theme = theme;
@@ -1980,7 +2149,7 @@ async function deleteProject(id, name) {
   function openProjectModal() {
     if (!modal) return;
     if (nameEl) nameEl.value = '';
-    if (pathEl) pathEl.value = '';
+    if (pathEl) { pathEl.value = ''; pathEl.classList.remove('field-invalid'); }
     modal.hidden = false;
     setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30);
   }
@@ -1988,11 +2157,17 @@ async function deleteProject(id, name) {
   async function submit() {
     let name = (nameEl && nameEl.value || '').trim();
     const projPath = (pathEl && pathEl.value || '').trim();
-    if (!name && projPath) name = projPath.split('/').filter(Boolean).pop() || 'project';
+    // Folder is required; the name is optional and derived from the path.
+    if (pathEl) pathEl.classList.remove('field-invalid');
+    if (!projPath) {
+      if (pathEl) { pathEl.classList.add('field-invalid'); pathEl.focus(); }
+      toast('Folder is required', 'error');
+      return;
+    }
+    if (!name) name = projPath.split('/').filter(Boolean).pop() || 'project';
     const res = await window.husk.projects.create({ name, path: projPath });
     if (!res || !res.ok) {
-      const t = document.getElementById('toast');
-      if (t) { t.textContent = (res && res.error) || 'Could not add project'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
+      toast((res && res.error) || 'Could not add project', 'error');
       return;
     }
     closeProjectModal();
@@ -2003,9 +2178,13 @@ async function deleteProject(id, name) {
   if (cancelBtn) cancelBtn.addEventListener('click', closeProjectModal);
   if (createBtn) createBtn.addEventListener('click', submit);
   if (pickEl) pickEl.addEventListener('click', async () => {
-    try { const picked = await window.husk.dialog2.pickDir(); if (picked && pathEl) pathEl.value = picked; } catch (_) {}
+    try { const picked = await window.husk.dialog2.pickDir(); if (picked && pathEl) { pathEl.value = picked; pathEl.classList.remove('field-invalid'); } } catch (_) {}
   });
-  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeProjectModal(); });
+  if (pathEl) pathEl.addEventListener('input', () => pathEl.classList.remove('field-invalid'));
+  // Close only via Cancel or Escape; a backdrop click must not discard the form.
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && !modal.hidden) closeProjectModal();
+  });
 
   // Topbar chip click navigates to Projects page.
   const chip = document.getElementById('topbar-project');
@@ -2048,7 +2227,9 @@ function wfShowView(name) {
   $('#wf-run-view').hidden = name !== 'run';
 }
 
+let wfKernelUnmount = null;
 async function renderWorkflows() {
+  if (wfKernelUnmount) { wfKernelUnmount(); wfKernelUnmount = null; }
   const grid = $('#wf-grid');
   if (!grid) return;
   workflowsCache = await window.husk.workflows.list();
@@ -2193,8 +2374,84 @@ function paintWorkflowList() {
   }
 
   if (!workflowsCache.length) {
-    // eslint-disable-next-line no-unsanitized/property -- static markup
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.workflows}</div><div class="es-title">No workflows yet</div><div class="es-msg">Build a pipeline by chaining agents together. Each step feeds its output to the next.</div></div>`;
+    // eslint-disable-next-line no-unsanitized/property -- static markup, no interpolation
+    grid.innerHTML = `<div class="empty-state es-kernel">
+      <div class="ek-stage">
+        <svg class="ek-graph" viewBox="0 0 480 280" aria-hidden="true">
+          <defs>
+            <linearGradient id="ek-ic" x1="0" y1="0" x2="1" y2="1"><stop offset="0" class="ek-ic0"/><stop offset="1" class="ek-ic1"/></linearGradient>
+          </defs>
+          <path class="ek-wire" d="M222,128 C 202,102 192,80 178,64"/>
+          <path class="ek-wire" d="M218,164 C 198,188 184,206 164,216"/>
+          <path class="ek-wire" d="M258,128 C 278,102 288,80 302,64"/>
+          <path class="ek-wire" d="M262,164 C 282,188 298,206 316,216"/>
+          <path class="ek-wire ek-wire-2" d="M118,64 C 98,74 82,92 64,103"/>
+          <path class="ek-wire ek-wire-2" d="M104,216 C 86,228 72,242 56,251"/>
+          <path class="ek-wire ek-wire-2" d="M362,64 C 382,74 398,92 416,103"/>
+          <path class="ek-wire ek-wire-2" d="M376,216 C 394,228 408,242 424,251"/>
+          <path class="ek-flow" pathLength="100" d="M222,128 C 202,102 192,80 178,64"/>
+          <path class="ek-flow" pathLength="100" d="M218,164 C 198,188 184,206 164,216"/>
+          <path class="ek-flow" pathLength="100" d="M258,128 C 278,102 288,80 302,64"/>
+          <path class="ek-flow" pathLength="100" d="M262,164 C 282,188 298,206 316,216"/>
+          <g class="ek-node" transform="translate(118,44)">
+            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
+            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
+            <rect class="ek-node-l1" x="27" y="12.5" width="23" height="4.5" rx="2.25"/>
+            <rect class="ek-node-l2" x="10" y="28" width="40" height="3.5" rx="1.75"/>
+          </g>
+          <g class="ek-node" transform="translate(104,196)">
+            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
+            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
+            <rect class="ek-node-l1" x="27" y="12.5" width="20" height="4.5" rx="2.25"/>
+            <rect class="ek-node-l2" x="10" y="28" width="36" height="3.5" rx="1.75"/>
+          </g>
+          <g class="ek-node" transform="translate(302,44)">
+            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
+            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
+            <rect class="ek-node-l1" x="27" y="12.5" width="24" height="4.5" rx="2.25"/>
+            <rect class="ek-node-l2" x="10" y="28" width="34" height="3.5" rx="1.75"/>
+          </g>
+          <g class="ek-node" transform="translate(316,196)">
+            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
+            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
+            <rect class="ek-node-l1" x="27" y="12.5" width="22" height="4.5" rx="2.25"/>
+            <rect class="ek-node-l2" x="10" y="28" width="38" height="3.5" rx="1.75"/>
+          </g>
+          <g class="ek-node ek-sub" transform="translate(18,88)">
+            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
+            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
+            <rect class="ek-node-l1" x="22" y="11" width="15" height="3.5" rx="1.75"/>
+          </g>
+          <g class="ek-node ek-sub" transform="translate(10,236)">
+            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
+            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
+            <rect class="ek-node-l1" x="22" y="11" width="13" height="3.5" rx="1.75"/>
+          </g>
+          <g class="ek-node ek-sub" transform="translate(416,88)">
+            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
+            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
+            <rect class="ek-node-l1" x="22" y="11" width="16" height="3.5" rx="1.75"/>
+          </g>
+          <g class="ek-node ek-sub" transform="translate(424,236)">
+            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
+            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
+            <rect class="ek-node-l1" x="22" y="11" width="14" height="3.5" rx="1.75"/>
+          </g>
+          <circle class="ek-dot" cx="178" cy="64" r="3.4"/>
+          <circle class="ek-dot" cx="164" cy="216" r="3.4"/>
+          <circle class="ek-dot" cx="302" cy="64" r="3.4"/>
+          <circle class="ek-dot" cx="316" cy="216" r="3.4"/>
+          <circle class="ek-dot ek-dot-2" cx="64" cy="103" r="2.8"/>
+          <circle class="ek-dot ek-dot-2" cx="56" cy="251" r="2.8"/>
+          <circle class="ek-dot ek-dot-2" cx="416" cy="103" r="2.8"/>
+          <circle class="ek-dot ek-dot-2" cx="424" cy="251" r="2.8"/>
+        </svg>
+        <div class="ek-slot"></div>
+      </div>
+      <div class="es-title">No workflows yet</div>
+      <div class="es-msg">Build a pipeline by chaining agents together. Each step feeds its output to the next.</div>
+    </div>`;
+    wfKernelUnmount = mountEmptyKernel(grid.querySelector('.ek-slot'));
     return;
   }
 
@@ -2364,7 +2621,27 @@ function wfEnsureEditor() {
   // removed from its config panel, and the popover rendered as a stray black box.
   const cont = $('#wf-canvas');
   if (cont) cont.addEventListener('contextmenu', (e) => e.preventDefault());
-  wfEditor.on('nodeSelected', (id) => { hideEdgePanel(); showNodePanel(id); });
+  // Open the config modal only on a real click: mousedown then mouseup on the
+  // same node without dragging. Dragging a node to reposition it must NOT open
+  // the wizard. Drawflow keeps owning selection and drag; we just detect a click
+  // on mouseup, after Drawflow has already ended its own drag.
+  let wfDownNodeEl = null, wfDownX = 0, wfDownY = 0, wfNodeMoved = false;
+  if (cont) {
+    cont.addEventListener('mousedown', (e) => {
+      const nodeEl = e.target.closest ? e.target.closest('.drawflow-node') : null;
+      // Ignore the connector dots so starting a connection never opens the modal.
+      if (!nodeEl || (e.target.closest && e.target.closest('.input, .output'))) { wfDownNodeEl = null; return; }
+      wfDownNodeEl = nodeEl; wfDownX = e.clientX; wfDownY = e.clientY; wfNodeMoved = false;
+    });
+    cont.addEventListener('mousemove', (e) => {
+      if (wfDownNodeEl && (Math.abs(e.clientX - wfDownX) > 4 || Math.abs(e.clientY - wfDownY) > 4)) wfNodeMoved = true;
+    });
+    cont.addEventListener('mouseup', () => {
+      const el = wfDownNodeEl; wfDownNodeEl = null;
+      if (el && !wfNodeMoved && el.id) showNodePanel(el.id.slice(5));
+    });
+  }
+  wfEditor.on('nodeSelected', () => { hideEdgePanel(); });
   wfEditor.on('nodeUnselected', () => hideNodePanel());
   wfEditor.on('nodeRemoved', () => hideNodePanel());
   wfEditor.on('connectionSelected', (c) => { hideNodePanel(); showEdgePanel(c); });
@@ -2466,6 +2743,8 @@ function showNodePanel(id) {
   $('#wf-np-agent').innerHTML = buildAgentOptions(d.agentCommand || '');
   $('#wf-np-context').value = d.passContext || 'full';
   $('#wf-np-prompt').value = d.prompt || '';
+  wfClearGenState();
+  wfUpdateGutter();
   const branchSel = $('#wf-np-branch');
   if (branchSel) branchSel.value = d.branchMode === 'ai' ? 'ai' : 'parallel';
   const outCount = wfEditor.export ? wfCountOutgoing(id) : 0;
@@ -2551,6 +2830,8 @@ function hideNodePanel() {
   wfSelectedNodeId = null;
   const panel = $('#wf-node-panel');
   if (panel) panel.hidden = true;
+  wfClearGenState();
+  wfDeselectNode();
 }
 
 function showEdgePanel(conn) {
@@ -2938,6 +3219,7 @@ function wfEnsureTerm() {
     disableStdin: true,
     scrollback: 5000,
     theme: themeForXterm(),
+    minimumContrastRatio: contrastForXterm(),
     allowTransparency: true,
   });
   try {
@@ -3394,6 +3676,111 @@ $('#wf-np-model-refresh') && $('#wf-np-model-refresh').addEventListener('click',
   wfLoadNodeModels(wfAgentCommandForPanel(), pinned, { refresh: true });
 });
 $('#wf-node-panel-close') && $('#wf-node-panel-close').addEventListener('click', hideNodePanel);
+$('#wf-node-panel-done') && $('#wf-node-panel-done').addEventListener('click', hideNodePanel);
+// Escape: dismiss a pending AI suggestion first, otherwise close the modal.
+// No backdrop-close: a stray click must not discard a half-written prompt.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const rev = $('#wf-gen-review');
+  if (rev && !rev.hidden) { $('#wf-gen-discard') && $('#wf-gen-discard').click(); return; }
+  if (!$('#wf-node-panel').hidden) hideNodePanel();
+});
+
+// ── Node config: drawflow release, mini-IDE gutter, AI generate with review ──
+const WF_PROMPT_MIN = 12;
+// Opening the modal on Drawflow's mousedown-select leaves the node mid-drag (its
+// mouseup lands on the modal overlay, not the canvas). Clear the drag flags so
+// the node stops following the cursor once the modal closes.
+// Closing the modal must also drop Drawflow's selection so the node is not left
+// highlighted (which otherwise needs an extra canvas click to clear).
+function wfDeselectNode() {
+  if (!wfEditor) return;
+  try { const el = wfEditor.node_selected; if (el && el.classList) el.classList.remove('selected'); wfEditor.node_selected = null; } catch (_) {}
+  document.querySelectorAll('#wf-canvas .drawflow-node.selected').forEach((n) => n.classList.remove('selected'));
+}
+function wfUpdateGutter() {
+  const ta = $('#wf-np-prompt');
+  const gut = $('#wf-np-gutter');
+  if (!ta || !gut) return;
+  const lines = (ta.value.match(/\n/g) || []).length + 1;
+  let s = '1';
+  for (let i = 2; i <= lines; i++) s += '\n' + i;
+  gut.textContent = s;
+  gut.scrollTop = ta.scrollTop;
+}
+function wfClearGenState() {
+  const ide = $('#wf-ide'); if (ide) ide.classList.remove('field-invalid');
+  const st = $('#wf-np-gen-status'); if (st) { st.hidden = true; st.textContent = ''; st.classList.remove('is-error'); }
+  const rev = $('#wf-gen-review'); if (rev) rev.hidden = true;
+  wfPendingSuggestion = '';
+}
+function wfGenError(msg) {
+  const ide = $('#wf-ide'); if (ide) ide.classList.add('field-invalid');
+  const st = $('#wf-np-gen-status'); if (st) { st.hidden = false; st.textContent = msg; st.classList.add('is-error'); }
+  toast(msg, 'error');
+  const ta = $('#wf-np-prompt'); if (ta) ta.focus();
+}
+let wfPendingSuggestion = '';
+function wfShowGenReview(text) {
+  wfPendingSuggestion = text;
+  const body = $('#wf-gen-review-text'); if (body) body.textContent = text;
+  const rev = $('#wf-gen-review'); if (rev) rev.hidden = false;
+}
+{
+  const ta = $('#wf-np-prompt');
+  if (ta) {
+    ta.addEventListener('input', () => {
+      wfUpdateGutter();
+      const ide = $('#wf-ide'); if (ide) ide.classList.remove('field-invalid');
+      const st = $('#wf-np-gen-status'); if (st && st.classList.contains('is-error')) { st.hidden = true; st.classList.remove('is-error'); }
+    });
+    ta.addEventListener('scroll', () => { const g = $('#wf-np-gutter'); if (g) g.scrollTop = ta.scrollTop; });
+  }
+}
+$('#wf-np-generate') && $('#wf-np-generate').addEventListener('click', async () => {
+  const btn = $('#wf-np-generate');
+  const promptEl = $('#wf-np-prompt');
+  const statusEl = $('#wf-np-gen-status');
+  if (!promptEl) return;
+  const seed = (promptEl.value || '').trim();
+  // Refuse to generate from nothing: the AI improves what you have, it cannot
+  // invent the step's goal. Mark the field and say exactly what's needed.
+  if (seed.length < WF_PROMPT_MIN) {
+    wfGenError(`Write at least ${WF_PROMPT_MIN} characters describing this step first. The AI improves your draft, it can't invent the goal.`);
+    return;
+  }
+  wfClearGenState();
+  btn.disabled = true;
+  if (statusEl) { statusEl.hidden = false; statusEl.classList.remove('is-error'); statusEl.textContent = 'Generating…'; }
+  try {
+    const res = await window.husk.workflows.generateStepPrompt(seed);
+    if (res && res.ok && res.prompt) {
+      if (statusEl) statusEl.hidden = true;
+      wfShowGenReview(res.prompt);
+    } else {
+      wfGenError((res && res.error) || 'Generation failed. Check that the agent CLI is installed and authenticated.');
+    }
+  } catch (_) {
+    wfGenError('Generation failed. Check that the agent CLI is installed and authenticated.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+$('#wf-gen-discard') && $('#wf-gen-discard').addEventListener('click', () => {
+  wfPendingSuggestion = '';
+  const rev = $('#wf-gen-review'); if (rev) rev.hidden = true;
+  const ta = $('#wf-np-prompt'); if (ta) ta.focus();
+});
+$('#wf-gen-use') && $('#wf-gen-use').addEventListener('click', () => {
+  const ta = $('#wf-np-prompt');
+  if (ta && wfPendingSuggestion) {
+    ta.value = wfPendingSuggestion;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    wfUpdateGutter();
+  }
+  wfPendingSuggestion = '';
+  const rev = $('#wf-gen-review'); if (rev) rev.hidden = true;
+});
 $('#wf-edge-panel-close') && $('#wf-edge-panel-close').addEventListener('click', hideEdgePanel);
 $('#wf-ec-type') && $('#wf-ec-type').addEventListener('change', wfSyncEdgePanel);
 $('#wf-ec-value') && $('#wf-ec-value').addEventListener('input', wfSyncEdgePanel);
@@ -3620,7 +4007,12 @@ async function saveAgentModal() {
   const description = (($('#agent-description') || {}).value || '').trim();
   const systemPrompt = (($('#agent-system-prompt') || {}).value || '').trim();
   const autoSelect = !!(($('#agent-autoselect') || {}).checked);
-  if (!name) { toast('Name is required', 'error'); return; }
+  if ($('#agent-name')) $('#agent-name').classList.remove('field-invalid');
+  if (!name) {
+    toast('Name is required', 'error');
+    if ($('#agent-name')) { $('#agent-name').classList.add('field-invalid'); $('#agent-name').focus(); }
+    return;
+  }
   let res;
   if (editingProfileId) {
     res = await window.husk.profiles.update({ id: editingProfileId, name, description, systemPrompt, autoSelect });
@@ -4203,6 +4595,7 @@ $('#repo-mcp-modal') && $('#repo-mcp-modal').addEventListener('click', (e) => { 
 $('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', closeAgentModal);
 $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
+$('#agent-name') && $('#agent-name').addEventListener('input', () => $('#agent-name').classList.remove('field-invalid'));
 $('#btn-deactivate-all') && $('#btn-deactivate-all').addEventListener('click', () => deactivateAllProfiles());
 $('#btn-select-all-agents') && $('#btn-select-all-agents').addEventListener('click', () => activateAllProfiles());
 $('#btn-deselect-all-agents') && $('#btn-deselect-all-agents').addEventListener('click', () => deactivateAllProfiles());
@@ -4342,11 +4735,13 @@ async function previewPrompt(mdPath) {
   const bodyEl = document.getElementById('np-content');
   const cancelBtn = document.getElementById('np-cancel');
   const createBtn = document.getElementById('np-create');
+  function clearInvalid() { [nameEl, descEl].forEach((el) => el && el.classList.remove('field-invalid')); }
   function openNewPrompt() {
     if (!modal) return;
     if (nameEl) nameEl.value = '';
     if (descEl) descEl.value = '';
     if (bodyEl) bodyEl.value = '';
+    clearInvalid();
     modal.hidden = false;
     setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30);
   }
@@ -4355,10 +4750,27 @@ async function previewPrompt(mdPath) {
     const name = (nameEl && nameEl.value || '').trim();
     const description = (descEl && descEl.value || '').trim();
     const content = bodyEl && bodyEl.value || '';
+    // Both fields are required by the backend; validate here so the user sees
+    // exactly which field is missing instead of a generic save failure.
+    clearInvalid();
+    if (!name) {
+      if (nameEl) { nameEl.classList.add('field-invalid'); nameEl.focus(); }
+      toast('Name is required', 'error');
+      return;
+    }
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+      if (nameEl) { nameEl.classList.add('field-invalid'); nameEl.focus(); }
+      toast('Name must be lowercase letters, digits, dashes; start with a letter.', 'error');
+      return;
+    }
+    if (!description) {
+      if (descEl) { descEl.classList.add('field-invalid'); descEl.focus(); }
+      toast('Description is required', 'error');
+      return;
+    }
     const res = await window.husk.prompts.create({ name, description, content });
     if (!res || !res.ok) {
-      const t = document.getElementById('toast');
-      if (t) { t.textContent = (res && res.error) || 'Could not create prompt'; t.hidden = false; setTimeout(() => { t.hidden = true; }, 3500); }
+      toast((res && res.error) || 'Could not create prompt', 'error');
       return;
     }
     closeNewPrompt();
@@ -4367,7 +4779,13 @@ async function previewPrompt(mdPath) {
   if (newBtn) newBtn.addEventListener('click', openNewPrompt);
   if (cancelBtn) cancelBtn.addEventListener('click', closeNewPrompt);
   if (createBtn) createBtn.addEventListener('click', submitNewPrompt);
-  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeNewPrompt(); });
+  // Drop the invalid-field highlight the moment the user starts fixing it.
+  [nameEl, descEl].forEach((el) => el && el.addEventListener('input', () => el.classList.remove('field-invalid')));
+  // Close only via Cancel or Escape. A backdrop click must not dismiss the
+  // modal, so half-written prompts survive an accidental outside click.
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && !modal.hidden) closeNewPrompt();
+  });
 }
 
 // ─── Skills page ──────────────────────────────────────────────────────────────
@@ -4513,26 +4931,31 @@ function openCreateSkillModal() {
   $('#ns-name').value = '';
   $('#ns-desc').value = '';
   $('#ns-content').value = '';
+  $('#ns-name').classList.remove('field-invalid');
+  $('#ns-desc').classList.remove('field-invalid');
   $('#new-skill-modal').hidden = false;
   setTimeout(() => $('#ns-name').focus(), 50);
 }
 function closeCreateSkillModal() { $('#new-skill-modal').hidden = true; }
 $('#ns-cancel').addEventListener('click', closeCreateSkillModal);
-$('#new-skill-modal').addEventListener('click', (e) => { if (e.target.id === 'new-skill-modal') closeCreateSkillModal(); });
+// Close only via Cancel or Escape; a backdrop click must not discard the form.
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#new-skill-modal').hidden) closeCreateSkillModal();
 });
+[$('#ns-name'), $('#ns-desc')].forEach((el) => el && el.addEventListener('input', () => el.classList.remove('field-invalid')));
 
 async function submitCreateSkill() {
   const name = $('#ns-name').value.trim().toLowerCase();
   const description = $('#ns-desc').value.trim();
   const content = $('#ns-content').value;
-  if (!name) { toast('Name is required', 'error'); $('#ns-name').focus(); return; }
+  $('#ns-name').classList.remove('field-invalid');
+  $('#ns-desc').classList.remove('field-invalid');
+  if (!name) { toast('Name is required', 'error'); $('#ns-name').classList.add('field-invalid'); $('#ns-name').focus(); return; }
   if (!/^[a-z][a-z0-9-]*$/.test(name)) {
     toast('Name must be lowercase letters, digits, dashes; start with a letter.', 'error');
-    $('#ns-name').focus(); return;
+    $('#ns-name').classList.add('field-invalid'); $('#ns-name').focus(); return;
   }
-  if (!description) { toast('Description is required', 'error'); $('#ns-desc').focus(); return; }
+  if (!description) { toast('Description is required', 'error'); $('#ns-desc').classList.add('field-invalid'); $('#ns-desc').focus(); return; }
   const r = await window.husk.skills.create({ name, description, content });
   if (r.ok) {
     toast(`Skill created: ${name} · restart agent to load it`, 'success');
@@ -7481,7 +7904,9 @@ $('#btn-new-session').addEventListener('click', () => openNewChatTab());
 const settleZoom = debounce((lvl) => {
   const base = (window.husk.ui && typeof window.husk.ui.zoomBase === 'number') ? window.husk.ui.zoomBase : 0;
   const pct = Math.round(Math.pow(1.2, lvl - base) * 100);
-  toast(`Zoom: ${pct}%`, 'success');
+  // Keyed, so stepping the zoom rewrites one readout instead of stacking a
+  // card per step.
+  notify(`Zoom: ${pct}%`, { kind: 'success', key: 'zoom' });
   fitNow();
 }, 120);
 function reportZoom(lvl) { settleZoom(lvl); }
@@ -8243,6 +8668,7 @@ function openAutopilotStart() {
   if (noProj) noProj.hidden = hasProject;
   if (body) body.hidden = !hasProject;
   if (foot) foot.hidden = !hasProject;
+  $('#aut-goal').classList.remove('field-invalid');
   $('#autopilot-start-modal').hidden = false;
   if (hasProject) setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
 }
@@ -8264,7 +8690,14 @@ function readCapField(id, def) {
   return { value: n };
 }
 async function startAutopilot() {
-  const goal = ($('#aut-goal').value || '').trim();
+  const goalEl = $('#aut-goal');
+  const goal = (goalEl && goalEl.value || '').trim();
+  // A run with no goal just burns tokens; require one before launching.
+  if (!goal) {
+    toast('Goal is required', 'error');
+    if (goalEl) { goalEl.classList.add('field-invalid'); goalEl.focus(); }
+    return;
+  }
   const cMin = readCapField('#aut-cap-min', 60);
   const cTok = readCapField('#aut-cap-tok', 200000);
   const cUsd = readCapField('#aut-cap-usd', 5);
@@ -8503,6 +8936,9 @@ const AUTOPILOT_PRESETS = [
 ];
 
 function renderAutopilotPage() {
+  // Mount the real Kernel into the hero art once (the slot lives in the hero).
+  const kSlot = document.querySelector('.aut-kernel-slot');
+  if (kSlot && !kSlot.querySelector('svg')) mountEmptyKernel(kSlot);
   // The dollar figure means different things on an API key vs a plan; learn
   // which so the label is honest before any numbers paint.
   refreshAutBilling();
@@ -10866,6 +11302,7 @@ $('#btn-autopilot') && $('#btn-autopilot').addEventListener('click', () => {
 $('#aut-start-close') && $('#aut-start-close').addEventListener('click', closeAutopilotStart);
 $('#aut-start-cancel') && $('#aut-start-cancel').addEventListener('click', closeAutopilotStart);
 $('#aut-start-go') && $('#aut-start-go').addEventListener('click', startAutopilot);
+$('#aut-goal') && $('#aut-goal').addEventListener('input', () => $('#aut-goal').classList.remove('field-invalid'));
 // Segmented mode control: Solo (one agent) or Team (orchestrated collab).
 // Team shows its explainer; the orchestrator decides the team size, so there
 // is no count to pick.
