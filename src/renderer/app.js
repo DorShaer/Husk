@@ -2202,9 +2202,8 @@ function paintWorkspace(id) {
     <button class="ghost-btn ws-back" id="ws-back"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> All projects</button>
     ${missing ? `<div class="ws-missing"><strong>This folder no longer exists.</strong> The path may be renamed, moved, or on a disconnected drive. Remove the project, or restore the folder and come back.<button class="ghost-btn" id="ws-remove-missing">Remove project</button></div>` : ''}
     <div class="ws-hero">
-      <div class="ws-avatar" aria-hidden="true">${escapeHtml((p.name || '?').trim().charAt(0).toUpperCase())}${st.live ? '<span class="ws-avatar-dot"></span>' : ''}</div>
       <div class="ws-hero-main">
-        <div class="ws-title">${escapeHtml(p.name)}${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
+        <div class="ws-title">${st.live ? '<span class="tv-dot" title="agent live"></span>' : ''}${escapeHtml(p.name)}${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
         <div class="ws-hero-meta"><span class="ws-hero-path" title="${escapeHtml(p.path)}">${escapeHtml(wsShortPath(p.path))}</span>${st.branch ? wsBranchChip(st) : ''}</div>
       </div>
       <div class="ws-title-actions">

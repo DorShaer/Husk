@@ -8221,24 +8221,28 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .ws-sec.is-attn .ws-table { border-color: color-mix(in srgb, var(--warn) 30%, var(--line)); }
 
-/* Column template shared by the header row and every project row. */
+/* One padding variable governs every band, so header text, group labels and
+   cell text share a single left edge. Column text aligns because cells carry
+   no boxes of their own inside the table. */
+.ws-table { --ws-pad-x: 20px; }
 .ws-thead, .ws-row {
   display: grid;
-  grid-template-columns: minmax(170px, 250px) minmax(150px, 1fr) minmax(120px, 200px) minmax(120px, 210px) 90px minmax(130px, max-content);
+  grid-template-columns: minmax(170px, 240px) minmax(150px, 1fr) minmax(150px, 220px) minmax(130px, 190px) 84px 118px;
   grid-template-areas: "name path git state time act";
   align-items: center;
   gap: 18px;
-  padding: 12px 20px;
+  padding: 0 var(--ws-pad-x);
 }
+.ws-row { min-height: 52px; }
 .ws-thead {
-  padding-top: 11px; padding-bottom: 11px;
+  min-height: 38px;
   font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
   color: var(--text-dim);
 }
 .ws-th-right { text-align: right; }
 .ws-group {
   display: flex; align-items: baseline; gap: 8px;
-  padding: 8px 20px;
+  padding: 8px var(--ws-pad-x);
   background: var(--bg-2);
   border-top: 1px solid var(--line);
   font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
@@ -8266,11 +8270,23 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ws-col-git { grid-area: git; min-width: 0; }
-.ws-col-state { grid-area: state; display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.ws-col-git { grid-area: git; min-width: 0; overflow: hidden; }
+.ws-col-state { grid-area: state; display: flex; gap: 10px; min-width: 0; overflow: hidden; }
+.ws-row .ws-stat, .ws-thead .ws-stat {
+  border: none; background: none; padding: 0; border-radius: 0;
+  font-size: 12.5px; min-width: 0; max-width: 100%;
+}
+.ws-row .ws-stat .ws-stat-txt { max-width: none; }
+.ws-row .ws-stat svg { color: var(--text-dim); }
+.ws-row .ws-stat.is-dirty { color: var(--amber); }
+.ws-row .ws-stat.is-warn { color: var(--warn); }
+.ws-row .ws-stat.is-attn { color: var(--accent); }
 .ws-col-time { grid-area: time; font-size: 11.5px; color: var(--text-dim); text-align: right; white-space: nowrap; }
-.ws-col-actions { grid-area: act; display: flex; align-items: center; gap: 6px; }
-.ws-col-actions .ghost-btn { padding: 4px 12px; font-size: 12px; }
+.ws-col-actions { grid-area: act; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.ws-col-actions .ghost-btn {
+  padding: 4px 0; font-size: 12px; width: 76px; text-align: center; justify-content: center;
+  display: inline-flex; flex: 0 0 auto;
+}
 .ws-row .card-delete { position: static; opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
 .ws-row:hover .card-delete, .ws-row:focus-within .card-delete { opacity: 1; }
 .ws-stat-txt { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -8318,22 +8334,9 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   background: radial-gradient(420px 130px at 8% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
   pointer-events: none;
 }
-.ws-avatar {
-  position: relative; z-index: 1;
-  width: 46px; height: 46px; border-radius: 13px; flex: 0 0 auto;
-  display: grid; place-items: center;
-  font-size: 20px; font-weight: 700; color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2, var(--accent)));
-  box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--accent) 55%, transparent),
-              inset 0 1px 0 rgba(255, 255, 255, .25);
-}
-.ws-avatar-dot {
-  position: absolute; right: -3px; bottom: -3px; width: 11px; height: 11px;
-  border-radius: 50%; background: var(--emerald);
-  border: 2.5px solid var(--bg);
-}
 .ws-hero-main { position: relative; z-index: 1; min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; }
 .ws-title { font-size: 22px; font-weight: 680; letter-spacing: -.015em; color: var(--text); display: flex; align-items: center; gap: 10px; }
+.ws-title .tv-dot { width: 8px; height: 8px; }
 .ws-hero-meta { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
 .ws-hero-path {
   font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text-3);
@@ -8373,7 +8376,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .ws-tile-value { font-size: 24px; font-weight: 680; letter-spacing: -.02em; color: var(--text); line-height: 1.2; }
 .ws-tile-ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ws-tile-sub { font-size: 12px; color: var(--text-3); }
+.ws-tile-sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ws-tile-sub.is-warn { color: var(--warn); }
 .ws-tile-sub.is-dirty { color: var(--amber); }
 .ws-tile-sub.is-live { color: var(--accent); }
@@ -8405,7 +8408,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-loop-text span { color: var(--text-3); font-size: 12px; }
 .ws-loop.is-warn strong { color: var(--warn); }
 .ws-sess {
-  display: flex; align-items: center; gap: 12px; padding: 9px 10px;
+  display: flex; align-items: center; gap: 12px; padding: 7px 10px; min-height: 44px;
   margin: 0 -10px; border-radius: var(--radius-md);
   transition: background var(--motion-fast) var(--ease-out);
 }
