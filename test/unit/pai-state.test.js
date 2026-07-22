@@ -15,6 +15,8 @@ const {
   HUSK_AGENTS_END,
   PARKED_BASENAME,
   parkedPath,
+  digestOf,
+  isHuskAuthoredClaudeMd,
   applyPaiState,
   buildHuskPrompt,
   renderHuskAgentsBlock,
@@ -28,11 +30,16 @@ afterEach(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catc
 const live = () => path.join(tmp, 'CLAUDE.md');
 const parked = () => path.join(tmp, PARKED_BASENAME);
 
+// Parking only ever moves a scaffold Husk wrote. Tests that exercise the
+// park/restore mechanics therefore have to declare the content as ours, the
+// same way main.js declares the digest of the template it ships.
+const ours = (text) => { fs.writeFileSync(live(), text); return { templateDigests: [digestOf(text)] }; };
+
 // ─── applyPaiState ────────────────────────────────────────────────────────
 
-test('ISC-1: disabling parks an existing CLAUDE.md verbatim', () => {
-  fs.writeFileSync(live(), 'PAI prose here.\nline 2\n');
-  applyPaiState(tmp, false);
+test('ISC-1: disabling parks a scaffold Husk wrote, verbatim', () => {
+  const opts = ours('PAI prose here.\nline 2\n');
+  applyPaiState(tmp, false, opts);
   assert.equal(fs.existsSync(live()), false, 'live file should be gone');
   assert.equal(fs.existsSync(parked()), true, 'parked file should exist');
   assert.equal(fs.readFileSync(parked(), 'utf8'), 'PAI prose here.\nline 2\n');
@@ -61,17 +68,17 @@ test('ISC-4: enabling never clobbers a user-created live CLAUDE.md', () => {
 });
 
 test('ISC-5: disabling when both files exist leaves both alone', () => {
-  fs.writeFileSync(live(), 'live content\n');
+  const opts = ours('live content\n');
   fs.writeFileSync(parked(), 'parked content\n');
-  applyPaiState(tmp, false);
+  applyPaiState(tmp, false, opts);
   assert.equal(fs.readFileSync(live(), 'utf8'), 'live content\n');
   assert.equal(fs.readFileSync(parked(), 'utf8'), 'parked content\n');
 });
 
 test('ISC-6: applyPaiState is idempotent; calling twice equals once', () => {
-  fs.writeFileSync(live(), 'pai\n');
-  applyPaiState(tmp, false);
-  applyPaiState(tmp, false);
+  const opts = ours('pai\n');
+  applyPaiState(tmp, false, opts);
+  applyPaiState(tmp, false, opts);
   assert.equal(fs.existsSync(live()), false);
   assert.equal(fs.existsSync(parked()), true);
   assert.equal(fs.readFileSync(parked(), 'utf8'), 'pai\n');
@@ -79,30 +86,30 @@ test('ISC-6: applyPaiState is idempotent; calling twice equals once', () => {
 
 test('ISC-7: full disable → enable round-trip preserves byte-exact content', () => {
   const original = 'multi\nline\nPAI\nbody with unicode ── █ ─ ──\n';
-  fs.writeFileSync(live(), original);
-  applyPaiState(tmp, false);
+  const opts = ours(original);
+  applyPaiState(tmp, false, opts);
   assert.equal(fs.existsSync(live()), false);
-  applyPaiState(tmp, true);
+  applyPaiState(tmp, true, opts);
   assert.equal(fs.existsSync(parked()), false);
   assert.equal(fs.readFileSync(live(), 'utf8'), original);
 });
 
 test('ISC-A1: applyPaiState never deletes; same total file count survives', () => {
-  fs.writeFileSync(live(), 'a');
+  const opts = ours('a');
   fs.writeFileSync(path.join(tmp, 'unrelated.txt'), 'b');
-  applyPaiState(tmp, false);
-  applyPaiState(tmp, true);
-  applyPaiState(tmp, false);
-  applyPaiState(tmp, true);
+  applyPaiState(tmp, false, opts);
+  applyPaiState(tmp, true, opts);
+  applyPaiState(tmp, false, opts);
+  applyPaiState(tmp, true, opts);
   const survivors = fs.readdirSync(tmp).sort();
   assert.deepEqual(survivors, ['CLAUDE.md', 'unrelated.txt']);
 });
 
 test('ISC-A2: applyPaiState writes only inside the supplied claudeDir', () => {
-  fs.writeFileSync(live(), 'pai\n');
+  const opts = ours('pai\n');
   const before = fs.readdirSync(os.tmpdir()).filter((n) => n.includes('husk-pai-')).length;
-  applyPaiState(tmp, false);
-  applyPaiState(tmp, true);
+  applyPaiState(tmp, false, opts);
+  applyPaiState(tmp, true, opts);
   const after = fs.readdirSync(os.tmpdir()).filter((n) => n.includes('husk-pai-')).length;
   assert.equal(after, before, 'no new sibling dirs created in tmpdir');
 });
@@ -281,4 +288,46 @@ test('merge with malformed markers (END before START) falls back to append', () 
   const lastStart = merged.lastIndexOf(HUSK_AGENTS_START);
   const lastEnd = merged.lastIndexOf(HUSK_AGENTS_END);
   assert.ok(lastEnd > lastStart, 'new block has START before END at the bottom');
+});
+
+// ─── the user's own CLAUDE.md is not ours to move ─────────────────────────
+// ~/.claude/CLAUDE.md belongs to the user. Plenty of people wrote one long
+// before they installed Husk, and a toggle in our Preferences must never
+// relocate it: the CLI stops seeing their config and the cause is invisible.
+
+test('a hand-written CLAUDE.md survives disabling, untouched', () => {
+  const mine = '# my own rules\nbuilt up over a year\n';
+  fs.writeFileSync(live(), mine);
+  // Digests of what Husk ships. The user's file matches none of them.
+  applyPaiState(tmp, false, { templateDigests: [digestOf('# the shipped scaffold\n')] });
+  assert.equal(fs.existsSync(live()), true, 'the user file must stay where the CLI reads it');
+  assert.equal(fs.readFileSync(live(), 'utf8'), mine, 'and must be byte-identical');
+  assert.equal(fs.existsSync(parked()), false, 'nothing should have been parked');
+});
+
+test('a scaffold the user has since edited is theirs, and stays put', () => {
+  const shipped = '# the shipped scaffold\n';
+  fs.writeFileSync(live(), shipped + '\nmy own additions\n');
+  applyPaiState(tmp, false, { templateDigests: [digestOf(shipped)] });
+  assert.equal(fs.existsSync(live()), true);
+  assert.equal(fs.existsSync(parked()), false);
+});
+
+test('with no digests supplied, nothing is parked: unproven ownership is not ownership', () => {
+  fs.writeFileSync(live(), 'anything at all\n');
+  applyPaiState(tmp, false);
+  assert.equal(fs.existsSync(live()), true);
+  assert.equal(fs.existsSync(parked()), false);
+});
+
+test('an older shipped scaffold is still recognised as ours', () => {
+  const older = '# scaffold from a previous Husk release\n';
+  fs.writeFileSync(live(), older);
+  applyPaiState(tmp, false, { templateDigests: [digestOf('# current\n'), digestOf(older)] });
+  assert.equal(fs.existsSync(live()), false, 'ours, so it parks');
+  assert.equal(fs.existsSync(parked()), true);
+});
+
+test('isHuskAuthoredClaudeMd is false when the file is absent', () => {
+  assert.equal(isHuskAuthoredClaudeMd(tmp, [digestOf('x')]), false);
 });

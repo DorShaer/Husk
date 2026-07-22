@@ -278,6 +278,19 @@ elif [ -d "$LIFEOS_BUNDLE" ]; then
     for MEMDIR in WORK KNOWLEDGE LEARNING STATE OBSERVABILITY SKILLS; do
         mkdir -p "$CLAUDE_DIR/LIFEOS/MEMORY/$MEMDIR"
     done
+    # Agent-instruction files carried inside the bundle belong to the upstream
+    # project's own repo, where they steer whoever is editing the framework.
+    # Landed in a user's ~/.claude/ they read as standing orders that person
+    # never wrote, in the exact place the CLI looks for their own. Writing
+    # their instructions is their business. Only the ones we just copied are
+    # removed, and only when they still match the bundle byte for byte, so a
+    # file the user already had is never touched.
+    find "$CLAUDE_DIR" -name 'CLAUDE.md' -not -path "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null | while read -r INSTALLED; do
+        REL="${INSTALLED#$CLAUDE_DIR/}"
+        SRC="$LIFEOS_BUNDLE/$REL"
+        [ -f "$SRC" ] || continue
+        cmp -s "$INSTALLED" "$SRC" && rm -f "$INSTALLED"
+    done
     ok "LifeOS ready"
 fi
 
