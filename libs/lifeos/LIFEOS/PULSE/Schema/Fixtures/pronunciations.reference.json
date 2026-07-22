@@ -1,0 +1,24 @@
+{
+  "kind": "reference",
+  "title": "Pronunciations",
+  "category": "voice",
+  "description": "Names and terms with non-obvious pronunciations.",
+  "entries": [
+    { "key": "Schmidt", "value": "shmit", "notes": "silent c, soft-t" },
+    { "key": "LifeOS", "value": "P-A-I", "notes": "letters not 'pie'" }
+  ],
+  "meta": {
+    "schemaVersion": "1.0.0",
+    "pageId": "pronunciations",
+    "lastBuildAt": "2026-05-03T01:00:00.000Z",
+    "sourceHashes": {
+      "LIFEOS/USER/PRINCIPAL/PRONUNCIATIONS.json": "ghi789"
+    },
+    "adapterVersion": "pronunciations-v1",
+    "model": "claude-sonnet-4-6",
+    "costUSD": 0.005,
+    "latencyMs": 1800,
+    "provenance": "customized",
+    "warnings": []
+  }
+}

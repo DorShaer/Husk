@@ -126,18 +126,22 @@ test('parkedPath returns the .husk-disabled sibling under claudeDir', () => {
 
 // ─── buildHuskPrompt ──────────────────────────────────────────────────────
 
-test('ISC-8: PAI-off prompt includes the explicit "do NOT emit" override', () => {
+test('ISC-8: framework-off prompt includes the explicit "do NOT emit" override', () => {
   const out = buildHuskPrompt({ agentName: 'Husk', paiEnabled: false, recap: true });
-  assert.match(out, /do NOT emit PAI mode banners/);
+  assert.match(out, /do NOT emit its banner/);
+  // Both banner vocabularies are named: an install carried over from the older
+  // layout still answers in the old shape, so suppressing only the current one
+  // would leave those users with banners they switched off.
+  assert.match(out, /════ LifeOS ═══/);
   assert.match(out, /═══ PAI ═══/);
-  assert.doesNotMatch(out, /follow your normal CLAUDE\.md, PAI\/Algorithm/);
+  assert.doesNotMatch(out, /follow your normal CLAUDE\.md, assistant-framework/);
 });
 
-test('ISC-9: PAI-on prompt names PAI/ALGORITHM and the TASK/CHANGE/VERIFY structure', () => {
+test('ISC-9: framework-on prompt defers to the framework and names the CHANGE/VERIFY structure', () => {
   const out = buildHuskPrompt({ agentName: 'Husk', paiEnabled: true, recap: true });
-  assert.match(out, /PAI\/ALGORITHM/);
-  assert.match(out, /TASK\/CHANGE\/VERIFY/);
-  assert.doesNotMatch(out, /do NOT emit PAI mode banners/);
+  assert.match(out, /assistant-framework/);
+  assert.match(out, /CHANGE\/VERIFY/);
+  assert.doesNotMatch(out, /do NOT emit its banner/);
 });
 
 test('ISC-10: recap=false appends the recap-suppression sentence regardless of PAI', () => {

@@ -1,0 +1,240 @@
+{
+  "indexes": [
+    {
+      "name": "Anthropic Engineering",
+      "url": "https://www.anthropic.com/engineering",
+      "link_pattern": "anthropic\\.com/engineering/[a-z0-9-]+",
+      "priority": "HIGH",
+      "type": "index",
+      "note": "Harness/agent/tool/context-engineering canon. No RSS — index link-diff."
+    },
+    {
+      "name": "Anthropic News",
+      "url": "https://www.anthropic.com/news",
+      "link_pattern": "anthropic\\.com/news/[a-z0-9-]+",
+      "priority": "MEDIUM",
+      "type": "index"
+    },
+    {
+      "name": "Anthropic Research",
+      "url": "https://www.anthropic.com/research",
+      "link_pattern": "anthropic\\.com/research/[a-z0-9-]+",
+      "priority": "MEDIUM",
+      "type": "index"
+    },
+    {
+      "name": "Cursor Changelog",
+      "url": "https://www.cursor.com/changelog",
+      "link_pattern": "cursor\\.com/changelog/[a-z0-9-]+",
+      "priority": "MEDIUM",
+      "type": "index",
+      "note": "Cross-harness technique comparison. No RSS."
+    }
+  ],
+  "feeds": [
+    {
+      "name": "Simon Willison",
+      "url": "https://simonwillison.net/atom/everything/",
+      "site": "https://simonwillison.net/",
+      "priority": "HIGH",
+      "type": "feed",
+      "note": "Top practitioner feed on LLM tooling, tool design, agent loops, prompt injection."
+    },
+    {
+      "name": "Hamel Husain",
+      "url": "https://hamel.dev/index.xml",
+      "site": "https://hamel.dev/",
+      "priority": "HIGH",
+      "type": "feed",
+      "note": "Reference on LLM evals — eval-driven agent debugging."
+    },
+    {
+      "name": "Chip Huyen",
+      "url": "https://huyenchip.com/feed.xml",
+      "site": "https://huyenchip.com/",
+      "priority": "HIGH",
+      "type": "feed",
+      "note": "Deep long-form on agent architecture, failure modes, gen-AI platform design."
+    },
+    {
+      "name": "Eugene Yan",
+      "url": "https://eugeneyan.com/rss/",
+      "site": "https://eugeneyan.com/",
+      "priority": "MEDIUM",
+      "type": "feed",
+      "note": "Applied ML-systems + LLM eval engineering."
+    },
+    {
+      "name": "Latent Space",
+      "url": "https://www.latent.space/feed",
+      "site": "https://www.latent.space/",
+      "priority": "MEDIUM",
+      "type": "feed",
+      "note": "AI Engineer newsletter+podcast; deep technical interviews on agent infra."
+    },
+    {
+      "name": "Thorsten Ball (Register Spill)",
+      "url": "https://thorstenball.substack.com/feed",
+      "site": "https://registerspill.thorstenball.com/",
+      "priority": "MEDIUM",
+      "type": "feed",
+      "note": "Builds the Amp coding agent; first-hand agent-loop and tool-design writing."
+    },
+    {
+      "name": "Jason Liu",
+      "url": "https://jxnl.co/feed_rss_created.xml",
+      "site": "https://jxnl.co/",
+      "priority": "MEDIUM",
+      "type": "feed",
+      "note": "Instructor author — structured output, RAG, evals, coding agents."
+    },
+    {
+      "name": "aider",
+      "url": "https://aider.chat/feed.xml",
+      "site": "https://aider.chat/",
+      "priority": "MEDIUM",
+      "type": "feed",
+      "note": "Mature CLI agent; rigorous model + edit-format benchmarks."
+    }
+  ],
+  "blogs": [
+    {
+      "name": "Alignment Science Blog",
+      "url": "https://alignment.anthropic.com/",
+      "priority": "LOW",
+      "type": "blog"
+    },
+    {
+      "name": "Transformer Circuits",
+      "url": "https://transformer-circuits.pub/",
+      "priority": "LOW",
+      "type": "blog"
+    }
+  ],
+  "github_repos": [
+    {
+      "name": "claude-code",
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "priority": "HIGH",
+      "check_commits": false,
+      "check_releases": true,
+      "check_issues": false
+    },
+    {
+      "name": "skills",
+      "owner": "anthropics",
+      "repo": "skills",
+      "priority": "HIGH",
+      "check_commits": true,
+      "check_releases": false,
+      "check_issues": false
+    },
+    {
+      "name": "12-factor-agents",
+      "owner": "humanlayer",
+      "repo": "12-factor-agents",
+      "priority": "HIGH",
+      "check_commits": false,
+      "check_releases": true,
+      "check_issues": false
+    },
+    {
+      "name": "MCP Specification",
+      "owner": "modelcontextprotocol",
+      "repo": "modelcontextprotocol",
+      "priority": "HIGH",
+      "check_commits": false,
+      "check_releases": true,
+      "check_issues": false
+    },
+    {
+      "name": "claude-cookbooks",
+      "owner": "anthropics",
+      "repo": "claude-cookbooks",
+      "priority": "MEDIUM",
+      "check_commits": true,
+      "check_releases": false,
+      "check_issues": false
+    },
+    {
+      "name": "claude-agent-sdk-typescript",
+      "owner": "anthropics",
+      "repo": "claude-agent-sdk-typescript",
+      "priority": "MEDIUM",
+      "check_commits": false,
+      "check_releases": true,
+      "check_issues": false
+    },
+    {
+      "name": "openai-codex",
+      "owner": "openai",
+      "repo": "codex",
+      "priority": "MEDIUM",
+      "check_commits": false,
+      "check_releases": true,
+      "check_issues": false
+    },
+    {
+      "name": "cline",
+      "owner": "cline",
+      "repo": "cline",
+      "priority": "MEDIUM",
+      "check_commits": false,
+      "check_releases": true,
+      "check_issues": false
+    },
+    {
+      "name": "awesome-claude-code",
+      "owner": "hesreallyhim",
+      "repo": "awesome-claude-code",
+      "priority": "MEDIUM",
+      "check_commits": true,
+      "check_releases": false,
+      "check_issues": false
+    }
+  ],
+  "changelogs": [
+    {
+      "name": "Claude Code CHANGELOG",
+      "url": "https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md",
+      "priority": "HIGH",
+      "type": "changelog"
+    },
+    {
+      "name": "Claude API Release Notes",
+      "url": "https://platform.claude.com/docs/en/release-notes/api",
+      "priority": "HIGH",
+      "type": "changelog"
+    }
+  ],
+  "documentation": [
+    {
+      "name": "Claude Code Docs",
+      "url": "https://code.claude.com/docs/en/overview",
+      "priority": "HIGH",
+      "type": "docs"
+    },
+    {
+      "name": "Agent SDK Docs",
+      "url": "https://code.claude.com/docs/en/agent-sdk/overview",
+      "priority": "HIGH",
+      "type": "docs"
+    },
+    {
+      "name": "MCP Specification",
+      "url": "https://modelcontextprotocol.io/specification/latest",
+      "priority": "MEDIUM",
+      "type": "docs"
+    }
+  ],
+  "community": [
+    {
+      "name": "Claude Developers Discord",
+      "url": "https://discord.com/invite/6PPFFzqPDZ",
+      "priority": "LOW",
+      "type": "community",
+      "note": "Manual check required - no automated scraping"
+    }
+  ]
+}

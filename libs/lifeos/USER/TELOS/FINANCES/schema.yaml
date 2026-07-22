@@ -1,0 +1,222 @@
+# > 💰 SAMPLE TEMPLATE — Replace with your own data via /interview or by editing this file. Real Pulse Finance dashboards populate from here once you've run the Finances interview.
+#
+# Schema definitions for the FINANCES/ data layer. This file is structural — the
+# definitions below are real (so Pulse can validate your data), but every example
+# value uses placeholders so this file ships safely as a template.
+
+version: 1
+description: >
+  Schema for LifeOS Finance data. Pulse and the /interview finances workflow validate
+  user data against these definitions. Replace placeholder example values with your
+  own data; do NOT change field names or required keys without updating Pulse.
+
+# ---------------------------------------------------------------------------
+# Top-level overview (FINANCES.md frontmatter equivalent)
+# ---------------------------------------------------------------------------
+overview:
+  type: object
+  required: [as_of, net_worth, monthly_cash_flow]
+  properties:
+    as_of:
+      type: string
+      format: date
+      example: "YYYY-MM-DD"
+    net_worth:
+      type: object
+      required: [total_assets, total_liabilities, net]
+      properties:
+        total_assets:    { type: string, example: "$X,XXX" }
+        total_liabilities: { type: string, example: "$X,XXX" }
+        net:             { type: string, example: "$X,XXX" }
+    monthly_cash_flow:
+      type: object
+      properties:
+        income:            { type: string, example: "$X,XXX" }
+        fixed_expenses:    { type: string, example: "$X,XXX" }
+        variable_expenses: { type: string, example: "$X,XXX" }
+        net:               { type: string, example: "$X,XXX" }
+        savings_rate_pct:  { type: number, example: 0 }
+
+# ---------------------------------------------------------------------------
+# Income source
+# ---------------------------------------------------------------------------
+income_source:
+  type: object
+  required: [name, type, payer, frequency]
+  properties:
+    name:
+      type: string
+      example: "Sample Source 1"
+    type:
+      type: string
+      enum: [w2, "1099", subscription, dividend, interest, royalty, rental, other]
+      example: "w2"
+    payer:
+      type: string
+      example: "Sample Employer Inc."
+    frequency:
+      type: string
+      enum: [weekly, biweekly, semi-monthly, monthly, quarterly, annual, project-based, irregular]
+      example: "semi-monthly"
+    gross_per_period: { type: string, example: "$X,XXX" }
+    net_per_period:   { type: string, example: "$X,XXX" }
+    annual_gross:     { type: string, example: "$X,XXX" }
+    deposit_account:  { type: string, example: "Sample Bank Checking ...XXXX" }
+    started:          { type: string, format: date, example: "YYYY-MM-DD" }
+    ended:            { type: string, format: date, example: "YYYY-MM-DD" }
+    notes:            { type: string }
+
+# ---------------------------------------------------------------------------
+# Expense entry
+# ---------------------------------------------------------------------------
+expense:
+  type: object
+  required: [category, vendor, amount, frequency]
+  properties:
+    category:
+      type: string
+      enum: [housing, utilities, insurance, subscription, software, grocery, dining, transportation, travel, entertainment, health, clothing, gifts, charitable, tax, loan, other]
+    vendor:    { type: string, example: "Sample Vendor" }
+    amount:    { type: string, example: "$X" }
+    frequency:
+      type: string
+      enum: [weekly, monthly, quarterly, semi-annual, annual, one-time]
+    envelope:  { type: string, example: "$X" }
+    notes:     { type: string }
+
+# ---------------------------------------------------------------------------
+# Investment account
+# ---------------------------------------------------------------------------
+investment_account:
+  type: object
+  required: [custodian, account_type, balance]
+  properties:
+    custodian:    { type: string, example: "Sample Brokerage" }
+    account_type:
+      type: string
+      enum: [taxable, roth_ira, traditional_ira, 401k, 403b, sep_ira, simple_ira, hsa, "529", crypto, other]
+    balance:      { type: string, example: "$X,XXX" }
+    last_4:       { type: string, example: "XXXX" }
+    cost_basis:   { type: string, example: "$X,XXX" }
+    ytd_contributions: { type: string, example: "$X" }
+    contribution_rate_pct: { type: number, example: 0 }
+    employer_match_pct:    { type: number, example: 0 }
+    strategy:     { type: string }
+    notes:        { type: string }
+
+# ---------------------------------------------------------------------------
+# Account (banking, credit, loan)
+# ---------------------------------------------------------------------------
+account:
+  type: object
+  required: [name, type, balance]
+  properties:
+    name:    { type: string, example: "Sample Bank Checking" }
+    type:
+      type: string
+      enum: [checking, savings, hysa, credit_card, mortgage, auto_loan, student_loan, personal_loan, brokerage, retirement, hsa, "529", crypto, other]
+    balance: { type: string, example: "$X" }
+    limit:   { type: string, example: "$X,XXX" }   # for credit cards
+    rate_pct: { type: number, example: 0 }         # for loans / HYSA
+    last_4:  { type: string, example: "XXXX" }
+    institution: { type: string, example: "Sample Bank" }
+    notes:   { type: string }
+
+# ---------------------------------------------------------------------------
+# Goal
+# ---------------------------------------------------------------------------
+goal:
+  type: object
+  required: [id, title, target_amount, target_date]
+  properties:
+    id:            { type: string, example: "G1" }
+    title:         { type: string, example: "Sample goal title" }
+    target_amount: { type: string, example: "$X,XXX" }
+    target_date:   { type: string, format: date, example: "YYYY-MM-DD" }
+    current_amount: { type: string, example: "$X" }
+    progress_pct:  { type: number, example: 0 }
+    monthly_contribution: { type: string, example: "$X" }
+    source_account: { type: string, example: "Sample Bank Savings ...XXXX" }
+    status:
+      type: string
+      enum: [not_started, on_track, behind, ahead, at_risk, completed, abandoned]
+    notes:         { type: string }
+
+# ---------------------------------------------------------------------------
+# Tax profile
+# ---------------------------------------------------------------------------
+tax_profile:
+  type: object
+  properties:
+    filing_status:
+      type: string
+      enum: [single, married_filing_jointly, married_filing_separately, head_of_household, qualifying_widow]
+    state:        { type: string, example: "Sample State" }
+    tax_year:     { type: number, example: 2026 }
+    preparer:     { type: string, example: "Sample CPA" }
+    quarterly_estimates:
+      type: array
+      items:
+        type: object
+        required: [quarter, due_date]
+        properties:
+          quarter:           { type: string, enum: [Q1, Q2, Q3, Q4] }
+          due_date:          { type: string, format: date, example: "YYYY-MM-DD" }
+          federal_estimate:  { type: string, example: "$X,XXX" }
+          state_estimate:    { type: string, example: "$X" }
+          paid:              { type: boolean, example: false }
+    deductions_tracked:
+      type: array
+      items: { type: string, example: "Sample deduction category" }
+
+# ---------------------------------------------------------------------------
+# Obligation (recurring bill) — referenced by obligations.yaml
+# ---------------------------------------------------------------------------
+obligation:
+  type: object
+  required: [vendor, category, amount, frequency]
+  properties:
+    vendor:    { type: string, example: "Sample Vendor" }
+    category:
+      type: string
+      enum: [housing, utilities, insurance, subscription, loan, tax, other]
+    amount:    { type: string, example: "$X" }
+    frequency:
+      type: string
+      enum: [weekly, monthly, quarterly, semi-annual, annual, one-time]
+    due_day:   { type: number, nullable: true, example: 1 }
+    account:   { type: string, example: "Sample Bank Checking ...XXXX" }
+    autopay:   { type: boolean, example: true }
+    notes:     { type: string }
+
+# ---------------------------------------------------------------------------
+# Vendor (counterparty) — referenced by vendors.yaml
+# ---------------------------------------------------------------------------
+vendor:
+  type: object
+  required: [name, category, direction]
+  properties:
+    name:     { type: string, example: "Sample Vendor" }
+    purpose:  { type: string, example: "Sample purpose" }
+    category:
+      type: string
+      enum: [housing, utilities, insurance, subscription, software, loan, tax, income, grocery, dining, travel, health, other]
+    direction:
+      type: string
+      enum: [outbound, inbound, both]
+    match:
+      type: array
+      items: { type: string, example: "SAMPLE MATCH STRING" }
+    notes:    { type: string }
+
+# ---------------------------------------------------------------------------
+# Validation rules (applied by Pulse / interview tooling)
+# ---------------------------------------------------------------------------
+validation:
+  - rule: "all monetary fields must be strings (not numbers) to allow placeholder values like $X,XXX during onboarding"
+  - rule: "last_4 fields must be exactly 4 characters, digits or X placeholders"
+  - rule: "dates must be ISO 8601 (YYYY-MM-DD)"
+  - rule: "category and enum fields must match one of the allowed values exactly"
+  - rule: "no full account numbers anywhere — use last_4 only"
+
+# This is a sample template. Replace every placeholder with your own data before relying on Pulse Finance views.

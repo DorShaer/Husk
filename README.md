@@ -156,7 +156,7 @@ cd husk
 ./installer/install.sh
 ```
 
-`install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS), and bootstraps PAI into `~/.claude/`.
+`install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS), and bootstraps LifeOS into `~/.claude/`.
 
 For pure dev mode without system registration:
 
@@ -192,7 +192,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
 - **Autopilot**: hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across collaborating parallel runs. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run.
 - **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
-- **Skills**: toggle PAI skills bundled with Husk plus any skills you keep in `~/.claude/skills/`.
+- **Skills**: toggle the skills bundled with Husk plus any skills you keep in `~/.claude/skills/`.
 - **MCP**: install / toggle / health-check Model Context Protocol servers.
 - **Plugins**: browse and manage Husk plugins.
 - **Files**: drag-drop file context, with a tree view of your working directory.
@@ -226,7 +226,7 @@ husk/
 ├── installer/                 OS install assets + verify helpers
 │   └── lib/                   Download-and-verify (verify.sh, verify.ps1)
 ├── libs/
-│   └── pai/                   Bundled PAI framework, third-party
+│   └── lifeos/                Bundled LifeOS framework, third-party
 ├── test/                      Unit tests (node:test) + Electron smoke
 │   ├── unit/                  node:test unit suite (500+ tests)
 │   └── e2e/                   Playwright smoke (real Electron boot)
@@ -260,7 +260,7 @@ husk/
 - `src/lib/` holds the pure helpers: shell-quote, path-confine, pty-spawn, user-path, agent-md, workflow-graph, the `mcp/` per-agent adapters, the `autonomy/` Autopilot safety modules, and about twenty more (see `docs/architecture.md`). Each is small, with no Electron / fs / spawn coupling, and unit-tested. New IPC handler logic should land here.
 - `src/preload.js` exposes a narrow `window.husk` API to the renderer through `contextBridge`. The renderer never gets Node access.
 - `src/renderer/` is the renderer: a single-page Electron view with rail navigation, an embedded xterm, a status panel, and the Chat / Agents / Workflows / Autopilot / Projects / Prompts / Skills / MCP / Plugins / Files / Sessions surfaces plus the Preferences modal.
-- `libs/pai/` is the bundled PAI framework, copied into `~/.claude/` on first install. Contains the system prompt, Algorithm phase machine, agents, hooks, lib, and the curated skills set.
+- `libs/lifeos/` is the bundled LifeOS framework, copied into `~/.claude/` on first install. Contains the system prompt, Algorithm phase machine, agents, commands, hooks, the identity scaffold, and the curated skills set. An install that already has the older `~/.claude/PAI/` layout is left alone rather than given a second framework beside it.
 - `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
 - `installer/` holds the source installers (`install.sh`, `install.ps1`, `uninstall.sh`) alongside the packaging assets they use. `scripts/` holds the published one-line installers and the dev launcher (`run.sh`). The repo root stays free of loose scripts.
 
@@ -286,7 +286,7 @@ CI runs both jobs on every push to `main`, `development`, and `dev/**`, and on e
 All settings live in `~/.config/husk/config.json` and are editable from the Preferences page:
 
 - **Agent command** (`claude`, `copilot`, `codex`, `aider`, or any binary on `$PATH`) and **agent name**
-- **Active agent profiles**: one or more PAI agent personas applied to the next session
+- **Active agent profiles**: one or more agent personas applied to the next session
 - **Active project**: drives the agent's working directory so per-folder trust prompts work
 - **Theme** (10 themes: Midnight default, Dark, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula, Light, Sepia) and **accent color** (orange / cyan / indigo / emerald / rose)
 - **Voice** (enable, voice model, speaking rate)
@@ -303,6 +303,6 @@ MIT.
 
 ## Credits
 
-Husk's reasoning, thinking format, and Algorithm phase machine come from [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) and Telos by **Daniel Miessler**. If you find Husk useful go show him some love.
+Husk's reasoning, thinking format, and Algorithm phase machine come from [LifeOS](https://github.com/danielmiessler/LifeOS) (formerly PAI) and Telos by **Daniel Miessler**. If you find Husk useful go show him some love.
 
 The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js) plus [`node-pty`](https://github.com/microsoft/node-pty). On Linux the PTY is established through `script(1)` so `claude --resume` gets its controlling terminal. Voice is via [Piper TTS](https://github.com/rhasspy/piper). The workflow editor uses [Drawflow](https://github.com/jerosoler/Drawflow).

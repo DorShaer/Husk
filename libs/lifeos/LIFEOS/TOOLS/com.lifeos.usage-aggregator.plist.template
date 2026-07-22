@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.lifeos.usage-aggregator.plist.template — Source template. Install via:
+    bun ~/.claude/LIFEOS/TOOLS/InstallUsageAggregator.ts
+
+  The installer reads $HOME at install time, substitutes {{HOME}}/{{BUN}}/{{BUN_DIR}}
+  placeholders, writes the materialized plist to ~/Library/LaunchAgents/, and
+  bootstraps it with launchctl. This template stays clean of principal-specific
+  paths so it ships in the public LifeOS release.
+
+  Behavior:
+    Runs UsageAggregator.ts nightly at 03:30 (StartCalendarInterval).
+    Fires once at load (RunAtLoad true) to populate the durable store immediately.
+    Crash-loop rate-limited (ThrottleInterval 60s).
+    stdout/stderr captured to MEMORY/STATE/com.lifeos.usage-aggregator.log.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.lifeos.usage-aggregator</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{BUN}}</string>
+    <string>{{HOME}}/.claude/LIFEOS/TOOLS/UsageAggregator.ts</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/STATE/com.lifeos.usage-aggregator.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/.claude/LIFEOS/MEMORY/STATE/com.lifeos.usage-aggregator.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/.claude</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{BUN_DIR}}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>{{HOME}}</string>
+  </dict>
+</dict>
+</plist>

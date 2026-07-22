@@ -1,0 +1,107 @@
+# > 💰 SAMPLE TEMPLATE — Replace with your own data via /interview or by editing this file. Real Pulse Finance dashboards populate from here once you've run the Finances interview.
+#
+# Recurring obligations — bills, subscriptions, dues that hit on a known cadence.
+# Pulse reads this to surface upcoming charges in your daily brief and reconcile against statements.
+#
+# Schema (see schema.yaml for full definitions):
+#   vendor:    string  — payee name (use "Sample Vendor X" until populated)
+#   category:  string  — housing | utilities | insurance | subscription | loan | tax | other
+#   amount:    string  — dollar amount as "$X" or "$X,XXX" (placeholder until real)
+#   frequency: string  — monthly | quarterly | annual | semi-annual | weekly | one-time
+#   due_day:   number? — day of period (1-31 for monthly, 1-365 for annual)
+#   account:   string  — which account it bills (use "Sample Bank ...XXXX" form)
+#   autopay:   boolean — whether autopay is enabled
+#   notes:     string? — free text
+
+obligations:
+  - vendor: "Sample Landlord"
+    category: "housing"
+    amount: "$X,XXX"
+    frequency: "monthly"
+    due_day: 1
+    account: "Sample Bank Checking ...XXXX"
+    autopay: true
+    notes: "Sample notes — rent or mortgage payment"
+
+  - vendor: "Sample Utility (Electric)"
+    category: "utilities"
+    amount: "$X"
+    frequency: "monthly"
+    due_day: 15
+    account: "Sample Bank Checking ...XXXX"
+    autopay: true
+    notes: "Sample notes — varies seasonally"
+
+  - vendor: "Sample ISP"
+    category: "utilities"
+    amount: "$X"
+    frequency: "monthly"
+    due_day: 10
+    account: "Sample Card 1 ...XXXX"
+    autopay: true
+    notes: "Sample notes"
+
+  - vendor: "Sample Health Insurer"
+    category: "insurance"
+    amount: "$X"
+    frequency: "monthly"
+    due_day: 1
+    account: "Sample Bank Checking ...XXXX"
+    autopay: true
+    notes: "Sample notes — pre-tax via payroll if applicable"
+
+  - vendor: "Sample Auto Insurer"
+    category: "insurance"
+    amount: "$X"
+    frequency: "semi-annual"
+    due_day: null
+    account: "Sample Card 1 ...XXXX"
+    autopay: true
+    notes: "Sample notes — renews YYYY-MM-DD"
+
+  - vendor: "Sample SaaS Vendor 1"
+    category: "subscription"
+    amount: "$X"
+    frequency: "monthly"
+    due_day: 5
+    account: "Sample Card 1 ...XXXX"
+    autopay: true
+    notes: "Sample notes"
+
+  - vendor: "Sample SaaS Vendor 2"
+    category: "subscription"
+    amount: "$X"
+    frequency: "annual"
+    due_day: null
+    account: "Sample Card 1 ...XXXX"
+    autopay: true
+    notes: "Sample notes — renews YYYY-MM-DD"
+
+  - vendor: "Sample Streaming Service"
+    category: "subscription"
+    amount: "$X"
+    frequency: "monthly"
+    due_day: 20
+    account: "Sample Card 2 ...XXXX"
+    autopay: true
+    notes: "Sample notes"
+
+  - vendor: "Sample Auto Loan Servicer"
+    category: "loan"
+    amount: "$X"
+    frequency: "monthly"
+    due_day: 15
+    account: "Sample Bank Checking ...XXXX"
+    autopay: true
+    notes: "Sample notes — see ACCOUNTS.md for principal remaining"
+
+  - vendor: "Sample County Assessor"
+    category: "tax"
+    amount: "$X,XXX"
+    frequency: "annual"
+    due_day: null
+    account: "Sample Bank Checking ...XXXX"
+    autopay: false
+    notes: "Sample notes — property tax, due YYYY-MM-DD"
+
+# This is a sample template. Replace every placeholder with your own data before relying on Pulse Finance views.

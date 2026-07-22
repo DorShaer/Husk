@@ -1,0 +1,60 @@
+#!/usr/bin/env bun
+// Normalize env path vars Claude Code may inject unexpanded — literal $HOME/${HOME}
+// in LIFEOS_DIR/LIFEOS_CONFIG_DIR/PROJECTS_DIR resolves to a shadow dir (#1404 / PR #1451, author jbmml).
+for (const __k of ["LIFEOS_DIR", "LIFEOS_CONFIG_DIR", "PROJECTS_DIR"]) {
+  const __v = process.env[__k];
+  if (__v && /^\$\{?HOME\}?(\/|$)/.test(__v)) process.env[__k] = __v.replace(/^\$\{?HOME\}?/, process.env.HOME ?? "~");
+}
+
+/**
+ * @version 1.2.4
+ * LastResponseCache.hook.ts — Cache last response for RatingCapture bridge
+ *
+ * PURPOSE:
+ * Caches the last assistant response text to disk so RatingCapture
+ * (which fires on UserPromptSubmit) can access the previous response.
+ *
+ * TRIGGER: Stop
+ *
+ * NEEDS TRANSCRIPT: No (uses last_assistant_message from stdin, transcript fallback)
+ */
+
+import { readHookInput, parseTranscriptFromInput } from './lib/hook-io';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
+
+// Normalize env path vars that Claude Code injects without shell expansion (LifeOS#1404)
+for (const k of ["LIFEOS_DIR", "LIFEOS_CONFIG_DIR", "PROJECTS_DIR"]) {
+  const v = process.env[k];
+  if (v && /^\$\{?HOME\}?(\/|$)/.test(v)) process.env[k] = v.replace(/^\$\{?HOME\}?/, process.env.HOME ?? "~");
+}
+
+
+async function main() {
+  const input = await readHookInput();
+  if (!input) { process.exit(0); }
+
+  // Prefer last_assistant_message from stdin (v2.1.47+), fall back to transcript parse
+  let lastResponse = input.last_assistant_message;
+  if (!lastResponse) {
+    const parsed = await parseTranscriptFromInput(input);
+    lastResponse = parsed.lastMessage;
+  }
+
+  if (lastResponse) {
+    try {
+      const paiDir = process.env.LIFEOS_DIR || join(process.env.HOME!, '.claude', 'LIFEOS');
+      const cachePath = join(paiDir, 'MEMORY', 'STATE', 'last-response.txt');
+      writeFileSync(cachePath, lastResponse.slice(0, 2000), 'utf-8');
+    } catch (err) {
+      console.error('[LastResponseCache] Failed to write:', err);
+    }
+  }
+
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error('[LastResponseCache] Fatal:', err);
+  process.exit(0);
+});

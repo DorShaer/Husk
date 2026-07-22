@@ -1,0 +1,14 @@
+{
+  "name": "token-xray",
+  "version": "1.0.0",
+  "description": "Reverse-engineer local Claude Code logs for token / time / cost breakdown",
+  "type": "module",
+  "private": true,
+  "main": "TokenXray.ts",
+  "scripts": {
+    "start": "bun TokenXray.ts"
+  },
+  "dependencies": {
+    "js-tiktoken": "^1.0.10"
+  }
+}

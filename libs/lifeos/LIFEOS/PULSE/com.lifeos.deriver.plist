@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lifeos.deriver</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BUN_PATH__</string>
+        <string>run</string>
+        <string>__HOME__/.claude/LIFEOS/TOOLS/LearningPatternSynthesis.ts</string>
+        <string>--hypothesize</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/.claude</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:__HOME__/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.claude/LIFEOS/MEMORY/OBSERVABILITY/deriver.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.claude/LIFEOS/MEMORY/OBSERVABILITY/deriver.log</string>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

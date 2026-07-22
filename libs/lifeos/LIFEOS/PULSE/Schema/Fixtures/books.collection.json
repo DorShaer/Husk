@@ -1,0 +1,42 @@
+{
+  "kind": "collection",
+  "title": "Books",
+  "category": "taste",
+  "description": "What I'm reading and what landed.",
+  "items": [
+    {
+      "name": "Meditations",
+      "creator": "Marcus Aurelius",
+      "rating": 10,
+      "notes": "stoic operating system",
+      "private": false
+    },
+    {
+      "name": "Antifragile",
+      "creator": "Nassim Taleb",
+      "rating": 9,
+      "notes": "systems that gain from disorder",
+      "private": false
+    },
+    {
+      "name": "Deep Work",
+      "creator": "Cal Newport",
+      "rating": 8,
+      "private": false
+    }
+  ],
+  "meta": {
+    "schemaVersion": "1.0.0",
+    "pageId": "books",
+    "lastBuildAt": "2026-05-03T01:00:00.000Z",
+    "sourceHashes": {
+      "LIFEOS/USER/Books.md": "abc123"
+    },
+    "adapterVersion": "books-v1",
+    "model": "claude-sonnet-4-6",
+    "costUSD": 0.012,
+    "latencyMs": 4250,
+    "provenance": "customized",
+    "warnings": []
+  }
+}

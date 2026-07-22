@@ -28,7 +28,7 @@ src/main.js          electron main process (IPC, PTY, agent control)
 src/preload.js       contextBridge surface
 src/lib/             pure helpers (shell-quote, path-confine, pty-spawn, workflow-graph, mcp/)
 src/renderer/        UI (single-page Electron view + xterm.js)
-libs/pai/            bundled PAI framework (third-party)
+libs/lifeos/         bundled LifeOS framework (third-party)
 installer/           OS install assets, default prompts, verify.sh / verify.ps1
 test/unit/           node:test unit tests against src/lib/
 test/e2e/            Playwright smoke (real Electron boot)

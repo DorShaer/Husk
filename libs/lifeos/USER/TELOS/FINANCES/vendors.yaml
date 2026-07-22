@@ -1,0 +1,143 @@
+# > 💰 SAMPLE TEMPLATE — Replace with your own data via /interview or by editing this file. Real Pulse Finance dashboards populate from here once you've run the Finances interview.
+#
+# Known vendors — every entity that sends or receives money from you.
+# Pulse uses this to classify statement line items, attach categories to obligations,
+# and recognize new vs. known counterparties.
+#
+# Schema (see schema.yaml for full definitions):
+#   name:     string  — vendor display name (use "Sample Vendor X" until populated)
+#   purpose:  string  — short description of what they bill for or pay you for
+#   category: string  — housing | utilities | insurance | subscription | loan | tax |
+#                       income | grocery | dining | travel | software | health | other
+#   direction: string — outbound (you pay them) | inbound (they pay you) | both
+#   match:    list    — substrings to match against statement descriptions
+#   notes:    string? — free text
+
+vendors:
+  - name: "Sample Employer Inc."
+    purpose: "Sample purpose — primary W-2 employer"
+    category: "income"
+    direction: "inbound"
+    match: ["SAMPLE EMPLOYER", "SAMPLE EMP DD"]
+    notes: "Sample notes — semi-monthly direct deposit"
+
+  - name: "Sample Client LLC"
+    purpose: "Sample purpose — 1099 consulting client"
+    category: "income"
+    direction: "inbound"
+    match: ["SAMPLE CLIENT", "SAMPLE LLC ACH"]
+    notes: "Sample notes — project-based"
+
+  - name: "Sample Landlord"
+    purpose: "Sample purpose — rent or mortgage servicer"
+    category: "housing"
+    direction: "outbound"
+    match: ["SAMPLE LANDLORD", "SAMPLE PROPERTY MGMT"]
+    notes: "Sample notes"
+
+  - name: "Sample Bank Mortgage"
+    purpose: "Sample purpose — primary mortgage servicer"
+    category: "housing"
+    direction: "outbound"
+    match: ["SAMPLE BANK MTG", "SAMPLE MORTGAGE"]
+    notes: "Sample notes"
+
+  - name: "Sample Utility (Electric)"
+    purpose: "Sample purpose — electricity"
+    category: "utilities"
+    direction: "outbound"
+    match: ["SAMPLE ELECTRIC", "SAMPLE PWR"]
+    notes: "Sample notes"
+
+  - name: "Sample Utility (Water)"
+    purpose: "Sample purpose — water and sewer"
+    category: "utilities"
+    direction: "outbound"
+    match: ["SAMPLE WATER"]
+    notes: "Sample notes"
+
+  - name: "Sample ISP"
+    purpose: "Sample purpose — home internet"
+    category: "utilities"
+    direction: "outbound"
+    match: ["SAMPLE ISP", "SAMPLE INTERNET"]
+    notes: "Sample notes"
+
+  - name: "Sample Health Insurer"
+    purpose: "Sample purpose — health insurance premium"
+    category: "insurance"
+    direction: "outbound"
+    match: ["SAMPLE HEALTH", "SAMPLE INS"]
+    notes: "Sample notes"
+
+  - name: "Sample Auto Insurer"
+    purpose: "Sample purpose — auto insurance"
+    category: "insurance"
+    direction: "outbound"
+    match: ["SAMPLE AUTO INS"]
+    notes: "Sample notes"
+
+  - name: "Sample SaaS Vendor 1"
+    purpose: "Sample purpose — productivity software"
+    category: "software"
+    direction: "outbound"
+    match: ["SAMPLE SAAS 1", "SAMPLE SUB 1"]
+    notes: "Sample notes"
+
+  - name: "Sample SaaS Vendor 2"
+    purpose: "Sample purpose — design / collaboration software"
+    category: "software"
+    direction: "outbound"
+    match: ["SAMPLE SAAS 2"]
+    notes: "Sample notes"
+
+  - name: "Sample AI Vendor"
+    purpose: "Sample purpose — AI tools subscription"
+    category: "software"
+    direction: "outbound"
+    match: ["SAMPLE AI", "SAMPLE LLM"]
+    notes: "Sample notes"
+
+  - name: "Sample Cloud Provider"
+    purpose: "Sample purpose — cloud hosting and infrastructure"
+    category: "software"
+    direction: "outbound"
+    match: ["SAMPLE CLOUD"]
+    notes: "Sample notes"
+
+  - name: "Sample Streaming Service"
+    purpose: "Sample purpose — entertainment streaming"
+    category: "subscription"
+    direction: "outbound"
+    match: ["SAMPLE STREAM"]
+    notes: "Sample notes"
+
+  - name: "Sample Grocery"
+    purpose: "Sample purpose — primary grocery store"
+    category: "grocery"
+    direction: "outbound"
+    match: ["SAMPLE GROCERY", "SAMPLE MARKET"]
+    notes: "Sample notes"
+
+  - name: "Sample Brokerage"
+    purpose: "Sample purpose — investment custodian"
+    category: "other"
+    direction: "both"
+    match: ["SAMPLE BROKERAGE"]
+    notes: "Sample notes — outbound transfers in, inbound dividends out"
+
+  - name: "Sample CPA"
+    purpose: "Sample purpose — tax preparation"
+    category: "other"
+    direction: "outbound"
+    match: ["SAMPLE CPA", "SAMPLE TAX PREP"]
+    notes: "Sample notes — annual fee"
+
+  - name: "Sample County Assessor"
+    purpose: "Sample purpose — property tax authority"
+    category: "tax"
+    direction: "outbound"
+    match: ["SAMPLE COUNTY", "PROP TAX"]
+    notes: "Sample notes"
+
+# This is a sample template. Replace every placeholder with your own data before relying on Pulse Finance views.

@@ -6508,8 +6508,8 @@ $('#pref-recap').addEventListener('change', async (e) => {
 $('#pref-pai') && $('#pref-pai').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ paiEnabled: e.target.checked });
   const msg = cfg.paiEnabled
-    ? 'PAI enabled · restart Husk to bootstrap, restart agent to load it'
-    : 'PAI disabled · restart agent to drop the PAI prompt; existing ~/.claude/ files left in place';
+    ? 'LifeOS enabled · restart Husk to bootstrap, restart agent to load it'
+    : 'LifeOS disabled · restart agent to drop the prompt; existing ~/.claude/ files left in place';
   toast(msg, 'success');
 });
 
@@ -8196,11 +8196,13 @@ function inlineMd(s) {
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
 
-// Drop PAI persona ceremony that leaks into workflow step output.
+// Drop framework persona ceremony that leaks into workflow step output. Both
+// banner vocabularies are matched: an install carried over from the older
+// layout still emits the old one.
 function stripPaiNoise(text) {
   return String(text || '')
     .split('\n')
-    .filter((ln) => !/^[═=]{3,}.*PAI/.test(ln.trim()))
+    .filter((ln) => !/^[═=]{3,}.*(PAI|LifeOS)/.test(ln.trim()))
     .filter((ln) => !/Executing using PAI native mode/.test(ln))
     .join('\n')
     .trim();

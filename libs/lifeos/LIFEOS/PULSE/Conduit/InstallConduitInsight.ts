@@ -1,0 +1,106 @@
+#!/usr/bin/env bun
+/**
+ * Conduit INSIGHT launchd installer. Registers `com.lifeos.conduit.insight` to run
+ * `BuildInsight.ts` HOURLY — the cheap-inference content-type read. Separate from the
+ * 120s capture job (`com.lifeos.conduit`) on purpose: a slow/failed hourly inference
+ * never stalls capture, and the two cadences are tuned independently. Mirrors
+ * InstallConduit.ts exactly.
+ *
+ *   bun InstallConduitInsight.ts             install + load (runs hourly)
+ *   bun InstallConduitInsight.ts --uninstall unload + remove
+ *   bun InstallConduitInsight.ts --status    show launchd state
+ */
+import { execFileSync } from "node:child_process"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { DATA_ROOT } from "./paths.ts"
+
+const LABEL = "com.lifeos.conduit.insight"
+const PLIST = join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`)
+const BUILD_INSIGHT = join(import.meta.dir, "BuildInsight.ts")
+const LOG_DIR = join(DATA_ROOT, "logs")
+const BUN = process.execPath
+const INTERVAL_SEC = 3600 // hourly
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+/**
+ * launchd gives jobs a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin) that does NOT
+ * include where `claude` lives (~/.local/bin) or homebrew — so the inference call
+ * would `spawn ENOENT` and fall back forever. Bake the INSTALLER's PATH (which has
+ * claude on it) into the plist. Portable: no hardcoded home path in system code — it
+ * uses whatever PATH the person running the installer had.
+ */
+function launchdPath(): string {
+  const base = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+  const current = (process.env.PATH ?? "").split(":").filter(Boolean)
+  return [...new Set([...current, ...base])].join(":")
+}
+
+function plistBody(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${escapeXml(BUN)}</string>
+    <string>${escapeXml(BUILD_INSIGHT)}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>${escapeXml(launchdPath())}</string>
+  </dict>
+  <key>StartInterval</key><integer>${INTERVAL_SEC}</integer>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>${escapeXml(join(LOG_DIR, "conduit-insight.out.log"))}</string>
+  <key>StandardErrorPath</key><string>${escapeXml(join(LOG_DIR, "conduit-insight.err.log"))}</string>
+</dict>
+</plist>
+`
+}
+
+function install(): void {
+  mkdirSync(LOG_DIR, { recursive: true })
+  writeFileSync(PLIST, plistBody())
+  try {
+    execFileSync("launchctl", ["unload", PLIST], { stdio: "ignore" })
+  } catch {
+    /* not loaded yet */
+  }
+  execFileSync("launchctl", ["load", PLIST], { stdio: "inherit" })
+  console.log(`Installed ${LABEL} → runs every ${INTERVAL_SEC}s (hourly)`)
+  console.log(`  plist: ${PLIST}`)
+  console.log(`  logs:  ${LOG_DIR}`)
+}
+
+function uninstall(): void {
+  try {
+    execFileSync("launchctl", ["unload", PLIST], { stdio: "ignore" })
+  } catch {
+    /* ignore */
+  }
+  if (existsSync(PLIST)) rmSync(PLIST)
+  console.log(`Uninstalled ${LABEL}`)
+}
+
+function status(): void {
+  try {
+    const out = execFileSync("launchctl", ["list"], { encoding: "utf8" })
+    const line = out.split("\n").find((l) => l.includes(LABEL))
+    console.log(line ? `loaded: ${line.trim()}` : `${LABEL} not loaded`)
+  } catch {
+    console.log("launchctl unavailable")
+  }
+}
+
+const arg = process.argv[2]
+if (arg === "--uninstall") uninstall()
+else if (arg === "--status") status()
+else install()

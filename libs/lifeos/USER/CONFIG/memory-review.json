@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "turn_threshold": 8,
+  "min_minutes_between": 30,
+  "idle_threshold": 2,
+  "confidence_threshold": 0.70,
+  "notes": "Cadence for the autonomic memory reviewer: it considers writing durable memory only after >= turn_threshold turns, >= min_minutes_between minutes since the last run, and >= idle_threshold idle turns. Tier-C proposals auto-apply at >= confidence_threshold. Conservative defaults; tune after use."
+}

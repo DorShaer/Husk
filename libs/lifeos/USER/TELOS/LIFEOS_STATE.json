@@ -1,0 +1,12 @@
+{
+  "dimensions": {
+    "health":         { "pct": 0, "tbd_count": 3, "source_file": "IDEAL_STATE/HEALTH.md",         "last_updated": "2026-01-01T00:00:00Z" },
+    "money":          { "pct": 0, "tbd_count": 3, "source_file": "IDEAL_STATE/MONEY.md",          "last_updated": "2026-01-01T00:00:00Z" },
+    "freedom":        { "pct": 0, "tbd_count": 3, "source_file": "IDEAL_STATE/FREEDOM.md",        "last_updated": "2026-01-01T00:00:00Z" },
+    "creative":       { "pct": 0, "tbd_count": 3, "source_file": "IDEAL_STATE/CREATIVE.md",       "last_updated": "2026-01-01T00:00:00Z" },
+    "relationships":  { "pct": 0, "tbd_count": 3, "source_file": "IDEAL_STATE/RELATIONSHIPS.md",  "last_updated": "2026-01-01T00:00:00Z" },
+    "rhythms":        { "pct": 0, "tbd_count": 3, "source_file": "IDEAL_STATE/RHYTHMS.md",        "last_updated": "2026-01-01T00:00:00Z" },
+    "infrastructure": { "pct": 0, "tbd_count": 3, "source_file": "IDEAL_STATE/INFRASTRUCTURE.md", "last_updated": "2026-01-01T00:00:00Z" }
+  },
+  "generated_at": "2026-01-01T00:00:00Z"
+}

@@ -34,7 +34,7 @@ husk/
 │       ├── assets/            App-time assets (logo)
 │       └── vendor/            Bundled xterm.js + addons
 ├── libs/
-│   └── pai/                   Bundled PAI framework, third-party
+│   └── lifeos/                Bundled LifeOS framework, third-party
 ├── installer/                 Source installers and packaging assets
 │   ├── install.sh             Source install, Linux / macOS
 │   ├── install.ps1            Source install, Windows

@@ -2,8 +2,29 @@
 useDefault = true
 
 [allowlist]
-description = "Ignore vendored PAI docs with placeholder/example tokens (current libs/pai path and the pre-move pai/ history path)"
+description = """
+Content we ship but do not author, where the default rules fire on ordinary \
+text rather than on anything secret.
+
+The vendored assistant framework, whose docs and fixtures carry placeholder \
+and example tokens. Three paths are listed because a history scan still \
+reaches the two this tree lived at before (libs/pai, and pai/ further back).
+
+Vendored browser bundles. Minified code trips the generic-api-key rule on \
+identifiers such as `t.FourKeyMap=t.TwoKeyMap`: high entropy, the word "Key", \
+no secret. CodeQL already skips these paths as third-party for the same reason.
+
+The generated apt index published to the gh-pages branch. Its `Depends:` lines \
+name real Debian packages, and `libsecret-1-0` is enough for the same rule to \
+fire.
+
+Scope is deliberately per-path rather than repo-wide: a scan of our own source \
+still runs with the full default rule set.
+"""
 paths = [
+  '''libs/lifeos/.*''',
   '''libs/pai/.*''',
   '''^pai/.*''',
+  '''^(src/renderer|web)/vendor/.*''',
+  '''^apt/dists/.*''',
 ]
