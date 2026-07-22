@@ -4603,6 +4603,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .ws-board, .ws-view {
   flex: 1; min-height: 0; overflow-y: auto;
   padding-right: 4px;
+  max-width: 1120px;
 }
 .project-card-pill {
   font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
@@ -8217,31 +8218,55 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .ws-sec.is-attn .ws-sec-head { color: var(--warn); }
 .ws-sec-count { color: var(--text-dim); font-weight: 500; }
-.ws-rows { display: flex; flex-direction: column; gap: 10px; }
-
-.ws-row {
-  display: flex; align-items: center; gap: 14px;
-  padding: 13px 16px;
-  background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg);
-  cursor: pointer; box-shadow: var(--hl-top);
-  transition: border-color var(--motion-base) var(--ease-out),
-              background var(--motion-base) var(--ease-out),
-              box-shadow var(--motion-base) var(--ease-out);
+.ws-table {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--hl-top);
+  overflow: hidden;
 }
-.ws-row:hover { border-color: var(--line-3); background: var(--bg-2); box-shadow: var(--elev-2); }
-.ws-row.is-active { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2)); }
-.ws-row.is-attn { border-color: color-mix(in srgb, var(--warn) 40%, var(--line-2)); }
-.ws-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.ws-row-title { font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; min-width: 0; }
-.ws-row-path {
+.ws-sec.is-attn .ws-table { border-color: color-mix(in srgb, var(--warn) 30%, var(--line)); }
+
+/* Column template shared by every row in a table. */
+.ws-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(120px, 1fr) minmax(0, 175px) minmax(0, 190px) 74px max-content;
+  grid-template-areas: "name path git state time act";
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.ws-row + .ws-row { border-top: 1px solid var(--line); }
+.ws-row:hover, .ws-row:focus-visible { background: var(--bg-2); outline: none; }
+.ws-col-name { grid-area: name; display: flex; align-items: center; gap: 9px; min-width: 0; }
+.ws-col-name .tv-dot { flex: 0 0 auto; }
+.ws-row-title {
+  font-weight: 600; font-size: 13.5px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-col-path {
+  grid-area: path;
   font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ws-row-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.ws-row-time { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
-.ws-row-actions { display: flex; align-items: center; gap: 8px; }
+.ws-col-git { grid-area: git; min-width: 0; }
+.ws-col-state { grid-area: state; display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.ws-col-time { grid-area: time; font-size: 11.5px; color: var(--text-dim); text-align: right; white-space: nowrap; }
+.ws-col-actions { grid-area: act; display: flex; align-items: center; gap: 6px; }
+.ws-col-actions .ghost-btn { padding: 4px 12px; font-size: 12px; }
 .ws-row .card-delete { position: static; opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
 .ws-row:hover .card-delete, .ws-row:focus-within .card-delete { opacity: 1; }
+.ws-stat-txt { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1020px) {
+  .ws-row {
+    grid-template-columns: minmax(0, 1fr) auto max-content;
+    grid-template-areas: "name time act" "path path path" "git state state";
+    row-gap: 5px;
+  }
+  .ws-col-git:empty, .ws-col-state:empty { display: none; }
+}
 
 /* Status chips: one visual system on rows, the workspace header, and details. */
 .ws-stat {
@@ -8258,7 +8283,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-stat.is-attn { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line-2)); background: color-mix(in srgb, var(--accent) 8%, var(--bg-2)); }
 .ws-ab { color: var(--text-3); }
 
-/* Quiet zone: compact chips, full rows would give dormant folders too much room. */
+/* Quiet zone renders as compact chips. */
 .ws-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .ws-chip {
   display: inline-flex; align-items: center; gap: 8px;

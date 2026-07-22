@@ -2002,7 +2002,19 @@ async function renderProjects() {
       projectGroups = st.groups || null;
       paintProjectsSurface();
     }
-  } catch (_) {}
+  } catch (err) {
+    // Without derived state the board still works, minus git and run signal.
+    // Log it: the usual cause is a main process older than the renderer.
+    console.warn('[projects] derived state unavailable:', err && err.message);
+  }
+}
+
+// Home-relative display form of a project path. The full path stays in the
+// title attribute.
+function wsShortPath(p) {
+  const s = String(p || '');
+  const h = String(huskHome || '');
+  return h && h !== '~' && s.startsWith(h) ? '~' + s.slice(h.length) : s;
 }
 
 function fmtRelTime(iso) {
@@ -2047,15 +2059,17 @@ function paintProjectsSurface() {
 const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
 const WS_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
 
-// Status chips for one project, shared by board rows and the workspace header.
-function wsStatChips(p) {
+// Git chip for one project, shared by board rows and the workspace header.
+function wsBranchChip(st) {
+  if (!st.branch) return '';
+  const ab = `${st.ahead ? ` <span class="ws-ab" title="commits ahead of upstream">&uarr;${Number(st.ahead)}</span>` : ''}${st.behind ? ` <span class="ws-ab" title="commits behind upstream">&darr;${Number(st.behind)}</span>` : ''}`;
+  return `<span class="ws-stat" title="git branch">${WS_BRANCH_SVG}<span class="ws-stat-txt">${escapeHtml(st.branch)}</span>${ab}</span>`;
+}
+
+// Working-state chips (dirty, conflicts, runs to review, missing folder).
+function wsWorkChips(p) {
   const st = wsStateOf(p.id);
   const chips = [];
-  if (st.live) chips.push('<span class="ws-stat is-live"><span class="tv-dot"></span>agent live</span>');
-  if (st.branch) {
-    const ab = `${st.ahead ? ` <span class="ws-ab" title="commits ahead of upstream">&uarr;${Number(st.ahead)}</span>` : ''}${st.behind ? ` <span class="ws-ab" title="commits behind upstream">&darr;${Number(st.behind)}</span>` : ''}`;
-    chips.push(`<span class="ws-stat" title="git branch">${WS_BRANCH_SVG}${escapeHtml(st.branch)}${ab}</span>`);
-  }
   if (st.conflicts) chips.push(`<span class="ws-stat is-warn">${Number(st.conflicts)} conflicted</span>`);
   else if (st.dirty) chips.push(`<span class="ws-stat is-dirty">${Number(st.dirty)} uncommitted</span>`);
   if (st.retainedCount) chips.push(`<span class="ws-stat is-attn">${Number(st.retainedCount)} to review</span>`);
@@ -2063,17 +2077,28 @@ function wsStatChips(p) {
   return chips.join('');
 }
 
+// The full chip set for the workspace header, where there is room to spell
+// liveness out; board rows show it as a dot next to the name instead.
+function wsStatChips(p) {
+  const st = wsStateOf(p.id);
+  const live = st.live ? '<span class="ws-stat is-live"><span class="tv-dot"></span>agent live</span>' : '';
+  return live + wsBranchChip(st) + wsWorkChips(p);
+}
+
+// One table row. The full path lives in the tooltip; the cell shows the
+// home-relative form.
 function wsRowHtml(p, attn) {
+  const st = wsStateOf(p.id);
   const isActive = p.id === activeProjectId;
   return `
     <div class="ws-row${isActive ? ' is-active' : ''}${attn ? ' is-attn' : ''}" data-id="${escapeHtml(p.id)}" tabindex="0" role="button" aria-label="Open workspace ${escapeHtml(p.name)}">
-      <div class="ws-row-main">
-        <div class="ws-row-title">${escapeHtml(p.name)}${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
-        <div class="ws-row-path" title="${escapeHtml(p.path)}">${escapeHtml(p.path)}</div>
-      </div>
-      <div class="ws-row-chips">${wsStatChips(p)}<span class="ws-row-time">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</span></div>
-      <div class="ws-row-actions">
-        <button class="card-cta ws-launch" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this folder' : 'Launch the agent in this folder'}">${isActive ? 'Reopen' : 'Launch'}<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+      <div class="ws-col-name">${st.live ? '<span class="tv-dot" title="agent live"></span>' : ''}<span class="ws-row-title">${escapeHtml(p.name)}</span>${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
+      <div class="ws-col-path" title="${escapeHtml(p.path)}">${escapeHtml(wsShortPath(p.path))}</div>
+      <div class="ws-col-git">${wsBranchChip(st)}</div>
+      <div class="ws-col-state">${wsWorkChips(p)}</div>
+      <div class="ws-col-time">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
+      <div class="ws-col-actions">
+        <button class="ghost-btn ws-launch" data-id="${escapeHtml(p.id)}" title="${isActive ? 'Restart the agent in this folder' : 'Launch the agent in this folder'}">${isActive ? 'Reopen' : 'Open'}</button>
         <button class="card-delete project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project" aria-label="Delete project">${WS_TRASH_SVG}</button>
       </div>
     </div>`;
@@ -2104,8 +2129,8 @@ function paintBoard(filter) {
   const act = pick(groups.active);
   const quiet = pick(groups.quiet);
   const secs = [];
-  if (needs.length) secs.push(`<div class="ws-sec is-attn"><div class="ws-sec-head">Needs you<span class="ws-sec-count">${needs.length}</span></div><div class="ws-rows">${needs.map((p) => wsRowHtml(p, true)).join('')}</div></div>`);
-  if (act.length) secs.push(`<div class="ws-sec"><div class="ws-sec-head">${projectGroups ? 'Active' : 'Projects'}<span class="ws-sec-count">${act.length}</span></div><div class="ws-rows">${act.map((p) => wsRowHtml(p, false)).join('')}</div></div>`);
+  if (needs.length) secs.push(`<div class="ws-sec is-attn"><div class="ws-sec-head">Needs you<span class="ws-sec-count">${needs.length}</span></div><div class="ws-table">${needs.map((p) => wsRowHtml(p, true)).join('')}</div></div>`);
+  if (act.length) secs.push(`<div class="ws-sec"><div class="ws-sec-head">${projectGroups ? 'Active' : 'Projects'}<span class="ws-sec-count">${act.length}</span></div><div class="ws-table">${act.map((p) => wsRowHtml(p, false)).join('')}</div></div>`);
   if (quiet.length) secs.push(`<div class="ws-sec"><div class="ws-sec-head">Quiet<span class="ws-sec-count">${quiet.length}</span></div><div class="ws-chips">${quiet.map(wsChipHtml).join('')}</div></div>`);
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   board.innerHTML = secs.join('') || `<div class="empty-state"><div class="es-msg">No projects match "${escapeHtml(q)}"</div></div>`;
