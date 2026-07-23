@@ -2075,9 +2075,11 @@ function paintProjectsSurface() {
   if (search) search.hidden = !!wsOpenId;
   const addBtn = $('#btn-projects-new');
   if (addBtn) addBtn.hidden = !!wsOpenId;
-  // Inside a workspace the page head belongs to the project: the list title
-  // and subtitle hide, and the breadcrumb inside the view carries "Projects".
-  const head = document.querySelector('.page-projects .page-head-left');
+  // Inside a workspace the breadcrumb and project hero replace the list header,
+  // so the empty page header must not reserve vertical space.
+  const page = document.querySelector('.page-projects');
+  if (page) page.classList.toggle('is-workspace-open', !!wsOpenId);
+  const head = document.querySelector('.page-projects .page-head');
   if (head) head.hidden = !!wsOpenId;
   wsSyncRailSuppression();
   if (wsOpenId) { board.hidden = true; ws.hidden = false; paintWorkspace(wsOpenId); return; }

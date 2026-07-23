@@ -94,13 +94,19 @@ test('clicking a row opens the workspace in place; launching stays a button', as
   await win.waitForSelector('#project-workspace:not([hidden])', { timeout: 10_000 });
   const info = await win.evaluate(() => ({
     onProjectsPage: !document.querySelector('.page-projects').hidden,
+    workspaceMode: document.querySelector('.page-projects').classList.contains('is-workspace-open'),
+    pageHeadHidden: document.querySelector('.page-projects .page-head').hidden,
     boardHidden: document.getElementById('projects-board').hidden,
+    workspaceOffset: Math.round(document.getElementById('project-workspace').getBoundingClientRect().top - document.querySelector('.page-projects').getBoundingClientRect().top),
     title: document.querySelector('#project-workspace .ws-title').textContent.trim(),
     hasLaunch: !!document.getElementById('ws-launch'),
     panelHeads: [...document.querySelectorAll('#project-workspace .ws-panel-head')].map((n) => n.textContent.trim()),
   }));
   // The view changed, the page and the agent did not.
   expect(info.onProjectsPage).toBe(true);
+  expect(info.workspaceMode).toBe(true);
+  expect(info.pageHeadHidden).toBe(true);
+  expect(info.workspaceOffset).toBeLessThan(32);
   expect(info.boardHidden).toBe(true);
   expect(info.title).toContain('Alpha');
   expect(info.hasLaunch).toBe(true);

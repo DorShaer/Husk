@@ -1019,6 +1019,7 @@ body[data-page="boot"] .page { display: none !important; }
 }
 .page-head-left { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .page-head-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.page-projects.is-workspace-open { padding-top: 18px; }
 /* Scrollable content region. The page itself is overflow:hidden, so the body
    takes the remaining height and scrolls its own content. */
 .page-body {
