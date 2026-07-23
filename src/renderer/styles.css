@@ -8338,21 +8338,17 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px;
 }
 .ws-title-actions { display: flex; align-items: center; gap: 8px; }
-.ws-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
+.ws-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 330px)); gap: 14px; margin-top: 18px; }
 .ws-tile {
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 55%, var(--bg-1)), var(--bg-1));
   border: 1px solid var(--line); border-radius: var(--radius-lg);
   padding: 14px 16px; box-shadow: var(--hl-top);
   display: flex; align-items: flex-start; gap: 12px; min-width: 0;
-  animation: ws-rise .28s var(--ease-out) backwards;
   transition: border-color var(--motion-base) var(--ease-out),
               transform var(--motion-base) var(--ease-out),
               box-shadow var(--motion-base) var(--ease-out);
 }
 .ws-tile:hover { border-color: var(--line-3); transform: translateY(-1px); box-shadow: var(--elev-2); }
-.ws-tile:nth-child(2) { animation-delay: .04s; }
-.ws-tile:nth-child(3) { animation-delay: .08s; }
-.ws-tile:nth-child(4) { animation-delay: .12s; }
 .ws-tile.is-attn { border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); }
 .ws-tile.is-attn .ws-tile-ic { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--bg-2)); }
 .ws-tile-ic {
@@ -8363,8 +8359,6 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .ws-tile-ic svg { width: 15px; height: 15px; }
 .ws-tile-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-@keyframes ws-rise { from { opacity: 0; transform: translateY(6px); } }
-@media (prefers-reduced-motion: reduce) { .ws-tile, .ws-panel { animation: none; } }
 .ws-tile-label {
   font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
   color: var(--text-dim);
@@ -8375,14 +8369,13 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-tile-sub.is-warn { color: var(--warn); }
 .ws-tile-sub.is-dirty { color: var(--amber); }
 .ws-tile-sub.is-live { color: var(--accent); }
-.ws-cols { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); gap: 14px; align-items: start; margin-top: 14px; }
+.ws-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 14px; align-items: start; margin-top: 14px; }
 .ws-col-l, .ws-col-r { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .ws-panel {
   position: relative; overflow: hidden;
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 40%, var(--bg-1)), var(--bg-1) 42px);
   border: 1px solid var(--line); border-radius: var(--radius-lg);
   padding: 16px 18px; box-shadow: var(--hl-top);
-  animation: ws-rise .3s var(--ease-out) backwards; animation-delay: .1s;
 }
 .ws-panel::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1.5px;
@@ -8464,8 +8457,6 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-crumb-sep { color: var(--text-dim); }
 .ws-crumb-here { color: var(--text-2); font-weight: 600; }
 
-/* The workspace column caps so tiles hold their labels close to their values. */
-.ws-view { max-width: 1280px; }
 
 /* Skeletons: fixed-size shimmer, so a value lands without a layout jump. */
 .ws-skel {
