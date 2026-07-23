@@ -4600,8 +4600,15 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 /* ─── Projects page ────────────────────────────────────────────────────── */
 
-.ws-board, .ws-view {
+.ws-board {
   flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  padding-right: 4px;
+}
+/* The workspace view is a fixed cockpit: crumbs, hero, and tiles stay put
+   while each column scrolls its own content when it overflows. */
+.ws-view {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
   padding-right: 4px;
 }
 .project-card-pill {
@@ -8299,7 +8306,10 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   }
   .ws-col-git:empty, .ws-col-state:empty { display: none; }
   .ws-tiles { grid-template-columns: repeat(2, 1fr); }
+  /* Stacked columns: the view scrolls as one so neither column is height-trapped. */
+  .ws-view { display: block; overflow-y: auto; overflow-x: hidden; }
   .ws-cols { grid-template-columns: 1fr; }
+  .ws-col-l, .ws-col-r { overflow: visible; padding-bottom: 0; }
 }
 
 /* Status chips: one visual system on rows, the workspace header, and details. */
@@ -8318,6 +8328,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-ab { color: var(--text-3); }
 
 /* ── Workspace view ── */
+.ws-view > .ws-crumbs, .ws-view > .ws-missing, .ws-view > .ws-hero { flex: 0 0 auto; }
 .ws-back { margin-bottom: 16px; }
 .ws-missing {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -8338,7 +8349,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px;
 }
 .ws-title-actions { display: flex; align-items: center; gap: 8px; }
-.ws-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 330px)); gap: 14px; margin-top: 18px; }
+.ws-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 18px; flex: 0 0 auto; }
 .ws-tile {
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 55%, var(--bg-1)), var(--bg-1));
   border: 1px solid var(--line); border-radius: var(--radius-lg);
@@ -8369,8 +8380,21 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-tile-sub.is-warn { color: var(--warn); }
 .ws-tile-sub.is-dirty { color: var(--amber); }
 .ws-tile-sub.is-live { color: var(--accent); }
-.ws-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 14px; align-items: start; margin-top: 14px; }
-.ws-col-l, .ws-col-r { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ws-cols {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 14px; align-items: stretch; margin-top: 14px;
+  flex: 1; min-height: 0;
+}
+.ws-col-l, .ws-col-r {
+  display: flex; flex-direction: column; gap: 14px; min-width: 0;
+  min-height: 0; overflow-y: auto; overflow-x: hidden;
+  padding-bottom: 4px;
+}
+.ws-col-l::-webkit-scrollbar, .ws-col-r::-webkit-scrollbar { width: 8px; }
+.ws-col-l::-webkit-scrollbar-thumb, .ws-col-r::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+.ws-col-l::-webkit-scrollbar-track, .ws-col-r::-webkit-scrollbar-track { background: transparent; }
+/* Panels keep their natural height inside a scrolling column. */
+.ws-col-l > .ws-panel, .ws-col-r > .ws-panel { flex: 0 0 auto; }
 .ws-panel {
   position: relative; overflow: hidden;
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 40%, var(--bg-1)), var(--bg-1) 42px);
