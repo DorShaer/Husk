@@ -1512,6 +1512,12 @@ function applyAccent(accent) {
 // does not re-record itself.
 let pageHistory = [];
 let pageForwardStack = [];
+// The palette badge shows the chord this platform actually uses.
+{
+  const pal = document.getElementById('btn-palette');
+  if (pal && !/mac/i.test(navigator.platform)) pal.textContent = 'Ctrl+K';
+}
+
 function setPage(name, opts = {}) {
   name = normalizePageName(name);
   if (!opts._nav && currentPage && currentPage !== name) {
@@ -1522,6 +1528,7 @@ function setPage(name, opts = {}) {
   currentPage = name;
   saveRouteState();
   applyPageShell(name);
+  wsSyncRailSuppression();
   if (name === 'chat') { renderChatsPanelSessions(); setTimeout(fitNow, 30); if (term) term.focus(); }
   if (name === 'agents') renderAgents();
   if (name === 'workflows') renderWorkflows();
@@ -2055,6 +2062,11 @@ function wsActivityMs(p) {
 // Board or workspace, one entry point so every caller repaints the right one.
 // The filter input scopes the board list, so it hides while a workspace is
 // open; Add project stays, it is global either way.
+function wsSyncRailSuppression() {
+  const rail = document.getElementById('rail-recent');
+  if (rail) rail.classList.toggle('ws-suppressed', currentPage === 'projects' && !!wsOpenId);
+}
+
 function paintProjectsSurface() {
   const board = $('#projects-board');
   const ws = $('#project-workspace');
@@ -2063,6 +2075,11 @@ function paintProjectsSurface() {
   if (search) search.hidden = !!wsOpenId;
   const addBtn = $('#btn-projects-new');
   if (addBtn) addBtn.hidden = !!wsOpenId;
+  // Inside a workspace the page head belongs to the project: the list title
+  // and subtitle hide, and the breadcrumb inside the view carries "Projects".
+  const head = document.querySelector('.page-projects .page-head-left');
+  if (head) head.hidden = !!wsOpenId;
+  wsSyncRailSuppression();
   if (wsOpenId) { board.hidden = true; ws.hidden = false; paintWorkspace(wsOpenId); return; }
   ws.hidden = true;
   board.hidden = false;
@@ -2097,8 +2114,8 @@ function wsRowHtml(p, attn) {
   const st = wsStateOf(p.id);
   const isActive = p.id === activeProjectId;
   const pending = !projectGroups;
-  const branchCell = wsBranchChip(st) || `<span class="ws-cell-dim">${pending ? '&hellip;' : '&middot;'}</span>`;
-  const statusCell = wsWorkChips(p) || `<span class="ws-cell-dim">${pending ? '&hellip;' : (st.isGit ? 'clean' : '&middot;')}</span>`;
+  const branchCell = wsBranchChip(st) || (pending ? '<span class="ws-skel ws-skel-cell"></span>' : '<span class="ws-cell-dim">&middot;</span>');
+  const statusCell = wsWorkChips(p) || (pending ? '<span class="ws-skel ws-skel-cell"></span>' : `<span class="ws-cell-dim">${st.isGit ? 'Clean' : '&middot;'}</span>`);
   return `
     <div class="ws-row${isActive ? ' is-active' : ''}${attn ? ' is-attn' : ''}" data-id="${escapeHtml(p.id)}" tabindex="0" role="button" aria-label="Open workspace ${escapeHtml(p.name)}">
       <div class="ws-col-name">${st.live ? '<span class="tv-dot" title="agent live"></span>' : ''}<span class="ws-row-title">${escapeHtml(p.name)}</span>${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
@@ -2192,45 +2209,48 @@ function paintWorkspace(id) {
   if (st.dirty && !st.conflicts) {
     loops.push(`<div class="ws-loop"><div class="ws-loop-text"><strong>${Number(st.dirty)} uncommitted change${st.dirty === 1 ? '' : 's'}${st.branch ? ` on ${escapeHtml(st.branch)}` : ''}</strong><span>${isActive ? 'review them on the Files page' : 'launch here to review them on the Files page'}</span></div>${isActive ? '<button class="ghost-btn" id="ws-open-files">Files</button>' : ''}</div>`);
   }
-  const loopsHtml = loops.length ? loops.join('') : '<div class="ws-allclear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg><span>Nothing waiting on you here.</span></div>';
+  const loopsPanel = loops.length ? `
+        <section class="ws-panel">
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>Open loops</div>
+          ${loops.join('')}
+        </section>` : '';
 
   const details = [
-    ['Path', `<span class="ws-mono">${escapeHtml(p.path)}</span>`],
-    ['Git', st.isGit ? `${escapeHtml(st.branch || 'repository')}` : (projectGroups ? 'not a git repository' : '&hellip;')],
+    ['Path', `<span class="ws-mono" title="${escapeHtml(p.path)}">${escapeHtml(wsShortPath(p.path))}</span>`],
+    ['Git', st.isGit ? `${escapeHtml(st.branch || 'repository')}` : (projectGroups ? 'Not a git repository' : '<span class="ws-skel"></span>')],
     ['Added', escapeHtml(fmtRelTime(p.addedAt))],
     ['Last launched', escapeHtml(fmtRelTime(p.lastUsedAt))],
-    ['Last session', `<span id="ws-detail-lastsession">${escapeHtml(fmtRelTime(st.lastSessionMs))}</span>`],
   ].map(([k, v]) => `<div class="ws-detail"><span class="ws-detail-k">${k}</span><span class="ws-detail-v">${v}</span></div>`).join('');
 
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   ws.innerHTML = `
-    <button class="ghost-btn ws-back" id="ws-back"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> All projects</button>
+    <nav class="ws-crumbs" aria-label="Breadcrumb"><button class="ws-crumb" id="ws-back">Projects</button><span class="ws-crumb-sep">/</span><span class="ws-crumb-here">${escapeHtml(p.name)}</span></nav>
     ${missing ? `<div class="ws-missing"><strong>This folder no longer exists.</strong> The path may be renamed, moved, or on a disconnected drive. Remove the project, or restore the folder and come back.<button class="ghost-btn" id="ws-remove-missing">Remove project</button></div>` : ''}
     <div class="ws-hero">
       <div class="ws-hero-main">
-        <div class="ws-title">${st.live ? '<span class="tv-dot" title="agent live"></span>' : ''}${escapeHtml(p.name)}${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
+        <div class="ws-title">${escapeHtml(p.name)}${isActive ? `<span class="project-card-pill${st.live ? ' pill-live' : ''}">${st.live ? 'Live' : 'Active'}</span>` : ''}</div>
         <div class="ws-hero-meta"><span class="ws-hero-path" title="${escapeHtml(p.path)}">${escapeHtml(wsShortPath(p.path))}</span>${st.branch ? wsBranchChip(st) : ''}</div>
       </div>
       <div class="ws-title-actions">
-        ${isActive ? '<button class="ghost-btn" id="ws-leave" title="Work with no project; the agent runs in your home folder">Switch to no project</button>' : ''}
+        ${isActive ? '<button class="ghost-btn" id="ws-leave" title="Close this project; the agent runs in your home folder">Exit project</button>' : ''}
         ${(missing || isActive) ? '' : `<button class="btn-primary" id="ws-launch">Launch<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
       </div>
     </div>
     <div class="ws-tiles">
-      <div class="ws-tile">
-        <span class="ws-tile-ic">${WS_BRANCH_SVG}</span>
+      <div class="ws-tile${st.conflicts ? ' is-attn' : ''}">
+        <span class="ws-tile-ic${(st.conflicts || st.dirty) ? ' is-warn-ic' : ''}">${WS_BRANCH_SVG}</span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Branch</div>
-          <div class="ws-tile-value ws-tile-ellipsis" title="${escapeHtml(st.branch || '')}">${st.branch ? escapeHtml(st.branch) : (projectGroups ? (st.isGit ? 'repository' : 'no repo') : '&hellip;')}</div>
-          <div class="ws-tile-sub${st.conflicts ? ' is-warn' : (st.dirty ? ' is-dirty' : '')}">${!projectGroups ? 'checking&hellip;' : (st.conflicts ? `${Number(st.conflicts)} conflicted` : (st.dirty ? `${Number(st.dirty)} uncommitted` : (st.isGit ? 'working tree clean' : 'plain folder')))}</div>
+          <div class="ws-tile-value ws-tile-ellipsis" title="${escapeHtml(st.branch || '')}">${!projectGroups ? '<span class="ws-skel ws-skel-value"></span>' : (st.branch ? escapeHtml(st.branch) : (st.isGit ? 'repository' : 'No repo'))}</div>
+          <div class="ws-tile-sub${st.conflicts ? ' is-warn' : (st.dirty ? ' is-dirty' : '')}">${!projectGroups ? 'Checking&hellip;' : (st.conflicts ? `${Number(st.conflicts)} conflicted` : (st.dirty ? `${Number(st.dirty)} uncommitted` : (st.isGit ? 'Working tree clean' : 'Plain folder')))}</div>
         </div>
       </div>
       <div class="ws-tile${loops.length ? ' is-attn' : ''}">
-        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></span>
+        <span class="ws-tile-ic${loops.length ? ' is-warn-ic' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Open loops</div>
           <div class="ws-tile-value">${loops.length}</div>
-          <div class="ws-tile-sub${loops.length ? ' is-warn' : ''}">${loops.length ? 'waiting on you' : 'all clear'}</div>
+          <div class="ws-tile-sub${loops.length ? ' is-warn' : ''}">${loops.length ? 'Waiting on you' : 'All clear'}</div>
         </div>
       </div>
       <div class="ws-tile">
@@ -2238,7 +2258,7 @@ function paintWorkspace(id) {
         <div class="ws-tile-body">
           <div class="ws-tile-label">Sessions</div>
           <div class="ws-tile-value" id="ws-tile-sessions">&hellip;</div>
-          <div class="ws-tile-sub" id="ws-tile-sessions-sub">in this folder</div>
+          <div class="ws-tile-sub">In this folder</div>
         </div>
       </div>
       <div class="ws-tile">
@@ -2246,16 +2266,11 @@ function paintWorkspace(id) {
         <div class="ws-tile-body">
           <div class="ws-tile-label">Last activity</div>
           <div class="ws-tile-value" id="ws-tile-activity">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
-          <div class="ws-tile-sub${st.live ? ' is-live' : ''}">${st.live ? 'agent live here' : 'agent idle'}</div>
         </div>
       </div>
     </div>
     <div class="ws-cols">
-      <div class="ws-col-l">
-        <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>Open loops</div>
-          ${loopsHtml}
-        </section>
+      <div class="ws-col-l">${loopsPanel}
         <section class="ws-panel">
           <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg>Recent sessions</div>
           <div id="ws-sessions-list"><div class="ws-empty">Loading&hellip;</div></div>
@@ -2276,7 +2291,7 @@ function paintWorkspace(id) {
         </section>
         <section class="ws-panel">
           <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>Danger zone</div>
-          <div class="ws-danger"><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button><span class="ws-danger-hint">removes it from Husk; the folder itself is not touched</span></div>
+          <div class="ws-danger"><span class="ws-danger-hint">Removes it from Husk; the folder itself is not touched.</span><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button></div>
         </section>
       </div>
     </div>`;
@@ -2319,7 +2334,9 @@ async function wsFillInspect(p) {
     const runs = ((hist && hist.runs) || []).slice(0, 5);
     if (!runs.length) {
       // eslint-disable-next-line no-unsanitized/property -- Static markup.
-      runsEl.innerHTML = '<div class="ws-empty">No autopilot runs in this folder yet.</div>';
+      runsEl.innerHTML = '<div class="ws-empty">No Autopilot runs in this folder yet.</div><button class="ghost-btn ws-cta" id="ws-cta-autopilot">Run Autopilot</button>';
+      const cta = $('#ws-cta-autopilot');
+      if (cta) cta.addEventListener('click', () => setPage('autopilot'));
     } else {
       // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
       runsEl.innerHTML = runs.map((r) => {
@@ -2350,7 +2367,9 @@ async function wsFillInspect(p) {
     const names = (ins && ins.ok && ins.mcpServers) || [];
     if (!names.length) {
       // eslint-disable-next-line no-unsanitized/property -- Static markup.
-      mcpEl.innerHTML = '<div class="ws-empty">None configured for this folder.</div>';
+      mcpEl.innerHTML = '<div class="ws-empty">None configured for this folder.</div><button class="ghost-btn ws-cta" id="ws-cta-mcp">Add server</button>';
+      const cta = $('#ws-cta-mcp');
+      if (cta) cta.addEventListener('click', () => setPage('mcp'));
     } else {
       // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
       mcpEl.innerHTML = names.map((n) => `<span class="ws-stat">${escapeHtml(n)}</span>`).join(' ');
@@ -2376,17 +2395,13 @@ async function wsFillSessions(p) {
   // The sessions tile shares this fetch. It counts every session in this
   // folder; the list below shows only the newest few.
   const tile = $('#ws-tile-sessions');
-  const tileSub = $('#ws-tile-sessions-sub');
   if (tile) tile.textContent = String(matches.length);
-  if (tileSub && matches.length) tileSub.textContent = `last ${fmtRelTime(matches[0].mtime || matches[0].startedMs)}`;
   if (matches.length) {
     const newestMs = matches[0].mtime || matches[0].startedMs || 0;
     if (newestMs > (wsActivityMs(p) || 0)) {
       const act = $('#ws-tile-activity');
       if (act) act.textContent = fmtRelTime(newestMs);
     }
-    const lastSess = $('#ws-detail-lastsession');
-    if (lastSess) lastSess.textContent = fmtRelTime(newestMs);
   }
   if (!rows.length) {
     // eslint-disable-next-line no-unsanitized/property -- Static markup.
@@ -2395,16 +2410,18 @@ async function wsFillSessions(p) {
   }
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   list.innerHTML = rows.map((s) => `
-    <div class="ws-sess">
+    <div class="ws-sess" role="button" tabindex="0" aria-label="Resume session: ${escapeHtml(s.title || 'untitled')}">
       <div class="ws-sess-main">
         <div class="ws-sess-title" title="${escapeHtml(s.title || '')}">${escapeHtml(s.title || '(untitled)')}</div>
         <div class="ws-sess-meta">${escapeHtml(fmtRelTime(s.mtime || s.startedMs))}</div>
       </div>
-      <button class="ws-link-btn ws-sess-resume">Resume<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+      <span class="ws-link-btn" aria-hidden="true">Resume<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
     </div>`).join('');
-  list.querySelectorAll('.ws-sess-resume').forEach((btn, i) => btn.addEventListener('click', () => {
-    resumeSessionInChat({ id: rows[i].id, project: p.path, owner: rows[i].owner });
-  }));
+  list.querySelectorAll('.ws-sess').forEach((row, i) => {
+    const go = () => resumeSessionInChat({ id: rows[i].id, project: p.path, owner: rows[i].owner });
+    row.addEventListener('click', go);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  });
 }
 
 async function openProject(id) {

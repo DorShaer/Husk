@@ -131,12 +131,17 @@ test('a non-git folder degrades to a plain workspace, not an error', async () =>
   const info = await win.evaluate(() => ({
     title: document.querySelector('#project-workspace .ws-title').textContent.trim(),
     details: document.querySelector('#project-workspace .ws-details').textContent,
-    loops: document.querySelector('#project-workspace .ws-panel').textContent,
-    sessions: document.getElementById('ws-sessions-list').textContent,
+    panelHeads: [...document.querySelectorAll('#project-workspace .ws-panel-head')].map((n) => n.textContent.trim()),
+    loopsTile: document.querySelectorAll('#project-workspace .ws-tile-value')[1].textContent.trim(),
+    crumb: document.querySelector('#project-workspace .ws-crumbs').textContent.replace(/\s+/g, ' ').trim(),
   }));
   expect(info.title).toContain('Plain');
-  expect(info.details).toContain('not a git repository');
-  expect(info.loops).toContain('Nothing waiting on you here');
+  expect(info.details).toContain('Not a git repository');
+  // A clean folder earns no loops panel; the tile already says all clear.
+  expect(info.panelHeads).not.toContain('Open loops');
+  expect(info.loopsTile).toBe('0');
+  expect(info.crumb).toContain('Projects');
+  expect(info.crumb).toContain('Plain');
   await app.close();
 });
 
