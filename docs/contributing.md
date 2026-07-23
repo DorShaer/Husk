@@ -112,19 +112,12 @@ Releases are tag-driven (`.github/workflows/release.yml`).
 
 ```bash
 # from main, after development has merged in
-git tag -a v0.5.0 -m "$(cat <<'EOF'
-## What's new
-
-- short bullet
-- another short bullet
-
-## Notes
-
-Anything else worth saying.
-EOF
-)"
-git push origin v0.5.0
+git tag -a vX.Y.Z --cleanup=verbatim -F /tmp/vX.Y.Z-notes.md
+git push origin vX.Y.Z
 ```
+
+The notes file starts with a one-line tag subject, a blank line, then the
+public release body. Keep the body user-facing and version-specific.
 
 The workflow then:
 
@@ -132,7 +125,7 @@ The workflow then:
 2. Each runner: `npm ci`, then `npm run dist` (electron-builder, `--publish never` so we control the publish step).
 3. Uploads platform artifacts as workflow artifacts.
 4. A final `release` job downloads everything, flattens into one folder, generates `SHA256SUMS`, and signs every artifact with `actions/attest-build-provenance`.
-5. Checks out the repo at the tag, reads the annotated tag's body with `git tag -l --format='%(contents:body)'`, writes it to `/tmp/release-notes.md`, and hands it to `softprops/action-gh-release@v2` as `body_path`. `generate_release_notes` is `false`.
+5. Checks out the repo at the tag, verifies the tag is annotated, reads the tag message into `/tmp/release-notes.md`, and hands it to `softprops/action-gh-release@v2` as `body_path`. `generate_release_notes` is `false`.
 
 The body that lands on the Releases page is exactly what you wrote in the `git tag -a` message. No auto-generated PR list, no electron-builder publish noise.
 

@@ -169,7 +169,7 @@ The on-disk shape (`mcpServers` plus the Husk-private `_huskMcpDisabled`) is ide
 - macOS: `dmg` and `zip` for both x64 and arm64
 - Windows: NSIS `.exe` and a portable `zip` for x64
 
-Artifact names follow `husk-v${version}-${os}-${arch}.${ext}` (configured under `build.{linux,mac,win}.artifactName` in `package.json`), so a release directory looks like `husk-v2.0.1-linux-x86_64.AppImage`, `husk-v2.0.1-mac-arm64.dmg`, `husk-v2.0.1-win-x64.exe`, etc.
+Artifact names follow `husk-v${version}-${os}-${arch}.${ext}` (configured under `build.{linux,mac,win}.artifactName` in `package.json`), so a release directory looks like `husk-v<version>-linux-x86_64.AppImage`, `husk-v<version>-mac-arm64.dmg`, `husk-v<version>-win-x64.exe`, etc.
 
 `libs/pai/` and `installer/` are shipped as `extraResources`, not inside the asar, so the main process can copy from `process.resourcesPath/pai/` and `process.resourcesPath/installer/prompts/` into `~/.claude/` and `~/.config/husk/prompts/` on first launch (`bootstrapPaiIfNeeded` and `bootstrapHuskPromptsIfNeeded` in `src/main.js`).
 

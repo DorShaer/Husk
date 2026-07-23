@@ -26,11 +26,12 @@ on:
       - 'scripts/install.ps1'
       - 'installer/index.html'
       - 'installer/husk-apt.gpg'
+      - 'docs/images/**'
       - '.github/workflows/apt-repo.yml'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to ingest (e.g. v2.8.7). Defaults to the latest release.'
+        description: 'Release tag to ingest (e.g. vX.Y.Z). Defaults to the latest release.'
         required: false
 
 permissions:
@@ -150,6 +151,8 @@ jobs:
 
           # installer/index.html is the source of truth for the landing page.
           cp installer/index.html site/index.html
+          mkdir -p site/docs/images
+          cp docs/images/*.png site/docs/images/
           touch site/.nojekyll
 
       - name: Publish to gh-pages

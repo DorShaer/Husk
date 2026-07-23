@@ -17,7 +17,7 @@ Husk wraps `claude`, `copilot`, `codex`, `aider`, or any other terminal-based AI
 
 <br />
 
-<img width="1280" height="720" alt="husk" src="https://github.com/user-attachments/assets/51d2e4f6-7cd8-4227-9287-7eee9a31176f">
+<img src="docs/images/husk-chat.png" alt="Husk chat workspace" width="900" />
 
 </div>
 
