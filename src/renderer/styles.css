@@ -8412,6 +8412,15 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   font-size: 11px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
   color: var(--text-3); margin-bottom: 12px;
 }
+.ws-panel-headbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 12px;
+}
+.ws-panel-headbar .ws-panel-head { margin-bottom: 0; min-width: 0; }
+.ws-panel-action-btn {
+  height: 24px; padding: 0 10px; flex: 0 0 auto;
+  font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none;
+}
 .ws-panel-head svg { width: 13px; height: 13px; color: var(--text-dim); }
 .ws-empty { color: var(--text-dim); font-size: 13px; }
 .ws-loop { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
