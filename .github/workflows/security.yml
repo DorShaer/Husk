@@ -108,9 +108,10 @@ jobs:
       - name: npm audit (high + critical, all deps)
         # Run against the full dependency graph including devDependencies
         # since the build chain (electron-builder, electron itself) ships
-        # binaries to end users. Local-only dev tools that do not touch
-        # the build can be excluded via per-advisory ignores when needed.
-        run: npm audit --audit-level=high
+        # binaries to end users. The gate fails on every high and critical
+        # advisory except the ones recorded in scripts/audit-gate.js, each
+        # with a reason and a review date.
+        run: node scripts/audit-gate.js
 
       - name: npm audit JSON report (full, prod + dev)
         if: always()
