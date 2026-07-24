@@ -2288,10 +2288,7 @@ function paintWorkspace(id) {
           <div id="ws-runs"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
         <section class="ws-panel">
-          <div class="ws-panel-headbar">
-            <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg>MCP servers in this folder</div>
-            <button class="ghost-btn ws-panel-action-btn" id="ws-cta-mcp">Add server</button>
-          </div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg>MCP servers in this folder</div>
           <div id="ws-mcp"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
         <section class="ws-panel">
@@ -2310,8 +2307,6 @@ function paintWorkspace(id) {
   if (review) review.addEventListener('click', () => setPage('autopilot'));
   const filesBtn = $('#ws-open-files');
   if (filesBtn) filesBtn.addEventListener('click', () => setPage('files'));
-  const mcpAdd = $('#ws-cta-mcp');
-  if (mcpAdd) mcpAdd.addEventListener('click', () => setPage('mcp'));
   const del = $('#ws-delete');
   if (del) del.addEventListener('click', () => deleteProject(p.id, p.name));
   const removeMissing = $('#ws-remove-missing');
@@ -2372,9 +2367,12 @@ async function wsFillInspect(p) {
   const mcpEl = $('#ws-mcp');
   if (mcpEl) {
     const names = (ins && ins.ok && ins.mcpServers) || [];
+    mcpEl.classList.toggle('is-empty', !names.length);
     if (!names.length) {
       // eslint-disable-next-line no-unsanitized/property -- Static markup.
-      mcpEl.innerHTML = '<div class="ws-empty">None configured for this folder.</div>';
+      mcpEl.innerHTML = '<div class="ws-empty">None configured for this folder.</div><button class="ghost-btn ws-cta" id="ws-cta-mcp">Add server</button>';
+      const cta = $('#ws-cta-mcp');
+      if (cta) cta.addEventListener('click', () => setPage('mcp'));
     } else {
       // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
       mcpEl.innerHTML = names.map((n) => `<span class="ws-stat">${escapeHtml(n)}</span>`).join(' ');
