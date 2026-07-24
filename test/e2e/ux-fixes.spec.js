@@ -369,11 +369,23 @@ test('adding a context file types its path and nothing else', async () => {
     setPage('chat'); // eslint-disable-line no-undef
     await startPty(); // eslint-disable-line no-undef
   });
-  // Wait for a live tab, then for the shell to put something on screen. Bytes
-  // written into a PTY whose shell has not started yet are simply dropped, so
-  // a fixed delay here turns into a timeout on a slow machine.
+  // Read the terminal through xterm's buffer rather than its DOM. The buffer
+  // fills as bytes are parsed; the rows only fill when the renderer paints,
+  // which a loaded machine can defer indefinitely.
+  await win.evaluate(() => {
+    window.__termText = () => { // eslint-disable-line no-undef
+      const b = term && term.buffer && term.buffer.active; // eslint-disable-line no-undef
+      if (!b) return '';
+      let s = '';
+      for (let i = 0; i < b.length; i++) s += (b.getLine(i)?.translateToString(true) || '') + '\n';
+      return s;
+    };
+  });
+  // Wait for a live tab, then for the shell to say something. Bytes written
+  // into a PTY whose shell has not started yet are simply dropped, so a fixed
+  // delay here turns into a timeout on a slow machine.
   await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size > 0 && !!term); // eslint-disable-line no-undef
-  await win.waitForFunction(() => (document.querySelector('#terminal .xterm-rows')?.innerText || '').trim().length > 0);
+  await win.waitForFunction(() => window.__termText().trim().length > 0);
   const dest = await win.evaluate(async (p) => {
     const r = await attachContextSource(p, 'cert.der'); // eslint-disable-line no-undef
     return r && r.dest ? r.dest : '';
@@ -384,12 +396,12 @@ test('adding a context file types its path and nothing else', async () => {
   // a path split across two rows is still the path that was typed.
   const flatten = (s) => String(s || '').replace(/\s+/g, '');
   await win.waitForFunction(
-    (d) => (document.querySelector('#terminal .xterm-rows')?.innerText || '').replace(/\s+/g, '').includes(d),
+    (d) => window.__termText().replace(/\s+/g, '').includes(d),
     flatten(dest)
   );
   const state = await win.evaluate(() => ({
     rail: document.querySelector('#rail-context-list')?.textContent || '',
-    terminal: document.querySelector('#terminal .xterm-rows')?.innerText || '',
+    terminal: window.__termText(),
   }));
   expect(state.rail).toContain('cert.der');
   // The path is the whole message: the user writes the request around it, and
