@@ -7444,7 +7444,7 @@ ipcMain.handle('sessions:list', () => {
       // out to `claude --print` for sentiment/context scoring, and the autopilot
       // and workflow orchestrators -- and every one of those leaves a transcript
       // in this same projects dir, each auto-titled differently, so one real
-      // conversation used to show up alongside a crowd of look-alike SDK runs.
+      // conversation sits among a crowd of look-alike SDK runs on disk.
       // A transcript with SDK turns and no human turn anywhere is such a
       // background run: skip it. If the head was inconclusive on a larger file,
       // scan the whole file first -- a real chat can open with a prepended SDK

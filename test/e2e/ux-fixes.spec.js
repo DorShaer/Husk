@@ -33,7 +33,7 @@ async function ready(app) {
   return win;
 }
 
-test('AI tool selector sits at the bottom, above Preferences (issue 7)', async () => {
+test('AI tool selector sits at the bottom, above Preferences', async () => {
   const app = await launch();
   const win = await ready(app);
   const order = await win.evaluate(() => {
@@ -55,7 +55,7 @@ test('AI tool selector sits at the bottom, above Preferences (issue 7)', async (
   await app.close();
 });
 
-test('rail stacks above the pages column so tooltips are not hidden (issue 6)', async () => {
+test('rail stacks above the pages column so tooltips are not hidden', async () => {
   const app = await launch();
   const win = await ready(app);
   const z = await win.evaluate(() => getComputedStyle(document.getElementById('rail')).zIndex);
@@ -63,7 +63,7 @@ test('rail stacks above the pages column so tooltips are not hidden (issue 6)', 
   await app.close();
 });
 
-test('autopilot wizard has an optional snapshot toggle and unlimited-cap hints (issues 2, 8)', async () => {
+test('autopilot wizard has an optional snapshot toggle and unlimited-cap hints', async () => {
   const app = await launch();
   const win = await ready(app);
   const info = await win.evaluate(() => {
@@ -119,7 +119,7 @@ test('orchestrator model picker uses provider catalog without overflowing', asyn
     cfg = {
       ...(cfg || {}),
       agentCommand: 'copilot',
-      modelRouting: { copilot: { cheap: 'DorShaer:~ +0 -0Session: 0 AIC usedYou must be logged in to select a model. Use /login to authenticate.Plan: no limit, 18 agentsGPT-5.5 1.1M Context', smart: 'claude-sonnet-5' } },
+      modelRouting: { copilot: { cheap: 'devuser:~ +0 -0Session: 0 AIC usedYou must be logged in to select a model. Use /login to authenticate.Plan: no limit, 18 agentsGPT-5.5 1.1M Context', smart: 'claude-sonnet-5' } },
     };
     orchCatalog = {
       loading: true,
@@ -331,7 +331,7 @@ test('appearance changes preview live and persist only on save', async () => {
   await app.close();
 });
 
-test('copy from the terminal context menu keeps focus in the terminal (issue 5)', async () => {
+test('copy from the terminal context menu keeps focus in the terminal', async () => {
   const app = await launch();
   const win = await ready(app);
   const focused = await win.evaluate(async () => {
@@ -395,7 +395,7 @@ test('adding a context file types its path and nothing else', async () => {
   await app.close();
 });
 
-test('the start wizard cannot be dismissed while a run is launching (issue 1)', async () => {
+test('the start wizard cannot be dismissed while a run is launching', async () => {
   const app = await launch();
   const win = await ready(app);
   const r = await win.evaluate(() => {
@@ -420,7 +420,7 @@ test('the start wizard cannot be dismissed while a run is launching (issue 1)', 
   await app.close();
 });
 
-test('a running autopilot session stays visible when revisiting the tab (issue 1)', async () => {
+test('a running autopilot session stays visible when revisiting the tab', async () => {
   const app = await launch();
   const win = await ready(app);
   const r = await win.evaluate(async () => {
@@ -584,7 +584,7 @@ test('Autopilot token source label does not flicker after partial accounting app
   await app.close();
 });
 
-test('window can shrink small enough to trigger responsive layout (issue 4)', async () => {
+test('window can shrink small enough to trigger responsive layout', async () => {
   const app = await launch();
   await ready(app);
   const min = await app.evaluate(async ({ BrowserWindow }) => {

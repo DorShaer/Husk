@@ -11169,9 +11169,9 @@ function renderTimeline() {
   const sig = String(autopilotTimeline.length);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
-  // The count belongs to this card, so it reports what this card renders. It
-  // used to be written by the run-log feed, which counts a different stream:
-  // a reviewed run showed a non-zero count above an empty timeline.
+  // The count belongs to this card, so it reports what this card renders. The
+  // run-log feed counts a different stream, and sourcing the number from there
+  // puts a non-zero count above an empty timeline on a reviewed run.
   const ec = $('#aut-page-event-count');
   if (ec) {
     const n = autopilotTimeline.length;

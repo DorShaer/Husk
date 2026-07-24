@@ -126,7 +126,7 @@ test('parseModelCatalog extracts Copilot table rows with Context column', () => 
 });
 
 test('parseModelCatalog ignores Copilot status-line model text', () => {
-  const out = 'DorShaer:~ +0 -0Session: 0 AIC usedPlan: no limit GPT-5.5 · Extra High · 1.1M context (0%)';
+  const out = 'devuser:~ +0 -0Session: 0 AIC usedPlan: no limit GPT-5.5 · Extra High · 1.1M context (0%)';
   assert.deepEqual(parseModelCatalog(out, 'copilot'), []);
   assert.equal(isCliStatusLine(out), true);
 });
@@ -137,7 +137,7 @@ test('parseModelCatalog prefers Copilot picker rows over status-line repeats', (
     GPT-5.5
     GPT-5 mini
     Search Search models...
-    DorShaer:~/repo Session: 0 AIC used Plan: no limit GPT-5.5 Extra High
+    devuser:~/repo Session: 0 AIC used Plan: no limit GPT-5.5 Extra High
   `;
   assert.deepEqual(parseModelCatalog(out, 'copilot'), [
     { value: 'gpt-5.5', label: 'GPT-5.5' },
@@ -221,7 +221,7 @@ test('uniqueModels keeps a base model when a mini variant is also present', () =
 });
 
 test('isModelValueUsable rejects CLI status/auth output', () => {
-  const bad = 'DorShaer:~ +0 -0Session: 0 AIC usedYou must be logged in to select a model. Use /login to authenticate.Plan: no limit, 18 agentsGPT-5.5 1.1M Context';
+  const bad = 'devuser:~ +0 -0Session: 0 AIC usedYou must be logged in to select a model. Use /login to authenticate.Plan: no limit, 18 agentsGPT-5.5 1.1M Context';
   assert.equal(isModelValueUsable(bad, 'copilot'), false);
   assert.equal(isModelValueUsable('gpt-5.5', 'copilot'), true);
   assert.equal(isModelValueUsable('claude-sonnet-5', 'copilot'), true);

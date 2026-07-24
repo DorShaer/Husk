@@ -323,7 +323,7 @@ test('argument validation: workspaceRoot must exist and be absolute', () => {
   assert.equal(r2.ok, false);
 });
 
-// ─── Adversarial review fixes ────────────────────────────────────────────
+// ─── Path safety under a hostile working tree ────────────────────────────
 
 test('SECURITY: writeFileSync does NOT follow a symlink-replaced file', () => {
   // Capture a regular file. Then between capture and restore, an
@@ -351,8 +351,7 @@ test('SECURITY: writeFileSync does NOT follow a symlink-replaced file', () => {
 });
 
 test('SECURITY: writeFileSync does NOT follow an ancestor symlink', () => {
-  // The full attack from the adversarial review: workspace/sub
-  // becomes a symlink to outside; manifest tries to write
+  // workspace/sub becomes a symlink to outside; manifest tries to write
   // sub/inner.txt. The write would land outside workspace without
   // the ancestor-chain validator.
   writeFile('sub/inner.txt', 'inner original\n');
@@ -410,9 +409,8 @@ test('SECURITY: manifest entries with non-hex sha values are refused', () => {
 });
 
 test('joinSafely tolerates a trailing path separator on base', () => {
-  // The bug from the adversarial review: base + path.sep would
-  // double up if base already ended in a separator. path.resolve
-  // strips trailing separators before the prefix check.
+  // base + path.sep doubles up when base already ends in a separator.
+  // path.resolve strips trailing separators before the prefix check.
   const base = '/tmp/foo' + path.sep;
   const ok = _internal.joinSafely(base, 'sub/file.js');
   assert.equal(ok, path.resolve('/tmp/foo/sub/file.js'));

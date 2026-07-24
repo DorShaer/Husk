@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-test('short window keeps the rail bottom and status footer visible (issue 4)', async () => {
+test('short window keeps the rail bottom and status footer visible', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });

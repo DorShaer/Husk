@@ -64,9 +64,9 @@ const CHEAP_RE = new RegExp(
   + '|inventory of|add (a )?(comment|docstring|jsdoc)|changelog', 'i');
 
 // The smallest possible task: put a file on disk with literal content. It is not
-// "maintenance" in the CHEAP_RE sense, so it used to fall through to the smart
-// tier and land on a frontier model, which is how "write hello123 into test.txt"
-// ends up costing dollars. The guards keep real engineering out: anything long,
+// "maintenance" in the CHEAP_RE sense, so without its own rule it falls through
+// to the smart tier and lands on a frontier model, which is how "write hello123
+// into test.txt" costs dollars. The guards keep real engineering out: anything long,
 // or naming work that needs judgement, stays on the smart tier, because routing
 // wrong toward cheap costs quality and that is the expensive mistake.
 const TRIVIAL_VERB_RE = /\b(create|creates|creating|make|makes|add|adds|write|writes|writing|wriute|put|touch|generate)\b/i;
