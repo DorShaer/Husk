@@ -1833,7 +1833,7 @@ async function refreshStatusline() {
         <div class="sp-row sp-clickable" data-open="files"><span class="sp-muted">Project ${spInfo('The active project directory. Click to open the Files page.')}</span><span class="sp-mono sp-accent" title="${escapeHtml(ws.cwd || '')}">${escapeHtml(ws.name)}</span></div>
         ${g.isRepo ? `
         <div class="sp-row"><span class="sp-muted">Branch ${spInfo('Current git branch, with commits ahead of / behind the upstream.')}</span><span class="sp-mono" title="${escapeHtml(branchLabel)}">${escapeHtml(branchLabel)}</span></div>
-        <div class="sp-row"><span class="sp-muted">Changes ${spInfo('Uncommitted changes in the working tree (staged, unstaged, and untracked).')}</span><span class="sp-mono ${g.dirty > 0 ? 'sp-accent' : 'sp-muted'}">${g.dirty > 0 ? escapeHtml(g.dirty) + (g.dirty === 1 ? ' file' : ' files') : 'clean'}</span></div>
+        <div class="sp-row"><span class="sp-muted">Uncommitted changes ${spInfo('Uncommitted changes in the working tree (staged, unstaged, and untracked).')}</span><span class="sp-mono ${g.dirty > 0 ? 'sp-accent' : 'sp-muted'}">${g.dirty > 0 ? escapeHtml(g.dirty) + (g.dirty === 1 ? ' file' : ' files') : 'clean'}</span></div>
         ` : `<div class="sp-row sp-tiny sp-muted">Not a git repository.</div>`}
       </div>
     </div>` : ''}
