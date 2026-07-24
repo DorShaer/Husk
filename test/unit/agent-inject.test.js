@@ -84,6 +84,7 @@ test('directives name the agent and ask for the speech-balloon line', () => {
   const d = buildGenericDirectives({ agentName: 'Ada', recap: true });
   assert.ok(d.includes('Ada'));
   assert.ok(d.includes('\u{1F5E3}\u{FE0F} Ada:'));
+  assert.ok(d.includes('~/.claude/MEMORY/CONTEXT/'));
 });
 
 test('recap=false omits the speech-balloon directive; recap=true includes it', () => {

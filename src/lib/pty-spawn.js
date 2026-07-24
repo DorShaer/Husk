@@ -137,4 +137,13 @@ function buildSpawnSpec(opts) {
   return { exe: '/bin/sh', argv: ['-c', cmdStr] };
 }
 
-module.exports = { resolveWindowsExe, buildSpawnSpec };
+function withCopilotContextDir({ agentExe, agentArgs, contextDir }) {
+  const args = Array.isArray(agentArgs) ? [...agentArgs] : [];
+  const base = path.basename(String(agentExe || '')).replace(/\.(exe|cmd|bat)$/i, '').toLowerCase();
+  if (base !== 'copilot' || !contextDir) return args;
+  const hasContextDir = args.some((a, i) => a === contextDir || a === `--add-dir=${contextDir}` || (args[i - 1] === '--add-dir' && a === contextDir));
+  if (!args.includes('--allow-all-paths') && !hasContextDir) args.push('--add-dir', contextDir);
+  return args;
+}
+
+module.exports = { resolveWindowsExe, buildSpawnSpec, withCopilotContextDir };

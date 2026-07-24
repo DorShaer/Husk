@@ -24,7 +24,7 @@ const CODE = [
   grab(/function readHead\(filePath, bytes\) \{[\s\S]*?\n\}/, 'readHead'),
   grab(/function geminiProjectRoot\(projectDir\) \{[\s\S]*?\n\}/, 'geminiProjectRoot'),
   grab(/function geminiFirstUserMessage\(fullPath\) \{[\s\S]*?\n\}/, 'geminiFirstUserMessage'),
-  grab(/function listGeminiSessions\(\) \{[\s\S]*?\n\}/, 'listGeminiSessions'),
+  grab(/function listGeminiSessions\(opts = \{\}\) \{[\s\S]*?\n\}/, 'listGeminiSessions'),
   grab(/function geminiResumeIndex\(sessionId, cwd\) \{[\s\S]*?\n\}/, 'geminiResumeIndex'),
 ].join('\n');
 

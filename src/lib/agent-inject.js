@@ -69,6 +69,7 @@ function buildGenericDirectives({ agentName, recap } = {}) {
   const name = cleanName(agentName);
   const lines = [
     `Your name in this session is ${name}. When asked your name or identity, answer as ${name}.`,
+    'When the user asks you to read an attached context file, look for that file by name in the session context directory at ~/.claude/MEMORY/CONTEXT/.',
   ];
   if (recap !== false) {
     lines.push(

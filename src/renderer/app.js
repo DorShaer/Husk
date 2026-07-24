@@ -371,6 +371,7 @@ function createTab(idOverride) {
     titleEarned: false,
     promptSent: false,
     agentId: null,
+    resumeAttempt: null,
     writeBuf: '', flushScheduled: false,
   };
   // Keystrokes typed in this tab go to its own session.
@@ -996,9 +997,55 @@ function _flushTabWrite(tab) {
   if (tab.id === activeTabId) detectAndSpeak();
 }
 
+function stripTerminalControls(s) {
+  return String(s || '')
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-_]/g, '');
+}
+
+function resumeRejectedOutput(text) {
+  const t = stripTerminalControls(text);
+  return /No session, task, or name matched/i.test(t)
+    || /No conversation found with session ID/i.test(t)
+    || /No conversation found/i.test(t);
+}
+
+async function closeRejectedResumeTab(tab) {
+  if (!tab || !tab.resumeAttempt || tab.resumeAttempt.failureHandled) return;
+  tab.resumeAttempt.failureHandled = true;
+  tab.restarting = true;
+  tab.writeBuf = '';
+  const agent = tab.resumeAttempt.agent || 'session';
+  const id = tab.resumeAttempt.id ? ` ${String(tab.resumeAttempt.id).slice(0, 8)}` : '';
+  const header = tab.resumeAttempt.previousHeader || null;
+  if (header) {
+    if (Object.prototype.hasOwnProperty.call(header, 'chatSub') && $('#chat-sub')) $('#chat-sub').textContent = header.chatSub;
+    if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
+    if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
+  }
+  toast(`${agent}${id} is not resumable yet; refreshed sessions`, 'error');
+  await closeTab(tab.id);
+  try { await refreshRecentList(); } catch (err) { console.warn('recent refresh after rejected resume failed', err); }
+  if (currentPage === 'sessions') {
+    try { await renderSessions(); } catch (err) { console.warn('sessions refresh after rejected resume failed', err); }
+  }
+}
+
+function captureResumeFailure(tab, data) {
+  if (!tab || !tab.resumeAttempt || tab.resumeAttempt.failureHandled) return false;
+  const age = Date.now() - (tab.resumeAttempt.startedAt || 0);
+  if (age > 20000) { tab.resumeAttempt = null; return false; }
+  tab.resumeAttempt.tail = ((tab.resumeAttempt.tail || '') + String(data || '')).slice(-4096);
+  if (!resumeRejectedOutput(tab.resumeAttempt.tail)) return false;
+  closeRejectedResumeTab(tab).catch((err) => console.warn('closing rejected resume tab failed', err));
+  return true;
+}
+
 window.husk.pty.onData((sessionId, d) => {
-  const tab = TABS.get(sessionId) || TABS.get(activeTabId);
+  const tab = TABS.get(sessionId) || (!sessionId ? TABS.get(activeTabId) : null);
   if (!tab || tab.restarting) return;
+  if (captureResumeFailure(tab, d)) return;
   if (tab.id === activeTabId && !chatHasInput) {
     chatHasInput = true;
     $('#chat-empty').classList.remove('show');
@@ -1123,6 +1170,16 @@ async function startPty() {
 // running. Backs the "+ New Chat" action.
 async function openNewChatTab(opts = {}) {
   const tab = createTab();
+  if (opts.resumeAttempt) {
+    tab.resumeAttempt = {
+      agent: String(opts.resumeAttempt.agent || ''),
+      id: String(opts.resumeAttempt.id || ''),
+      previousHeader: opts.resumeAttempt.previousHeader || null,
+      startedAt: Date.now(),
+      tail: '',
+      failureHandled: false,
+    };
+  }
   activateTab(tab.id);
   fitAddon.fit();
   const { cols, rows } = tab.term;
@@ -1538,10 +1595,10 @@ function setPage(name, opts = {}) {
   if (name === 'skills') renderSkills();
   if (name === 'sessions') renderSessions();
   if (name === 'files') {
-    const c = cfg || {};
-    fxSetOpenFolderLabel(c.treeRoot);
-    $('#files-hidden').checked = !!c.showHidden;
-    fxLoad(c.treeRoot);
+    const root = fxCurrentRoot();
+    fxSetOpenFolderLabel(root);
+    $('#files-hidden').checked = !!(cfg && cfg.showHidden);
+    fxLoad(root);
   }
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
@@ -2458,12 +2515,15 @@ async function refreshProjectsState() {
   // Re-pull list so lastUsedAt freshens, then update topbar chip + grid + cfg cache.
   const res = await window.husk.projects.list();
   if (!res || !res.ok) return;
+  const prevActiveId = activeProjectId;
   projectsCache = res.projects || [];
   activeProjectId = res.activeProjectId || null;
   updateActiveProjectChip();
   if (currentPage === 'projects') paintProjectsSurface();
   // Refresh chat-sub since the agent cwd may have changed.
   try { cfg = await window.husk.config.get(); } catch (_) {}
+  // The workspace moved, so Files moves with it.
+  if (activeProjectId !== prevActiveId) fxSyncToWorkspace();
   updateAgentPill && updateAgentPill();
   const cmdShort = (cfg.agentCommand || 'agent').split(/\s+/)[0];
   const active = projectsCache.find((p) => p.id === activeProjectId);
@@ -5627,6 +5687,11 @@ async function resumeSessionInChat(d) {
   }
   closeDetail();
   setPage('chat');
+  const previousHeader = {
+    chatSub: $('#chat-sub') ? $('#chat-sub').textContent : '',
+    spAgent: $('#sp-agent') ? $('#sp-agent').textContent : '',
+    spSessionId: $('#sp-session-id') ? $('#sp-session-id').textContent : '',
+  };
   const cmdShort = resumeCommandLabel(agent, d.id.slice(0, 8)) || cmd;
   const cwd = d.project || null;
   toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
@@ -5634,7 +5699,7 @@ async function resumeSessionInChat(d) {
   if ($('#sp-agent')) $('#sp-agent').textContent = cmdShort;
   if ($('#sp-session-id')) $('#sp-session-id').textContent = `${d.id.slice(0, 8)} · ${cwd || huskHome}`;
   // Resume in a fresh tab so the current chat keeps running alongside it.
-  const tab = await openNewChatTab({ command: cmd, cwd });
+  const tab = await openNewChatTab({ command: cmd, cwd, skipContext: true, resumeAttempt: { agent, id: d.id, previousHeader } });
   // Link the tab to the resumed session so future renames persist, and restore
   // a custom name if this session was renamed before. The default label stays
   // "Chat N" otherwise; the header title stays "Chat".
@@ -5677,6 +5742,29 @@ const fx = {
   dirty: false,
 };
 const FX_MAX_ROWS = 400;
+
+// Files follows the workspace. Whatever folder the agent is working in is the
+// folder this page shows, so opening Files never means re-finding the project
+// that is already open in the chat. Open-folder is a detour from that, held
+// for the session only: pinning a different project ends it.
+let fxRootOverride = null;
+function fxDefaultRoot() {
+  const active = projectsCache.find((p) => p && p.id === activeProjectId);
+  if (active && active.path) return active.path;
+  return (cfg && (cfg.agentCwd || cfg.treeRoot)) || huskHome || null;
+}
+function fxCurrentRoot() { return fxRootOverride || fxDefaultRoot(); }
+
+// Called when the pinned project changes: drop the detour and repaint if the
+// page is on screen. Files that were listed under the old project would other-
+// wise stay up while the chat has already moved.
+function fxSyncToWorkspace() {
+  fxRootOverride = null;
+  if (currentPage !== 'files') return;
+  const root = fxCurrentRoot();
+  fxSetOpenFolderLabel(root);
+  fxLoad(root);
+}
 
 function fxGitClass(status) {
   if (!status) return '';
@@ -6218,8 +6306,8 @@ function initFilesCommandCenter() {
   $('#fx-act-diff') && $('#fx-act-diff').addEventListener('click', fxToggleDiff);
   $('#fx-act-mention') && $('#fx-act-mention').addEventListener('click', () => {
     if (!fx.selected) return;
-    tellAgentAboutFile(joinRoot(fx.selected), fx.selected);
-    toast('Sent to the agent', 'success');
+    attachFileToChat(joinRoot(fx.selected));
+    toast('Added to the chat', 'success');
   });
   $('#fx-act-context') && $('#fx-act-context').addEventListener('click', () => {
     if (!fx.selected) return;
@@ -6258,16 +6346,19 @@ function initFilesCommandCenter() {
     const s = $('#fx-search');
     if (s) { s.focus(); s.select(); }
   });
-  $('#btn-files-refresh') && $('#btn-files-refresh').addEventListener('click', () => fxLoad(cfg.treeRoot));
+  $('#btn-files-refresh') && $('#btn-files-refresh').addEventListener('click', () => fxLoad(fxCurrentRoot()));
   $('#files-hidden') && $('#files-hidden').addEventListener('change', async (e) => {
     cfg = await window.husk.config.set({ showHidden: e.target.checked });
-    fxLoad(cfg.treeRoot);
+    fxLoad(fxCurrentRoot());
   });
-  // Open folder: native OS directory picker instead of a raw path box.
+  // Open folder: native OS directory picker instead of a raw path box. The pick
+  // holds for the session and is also saved, so it survives a restart as the
+  // browsing root for whenever no project is pinned.
   $('#btn-files-open') && $('#btn-files-open').addEventListener('click', async () => {
     let dir = null;
     try { dir = await window.husk.dialog2.pickDir(); } catch (_) {}
     if (!dir) return;
+    fxRootOverride = dir;
     cfg = await window.husk.config.set({ treeRoot: dir });
     fxSetOpenFolderLabel(dir);
     fxLoad(dir);
@@ -7086,20 +7177,20 @@ window.husk.updates.onStatus((s) => {
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
 $('#btn-restart').addEventListener('click', restartPty);
 // Theme selection lives only in Preferences (full picker).
-function displayFilePath(filePath) {
-  const s = String(filePath || '');
-  const h = String(huskHome || '');
-  return h && h !== '~' && s.startsWith(h) ? '~' + s.slice(h.length) : s;
+// Attaching a file puts its path in the agent's input and stops there. A real
+// PTY cannot draw an attachment chip inside the agent's own prompt, so the path
+// is the attachment; the sentence around it belongs to the user. The path is
+// absolute (every CLI can open it as written) and quoted when it holds
+// whitespace. Nothing is submitted: the user types their question and presses
+// Enter, exactly as they would after attaching a file anywhere else.
+function chatFileRef(filePath) {
+  const p = String(filePath || '');
+  return /\s/.test(p) ? `"${p}" ` : `${p} `;
 }
 
-// Explicit file mentions still prefill the user's PENDING message, but context
-// adds no longer do. A real PTY cannot render attachment chips inside the
-// agent's own input, so automatic prefill made the terminal look like raw path
-// junk every time a file was shared.
-async function tellAgentAboutFile(filePath, displayName) {
-  const shown = displayFilePath(filePath);
-  const label = displayName && displayName !== shown ? `${displayName} (${shown})` : shown;
-  const ref = `Please read ${label}. `;
+async function attachFileToChat(filePath) {
+  const ref = chatFileRef(filePath);
+  if (!ref.trim()) return;
   const welcomeUp = $('#chat-empty')?.classList.contains('show');
   if (welcomeUp) {
     await launchAgent({ initialPrompt: ref });
@@ -7161,7 +7252,7 @@ function refreshContextList() {
         toast(`Removed: ${el.dataset.name}`, 'success');
         return;
       }
-      tellAgentAboutFile(el.dataset.path, el.dataset.name);
+      attachFileToChat(el.dataset.path);
     });
   });
 }
@@ -7170,6 +7261,7 @@ async function attachContextSource(sourcePath, name, successLabel = 'Attached') 
   if (result.ok) {
     toast(`${successLabel}: ${name}`, 'success');
     addToSessionContext({ name, path: result.dest });
+    await attachFileToChat(result.dest);
   } else {
     toast(`Failed: ${result.error}`, 'error');
   }
@@ -8335,8 +8427,9 @@ window.addEventListener('drop', async (e) => {
         toast(`Skill installed: ${f.name}`, 'success');
         announceInTerminal(`Skill installed: ${f.name}\r\n  → ${result.dest}\r\n  Click ↻ Restart to activate.`);
       } else {
-        toast(`Shared with agent: ${f.name}`, 'success');
+        toast(`Added to the chat: ${f.name}`, 'success');
         addToSessionContext({ name: f.name, path: result.dest });
+        await attachFileToChat(result.dest);
       }
       if (currentPage === 'skills') renderSkills();
     } else toast(`Failed: ${result.error}`, 'error');

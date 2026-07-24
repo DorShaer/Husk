@@ -14,7 +14,7 @@ const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside } = require('./lib/path-confine');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
-const { buildSpawnSpec } = require('./lib/pty-spawn');
+const { buildSpawnSpec, withCopilotContextDir } = require('./lib/pty-spawn');
 const AgentInject = require('./lib/agent-inject');
 const { createMouseModeStripper } = require('./lib/term-mouse');
 const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
@@ -1049,6 +1049,12 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
       }
     } catch (_) {}
   }
+
+  agentArgs = withCopilotContextDir({
+    agentExe,
+    agentArgs,
+    contextDir: path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT'),
+  });
 
   // Bind this tab to a definite claude session id so stats/recent/resume read
   // exactly this tab's transcript. On resume the id comes from --resume; for a
@@ -4523,14 +4529,14 @@ function gitSummary(cwd) {
 }
 
 // Session stats for a Copilot chat, read from its own transcript at
-// ~/.copilot/session-state/<uuid>/events.jsonl. Returns the live model
+// <COPILOT_HOME>/session-state/<uuid>/events.jsonl. Returns the live model
 // (from session.model_change), the turn count, and the summed output
 // tokens Copilot records per assistant message. Copilot does not log
 // input/context-window totals, so ctxTokens/ctxWindow stay 0 and the
 // panel's Context Window row is correctly omitted for it. Picks the
 // newest session whose workspace cwd matches the active chat's cwd.
 function readCopilotSessionStats(cwd) {
-  const root = path.join(HOME, '.copilot', 'session-state');
+  const root = path.join(COPILOT_DIR, 'session-state');
   let dirs = [];
   try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
   catch (_) { return null; }
@@ -4681,7 +4687,7 @@ ipcMain.handle('stats:get', () => {
   const workflows = safeCount(workflowsDir, (e) => e.isFile() && e.name.endsWith('.md'))
                   + safeCount(workflowsDir, (e) => e.isDirectory());
   // Hooks are per-agent: Claude runs ~/.claude/hooks/*.hook.ts, Copilot
-  // runs ~/.copilot/hooks/*.json. Count and expose whichever the active
+  // runs <COPILOT_HOME>/hooks/*.json. Count and expose whichever the active
   // agent uses; agents with no hook system report hooksApplicable false.
   let hooksDir = null;
   let hooks = 0;
@@ -4691,7 +4697,7 @@ ipcMain.handle('stats:get', () => {
     hooks = safeCount(hooksDir, (e) => e.isFile() && e.name.endsWith('.hook.ts'));
     hooksApplicable = true;
   } else if (agentCmd === 'copilot') {
-    hooksDir = path.join(HOME, '.copilot', 'hooks');
+    hooksDir = path.join(COPILOT_DIR, 'hooks');
     hooks = safeCount(hooksDir, (e) => e.isFile() && e.name.endsWith('.json'));
     hooksApplicable = true;
   }
@@ -5580,18 +5586,18 @@ Create an agent profile. Return ONLY valid JSON, no markdown fences, no explanat
 // a { label, dir } entry. Files in each dir are parsed by parseAgentMd.
 const AGENT_SOURCES = [
   { label: 'Claude Code', dir: path.join(HOME, '.claude', 'agents') },
-  { label: 'GitHub Copilot', dir: path.join(HOME, '.copilot', 'agents') },
+  { label: 'GitHub Copilot', dir: path.join(COPILOT_DIR, 'agents') },
 ];
 
 // Native agents directory per CLI. Both claude and copilot load the same
 // markdown agent format from these locations, so a Husk agent written into
 // each installed CLI's dir is usable in whichever CLI the user runs.
 const CLAUDE_AGENTS_DIR = path.join(HOME, '.claude', 'agents');
-const COPILOT_AGENTS_DIR = path.join(HOME, '.copilot', 'agents');
+const COPILOT_AGENTS_DIR = path.join(COPILOT_DIR, 'agents');
 function installedAgentDirs() {
   const out = [];
   try { if (fs.existsSync(path.join(HOME, '.claude'))) out.push(CLAUDE_AGENTS_DIR); } catch (_) {}
-  try { if (fs.existsSync(path.join(HOME, '.copilot'))) out.push(COPILOT_AGENTS_DIR); } catch (_) {}
+  try { if (fs.existsSync(COPILOT_DIR)) out.push(COPILOT_AGENTS_DIR); } catch (_) {}
   return out;
 }
 // Mirror every user (non-builtin) agent profile into each installed CLI's
@@ -6935,7 +6941,7 @@ function geminiFirstUserMessage(fullPath) {
   return '';
 }
 
-function listGeminiSessions() {
+function listGeminiSessions(opts = {}) {
   const root = path.join(GEMINI_DIR, 'tmp');
   let projects = [];
   try { projects = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
@@ -6963,6 +6969,12 @@ function listGeminiSessions() {
 
       const summary = latestTranscriptTitle(fullPath, 'gemini');
       const firstMessage = geminiFirstUserMessage(fullPath);
+      // A transcript with no turn in it belongs to a chat that was opened and
+      // closed without a word. It is not history, and callers that only need
+      // history skip it. Resume-index and live-tab discovery pass includeEmpty
+      // because both address sessions by position or by launch time.
+      const hasContent = st.size > 0 && !!(summary || firstMessage);
+      if (!hasContent && opts.includeEmpty !== true) continue;
       const startedMs = Date.parse((head && head.startTime) || '') || st.birthtimeMs || st.mtimeMs;
 
       out.push({
@@ -6976,7 +6988,7 @@ function listGeminiSessions() {
         // so a tab keeps its pending state until the session really earns a name.
         named: !!summary,
         firstMessage: firstMessage || summary || '',
-        hasContent: st.size > 0 && !!(summary || firstMessage),
+        hasContent,
         prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
         startedISO: new Date(startedMs).toISOString(),
         startedMs,
@@ -6994,7 +7006,7 @@ function listGeminiSessions() {
 // index therefore has to be computed against the current list, since a new
 // session shifts nothing but a deleted one would.
 function geminiResumeIndex(sessionId, cwd) {
-  const mine = listGeminiSessions()
+  const mine = listGeminiSessions({ includeEmpty: true })
     .filter((s) => !cwd || !s.originalCwd || s.originalCwd === cwd)
     .sort((a, b) => a.startedMs - b.startedMs);
   const at = mine.findIndex((s) => s.id === sessionId);
@@ -7189,12 +7201,12 @@ function isAutopilotCopilotSession(ws, eventTitle) {
     || isAutopilotCopilotText(eventTitle && eventTitle.title);
 }
 
-// List copilot sessions from ~/.copilot/session-state/<uuid>/, normalized to
+// List copilot sessions from <COPILOT_HOME>/session-state/<uuid>/, normalized to
 // the same shape the renderer consumes for claude sessions. Copilot stores the
 // cwd and timestamps in each session's workspace.yaml; names are often null,
 // so derive a stable title from the event log's first user turn.
 function listCopilotSessions(opts = {}) {
-  const root = path.join(HOME, '.copilot', 'session-state');
+  const root = path.join(COPILOT_DIR, 'session-state');
   let dirs = [];
   try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
   catch (_) { return opts.withMeta ? { sessions: [], hiddenAutopilot: 0 } : []; }
@@ -7215,6 +7227,13 @@ function listCopilotSessions(opts = {}) {
     catch (_) { if (!mtime) { try { mtime = fs.statSync(full).mtimeMs; } catch (_e) {} } }
     const startedMs = Date.parse(ws.created_at) || mtime;
     const name = (ws.name && ws.name !== 'null') ? ws.name.slice(0, 120) : '';
+    // The CLI creates a session directory the moment it launches and only writes
+    // events.jsonl once the conversation starts, so a chat opened and closed
+    // without a turn leaves a directory that holds nothing, can never earn a
+    // name, and cannot be resumed. That is not history: it is listed only for
+    // callers that bind a live tab to its session, which need every candidate.
+    const hasContent = sizeBytes > 0 || !!name;
+    if (!hasContent && opts.includeEmpty !== true) continue;
     const title = name || eventTitle.title || 'New Copilot chat';
     const firstMessage = eventTitle.firstMessage || name || '';
     out.push({
@@ -7229,12 +7248,9 @@ function listCopilotSessions(opts = {}) {
       named: !!(name || eventTitle.generatedTitle),
       firstMessage,
       prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
-      // The CLI creates a session directory the moment it launches and only
-      // writes events.jsonl once the conversation starts, so an abandoned chat
-      // leaves an empty directory behind. Such a session can never earn a name,
-      // and a tab bound to one shows the pending dots forever. Flag the ones
-      // that carry real content so tab discovery can prefer them.
-      hasContent: sizeBytes > 0 || !!name,
+      // Tab discovery prefers a session that carries content: a tab bound to an
+      // empty one shows the pending dots forever.
+      hasContent,
       startedISO: ws.created_at || new Date(mtime || 0).toISOString(),
       startedMs,
       sizeBytes,
@@ -7246,10 +7262,27 @@ function listCopilotSessions(opts = {}) {
   return out;
 }
 
+function sameResolvedPath(a, b) {
+  if (!a || !b) return false;
+  try { return path.resolve(a) === path.resolve(b); }
+  catch (_) { return String(a) === String(b); }
+}
+
+function findCopilotSessionForResume(id, cwd) {
+  const want = String(id || '');
+  if (!want) return null;
+  const targetCwd = String(cwd || '');
+  const list = listCopilotSessions({ includeAutopilot: true, includeEmpty: true });
+  return list.find((s) => {
+    if (!s || s.id !== want) return false;
+    return !targetCwd || !s.originalCwd || sameResolvedPath(s.originalCwd, targetCwd);
+  }) || null;
+}
+
 // List the active agent's saved sessions. Husk is tool-agnostic: the source
 // (and on-disk format) depends on which CLI is active. claude keeps JSONL
 // transcripts under ~/.claude/projects; copilot keeps per-session folders under
-// ~/.copilot/session-state. Agents we do not yet read return an empty list with
+// <COPILOT_HOME>/session-state. Agents we do not yet read return an empty list with
 // supported:false so the UI can say so instead of erroring.
 ipcMain.handle('sessions:list', () => {
   const agent = activeAgentName();
@@ -7259,7 +7292,7 @@ ipcMain.handle('sessions:list', () => {
       ok: true,
       agent,
       supported: true,
-      sessionsDir: path.join(HOME, '.copilot', 'session-state'),
+      sessionsDir: path.join(COPILOT_DIR, 'session-state'),
       currentCwd: activePtyCwd || '',
       sessions: listed.sessions,
       hiddenAutopilotSessions: listed.hiddenAutopilot,
@@ -7509,7 +7542,7 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       const custom = customFor(known);
       let hit = null;
       if (/^[A-Za-z0-9][A-Za-z0-9-]{5,80}$/.test(known)) {
-        const dir = path.join(HOME, '.copilot', 'session-state', known);
+        const dir = path.join(COPILOT_DIR, 'session-state', known);
         const ws = readCopilotWorkspace(dir);
         if (ws && ws.id) {
           const eventTitle = readCopilotSessionTitle(dir);
@@ -7535,7 +7568,10 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       }
       return { ok: false };
     }
-    const list = listCopilotSessions();
+    // Discovery has to see empty sessions too: a tab that just launched owns one
+    // until the first turn writes events.jsonl, and the provisional binding is
+    // what lets the tab move to the real session once it does.
+    const list = listCopilotSessions({ includeEmpty: true });
     const s = sessions.get(String((payload && payload.huskSessionId) || ''));
     if (!s || !s.cwd) return { ok: false };
     const startedAt = s.startedAt || 0;
@@ -7581,7 +7617,7 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
 
   if (agent === 'gemini') {
     const known = String((payload && payload.knownAgentId) || '');
-    const list = listGeminiSessions();
+    const list = listGeminiSessions({ includeEmpty: true });
     if (known) {
       const custom = customFor(known);
       const hit = list.find((x) => x.id === known) || null;
@@ -7705,7 +7741,12 @@ ipcMain.handle('sessions:resumeCommand', (_e, payload = {}) => {
   const id = String(payload.id || '');
   if (!id) return { ok: false, error: 'no session id' };
   if (agent === 'claude') return { ok: true, command: `claude --resume ${id}` };
-  if (agent === 'copilot') return { ok: true, command: `copilot --resume=${id}` };
+  if (agent === 'copilot') {
+    const hit = findCopilotSessionForResume(id, String(payload.cwd || ''));
+    if (!hit) return { ok: false, error: 'that copilot session is no longer listed' };
+    if (!hit.hasContent) return { ok: false, error: 'Copilot is still creating that session; try again in a moment' };
+    return { ok: true, command: `copilot --resume=${id}` };
+  }
   if (agent === 'gemini') {
     const index = geminiResumeIndex(id, String(payload.cwd || ''));
     if (!index) return { ok: false, error: 'that gemini session is no longer listed' };

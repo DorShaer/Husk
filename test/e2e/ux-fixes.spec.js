@@ -359,28 +359,39 @@ test('copy from the terminal context menu keeps focus in the terminal (issue 5)'
   await app.close();
 });
 
-test('adding a context file does not paste its path into the terminal', async () => {
+test('adding a context file types its path and nothing else', async () => {
   const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-context-source-'));
   const sourcePath = path.join(sourceDir, 'cert.der');
   fs.writeFileSync(sourcePath, 'demo certificate');
-  const app = await launch({ firstRunDone: true, agentCommand: 'node', paiEnabled: false });
+  const app = await launch({ firstRunDone: true, agentCommand: 'bash --noprofile --norc', paiEnabled: false });
   const win = await ready(app);
   await win.evaluate(async () => {
     setPage('chat'); // eslint-disable-line no-undef
     try { await startPty(); } catch (_) {} // eslint-disable-line no-undef
     for (let i = 0; i < 100 && !term; i++) await new Promise((r) => setTimeout(r, 20)); // eslint-disable-line no-undef
   });
-  await win.evaluate(async (p) => {
-    await attachContextSource(p, 'cert.der'); // eslint-disable-line no-undef
+  const dest = await win.evaluate(async (p) => {
+    const r = await attachContextSource(p, 'cert.der'); // eslint-disable-line no-undef
+    return r && r.dest ? r.dest : '';
   }, sourcePath);
+  expect(dest).toContain('cert.der');
   await win.waitForFunction(() => document.querySelector('#rail-context-list')?.textContent.includes('cert.der'));
+  // The terminal wraps at its own width, so compare with whitespace stripped:
+  // a path split across two rows is still the path that was typed.
+  const flatten = (s) => String(s || '').replace(/\s+/g, '');
+  await win.waitForFunction(
+    (d) => (document.querySelector('#terminal .xterm-rows')?.innerText || '').replace(/\s+/g, '').includes(d),
+    flatten(dest)
+  );
   const state = await win.evaluate(() => ({
     rail: document.querySelector('#rail-context-list')?.textContent || '',
     terminal: document.querySelector('#terminal .xterm-rows')?.innerText || '',
   }));
   expect(state.rail).toContain('cert.der');
-  expect(state.terminal).not.toContain('cert.der');
-  expect(state.terminal).not.toContain('MEMORY/CONTEXT');
+  // The path is the whole message: the user writes the request around it, and
+  // nothing is submitted on their behalf.
+  expect(flatten(state.terminal)).toContain(flatten(dest));
+  expect(flatten(state.terminal)).not.toContain('Pleaseread');
   await app.close();
 });
 
@@ -582,4 +593,60 @@ test('window can shrink small enough to trigger responsive layout (issue 4)', as
   });
   expect(min[0]).toBeLessThanOrEqual(760);
   await app.close();
+});
+
+test('Files opens on the pinned project, not the saved tree root', async () => {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-project-'));
+  fs.writeFileSync(path.join(projectDir, 'inside-project.md'), '# demo\n');
+  const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-other-'));
+  fs.writeFileSync(path.join(otherDir, 'outside-project.txt'), 'x');
+  const app = await launch({
+    firstRunDone: true,
+    treeRoot: otherDir,
+    projects: [{ id: 'p1', name: 'Demo', path: projectDir, addedAt: '2026-07-25T00:00:00.000Z', lastUsedAt: null }],
+    activeProjectId: 'p1',
+  });
+  const win = await ready(app);
+  await win.waitForFunction(() => typeof projectsCache !== 'undefined' && projectsCache.length > 0); // eslint-disable-line no-undef
+  await win.evaluate(() => setPage('files')); // eslint-disable-line no-undef
+  await win.waitForFunction(
+    (p) => (document.querySelector('#files-sub')?.textContent || '') === p,
+    projectDir
+  );
+  const state = await win.evaluate(() => ({
+    sub: document.querySelector('#files-sub')?.textContent || '',
+    label: document.querySelector('#fx-open-folder-label')?.textContent || '',
+    rows: document.querySelector('#fx-list')?.innerText || '',
+  }));
+  expect(state.sub).toBe(projectDir);
+  expect(state.label).toBe(projectDir.split('/').pop());
+  expect(state.rows).toContain('inside-project.md');
+  expect(state.rows).not.toContain('outside-project.txt');
+  await app.close();
+  fs.rmSync(projectDir, { recursive: true, force: true });
+  fs.rmSync(otherDir, { recursive: true, force: true });
+});
+
+test('leaving the project drops Files back to the configured tree root', async () => {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-project-'));
+  fs.writeFileSync(path.join(projectDir, 'inside-project.md'), '# demo\n');
+  const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-other-'));
+  fs.writeFileSync(path.join(otherDir, 'outside-project.txt'), 'x');
+  const app = await launch({
+    firstRunDone: true,
+    treeRoot: otherDir,
+    projects: [{ id: 'p1', name: 'Demo', path: projectDir, addedAt: '2026-07-25T00:00:00.000Z', lastUsedAt: null }],
+    activeProjectId: 'p1',
+  });
+  const win = await ready(app);
+  await win.waitForFunction(() => typeof projectsCache !== 'undefined' && projectsCache.length > 0); // eslint-disable-line no-undef
+  await win.evaluate(() => setPage('files')); // eslint-disable-line no-undef
+  await win.waitForFunction((p) => (document.querySelector('#files-sub')?.textContent || '') === p, projectDir);
+  await win.evaluate(async () => { await window.husk.projects.clearActive(); await refreshProjectsState(); }); // eslint-disable-line no-undef
+  await win.waitForFunction((p) => (document.querySelector('#files-sub')?.textContent || '') === p, otherDir);
+  const rows = await win.evaluate(() => document.querySelector('#fx-list')?.innerText || '');
+  expect(rows).toContain('outside-project.txt');
+  await app.close();
+  fs.rmSync(projectDir, { recursive: true, force: true });
+  fs.rmSync(otherDir, { recursive: true, force: true });
 });

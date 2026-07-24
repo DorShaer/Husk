@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { resolveWindowsExe, buildSpawnSpec } = require('../../src/lib/pty-spawn');
+const { resolveWindowsExe, buildSpawnSpec, withCopilotContextDir } = require('../../src/lib/pty-spawn');
 const { shJoin } = require('../../src/lib/shell-quote');
 
 // ─── resolveWindowsExe ───────────────────────────────────────────────────────
@@ -226,6 +226,35 @@ test('buildSpawnSpec: win32 falls back to cmd.exe /c when exe is not resolvable'
   });
   assert.equal(spec.exe, 'C:\\Windows\\System32\\cmd.exe');
   assert.deepEqual(spec.argv, ['/c', 'ghost --help']);
+});
+
+// ─── withCopilotContextDir ──────────────────────────────────────────────────
+
+test('withCopilotContextDir: adds the Husk context tray for copilot', () => {
+  const args = withCopilotContextDir({
+    agentExe: '/home/user/.local/bin/copilot',
+    agentArgs: ['--model', 'gpt-5.5'],
+    contextDir: '/home/user/.claude/MEMORY/CONTEXT',
+  });
+  assert.deepEqual(args, ['--model', 'gpt-5.5', '--add-dir', '/home/user/.claude/MEMORY/CONTEXT']);
+});
+
+test('withCopilotContextDir: does not duplicate an existing context dir', () => {
+  const args = withCopilotContextDir({
+    agentExe: 'copilot',
+    agentArgs: ['--add-dir', '/tmp/context'],
+    contextDir: '/tmp/context',
+  });
+  assert.deepEqual(args, ['--add-dir', '/tmp/context']);
+});
+
+test('withCopilotContextDir: leaves non-copilot agents unchanged', () => {
+  const args = withCopilotContextDir({
+    agentExe: 'claude',
+    agentArgs: ['--foo'],
+    contextDir: '/tmp/context',
+  });
+  assert.deepEqual(args, ['--foo']);
 });
 
 test('buildSpawnSpec: empty rawCmd drops into the platform shell', () => {

@@ -225,3 +225,102 @@ test('copilot sessions use the first prompt when workspace name is null', async 
   expect(sub).toContain('3 Autopilot sessions');
   await app.close();
 });
+
+test('copilot resume rejection closes the transient chat tab', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-copilot-reject-'));
+  const copilotHome = path.join(homeDir, '.custom-copilot');
+  const resumeMarker = path.join(homeDir, 'resume-called.txt');
+  fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
+    firstRunDone: true,
+    skipWelcome: true,
+    agentCommand: 'copilot',
+  }));
+
+  const rejectedId = '99999999-aaaa-bbbb-cccc-dddddddddddd';
+  const sessionDir = path.join(copilotHome, 'session-state', rejectedId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const now = new Date().toISOString();
+  fs.writeFileSync(path.join(sessionDir, 'workspace.yaml'), [
+    `id: ${rejectedId}`,
+    'name: null',
+    'cwd: /tmp/copilot-project',
+    `created_at: ${now}`,
+    `updated_at: ${now}`,
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), [
+    JSON.stringify({ type: 'user.message', data: { content: 'Rejected resume should not leave a tab' } }),
+    JSON.stringify({ type: 'assistant.message', data: { content: 'A previous answer.' } }),
+  ].join('\n') + '\n');
+
+  const binDir = path.join(homeDir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const fakeCopilot = path.join(binDir, 'copilot');
+  fs.writeFileSync(fakeCopilot, `#!/usr/bin/env node
+const fs = require('fs');
+if (process.argv.includes('--version') || process.argv.includes('-v') || process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log('1.0.75');
+  process.exit(0);
+}
+if (process.argv.includes('--list-models')) {
+  console.log('Model Reasoning\\nGPT-5.5 high');
+  process.exit(0);
+}
+const resumeArg = process.argv.find((a) => a.startsWith('--resume='));
+if (resumeArg) {
+  const id = resumeArg.slice('--resume='.length);
+  fs.writeFileSync(process.env.HUSK_RESUME_MARKER, id);
+  process.stdout.write("Error: No session, task, or name matched '" + id + "'.\\n");
+  process.exit(0);
+}
+for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT']) process.on(sig, () => process.exit(0));
+process.stdout.write('fake copilot ready\\n');
+setInterval(() => {}, 1000);
+`);
+  fs.chmodSync(fakeCopilot, 0o755);
+
+  const app = await electron.launch({
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      PATH: `${binDir}${path.delimiter}${process.env.PATH || ''}`,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+      COPILOT_HOME: copilotHome,
+      HUSK_RESUME_MARKER: resumeMarker,
+      ELECTRON_DISABLE_SANDBOX: '1',
+      HUSK_E2E: '1',
+    },
+    timeout: 30_000,
+  });
+  const win = await app.firstWindow({ timeout: 30_000 });
+  await win.waitForLoadState('domcontentloaded');
+  await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size === 1, null, { timeout: 10_000 });
+
+  await win.evaluate(() => setPage('sessions'));
+  await win.waitForSelector('.session-row', { timeout: 10_000 });
+  const sub = await win.textContent('#sessions-sub');
+  expect(sub).toContain(path.join(copilotHome, 'session-state'));
+  await win.click('.session-row');
+  await win.click('#dp-foot .btn-primary');
+
+  await expect.poll(() => fs.existsSync(resumeMarker), { timeout: 10_000 }).toBe(true);
+  await expect.poll(
+    () => win.evaluate(() => TABS.size),
+    { timeout: 10_000 },
+  ).toBe(1);
+  const state = await win.evaluate(() => {
+    const tab = [...TABS.values()][0];
+    const buf = tab.term.buffer.active;
+    let text = '';
+    for (let y = 0; y < buf.length; y++) text += (buf.getLine(y)?.translateToString(true) || '');
+    return { sub: document.getElementById('chat-sub').textContent, text };
+  });
+  expect(state.sub).not.toContain('--resume');
+  expect(state.text).not.toContain('No session, task, or name matched');
+
+  await app.close();
+});
