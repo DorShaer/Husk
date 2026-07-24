@@ -359,6 +359,31 @@ test('copy from the terminal context menu keeps focus in the terminal (issue 5)'
   await app.close();
 });
 
+test('adding a context file does not paste its path into the terminal', async () => {
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-context-source-'));
+  const sourcePath = path.join(sourceDir, 'cert.der');
+  fs.writeFileSync(sourcePath, 'demo certificate');
+  const app = await launch({ firstRunDone: true, agentCommand: 'node', paiEnabled: false });
+  const win = await ready(app);
+  await win.evaluate(async () => {
+    setPage('chat'); // eslint-disable-line no-undef
+    try { await startPty(); } catch (_) {} // eslint-disable-line no-undef
+    for (let i = 0; i < 100 && !term; i++) await new Promise((r) => setTimeout(r, 20)); // eslint-disable-line no-undef
+  });
+  await win.evaluate(async (p) => {
+    await attachContextSource(p, 'cert.der'); // eslint-disable-line no-undef
+  }, sourcePath);
+  await win.waitForFunction(() => document.querySelector('#rail-context-list')?.textContent.includes('cert.der'));
+  const state = await win.evaluate(() => ({
+    rail: document.querySelector('#rail-context-list')?.textContent || '',
+    terminal: document.querySelector('#terminal .xterm-rows')?.innerText || '',
+  }));
+  expect(state.rail).toContain('cert.der');
+  expect(state.terminal).not.toContain('cert.der');
+  expect(state.terminal).not.toContain('MEMORY/CONTEXT');
+  await app.close();
+});
+
 test('the start wizard cannot be dismissed while a run is launching (issue 1)', async () => {
   const app = await launch();
   const win = await ready(app);

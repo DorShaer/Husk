@@ -7086,14 +7086,20 @@ window.husk.updates.onStatus((s) => {
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
 $('#btn-restart').addEventListener('click', restartPty);
 // Theme selection lives only in Preferences (full picker).
-// Attach the file to the user's PENDING message rather than firing a separate
-// "please read this" turn. We drop the (quoted) path into the agent's input
-// with NO trailing newline, so it is not submitted: the user adds their own
-// question and sends both together, and the agent reads the referenced path on
-// send. The path is quoted so names with spaces stay one token. (A true visual
-// attachment chip is not possible inside the agent's own terminal input.)
+function displayFilePath(filePath) {
+  const s = String(filePath || '');
+  const h = String(huskHome || '');
+  return h && h !== '~' && s.startsWith(h) ? '~' + s.slice(h.length) : s;
+}
+
+// Explicit file mentions still prefill the user's PENDING message, but context
+// adds no longer do. A real PTY cannot render attachment chips inside the
+// agent's own input, so automatic prefill made the terminal look like raw path
+// junk every time a file was shared.
 async function tellAgentAboutFile(filePath, displayName) {
-  const ref = `"${filePath}" `;
+  const shown = displayFilePath(filePath);
+  const label = displayName && displayName !== shown ? `${displayName} (${shown})` : shown;
+  const ref = `Please read ${label}. `;
   const welcomeUp = $('#chat-empty')?.classList.contains('show');
   if (welcomeUp) {
     await launchAgent({ initialPrompt: ref });
@@ -7159,17 +7165,22 @@ function refreshContextList() {
     });
   });
 }
+async function attachContextSource(sourcePath, name, successLabel = 'Attached') {
+  const result = await window.husk.fs.dropFile({ sourcePath, kind: 'context' });
+  if (result.ok) {
+    toast(`${successLabel}: ${name}`, 'success');
+    addToSessionContext({ name, path: result.dest });
+  } else {
+    toast(`Failed: ${result.error}`, 'error');
+  }
+  return result;
+}
 async function shareFilesViaPicker() {
   const paths = await window.husk.dialog.pickFile();
   if (!paths || !paths.length) return;
   for (const p of paths) {
     const name = p.split('/').pop();
-    const result = await window.husk.fs.dropFile({ sourcePath: p, kind: 'context' });
-    if (result.ok) {
-      toast(`Attached: ${name}`, 'success');
-      addToSessionContext({ name, path: result.dest });
-      await tellAgentAboutFile(result.dest, name);
-    } else toast(`Failed: ${result.error}`, 'error');
+    await attachContextSource(p, name);
   }
 }
 $('#btn-context-add').addEventListener('click', shareFilesViaPicker);
@@ -8325,9 +8336,7 @@ window.addEventListener('drop', async (e) => {
         announceInTerminal(`Skill installed: ${f.name}\r\n  → ${result.dest}\r\n  Click ↻ Restart to activate.`);
       } else {
         toast(`Shared with agent: ${f.name}`, 'success');
-        announceInTerminal(`Shared file with agent: ${f.name}\r\n  → ${result.dest}`);
         addToSessionContext({ name: f.name, path: result.dest });
-        await tellAgentAboutFile(result.dest, f.name);
       }
       if (currentPage === 'skills') renderSkills();
     } else toast(`Failed: ${result.error}`, 'error');
