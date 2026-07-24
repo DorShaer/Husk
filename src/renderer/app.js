@@ -5275,13 +5275,14 @@ async function injectPromptToChat(content) {
   const trimmed = String(content).replace(/^---[\s\S]*?---\n?/, '').trim();
   if (!trimmed) return;
   setPage('chat');
-  // If the welcome screen is still up (no PTY yet), launch the agent with this
-  // prompt as the initial input. Otherwise just paste into the running PTY.
-  const welcomeUp = $('#chat-empty')?.classList.contains('show');
-  if (welcomeUp) {
+  // With no chat open, launch the agent with this prompt as its initial input.
+  // Otherwise paste into the running PTY. The test is the live tab, not the
+  // welcome screen, which can still be painted over a chat that is already up.
+  if (!TABS.size && $('#chat-empty')?.classList.contains('show')) {
     await launchAgent({ initialPrompt: trimmed });
     return;
   }
+  $('#chat-empty').classList.remove('show');
   setTimeout(() => {
     try { window.husk.pty.write(trimmed); } catch (_) {}
     try { term.focus(); } catch (_) {}
@@ -7191,11 +7192,14 @@ function chatFileRef(filePath) {
 async function attachFileToChat(filePath) {
   const ref = chatFileRef(filePath);
   if (!ref.trim()) return;
-  const welcomeUp = $('#chat-empty')?.classList.contains('show');
-  if (welcomeUp) {
+  // The welcome screen can still be up over a chat that is already running,
+  // and launching a second agent there would spawn a PTY the path never
+  // reaches. A live tab means write to it and clear the overlay instead.
+  if (!TABS.size && $('#chat-empty')?.classList.contains('show')) {
     await launchAgent({ initialPrompt: ref });
     return;
   }
+  $('#chat-empty').classList.remove('show');
   setPage('chat');
   setTimeout(() => {
     try { window.husk.pty.write(ref); } catch (_) {}
@@ -7507,8 +7511,7 @@ function mcpRowHTML(s) {
 // finger. Skipped if no PTY has ever started (welcome screen still up).
 async function applyMcpChange(label) {
   const inv = await reloadMcpInventory();
-  const welcomeUp = $('#chat-empty')?.classList.contains('show');
-  if (welcomeUp) {
+  if (!TABS.size) {
     // No live agent yet. Snapshot lazily; whenever the user clicks Launch /
     // Start building, the new MCPs load on first start (shown as Loaded).
     snapshotLoadedMcps(inv);
