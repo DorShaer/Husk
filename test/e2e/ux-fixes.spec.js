@@ -367,9 +367,13 @@ test('adding a context file types its path and nothing else', async () => {
   const win = await ready(app);
   await win.evaluate(async () => {
     setPage('chat'); // eslint-disable-line no-undef
-    try { await startPty(); } catch (_) {} // eslint-disable-line no-undef
-    for (let i = 0; i < 100 && !term; i++) await new Promise((r) => setTimeout(r, 20)); // eslint-disable-line no-undef
+    await startPty(); // eslint-disable-line no-undef
   });
+  // Wait for a live tab, then for the shell to put something on screen. Bytes
+  // written into a PTY whose shell has not started yet are simply dropped, so
+  // a fixed delay here turns into a timeout on a slow machine.
+  await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size > 0 && !!term); // eslint-disable-line no-undef
+  await win.waitForFunction(() => (document.querySelector('#terminal .xterm-rows')?.innerText || '').trim().length > 0);
   const dest = await win.evaluate(async (p) => {
     const r = await attachContextSource(p, 'cert.der'); // eslint-disable-line no-undef
     return r && r.dest ? r.dest : '';
