@@ -20,9 +20,12 @@ const PLAIN = ['Agents', 'Research', 'Interceptor'];
 
 // Use launches the agent when no chat is open, so the fixture ships a stub on
 // PATH rather than leaving that path to fail silently.
+// Records what actually reaches the agent's stdin, one character at a time so
+// nothing sits in a buffer, which is the only way to prove what Husk sent.
 const STUB = [
   '#!/usr/bin/env bash',
-  'cat >/dev/null',
+  ': > "$HOME/agent-stdin.log"',
+  'while IFS= read -r -N1 ch; do printf %s "$ch" >> "$HOME/agent-stdin.log"; done',
   '',
 ].join('\n');
 
@@ -137,7 +140,7 @@ test('the state filter isolates disabled entries and keeps their switch usable',
     await win.locator('[data-state="off"]').click();
     await win.waitForTimeout(250);
     expect(await rowNames(win)).toEqual(['retired']);
-    expect(await col(win, '.sk-row-state')).toEqual(['Disabled']);
+    expect(await col(win, '.sk-row-state')).toEqual(['Off']);
     // Every other row hides its switch until hover; a disabled row cannot,
     // because that switch is the only way back.
     const opacity = await win.evaluate(
@@ -210,7 +213,7 @@ test('a column header sorts the body and flips on a second click', async () => {
     expect(await win.locator('.sk-th[data-sort="state"].is-sorted').count()).toBe(1);
     expect(await win.locator('.sk-th[data-sort="name"].is-sorted').count()).toBe(0);
     const states = await col(win, '.sk-row-state');
-    expect(states[states.length - 1]).toBe('Disabled');
+    expect(states[states.length - 1]).toBe('Off');
   } finally { await app.close(); }
 });
 
@@ -237,7 +240,7 @@ test('the switch enables and disables a skill on disk', async () => {
       () => fs.existsSync(path.join(skillsDir, '_disabled_Agents')),
       { timeout: 10_000 },
     ).toBe(true);
-    expect(await stateOf(win, 'Agents')).toBe('Disabled');
+    expect(await stateOf(win, 'Agents')).toBe('Off');
 
     // And back, which is the path that has to keep working once the row has
     // been re-keyed to the renamed directory.
@@ -247,24 +250,65 @@ test('the switch enables and disables a skill on disk', async () => {
       () => fs.existsSync(path.join(skillsDir, 'Agents')),
       { timeout: 10_000 },
     ).toBe(true);
-    expect(await stateOf(win, 'Agents')).toBe('Enabled');
+    expect(await stateOf(win, 'Agents')).toBe('Auto');
   } finally { await app.close(); }
 });
 
-test('Use injects the skill and opens the chat', async () => {
+test('Ask names an auto-loaded skill instead of pasting it', async () => {
+  test.setTimeout(90_000);
+  const env = boot();
+  const app = await launch(env);
+  const log = path.join(env.homeDir, 'agent-stdin.log');
+  try {
+    const win = await openSkills(app);
+    const row = rowFor(win, 'Research');
+    // An auto-loaded skill offers Ask, never Send.
+    await expect(row.locator('[data-use]')).toHaveText('Ask');
+    expect(await stateOf(win, 'Research')).toBe('Auto');
+    await row.hover();
+    await row.locator('[data-use]').click();
+    await expect.poll(
+      () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : ''),
+      { timeout: 15_000 },
+    ).toContain('Use the Research skill to');
+    // The body never goes near the chat: that is the whole point of the skill
+    // being loaded on demand by the agent.
+    expect(fs.readFileSync(log, 'utf8')).not.toContain('Steps for Research.');
+    // And it is left unsent, so the user says what they want done with it.
+    expect(fs.readFileSync(log, 'utf8')).not.toContain('\r');
+  } finally { await app.close(); }
+});
+
+test('Send puts a prompt body in the chat, because nothing else will', async () => {
+  test.setTimeout(90_000);
+  const env = boot();
+  const app = await launch(env);
+  const log = path.join(env.homeDir, 'agent-stdin.log');
+  try {
+    const win = await openSkills(app);
+    const row = rowFor(win, 'explain-this');
+    await expect(row.locator('[data-use]')).toHaveText('Send');
+    expect(await stateOf(win, 'explain-this')).toBe('Manual');
+    await row.hover();
+    await row.locator('[data-use]').click();
+    await expect.poll(
+      () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : ''),
+      { timeout: 15_000 },
+    ).toContain('Explain the code.');
+  } finally { await app.close(); }
+});
+
+test('a switched-off entry offers no action at all', async () => {
   test.setTimeout(90_000);
   const app = await launch(boot());
   try {
     const win = await openSkills(app);
-    const row = rowFor(win, 'Research');
-    await row.hover();
-    await row.locator('[data-use]').click();
-    // Injecting leaves the Skills page for the chat, and names what it sent.
-    await expect.poll(
-      () => win.evaluate(() => document.querySelector('.page-chat')?.hidden === false),
-      { timeout: 10_000 },
-    ).toBe(true);
-    await expect(win.locator('.toast', { hasText: 'Research' }).first()).toBeVisible({ timeout: 5_000 });
+    await win.locator('[data-state="off"]').click();
+    await win.waitForTimeout(250);
+    expect(await stateOf(win, 'retired')).toBe('Off');
+    // Nothing can reach it, so the row does not pretend otherwise.
+    expect(await rowFor(win, 'retired').locator('[data-use]').count()).toBe(0);
+    expect(await rowFor(win, 'retired').locator('[data-toggle]').count()).toBe(1);
   } finally { await app.close(); }
 });
 
@@ -279,7 +323,7 @@ test('clicking a row opens its detail rather than toggling it', async () => {
       { timeout: 10_000 },
     ).toBe(true);
     // The row that was clicked is untouched; only the switch may change state.
-    expect(await stateOf(win, 'Interceptor')).toBe('Enabled');
+    expect(await stateOf(win, 'Interceptor')).toBe('Auto');
   } finally { await app.close(); }
 });
 

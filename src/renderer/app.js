@@ -5707,9 +5707,25 @@ function applyPromptsLabels() {
     const n = skillsCache.length || ((lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null);
     const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
     skillsSub.textContent = count + (agentKindCache === 'claude'
-      ? 'auto-loaded by claude, or click Use to inject manually'
-      : 'click Use to inject any skill into the chat');
+      ? 'the agent loads what it needs; Ask names one for it'
+      : 'this agent does not auto-load skills; Send puts one in the chat');
   }
+}
+// Hands the chat a reference and stops there: no newline, so the line waits at
+// the prompt for the user to say what they actually want done with it.
+async function mentionSkillInChat(name) {
+  if (!name) return;
+  const line = `Use the ${name} skill to `;
+  setPage('chat');
+  if (!TABS.size && $('#chat-empty')?.classList.contains('show')) {
+    await launchAgent({ initialPrompt: line });
+    return;
+  }
+  $('#chat-empty').classList.remove('show');
+  setTimeout(() => {
+    try { window.husk.pty.write(line); } catch (_) {}
+    try { term.focus(); } catch (_) {}
+  }, 60);
 }
 async function injectPromptToChat(content) {
   if (!content) return;
@@ -5758,6 +5774,22 @@ function skFamilyLabel(key) {
   if (key === SK_LIBRARY) return 'Library';
   return key;
 }
+// How the agent can actually reach this entry, which is the only honest basis
+// for both the status word and the row's action.
+//   auto   the agent reads it off disk and invokes it when it is relevant, so
+//          Husk's job is to name it, never to paste it
+//   manual nothing loads it, so its text is the only way in
+//   off    switched off on disk; the agent cannot see it at all
+function skReach(sk) {
+  if (sk.disabled) return 'off';
+  if (sk.source === 'husk') return 'manual';
+  return agentKindCache === 'claude' ? 'auto' : 'manual';
+}
+const SK_REACH = {
+  auto: { label: 'Auto', hint: 'Loaded by the agent whenever it is relevant', action: 'Ask', actionHint: 'Name this skill in the chat and let the agent load it itself' },
+  manual: { label: 'Manual', hint: 'Nothing loads this on its own; send it when you want it', action: 'Send', actionHint: 'Put this text in the chat' },
+  off: { label: 'Off', hint: 'Switched off on disk, so the agent cannot see it', action: '', actionHint: '' },
+};
 // The heading carries the family, so the row drops the prefix it repeats. The
 // full name stays on the row for search, the tooltip and the detail view.
 function skShortName(sk, key) {
@@ -5838,20 +5870,22 @@ function paintSkills(list, query) {
     }
     return shown(a).localeCompare(shown(b)) * dir;
   });
-  const useTitle = agentKindCache === 'claude'
-    ? 'Inject this skill into the active chat; claude also auto-loads it'
-    : 'Inject this skill into the active chat';
   // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
   body.innerHTML = rows.map((sk) => {
     const key = skFamilyKey(sk, counts);
+    const reach = skReach(sk);
+    const r = SK_REACH[reach];
+    const action = r.action
+      ? `<button class="ghost-btn sk-use" data-use="${escapeAttr(reach)}" title="${escapeAttr(r.actionHint)}">${escapeHtml(r.action)}</button>`
+      : '';
     return `
-    <div class="sk-row${sk.disabled ? ' disabled' : ''}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
+    <div class="sk-row${sk.disabled ? ' disabled' : ''}" data-reach="${escapeAttr(reach)}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
       <div class="sk-row-name" title="${escapeAttr(sk.name)}"><span>${escapeHtml(skShortName(sk, key))}</span></div>
       <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
       <div class="sk-row-family">${escapeHtml(skFamilyLabel(key))}</div>
-      <div class="sk-row-state"><span class="sk-dot"></span>${sk.disabled ? 'Disabled' : 'Enabled'}</div>
+      <div class="sk-row-state" title="${escapeAttr(r.hint)}"><span class="sk-dot"></span>${escapeHtml(r.label)}</div>
       <div class="sk-row-tail">
-        <button class="ghost-btn sk-use" data-use="1" title="${useTitle}">Use \u25B6</button>
+        ${action}
         <button class="toggle ${sk.disabled ? '' : 'on'}" data-toggle="1" title="${sk.disabled ? 'Enable' : 'Disable'} skill"></button>
       </div>
     </div>`;
@@ -5874,10 +5908,18 @@ $('#skills-list').addEventListener('click', async (e) => {
   const toggleBtn = e.target.closest('[data-toggle]');
   if (useBtn) {
     e.stopPropagation();
+    // An auto-loaded skill is already available to the agent, and its body is
+    // meant to be read at the moment it is invoked. Naming it is the whole
+    // job; pasting it would spend the context the skill exists to save and
+    // take the decision to invoke away from the model.
+    if (useBtn.dataset.use === 'auto') {
+      mentionSkillInChat(row.dataset.name);
+      return;
+    }
     const r = await window.husk.skills.read(row.dataset.mdpath);
     if (!r.ok) { toast(r.error || 'Could not read', 'error'); return; }
     injectPromptToChat(r.content);
-    toast(`Injected: ${row.dataset.name}`, 'success');
+    toast(`Sent: ${row.dataset.name}`, 'success');
     return;
   }
   if (toggleBtn) {
@@ -5894,14 +5936,12 @@ $('#skills-list').addEventListener('click', async (e) => {
       // so the next click targets the new path.
       row.dataset.id = result.id || result.dirName;
       row.dataset.dirname = result.dirName || result.id;
-      toggleBtn.classList.toggle('on', !result.disabled);
-      row.classList.toggle('disabled', !!result.disabled);
-      toggleBtn.title = `${result.disabled ? 'Enable' : 'Disable'} skill`;
-      const state = row.querySelector('.sk-row-state');
-      if (state) state.lastChild.textContent = result.disabled ? 'Disabled' : 'Enabled';
-      const cached = skillsCache.find((s) => s.mdPath === row.dataset.mdpath);
-      if (cached) { cached.disabled = !!result.disabled; cached.id = row.dataset.id; }
+      // Reload rather than patch the cells. Toggling renames the entry on
+      // disk, so its path changes along with its status word, its action and
+      // whether it still passes the current filter. Re-reading is the only
+      // version of that update which cannot go stale.
       toast(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success');
+      await renderSkills();
       refreshStats();
     } else {
       // Revert.
