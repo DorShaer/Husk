@@ -1,11 +1,12 @@
 'use strict';
 
-// The library is a sortable table filtered three ways at once. These check that
-// the family column is derived only where it earns a name, that the name cell
-// drops the prefix that column repeats without losing it for search, that the
-// facet, state and text filters compose instead of overriding each other, that
-// sorting a column reorders the body, and that the switch is the page's only
-// control over a skill.
+// The library is a sortable table of folded sections, one per source folder,
+// filtered three ways at once. These check that a section is named only where
+// it earns a name, that the name cell drops the prefix its section repeats
+// without losing it for search, that the facet, state and text filters compose
+// instead of overriding each other, that sorting orders rows inside their own
+// section, that folding survives a repaint, and that the switch is the page's
+// only control over a skill.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');
@@ -61,13 +62,27 @@ function launch(env) {
   });
 }
 
-async function openSkills(app) {
+async function openSkills(app, { expand = true } = {}) {
   const win = await app.firstWindow({ timeout: 30_000 });
   await win.waitForLoadState('domcontentloaded');
   await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20_000 });
   await win.evaluate(() => setPage('skills'));                // eslint-disable-line no-undef
-  await win.waitForSelector('.sk-row', { timeout: 15_000 });
+  await win.waitForSelector('.sk-group-head', { timeout: 15_000 });
+  // Sections land folded, so anything asserting on rows opens them first.
+  if (expand) {
+    await expandAll(win);
+    await win.waitForSelector('.sk-row', { timeout: 15_000 });
+  }
   return win;
+}
+
+async function expandAll(win) {
+  for (let i = 0; i < 12; i += 1) {
+    const folded = win.locator('.sk-group.is-folded .sk-group-head');
+    if (await folded.count() === 0) return;
+    await folded.first().click();
+    await win.waitForTimeout(140);
+  }
 }
 
 const col = (win, cls) => win.evaluate(
@@ -82,12 +97,14 @@ const stateOf = (win, name) => win.evaluate(
   (n) => document.querySelector(`.sk-row[data-name="${n}"] .sk-row-state`)?.textContent.trim(), name,
 );
 
-test('the family column names a group only once enough entries share it', async () => {
+test('a section is named only once enough entries share its folder', async () => {
   test.setTimeout(90_000);
   const app = await launch(boot());
   try {
     const win = await openSkills(app);
-    const families = new Set(await col(win, '.sk-row-family'));
+    const families = new Set(await win.evaluate(
+      () => [...document.querySelectorAll('.sk-group-name')].map((n) => n.textContent),
+    ));
     // Five entries share "zed", so it is named. Two share "rare", so they fall
     // back to the library rather than becoming a family of their own.
     expect(families).toContain('zed');
@@ -168,8 +185,10 @@ test('every facet filters, including the standing Library group', async () => {
         () => document.querySelector('.sk-facet.is-active')?.dataset.family,
       );
       expect(active).toBe(key);
-      const families = new Set(await col(win, '.sk-row-family'));
-      expect(families.size).toBe(key === 'all' ? 2 : 1);
+      const shown = await win.evaluate(
+        () => [...document.querySelectorAll('.sk-group-name')].map((n) => n.textContent),
+      );
+      expect(shown.length).toBe(key === 'all' ? 2 : 1);
     }
   } finally { await app.close(); }
 });
@@ -192,11 +211,15 @@ test('facet and state filters compose rather than replace each other', async () 
   } finally { await app.close(); }
 });
 
-test('a column header sorts the body and flips on a second click', async () => {
+test('a column header sorts within a section and flips on a second click', async () => {
   test.setTimeout(90_000);
   const app = await launch(boot());
   try {
     const win = await openSkills(app);
+    // Scoped to one section, because rows are ordered inside their own folder
+    // rather than across the whole library.
+    await win.locator('.sk-facet[data-family="zed"]').click();
+    await win.waitForTimeout(220);
     const ascending = await rowNames(win);
     expect(ascending).toEqual([...ascending].sort((a, b) => a.localeCompare(b)));
 
@@ -207,11 +230,17 @@ test('a column header sorts the body and flips on a second click', async () => {
 
     // Taking over another column starts it ascending rather than inheriting
     // the previous column's direction.
+    await win.locator('.sk-facet[data-family="__library"]').click();
     await win.locator('.sk-th[data-sort="state"]').click();
     await win.waitForTimeout(220);
     expect(await win.locator('.sk-th[data-sort="state"].is-sorted').count()).toBe(1);
     expect(await win.locator('.sk-th[data-sort="name"].is-sorted').count()).toBe(0);
-    const states = await col(win, '.sk-row-state');
+    // Order applies inside the section, so the disabled entry sinks to the
+    // bottom of the one section that holds it.
+    const states = await win.evaluate(
+      () => [...document.querySelectorAll('.sk-group[data-family="__library"] .sk-row-state')]
+        .map((n) => n.textContent.trim()),
+    );
     expect(states[states.length - 1]).toBe('Disabled');
   } finally { await app.close(); }
 });
@@ -274,5 +303,44 @@ test('clicking a row opens its detail rather than toggling it', async () => {
       { timeout: 10_000 },
     ).toBe(true);
     expect(await stateOf(win, 'Interceptor')).toBe('Enabled');
+  } finally { await app.close(); }
+});
+
+test('sections land folded and remember what the user opened', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app, { expand: false });
+    // The page opens as a short list of named sources, not every skill.
+    expect(await win.locator('.sk-row').count()).toBe(0);
+    const bands = await win.evaluate(
+      () => [...document.querySelectorAll('.sk-group-name')].map((n) => n.textContent),
+    );
+    expect(bands).toEqual(expect.arrayContaining(['Library', 'zed']));
+    // Column headings label nothing while everything is shut.
+    expect(await win.locator('.sk-table.is-folded-shut').count()).toBe(1);
+
+    await win.locator('.sk-group[data-family="zed"] .sk-group-head').click();
+    await win.waitForTimeout(200);
+    expect(await win.locator('.sk-row').count()).toBe(FAMILY.length);
+    expect(await win.locator('.sk-table.is-folded-shut').count()).toBe(0);
+
+    // The choice survives a repaint driven by something else entirely.
+    await win.locator('[data-state="all"]').click();
+    await win.waitForTimeout(200);
+    expect(await win.locator('.sk-row').count()).toBe(FAMILY.length);
+  } finally { await app.close(); }
+});
+
+test('a search opens the sections that match it', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app, { expand: false });
+    expect(await win.locator('.sk-row').count()).toBe(0);
+    await win.fill('#skills-search', 'ssrf');
+    await win.waitForTimeout(300);
+    // Having said what they want, the user should not have to open it as well.
+    expect(await rowNames(win)).toEqual(['hunt-ssrf']);
   } finally { await app.close(); }
 });

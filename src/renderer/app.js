@@ -5740,6 +5740,22 @@ const SK_LIBRARY = '__library';
 let skFamily = 'all';
 let skState = 'all';
 let skSortKey = 'name';
+const SK_FOLD_KEY = 'husk.skCollapsed';
+// Sections open closed the first time, so the page lands as a short list of
+// named sources rather than every skill at once. Once the user folds anything
+// themselves, their choice is what persists.
+let skFoldsSeeded = false;
+const skCollapsed = new Set((() => {
+  try {
+    const stored = localStorage.getItem(SK_FOLD_KEY);
+    if (stored === null) return [];
+    skFoldsSeeded = true;
+    return JSON.parse(stored) || [];
+  } catch (_) { return []; }
+})());
+function skSaveFolds() {
+  try { localStorage.setItem(SK_FOLD_KEY, JSON.stringify([...skCollapsed])); } catch (_) {}
+}
 let skSortDesc = false;
 
 // A family is the folder prefix the name already carries, which is how these
@@ -5820,12 +5836,6 @@ function paintSkills(list, query) {
   // column looking unsorted.
   const shown = (sk) => skShortName(sk, skFamilyKey(sk, counts));
   rows.sort((a, b) => {
-    if (skSortKey === 'family') {
-      const fa = skFamilyLabel(skFamilyKey(a, counts));
-      const fb = skFamilyLabel(skFamilyKey(b, counts));
-      if (fa !== fb) return fa.localeCompare(fb) * dir;
-      return shown(a).localeCompare(shown(b));
-    }
     if (skSortKey === 'state') {
       const sa = a.disabled ? 1 : 0;
       const sb = b.disabled ? 1 : 0;
@@ -5834,15 +5844,32 @@ function paintSkills(list, query) {
     }
     return shown(a).localeCompare(shown(b)) * dir;
   });
-  // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
-  body.innerHTML = rows.map((sk) => {
+  // Grouped by the folder each skill came from, because that is how a library
+  // this size is actually held in the head. A group can be folded away, so the
+  // page opens as a handful of named sections instead of ninety rows.
+  const groups = new Map();
+  for (const sk of rows) {
+    const key = skFamilyKey(sk, counts);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sk);
+  }
+  if (!skFoldsSeeded) {
+    skFoldsSeeded = true;
+    for (const key of groups.keys()) skCollapsed.add(key);
+  }
+  // Searching, or narrowing to one source, means the user has already said
+  // what they are looking for; making them open it again would be a step for
+  // nothing.
+  const forceOpen = !!q || groups.size === 1;
+  const anyOpen = [...groups.keys()].some((k) => forceOpen || !skCollapsed.has(k));
+  document.querySelector('.sk-table')?.classList.toggle('is-folded-shut', !anyOpen);
+  const row = (sk) => {
     const key = skFamilyKey(sk, counts);
     const on = !sk.disabled;
     return `
     <div class="sk-row${on ? '' : ' disabled'}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
       <div class="sk-row-name" title="${escapeAttr(sk.name)}"><span>${escapeHtml(skShortName(sk, key))}</span></div>
       <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
-      <div class="sk-row-family">${escapeHtml(skFamilyLabel(key))}</div>
       <div class="sk-row-state">
         <span class="sk-tag ${on ? 'is-on' : 'is-off'}" title="${on ? 'The agent calls this when it decides it is relevant' : 'Switched off, so the agent cannot see it'}">${on ? 'Enabled' : 'Disabled'}</span>
       </div>
@@ -5850,6 +5877,21 @@ function paintSkills(list, query) {
         <button class="toggle ${on ? 'on' : ''}" data-toggle="1" title="${on ? 'Disable' : 'Enable'} skill"></button>
       </div>
     </div>`;
+  };
+  // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
+  body.innerHTML = [...groups.keys()].sort(skGroupOrder).map((key) => {
+    const items = groups.get(key);
+    const live = items.filter((sk) => !sk.disabled).length;
+    const folded = !forceOpen && skCollapsed.has(key);
+    return `<section class="sk-group${folded ? ' is-folded' : ''}" data-family="${escapeAttr(key)}">
+      <button type="button" class="sk-group-head" data-fold="${escapeAttr(key)}" aria-expanded="${folded ? 'false' : 'true'}">
+        <span class="sk-fold" aria-hidden="true"></span>
+        <span class="sk-group-name">${escapeHtml(skFamilyLabel(key))}</span>
+        <span class="sk-group-count">${items.length}</span>
+        <span class="sk-group-live">${live} enabled</span>
+      </button>
+      ${folded ? '' : items.map(row).join('')}
+    </section>`;
   }).join('');
 }
 function paintSkillSortHeads() {
@@ -5863,6 +5905,14 @@ function paintSkillSortHeads() {
 // sort, and rebinding three handlers per row would make each repaint
 // proportional to the library's size.
 $('#skills-list').addEventListener('click', async (e) => {
+  const fold = e.target.closest('[data-fold]');
+  if (fold) {
+    const key = fold.dataset.fold;
+    if (skCollapsed.has(key)) skCollapsed.delete(key); else skCollapsed.add(key);
+    skSaveFolds();
+    paintSkills(skillsCache, $('#skills-search').value);
+    return;
+  }
   const row = e.target.closest('.sk-row');
   if (!row) return;
   const toggleBtn = e.target.closest('[data-toggle]');

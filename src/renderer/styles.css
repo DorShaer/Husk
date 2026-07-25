@@ -4914,7 +4914,9 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .sk-facet-n { opacity: 0.6; margin-left: 5px; font-variant-numeric: tabular-nums; }
 
 .sk-table {
-  flex: 1; min-height: 0;
+  /* Hugs its content when the sections are folded, grows to the page and
+     scrolls when they are open. */
+  flex: 0 1 auto; min-height: 0; max-height: 100%;
   display: flex; flex-direction: column;
   background: var(--bg-1);
   border: 1px solid var(--line);
@@ -4925,11 +4927,13 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .sk-thead, .sk-row {
   display: grid;
-  grid-template-columns: minmax(150px, 240px) minmax(180px, 1fr) minmax(96px, 150px) 104px 56px;
+  grid-template-columns: minmax(150px, 260px) minmax(180px, 1fr) 104px 56px;
   align-items: center;
   gap: 16px;
   padding: 0 var(--sk-pad-x);
 }
+/* With every section folded there are no columns to label yet. */
+.sk-table.is-folded-shut .sk-thead { display: none; }
 .sk-thead {
   min-height: 38px;
   border-bottom: 1px solid var(--line);
@@ -4985,6 +4989,43 @@ body[data-page="chat"] #chats-panel { display: flex; }
   font-size: 12px; color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Each source folder is its own section with a name, a count and how much of
+   it is live, and it folds away. Ninety rows arrive as a few named sections
+   rather than one run. */
+.sk-group + .sk-group { margin-top: 0; }
+.sk-group-head {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 9px var(--sk-pad-x);
+  border: 0; border-top: 1px solid var(--line);
+  background: var(--bg-2);
+  font-family: inherit; text-align: left;
+  cursor: pointer;
+  transition: background 130ms ease;
+}
+.sk-group:first-child .sk-group-head { border-top: 0; }
+.sk-group-head:hover { background: var(--bg-3); }
+.sk-group-name {
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text);
+}
+.sk-group-count {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-3); font-variant-numeric: tabular-nums;
+  padding: 1px 7px; border-radius: 999px; background: var(--bg-3);
+}
+.sk-group-live { margin-left: auto; font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* Drawn, so it keeps its weight at this size and can rotate. */
+.sk-fold {
+  width: 0; height: 0; flex: 0 0 auto;
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--text-3);
+  transform: rotate(90deg);
+  transition: transform 150ms var(--ease-out);
+}
+.sk-group.is-folded .sk-fold { transform: rotate(0deg); }
+
 /* Status is a tag, aligned in its own column: one word, same place on every
    row, readable without hovering anything. */
 .sk-row-state { display: flex; align-items: center; min-width: 0; }
@@ -7520,12 +7561,14 @@ kbd {
   /* Description and family are the two columns a narrow window can lose and
      still leave the table readable. Both the cell and its heading go, so the
      tracks keep matching. */
+  /* Description is the column a narrow window can lose and still leave the
+     table readable. The cell and its heading go together, so the tracks keep
+     matching. */
   .sk-thead, .sk-row {
     grid-template-columns: minmax(0, 1fr) 104px 56px;
     gap: 10px;
   }
-  .sk-row-desc, .sk-row-family,
-  .sk-thead .sk-th:nth-child(2), .sk-thead .sk-th:nth-child(3) { display: none; }
+  .sk-row-desc, .sk-thead .sk-th:nth-child(2) { display: none; }
   .modal-card,
   .modal-card.modal-wide,
   .modal-card.modal-card-wide {
