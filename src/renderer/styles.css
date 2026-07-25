@@ -4889,11 +4889,15 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 /* ── Skills library ──────────────────────────────────────────────────────────
    Two panes. Sources on the left, their skills on the right, because a library
-   this size is navigated rather than scrolled. The palette is deliberately
-   cold and local to this page: steel surfaces, hairline rules, one ice accent
-   for the only state that matters. */
+   this size is navigated rather than scrolled. The neutrals are deliberately
+   cold and local to this page, steel surfaces over hairline rules, and the
+   only colour is the product's own accent on the two things that are
+   interactive: the source you are in and the switch. */
 .page-skills {
-  --ice: #38bdf8;
+  /* The rail collapses against this panel's own width, not the window's: the
+     status panel and the collapsed nav both resize it without the viewport
+     moving. */
+  container-type: inline-size;
   --steel: #94a3b8;
   --sk-surface: color-mix(in srgb, var(--steel) 4%, var(--bg-1));
   --sk-raise: color-mix(in srgb, var(--steel) 9%, var(--bg-1));
@@ -4902,7 +4906,6 @@ body[data-page="chat"] #chats-panel { display: flex; }
   --sk-dim: color-mix(in srgb, var(--steel) 78%, var(--text));
 }
 [data-theme="light"] .page-skills {
-  --ice: #0284c7;
   --steel: #64748b;
   --sk-surface: #ffffff;
   --sk-raise: #f4f6f9;
@@ -4946,15 +4949,20 @@ body[data-page="chat"] #chats-panel { display: flex; }
   transition: background 120ms ease, color 120ms ease;
 }
 .sk-source:hover { background: var(--sk-raise); color: var(--text); }
+.sk-source:focus-visible, .sk-state-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -2px;
+}
 .sk-source.is-active {
-  background: color-mix(in srgb, var(--ice) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text); font-weight: 600;
 }
 .sk-source-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sk-source-n {
   font-size: 11px; font-variant-numeric: tabular-nums;
-  color: var(--sk-dim); opacity: 0.85;
+  color: var(--sk-dim); opacity: 0.8;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
+  min-width: 22px; text-align: right;
 }
 /* A hairline that lights up on the selected source, so the rail reads as a
    position rather than a set of buttons. */
@@ -4963,7 +4971,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
   background: transparent; flex: 0 0 auto;
   transition: background 120ms ease;
 }
-.sk-source.is-active::before { background: var(--ice); }
+.sk-source.is-active::before { background: var(--accent); }
 
 .sk-state { display: flex; flex-direction: column; gap: 1px; }
 .sk-state-btn {
@@ -4974,23 +4982,35 @@ body[data-page="chat"] #chats-panel { display: flex; }
   transition: background 120ms ease, color 120ms ease;
 }
 .sk-state-btn:hover { background: var(--sk-raise); color: var(--text); }
-.sk-state-btn.is-active { color: var(--text); font-weight: 600; background: var(--sk-raise); }
+.sk-state-btn.is-active {
+  color: var(--text); font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.sk-state-btn.is-active::before { background: var(--accent); }
+.sk-state-btn::before {
+  content: ""; position: absolute; left: 9px; top: 50%;
+  width: 2px; height: 13px; margin-top: -6.5px; border-radius: 2px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.sk-state-btn { position: relative; }
 
 /* ── Right: the skills ─────────────────────────────────────────────────── */
 .sk-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .sk-main-head {
   display: flex; align-items: center; gap: 16px;
-  padding: 16px 20px 14px;
+  padding: 15px 20px 14px;
   border-bottom: 1px solid var(--sk-line);
+  background: color-mix(in srgb, var(--steel) 3%, transparent);
 }
 .sk-main-id { flex: 1; min-width: 0; }
 .sk-main-title {
-  margin: 0; font-size: 15px; font-weight: 650;
-  letter-spacing: -0.01em; color: var(--text);
+  margin: 0; font-size: 15.5px; font-weight: 650;
+  letter-spacing: -0.012em; color: var(--text);
 }
 .sk-main-sub {
-  margin: 3px 0 0; font-size: 12px; color: var(--sk-dim);
-  font-variant-numeric: tabular-nums;
+  margin: 4px 0 0; font-size: 12px; color: var(--sk-dim);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
 }
 .sk-main-act { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .sk-bulk-label { font-size: 12px; color: var(--sk-dim); white-space: nowrap; }
@@ -5006,14 +5026,20 @@ body[data-page="chat"] #chats-panel { display: flex; }
   transition: background 110ms ease;
 }
 .sk-row:last-child { border-bottom: 0; }
-.sk-row:hover, .sk-row:focus-within { background: var(--sk-raise); }
+/* The same hover the workspace table uses, so a row feels like the rest of
+   the product under the pointer. */
+.sk-row:hover, .sk-row:focus-within {
+  background: var(--sk-raise);
+  box-shadow: inset 2.5px 0 0 -0.5px color-mix(in srgb, var(--accent) 65%, transparent);
+}
 .sk-row-label {
   font-size: 13.5px; font-weight: 550; color: var(--text);
   letter-spacing: -0.005em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sk-row-desc {
-  font-size: 12.5px; color: var(--sk-dim); line-height: 1.45;
+  font-size: 12.5px; line-height: 1.45;
+  color: color-mix(in srgb, var(--sk-dim) 88%, transparent);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Off is the exception, so it is the only thing that changes the row. */
@@ -5021,36 +5047,32 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .sk-row.disabled .sk-row-desc { opacity: 0.55; }
 
 .sk-empty {
-  display: grid; place-items: center; gap: 8px;
-  padding: 64px 20px; text-align: center;
+  display: grid; place-items: center;
+  padding: 72px 24px; text-align: center;
   color: var(--sk-dim); font-size: 13px;
+  letter-spacing: 0.01em;
 }
 
-/* The switch, recut cold: off is a bare outline, on is a solid ice bar. */
-.sk-list .toggle, .sk-main-act .toggle {
-  width: 34px; height: 20px;
-  background: transparent;
-  border: 1px solid var(--sk-line-2);
-}
-.sk-list .toggle::before, .sk-main-act .toggle::before {
-  width: 12px; height: 12px; top: 3px; left: 3px;
-  background: var(--sk-dim); box-shadow: none;
-}
-.sk-list .toggle.on, .sk-main-act .toggle.on {
-  background: var(--ice); border-color: var(--ice);
-}
-.sk-list .toggle.on::before, .sk-main-act .toggle.on::before {
-  transform: translateX(14px); background: #ffffff;
-}
-.sk-main-act .toggle.is-mixed {
-  background: color-mix(in srgb, var(--ice) 34%, transparent);
-  border-color: color-mix(in srgb, var(--ice) 55%, transparent);
-}
-.sk-main-act .toggle.is-mixed::before { transform: translateX(7px); background: #ffffff; }
-
+/* Narrow: the rail lies down across the top rather than leaving, because
+   losing it would strand the reader on whichever source was selected. */
 @container (max-width: 720px) {
-  .sk { grid-template-columns: minmax(0, 1fr); }
-  .sk-rail { display: none; }
+  .sk {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .sk-rail {
+    flex-direction: row; align-items: center; gap: 6px;
+    padding: 10px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--sk-line);
+    overflow-x: auto; overflow-y: hidden;
+  }
+  .sk-rail-cap { display: none; }
+  .sk-sources, .sk-state { flex-direction: row; gap: 4px; }
+  .sk-state { margin-left: auto; }
+  .sk-source, .sk-state-btn { padding: 6px 11px; white-space: nowrap; }
+  .sk-source::before, .sk-state-btn::before { display: none; }
+  .sk-source, .sk-state-btn { border-radius: 999px; }
   .sk-row { grid-template-columns: minmax(0, 1fr) auto; }
   .sk-row-desc { display: none; }
 }

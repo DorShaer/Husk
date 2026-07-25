@@ -251,3 +251,41 @@ test('clicking a row opens its detail rather than toggling it', async () => {
     await expect(rowFor(win, 'Interceptor')).not.toHaveClass(/disabled/);
   } finally { await app.close(); }
 });
+
+test('the switch is the product switch, in both themes', async () => {
+  test.setTimeout(120_000);
+  for (const theme of ['midnight', 'light']) {
+    const env = boot();
+    fs.writeFileSync(path.join(env.homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
+      firstRunDone: true, skipWelcome: true, agentCommand: 'claude', theme,
+    }));
+    const app = await launch(env);
+    try {
+      const win = await openSkills(app);
+      // A stylesheet that stops parsing part way leaves a bare <button> here
+      // and nothing else fails, so the switch is measured rather than assumed.
+      const sw = await win.evaluate(() => {
+        const el = document.querySelector('.sk-row .toggle');
+        const cs = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return {
+          w: Math.round(r.width), h: Math.round(r.height),
+          appearance: cs.appearance, radius: cs.borderRadius,
+          accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+          on: cs.backgroundColor,
+        };
+      });
+      expect(sw.w).toBe(38);
+      expect(sw.h).toBe(22);
+      expect(sw.appearance).toBe('none');
+      expect(sw.radius).toBe('999px');
+      // On means the product's accent, not a colour this page invented.
+      const probe = await win.evaluate((c) => {
+        const d = document.createElement('div');
+        d.style.color = c; document.body.appendChild(d);
+        const rgb = getComputedStyle(d).color; d.remove(); return rgb;
+      }, sw.accent);
+      expect(sw.on).toBe(probe);
+    } finally { await app.close(); }
+  }
+});
