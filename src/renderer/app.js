@@ -5679,7 +5679,9 @@ async function renderSkills() {
     listEl.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
     return;
   }
-  skillsCache = res.skills;
+  // Husk prompts have a page of their own; mixing them in here is what made
+  // one row mean two different things.
+  skillsCache = (res.skills || []).filter((sk) => sk.source !== 'husk');
   agentKindCache = res.agentKind || 'claude';
   document.body.dataset.agentKind = agentKindCache;
   applyPromptsLabels();
@@ -5702,13 +5704,12 @@ function applyPromptsLabels() {
   if (skillsTitle) skillsTitle.textContent = 'Skills';
   const skillsSub = document.querySelector('.page-skills .page-sub');
   if (skillsSub) {
-    // Count what the page lists. The stats tile counts skill directories only,
-    // and the list also carries Husk prompts, so the two disagree by design.
+    // Count what the page lists.
     const n = skillsCache.length || ((lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null);
     const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
     skillsSub.textContent = count + (agentKindCache === 'claude'
-      ? 'the agent loads what it needs on its own; switch off anything it should not see'
-      : 'this agent does not auto-load skills; Send puts one in the chat');
+      ? 'an enabled skill is called automatically whenever the agent decides it fits'
+      : 'switch off anything this agent should not see');
   }
 }
 async function injectPromptToChat(content) {
@@ -5736,17 +5737,14 @@ const SK_FAMILY_MIN = 3;
 // that survive a round trip through a data attribute. A family is matched as
 // [A-Za-z0-9]+, so a leading underscore is unreachable.
 const SK_LIBRARY = '__library';
-const SK_PROMPTS = '__prompts';
 let skFamily = 'all';
 let skState = 'all';
 let skSortKey = 'name';
 let skSortDesc = false;
 
-// Husk prompts and the shared library are different things and always split.
-// Everything else groups on the prefix its own name already carries, which is
-// how these libraries are actually organised on disk.
+// A family is the folder prefix the name already carries, which is how these
+// libraries are actually organised on disk.
 function skFamilyKey(sk, counts) {
-  if (sk.source === 'husk') return SK_PROMPTS;
   const m = /^([A-Za-z0-9]+)[-:_]/.exec(sk.name || '');
   const key = m ? m[1].toLowerCase() : '';
   if (!key) return SK_LIBRARY;
@@ -5754,44 +5752,19 @@ function skFamilyKey(sk, counts) {
   return key;
 }
 function skFamilyLabel(key) {
-  if (key === SK_PROMPTS) return 'Husk prompts';
   if (key === SK_LIBRARY) return 'Library';
   return key;
 }
-// How the agent can actually reach this entry, which is the only honest basis
-// for both the status word and the row's action.
-//   auto   the agent reads it off disk and invokes it when it is relevant, so
-//          Husk's job is to name it, never to paste it
-//   manual nothing loads it, so its text is the only way in
-//   off    switched off on disk; the agent cannot see it at all
-function skReach(sk) {
-  if (sk.disabled) return 'off';
-  if (sk.source === 'husk') return 'manual';
-  return agentKindCache === 'claude' ? 'auto' : 'manual';
-}
-// Only 'manual' carries an action. An auto-loaded skill needs nothing from
-// this page but the switch: offering a button to invoke it would imply the
-// agent were not going to, which is the opposite of what Auto means.
-//
-// Only the exceptions are named. Auto is what nearly every row is, and a word
-// repeated down ninety rows stops being read; the dot marks the row as live
-// and the column header carries the meaning.
-const SK_REACH = {
-  auto: { label: '', hint: 'The agent loads this itself whenever it is relevant', action: '', actionHint: '' },
-  manual: { label: 'Manual', hint: 'Nothing loads this on its own; send it when you want it', action: 'Send', actionHint: 'Put this text in the chat' },
-  off: { label: 'Off', hint: 'Switched off on disk, so the agent cannot see it', action: '', actionHint: '' },
-};
 // The heading carries the family, so the row drops the prefix it repeats. The
 // full name stays on the row for search, the tooltip and the detail view.
 function skShortName(sk, key) {
-  if (key === SK_PROMPTS || key === SK_LIBRARY) return sk.name;
+  if (key === SK_LIBRARY) return sk.name;
   const cut = sk.name.slice(key.length);
   return /^[-:_]/.test(cut) ? cut.slice(1) : sk.name;
 }
 function skPrefixCounts(list) {
   const counts = new Map();
   for (const sk of list) {
-    if (sk.source === 'husk') continue;
     const m = /^([A-Za-z0-9]+)[-:_]/.exec(sk.name || '');
     if (!m) continue;
     const key = m[1].toLowerCase();
@@ -5800,9 +5773,9 @@ function skPrefixCounts(list) {
   return counts;
 }
 function skGroupOrder(a, b) {
-  // Library first because it is the default home, prompts last because they
-  // are a different kind of thing, named families alphabetical between them.
-  const rank = (k) => (k === SK_LIBRARY ? 0 : k === SK_PROMPTS ? 2 : 1);
+  // Library first because it is the default home for anything unprefixed,
+  // named folders alphabetical after it.
+  const rank = (k) => (k === SK_LIBRARY ? 0 : 1);
   return rank(a) - rank(b) || a.localeCompare(b);
 }
 function skMatches(sk, q, counts) {
@@ -5864,20 +5837,17 @@ function paintSkills(list, query) {
   // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
   body.innerHTML = rows.map((sk) => {
     const key = skFamilyKey(sk, counts);
-    const reach = skReach(sk);
-    const r = SK_REACH[reach];
-    const action = r.action
-      ? `<button class="ghost-btn sk-use" data-use="${escapeAttr(reach)}" title="${escapeAttr(r.actionHint)}">${escapeHtml(r.action)}</button>`
-      : '';
+    const on = !sk.disabled;
     return `
-    <div class="sk-row${sk.disabled ? ' disabled' : ''}" data-reach="${escapeAttr(reach)}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
+    <div class="sk-row${on ? '' : ' disabled'}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
       <div class="sk-row-name" title="${escapeAttr(sk.name)}"><span>${escapeHtml(skShortName(sk, key))}</span></div>
       <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
       <div class="sk-row-family">${escapeHtml(skFamilyLabel(key))}</div>
-      <div class="sk-row-state" title="${escapeAttr(r.hint)}"><span class="sk-dot"></span>${escapeHtml(r.label)}</div>
+      <div class="sk-row-state">
+        <span class="sk-tag ${on ? 'is-on' : 'is-off'}" title="${on ? 'The agent calls this when it decides it is relevant' : 'Switched off, so the agent cannot see it'}">${on ? 'Enabled' : 'Disabled'}</span>
+      </div>
       <div class="sk-row-tail">
-        ${action}
-        <button class="toggle ${sk.disabled ? '' : 'on'}" data-toggle="1" title="${sk.disabled ? 'Enable' : 'Disable'} skill"></button>
+        <button class="toggle ${on ? 'on' : ''}" data-toggle="1" title="${on ? 'Disable' : 'Enable'} skill"></button>
       </div>
     </div>`;
   }).join('');
@@ -5895,16 +5865,7 @@ function paintSkillSortHeads() {
 $('#skills-list').addEventListener('click', async (e) => {
   const row = e.target.closest('.sk-row');
   if (!row) return;
-  const useBtn = e.target.closest('[data-use]');
   const toggleBtn = e.target.closest('[data-toggle]');
-  if (useBtn) {
-    e.stopPropagation();
-    const r = await window.husk.skills.read(row.dataset.mdpath);
-    if (!r.ok) { toast(r.error || 'Could not read', 'error'); return; }
-    injectPromptToChat(r.content);
-    toast(`Sent: ${row.dataset.name}`, 'success');
-    return;
-  }
   if (toggleBtn) {
     e.stopPropagation();
     const id = row.dataset.id || row.dataset.dirname;

@@ -4925,7 +4925,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .sk-thead, .sk-row {
   display: grid;
-  grid-template-columns: minmax(150px, 240px) minmax(180px, 1fr) minmax(96px, 150px) 112px 132px;
+  grid-template-columns: minmax(150px, 240px) minmax(180px, 1fr) minmax(96px, 150px) 104px 56px;
   align-items: center;
   gap: 16px;
   padding: 0 var(--sk-pad-x);
@@ -4985,31 +4985,30 @@ body[data-page="chat"] #chats-panel { display: flex; }
   font-size: 12px; color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Status is words plus a dot, so state survives without hovering ninety rows
-   and without reading ninety switch positions. */
-.sk-row-state { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-3); }
-.sk-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--emerald); flex: 0 0 auto; }
-.sk-row.disabled .sk-dot { background: var(--text-3); opacity: 0.7; }
+/* Status is a tag, aligned in its own column: one word, same place on every
+   row, readable without hovering anything. */
+.sk-row-state { display: flex; align-items: center; min-width: 0; }
+.sk-tag {
+  font-size: 11px; font-weight: 600;
+  padding: 2px 9px; border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.sk-tag.is-on {
+  color: var(--emerald);
+  border-color: color-mix(in srgb, var(--emerald) 34%, transparent);
+  background: color-mix(in srgb, var(--emerald) 12%, transparent);
+}
+.sk-tag.is-off {
+  color: var(--text-3);
+  border-color: var(--line-2);
+  background: var(--bg-2);
+}
 .sk-row.disabled .sk-row-name { color: var(--text-3); font-weight: 500; }
 .sk-row.disabled .sk-row-desc { opacity: 0.7; }
 
-.sk-row-tail { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-/* Ninety rows means ninety of everything, so the controls stay out of the
-   resting state and arrive on hover or keyboard focus. */
-.sk-row .sk-use {
-  padding: 3px 10px; font-size: 12px; font-weight: 600;
-  border-radius: 7px; cursor: pointer;
-  background: var(--bg-3); color: var(--text);
-  border: 1px solid var(--line);
-  opacity: 0; pointer-events: none;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.13s ease;
-}
-.sk-row:hover .sk-use, .sk-row:focus-within .sk-use { opacity: 1; pointer-events: auto; }
-.sk-row .sk-use:hover { background: var(--text); color: var(--bg); border-color: var(--text); }
-.sk-row .toggle { opacity: 0; pointer-events: none; transition: opacity 0.13s ease; }
-.sk-row:hover .toggle, .sk-row:focus-within .toggle { opacity: 1; pointer-events: auto; }
-/* A disabled row keeps its switch: it is the only way back. */
-.sk-row.disabled .toggle { opacity: 0.65; pointer-events: auto; }
+/* The switch is the one control on the row, so it stays put and visible. */
+.sk-row-tail { display: flex; align-items: center; justify-content: flex-end; }
 
 /* Reusable iOS-style switch.
    Use class="husk-switch" on a <button> with the .on class for state, OR on
@@ -7522,7 +7521,7 @@ kbd {
      still leave the table readable. Both the cell and its heading go, so the
      tracks keep matching. */
   .sk-thead, .sk-row {
-    grid-template-columns: minmax(0, 1fr) 112px 132px;
+    grid-template-columns: minmax(0, 1fr) 104px 56px;
     gap: 10px;
   }
   .sk-row-desc, .sk-row-family,
