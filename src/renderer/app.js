@@ -5739,6 +5739,8 @@ const SK_LIBRARY = '__library';
 const SK_PROMPTS = '__prompts';
 let skFamily = 'all';
 let skState = 'all';
+let skSortKey = 'name';
+let skSortDesc = false;
 
 // Husk prompts and the shared library are different things and always split.
 // Everything else groups on the prefix its own name already carries, which is
@@ -5805,105 +5807,72 @@ function paintSkillFacets(list, counts) {
     <button type="button" class="sk-facet${skFamily === key ? ' is-active' : ''}" data-family="${escapeAttr(key)}">${escapeHtml(label)}<span class="sk-facet-n">${n}</span></button>`).join('');
 }
 function paintSkills(list, query) {
-  const listEl = $('#skills-list');
+  const body = $('#skills-list');
   const q = (query || '').toLowerCase().trim();
   const counts = skPrefixCounts(list);
   paintSkillFacets(list, counts);
-  const filtered = list.filter((s) => skMatches(s, q, counts));
-  if (!filtered.length) {
-    const msg = list.length ? 'No skills match this filter' : 'No skills yet. Drop a .md file or use ＋.';
+  const rows = list.filter((s) => skMatches(s, q, counts));
+  if (!rows.length) {
+    const msg = list.length ? 'No skills match this filter' : 'No skills yet. Drop a .md file or use \uFF0B.';
     // eslint-disable-next-line no-unsanitized/property -- Static message text.
-    listEl.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
+    body.innerHTML = `<div class="empty-state"><div class="es-icon">\u232C</div><div class="es-msg">${msg}</div></div>`;
     return;
   }
-  const groups = new Map();
-  for (const sk of filtered) {
-    const key = skFamilyKey(sk, counts);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(sk);
-  }
+  const dir = skSortDesc ? -1 : 1;
+  // Sort on the name the row shows, not the one on disk: the family prefix is
+  // in its own column, so ordering by the full name would leave the visible
+  // column looking unsorted.
+  const shown = (sk) => skShortName(sk, skFamilyKey(sk, counts));
+  rows.sort((a, b) => {
+    if (skSortKey === 'family') {
+      const fa = skFamilyLabel(skFamilyKey(a, counts));
+      const fb = skFamilyLabel(skFamilyKey(b, counts));
+      if (fa !== fb) return fa.localeCompare(fb) * dir;
+      return shown(a).localeCompare(shown(b));
+    }
+    if (skSortKey === 'state') {
+      const sa = a.disabled ? 1 : 0;
+      const sb = b.disabled ? 1 : 0;
+      if (sa !== sb) return (sa - sb) * dir;
+      return shown(a).localeCompare(shown(b));
+    }
+    return shown(a).localeCompare(shown(b)) * dir;
+  });
   const useTitle = agentKindCache === 'claude'
     ? 'Inject this skill into the active chat; claude also auto-loads it'
     : 'Inject this skill into the active chat';
   // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
-  listEl.innerHTML = [...groups.keys()].sort(skGroupOrder).map((key) => {
-    const rows = groups.get(key).slice().sort((a, b) => a.name.localeCompare(b.name)).map((sk) => `
-      <div class="sk-row${sk.disabled ? ' disabled' : ''}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
-        <div class="sk-row-name" title="${escapeAttr(sk.name)}">
-          <span>${escapeHtml(skShortName(sk, key))}</span>
-          ${sk.source === 'husk' ? '<span class="sk-tag sk-tag-prompt" title="Husk-managed prompt">prompt</span>' : ''}
-          ${sk.disabled ? '<span class="sk-tag sk-tag-off">off</span>' : ''}
-        </div>
-        <div class="sk-row-desc">${escapeHtml(sk.description || 'No description.')}</div>
-        <div class="sk-row-tail">
-          <button class="ghost-btn sk-use" data-use="1" title="${useTitle}">Use ▶</button>
-          <button class="toggle ${sk.disabled ? '' : 'on'}" data-toggle="1" title="${sk.disabled ? 'Enable' : 'Disable'} skill"></button>
-        </div>
-      </div>`).join('');
-    return `<section class="sk-group">
-      <div class="sk-group-head">
-        <span class="sk-group-name">${escapeHtml(skFamilyLabel(key))}</span>
-        <span class="sk-group-count">${groups.get(key).length}</span>
-        <span class="sk-group-rule"></span>
+  body.innerHTML = rows.map((sk) => {
+    const key = skFamilyKey(sk, counts);
+    return `
+    <div class="sk-row${sk.disabled ? ' disabled' : ''}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
+      <div class="sk-row-name" title="${escapeAttr(sk.name)}"><span>${escapeHtml(skShortName(sk, key))}</span></div>
+      <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
+      <div class="sk-row-family">${escapeHtml(skFamilyLabel(key))}</div>
+      <div class="sk-row-state"><span class="sk-dot"></span>${sk.disabled ? 'Disabled' : 'Enabled'}</div>
+      <div class="sk-row-tail">
+        <button class="ghost-btn sk-use" data-use="1" title="${useTitle}">Use \u25B6</button>
+        <button class="toggle ${sk.disabled ? '' : 'on'}" data-toggle="1" title="${sk.disabled ? 'Enable' : 'Disable'} skill"></button>
       </div>
-      ${rows}
-    </section>`;
+    </div>`;
   }).join('');
 }
-// Delegated once at the container: the list repaints on every keystroke, and
-// rebinding three handlers per row made each repaint proportional to the
-// library's size.
-function skRowFromEvent(e) { return e.target.closest('.sk-row'); }
-$('#skills-list').addEventListener('click', async (e) => {
-  const row = skRowFromEvent(e);
-  if (!row) return;
-  const useBtn = e.target.closest('[data-use]');
-  const toggleBtn = e.target.closest('[data-toggle]');
-  if (useBtn) {
-    e.stopPropagation();
-    const r = await window.husk.skills.read(row.dataset.mdpath);
-    if (!r.ok) { toast(r.error || 'Could not read', 'error'); return; }
-    injectPromptToChat(r.content);
-    toast(`Injected: ${row.dataset.name}`, 'success');
-    return;
-  }
-  if (toggleBtn) {
-    e.stopPropagation();
-    const id = row.dataset.id || row.dataset.dirname;
-    const source = row.dataset.source || 'claude';
-    const wasOn = toggleBtn.classList.contains('on');
-    // Optimistic flip, CSS transition needs the same node, not a re-rendered one.
-    toggleBtn.classList.toggle('on');
-    row.classList.toggle('disabled');
-    const result = await window.husk.skills.toggle({ id, source, dirName: id });
-    if (result.ok) {
-      // The dir/file was renamed on disk. Update the data-id and data-dirname
-      // so the next click targets the new path.
-      row.dataset.id = result.id || result.dirName;
-      row.dataset.dirname = result.dirName || result.id;
-      toggleBtn.classList.toggle('on', !result.disabled);
-      row.classList.toggle('disabled', !!result.disabled);
-      toggleBtn.title = `${result.disabled ? 'Enable' : 'Disable'} skill`;
-      const cached = skillsCache.find((s) => s.mdPath === row.dataset.mdpath);
-      if (cached) { cached.disabled = !!result.disabled; cached.id = row.dataset.id; }
-      row.querySelector('.sk-row-name .sk-tag-off')?.remove();
-      if (result.disabled) {
-        const off = document.createElement('span');
-        off.className = 'sk-tag sk-tag-off';
-        off.textContent = 'off';
-        row.querySelector('.sk-row-name').appendChild(off);
-      }
-      toast(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success');
-      refreshStats();
-    } else {
-      // Revert.
-      toggleBtn.classList.toggle('on', wasOn);
-      row.classList.toggle('disabled', !wasOn);
-      toast(result.error || 'Toggle failed', 'error');
-    }
-    return;
-  }
-  openSkillDetail(row.dataset);
+function paintSkillSortHeads() {
+  document.querySelectorAll('.sk-sortable').forEach((th) => {
+    const on = th.dataset.sort === skSortKey;
+    th.classList.toggle('is-sorted', on);
+    th.classList.toggle('is-desc', on && skSortDesc);
+  });
+}
+// Clicking the sorted column flips it; clicking another takes over ascending,
+// which is what a table header is expected to do.
+document.querySelector('.sk-thead').addEventListener('click', (e) => {
+  const th = e.target.closest('.sk-sortable');
+  if (!th) return;
+  if (th.dataset.sort === skSortKey) skSortDesc = !skSortDesc;
+  else { skSortKey = th.dataset.sort; skSortDesc = false; }
+  paintSkillSortHeads();
+  paintSkills(skillsCache, $('#skills-search').value);
 });
 $('#skills-facets').addEventListener('click', (e) => {
   const chip = e.target.closest('[data-family]');

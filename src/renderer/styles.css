@@ -4887,15 +4887,13 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 /* ─── Skills page ───────────────────────────────────────────────────────── */
 
-/* The library is a list, not a gallery: at ninety-odd entries the page is
-   something you scan, so it needs landmarks and a steady rhythm rather than
-   equal weight everywhere. Rows group under the family already encoded in the
-   names, and the name column holds a fixed width so the descriptions line up
-   as a second readable column. */
+/* The library is a table: ninety-odd entries are something you scan and sort,
+   so the columns stay in fixed tracks and every cell shares one left edge.
+   Built on the same idiom as .ws-table so the two read as one app. */
 .skills-toolbar {
   display: flex; align-items: center; justify-content: space-between;
   gap: 14px; flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 .sk-facets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .sk-facet {
@@ -4915,59 +4913,89 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .sk-facet-n { opacity: 0.6; margin-left: 5px; font-variant-numeric: tabular-nums; }
 
-.skills-list {
-  flex: 1; min-height: 0; overflow-y: auto;
-  padding-right: 4px;
+.sk-table {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--hl-top);
+  overflow: hidden;
+  --sk-pad-x: 18px;
 }
-.sk-group + .sk-group { margin-top: 26px; }
-/* Sticky, so the family you are reading stays named while you scroll it. */
-.sk-group-head {
-  position: sticky; top: 0; z-index: 2;
-  display: flex; align-items: baseline; gap: 9px;
-  padding: 4px 12px 8px;
-  background: var(--bg);
-}
-.sk-group-name {
-  font-size: 11px; font-weight: 700;
-  letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--text-2);
-}
-.sk-group-count { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.sk-group-rule { flex: 1; height: 1px; background: var(--line); align-self: center; }
-
-.sk-row {
+.sk-thead, .sk-row {
   display: grid;
-  grid-template-columns: minmax(140px, 232px) minmax(0, 1fr) auto;
-  align-items: center; gap: 18px;
-  padding: 8px 12px;
-  border: 1px solid transparent; border-radius: 9px;
-  cursor: pointer;
-  transition: background 130ms ease, border-color 130ms ease;
+  grid-template-columns: minmax(150px, 240px) minmax(180px, 1fr) minmax(96px, 150px) 112px 132px;
+  align-items: center;
+  gap: 16px;
+  padding: 0 var(--sk-pad-x);
 }
+.sk-thead {
+  min-height: 38px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.sk-th {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-3);
+  border: 0; background: none; padding: 0; font-family: inherit;
+  text-align: left; white-space: nowrap;
+}
+.sk-th-right { text-align: right; }
+.sk-sortable {
+  display: inline-flex; align-items: center; gap: 5px;
+  cursor: pointer;
+  transition: color 130ms ease;
+}
+.sk-sortable:hover { color: var(--text); }
+.sk-sortable.is-sorted { color: var(--text); }
+/* The caret is drawn, not typed, so it keeps its weight at 10px. */
+.sk-caret {
+  width: 0; height: 0; opacity: 0;
+  border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
+  border-bottom: 4.5px solid currentColor;
+  transition: opacity 130ms ease, transform 130ms ease;
+}
+.sk-sortable.is-sorted .sk-caret { opacity: 0.85; }
+.sk-sortable.is-desc .sk-caret { transform: rotate(180deg); }
+
+.sk-tbody { flex: 1; min-height: 0; overflow-y: auto; }
+.sk-row {
+  min-height: 44px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.sk-tbody > .sk-row:first-child { border-top: 0; }
 .sk-row:hover, .sk-row:focus-within {
   background: var(--bg-2);
-  border-color: var(--line);
+  box-shadow: inset 2.5px 0 0 -0.5px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 .sk-row-name {
   display: flex; align-items: center; gap: 8px;
   font-size: 13.5px; font-weight: 600; color: var(--text);
   min-width: 0;
 }
-.sk-row-name > span {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+.sk-row-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sk-row-desc {
-  font-size: 13px; color: var(--text-3); line-height: 1.4;
+  font-size: 12.5px; color: var(--text-3); line-height: 1.4;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Width is reserved so revealing the controls never shifts the row under the
-   pointer. */
-.sk-row-tail {
-  display: flex; align-items: center; gap: 10px; justify-content: flex-end;
-  min-width: 96px;
+.sk-row-family {
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Ninety rows means ninety of everything, so the per-row controls stay out of
-   the resting state and arrive on hover or keyboard focus. */
+/* Status is words plus a dot, so state survives without hovering ninety rows
+   and without reading ninety switch positions. */
+.sk-row-state { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-3); }
+.sk-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--emerald); flex: 0 0 auto; }
+.sk-row.disabled .sk-dot { background: var(--text-3); opacity: 0.7; }
+.sk-row.disabled .sk-row-name { color: var(--text-3); font-weight: 500; }
+.sk-row.disabled .sk-row-desc { opacity: 0.7; }
+
+.sk-row-tail { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+/* Ninety rows means ninety of everything, so the controls stay out of the
+   resting state and arrive on hover or keyboard focus. */
 .sk-row .sk-use {
   padding: 3px 10px; font-size: 12px; font-weight: 600;
   border-radius: 7px; cursor: pointer;
@@ -4978,29 +5006,10 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .sk-row:hover .sk-use, .sk-row:focus-within .sk-use { opacity: 1; pointer-events: auto; }
 .sk-row .sk-use:hover { background: var(--text); color: var(--bg); border-color: var(--text); }
-/* The switch is the control, not the state read. Ninety of them at rest is
-   ninety accent pills saying the same thing, so it waits for hover and the
-   exception carries the state instead. */
 .sk-row .toggle { opacity: 0; pointer-events: none; transition: opacity 0.13s ease; }
 .sk-row:hover .toggle, .sk-row:focus-within .toggle { opacity: 1; pointer-events: auto; }
-/* A disabled row states it in words, so state survives without hovering and
-   without reading ninety switch positions. */
-.sk-row.disabled .sk-row-name { color: var(--text-3); font-weight: 500; }
-.sk-row.disabled .sk-row-desc { opacity: 0.6; }
-.sk-row.disabled .toggle { opacity: 0.6; pointer-events: auto; }
-.sk-tag {
-  font-size: 9.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
-  padding: 2px 6px; border-radius: 4px;
-  border: 1px solid var(--line);
-  color: var(--text-3);
-  flex: 0 0 auto;
-}
-/* Only the exception is marked. A badge every row carries is not a badge. */
-.sk-tag-prompt {
-  color: var(--cyan, #67e8f9);
-  border-color: color-mix(in srgb, var(--cyan, #67e8f9) 40%, var(--line));
-}
-.sk-tag-off { color: var(--text-3); }
+/* A disabled row keeps its switch: it is the only way back. */
+.sk-row.disabled .toggle { opacity: 0.65; pointer-events: auto; }
 
 /* Reusable iOS-style switch.
    Use class="husk-switch" on a <button> with the .on class for state, OR on
@@ -5148,7 +5157,7 @@ input[type="checkbox"]:disabled {
    visible page area instead of huddling in a 320px corner cell. */
 .ws-board > .empty-state,
 .prompts-grid > .empty-state,
-.skills-list > .empty-state,
+.sk-tbody > .empty-state,
 .mcp-grid > .empty-state,
 .mcp-installed > .empty-state {
   grid-column: 1 / -1;
@@ -7509,11 +7518,15 @@ kbd {
   .page-head-right .ghost-input { min-width: 0; flex: 1 1 100%; }
   .page-title { font-size: 22px; }
   .prompts-grid,
-  .sk-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+  /* Description and family are the two columns a narrow window can lose and
+     still leave the table readable. Both the cell and its heading go, so the
+     tracks keep matching. */
+  .sk-thead, .sk-row {
+    grid-template-columns: minmax(0, 1fr) 112px 132px;
     gap: 10px;
   }
-  .sk-row-desc { display: none; }
+  .sk-row-desc, .sk-row-family,
+  .sk-thead .sk-th:nth-child(2), .sk-thead .sk-th:nth-child(3) { display: none; }
   .modal-card,
   .modal-card.modal-wide,
   .modal-card.modal-card-wide {

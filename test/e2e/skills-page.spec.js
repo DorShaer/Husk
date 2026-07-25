@@ -1,9 +1,10 @@
 'use strict';
 
-// The library is grouped by the family each name already carries, so these
-// check that the grouping forms only where it earns a heading, that the row
-// drops the prefix its heading repeats without losing it for search, and that
-// the facet, state and text filters compose instead of overriding each other.
+// The library is a sortable table filtered three ways at once. These check that
+// the family column is derived only where it earns a name, that the name cell
+// drops the prefix that column repeats without losing it for search, that the
+// facet, state and text filters compose instead of overriding each other, and
+// that sorting a column actually reorders the body.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');
@@ -12,7 +13,7 @@ const fs = require('fs');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-// A library shaped like a real one: a family big enough to earn a heading, a
+// A library shaped like a real one: a family big enough to earn a name, a
 // prefix too rare to earn one, plain entries, a disabled entry and prompts.
 const FAMILY = ['xss', 'sqli', 'ssrf', 'idor', 'rce'];
 const PLAIN = ['Agents', 'Research', 'Interceptor'];
@@ -34,7 +35,7 @@ function boot() {
   };
   FAMILY.forEach((f) => mk(`zed-hunt-${f}`, `Hunting skill for ${f}.`));
   PLAIN.forEach((p) => mk(p, `The ${p} skill.`));
-  // Two entries share this prefix, one short of a heading of their own.
+  // Two entries share this prefix, one short of a family of their own.
   mk('rare-alpha', 'A prefix too rare to group.');
   mk('rare-beta', 'A prefix too rare to group.');
   mk('_disabled_retired', 'A skill that is switched off.');
@@ -66,39 +67,37 @@ async function openSkills(app) {
   return win;
 }
 
-const groupNames = (win) => win.evaluate(
-  () => [...document.querySelectorAll('.sk-group-name')].map((n) => n.textContent),
+const col = (win, cls) => win.evaluate(
+  (c) => [...document.querySelectorAll(`.sk-row ${c}`)].map((n) => n.textContent.trim()), cls,
 );
 const rowNames = (win) => win.evaluate(
   () => [...document.querySelectorAll('.sk-row')].map((r) => r.querySelector('.sk-row-name > span').textContent),
 );
 
-test('a family earns a heading only once enough entries share it', async () => {
+test('the family column names a group only once enough entries share it', async () => {
   test.setTimeout(90_000);
   const app = await launch(boot());
   try {
     const win = await openSkills(app);
-    const groups = await groupNames(win);
-    // Five entries share "zed", so it groups. Two share "rare", so they fall
-    // back to the library rather than forming a heading of their own.
-    expect(groups).toContain('zed');
-    expect(groups).toContain('Library');
-    expect(groups).toContain('Husk prompts');
-    expect(groups).not.toContain('rare');
-    const names = await rowNames(win);
-    expect(names).toContain('rare-alpha');
+    const families = new Set(await col(win, '.sk-row-family'));
+    // Five entries share "zed", so it is named. Two share "rare", so they fall
+    // back to the library rather than becoming a family of their own.
+    expect(families).toContain('zed');
+    expect(families).toContain('Library');
+    expect(families).toContain('Husk prompts');
+    expect(families).not.toContain('rare');
+    expect(await rowNames(win)).toContain('rare-alpha');
   } finally { await app.close(); }
 });
 
-test('a grouped row drops the prefix its heading already carries', async () => {
+test('a row drops the prefix its family column already carries', async () => {
   test.setTimeout(90_000);
   const app = await launch(boot());
   try {
     const win = await openSkills(app);
     await win.locator('.sk-facet[data-family="zed"]').click();
     await win.waitForTimeout(200);
-    const names = await rowNames(win);
-    expect(names.sort()).toEqual(FAMILY.map((f) => `hunt-${f}`).sort());
+    expect((await rowNames(win)).sort()).toEqual(FAMILY.map((f) => `hunt-${f}`).sort());
     // The full name survives for the tooltip and for the row's own data.
     const full = await win.evaluate(() => document.querySelector('.sk-row').dataset.name);
     expect(full.startsWith('zed-hunt-')).toBe(true);
@@ -124,13 +123,13 @@ test('the state filter isolates disabled entries and keeps their switch usable',
     await win.locator('[data-state="off"]').click();
     await win.waitForTimeout(250);
     expect(await rowNames(win)).toEqual(['retired']);
+    expect(await col(win, '.sk-row-state')).toEqual(['Disabled']);
     // Every other row hides its switch until hover; a disabled row cannot,
     // because that switch is the only way back.
     const opacity = await win.evaluate(
       () => getComputedStyle(document.querySelector('.sk-row .toggle')).opacity,
     );
     expect(Number(opacity)).toBeGreaterThan(0);
-    expect(await win.locator('.sk-tag-off').count()).toBe(1);
   } finally { await app.close(); }
 });
 
@@ -149,12 +148,12 @@ test('every facet filters, including the two standing groups', async () => {
     for (const key of keys) {
       await win.locator(`.sk-facet[data-family="${key}"]`).click();
       await win.waitForTimeout(200);
-      const state = await win.evaluate(() => ({
-        active: document.querySelector('.sk-facet.is-active')?.dataset.family,
-        groups: [...document.querySelectorAll('.sk-group-name')].length,
-      }));
-      expect(state.active).toBe(key);
-      expect(state.groups).toBe(key === 'all' ? 3 : 1);
+      const active = await win.evaluate(
+        () => document.querySelector('.sk-facet.is-active')?.dataset.family,
+      );
+      expect(active).toBe(key);
+      const families = new Set(await col(win, '.sk-row-family'));
+      expect(families.size).toBe(key === 'all' ? 3 : 1);
     }
   } finally { await app.close(); }
 });
@@ -170,19 +169,42 @@ test('facet and state filters compose rather than replace each other', async () 
     // Nothing in the family is disabled, so the pair yields an empty result
     // instead of the state filter winning and showing the retired entry.
     expect(await win.locator('.sk-row').count()).toBe(0);
-    expect(await win.locator('.skills-list .empty-state').count()).toBe(1);
+    expect(await win.locator('.sk-tbody .empty-state').count()).toBe(1);
     await win.locator('[data-state="all"]').click();
     await win.waitForTimeout(250);
     expect(await win.locator('.sk-row').count()).toBe(FAMILY.length);
   } finally { await app.close(); }
 });
 
-test('the resting list keeps its per-row controls out of the way', async () => {
+test('a column header sorts the body and flips on a second click', async () => {
   test.setTimeout(90_000);
   const app = await launch(boot());
   try {
     const win = await openSkills(app);
-    const first = win.locator('.sk-row').first();
+    const ascending = await rowNames(win);
+    expect(ascending).toEqual([...ascending].sort((a, b) => a.localeCompare(b)));
+
+    await win.locator('.sk-th[data-sort="name"]').click();
+    await win.waitForTimeout(220);
+    expect(await rowNames(win)).toEqual([...ascending].reverse());
+    expect(await win.locator('.sk-th[data-sort="name"].is-desc').count()).toBe(1);
+
+    // Taking over another column starts it ascending rather than inheriting
+    // the previous column's direction.
+    await win.locator('.sk-th[data-sort="state"]').click();
+    await win.waitForTimeout(220);
+    expect(await win.locator('.sk-th[data-sort="state"].is-sorted').count()).toBe(1);
+    expect(await win.locator('.sk-th[data-sort="name"].is-sorted').count()).toBe(0);
+    const states = await col(win, '.sk-row-state');
+    expect(states[states.length - 1]).toBe('Disabled');
+  } finally { await app.close(); }
+});
+
+test('the resting table keeps its per-row controls out of the way', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app);
     const at = async () => win.evaluate(() => {
       const r = document.querySelector('.sk-row');
       return {
@@ -193,7 +215,7 @@ test('the resting list keeps its per-row controls out of the way', async () => {
     const resting = await at();
     expect(Number(resting.use)).toBe(0);
     expect(Number(resting.toggle)).toBe(0);
-    await first.hover();
+    await win.locator('.sk-row').first().hover();
     await win.waitForTimeout(260);
     const hovered = await at();
     expect(Number(hovered.use)).toBe(1);
