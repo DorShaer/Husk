@@ -134,6 +134,31 @@ test('the state filter isolates disabled entries and keeps their switch usable',
   } finally { await app.close(); }
 });
 
+test('every facet filters, including the two standing groups', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app);
+    const keys = await win.evaluate(
+      () => [...document.querySelectorAll('.sk-facet')].map((f) => f.dataset.family),
+    );
+    // The standing groups carry synthetic keys, so they are the ones that can
+    // fail to survive the trip through the data attribute and silently fall
+    // back to All. Each facet is checked, not a representative one.
+    expect(keys).toEqual(expect.arrayContaining(['all', '__library', '__prompts', 'zed']));
+    for (const key of keys) {
+      await win.locator(`.sk-facet[data-family="${key}"]`).click();
+      await win.waitForTimeout(200);
+      const state = await win.evaluate(() => ({
+        active: document.querySelector('.sk-facet.is-active')?.dataset.family,
+        groups: [...document.querySelectorAll('.sk-group-name')].length,
+      }));
+      expect(state.active).toBe(key);
+      expect(state.groups).toBe(key === 'all' ? 3 : 1);
+    }
+  } finally { await app.close(); }
+});
+
 test('facet and state filters compose rather than replace each other', async () => {
   test.setTimeout(90_000);
   const app = await launch(boot());

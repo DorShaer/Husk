@@ -5732,8 +5732,11 @@ async function injectPromptToChat(content) {
 // A family is only worth a heading once enough entries share it, otherwise the
 // page trades one flat run for a run of one-item sections.
 const SK_FAMILY_MIN = 3;
-const SK_LIBRARY = ' library';
-const SK_PROMPTS = ' prompts';
+// The two standing groups need keys a derived family can never produce, and
+// that survive a round trip through a data attribute. A family is matched as
+// [A-Za-z0-9]+, so a leading underscore is unreachable.
+const SK_LIBRARY = '__library';
+const SK_PROMPTS = '__prompts';
 let skFamily = 'all';
 let skState = 'all';
 
