@@ -3732,14 +3732,72 @@ body[data-page="chat"] #chats-panel { display: flex; }
   background:
     radial-gradient(circle, var(--line) 1px, transparent 1px) 0 0 / 22px 22px;
 }
-.wf-canvas-hint {
-  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-  font-size: 11px; color: var(--text-3);
-  background: var(--bg-2); border: 1px solid var(--line);
-  padding: 5px 12px; border-radius: var(--radius-pill);
-  pointer-events: none; white-space: nowrap;
-  box-shadow: var(--elev-1);
+/* Canvas legend. Docked bottom-left so it never sits over the first step,
+   which lands top-left, and collapsible to a pill once you know the moves. */
+.wf-legend {
+  position: absolute; left: 14px; bottom: 14px; z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  max-width: min(340px, calc(100% - 28px));
+  /* Reference material must never intercept the canvas underneath it: dropping
+     a connection on the legend would otherwise read as dropping it on nothing
+     while the pointer never reached the canvas at all. Only the toggle takes
+     clicks. */
+  pointer-events: none;
 }
+.wf-legend-toggle { pointer-events: auto; }
+.wf-legend-body {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--bg-1), var(--bg-1));
+  border: 1px solid var(--line);
+  box-shadow: var(--elev-3);
+}
+.wf-legend.is-collapsed .wf-legend-body { display: none; }
+.wf-legend-title {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 7px;
+}
+.wf-legend-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 10px; align-items: baseline;
+  padding: 2.5px 0;
+  font-size: 11.5px; line-height: 1.45;
+}
+.wf-legend-what { color: var(--text-2); }
+.wf-legend-how { color: var(--text-3); }
+.wf-legend-how b { color: var(--text-2); font-weight: 600; }
+.wf-legend-how kbd {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px; line-height: 1;
+  padding: 2px 5px; border-radius: 5px;
+  background: var(--bg-3); border: 1px solid var(--line-2);
+  color: var(--text-2);
+}
+.wf-legend-note {
+  margin: 0; padding-top: 11px;
+  border-top: 1px solid var(--line);
+  font-size: 11px; line-height: 1.5; color: var(--text-3);
+}
+.wf-legend-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 11px;
+  border-radius: var(--radius-pill);
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--bg-2), var(--bg-2));
+  border: 1px solid var(--line);
+  color: var(--text-3);
+  font-family: inherit; font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--elev-1);
+  transition: color 0.14s ease, border-color 0.14s ease;
+}
+.wf-legend-toggle:hover { color: var(--text); border-color: var(--line-2); }
+.wf-legend-toggle svg { width: 13px; height: 13px; color: var(--accent); }
 
 /* Drawflow dark theme overrides */
 .wf-canvas .drawflow { width: 100%; height: 100%; }
@@ -3821,15 +3879,41 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .wf-drawer[hidden] { display: none; }
 .wf-drawer-scrim { position: absolute; inset: 0; background: rgba(0,0,0,0.42); backdrop-filter: blur(2px); animation: wf-scrim-in 0.2s ease; }
 .wf-drawer-panel {
-  position: relative; width: min(560px, 94vw); height: 100%;
+  position: relative; width: min(560px, 94vw); max-width: 94vw; height: 100%;
+  container-type: inline-size;
   display: flex; flex-direction: column;
   background-color: var(--bg); background-image: linear-gradient(var(--bg-1), var(--bg-1));
   border-left: 1px solid var(--line); box-shadow: -26px 0 60px -24px rgba(0,0,0,0.6);
   animation: wf-drawer-in 0.24s cubic-bezier(.16,1,.3,1);
+  transition: width 0.24s cubic-bezier(.16,1,.3,1);
 }
+/* Dragging is direct manipulation: the panel must track the pointer exactly,
+   so the easing that makes the Widen button feel good gets out of the way. */
+.wf-drawer-panel.is-dragging { transition: none; }
+.wf-drawer.is-dragging { cursor: col-resize; user-select: none; }
+.wf-drawer-grip {
+  position: absolute; left: -5px; top: 0; bottom: 0; width: 11px; z-index: 4;
+  cursor: col-resize;
+}
+.wf-drawer-grip::after {
+  content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 2px;
+  background: transparent; transition: background 0.14s ease;
+}
+.wf-drawer-grip:hover::after,
+.wf-drawer-panel.is-dragging .wf-drawer-grip::after { background: var(--accent); }
 @keyframes wf-drawer-in { from { transform: translateX(26px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes wf-scrim-in { from { opacity: 0; } to { opacity: 1; } }
 .wf-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
+.wf-nm-fields { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* Past this width the panel stops being a form with a big box at the bottom
+   and becomes a composer: settings in a fixed left column, the editor taking
+   the whole remaining pane at full height. Keyed off the panel's own width so
+   dragging the edge crosses over at the same point the Widen button does. */
+@container (min-width: 800px) {
+  .wf-drawer-body { flex-direction: row; align-items: stretch; gap: 26px; overflow: hidden; }
+  .wf-nm-fields { flex: 0 0 300px; overflow-y: auto; padding-right: 2px; }
+  .wf-nm-editor { flex: 1; min-width: 0; }
+}
 .wf-nm-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .wf-nm-head-title { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .wf-nm-head-badge {
@@ -3841,6 +3925,12 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .wf-nm-editor { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1; min-height: 0; }
 .wf-nm-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .wf-nm-editor-head .form-label { margin: 0; }
+.wf-nm-editor-tools { display: flex; align-items: center; gap: 8px; }
+.wf-nm-widen { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; font-size: var(--fs-small); white-space: nowrap; border-radius: 8px; }
+.wf-nm-widen svg { width: 13px; height: 13px; color: var(--text-3); }
+.wf-nm-widen .wf-widen-in { display: none; }
+.wf-nm-widen.is-wide .wf-widen-in { display: block; }
+.wf-nm-widen.is-wide .wf-widen-out { display: none; }
 .wf-nm-generate { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; font-size: var(--fs-small); white-space: nowrap; border-radius: 8px; }
 .wf-nm-generate svg { color: var(--accent); }
 .wf-nm-generate:disabled { opacity: 0.55; cursor: default; }
@@ -3869,16 +3959,30 @@ body[data-page="chat"] #chats-panel { display: flex; }
   box-shadow: none !important;
   border-color: transparent !important;
 }
+/* One number per logical line, each block as tall as that line renders. A
+   paragraph that wraps over five rows is still one numbered thing, which is
+   what a prompt author is actually counting. */
 .wf-ide-gutter {
-  flex: none; width: 42px; padding: 14px 8px 14px 0; text-align: right;
+  flex: none; width: 40px; padding: 14px 9px 14px 0; text-align: right;
   color: var(--text-3); background: color-mix(in srgb, var(--text) 3%, transparent);
   user-select: none; overflow: hidden;
-  white-space: pre; font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums;
 }
+.wf-ide-gutter > div { overflow: hidden; }
 .wf-ide-input {
   flex: 1; min-width: 0; border: 0; outline: none; resize: none;
   background: transparent; color: var(--text); padding: 14px 16px;
-  font: inherit; line-height: inherit; white-space: pre;
+  font: inherit; line-height: inherit;
+  white-space: pre-wrap; overflow-wrap: break-word;
+}
+/* Measured, never seen. Same font, same wrapping, same content width as the
+   textarea's text column, so offsetHeight per line is the real rendered height. */
+.wf-ide-mirror {
+  position: absolute; top: 0; left: 0; z-index: -1;
+  visibility: hidden; pointer-events: none;
+  padding: 0; border: 0;
+  font: inherit; line-height: inherit;
+  white-space: pre-wrap; overflow-wrap: break-word;
 }
 .wf-ide-input::placeholder { color: var(--text-3); white-space: pre-wrap; }
 /* AI suggestion review overlay: approve or discard before it touches the editor. */
@@ -3903,11 +4007,29 @@ body[data-page="chat"] #chats-panel { display: flex; }
   font-size: 13px; line-height: 1.7;
 }
 .wf-gen-review-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); }
+.wf-nm-editor-foot { display: flex; align-items: center; gap: 12px; min-height: 16px; }
 .wf-nm-gen-status { font-size: var(--fs-small); color: var(--text-3); min-height: 1em; }
 .wf-nm-gen-status.is-error { color: var(--rose); }
+/* What you have written, in the units the agent will actually be billed in. */
+.wf-nm-measure {
+  margin-left: auto; white-space: nowrap;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
 .wf-nm-foot { display: flex; align-items: center; justify-content: space-between; padding: 13px 20px; border-top: 1px solid var(--line); }
-.wf-nm-foot #wf-np-delete { border: 0; background: transparent; color: var(--text-3); padding: 7px 10px; font-size: var(--fs-small); }
-.wf-nm-foot #wf-np-delete:hover { background: color-mix(in srgb, var(--rose) 14%, transparent); color: var(--rose); }
+/* Deleting a step is destructive and irreversible, so it reads as destructive
+   and carries the same weight as the button it sits opposite. */
+.wf-nm-foot #wf-np-delete {
+  height: var(--control-h); min-width: 96px; padding: 0 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--rose) 42%, var(--line));
+  background: color-mix(in srgb, var(--rose) 11%, transparent);
+  color: var(--rose); font-size: var(--fs-small); font-weight: 600;
+}
+.wf-nm-foot #wf-np-delete:hover {
+  background: var(--rose); border-color: var(--rose); color: #fff;
+}
 /* Beat the .modal-card .btn-primary { width:100% } rule so Done stays compact. */
 .wf-drawer .btn-primary { width: auto; min-width: 96px; height: var(--control-h); padding: 0 18px; font-size: var(--fs-small); }
 .wf-edge-panel-hint {
@@ -4988,8 +5110,7 @@ input[type="checkbox"]:disabled {
 .prompts-grid > .empty-state,
 .skills-grid > .empty-state,
 .mcp-grid > .empty-state,
-.mcp-installed > .empty-state,
-.wf-grid > .empty-state {
+.mcp-installed > .empty-state {
   grid-column: 1 / -1;
   min-height: 360px;
 }
@@ -6449,54 +6570,16 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
   overflow: visible;
   cursor: pointer;
 }
-/* ── Kernel in empty states ──────────────────────────────────────────────
-   A standalone, static Kernel wired to workflow node cards, with a signal
-   flowing along each wire toward its node. */
-.empty-state.es-kernel { gap: 4px; }
-.es-kernel .ek-stage {
-  position: relative; width: 480px; height: 280px; max-width: 100%;
-  display: grid; place-items: center;
-  margin-bottom: 4px;
-}
-/* Bare Kernel: hide the pod/husk shell, hands, glow and sparks and show only
+/* ── Bare Kernel ─────────────────────────────────────────────────────────
+   The mascot on its own, used wherever a page wants him as illustration
+   rather than as the live boot animation.
+
+   Bare Kernel: hide the pod/husk shell, hands, glow and sparks and show only
    the seed character, at rest, with every animation and transition off. */
 .hk.is-bare .hk-petal, .hk.is-bare .hk-pit, .hk.is-bare .hk-shadow,
 .hk.is-bare .hk-glow, .hk.is-bare .hk-hands, .hk.is-bare .hk-sparks { display: none; }
 .hk.is-bare .hk-seed { transform: none; opacity: 1; }
 .hk.is-bare, .hk.is-bare * { animation: none !important; transition: none !important; }
-.es-kernel .ek-slot { position: relative; z-index: 1; line-height: 0; }
-.es-kernel .ek-slot .hk { width: 104px; height: auto; cursor: default; }
-/* Workflow graph: curved wires from Kernel to faint node cards, each carrying a
-   bright signal dot that flows out toward its node. */
-.es-kernel .ek-graph { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.es-kernel .ek-wire {
-  fill: none; stroke-width: 2; stroke-linecap: round;
-  stroke: color-mix(in srgb, var(--accent) 32%, var(--line));
-}
-.es-kernel .ek-wire-2 { stroke-width: 1.5; stroke: color-mix(in srgb, var(--accent) 20%, var(--line)); }
-.es-kernel .ek-flow {
-  fill: none; stroke-width: 3; stroke-linecap: round; stroke: var(--accent);
-  stroke-dasharray: 6 100; stroke-dashoffset: 106;
-  filter: drop-shadow(0 0 3px var(--accent-glow));
-  animation: ek-flow 2.4s linear infinite;
-}
-.es-kernel .ek-flow:nth-of-type(10) { animation-delay: 0.6s; }
-.es-kernel .ek-flow:nth-of-type(11) { animation-delay: 1.2s; }
-.es-kernel .ek-flow:nth-of-type(12) { animation-delay: 1.8s; }
-/* Mini workflow-node cards: gradient icon badge, title + meta lines, floating. */
-.es-kernel .ek-node { filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.38)); }
-.es-kernel .ek-card { fill: var(--bg-4); stroke: var(--line-2); stroke-width: 1; }
-.es-kernel .ek-node-icon { fill: url(#ek-ic); }
-.es-kernel .ek-node-l1 { fill: color-mix(in srgb, var(--text) 52%, transparent); }
-.es-kernel .ek-node-l2 { fill: color-mix(in srgb, var(--text) 22%, transparent); }
-.ek-ic0 { stop-color: var(--accent); }
-.ek-ic1 { stop-color: var(--accent-2); }
-.es-kernel .ek-dot { fill: var(--accent); }
-.es-kernel .ek-dot-2 { fill: color-mix(in srgb, var(--accent) 70%, transparent); }
-@keyframes ek-flow { to { stroke-dashoffset: 0; } }
-@media (prefers-reduced-motion: reduce) {
-  .es-kernel .ek-flow { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; opacity: 0; }
-}
 /* Every animated part is positioned in viewBox units, so transform-origin is
    read against the viewBox rather than each element's own tight bounding box. */
 .hk-petal, .hk-seed, .hk-sprout-g, .hk-eyes, .hk-lid,
@@ -8018,6 +8101,445 @@ kbd {
   cursor: pointer; font-family: inherit;
 }
 .wf-band-btn:hover { background: var(--bg-3); border-color: var(--line-3); }
+
+/* ── The hub: hero, patterns, concepts, saved flows, run history ─────────────
+   The index is the landing page for the whole feature, not a bare grid. It
+   stays explanatory when nothing is saved and stays useful once flows exist,
+   because the same sections just fill in. */
+.wfx { display: flex; flex-direction: column; gap: 36px; }
+
+.wfx-hero {
+  position: relative;
+  /* Copy and art are two columns of one grid, and the stats bar is its own
+     full-width row underneath. The art is therefore bounded by the rows it
+     spans and cannot reach the stats rule at any width. A container query,
+     not a media query: the status panel and the collapsed rail both change
+     this box without changing the window. */
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52%;
+  column-gap: 32px;
+  align-content: start;
+  padding: 42px 40px 36px;
+  border-radius: 24px;
+  background:
+    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),
+    radial-gradient(80% 80% at 100% 100%, color-mix(in srgb, var(--accent-2) 10%, transparent), transparent 60%),
+    var(--bg-1);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+/* Ambient corner light, kept well under the diagram so it reads as depth
+   rather than as another thing to look at. */
+.wfx-hero::before {
+  content: "";
+  position: absolute;
+  top: -140px; right: -60px;
+  width: 380px; height: 380px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%);
+  pointer-events: none;
+  filter: blur(16px);
+}
+/* A live DAG: start chip, parallel security reviewers, a gate, and a ship/fix
+   branch. The art states the product thesis without competing with the copy. */
+.wfx-hero-art {
+  position: relative;
+  /* Spans the copy's rows and stops there. The box takes its height from the
+     column beside it rather than from its own width, and the SVG letterboxes
+     inside whatever it gets, so the graph scales without ever driving the
+     panel's height or crossing the row below. */
+  grid-column: 2; grid-row: 1 / 5;
+  align-self: stretch;
+  min-height: 0;
+  pointer-events: none; z-index: 0;
+  contain: paint;
+}
+.wfx-dag { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.wfx-grid-dot { fill: color-mix(in srgb, var(--text) 9%, transparent); }
+
+/* The stage rail. Set above the graph, so it can never meet the stats rule. */
+.wfx-stage {
+  fill: color-mix(in srgb, var(--text) 38%, transparent);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px; font-weight: 700; letter-spacing: 2.6px; text-anchor: middle;
+}
+.wfx-rule { stroke: color-mix(in srgb, var(--text) 10%, transparent); stroke-width: 1; }
+
+/* Group opacity, not per-stroke alpha: the fan wires overlap where they leave
+   the card, and per-stroke alpha composites that into a bright nub. */
+.wfx-wires { opacity: 0.42; }
+.wfx-wires path { fill: none; stroke: var(--text); stroke-width: 1.75; stroke-linecap: butt; }
+.wfx-wires path.is-idle { stroke-dasharray: 4 5; opacity: 0.55; }
+.wfx-casters rect, .wfx-casters path { fill: var(--bg-2); }
+
+/* One 6s timeline retelling the run in order: the fan leaves together and
+   lands together, the merge follows, the gate decides, and only the pass
+   branch carries on. Both keyframe values are plain lengths, because a calc()
+   against a bare length steps instead of interpolating. */
+.wfx-pulse path {
+  fill: none; stroke: var(--accent); stroke-width: 2.25; stroke-linecap: round;
+  stroke-dasharray: var(--d) 200;
+  filter: drop-shadow(0 0 3px var(--accent-glow));
+  animation-duration: 6s; animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+.is-curve { --d: 15px; --d-end: -115px; }
+.is-straight { --d: 26px; --d-end: -126px; }
+.is-fan { animation-name: wfx-fan; }
+.is-merge { animation-name: wfx-merge; }
+.is-branch { animation-name: wfx-branch; }
+@keyframes wfx-fan {
+  0%, 4%    { stroke-dashoffset: var(--d); }
+  24%, 100% { stroke-dashoffset: var(--d-end); }
+}
+@keyframes wfx-merge {
+  0%, 27%   { stroke-dashoffset: var(--d); }
+  46%, 100% { stroke-dashoffset: var(--d-end); }
+}
+@keyframes wfx-branch {
+  0%, 52%   { stroke-dashoffset: var(--d); }
+  70%, 100% { stroke-dashoffset: var(--d-end); }
+}
+
+/* Cards are the only things that leave the plane. State lives on the border
+   and its dot: emerald done, accent running. */
+.wfx-card { fill: url(#wfx-card-g); stroke: var(--line-3); stroke-width: 1; }
+.wfx-card.is-entry { stroke: color-mix(in srgb, var(--accent) 52%, transparent); }
+/* Done is said once, by the dot, so the accent border belongs to the live
+   step alone and has a neutral field to stand out against. */
+.wfx-card.is-live { stroke: color-mix(in srgb, var(--accent) 58%, transparent); }
+/* Accent marks the live spine only: the entry, the gate deciding, and the
+   step running now. A finished step already says so with its dot, so its
+   glyph drops to plain ink and stops competing for the same read. */
+.wfx-node.is-done .wfx-glyph { stroke: color-mix(in srgb, var(--text) 58%, transparent); }
+/* The branch not taken says so once, with its dashed edge; the card just
+   steps back. */
+.wfx-node.is-skipped { opacity: 0.55; }
+.wfx-node.is-skipped .wfx-glyph { stroke: color-mix(in srgb, var(--text) 45%, transparent); }
+.wfx-node.is-skipped .wfx-chip { fill: color-mix(in srgb, var(--text) 7%, transparent); }
+.wfx-node.is-skipped .wfx-title { fill: color-mix(in srgb, var(--text) 65%, transparent); }
+.wfx-cg0 { stop-color: var(--bg-4); }
+.wfx-cg1 { stop-color: var(--bg-2); }
+
+.wfx-chip { fill: color-mix(in srgb, var(--text) 8%, transparent); }
+.wfx-chip.is-accent { fill: color-mix(in srgb, var(--accent) 20%, transparent); }
+.wfx-glyph { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wfx-glyph * { vector-effect: non-scaling-stroke; }
+.wfx-play { fill: var(--accent); }
+.wfx-entry-rail { fill: var(--accent); }
+
+.wfx-title {
+  fill: color-mix(in srgb, var(--text) 94%, transparent);
+  font-family: var(--font-ui, inherit); font-size: 13.5px; font-weight: 600;
+  letter-spacing: -0.15px;
+}
+/* Run detail in the product's own units, sized to fit the card's text slot. */
+.wfx-meta {
+  fill: color-mix(in srgb, var(--text) 44%, transparent);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.05px;
+}
+.wfx-state { fill: color-mix(in srgb, var(--text) 24%, transparent); }
+.wfx-state.is-done { fill: var(--emerald); }
+.wfx-state.is-live {
+  fill: var(--accent);
+  transform-box: fill-box; transform-origin: center;
+  animation: wfx-lit 6s ease-in-out infinite;
+}
+/* The running step answers the moment the pulse reaches it. */
+@keyframes wfx-lit {
+  0%, 70%   { transform: scale(1); opacity: 1; }
+  78%       { transform: scale(1.5); opacity: 0.55; }
+  88%, 100% { transform: scale(1); opacity: 1; }
+}
+
+/* The diamond is the decision, so it is the one lit shape. */
+.wfx-gate {
+  fill: color-mix(in srgb, var(--accent) 10%, var(--bg-4));
+  stroke: color-mix(in srgb, var(--accent) 70%, transparent); stroke-width: 2;
+}
+.wfx-gate-mark {
+  fill: none; stroke: var(--accent); stroke-width: 3;
+  stroke-linecap: round; stroke-linejoin: round;
+  animation: wfx-gatelit 6s ease-in-out infinite;
+}
+@keyframes wfx-gatelit { 0%, 46% { opacity: 0.45; } 52%, 64% { opacity: 1; } 74%, 100% { opacity: 0.45; } }
+/* The rule the gate applies, so the diagram can be inferred, not just seen.
+   Set in the caption grey the stage rail uses: the gate is already the lit
+   shape, and a second accent here would pull rank on the live step. */
+.wfx-gate-note {
+  fill: color-mix(in srgb, var(--text) 42%, transparent);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 8.5px; letter-spacing: 0.4px; text-anchor: middle;
+}
+
+/* The verdict, set beside its own edge as bare type. The seat is chosen off
+   the stroke's normal with a clear band of background around it, so the label
+   stays legible without a plate to separate it from the wire. */
+.wfx-edge-label {
+  fill: color-mix(in srgb, var(--text) 58%, transparent);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px; font-weight: 500; letter-spacing: 0.4px; text-anchor: middle;
+}
+.wfx-edge-label.is-idle { fill: color-mix(in srgb, var(--text) 34%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* A frozen comet is a stray smear, so the pulses leave entirely. */
+  .wfx-pulse { display: none; }
+  .wfx-gate-mark, .wfx-state.is-live { animation: none; opacity: 1; }
+}
+
+.wfx-hero-eyebrow {
+  grid-column: 1; grid-row: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase;
+  color: var(--accent); font-weight: 600;
+  margin-bottom: 14px;
+}
+.wfx-hero-title {
+  grid-column: 1; grid-row: 2;
+  font-family: var(--font-display);
+  font-size: 46px; font-weight: 700;
+  letter-spacing: -0.025em; line-height: 1.05;
+  color: var(--text);
+  margin: 0 0 20px 0;
+  max-width: 600px;
+  background: linear-gradient(135deg, var(--text) 0%, var(--text-2) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.wfx-hero-body {
+  grid-column: 1; grid-row: 3;
+  font-size: 15.5px; line-height: 1.62;
+  color: var(--text-2);
+  max-width: 600px;
+  margin: 0 0 30px 0;
+}
+.wfx-hero-actions {
+  grid-column: 1; grid-row: 4;
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 30px;
+}
+.wfx-hero-secondary {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: var(--radius-md);
+  height: var(--control-h);
+  padding: 0 16px;
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.wfx-hero-secondary:hover { background: var(--bg-2); border-color: var(--line-2); }
+.wfx-hero-stats {
+  grid-column: 1 / -1; grid-row: 5;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, max-content));
+  gap: 44px;
+  padding-top: 30px;
+  border-top: 1px solid var(--line-2);
+}
+.wfx-hero-stat-value {
+  font-family: var(--font-display);
+  font-size: 32px; font-weight: 700; letter-spacing: -0.015em;
+  color: var(--text); font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+.wfx-hero-stat-label {
+  margin-top: 2px;
+  font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-3); font-weight: 600;
+}
+@media (max-width: 900px) {
+  .wfx-hero { padding: 30px 24px 26px; }
+  .wfx-hero-title { font-size: 34px; }
+  .wfx-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+}
+/* Sized against the hero, not the window: the status panel and the collapsed
+   rail both resize this box without the viewport moving. The headline gives up
+   type size before it gives up its two-line break, and once the copy would
+   crowd the graph the graph leaves instead. */
+@container (max-width: 1040px) { .wfx-hero-title { font-size: 37px; } }
+@container (max-width: 900px) { .wfx-hero-title { font-size: 31px; } }
+@container (max-width: 900px) {
+  .wfx-hero { grid-template-columns: minmax(0, 1fr); }
+  .wfx-hero-art { display: none; }
+  .wfx-hero-title { font-size: 37px; }
+  .wfx-hero-title, .wfx-hero-body { max-width: 100%; }
+}
+
+/* Section shell shared by patterns, concepts, saved flows and history. */
+.wfx-section { display: flex; flex-direction: column; gap: 16px; }
+.wfx-section-head { display: flex; flex-direction: column; gap: 4px; }
+.wfx-section-title {
+  font-family: var(--font-display);
+  font-size: 20px; font-weight: 600; letter-spacing: -0.012em;
+  color: var(--text); margin: 0;
+}
+.wfx-section-sub { font-size: 12.5px; color: var(--text-3); }
+
+/* Pattern cards. The topology is the headline: each card draws its own graph
+   with the same mini-graph renderer the saved cards use, so what you click is
+   literally what you get. */
+.wfx-pattern-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+.wfx-pattern {
+  position: relative;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 18px 18px 16px;
+  border-radius: 16px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  text-align: left; font-family: inherit; color: inherit;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease, transform 120ms ease, box-shadow 180ms ease;
+}
+.wfx-pattern:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line-2));
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-1));
+  transform: translateY(-2px);
+  box-shadow: var(--elev-2);
+}
+.wfx-pattern:active { transform: translateY(0); }
+.wfx-pattern-top { display: flex; align-items: center; gap: 10px; }
+.wfx-pattern-icon {
+  width: 34px; height: 34px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-1));
+  color: var(--accent);
+}
+.wfx-pattern-icon svg { width: 17px; height: 17px; }
+.wfx-pattern-title { font-size: 14.5px; font-weight: 650; letter-spacing: -0.005em; color: var(--text); }
+.wfx-pattern-shape {
+  padding: 8px 0 4px;
+  border-radius: 10px;
+  background:
+    radial-gradient(80% 120% at 50% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    var(--bg-2);
+  border: 1px solid var(--line);
+}
+.wfx-pattern-shape .wf-mini { width: 100%; height: 62px; display: block; }
+/* The thumbnail is the headline here, not a footnote on a saved card, so the
+   topology is tinted up until it reads from across the grid. */
+.wfx-pattern-shape .wf-mini-edge { stroke: color-mix(in srgb, var(--accent) 34%, var(--line-3)); }
+.wfx-pattern-shape .wf-mini-node {
+  fill: var(--bg-4);
+  stroke: color-mix(in srgb, var(--accent) 48%, var(--line-3));
+  transition: stroke 180ms ease, fill 180ms ease;
+}
+.wfx-pattern:hover .wf-mini-node { stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 16%, var(--bg-4)); }
+.wfx-pattern-body { font-size: 12.5px; line-height: 1.5; color: var(--text-2); flex: 1; }
+.wfx-pattern-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.wfx-pattern-foot > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.wfx-pattern-use {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--accent); font-weight: 600;
+  opacity: 0; transform: translateX(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.wfx-pattern:hover .wfx-pattern-use { opacity: 1; transform: translateX(0); }
+.wfx-pattern-use svg { width: 12px; height: 12px; }
+
+/* Concepts: numbered, quiet, docs-like. */
+.wfx-concepts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.wfx-concept {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 20px 18px;
+  background: var(--bg-1);
+}
+.wfx-concept-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--accent) 80%, transparent);
+}
+.wfx-concept-title { font-size: 13.5px; font-weight: 650; color: var(--text); }
+.wfx-concept-body { font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.wfx-concept-body code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  padding: 1px 5px; border-radius: 5px;
+  background: var(--bg-3); color: var(--text);
+}
+
+/* Run history: one row per run, newest first. */
+.wfx-runs {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.wfx-run-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 18px;
+  cursor: pointer;
+  background: transparent; border: 0; text-align: left;
+  font-family: inherit; color: inherit;
+  transition: background 160ms ease;
+}
+.wfx-run-row + .wfx-run-row { border-top: 1px solid var(--line); }
+.wfx-run-row:hover { background: var(--bg-2); }
+.wfx-run-icon {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-3);
+}
+.wfx-run-row.is-done .wfx-run-icon { background: var(--emerald); }
+.wfx-run-row.is-failed .wfx-run-icon { background: var(--rose); }
+/* Name over detail, so a long "stopped at ..." never crowds the timestamp. */
+.wfx-run-row > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; }
+.wfx-run-name {
+  display: block; font-size: 13px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wfx-run-sub { display: block; font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.wfx-run-when {
+  font-size: 11.5px; color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+.wfx-run-pill {
+  font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  border: 1px solid var(--line-2);
+  color: var(--text-2); background: var(--bg-2);
+}
+.wfx-run-row.is-done .wfx-run-pill {
+  color: var(--emerald);
+  border-color: color-mix(in srgb, var(--emerald) 40%, var(--line));
+  background: color-mix(in srgb, var(--emerald) 10%, transparent);
+}
+.wfx-run-row.is-failed .wfx-run-pill {
+  color: var(--rose);
+  border-color: color-mix(in srgb, var(--rose) 40%, var(--line));
+  background: color-mix(in srgb, var(--rose) 10%, transparent);
+}
 
 /* ── The card ─────────────────────────────────────────────────────────────── */
 #wf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 14px; }

@@ -88,27 +88,43 @@ test('autopilot wizard has an optional snapshot toggle and unlimited-cap hints',
   await app.close();
 });
 
-// The empty state carries an illustration: a graph of node cards plus the
-// mascot cloned into its slot. Assert both, so neither half can quietly stop
-// rendering and leave a bare block of text.
-test('workflows empty state renders its illustration', async () => {
+// With nothing saved, the page is still the whole feature: a hero carrying the
+// animated graph, a gallery of runnable patterns, and no empty
+// "your workflows" section in the way. Assert each half, so none of them can
+// quietly stop rendering and leave a bare block of text.
+test('workflows hub renders its hero, illustration and pattern gallery', async () => {
   const app = await launch();
   const win = await ready(app);
   const info = await win.evaluate(async () => {
     setPage('workflows');
-    for (let i = 0; i < 40 && !document.querySelector('#wf-grid .empty-state'); i++) {
+    for (let i = 0; i < 40 && !document.querySelector('.wfx-pattern'); i++) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    const stage = document.querySelector('#wf-grid .empty-state .ek-stage');
+    const art = document.querySelector('.wfx-hero-art');
     return {
-      hasGraph: !!(stage && stage.querySelector('svg.ek-graph')),
-      hasMascot: !!(stage && stage.querySelector('.ek-slot svg')),
-      text: document.getElementById('wf-grid').textContent.replace(/\s+/g, ' ').trim(),
+      hasGraph: !!(art && art.querySelector('svg.wfx-dag')),
+      // The graph is made only of things a workflow is made of. The mascot has
+      // a role on Autopilot, where he is flying the plane; inside a node card
+      // he only made that node's type ambiguous.
+      hasMascot: !!(art && art.querySelector('.hk')),
+      patterns: document.querySelectorAll('.wfx-pattern').length,
+      patternShapes: document.querySelectorAll('.wfx-pattern-shape svg.wf-mini').length,
+      concepts: document.querySelectorAll('.wfx-concept').length,
+      mineHidden: document.getElementById('wfx-mine-section').hidden,
+      runsHidden: document.getElementById('wfx-runs-section').hidden,
+      text: document.querySelector('.wfx-hero').textContent.replace(/\s+/g, ' ').trim(),
+      graphText: art ? art.textContent.replace(/\s+/g, ' ').trim() : '',
     };
   });
   expect(info.hasGraph).toBe(true);
-  expect(info.hasMascot).toBe(true);
-  expect(info.text).toContain('No workflows yet');
+  expect(info.hasMascot).toBe(false);
+  expect(info.patterns).toBeGreaterThanOrEqual(6);
+  expect(info.patternShapes).toBe(info.patterns);   // every pattern draws its own topology
+  expect(info.concepts).toBe(4);
+  expect(info.mineHidden).toBe(true);
+  expect(info.runsHidden).toBe(true);
+  expect(info.text).toContain('AGENTIC WORKFLOWS');
+  expect(info.graphText).toContain('DAST');
   await app.close();
 });
 

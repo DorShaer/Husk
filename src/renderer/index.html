@@ -503,8 +503,7 @@
             <div class="page-head">
               <div class="page-head-left">
                 <h1 class="page-title">Workflows</h1>
-                <span class="page-sub">chain agents into automated pipelines</span>
-                <span class="wf-stats" id="wf-stats"></span>
+                <span class="page-sub">design, run, and replay multi-agent graphs</span>
               </div>
               <div class="page-head-right">
                 <button class="btn-primary" id="btn-new-workflow"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Workflow</button>
@@ -518,7 +517,219 @@
                 <span class="wf-band-meta"></span>
                 <button class="wf-band-btn" id="wf-band-watch">Watch</button>
               </aside>
-              <div id="wf-grid" class="wf-grid"></div>
+
+              <!-- The landing hub for the whole feature: what a graph buys you,
+                   the topologies worth copying, the flows already saved, and how
+                   they have been behaving. -->
+              <div class="wfx">
+
+                <section class="wfx-hero">
+                  <div class="wfx-hero-art" aria-hidden="true">
+                    <svg class="wfx-dag" viewBox="0 0 760 300" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                          <linearGradient id="wfx-card-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="wfx-cg0"/><stop offset="1" class="wfx-cg1"/></linearGradient>
+                          <pattern id="wfx-grid" width="16" height="16" patternUnits="userSpaceOnUse"><circle class="wfx-grid-dot" cx="8" cy="8" r="1"/></pattern>
+                          <radialGradient id="wfx-fade" cx="0.5" cy="0.56" r="0.58">
+                            <stop offset="0" stop-color="#fff" stop-opacity="1"/>
+                            <stop offset="0.6" stop-color="#fff" stop-opacity="0.65"/>
+                            <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+                          </radialGradient>
+                          <mask id="wfx-grid-mask"><rect width="760" height="300" fill="url(#wfx-fade)"/></mask>
+                          <filter id="wfx-shadow" x="-30%" y="-30%" width="160%" height="160%">
+                            <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.4"/>
+                          </filter>
+                        </defs>
+
+                        <rect width="760" height="300" fill="url(#wfx-grid)" mask="url(#wfx-grid-mask)"/>
+
+                        <!-- The lifecycle the columns are built on, set as a header
+                             rail so it can never collide with the panel below. -->
+                        <text class="wfx-stage" x="97" y="40">PLAN</text>
+                        <text class="wfx-stage" x="297" y="40">SCAN</text>
+                        <text class="wfx-stage" x="461" y="40">GATE</text>
+                        <text class="wfx-stage" x="663" y="40">SHIP</text>
+                        <line class="wfx-rule" x1="31" y1="52" x2="729" y2="52"/>
+
+                        <!-- Every handle is horizontal and offset by half its gap, so no curve
+                             crosses itself and each one meets a border square on. The branch is
+                             given the widest gap of the three: it is the only edge carrying a
+                             label, and a label needs a clear band of background around it. -->
+                        <g class="wfx-wires">
+                          <path class="wfx-wire" d="M163,176 C 197,176 197,112 231,112"/>
+                          <path class="wfx-wire" d="M163,176 C 197,176 197,176 231,176"/>
+                          <path class="wfx-wire" d="M163,176 C 197,176 197,240 231,240"/>
+                          <path class="wfx-wire" d="M363,112 C 394,112 394,176 425,176"/>
+                          <path class="wfx-wire" d="M363,176 C 394,176 394,176 425,176"/>
+                          <path class="wfx-wire" d="M363,240 C 394,240 394,176 425,176"/>
+                          <path class="wfx-wire" d="M497,176 C 547,176 547,124 597,124"/>
+                          <path class="wfx-wire is-idle" d="M497,176 C 547,176 547,228 597,228"/>
+                        </g>
+                        <g class="wfx-pulse">
+                          <path class="is-fan is-curve" pathLength="100" d="M163,176 C 197,176 197,112 231,112"/>
+                          <path class="is-fan is-straight" pathLength="100" d="M163,176 C 197,176 197,176 231,176"/>
+                          <path class="is-fan is-curve" pathLength="100" d="M163,176 C 197,176 197,240 231,240"/>
+                          <path class="is-merge is-curve" pathLength="100" d="M363,112 C 394,112 394,176 425,176"/>
+                          <path class="is-merge is-straight" pathLength="100" d="M363,176 C 394,176 394,176 425,176"/>
+                          <path class="is-merge is-curve" pathLength="100" d="M363,240 C 394,240 394,176 425,176"/>
+                          <path class="is-branch is-curve" pathLength="100" d="M497,176 C 547,176 547,124 597,124"/>
+                        </g>
+
+                        <!-- Shadows cast from duplicates, so the blur never lands
+                             under a label. -->
+                        <g class="wfx-casters" filter="url(#wfx-shadow)">
+                          <rect x="31" y="152" width="132" height="48" rx="13"/>
+                          <rect x="231" y="88" width="132" height="48" rx="13"/>
+                          <rect x="231" y="152" width="132" height="48" rx="13"/>
+                          <rect x="231" y="216" width="132" height="48" rx="13"/>
+                          <path d="M461,140 L497,176 L461,212 L425,176 Z"/>
+                          <rect x="597" y="100" width="132" height="48" rx="13"/>
+                        </g>
+
+                        <g class="wfx-node">
+                          <rect class="wfx-card is-entry" x="31.5" y="152.5" width="131" height="47" rx="12.5"/>
+                          <rect class="wfx-entry-rail" x="31" y="164" width="3" height="24" rx="1.5"/>
+                          <rect class="wfx-chip is-accent" x="43" y="164" width="24" height="24" rx="8"/>
+                          <path class="wfx-play" d="M51,169 L51,183 L62,176 Z"/>
+                          <text class="wfx-title" x="75" y="173">Plan</text>
+                          <text class="wfx-meta" x="75" y="188">the change</text>
+                          <circle class="wfx-state is-done" cx="147" cy="176" r="4"/>
+                        </g>
+
+                        <g class="wfx-node is-done">
+                          <rect class="wfx-card" x="231.5" y="88.5" width="131" height="47" rx="12.5"/>
+                          <rect class="wfx-chip" x="243" y="100" width="24" height="24" rx="8"/>
+                          <g class="wfx-glyph" transform="translate(255,112) scale(0.55) translate(-12,-12)"><path d="M12 21s7-3.5 7-9V6l-7-3-7 3v6c0 5.5 7 9 7 9z"/></g>
+                          <text class="wfx-title" x="275" y="109">SAST</text>
+                          <text class="wfx-meta" x="275" y="124">code</text>
+                          <circle class="wfx-state is-done" cx="347" cy="112" r="4"/>
+                        </g>
+                        <g class="wfx-node is-done">
+                          <rect class="wfx-card" x="231.5" y="152.5" width="131" height="47" rx="12.5"/>
+                          <rect class="wfx-chip" x="243" y="164" width="24" height="24" rx="8"/>
+                          <g class="wfx-glyph" transform="translate(255,176) scale(0.55) translate(-12,-12)"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></g>
+                          <text class="wfx-title" x="275" y="173">Secrets</text>
+                          <text class="wfx-meta" x="275" y="188">credentials</text>
+                          <circle class="wfx-state is-done" cx="347" cy="176" r="4"/>
+                        </g>
+                        <g class="wfx-node is-done">
+                          <rect class="wfx-card" x="231.5" y="216.5" width="131" height="47" rx="12.5"/>
+                          <rect class="wfx-chip" x="243" y="228" width="24" height="24" rx="8"/>
+                          <g class="wfx-glyph" transform="translate(255,240) scale(0.55) translate(-12,-12)"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/></g>
+                          <text class="wfx-title" x="275" y="237">DAST</text>
+                          <text class="wfx-meta" x="275" y="252">runtime</text>
+                          <circle class="wfx-state is-done" cx="347" cy="240" r="4"/>
+                        </g>
+
+                        <g class="wfx-node">
+                          <path class="wfx-gate" d="M461,140 L497,176 L461,212 L425,176 Z"/>
+                          <path class="wfx-gate-mark" d="M450,176 l7,8 l16,-17"/>
+                          <text class="wfx-gate-note" x="461" y="234">all scans green</text>
+                        </g>
+
+                        <g class="wfx-node">
+                          <rect class="wfx-card is-live" x="597.5" y="100.5" width="131" height="47" rx="12.5"/>
+                          <rect class="wfx-chip" x="609" y="112" width="24" height="24" rx="8"/>
+                          <g class="wfx-glyph" transform="translate(621,124) scale(0.55) translate(-12,-12)"><path d="M12 20V5"/><path d="M6 11l6-6 6 6"/></g>
+                          <text class="wfx-title" x="641" y="121">Release</text>
+                          <text class="wfx-meta" x="641" y="136">artifacts</text>
+                          <circle class="wfx-state is-live" cx="713" cy="124" r="4"/>
+                        </g>
+                        <g class="wfx-node is-skipped">
+                          <rect class="wfx-card" x="597.5" y="204.5" width="131" height="47" rx="12.5"/>
+                          <rect class="wfx-chip" x="609" y="216" width="24" height="24" rx="8"/>
+                          <g class="wfx-glyph" transform="translate(621,228) scale(0.55) translate(-12,-12)"><path d="M14.5 6.5a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.2-3.2a5.5 5.5 0 0 1-7.2 7.2l-6.2 6.2a2 2 0 0 1-2.8-2.8l6.2-6.2a5.5 5.5 0 0 1 7.2-7.2z"/></g>
+                          <text class="wfx-title" x="641" y="225">Fix</text>
+                          <text class="wfx-meta" x="641" y="240">findings</text>
+                        </g>
+
+                        <!-- Seated beside the branch, never on it: both sit off the stroke's
+                             normal with a clear band of background between type and wire. -->
+                        <text class="wfx-edge-label" x="528" y="133">pass</text>
+                        <text class="wfx-edge-label is-idle" x="528" y="223">fail</text>
+                      </svg>
+                  </div>
+                  <div class="wfx-hero-eyebrow">AGENTIC WORKFLOWS</div>
+                  <h2 class="wfx-hero-title">Stop chaining prompts.<br/>Start running graphs.</h2>
+                  <p class="wfx-hero-body">A workflow is a directed graph of agent steps. Fan three reviewers out in parallel, let a triage step name the branch it wants, gate a release on the literal test output, then join it all back into one answer. Every node runs in a real CLI session with its own terminal, and the finished run replays on the graph so you can see the exact path it took.</p>
+                  <div class="wfx-hero-actions">
+                    <button class="btn-primary" id="wfx-cta-build">Build a workflow</button>
+                    <button class="wfx-hero-secondary" id="wfx-cta-patterns">Start from a pattern</button>
+                    <button class="wfx-hero-secondary" id="wfx-cta-learn">How a run works</button>
+                  </div>
+                  <div class="wfx-hero-stats">
+                    <div class="wfx-hero-stat">
+                      <div class="wfx-hero-stat-value" id="wfx-stat-flows">0</div>
+                      <div class="wfx-hero-stat-label">flows saved</div>
+                    </div>
+                    <div class="wfx-hero-stat">
+                      <div class="wfx-hero-stat-value" id="wfx-stat-runs">0</div>
+                      <div class="wfx-hero-stat-label">runs this week</div>
+                    </div>
+                    <div class="wfx-hero-stat">
+                      <div class="wfx-hero-stat-value" id="wfx-stat-pass">n/a</div>
+                      <div class="wfx-hero-stat-label">passed</div>
+                    </div>
+                    <div class="wfx-hero-stat">
+                      <div class="wfx-hero-stat-value" id="wfx-stat-median">n/a</div>
+                      <div class="wfx-hero-stat-label">median run</div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="wfx-section" id="wfx-mine-section" hidden>
+                  <div class="wfx-section-head">
+                    <h3 class="wfx-section-title">Your workflows</h3>
+                    <span class="wfx-section-sub" id="wfx-mine-sub"></span>
+                  </div>
+                  <div id="wf-grid" class="wf-grid"></div>
+                </section>
+
+                <section class="wfx-section" id="wfx-patterns-section">
+                  <div class="wfx-section-head">
+                    <h3 class="wfx-section-title">Start from a pattern</h3>
+                    <span class="wfx-section-sub">the topologies that keep showing up in agent systems, wired and ready to edit</span>
+                  </div>
+                  <div class="wfx-pattern-grid" id="wfx-pattern-grid"></div>
+                </section>
+
+                <section class="wfx-section" id="wfx-concepts-section">
+                  <div class="wfx-section-head">
+                    <h3 class="wfx-section-title">How a run works</h3>
+                    <span class="wfx-section-sub">four ideas, and you have the whole model</span>
+                  </div>
+                  <div class="wfx-concepts">
+                    <div class="wfx-concept">
+                      <div class="wfx-concept-num">01</div>
+                      <div class="wfx-concept-title">A node is an agent</div>
+                      <div class="wfx-concept-body">Each step spawns one agent CLI with its own model and prompt. Mix them freely: a cheap model triages, an expensive one writes, a third reviews.</div>
+                    </div>
+                    <div class="wfx-concept">
+                      <div class="wfx-concept-num">02</div>
+                      <div class="wfx-concept-title">An edge carries the decision</div>
+                      <div class="wfx-concept-body">One outgoing edge runs straight through. Several, and the step that just ran names the path on a final <code>ROUTE:</code> line, or you pin the edge to a text or regex match instead.</div>
+                    </div>
+                    <div class="wfx-concept">
+                      <div class="wfx-concept-num">03</div>
+                      <div class="wfx-concept-title">State is what you pass on</div>
+                      <div class="wfx-concept-body">Every node chooses how much of the previous output it inherits: all of it, the last fifty lines, or nothing at all when a step should start clean.</div>
+                    </div>
+                    <div class="wfx-concept">
+                      <div class="wfx-concept-num">04</div>
+                      <div class="wfx-concept-title">The run plays on the graph</div>
+                      <div class="wfx-concept-body">Nodes light up as they execute and the taken path stays drawn. Click any step to open its terminal, live or long after it finished.</div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="wfx-section" id="wfx-runs-section" hidden>
+                  <div class="wfx-section-head">
+                    <h3 class="wfx-section-title">Recent runs</h3>
+                    <span class="wfx-section-sub" id="wfx-runs-sub"></span>
+                  </div>
+                  <div class="wfx-runs" id="wfx-runs"></div>
+                </section>
+
+              </div>
             </div>
           </div>
 
@@ -562,10 +773,42 @@
               </div>
               <div class="wf-canvas-wrap">
                 <div id="wf-canvas" class="wf-canvas"></div>
-                <div class="wf-canvas-hint" id="wf-canvas-hint">Drag from a node's right dot to another node's left dot to connect them. Click a node to edit it.</div>
+                <!-- Every interaction this canvas supports, in one place. Each
+                     line is behaviour that exists; nothing aspirational. -->
+                <div class="wf-legend" id="wf-legend">
+                  <div class="wf-legend-body" id="wf-legend-body">
+                    <div class="wf-legend-group">
+                      <div class="wf-legend-title">Steps</div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Add one</span><span class="wf-legend-how">the <b>Add node</b> button, top right</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Open and edit</span><span class="wf-legend-how">click the step</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Move</span><span class="wf-legend-how">drag the step</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Delete</span><span class="wf-legend-how">open it, then <b>Delete node</b></span></div>
+                    </div>
+                    <div class="wf-legend-group">
+                      <div class="wf-legend-title">Connections</div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Connect two steps</span><span class="wf-legend-how">drag a step's right dot onto the next step</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Set its condition</span><span class="wf-legend-how">click the line</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Delete a line</span><span class="wf-legend-how">double-click it, or click it and press <kbd>Del</kbd></span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Abandon one mid-drag</span><span class="wf-legend-how">let go over empty canvas, nothing is kept</span></div>
+                    </div>
+                    <div class="wf-legend-group">
+                      <div class="wf-legend-title">Canvas</div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Pan</span><span class="wf-legend-how">drag the background</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Zoom</span><span class="wf-legend-how"><kbd>Ctrl</kbd> + scroll</span></div>
+                    </div>
+                    <p class="wf-legend-note">Deleting a step takes its lines with it, so a line is never left pointing at nothing.</p>
+                  </div>
+                  <button class="wf-legend-toggle" id="wf-legend-toggle" type="button" aria-expanded="true" aria-controls="wf-legend-body">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.4-2.8 2.4"/><path d="M12 17h.01"/></svg>
+                    <span id="wf-legend-toggle-label">Hide guide</span>
+                  </button>
+                </div>
                 <div class="wf-drawer" id="wf-node-panel" hidden>
                   <div class="wf-drawer-scrim" aria-hidden="true"></div>
                   <div class="wf-drawer-panel" role="dialog" aria-label="Configure step">
+                    <!-- The prompt is the only field that wants room, so the
+                         panel itself gives it: drag this edge, or hit Widen. -->
+                    <div class="wf-drawer-grip" id="wf-drawer-grip" role="separator" aria-orientation="vertical" aria-label="Resize this panel" title="Drag to resize"></div>
                     <div class="wf-nm-head">
                       <div class="wf-nm-head-title">
                         <span class="wf-nm-head-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v10l-7 4-7-4V7z"/></svg></span>
@@ -574,6 +817,10 @@
                       <button class="wf-node-panel-close" id="wf-node-panel-close" aria-label="Close">&times;</button>
                     </div>
                     <div class="wf-drawer-body">
+                      <!-- The short controls travel together, so a wide panel
+                           can stand them beside the editor instead of leaving
+                           a column of dead space next to them. -->
+                      <div class="wf-nm-fields">
                       <div class="form-row">
                         <label class="form-label">Name</label>
                         <input class="form-input" id="wf-np-name" type="text" maxlength="64" />
@@ -608,17 +855,29 @@
                           <option value="none">None</option>
                         </select>
                       </div>
+                      </div>
                       <div class="wf-nm-editor">
                         <div class="wf-nm-editor-head">
                           <label class="form-label" for="wf-np-prompt">Prompt</label>
-                          <button class="ghost-btn wf-nm-generate" id="wf-np-generate" type="button" title="Improve this prompt with AI">
-                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>
-                            Generate with AI
-                          </button>
+                          <div class="wf-nm-editor-tools">
+                            <button class="ghost-btn wf-nm-widen" id="wf-np-widen" type="button" title="Give the prompt more room">
+                              <svg class="wf-widen-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M13 20h6a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1h-6"/><path d="M14 12H7"/><path d="M10 9l-3 3 3 3"/></svg>
+                              <svg class="wf-widen-in" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M13 20h6a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1h-6"/><path d="M7 12h7"/><path d="M11 9l3 3-3 3"/></svg>
+                              <span id="wf-np-widen-label">Widen</span>
+                            </button>
+                            <button class="ghost-btn wf-nm-generate" id="wf-np-generate" type="button" title="Improve this prompt with AI">
+                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>
+                              Generate with AI
+                            </button>
+                          </div>
                         </div>
                         <div class="wf-ide" id="wf-ide">
-                          <div class="wf-ide-gutter" id="wf-np-gutter" aria-hidden="true">1</div>
-                          <textarea class="wf-ide-input" id="wf-np-prompt" wrap="off" maxlength="8192" spellcheck="false" placeholder="What should this step do? Write a rough idea, then Generate with AI to polish it."></textarea>
+                          <div class="wf-ide-gutter" id="wf-np-gutter" aria-hidden="true"></div>
+                          <textarea class="wf-ide-input" id="wf-np-prompt" maxlength="8192" spellcheck="false" placeholder="What should this step do? Write a rough idea, then Generate with AI to polish it."></textarea>
+                          <!-- Off-screen twin of the editor's text column. Each
+                               logical line is measured here so the gutter can
+                               give a wrapped paragraph one number, not five. -->
+                          <div class="wf-ide-mirror" id="wf-ide-mirror" aria-hidden="true"></div>
                           <div class="wf-gen-review" id="wf-gen-review" hidden>
                             <div class="wf-gen-review-head">
                               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"/></svg>
@@ -631,7 +890,10 @@
                             </div>
                           </div>
                         </div>
-                        <div class="wf-nm-gen-status" id="wf-np-gen-status" hidden></div>
+                        <div class="wf-nm-editor-foot">
+                          <div class="wf-nm-gen-status" id="wf-np-gen-status" hidden></div>
+                          <div class="wf-nm-measure" id="wf-np-measure"></div>
+                        </div>
                       </div>
                     </div>
                     <div class="wf-nm-foot">
@@ -652,6 +914,7 @@
                       <option value="always">AI decides the path</option>
                       <option value="contains">Override: if output contains text</option>
                       <option value="regex">Override: if output matches a regex</option>
+                      <option value="otherwise">Override: if no other condition matched</option>
                     </select>
                   </div>
                   <div class="form-row" id="wf-ec-value-row">

@@ -2666,9 +2666,7 @@ function wfShowView(name) {
   $('#wf-run-view').hidden = name !== 'run';
 }
 
-let wfKernelUnmount = null;
 async function renderWorkflows() {
-  if (wfKernelUnmount) { wfKernelUnmount(); wfKernelUnmount = null; }
   const grid = $('#wf-grid');
   if (!grid) return;
   workflowsCache = await window.husk.workflows.list();
@@ -2794,105 +2792,285 @@ function wfLastRunPill(runs) {
   return `<span class="wf-lr is-stopped"><i></i>Stopped<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfRelTime(r.finishedAt))}</span>`;
 }
 
+// ─── Patterns ────────────────────────────────────────────────────────────────
+// Topologies worth copying, each one a real graph. Clicking a card saves the
+// flow and drops you into the builder with working nodes, edges and prompts,
+// so the first workflow anyone owns is a shape that already makes sense.
+//
+// Every pattern here is expressible on the run engine as it stands: fan-out,
+// join, agent-picked branches and conditional edges. Nothing loops, because a
+// node runs at most once per run.
+
+function wfPatternGraph(spec) {
+  const ids = {};
+  const rand = () => Math.random().toString(36).slice(2, 8);
+  const nodes = spec.nodes.map((n) => {
+    const id = `node-${Date.now()}-${rand()}`;
+    ids[n.key] = id;
+    return {
+      id,
+      name: n.name,
+      agentCommand: null,
+      model: null,
+      branchMode: n.branchMode === 'ai' ? 'ai' : 'parallel',
+      prompt: n.prompt,
+      passContext: n.passContext || 'full',
+      x: n.x,
+      y: n.y,
+    };
+  });
+  const edges = spec.edges.map(([from, to, condition]) => ({
+    id: `edge-${Date.now()}-${rand()}`,
+    from: ids[from],
+    to: ids[to],
+    condition: condition || { type: 'always', value: '' },
+  }));
+  return { nodes, edges };
+}
+
+const WF_ICONS = {
+  chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/><path d="M14.5 9.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7"/></svg>',
+  fan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="20" cy="19" r="2"/><path d="M6 12h12M6 11l12-5M6 13l12 5"/></svg>',
+  route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h5l4-6h9"/><path d="M12 18h9"/><path d="M8 12l4 6"/><path d="M18 3l3 3-3 3"/><path d="M18 15l3 3-3 3"/></svg>',
+  grade: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><path d="M8 12l3 3 9-9"/></svg>',
+  vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.3 5.5 6 .5-4.6 3.9 1.4 5.8L12 15.6 6.9 18.7l1.4-5.8L3.7 9l6-.5z"/></svg>',
+  ship: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>',
+};
+
+const WF_PATTERNS = [
+  {
+    id: 'chain',
+    title: 'Prompt chain',
+    icon: WF_ICONS.chain,
+    blurb: 'The plainest useful shape. Each step narrows the work for the next, so the model that writes code never has to also decide what the work is.',
+    trait: 'sequential · 3',
+    build: () => ({
+      name: 'Plan, build, verify',
+      description: 'A linear chain: decide what to do, do it, then check it held.',
+      graph: wfPatternGraph({
+        nodes: [
+          { key: 'plan', name: 'Plan', x: 60, y: 200, prompt: 'Read the task and the files it touches. Write a short, concrete plan: which files change, in what order, and what could break. Name the check that will prove it worked. Do not write any code yet.' },
+          { key: 'build', name: 'Build', x: 400, y: 200, prompt: 'Carry out the plan above exactly. Make the smallest change that satisfies it. Do not refactor anything the plan did not name. Report the files you touched.' },
+          { key: 'verify', name: 'Verify', x: 740, y: 200, passContext: 'last50', prompt: 'Run the project test suite and type checker against the change described above. Report what passed, what failed with the exact error, and anything the plan promised that is not actually in the code.' },
+        ],
+        edges: [['plan', 'build'], ['build', 'verify']],
+      }),
+    }),
+  },
+  {
+    id: 'fanout',
+    title: 'Parallel review',
+    icon: WF_ICONS.fan,
+    blurb: 'One brief, three reviewers running at the same time, one merge. Separate lenses catch what a single pass blurs together, and they cost you no extra wall clock.',
+    trait: 'fan-out + join · 5',
+    build: () => ({
+      name: 'Three-lens review',
+      description: 'Fan the same diff out to three reviewers, then merge their findings.',
+      graph: wfPatternGraph({
+        nodes: [
+          { key: 'brief', name: 'Brief', x: 60, y: 260, prompt: 'Summarise the current diff: what changed, which files, and what the change is trying to do. Keep it under fifteen lines. The reviewers after this step read only your summary and the code, so leave nothing important out.' },
+          { key: 'correct', name: 'Correctness', x: 400, y: 60, prompt: 'Review the change for correctness only. Look for off-by-one errors, wrong conditionals, unhandled null or error paths, and behaviour that differs from what the summary claims. For each finding give file, line, and the input that breaks it. If you find nothing, say so plainly.' },
+          { key: 'security', name: 'Security', x: 400, y: 260, prompt: 'Review the change for security only. Look for unvalidated input reaching a sink, path traversal, injection, secrets in source, missing authorization checks, and unsafe deserialization. For each finding give file, line, and the concrete abuse case. If you find nothing, say so plainly.' },
+          { key: 'perf', name: 'Performance', x: 400, y: 460, prompt: 'Review the change for performance only. Look for work inside loops that belongs outside, repeated file or network reads, unbounded growth, and blocking calls on a hot path. For each finding give file, line, and the size of input at which it starts to hurt. If you find nothing, say so plainly.' },
+          { key: 'merge', name: 'Merge', x: 740, y: 260, prompt: 'Three independent reviews of the same change are above, each from one lens. Merge them into a single list. Drop duplicates, keep the sharpest wording of each finding, and order by severity. End with the one change you would make first.' },
+        ],
+        edges: [['brief', 'correct'], ['brief', 'security'], ['brief', 'perf'], ['correct', 'merge'], ['security', 'merge'], ['perf', 'merge']],
+      }),
+    }),
+  },
+  {
+    id: 'router',
+    title: 'Router',
+    icon: WF_ICONS.route,
+    blurb: 'A cheap first step reads the request and names the branch, then exactly one specialist runs. Classification and execution stop fighting over the same prompt.',
+    trait: 'routed branch · 4',
+    build: () => ({
+      name: 'Triage and dispatch',
+      description: 'Classify the incoming request, then run only the specialist it needs.',
+      graph: wfPatternGraph({
+        nodes: [
+          { key: 'triage', name: 'Triage', x: 60, y: 260, branchMode: 'ai', prompt: 'Read the request and decide what kind of work it is: a defect to fix, a feature to add, or documentation to write. State the category and one sentence of reasoning, then restate the request in the terms the specialist will need.' },
+          { key: 'bug', name: 'Bug fix', x: 400, y: 60, prompt: 'Treat this as a defect. Reproduce it first and quote the failure. Then find the root cause, fix it at the point the bad state enters the system, and add a regression test that fails without your fix.' },
+          { key: 'feature', name: 'Feature', x: 400, y: 260, prompt: 'Treat this as new behaviour. List the files that need to change and the public surface you are adding. Implement it in the style of the surrounding code, then add tests for the happy path and one failure path.' },
+          { key: 'docs', name: 'Docs', x: 400, y: 460, prompt: 'Treat this as a documentation task. Find where this subject is already described and update it in place rather than adding a second version. Match the existing tone and heading structure. Do not document behaviour you have not read in the code.' },
+        ],
+        edges: [['triage', 'bug'], ['triage', 'feature'], ['triage', 'docs']],
+      }),
+    }),
+  },
+  {
+    id: 'evaluator',
+    title: 'Evaluator and optimizer',
+    icon: WF_ICONS.grade,
+    blurb: 'Write, then grade, then take the path the grade earned. A weak draft gets rewritten from the critique; a strong one only gets tightened. Both land in the same sign-off.',
+    trait: 'graded branch · 5',
+    build: () => ({
+      name: 'Draft, grade, sign off',
+      description: 'Grade the draft, rewrite or tighten it accordingly, then sign it off.',
+      graph: wfPatternGraph({
+        nodes: [
+          { key: 'draft', name: 'Draft', x: 60, y: 260, prompt: 'Produce a first version of the requested work. Prefer completeness over polish at this stage: it is going to be graded and revised. State any assumption you had to make.' },
+          { key: 'grade', name: 'Grade', x: 400, y: 260, branchMode: 'ai', prompt: 'Grade the draft above against the original request. Score it out of ten on correctness, completeness and clarity, and list every concrete defect with the fix it needs. Be harsh: an unearned pass costs more than a harsh fail. If the total is eight or above, route to Tighten. Otherwise route to Rewrite.' },
+          { key: 'rewrite', name: 'Rewrite', x: 740, y: 100, prompt: 'The critique above found real problems. Rewrite the draft from scratch using the critique as the specification. Do not defend the original. Address every listed defect and say which ones you could not resolve and why.' },
+          { key: 'tighten', name: 'Tighten', x: 740, y: 420, prompt: 'The draft above passed. Do not restructure it. Fix only what the critique named, cut anything that repeats itself, and leave the argument and structure alone.' },
+          { key: 'signoff', name: 'Sign off', x: 1080, y: 260, passContext: 'last50', prompt: 'Read the final version above against the original request, one requirement at a time. For each, say met or not met and quote the line that proves it. End with a single verdict: ready, or the shortest list of what still blocks it.' },
+        ],
+        edges: [['draft', 'grade'], ['grade', 'rewrite'], ['grade', 'tighten'], ['rewrite', 'signoff'], ['tighten', 'signoff']],
+      }),
+    }),
+  },
+  {
+    id: 'ensemble',
+    title: 'Ensemble vote',
+    icon: WF_ICONS.vote,
+    blurb: 'Three independent attempts at the same problem, then a judge that never saw them being written. Point each lane at a different agent or model and the disagreement itself becomes the signal.',
+    trait: 'vote + judge · 4',
+    build: () => ({
+      name: 'Three attempts, one judge',
+      description: 'Solve the same problem three ways in parallel, then pick the best.',
+      graph: wfPatternGraph({
+        nodes: [
+          { key: 'a', name: 'Attempt A', x: 60, y: 60, passContext: 'none', prompt: 'Solve the problem the most direct way you can. Optimise for the smallest change that works. Show the full solution and name its main weakness.' },
+          { key: 'b', name: 'Attempt B', x: 60, y: 260, passContext: 'none', prompt: 'Solve the problem the most robust way you can. Assume the inputs are hostile and the caller will get it wrong. Show the full solution and name what it costs in complexity.' },
+          { key: 'c', name: 'Attempt C', x: 60, y: 460, passContext: 'none', prompt: 'Solve the problem the way that leaves the codebase easiest to change next year. Optimise for the reader. Show the full solution and name what you traded away to get there.' },
+          { key: 'judge', name: 'Judge', x: 460, y: 260, prompt: 'Three independent solutions to the same problem are above. Score each on correctness, robustness and readability. Pick a winner and say why in two sentences. Then write the final version: the winner, with any clearly better idea from the other two grafted in.' },
+        ],
+        edges: [['a', 'judge'], ['b', 'judge'], ['c', 'judge']],
+      }),
+    }),
+  },
+  {
+    id: 'guarded',
+    title: 'Guarded release',
+    icon: WF_ICONS.ship,
+    blurb: 'The one shape where you want a machine reading the output, not a model. The edge out of the test step matches on the failure text, so a red suite can never reach the release notes.',
+    trait: 'conditional edges · 4',
+    build: () => ({
+      name: 'Test, then release',
+      description: 'Route on the literal test output: fix on red, write release notes on green.',
+      graph: wfPatternGraph({
+        nodes: [
+          { key: 'test', name: 'Run tests', x: 60, y: 260, prompt: 'Run the full test suite and the type checker. Do not fix anything. Report the raw result. If anything at all failed, the last line of your response must be exactly SUITE_RED. If everything passed, the last line must be exactly SUITE_GREEN.' },
+          { key: 'fix', name: 'Fix failures', x: 400, y: 100, prompt: 'The suite is red. Take the failures above one at a time. For each, decide whether the code or the test is wrong, fix that, and re-run the single failing test before moving on. Never delete or skip a test to make it pass.' },
+          { key: 'notes', name: 'Release notes', x: 400, y: 420, prompt: 'The suite is green. Read the commits since the last tag and draft release notes grouped into features, fixes and breaking changes. Write them to a file. Do not tag and do not push.' },
+          { key: 'report', name: 'Report', x: 740, y: 260, passContext: 'last50', prompt: 'Summarise what this run did in under ten lines: what the suite said, which path was taken, and what a human needs to look at before shipping.' },
+        ],
+        edges: [
+          ['test', 'fix', { type: 'contains', value: 'SUITE_RED' }],
+          ['test', 'notes', { type: 'otherwise', value: '' }],
+          ['fix', 'report'],
+          ['notes', 'report'],
+        ],
+      }),
+    }),
+  },
+];
+
+async function wfCreateFromPattern(pattern) {
+  const spec = pattern.build();
+  // Give the copy a distinct name when the pattern has been used before, so a
+  // second "Router" does not read as a duplicate of the first.
+  const taken = new Set(workflowsCache.map((w) => w.name));
+  let name = spec.name;
+  for (let i = 2; taken.has(name); i++) name = `${spec.name} ${i}`;
+  const created = await window.husk.workflows.create({ ...spec, name, trigger: 'manual' });
+  workflowsCache = await window.husk.workflows.list();
+  toast(`${pattern.title} added. Edit the steps, then run it.`, 'success');
+  openWorkflowBuilder(created && created.id);
+}
+
+function wfPaintPatterns() {
+  const grid = $('#wfx-pattern-grid');
+  if (!grid || grid.childElementCount) return;   // static: build once per session
+  for (const p of WF_PATTERNS) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'wfx-pattern';
+    // eslint-disable-next-line no-unsanitized/property -- inline SVG and copy from a static constant, no user input
+    card.innerHTML = `
+      <div class="wfx-pattern-top">
+        <div class="wfx-pattern-icon">${p.icon}</div>
+        <div class="wfx-pattern-title">${escapeHtml(p.title)}</div>
+      </div>
+      <div class="wfx-pattern-shape">${wfMiniGraph(p.build().graph, null)}</div>
+      <div class="wfx-pattern-body">${escapeHtml(p.blurb)}</div>
+      <div class="wfx-pattern-foot">
+        <span>${escapeHtml(p.trait)}</span>
+        <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
+      </div>`;
+    card.addEventListener('click', () => wfCreateFromPattern(p));
+    grid.appendChild(card);
+  }
+}
+
+// The last handful of runs across every flow, so the page answers "has this
+// been working" without opening a single card.
+function wfPaintRecentRuns() {
+  const host = $('#wfx-runs');
+  const section = $('#wfx-runs-section');
+  const sub = $('#wfx-runs-sub');
+  if (!host || !section) return;
+  const runs = wfRunsCache.slice(0, 8);
+  section.hidden = !runs.length;
+  if (!runs.length) return;
+  if (sub) sub.textContent = `last ${runs.length} of ${wfRunsCache.length}`;
+  while (host.firstChild) host.removeChild(host.firstChild);
+  for (const r of runs) {
+    const wf = workflowsCache.find((w) => w.id === r.workflowId);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `wfx-run-row is-${r.status}`;
+    const label = r.status === 'done' ? 'Passed' : (r.status === 'failed' ? 'Failed' : 'Stopped');
+    const detail = r.status === 'failed' && r.failedStep
+      ? `stopped at "${r.failedStep}" · ${wfDur(r.ms)}`
+      : `${wfDur(r.ms)}`;
+    // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
+    row.innerHTML = `
+      <span class="wfx-run-icon"></span>
+      <span>
+        <span class="wfx-run-name">${escapeHtml((wf && wf.name) || r.workflowName || 'Deleted workflow')}</span>
+        <span class="wfx-run-sub">${escapeHtml(detail)}</span>
+      </span>
+      <span class="wfx-run-when">${escapeHtml(wfRelTime(r.finishedAt))}</span>
+      <span class="wfx-run-pill">${escapeHtml(label)}</span>`;
+    if (wf) row.addEventListener('click', () => wfOpenRun(wf.id, r));
+    else row.disabled = true;
+    host.appendChild(row);
+  }
+}
+
 function paintWorkflowList() {
   const grid = $('#wf-grid');
   if (!grid) return;
 
-  // Header stats: what this page is worth at a glance.
-  const statsEl = $('#wf-stats');
-  if (statsEl) {
-    const week = wfRunsCache.filter((r) => Date.now() - new Date(r.finishedAt).getTime() < 7 * 864e5);
-    const passed = week.filter((r) => r.status === 'done').length;
-    const rate = week.length ? Math.round((passed / week.length) * 100) : null;
-    const bits = [`${workflowsCache.length} flow${workflowsCache.length === 1 ? '' : 's'}`];
-    if (week.length) {
-      bits.push(`${week.length} run${week.length === 1 ? '' : 's'} this week`);
-      bits.push(`${rate}% passed`);
-    }
-    statsEl.textContent = bits.join('  ·  ');
+  wfPaintPatterns();
+  wfPaintRecentRuns();
+
+  // Hero figures: what this page is worth at a glance.
+  const week = wfRunsCache.filter((r) => Date.now() - new Date(r.finishedAt).getTime() < 7 * 864e5);
+  const passed = week.filter((r) => r.status === 'done').length;
+  const setStat = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
+  setStat('#wfx-stat-flows', String(workflowsCache.length));
+  setStat('#wfx-stat-runs', String(week.length));
+  setStat('#wfx-stat-pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
+  if (wfRunsCache.length) {
+    const durations = wfRunsCache.map((r) => r.ms || 0).filter(Boolean).sort((a, b) => a - b);
+    setStat('#wfx-stat-median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
+  } else {
+    setStat('#wfx-stat-median', 'n/a');
   }
 
-  if (!workflowsCache.length) {
-    // eslint-disable-next-line no-unsanitized/property -- static markup, no interpolation
-    grid.innerHTML = `<div class="empty-state es-kernel">
-      <div class="ek-stage">
-        <svg class="ek-graph" viewBox="0 0 480 280" aria-hidden="true">
-          <defs>
-            <linearGradient id="ek-ic" x1="0" y1="0" x2="1" y2="1"><stop offset="0" class="ek-ic0"/><stop offset="1" class="ek-ic1"/></linearGradient>
-          </defs>
-          <path class="ek-wire" d="M222,128 C 202,102 192,80 178,64"/>
-          <path class="ek-wire" d="M218,164 C 198,188 184,206 164,216"/>
-          <path class="ek-wire" d="M258,128 C 278,102 288,80 302,64"/>
-          <path class="ek-wire" d="M262,164 C 282,188 298,206 316,216"/>
-          <path class="ek-wire ek-wire-2" d="M118,64 C 98,74 82,92 64,103"/>
-          <path class="ek-wire ek-wire-2" d="M104,216 C 86,228 72,242 56,251"/>
-          <path class="ek-wire ek-wire-2" d="M362,64 C 382,74 398,92 416,103"/>
-          <path class="ek-wire ek-wire-2" d="M376,216 C 394,228 408,242 424,251"/>
-          <path class="ek-flow" pathLength="100" d="M222,128 C 202,102 192,80 178,64"/>
-          <path class="ek-flow" pathLength="100" d="M218,164 C 198,188 184,206 164,216"/>
-          <path class="ek-flow" pathLength="100" d="M258,128 C 278,102 288,80 302,64"/>
-          <path class="ek-flow" pathLength="100" d="M262,164 C 282,188 298,206 316,216"/>
-          <g class="ek-node" transform="translate(118,44)">
-            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
-            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
-            <rect class="ek-node-l1" x="27" y="12.5" width="23" height="4.5" rx="2.25"/>
-            <rect class="ek-node-l2" x="10" y="28" width="40" height="3.5" rx="1.75"/>
-          </g>
-          <g class="ek-node" transform="translate(104,196)">
-            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
-            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
-            <rect class="ek-node-l1" x="27" y="12.5" width="20" height="4.5" rx="2.25"/>
-            <rect class="ek-node-l2" x="10" y="28" width="36" height="3.5" rx="1.75"/>
-          </g>
-          <g class="ek-node" transform="translate(302,44)">
-            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
-            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
-            <rect class="ek-node-l1" x="27" y="12.5" width="24" height="4.5" rx="2.25"/>
-            <rect class="ek-node-l2" x="10" y="28" width="34" height="3.5" rx="1.75"/>
-          </g>
-          <g class="ek-node" transform="translate(316,196)">
-            <rect class="ek-card" x="0" y="0" width="60" height="40" rx="10"/>
-            <rect class="ek-node-icon" x="10" y="11" width="12" height="12" rx="3.5"/>
-            <rect class="ek-node-l1" x="27" y="12.5" width="22" height="4.5" rx="2.25"/>
-            <rect class="ek-node-l2" x="10" y="28" width="38" height="3.5" rx="1.75"/>
-          </g>
-          <g class="ek-node ek-sub" transform="translate(18,88)">
-            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
-            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
-            <rect class="ek-node-l1" x="22" y="11" width="15" height="3.5" rx="1.75"/>
-          </g>
-          <g class="ek-node ek-sub" transform="translate(10,236)">
-            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
-            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
-            <rect class="ek-node-l1" x="22" y="11" width="13" height="3.5" rx="1.75"/>
-          </g>
-          <g class="ek-node ek-sub" transform="translate(416,88)">
-            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
-            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
-            <rect class="ek-node-l1" x="22" y="11" width="16" height="3.5" rx="1.75"/>
-          </g>
-          <g class="ek-node ek-sub" transform="translate(424,236)">
-            <rect class="ek-card" x="0" y="0" width="46" height="30" rx="8"/>
-            <rect class="ek-node-icon" x="8" y="9" width="10" height="10" rx="3"/>
-            <rect class="ek-node-l1" x="22" y="11" width="14" height="3.5" rx="1.75"/>
-          </g>
-          <circle class="ek-dot" cx="178" cy="64" r="3.4"/>
-          <circle class="ek-dot" cx="164" cy="216" r="3.4"/>
-          <circle class="ek-dot" cx="302" cy="64" r="3.4"/>
-          <circle class="ek-dot" cx="316" cy="216" r="3.4"/>
-          <circle class="ek-dot ek-dot-2" cx="64" cy="103" r="2.8"/>
-          <circle class="ek-dot ek-dot-2" cx="56" cy="251" r="2.8"/>
-          <circle class="ek-dot ek-dot-2" cx="416" cy="103" r="2.8"/>
-          <circle class="ek-dot ek-dot-2" cx="424" cy="251" r="2.8"/>
-        </svg>
-        <div class="ek-slot"></div>
-      </div>
-      <div class="es-title">No workflows yet</div>
-      <div class="es-msg">Build a pipeline by chaining agents together. Each step feeds its output to the next.</div>
-    </div>`;
-    wfKernelUnmount = mountEmptyKernel(grid.querySelector('.ek-slot'));
-    return;
+  // Nothing saved yet: the patterns gallery is the call to action, so the
+  // "your workflows" section stays out of the way entirely.
+  const mine = $('#wfx-mine-section');
+  const mineSub = $('#wfx-mine-sub');
+  if (mine) mine.hidden = !workflowsCache.length;
+  if (mineSub) {
+    mineSub.textContent = workflowsCache.length === 1
+      ? '1 flow saved in this workspace'
+      : `${workflowsCache.length} flows saved in this workspace`;
   }
+  if (!workflowsCache.length) { grid.replaceChildren(); return; }
 
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
   grid.innerHTML = workflowsCache.map((w) => {
@@ -3040,6 +3218,53 @@ const wfEdgeConditions = {};
 let wfSelectedEdge = null;
 function wfEdgeKey(from, to) { return `${from}->${to}`; }
 
+// A connection's endpoints live in the class list of its <svg>, which is the
+// only place Drawflow records them:
+//   connection · node_in_node-<in> · node_out_node-<out> · output_N · input_N
+function wfConnectionParts(svg) {
+  const classes = [...svg.classList];
+  const inClass = classes.find((c) => c.startsWith('node_in_node-'));
+  const outClass = classes.find((c) => c.startsWith('node_out_node-'));
+  if (!inClass || !outClass) return null;
+  return {
+    inputId: inClass.slice('node_in_node-'.length),
+    outputId: outClass.slice('node_out_node-'.length),
+    outputPort: classes.find((c) => /^output_\d+$/.test(c)) || 'output_1',
+    inputPort: classes.find((c) => /^input_\d+$/.test(c)) || 'input_1',
+  };
+}
+
+// A connection Drawflow started but never finished keeps its <svg> in the DOM
+// with none of the endpoint classes on it, which draws as a line joined to
+// nothing and cannot be selected, configured or removed. Releasing a drag over
+// anything that is not a step leaves one behind, so sweep after every release.
+function wfSweepDanglingConnections() {
+  const cont = $('#wf-canvas');
+  if (!cont) return 0;
+  let removed = 0;
+  cont.querySelectorAll('svg.connection').forEach((svg) => {
+    const classes = [...svg.classList];
+    const joined = classes.some((c) => c.startsWith('node_in_node-'))
+      && classes.some((c) => c.startsWith('node_out_node-'));
+    if (!joined) { svg.remove(); removed += 1; }
+  });
+  return removed;
+}
+
+// Drawflow fires connectionRemoved from here, which is what drops the edge's
+// stored condition, so this is the single path for removing a connection.
+function wfRemoveConnectionEl(svg) {
+  if (!wfEditor || !svg) return false;
+  const parts = wfConnectionParts(svg);
+  if (!parts) return false;
+  wfEditor.removeSingleConnection(parts.outputId, parts.inputId, parts.outputPort, parts.inputPort);
+  if (wfEditor.connection_selected && !wfEditor.connection_selected.isConnected) {
+    wfEditor.connection_selected = null;
+  }
+  hideEdgePanel();
+  return true;
+}
+
 function wfEnsureEditor() {
   if (wfEditor) {
     wfEditor.clear();
@@ -3066,6 +3291,15 @@ function wfEnsureEditor() {
   // on mouseup, after Drawflow has already ended its own drag.
   let wfDownNodeEl = null, wfDownX = 0, wfDownY = 0, wfNodeMoved = false;
   if (cont) {
+    // Touching the canvas hands the keyboard back to it. The builder focuses
+    // the name field on open, and a field that keeps focus swallows Delete,
+    // so selecting a connection and pressing Delete would silently do nothing.
+    cont.addEventListener('mousedown', () => {
+      const active = document.activeElement;
+      if (!active || active === document.body) return;
+      const tag = active.tagName;
+      if ((tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && !cont.contains(active)) active.blur();
+    }, true);
     cont.addEventListener('mousedown', (e) => {
       const nodeEl = e.target.closest ? e.target.closest('.drawflow-node') : null;
       // Ignore the connector dots so starting a connection never opens the modal.
@@ -3078,6 +3312,28 @@ function wfEnsureEditor() {
     cont.addEventListener('mouseup', () => {
       const el = wfDownNodeEl; wfDownNodeEl = null;
       if (el && !wfNodeMoved && el.id) showNodePanel(el.id.slice(5));
+    });
+  }
+  // Double-click a line to remove it. Drawflow's own dblclick would drop a
+  // reroute point on the path instead, so this runs in the capture phase and
+  // stops there. Double-clicking an existing reroute point still removes that
+  // point, which is Drawflow's own handler and stays reachable.
+  if (cont) {
+    cont.addEventListener('dblclick', (e) => {
+      const target = e.target;
+      if (!target || !target.closest) return;
+      if (target.classList && target.classList.contains('point')) return;
+      const svg = target.closest('svg.connection');
+      if (!svg) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (wfRemoveConnectionEl(svg)) toast('Connection removed', 'success');
+    }, true);
+  }
+  // Drawflow owns the release, so the sweep runs on the frame after it.
+  if (cont) {
+    cont.addEventListener('pointerup', () => {
+      requestAnimationFrame(wfSweepDanglingConnections);
     });
   }
   wfEditor.on('nodeSelected', () => { hideEdgePanel(); });
@@ -3183,13 +3439,17 @@ function showNodePanel(id) {
   $('#wf-np-context').value = d.passContext || 'full';
   $('#wf-np-prompt').value = d.prompt || '';
   wfClearGenState();
-  wfUpdateGutter();
   const branchSel = $('#wf-np-branch');
   if (branchSel) branchSel.value = d.branchMode === 'ai' ? 'ai' : 'parallel';
   const outCount = wfEditor.export ? wfCountOutgoing(id) : 0;
   const branchRow = $('#wf-np-branch-row');
   if (branchRow) branchRow.hidden = outCount < 2;
+  // Width first, while the panel is still display:none, so restoring a wide
+  // panel lands at its size instead of animating out to it on every open.
+  wfRestoreDrawerWidth();
   $('#wf-node-panel').hidden = false;
+  // Now the editor has a real width, so the mirror can measure against it.
+  wfUpdateGutter();
   wfLoadNodeModels(d.agentCommand || '', d.model || '');
 }
 
@@ -3362,6 +3622,7 @@ function openWorkflowBuilder(editId) {
   wfSyncNameCount();
   if ($('#wf-trigger-select')) $('#wf-trigger-select').value = existing ? (existing.trigger || 'manual') : 'manual';
   wfShowView('builder');
+  wfRestoreLegend();
   hideNodePanel();
   hideEdgePanel();
   // Drawflow needs the container visible and sized before start(). The view is
@@ -4063,6 +4324,15 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
 
 // Button wiring
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
+$('#wfx-cta-build') && $('#wfx-cta-build').addEventListener('click', () => openWorkflowBuilder(null));
+// The two learn-more CTAs scroll rather than navigate: the answer to both is
+// already further down this page, and a jump keeps the context.
+const wfxScrollTo = (sel) => {
+  const el = $(sel);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+$('#wfx-cta-patterns') && $('#wfx-cta-patterns').addEventListener('click', () => wfxScrollTo('#wfx-patterns-section'));
+$('#wfx-cta-learn') && $('#wfx-cta-learn').addEventListener('click', () => wfxScrollTo('#wfx-concepts-section'));
 $('#btn-wf-builder-back') && $('#btn-wf-builder-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
 $('#btn-save-workflow') && $('#btn-save-workflow').addEventListener('click', saveWorkflow);
 $('#btn-run-from-builder') && $('#btn-run-from-builder').addEventListener('click', async () => {
@@ -4073,6 +4343,29 @@ $('#btn-run-from-builder') && $('#btn-run-from-builder').addEventListener('click
 });
 $('#wf-name-input') && $('#wf-name-input').addEventListener('input', wfSyncNameCount);
 $('#btn-add-wf-node') && $('#btn-add-wf-node').addEventListener('click', () => wfAddCanvasNode(null));
+
+// The legend is open the first time and whenever it was left open. Once the
+// moves are learned it collapses to a pill and stays that way.
+const WF_LEGEND_KEY = 'husk.wfLegendCollapsed';
+function wfSetLegend(collapsed, persist) {
+  const el = $('#wf-legend');
+  const btn = $('#wf-legend-toggle');
+  const label = $('#wf-legend-toggle-label');
+  if (!el) return;
+  el.classList.toggle('is-collapsed', collapsed);
+  if (btn) btn.setAttribute('aria-expanded', String(!collapsed));
+  if (label) label.textContent = collapsed ? 'How this works' : 'Hide guide';
+  if (persist) { try { localStorage.setItem(WF_LEGEND_KEY, collapsed ? '1' : '0'); } catch (_) {} }
+}
+function wfRestoreLegend() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(WF_LEGEND_KEY) === '1'; } catch (_) {}
+  wfSetLegend(collapsed, false);
+}
+$('#wf-legend-toggle') && $('#wf-legend-toggle').addEventListener('click', () => {
+  const el = $('#wf-legend');
+  wfSetLegend(!(el && el.classList.contains('is-collapsed')), true);
+});
 $('#btn-wf-run-back') && $('#btn-wf-run-back').addEventListener('click', () => {
   wfShowView('list');
   paintWorkflowList();
@@ -4137,15 +4430,91 @@ function wfDeselectNode() {
   try { const el = wfEditor.node_selected; if (el && el.classList) el.classList.remove('selected'); wfEditor.node_selected = null; } catch (_) {}
   document.querySelectorAll('#wf-canvas .drawflow-node.selected').forEach((n) => n.classList.remove('selected'));
 }
+// ─── Prompt editor ──────────────────────────────────────────────────────────
+// A prompt is prose, so it wraps. That breaks the naive gutter, which counted
+// newlines and would number a five-row paragraph "1" while the rows below it
+// went unlabelled. The mirror measures each logical line at the editor's real
+// text width, and the gutter gives that line a block of exactly that height.
+
 function wfUpdateGutter() {
   const ta = $('#wf-np-prompt');
   const gut = $('#wf-np-gutter');
   if (!ta || !gut) return;
-  const lines = (ta.value.match(/\n/g) || []).length + 1;
-  let s = '1';
-  for (let i = 2; i <= lines; i++) s += '\n' + i;
-  gut.textContent = s;
+  const lines = ta.value.split('\n');
+  const mirror = $('#wf-ide-mirror');
+  let heights = null;
+  if (mirror && ta.clientWidth) {
+    const cs = getComputedStyle(ta);
+    const inner = ta.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+    if (inner > 0) {
+      mirror.style.width = `${inner}px`;
+      // A blank line still occupies one row; a zero-width space gives the
+      // mirror something to lay out so the height is not collapsed to nothing.
+      mirror.replaceChildren(...lines.map((line) => {
+        const d = document.createElement('div');
+        d.textContent = line === '' ? '​' : line;
+        return d;
+      }));
+      heights = [...mirror.children].map((c) => c.offsetHeight);
+    }
+  }
+  gut.replaceChildren(...lines.map((_, i) => {
+    const d = document.createElement('div');
+    if (heights && heights[i]) d.style.height = `${heights[i]}px`;
+    d.textContent = String(i + 1);
+    return d;
+  }));
   gut.scrollTop = ta.scrollTop;
+  wfUpdateMeasure();
+}
+
+// Length in the units that matter downstream. The token figure is the usual
+// four-characters-per-token approximation, marked as approximate because it is.
+function wfUpdateMeasure() {
+  const ta = $('#wf-np-prompt');
+  const out = $('#wf-np-measure');
+  if (!ta || !out) return;
+  const value = ta.value;
+  const words = (value.trim().match(/\S+/g) || []).length;
+  out.textContent = words
+    ? `${words} word${words === 1 ? '' : 's'} · ~${Math.max(1, Math.ceil(value.length / 4))} tokens`
+    : '';
+}
+
+// The panel is the writing surface, so its width is the writer's to set. Drag
+// the left edge for anything, or hit Widen to jump between the compact form
+// width and a comfortable measure. The choice sticks across sessions.
+const WF_DRAWER_MIN = 440;
+const WF_DRAWER_NARROW = 560;
+const WF_DRAWER_WIDTH_KEY = 'husk.wfNodeDrawerWidth';
+
+function wfDrawerPanel() { return document.querySelector('#wf-node-panel .wf-drawer-panel'); }
+function wfDrawerMax() { return Math.max(WF_DRAWER_MIN, window.innerWidth - 140); }
+function wfDrawerWide() { return Math.min(940, wfDrawerMax()); }
+
+function wfSetDrawerWidth(px, persist) {
+  const panel = wfDrawerPanel();
+  if (!panel) return;
+  const w = Math.round(Math.min(wfDrawerMax(), Math.max(WF_DRAWER_MIN, px)));
+  panel.style.width = `${w}px`;
+  if (persist) { try { localStorage.setItem(WF_DRAWER_WIDTH_KEY, String(w)); } catch (_) {} }
+  const btn = $('#wf-np-widen');
+  if (btn) {
+    const wide = w >= wfDrawerWide() - 4;
+    btn.classList.toggle('is-wide', wide);
+    btn.title = wide ? 'Back to the compact panel' : 'Give the prompt more room';
+    const label = $('#wf-np-widen-label');
+    if (label) label.textContent = wide ? 'Narrow' : 'Widen';
+  }
+}
+
+function wfRestoreDrawerWidth() {
+  let w = WF_DRAWER_NARROW;
+  try {
+    const saved = parseInt(localStorage.getItem(WF_DRAWER_WIDTH_KEY) || '', 10);
+    if (Number.isFinite(saved)) w = saved;
+  } catch (_) {}
+  wfSetDrawerWidth(w, false);
 }
 function wfClearGenState() {
   const ide = $('#wf-ide'); if (ide) ide.classList.remove('field-invalid');
@@ -4174,8 +4543,51 @@ function wfShowGenReview(text) {
       const st = $('#wf-np-gen-status'); if (st && st.classList.contains('is-error')) { st.hidden = true; st.classList.remove('is-error'); }
     });
     ta.addEventListener('scroll', () => { const g = $('#wf-np-gutter'); if (g) g.scrollTop = ta.scrollTop; });
+    // One source of truth for "the text column changed width": dragging the
+    // panel, hitting Widen, and resizing the window all land here.
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => wfUpdateGutter()).observe(ta);
+    }
   }
 }
+
+// Drag the panel's left edge. Pointer capture keeps the drag alive over the
+// canvas and past the window edge, which a plain mousemove listener loses.
+{
+  const grip = $('#wf-drawer-grip');
+  if (grip) {
+    grip.addEventListener('pointerdown', (e) => {
+      const panel = wfDrawerPanel();
+      const drawer = $('#wf-node-panel');
+      if (!panel) return;
+      e.preventDefault();
+      const right = panel.getBoundingClientRect().right;
+      panel.classList.add('is-dragging');
+      if (drawer) drawer.classList.add('is-dragging');
+      try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+      const move = (ev) => wfSetDrawerWidth(right - ev.clientX, false);
+      const end = (ev) => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', end);
+        grip.removeEventListener('pointercancel', end);
+        try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
+        panel.classList.remove('is-dragging');
+        if (drawer) drawer.classList.remove('is-dragging');
+        wfSetDrawerWidth(right - ev.clientX, true);
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', end);
+      grip.addEventListener('pointercancel', end);
+    });
+  }
+}
+
+$('#wf-np-widen') && $('#wf-np-widen').addEventListener('click', () => {
+  const panel = wfDrawerPanel();
+  const current = panel ? panel.getBoundingClientRect().width : WF_DRAWER_NARROW;
+  wfSetDrawerWidth(current >= wfDrawerWide() - 4 ? WF_DRAWER_NARROW : wfDrawerWide(), true);
+  const ta = $('#wf-np-prompt'); if (ta) ta.focus();
+});
 $('#wf-np-generate') && $('#wf-np-generate').addEventListener('click', async () => {
   const btn = $('#wf-np-generate');
   const promptEl = $('#wf-np-prompt');
@@ -4227,6 +4639,33 @@ $('#wf-np-delete') && $('#wf-np-delete').addEventListener('click', () => {
   if (wfEditor && wfSelectedNodeId != null) {
     wfEditor.removeNodeId('node-' + wfSelectedNodeId);
     hideNodePanel();
+  }
+});
+
+// Delete the selected connection. Drawflow binds its own key handler to the
+// canvas container, which never receives keys because a div is not focusable,
+// so the shortcut lives on the document and guards itself: only in the builder,
+// only with the config drawer closed, never while a text field has focus.
+//
+// Steps are deliberately not covered here. Clicking a step opens its drawer and
+// closing the drawer clears the selection, so "a selected step with no drawer
+// open" is not a state this canvas can be in. Steps are removed from the drawer.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+  if (!wfEditor) return;
+  const builder = $('#wf-builder-view');
+  if (!builder || builder.hidden) return;
+  const drawer = $('#wf-node-panel');
+  if (drawer && !drawer.hidden) return;
+  const t = e.target;
+  const tag = t && t.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+
+  // connection_selected is the <path>; its parent <svg> carries the endpoints.
+  const path = wfEditor.connection_selected;
+  if (path && path.parentElement) {
+    e.preventDefault();
+    if (wfRemoveConnectionEl(path.parentElement)) toast('Connection removed', 'success');
   }
 });
 $('#btn-stop-wf') && $('#btn-stop-wf').addEventListener('click', async () => {

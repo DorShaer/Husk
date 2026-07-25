@@ -200,13 +200,17 @@ test('a finished run is remembered, and the card reads it back', async () => {
         pill: (c.querySelector('.wf-lr') || {}).textContent || '',
         dots: c.querySelectorAll('.wf-dot.is-done').length,
         miniNodes: c.querySelectorAll('.wf-mini-node').length,
-        stats: (document.getElementById('wf-stats') || {}).textContent || '',
+        runs: (document.getElementById('wfx-stat-runs') || {}).textContent || '',
+        pass: (document.getElementById('wfx-stat-pass') || {}).textContent || '',
+        historyRows: document.querySelectorAll('.wfx-run-row').length,
       };
     });
     expect(card.pill).toMatch(/Passed/);
     expect(card.dots).toBe(1);
     expect(card.miniNodes).toBe(2);        // the flow's shape, drawn on the card
-    expect(card.stats).toMatch(/1 run this week/);
+    expect(card.runs).toBe('1');           // the hero counts it too
+    expect(card.pass).toBe('100%');
+    expect(card.historyRows).toBe(1);      // and it lands in the run history
   } finally {
     await app.close();
   }
