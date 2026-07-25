@@ -2992,7 +2992,8 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 /* Segmented mode control in the start wizard: a contained two-option pill
    group sized like the neighboring cap inputs, with the active option raised
    on its own surface so the selection reads instantly. */
-.aut-seg {
+.aut-seg,
+.sk-seg {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 3px;
@@ -3001,7 +3002,10 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.aut-seg-btn {
+.sk-seg { grid-template-columns: repeat(3, auto); }
+.sk-seg .sk-seg-btn { padding: 5px 14px; }
+.aut-seg-btn,
+.sk-seg-btn {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-3);
@@ -3014,8 +3018,10 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   white-space: nowrap;
   transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
-.aut-seg-btn:hover { color: var(--text); }
-.aut-seg-btn.is-active {
+.aut-seg-btn:hover,
+.sk-seg-btn:hover { color: var(--text); }
+.aut-seg-btn.is-active,
+.sk-seg-btn.is-active {
   background: var(--bg);
   color: var(--text);
   border-color: var(--line-2);
@@ -4881,86 +4887,120 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 /* ─── Skills page ───────────────────────────────────────────────────────── */
 
-.skills-grid {
-  flex: 1; min-height: 0; overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px;
-  padding-right: 4px;
-  align-content: start;
+/* The library is a list, not a gallery: at ninety-odd entries the page is
+   something you scan, so it needs landmarks and a steady rhythm rather than
+   equal weight everywhere. Rows group under the family already encoded in the
+   names, and the name column holds a fixed width so the descriptions line up
+   as a second readable column. */
+.skills-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+  margin-bottom: 16px;
 }
-.skill-card {
-  background: var(--bg-1);
+.sk-facets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.sk-facet {
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  padding: 16px 18px;
-  display: flex; flex-direction: column;
-  gap: 9px;
+  background: var(--bg-1);
+  color: var(--text-3);
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 11px; border-radius: 999px;
+  cursor: pointer; white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.sk-facet:hover { color: var(--text); border-color: var(--line-2); }
+.sk-facet.is-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-1));
+}
+.sk-facet-n { opacity: 0.6; margin-left: 5px; font-variant-numeric: tabular-nums; }
+
+.skills-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding-right: 4px;
+}
+.sk-group + .sk-group { margin-top: 26px; }
+/* Sticky, so the family you are reading stays named while you scroll it. */
+.sk-group-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: baseline; gap: 9px;
+  padding: 4px 12px 8px;
+  background: var(--bg);
+}
+.sk-group-name {
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-2);
+}
+.sk-group-count { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sk-group-rule { flex: 1; height: 1px; background: var(--line); align-self: center; }
+
+.sk-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 232px) minmax(0, 1fr) auto;
+  align-items: center; gap: 18px;
+  padding: 8px 12px;
+  border: 1px solid transparent; border-radius: 9px;
   cursor: pointer;
-  box-shadow: var(--hl-top);
-  transition: border-color var(--motion-base) var(--ease-out),
-              background var(--motion-base) var(--ease-out),
-              box-shadow var(--motion-base) var(--ease-out);
-  font-family: inherit; text-align: left;
-  color: var(--text);
-  min-height: 120px;
+  transition: background 130ms ease, border-color 130ms ease;
 }
-.skill-card:hover {
-  border-color: var(--line-3);
+.sk-row:hover, .sk-row:focus-within {
   background: var(--bg-2);
-  box-shadow: var(--elev-2);
+  border-color: var(--line);
 }
-.skill-card.disabled { opacity: 0.55; }
-.skill-card.disabled:hover { opacity: 0.75; }
-.sk-row1 { display: flex; align-items: center; gap: 10px; }
-.skill-card .sk-name {
-  display: flex; align-items: center; gap: 10px;
-  font-weight: 600; font-size: 14px; color: var(--text);
-  flex: 1;
-  overflow: hidden;
+.sk-row-name {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13.5px; font-weight: 600; color: var(--text);
+  min-width: 0;
 }
-.skill-card .sk-name > span:nth-child(2) {
+.sk-row-name > span {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  flex: 1;
 }
-.skill-card .sk-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.skill-card .sk-use {
-  padding: 4px 10px; font-size: 12px; font-weight: 600;
+.sk-row-desc {
+  font-size: 13px; color: var(--text-3); line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Width is reserved so revealing the controls never shifts the row under the
+   pointer. */
+.sk-row-tail {
+  display: flex; align-items: center; gap: 10px; justify-content: flex-end;
+  min-width: 96px;
+}
+/* Ninety rows means ninety of everything, so the per-row controls stay out of
+   the resting state and arrive on hover or keyboard focus. */
+.sk-row .sk-use {
+  padding: 3px 10px; font-size: 12px; font-weight: 600;
   border-radius: 7px; cursor: pointer;
   background: var(--bg-3); color: var(--text);
   border: 1px solid var(--line);
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  opacity: 0; pointer-events: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.13s ease;
 }
-.skill-card .sk-use:hover {
-  background: var(--text); color: var(--bg); border-color: var(--text);
-}
-.sk-badge {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: 4px;
-  background: var(--bg-3); color: var(--text-3);
+.sk-row:hover .sk-use, .sk-row:focus-within .sk-use { opacity: 1; pointer-events: auto; }
+.sk-row .sk-use:hover { background: var(--text); color: var(--bg); border-color: var(--text); }
+/* The switch is the control, not the state read. Ninety of them at rest is
+   ninety accent pills saying the same thing, so it waits for hover and the
+   exception carries the state instead. */
+.sk-row .toggle { opacity: 0; pointer-events: none; transition: opacity 0.13s ease; }
+.sk-row:hover .toggle, .sk-row:focus-within .toggle { opacity: 1; pointer-events: auto; }
+/* A disabled row states it in words, so state survives without hovering and
+   without reading ninety switch positions. */
+.sk-row.disabled .sk-row-name { color: var(--text-3); font-weight: 500; }
+.sk-row.disabled .sk-row-desc { opacity: 0.6; }
+.sk-row.disabled .toggle { opacity: 0.6; pointer-events: auto; }
+.sk-tag {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 4px;
   border: 1px solid var(--line);
+  color: var(--text-3);
   flex: 0 0 auto;
 }
-.sk-badge-claude { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
-.sk-badge-husk { color: var(--cyan, #67e8f9); border-color: color-mix(in srgb, var(--cyan, #67e8f9) 40%, var(--line)); }
-.skill-card .sk-icon {
-  color: var(--accent);
-  flex: 0 0 auto;
-  font-size: 16px;
+/* Only the exception is marked. A badge every row carries is not a badge. */
+.sk-tag-prompt {
+  color: var(--cyan, #67e8f9);
+  border-color: color-mix(in srgb, var(--cyan, #67e8f9) 40%, var(--line));
 }
-.skill-card .sk-desc {
-  font-size: 14px; color: var(--text-2); line-height: 1.55;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.skill-card .sk-path {
-  font-size: 11px; color: var(--text-3);
-  font-family: 'JetBrains Mono', monospace;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  margin-top: auto;
-}
+.sk-tag-off { color: var(--text-3); }
 
 /* Reusable iOS-style switch.
    Use class="husk-switch" on a <button> with the .on class for state, OR on
@@ -5108,7 +5148,7 @@ input[type="checkbox"]:disabled {
    visible page area instead of huddling in a 320px corner cell. */
 .ws-board > .empty-state,
 .prompts-grid > .empty-state,
-.skills-grid > .empty-state,
+.skills-list > .empty-state,
 .mcp-grid > .empty-state,
 .mcp-installed > .empty-state {
   grid-column: 1 / -1;
@@ -7469,9 +7509,11 @@ kbd {
   .page-head-right .ghost-input { min-width: 0; flex: 1 1 100%; }
   .page-title { font-size: 22px; }
   .prompts-grid,
-  .skills-grid {
-    grid-template-columns: 1fr;
+  .sk-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
   }
+  .sk-row-desc { display: none; }
   .modal-card,
   .modal-card.modal-wide,
   .modal-card.modal-card-wide {

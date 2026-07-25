@@ -1537,7 +1537,17 @@
               <button class="btn-primary" id="btn-skills-new" title="Create a new skill"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create skill</button>
             </div>
           </div>
-          <div class="skills-grid" id="skills-grid"></div>
+          <!-- Facets carry the structure the library already has in its names,
+               so 90-odd entries arrive pre-sorted instead of as one flat run. -->
+          <div class="skills-toolbar">
+            <div class="sk-facets" id="skills-facets"></div>
+            <div class="sk-seg" id="skills-state" role="group" aria-label="Filter by state">
+              <button type="button" class="sk-seg-btn is-active" data-state="all">All</button>
+              <button type="button" class="sk-seg-btn" data-state="on">Enabled</button>
+              <button type="button" class="sk-seg-btn" data-state="off">Disabled</button>
+            </div>
+          </div>
+          <div class="skills-list" id="skills-list"></div>
         </div>
 
         <!-- SESSIONS PAGE -->

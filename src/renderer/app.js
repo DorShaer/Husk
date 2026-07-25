@@ -5670,13 +5670,13 @@ async function previewPrompt(mdPath) {
 let skillsCache = [];
 let agentKindCache = 'claude';
 async function renderSkills() {
-  const grid = $('#skills-grid');
+  const listEl = $('#skills-list');
   // eslint-disable-next-line no-unsanitized/property -- Static loading template.
-  grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading…</div></div>';
+  listEl.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading…</div></div>';
   const res = await window.husk.skills.list();
   if (!res.ok) {
     // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
+    listEl.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
     return;
   }
   skillsCache = res.skills;
@@ -5702,7 +5702,9 @@ function applyPromptsLabels() {
   if (skillsTitle) skillsTitle.textContent = 'Skills';
   const skillsSub = document.querySelector('.page-skills .page-sub');
   if (skillsSub) {
-    const n = (lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null;
+    // Count what the page lists. The stats tile counts skill directories only,
+    // and the list also carries Husk prompts, so the two disagree by design.
+    const n = skillsCache.length || ((lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null);
     const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
     skillsSub.textContent = count + (agentKindCache === 'claude'
       ? 'auto-loaded by claude, or click Use to inject manually'
@@ -5727,80 +5729,192 @@ async function injectPromptToChat(content) {
     try { term.focus(); } catch (_) {}
   }, 60);
 }
+// A family is only worth a heading once enough entries share it, otherwise the
+// page trades one flat run for a run of one-item sections.
+const SK_FAMILY_MIN = 3;
+const SK_LIBRARY = ' library';
+const SK_PROMPTS = ' prompts';
+let skFamily = 'all';
+let skState = 'all';
+
+// Husk prompts and the shared library are different things and always split.
+// Everything else groups on the prefix its own name already carries, which is
+// how these libraries are actually organised on disk.
+function skFamilyKey(sk, counts) {
+  if (sk.source === 'husk') return SK_PROMPTS;
+  const m = /^([A-Za-z0-9]+)[-:_]/.exec(sk.name || '');
+  const key = m ? m[1].toLowerCase() : '';
+  if (!key) return SK_LIBRARY;
+  if (counts && (counts.get(key) || 0) < SK_FAMILY_MIN) return SK_LIBRARY;
+  return key;
+}
+function skFamilyLabel(key) {
+  if (key === SK_PROMPTS) return 'Husk prompts';
+  if (key === SK_LIBRARY) return 'Library';
+  return key;
+}
+// The heading carries the family, so the row drops the prefix it repeats. The
+// full name stays on the row for search, the tooltip and the detail view.
+function skShortName(sk, key) {
+  if (key === SK_PROMPTS || key === SK_LIBRARY) return sk.name;
+  const cut = sk.name.slice(key.length);
+  return /^[-:_]/.test(cut) ? cut.slice(1) : sk.name;
+}
+function skPrefixCounts(list) {
+  const counts = new Map();
+  for (const sk of list) {
+    if (sk.source === 'husk') continue;
+    const m = /^([A-Za-z0-9]+)[-:_]/.exec(sk.name || '');
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+function skGroupOrder(a, b) {
+  // Library first because it is the default home, prompts last because they
+  // are a different kind of thing, named families alphabetical between them.
+  const rank = (k) => (k === SK_LIBRARY ? 0 : k === SK_PROMPTS ? 2 : 1);
+  return rank(a) - rank(b) || a.localeCompare(b);
+}
+function skMatches(sk, q, counts) {
+  if (skState === 'on' && sk.disabled) return false;
+  if (skState === 'off' && !sk.disabled) return false;
+  if (skFamily !== 'all' && skFamilyKey(sk, counts) !== skFamily) return false;
+  if (!q) return true;
+  return (sk.name + ' ' + (sk.description || '')).toLowerCase().includes(q);
+}
+function paintSkillFacets(list, counts) {
+  const bar = $('#skills-facets');
+  if (!bar) return;
+  const tally = new Map();
+  for (const sk of list) {
+    const k = skFamilyKey(sk, counts);
+    tally.set(k, (tally.get(k) || 0) + 1);
+  }
+  const keys = [...tally.keys()].sort(skGroupOrder);
+  // A facet the page cannot offer is a facet that should not be shown.
+  if (!keys.some((k) => k !== SK_LIBRARY)) { bar.replaceChildren(); skFamily = 'all'; return; }
+  if (skFamily !== 'all' && !tally.has(skFamily)) skFamily = 'all';
+  const chips = [['all', 'All', list.length], ...keys.map((k) => [k, skFamilyLabel(k), tally.get(k)])];
+  // eslint-disable-next-line no-unsanitized/property -- Labels are escaped below.
+  bar.innerHTML = chips.map(([key, label, n]) => `
+    <button type="button" class="sk-facet${skFamily === key ? ' is-active' : ''}" data-family="${escapeAttr(key)}">${escapeHtml(label)}<span class="sk-facet-n">${n}</span></button>`).join('');
+}
 function paintSkills(list, query) {
-  const grid = $('#skills-grid');
+  const listEl = $('#skills-list');
   const q = (query || '').toLowerCase().trim();
-  const filtered = q ? list.filter((s) => (s.name + ' ' + (s.description || '')).toLowerCase().includes(q)) : list;
+  const counts = skPrefixCounts(list);
+  paintSkillFacets(list, counts);
+  const filtered = list.filter((s) => skMatches(s, q, counts));
   if (!filtered.length) {
-    const msg = list.length ? `No skills match "${escapeHtml(query)}"` : 'No skills yet. Drop a .md file or use ＋.';
-    // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
+    const msg = list.length ? 'No skills match this filter' : 'No skills yet. Drop a .md file or use ＋.';
+    // eslint-disable-next-line no-unsanitized/property -- Static message text.
+    listEl.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
     return;
   }
+  const groups = new Map();
+  for (const sk of filtered) {
+    const key = skFamilyKey(sk, counts);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sk);
+  }
+  const useTitle = agentKindCache === 'claude'
+    ? 'Inject this skill into the active chat; claude also auto-loads it'
+    : 'Inject this skill into the active chat';
   // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
-  grid.innerHTML = filtered.map((sk) => {
-    const sourceBadge = sk.source === 'husk'
-      ? '<span class="sk-badge sk-badge-husk" title="Husk-managed prompt">prompt</span>'
-      : `<span class="sk-badge sk-badge-claude" title="${agentKindCache === 'claude' ? 'Shared-library skill; Claude auto-loads it, and Use injects it into any chat' : 'Shared-library skill; use Use to inject it into the chat'}">skill</span>`;
-    return `
-    <div class="skill-card${sk.disabled ? ' disabled' : ''}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
-      <div class="sk-row1">
-        <div class="sk-name"><span class="sk-icon">⌬</span><span>${escapeHtml(sk.name)}</span>${sourceBadge}</div>
-        <div class="sk-actions">
-          <button class="ghost-btn sk-use" data-use="1" title="Inject this prompt into the active chat">Use ▶</button>
-          <button class="toggle ${sk.disabled ? '' : 'on'}" data-toggle="1" title="${sk.disabled ? 'Enable' : 'Disable'}"></button>
+  listEl.innerHTML = [...groups.keys()].sort(skGroupOrder).map((key) => {
+    const rows = groups.get(key).slice().sort((a, b) => a.name.localeCompare(b.name)).map((sk) => `
+      <div class="sk-row${sk.disabled ? ' disabled' : ''}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
+        <div class="sk-row-name" title="${escapeAttr(sk.name)}">
+          <span>${escapeHtml(skShortName(sk, key))}</span>
+          ${sk.source === 'husk' ? '<span class="sk-tag sk-tag-prompt" title="Husk-managed prompt">prompt</span>' : ''}
+          ${sk.disabled ? '<span class="sk-tag sk-tag-off">off</span>' : ''}
         </div>
+        <div class="sk-row-desc">${escapeHtml(sk.description || 'No description.')}</div>
+        <div class="sk-row-tail">
+          <button class="ghost-btn sk-use" data-use="1" title="${useTitle}">Use ▶</button>
+          <button class="toggle ${sk.disabled ? '' : 'on'}" data-toggle="1" title="${sk.disabled ? 'Enable' : 'Disable'} skill"></button>
+        </div>
+      </div>`).join('');
+    return `<section class="sk-group">
+      <div class="sk-group-head">
+        <span class="sk-group-name">${escapeHtml(skFamilyLabel(key))}</span>
+        <span class="sk-group-count">${groups.get(key).length}</span>
+        <span class="sk-group-rule"></span>
       </div>
-      <div class="sk-desc">${escapeHtml(sk.description || 'No description.')}</div>
-      <div class="sk-path">${escapeHtml(sk.path)}</div>
-    </div>`;
+      ${rows}
+    </section>`;
   }).join('');
-  grid.querySelectorAll('.skill-card').forEach((c) => {
-    c.addEventListener('click', (e) => {
-      if (e.target.closest('[data-toggle]') || e.target.closest('[data-use]')) return;
-      openSkillDetail(c.dataset);
-    });
-  });
-  grid.querySelectorAll('.skill-card .sk-use').forEach((u) => {
-    u.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const card = u.closest('.skill-card');
-      const r = await window.husk.skills.read(card.dataset.mdpath);
-      if (!r.ok) { toast(r.error || 'Could not read', 'error'); return; }
-      injectPromptToChat(r.content);
-      toast(`Injected: ${card.dataset.name}`, 'success');
-    });
-  });
-  grid.querySelectorAll('.skill-card .toggle').forEach((t) => {
-    t.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const card = t.closest('.skill-card');
-      const id = card.dataset.id || card.dataset.dirname;
-      const source = card.dataset.source || 'claude';
-      const wasOn = t.classList.contains('on');
-      // Optimistic flip, CSS transition needs the same node, not a re-rendered one.
-      t.classList.toggle('on');
-      card.classList.toggle('disabled');
-      const result = await window.husk.skills.toggle({ id, source, dirName: id });
-      if (result.ok) {
-        // The dir/file was renamed on disk. Update the data-id and data-dirname
-        // so the next click targets the new path.
-        card.dataset.id = result.id || result.dirName;
-        card.dataset.dirname = result.dirName || result.id;
-        t.classList.toggle('on', !result.disabled);
-        card.classList.toggle('disabled', !!result.disabled);
-        t.title = `${result.disabled ? 'Enable' : 'Disable'} skill`;
-        toast(`${card.dataset.name} ${result.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success');
-        refreshStats();
-      } else {
-        // Revert.
-        t.classList.toggle('on', wasOn);
-        card.classList.toggle('disabled', !wasOn);
-        toast(result.error || 'Toggle failed', 'error');
-      }
-    });
-  });
 }
+// Delegated once at the container: the list repaints on every keystroke, and
+// rebinding three handlers per row made each repaint proportional to the
+// library's size.
+function skRowFromEvent(e) { return e.target.closest('.sk-row'); }
+$('#skills-list').addEventListener('click', async (e) => {
+  const row = skRowFromEvent(e);
+  if (!row) return;
+  const useBtn = e.target.closest('[data-use]');
+  const toggleBtn = e.target.closest('[data-toggle]');
+  if (useBtn) {
+    e.stopPropagation();
+    const r = await window.husk.skills.read(row.dataset.mdpath);
+    if (!r.ok) { toast(r.error || 'Could not read', 'error'); return; }
+    injectPromptToChat(r.content);
+    toast(`Injected: ${row.dataset.name}`, 'success');
+    return;
+  }
+  if (toggleBtn) {
+    e.stopPropagation();
+    const id = row.dataset.id || row.dataset.dirname;
+    const source = row.dataset.source || 'claude';
+    const wasOn = toggleBtn.classList.contains('on');
+    // Optimistic flip, CSS transition needs the same node, not a re-rendered one.
+    toggleBtn.classList.toggle('on');
+    row.classList.toggle('disabled');
+    const result = await window.husk.skills.toggle({ id, source, dirName: id });
+    if (result.ok) {
+      // The dir/file was renamed on disk. Update the data-id and data-dirname
+      // so the next click targets the new path.
+      row.dataset.id = result.id || result.dirName;
+      row.dataset.dirname = result.dirName || result.id;
+      toggleBtn.classList.toggle('on', !result.disabled);
+      row.classList.toggle('disabled', !!result.disabled);
+      toggleBtn.title = `${result.disabled ? 'Enable' : 'Disable'} skill`;
+      const cached = skillsCache.find((s) => s.mdPath === row.dataset.mdpath);
+      if (cached) { cached.disabled = !!result.disabled; cached.id = row.dataset.id; }
+      row.querySelector('.sk-row-name .sk-tag-off')?.remove();
+      if (result.disabled) {
+        const off = document.createElement('span');
+        off.className = 'sk-tag sk-tag-off';
+        off.textContent = 'off';
+        row.querySelector('.sk-row-name').appendChild(off);
+      }
+      toast(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success');
+      refreshStats();
+    } else {
+      // Revert.
+      toggleBtn.classList.toggle('on', wasOn);
+      row.classList.toggle('disabled', !wasOn);
+      toast(result.error || 'Toggle failed', 'error');
+    }
+    return;
+  }
+  openSkillDetail(row.dataset);
+});
+$('#skills-facets').addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-family]');
+  if (!chip) return;
+  skFamily = chip.dataset.family;
+  paintSkills(skillsCache, $('#skills-search').value);
+});
+$('#skills-state').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-state]');
+  if (!btn) return;
+  skState = btn.dataset.state;
+  $('#skills-state').querySelectorAll('[data-state]').forEach((b) => b.classList.toggle('is-active', b === btn));
+  paintSkills(skillsCache, $('#skills-search').value);
+});
 $('#skills-search').addEventListener('input', debounce((e) => paintSkills(skillsCache, e.target.value), 120));
 $('#btn-skills-refresh').addEventListener('click', renderSkills);
 $('#btn-skills-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.skillsDir));
