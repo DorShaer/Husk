@@ -5767,6 +5767,19 @@ function skFamilyKey(sk, counts) {
   if (counts && (counts.get(key) || 0) < SK_FAMILY_MIN) return SK_LIBRARY;
   return key;
 }
+// A monogram per row, tinted by its folder. Ninety lines of text read as a
+// wall; a column of coloured marks gives the eye somewhere to land and makes a
+// folder recognisable at a glance without another word of chrome.
+const SK_TINTS = 6;
+function skTint(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return h % SK_TINTS;
+}
+function skInitial(name) {
+  const m = /[A-Za-z0-9]/.exec(name || '');
+  return (m ? m[0] : '?').toUpperCase();
+}
 function skFamilyLabel(key) {
   if (key === SK_LIBRARY) return 'Library';
   return key;
@@ -5868,7 +5881,10 @@ function paintSkills(list, query) {
     const on = !sk.disabled;
     return `
     <div class="sk-row${on ? '' : ' disabled'}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
-      <div class="sk-row-name" title="${escapeAttr(sk.name)}"><span>${escapeHtml(skShortName(sk, key))}</span></div>
+      <div class="sk-row-name" title="${escapeAttr(sk.name)}">
+        <span class="sk-mono" data-tint="${skTint(sk.name)}" aria-hidden="true">${escapeHtml(skInitial(skShortName(sk, key)))}</span>
+        <span class="sk-row-label">${escapeHtml(skShortName(sk, key))}</span>
+      </div>
       <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
       <div class="sk-row-state">
         <span class="sk-tag ${on ? 'is-on' : 'is-off'}" title="${on ? 'The agent calls this when it decides it is relevant' : 'Switched off, so the agent cannot see it'}">${on ? 'Enabled' : 'Disabled'}</span>
@@ -5883,13 +5899,19 @@ function paintSkills(list, query) {
     const items = groups.get(key);
     const live = items.filter((sk) => !sk.disabled).length;
     const folded = !forceOpen && skCollapsed.has(key);
+    const all = live === items.length;
+    const mixed = live > 0 && !all;
     return `<section class="sk-group${folded ? ' is-folded' : ''}" data-family="${escapeAttr(key)}">
-      <button type="button" class="sk-group-head" data-fold="${escapeAttr(key)}" aria-expanded="${folded ? 'false' : 'true'}">
-        <span class="sk-fold" aria-hidden="true"></span>
-        <span class="sk-group-name">${escapeHtml(skFamilyLabel(key))}</span>
-        <span class="sk-group-count">${items.length}</span>
-        <span class="sk-group-live">${live} enabled</span>
-      </button>
+      <div class="sk-group-head">
+        <button type="button" class="sk-group-open" data-fold="${escapeAttr(key)}" aria-expanded="${folded ? 'false' : 'true'}">
+          <span class="sk-fold" aria-hidden="true"></span>
+          <span class="sk-folder" data-tint="${skTint(key)}" aria-hidden="true">${escapeHtml(skInitial(skFamilyLabel(key)))}</span>
+          <span class="sk-group-name">${escapeHtml(skFamilyLabel(key))}</span>
+          <span class="sk-group-count">${items.length}</span>
+        </button>
+        <span class="sk-group-live">${live} of ${items.length} enabled</span>
+        <button class="toggle ${all ? 'on' : ''}${mixed ? ' is-mixed' : ''}" data-bulk="${escapeAttr(key)}" title="${all ? 'Disable' : 'Enable'} every skill in ${escapeAttr(skFamilyLabel(key))}"></button>
+      </div>
       ${folded ? '' : items.map(row).join('')}
     </section>`;
   }).join('');
@@ -5905,6 +5927,30 @@ function paintSkillSortHeads() {
 // sort, and rebinding three handlers per row would make each repaint
 // proportional to the library's size.
 $('#skills-list').addEventListener('click', async (e) => {
+  const bulk = e.target.closest('[data-bulk]');
+  if (bulk) {
+    e.stopPropagation();
+    if (bulk.disabled) return;
+    bulk.disabled = true;
+    const counts = skPrefixCounts(skillsCache);
+    const members = skillsCache.filter((sk) => skFamilyKey(sk, counts) === bulk.dataset.bulk);
+    const turnOn = members.some((sk) => sk.disabled);
+    // One pass over the members that disagree with the target, then a single
+    // reload: each toggle renames a directory, so the paths only settle once
+    // every rename is done.
+    let changed = 0;
+    for (const sk of members) {
+      if (!!sk.disabled === !turnOn) continue;
+      const r = await window.husk.skills.toggle({ id: sk.id, source: sk.source, dirName: sk.id });
+      if (r.ok) changed += 1;
+    }
+    toast(changed
+      ? `${changed} ${changed === 1 ? 'skill' : 'skills'} ${turnOn ? 'enabled' : 'disabled'} · restart agent to apply`
+      : 'Nothing to change', changed ? 'success' : 'info');
+    await renderSkills();
+    refreshStats();
+    return;
+  }
   const fold = e.target.closest('[data-fold]');
   if (fold) {
     const key = fold.dataset.fold;

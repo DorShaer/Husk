@@ -4965,7 +4965,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 .sk-tbody { flex: 1; min-height: 0; overflow-y: auto; }
 .sk-row {
-  min-height: 44px;
+  min-height: 46px;
   border-top: 1px solid var(--line);
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease-out);
@@ -4976,11 +4976,11 @@ body[data-page="chat"] #chats-panel { display: flex; }
   box-shadow: inset 2.5px 0 0 -0.5px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 .sk-row-name {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 11px;
   font-size: 13.5px; font-weight: 600; color: var(--text);
   min-width: 0;
 }
-.sk-row-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sk-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sk-row-desc {
   font-size: 12.5px; color: var(--text-3); line-height: 1.4;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -4989,33 +4989,39 @@ body[data-page="chat"] #chats-panel { display: flex; }
   font-size: 12px; color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Each source folder is its own section with a name, a count and how much of
-   it is live, and it folds away. Ninety rows arrive as a few named sections
-   rather than one run. */
-.sk-group + .sk-group { margin-top: 0; }
+/* Each source folder is a section: a mark, a name, how much of it is live and
+   one switch for the lot. It folds, so ninety rows arrive as a few named
+   sources rather than one run. */
 .sk-group-head {
-  display: flex; align-items: center; gap: 10px;
-  width: 100%;
-  padding: 9px var(--sk-pad-x);
-  border: 0; border-top: 1px solid var(--line);
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 var(--sk-pad-x) 0 0;
+  border-top: 1px solid var(--line);
   background: var(--bg-2);
-  font-family: inherit; text-align: left;
-  cursor: pointer;
-  transition: background 130ms ease;
 }
 .sk-group:first-child .sk-group-head { border-top: 0; }
+.sk-group-open {
+  display: flex; align-items: center; gap: 11px;
+  flex: 1; min-width: 0;
+  padding: 11px 0 11px var(--sk-pad-x);
+  border: 0; background: none;
+  font-family: inherit; text-align: left; cursor: pointer;
+}
 .sk-group-head:hover { background: var(--bg-3); }
 .sk-group-name {
-  font-size: 11px; font-weight: 700;
-  letter-spacing: 0.1em; text-transform: uppercase;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
   color: var(--text);
 }
 .sk-group-count {
   font-size: 11px; font-weight: 600;
   color: var(--text-3); font-variant-numeric: tabular-nums;
-  padding: 1px 7px; border-radius: 999px; background: var(--bg-3);
+  padding: 1px 8px; border-radius: 999px;
+  background: var(--bg-1); border: 1px solid var(--line);
 }
-.sk-group-live { margin-left: auto; font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sk-group-live {
+  font-size: 11.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 /* Drawn, so it keeps its weight at this size and can rotate. */
 .sk-fold {
   width: 0; height: 0; flex: 0 0 auto;
@@ -5025,6 +5031,29 @@ body[data-page="chat"] #chats-panel { display: flex; }
   transition: transform 150ms var(--ease-out);
 }
 .sk-group.is-folded .sk-fold { transform: rotate(0deg); }
+
+/* Six tints, picked from the name, so a source keeps the same colour
+   every session and the eye can find it without reading. */
+.sk-mono, .sk-folder {
+  display: grid; place-items: center;
+  flex: 0 0 auto;
+  font-weight: 700; letter-spacing: 0;
+  border: 1px solid transparent;
+}
+.sk-mono { width: 25px; height: 25px; border-radius: 8px; font-size: 11px; }
+.sk-folder { width: 27px; height: 27px; border-radius: 9px; font-size: 12px; }
+[data-tint="0"] { --sk-t: #f97316; }
+[data-tint="1"] { --sk-t: #38bdf8; }
+[data-tint="2"] { --sk-t: #a78bfa; }
+[data-tint="3"] { --sk-t: #34d399; }
+[data-tint="4"] { --sk-t: #fb7185; }
+[data-tint="5"] { --sk-t: #fbbf24; }
+.sk-mono, .sk-folder {
+  background: color-mix(in srgb, var(--sk-t) 15%, transparent);
+  border-color: color-mix(in srgb, var(--sk-t) 26%, transparent);
+  color: color-mix(in srgb, var(--sk-t) 72%, var(--text));
+}
+.sk-row.disabled .sk-mono { filter: saturate(0.25); opacity: 0.7; }
 
 /* Status is a tag, aligned in its own column: one word, same place on every
    row, readable without hovering anything. */
@@ -5101,6 +5130,17 @@ input[type="checkbox"]:checked {
 .toggle.on::before,
 input[type="checkbox"]:checked::before {
   transform: translateX(16px);
+  background: #ffffff;
+}
+
+/* A section only partly enabled parks its knob mid-track, so 53 of 54 reads as
+   neither on nor off. */
+.toggle.is-mixed {
+  background: color-mix(in srgb, var(--accent) 42%, var(--bg-3));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+}
+.toggle.is-mixed::before {
+  transform: translateX(8px);
   background: #ffffff;
 }
 .husk-switch:focus-visible,

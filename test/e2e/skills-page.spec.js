@@ -89,7 +89,7 @@ const col = (win, cls) => win.evaluate(
   (c) => [...document.querySelectorAll(`.sk-row ${c}`)].map((n) => n.textContent.trim()), cls,
 );
 const rowNames = (win) => win.evaluate(
-  () => [...document.querySelectorAll('.sk-row')].map((r) => r.querySelector('.sk-row-name > span').textContent),
+  () => [...document.querySelectorAll('.sk-row')].map((r) => r.querySelector('.sk-row-label').textContent),
 );
 
 const rowFor = (win, name) => win.locator(`.sk-row[data-name="${name}"]`);
@@ -342,5 +342,50 @@ test('a search opens the sections that match it', async () => {
     await win.waitForTimeout(300);
     // Having said what they want, the user should not have to open it as well.
     expect(await rowNames(win)).toEqual(['hunt-ssrf']);
+  } finally { await app.close(); }
+});
+
+test('a section switch flips everything under it in one go', async () => {
+  test.setTimeout(120_000);
+  const env = boot();
+  const app = await launch(env);
+  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  try {
+    const win = await openSkills(app, { expand: false });
+    const band = win.locator('.sk-group[data-family="zed"]');
+    await expect(band.locator('.sk-group-live')).toHaveText(`${FAMILY.length} of ${FAMILY.length} enabled`);
+    await band.locator('[data-bulk]').click();
+    await expect.poll(
+      () => fs.readdirSync(skillsDir).filter((d) => d.startsWith('_disabled_zed-hunt-')).length,
+      { timeout: 30_000 },
+    ).toBe(FAMILY.length);
+    await expect(band.locator('.sk-group-live')).toHaveText(`0 of ${FAMILY.length} enabled`);
+
+    // And back, which has to keep working now every member has been renamed.
+    await band.locator('[data-bulk]').click();
+    await expect.poll(
+      () => fs.readdirSync(skillsDir).filter((d) => d.startsWith('zed-hunt-')).length,
+      { timeout: 30_000 },
+    ).toBe(FAMILY.length);
+    await expect(band.locator('.sk-group-live')).toHaveText(`${FAMILY.length} of ${FAMILY.length} enabled`);
+  } finally { await app.close(); }
+});
+
+test('a partly enabled section shows neither on nor off', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app, { expand: false });
+    // Library holds the one disabled entry, so its section switch sits mixed
+    // rather than claiming the whole folder is off.
+    const library = win.locator('.sk-group[data-family="__library"] [data-bulk]');
+    await expect(library).toHaveClass(/is-mixed/);
+    await expect(win.locator('.sk-group[data-family="zed"] [data-bulk]')).not.toHaveClass(/is-mixed/);
+    const knob = await win.evaluate(() => {
+      const el = document.querySelector('.sk-group[data-family="__library"] [data-bulk]');
+      return getComputedStyle(el, '::before').transform;
+    });
+    // Parked mid-track, not at either end.
+    expect(knob).toContain('8');
   } finally { await app.close(); }
 });
