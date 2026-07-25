@@ -4887,198 +4887,173 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 /* ─── Skills page ───────────────────────────────────────────────────────── */
 
-/* The library is a table: ninety-odd entries are something you scan and sort,
-   so the columns stay in fixed tracks and every cell shares one left edge.
-   Built on the same idiom as .ws-table so the two read as one app. */
-.skills-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 14px; flex-wrap: wrap;
-  margin-bottom: 14px;
+/* ── Skills library ──────────────────────────────────────────────────────────
+   Two panes. Sources on the left, their skills on the right, because a library
+   this size is navigated rather than scrolled. The palette is deliberately
+   cold and local to this page: steel surfaces, hairline rules, one ice accent
+   for the only state that matters. */
+.page-skills {
+  --ice: #38bdf8;
+  --steel: #94a3b8;
+  --sk-surface: color-mix(in srgb, var(--steel) 4%, var(--bg-1));
+  --sk-raise: color-mix(in srgb, var(--steel) 9%, var(--bg-1));
+  --sk-line: color-mix(in srgb, var(--steel) 16%, transparent);
+  --sk-line-2: color-mix(in srgb, var(--steel) 26%, transparent);
+  --sk-dim: color-mix(in srgb, var(--steel) 78%, var(--text));
 }
-.sk-facets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.sk-facet {
-  border: 1px solid var(--line);
-  background: var(--bg-1);
-  color: var(--text-3);
-  font-family: inherit; font-size: 12px; font-weight: 600;
-  padding: 5px 11px; border-radius: 999px;
-  cursor: pointer; white-space: nowrap;
-  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+[data-theme="light"] .page-skills {
+  --ice: #0284c7;
+  --steel: #64748b;
+  --sk-surface: #ffffff;
+  --sk-raise: #f4f6f9;
+  --sk-line: color-mix(in srgb, var(--steel) 22%, transparent);
+  --sk-line-2: color-mix(in srgb, var(--steel) 34%, transparent);
 }
-.sk-facet:hover { color: var(--text); border-color: var(--line-2); }
-.sk-facet.is-active {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-1));
-}
-.sk-facet-n { opacity: 0.6; margin-left: 5px; font-variant-numeric: tabular-nums; }
 
-.sk-table {
-  /* Hugs its content when the sections are folded, grows to the page and
-     scrolls when they are open. */
-  flex: 0 1 auto; min-height: 0; max-height: 100%;
-  display: flex; flex-direction: column;
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--hl-top);
-  overflow: hidden;
-  --sk-pad-x: 18px;
-}
-.sk-thead, .sk-row {
+.sk {
+  flex: 1; min-height: 0;
   display: grid;
-  grid-template-columns: minmax(150px, 260px) minmax(180px, 1fr) 104px 56px;
-  align-items: center;
-  gap: 16px;
-  padding: 0 var(--sk-pad-x);
+  grid-template-columns: 216px minmax(0, 1fr);
+  border: 1px solid var(--sk-line);
+  border-radius: 14px;
+  background: var(--sk-surface);
+  overflow: hidden;
 }
-/* With every section folded there are no columns to label yet. */
-.sk-table.is-folded-shut .sk-thead { display: none; }
-.sk-thead {
-  min-height: 38px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-2);
-}
-.sk-th {
-  font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-3);
-  border: 0; background: none; padding: 0; font-family: inherit;
-  text-align: left; white-space: nowrap;
-}
-.sk-th-right { text-align: right; }
-.sk-sortable {
-  display: inline-flex; align-items: center; gap: 5px;
-  cursor: pointer;
-  transition: color 130ms ease;
-}
-.sk-sortable:hover { color: var(--text); }
-.sk-sortable.is-sorted { color: var(--text); }
-/* The caret is drawn, not typed, so it keeps its weight at 10px. */
-.sk-caret {
-  width: 0; height: 0; opacity: 0;
-  border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
-  border-bottom: 4.5px solid currentColor;
-  transition: opacity 130ms ease, transform 130ms ease;
-}
-.sk-sortable.is-sorted .sk-caret { opacity: 0.85; }
-.sk-sortable.is-desc .sk-caret { transform: rotate(180deg); }
 
-.sk-tbody { flex: 1; min-height: 0; overflow-y: auto; }
+/* ── Left: the sources ─────────────────────────────────────────────────── */
+.sk-rail {
+  display: flex; flex-direction: column;
+  gap: 6px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--sk-line);
+  background: color-mix(in srgb, var(--steel) 3%, transparent);
+  overflow-y: auto;
+}
+.sk-rail-cap {
+  padding: 6px 8px 2px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--sk-dim); opacity: 0.75;
+}
+.sk-sources { display: flex; flex-direction: column; gap: 1px; }
+.sk-source {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 7px 9px;
+  border: 0; border-radius: 8px;
+  background: none; color: var(--sk-dim);
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  text-align: left; cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sk-source:hover { background: var(--sk-raise); color: var(--text); }
+.sk-source.is-active {
+  background: color-mix(in srgb, var(--ice) 14%, transparent);
+  color: var(--text); font-weight: 600;
+}
+.sk-source-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sk-source-n {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--sk-dim); opacity: 0.85;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+/* A hairline that lights up on the selected source, so the rail reads as a
+   position rather than a set of buttons. */
+.sk-source::before {
+  content: ""; width: 2px; height: 15px; border-radius: 2px;
+  background: transparent; flex: 0 0 auto;
+  transition: background 120ms ease;
+}
+.sk-source.is-active::before { background: var(--ice); }
+
+.sk-state { display: flex; flex-direction: column; gap: 1px; }
+.sk-state-btn {
+  padding: 6px 9px 6px 20px;
+  border: 0; border-radius: 8px;
+  background: none; color: var(--sk-dim);
+  font-family: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sk-state-btn:hover { background: var(--sk-raise); color: var(--text); }
+.sk-state-btn.is-active { color: var(--text); font-weight: 600; background: var(--sk-raise); }
+
+/* ── Right: the skills ─────────────────────────────────────────────────── */
+.sk-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.sk-main-head {
+  display: flex; align-items: center; gap: 16px;
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--sk-line);
+}
+.sk-main-id { flex: 1; min-width: 0; }
+.sk-main-title {
+  margin: 0; font-size: 15px; font-weight: 650;
+  letter-spacing: -0.01em; color: var(--text);
+}
+.sk-main-sub {
+  margin: 3px 0 0; font-size: 12px; color: var(--sk-dim);
+  font-variant-numeric: tabular-nums;
+}
+.sk-main-act { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.sk-bulk-label { font-size: 12px; color: var(--sk-dim); white-space: nowrap; }
+
+.sk-list { flex: 1; min-height: 0; overflow-y: auto; }
 .sk-row {
-  min-height: 46px;
-  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr) auto;
+  align-items: center; gap: 20px;
+  padding: 11px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sk-line) 60%, transparent);
   cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-out);
+  transition: background 110ms ease;
 }
-.sk-tbody > .sk-row:first-child { border-top: 0; }
-.sk-row:hover, .sk-row:focus-within {
-  background: var(--bg-2);
-  box-shadow: inset 2.5px 0 0 -0.5px color-mix(in srgb, var(--accent) 65%, transparent);
+.sk-row:last-child { border-bottom: 0; }
+.sk-row:hover, .sk-row:focus-within { background: var(--sk-raise); }
+.sk-row-label {
+  font-size: 13.5px; font-weight: 550; color: var(--text);
+  letter-spacing: -0.005em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.sk-row-name {
-  display: flex; align-items: center; gap: 11px;
-  font-size: 13.5px; font-weight: 600; color: var(--text);
-  min-width: 0;
-}
-.sk-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sk-row-desc {
-  font-size: 12.5px; color: var(--text-3); line-height: 1.4;
+  font-size: 12.5px; color: var(--sk-dim); line-height: 1.45;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.sk-row-family {
-  font-size: 12px; color: var(--text-2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* Each source folder is a section: a mark, a name, how much of it is live and
-   one switch for the lot. It folds, so ninety rows arrive as a few named
-   sources rather than one run. */
-.sk-group-head {
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 var(--sk-pad-x) 0 0;
-  border-top: 1px solid var(--line);
-  background: var(--bg-2);
-}
-.sk-group:first-child .sk-group-head { border-top: 0; }
-.sk-group-open {
-  display: flex; align-items: center; gap: 11px;
-  flex: 1; min-width: 0;
-  padding: 11px 0 11px var(--sk-pad-x);
-  border: 0; background: none;
-  font-family: inherit; text-align: left; cursor: pointer;
-}
-.sk-group-head:hover { background: var(--bg-3); }
-.sk-group-name {
-  font-size: 12px; font-weight: 700;
-  letter-spacing: 0.09em; text-transform: uppercase;
-  color: var(--text);
-}
-.sk-group-count {
-  font-size: 11px; font-weight: 600;
-  color: var(--text-3); font-variant-numeric: tabular-nums;
-  padding: 1px 8px; border-radius: 999px;
-  background: var(--bg-1); border: 1px solid var(--line);
-}
-.sk-group-live {
-  font-size: 11.5px; color: var(--text-3);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-/* Drawn, so it keeps its weight at this size and can rotate. */
-.sk-fold {
-  width: 0; height: 0; flex: 0 0 auto;
-  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
-  border-left: 5px solid var(--text-3);
-  transform: rotate(90deg);
-  transition: transform 150ms var(--ease-out);
-}
-.sk-group.is-folded .sk-fold { transform: rotate(0deg); }
+/* Off is the exception, so it is the only thing that changes the row. */
+.sk-row.disabled .sk-row-label { color: var(--sk-dim); font-weight: 500; }
+.sk-row.disabled .sk-row-desc { opacity: 0.55; }
 
-/* Six tints, picked from the name, so a source keeps the same colour
-   every session and the eye can find it without reading. */
-.sk-mono, .sk-folder {
-  display: grid; place-items: center;
-  flex: 0 0 auto;
-  font-weight: 700; letter-spacing: 0;
-  border: 1px solid transparent;
+.sk-empty {
+  display: grid; place-items: center; gap: 8px;
+  padding: 64px 20px; text-align: center;
+  color: var(--sk-dim); font-size: 13px;
 }
-.sk-mono { width: 25px; height: 25px; border-radius: 8px; font-size: 11px; }
-.sk-folder { width: 27px; height: 27px; border-radius: 9px; font-size: 12px; }
-[data-tint="0"] { --sk-t: #f97316; }
-[data-tint="1"] { --sk-t: #38bdf8; }
-[data-tint="2"] { --sk-t: #a78bfa; }
-[data-tint="3"] { --sk-t: #34d399; }
-[data-tint="4"] { --sk-t: #fb7185; }
-[data-tint="5"] { --sk-t: #fbbf24; }
-.sk-mono, .sk-folder {
-  background: color-mix(in srgb, var(--sk-t) 15%, transparent);
-  border-color: color-mix(in srgb, var(--sk-t) 26%, transparent);
-  color: color-mix(in srgb, var(--sk-t) 72%, var(--text));
-}
-.sk-row.disabled .sk-mono { filter: saturate(0.25); opacity: 0.7; }
 
-/* Status is a tag, aligned in its own column: one word, same place on every
-   row, readable without hovering anything. */
-.sk-row-state { display: flex; align-items: center; min-width: 0; }
-.sk-tag {
-  font-size: 11px; font-weight: 600;
-  padding: 2px 9px; border-radius: 999px;
-  border: 1px solid transparent;
-  white-space: nowrap;
+/* The switch, recut cold: off is a bare outline, on is a solid ice bar. */
+.sk-list .toggle, .sk-main-act .toggle {
+  width: 34px; height: 20px;
+  background: transparent;
+  border: 1px solid var(--sk-line-2);
 }
-.sk-tag.is-on {
-  color: var(--emerald);
-  border-color: color-mix(in srgb, var(--emerald) 34%, transparent);
-  background: color-mix(in srgb, var(--emerald) 12%, transparent);
+.sk-list .toggle::before, .sk-main-act .toggle::before {
+  width: 12px; height: 12px; top: 3px; left: 3px;
+  background: var(--sk-dim); box-shadow: none;
 }
-.sk-tag.is-off {
-  color: var(--text-3);
-  border-color: var(--line-2);
-  background: var(--bg-2);
+.sk-list .toggle.on, .sk-main-act .toggle.on {
+  background: var(--ice); border-color: var(--ice);
 }
-.sk-row.disabled .sk-row-name { color: var(--text-3); font-weight: 500; }
-.sk-row.disabled .sk-row-desc { opacity: 0.7; }
+.sk-list .toggle.on::before, .sk-main-act .toggle.on::before {
+  transform: translateX(14px); background: #ffffff;
+}
+.sk-main-act .toggle.is-mixed {
+  background: color-mix(in srgb, var(--ice) 34%, transparent);
+  border-color: color-mix(in srgb, var(--ice) 55%, transparent);
+}
+.sk-main-act .toggle.is-mixed::before { transform: translateX(7px); background: #ffffff; }
 
-/* The switch is the one control on the row, so it stays put and visible. */
-.sk-row-tail { display: flex; align-items: center; justify-content: flex-end; }
+@container (max-width: 720px) {
+  .sk { grid-template-columns: minmax(0, 1fr); }
+  .sk-rail { display: none; }
+  .sk-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .sk-row-desc { display: none; }
+}
 
 /* Reusable iOS-style switch.
    Use class="husk-switch" on a <button> with the .on class for state, OR on
@@ -5237,7 +5212,6 @@ input[type="checkbox"]:disabled {
    visible page area instead of huddling in a 320px corner cell. */
 .ws-board > .empty-state,
 .prompts-grid > .empty-state,
-.sk-tbody > .empty-state,
 .mcp-grid > .empty-state,
 .mcp-installed > .empty-state {
   grid-column: 1 / -1;
@@ -7601,14 +7575,6 @@ kbd {
   /* Description and family are the two columns a narrow window can lose and
      still leave the table readable. Both the cell and its heading go, so the
      tracks keep matching. */
-  /* Description is the column a narrow window can lose and still leave the
-     table readable. The cell and its heading go together, so the tracks keep
-     matching. */
-  .sk-thead, .sk-row {
-    grid-template-columns: minmax(0, 1fr) 104px 56px;
-    gap: 10px;
-  }
-  .sk-row-desc, .sk-thead .sk-th:nth-child(2) { display: none; }
   .modal-card,
   .modal-card.modal-wide,
   .modal-card.modal-card-wide {

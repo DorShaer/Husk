@@ -1537,28 +1537,32 @@
               <button class="btn-primary" id="btn-skills-new" title="Create a new skill"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create skill</button>
             </div>
           </div>
-          <!-- Facets carry the structure the library already has in its names,
-               so 90-odd entries arrive pre-sorted instead of as one flat run. -->
-          <div class="skills-toolbar">
-            <div class="sk-facets" id="skills-facets"></div>
-            <div class="sk-seg" id="skills-state" role="group" aria-label="Filter by state">
-              <button type="button" class="sk-seg-btn is-active" data-state="all">All</button>
-              <button type="button" class="sk-seg-btn" data-state="on">Enabled</button>
-              <button type="button" class="sk-seg-btn" data-state="off">Disabled</button>
-            </div>
-          </div>
-          <!-- The head sits outside the scrolling body rather than sticking to
-               it: these surface tokens are translucent overlays, and a sticky
-               band needs an opaque fill that would not match the page under
-               it. -->
-          <div class="sk-table">
-            <div class="sk-thead">
-              <button type="button" class="sk-th sk-sortable is-sorted" data-sort="name">Name<span class="sk-caret"></span></button>
-              <div class="sk-th">Description</div>
-              <button type="button" class="sk-th sk-sortable" data-sort="state" title="An enabled skill is called automatically whenever the agent decides it fits">Status<span class="sk-caret"></span></button>
-              <div class="sk-th"></div>
-            </div>
-            <div class="sk-tbody" id="skills-list"></div>
+          <!-- Two panes: sources on the left, their skills on the right. A
+               library this size is navigated, not scrolled. -->
+          <div class="sk">
+            <aside class="sk-rail">
+              <div class="sk-rail-cap">Sources</div>
+              <nav class="sk-sources" id="skills-sources" aria-label="Skill sources"></nav>
+              <div class="sk-rail-cap">Show</div>
+              <div class="sk-state" id="skills-state" role="group" aria-label="Filter by state">
+                <button type="button" class="sk-state-btn is-active" data-state="all">All</button>
+                <button type="button" class="sk-state-btn" data-state="on">Enabled</button>
+                <button type="button" class="sk-state-btn" data-state="off">Disabled</button>
+              </div>
+            </aside>
+            <section class="sk-main">
+              <header class="sk-main-head">
+                <div class="sk-main-id">
+                  <h2 class="sk-main-title" id="sk-title">All skills</h2>
+                  <p class="sk-main-sub" id="sk-sub"></p>
+                </div>
+                <div class="sk-main-act" id="sk-bulk-wrap" hidden>
+                  <span class="sk-bulk-label" id="sk-bulk-label"></span>
+                  <button class="toggle" id="sk-bulk" data-bulk=""></button>
+                </div>
+              </header>
+              <div class="sk-list" id="skills-list"></div>
+            </section>
           </div>
         </div>
 

@@ -5730,61 +5730,22 @@ async function injectPromptToChat(content) {
     try { term.focus(); } catch (_) {}
   }, 60);
 }
-// A family is only worth a heading once enough entries share it, otherwise the
-// page trades one flat run for a run of one-item sections.
-const SK_FAMILY_MIN = 3;
-// The two standing groups need keys a derived family can never produce, and
-// that survive a round trip through a data attribute. A family is matched as
-// [A-Za-z0-9]+, so a leading underscore is unreachable.
+// A source is only worth its own entry in the rail once enough skills share
+// the folder prefix; the rest live under Library.
+const SK_SOURCE_MIN = 3;
 const SK_LIBRARY = '__library';
-let skFamily = 'all';
+let skSource = 'all';
 let skState = 'all';
-let skSortKey = 'name';
-const SK_FOLD_KEY = 'husk.skCollapsed';
-// Sections open closed the first time, so the page lands as a short list of
-// named sources rather than every skill at once. Once the user folds anything
-// themselves, their choice is what persists.
-let skFoldsSeeded = false;
-const skCollapsed = new Set((() => {
-  try {
-    const stored = localStorage.getItem(SK_FOLD_KEY);
-    if (stored === null) return [];
-    skFoldsSeeded = true;
-    return JSON.parse(stored) || [];
-  } catch (_) { return []; }
-})());
-function skSaveFolds() {
-  try { localStorage.setItem(SK_FOLD_KEY, JSON.stringify([...skCollapsed])); } catch (_) {}
-}
-let skSortDesc = false;
 
-// A family is the folder prefix the name already carries, which is how these
-// libraries are actually organised on disk.
-function skFamilyKey(sk, counts) {
+function skSourceKey(sk, counts) {
   const m = /^([A-Za-z0-9]+)[-:_]/.exec(sk.name || '');
   const key = m ? m[1].toLowerCase() : '';
   if (!key) return SK_LIBRARY;
-  if (counts && (counts.get(key) || 0) < SK_FAMILY_MIN) return SK_LIBRARY;
+  if (counts && (counts.get(key) || 0) < SK_SOURCE_MIN) return SK_LIBRARY;
   return key;
 }
-// A monogram per row, tinted by its folder. Ninety lines of text read as a
-// wall; a column of coloured marks gives the eye somewhere to land and makes a
-// folder recognisable at a glance without another word of chrome.
-const SK_TINTS = 6;
-function skTint(key) {
-  let h = 0;
-  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return h % SK_TINTS;
-}
-function skInitial(name) {
-  const m = /[A-Za-z0-9]/.exec(name || '');
-  return (m ? m[0] : '?').toUpperCase();
-}
-function skFamilyLabel(key) {
-  if (key === SK_LIBRARY) return 'Library';
-  return key;
-}
-// The heading carries the family, so the row drops the prefix it repeats. The
+function skSourceLabel(key) { return key === SK_LIBRARY ? 'Library' : key; }
+// The rail carries the source, so the row drops the prefix it repeats. The
 // full name stays on the row for search, the tooltip and the detail view.
 function skShortName(sk, key) {
   if (key === SK_LIBRARY) return sk.name;
@@ -5801,164 +5762,83 @@ function skPrefixCounts(list) {
   }
   return counts;
 }
-function skGroupOrder(a, b) {
-  // Library first because it is the default home for anything unprefixed,
-  // named folders alphabetical after it.
-  const rank = (k) => (k === SK_LIBRARY ? 0 : 1);
-  return rank(a) - rank(b) || a.localeCompare(b);
+function skSourceOrder(a, b) {
+  // Library first because it is the default home for anything unprefixed.
+  return (a === SK_LIBRARY ? 0 : 1) - (b === SK_LIBRARY ? 0 : 1) || a.localeCompare(b);
 }
 function skMatches(sk, q, counts) {
   if (skState === 'on' && sk.disabled) return false;
   if (skState === 'off' && !sk.disabled) return false;
-  if (skFamily !== 'all' && skFamilyKey(sk, counts) !== skFamily) return false;
+  if (skSource !== 'all' && skSourceKey(sk, counts) !== skSource) return false;
   if (!q) return true;
   return (sk.name + ' ' + (sk.description || '')).toLowerCase().includes(q);
 }
-function paintSkillFacets(list, counts) {
-  const bar = $('#skills-facets');
-  if (!bar) return;
-  const tally = new Map();
-  for (const sk of list) {
-    const k = skFamilyKey(sk, counts);
-    tally.set(k, (tally.get(k) || 0) + 1);
-  }
-  const keys = [...tally.keys()].sort(skGroupOrder);
-  // A facet the page cannot offer is a facet that should not be shown.
-  if (!keys.some((k) => k !== SK_LIBRARY)) { bar.replaceChildren(); skFamily = 'all'; return; }
-  if (skFamily !== 'all' && !tally.has(skFamily)) skFamily = 'all';
-  const chips = [['all', 'All', list.length], ...keys.map((k) => [k, skFamilyLabel(k), tally.get(k)])];
-  // eslint-disable-next-line no-unsanitized/property -- Labels are escaped below.
-  bar.innerHTML = chips.map(([key, label, n]) => `
-    <button type="button" class="sk-facet${skFamily === key ? ' is-active' : ''}" data-family="${escapeAttr(key)}">${escapeHtml(label)}<span class="sk-facet-n">${n}</span></button>`).join('');
-}
+
 function paintSkills(list, query) {
-  const body = $('#skills-list');
   const q = (query || '').toLowerCase().trim();
   const counts = skPrefixCounts(list);
-  paintSkillFacets(list, counts);
-  const rows = list.filter((s) => skMatches(s, q, counts));
+  const keys = [...new Set(list.map((sk) => skSourceKey(sk, counts)))].sort(skSourceOrder);
+  if (skSource !== 'all' && !keys.includes(skSource)) skSource = 'all';
+
+  // Left rail: every source, with how many it holds.
+  const tally = new Map();
+  for (const sk of list) {
+    const k = skSourceKey(sk, counts);
+    tally.set(k, (tally.get(k) || 0) + 1);
+  }
+  const entries = [['all', 'All skills', list.length], ...keys.map((k) => [k, skSourceLabel(k), tally.get(k)])];
+  // eslint-disable-next-line no-unsanitized/property -- Labels are escaped below.
+  $('#skills-sources').innerHTML = entries.map(([key, label, n]) => `
+    <button type="button" class="sk-source${skSource === key ? ' is-active' : ''}" data-source-key="${escapeAttr(key)}">
+      <span class="sk-source-name">${escapeHtml(label)}</span>
+      <span class="sk-source-n">${n}</span>
+    </button>`).join('');
+
+  const rows = list.filter((sk) => skMatches(sk, q, counts))
+    .sort((a, b) => skShortName(a, skSourceKey(a, counts))
+      .localeCompare(skShortName(b, skSourceKey(b, counts))));
+
+  // Header: what is being shown, and one switch for the whole of it.
+  const scope = skSource === 'all' ? list : list.filter((sk) => skSourceKey(sk, counts) === skSource);
+  const live = scope.filter((sk) => !sk.disabled).length;
+  $('#sk-title').textContent = skSource === 'all' ? 'All skills' : skSourceLabel(skSource);
+  $('#sk-sub').textContent = scope.length
+    ? `${live} of ${scope.length} enabled${rows.length !== scope.length ? ` · ${rows.length} shown` : ''}`
+    : 'Nothing here yet';
+  const bulkWrap = $('#sk-bulk-wrap');
+  const bulk = $('#sk-bulk');
+  bulkWrap.hidden = !scope.length;
+  const allOn = scope.length > 0 && live === scope.length;
+  bulk.classList.toggle('on', allOn);
+  bulk.classList.toggle('is-mixed', live > 0 && !allOn);
+  bulk.dataset.bulk = skSource;
+  bulk.title = `${allOn ? 'Disable' : 'Enable'} every skill shown here`;
+  $('#sk-bulk-label').textContent = allOn ? 'All on' : live ? 'Some on' : 'All off';
+
+  const body = $('#skills-list');
   if (!rows.length) {
-    const msg = list.length ? 'No skills match this filter' : 'No skills yet. Drop a .md file or use \uFF0B.';
+    const msg = list.length ? 'Nothing matches this filter' : 'No skills yet. Drop a folder in, or use Create skill.';
     // eslint-disable-next-line no-unsanitized/property -- Static message text.
-    body.innerHTML = `<div class="empty-state"><div class="es-icon">\u232C</div><div class="es-msg">${msg}</div></div>`;
+    body.innerHTML = `<div class="sk-empty">${msg}</div>`;
     return;
   }
-  const dir = skSortDesc ? -1 : 1;
-  // Sort on the name the row shows, not the one on disk: the family prefix is
-  // in its own column, so ordering by the full name would leave the visible
-  // column looking unsorted.
-  const shown = (sk) => skShortName(sk, skFamilyKey(sk, counts));
-  rows.sort((a, b) => {
-    if (skSortKey === 'state') {
-      const sa = a.disabled ? 1 : 0;
-      const sb = b.disabled ? 1 : 0;
-      if (sa !== sb) return (sa - sb) * dir;
-      return shown(a).localeCompare(shown(b));
-    }
-    return shown(a).localeCompare(shown(b)) * dir;
-  });
-  // Grouped by the folder each skill came from, because that is how a library
-  // this size is actually held in the head. A group can be folded away, so the
-  // page opens as a handful of named sections instead of ninety rows.
-  const groups = new Map();
-  for (const sk of rows) {
-    const key = skFamilyKey(sk, counts);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(sk);
-  }
-  if (!skFoldsSeeded) {
-    skFoldsSeeded = true;
-    for (const key of groups.keys()) skCollapsed.add(key);
-  }
-  // Searching, or narrowing to one source, means the user has already said
-  // what they are looking for; making them open it again would be a step for
-  // nothing.
-  const forceOpen = !!q || groups.size === 1;
-  const anyOpen = [...groups.keys()].some((k) => forceOpen || !skCollapsed.has(k));
-  document.querySelector('.sk-table')?.classList.toggle('is-folded-shut', !anyOpen);
-  const row = (sk) => {
-    const key = skFamilyKey(sk, counts);
+  // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
+  body.innerHTML = rows.map((sk) => {
+    const key = skSourceKey(sk, counts);
     const on = !sk.disabled;
     return `
     <div class="sk-row${on ? '' : ' disabled'}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
-      <div class="sk-row-name" title="${escapeAttr(sk.name)}">
-        <span class="sk-mono" data-tint="${skTint(sk.name)}" aria-hidden="true">${escapeHtml(skInitial(skShortName(sk, key)))}</span>
-        <span class="sk-row-label">${escapeHtml(skShortName(sk, key))}</span>
-      </div>
+      <div class="sk-row-label" title="${escapeAttr(sk.name)}">${escapeHtml(skShortName(sk, key))}</div>
       <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
-      <div class="sk-row-state">
-        <span class="sk-tag ${on ? 'is-on' : 'is-off'}" title="${on ? 'The agent calls this when it decides it is relevant' : 'Switched off, so the agent cannot see it'}">${on ? 'Enabled' : 'Disabled'}</span>
-      </div>
-      <div class="sk-row-tail">
-        <button class="toggle ${on ? 'on' : ''}" data-toggle="1" title="${on ? 'Disable' : 'Enable'} skill"></button>
-      </div>
+      <button class="toggle ${on ? 'on' : ''}" data-toggle="1" title="${on ? 'Disable' : 'Enable'} skill"></button>
     </div>`;
-  };
-  // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
-  body.innerHTML = [...groups.keys()].sort(skGroupOrder).map((key) => {
-    const items = groups.get(key);
-    const live = items.filter((sk) => !sk.disabled).length;
-    const folded = !forceOpen && skCollapsed.has(key);
-    const all = live === items.length;
-    const mixed = live > 0 && !all;
-    return `<section class="sk-group${folded ? ' is-folded' : ''}" data-family="${escapeAttr(key)}">
-      <div class="sk-group-head">
-        <button type="button" class="sk-group-open" data-fold="${escapeAttr(key)}" aria-expanded="${folded ? 'false' : 'true'}">
-          <span class="sk-fold" aria-hidden="true"></span>
-          <span class="sk-folder" data-tint="${skTint(key)}" aria-hidden="true">${escapeHtml(skInitial(skFamilyLabel(key)))}</span>
-          <span class="sk-group-name">${escapeHtml(skFamilyLabel(key))}</span>
-          <span class="sk-group-count">${items.length}</span>
-        </button>
-        <span class="sk-group-live">${live} of ${items.length} enabled</span>
-        <button class="toggle ${all ? 'on' : ''}${mixed ? ' is-mixed' : ''}" data-bulk="${escapeAttr(key)}" title="${all ? 'Disable' : 'Enable'} every skill in ${escapeAttr(skFamilyLabel(key))}"></button>
-      </div>
-      ${folded ? '' : items.map(row).join('')}
-    </section>`;
   }).join('');
 }
-function paintSkillSortHeads() {
-  document.querySelectorAll('.sk-sortable').forEach((th) => {
-    const on = th.dataset.sort === skSortKey;
-    th.classList.toggle('is-sorted', on);
-    th.classList.toggle('is-desc', on && skSortDesc);
-  });
-}
-// Delegated once at the body: the table repaints on every keystroke, facet and
-// sort, and rebinding three handlers per row would make each repaint
-// proportional to the library's size.
+
+// Delegated once at the container: the list repaints on every keystroke, and
+// rebinding a handler per row would make each repaint proportional to the
+// library's size.
 $('#skills-list').addEventListener('click', async (e) => {
-  const bulk = e.target.closest('[data-bulk]');
-  if (bulk) {
-    e.stopPropagation();
-    if (bulk.disabled) return;
-    bulk.disabled = true;
-    const counts = skPrefixCounts(skillsCache);
-    const members = skillsCache.filter((sk) => skFamilyKey(sk, counts) === bulk.dataset.bulk);
-    const turnOn = members.some((sk) => sk.disabled);
-    // One pass over the members that disagree with the target, then a single
-    // reload: each toggle renames a directory, so the paths only settle once
-    // every rename is done.
-    let changed = 0;
-    for (const sk of members) {
-      if (!!sk.disabled === !turnOn) continue;
-      const r = await window.husk.skills.toggle({ id: sk.id, source: sk.source, dirName: sk.id });
-      if (r.ok) changed += 1;
-    }
-    toast(changed
-      ? `${changed} ${changed === 1 ? 'skill' : 'skills'} ${turnOn ? 'enabled' : 'disabled'} · restart agent to apply`
-      : 'Nothing to change', changed ? 'success' : 'info');
-    await renderSkills();
-    refreshStats();
-    return;
-  }
-  const fold = e.target.closest('[data-fold]');
-  if (fold) {
-    const key = fold.dataset.fold;
-    if (skCollapsed.has(key)) skCollapsed.delete(key); else skCollapsed.add(key);
-    skSaveFolds();
-    paintSkills(skillsCache, $('#skills-search').value);
-    return;
-  }
   const row = e.target.closest('.sk-row');
   if (!row) return;
   const toggleBtn = e.target.closest('[data-toggle]');
@@ -5972,19 +5852,14 @@ $('#skills-list').addEventListener('click', async (e) => {
     row.classList.toggle('disabled');
     const result = await window.husk.skills.toggle({ id, source, dirName: id });
     if (result.ok) {
-      // The dir/file was renamed on disk. Update the data-id and data-dirname
-      // so the next click targets the new path.
-      row.dataset.id = result.id || result.dirName;
-      row.dataset.dirname = result.dirName || result.id;
-      // Reload rather than patch the cells. Toggling renames the entry on
-      // disk, so its path changes along with its status word, its action and
-      // whether it still passes the current filter. Re-reading is the only
-      // version of that update which cannot go stale.
+      // Reload rather than patch. Toggling renames the entry on disk, so its
+      // path changes along with its state and whether it still passes the
+      // filter; re-reading is the only version of that update which cannot go
+      // stale.
       toast(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success');
       await renderSkills();
       refreshStats();
     } else {
-      // Revert.
       toggleBtn.classList.toggle('on', wasOn);
       row.classList.toggle('disabled', !wasOn);
       toast(result.error || 'Toggle failed', 'error');
@@ -5993,20 +5868,10 @@ $('#skills-list').addEventListener('click', async (e) => {
   }
   openSkillDetail(row.dataset);
 });
-// Clicking the sorted column flips it; clicking another takes over ascending,
-// which is what a table header is expected to do.
-document.querySelector('.sk-thead').addEventListener('click', (e) => {
-  const th = e.target.closest('.sk-sortable');
-  if (!th) return;
-  if (th.dataset.sort === skSortKey) skSortDesc = !skSortDesc;
-  else { skSortKey = th.dataset.sort; skSortDesc = false; }
-  paintSkillSortHeads();
-  paintSkills(skillsCache, $('#skills-search').value);
-});
-$('#skills-facets').addEventListener('click', (e) => {
-  const chip = e.target.closest('[data-family]');
-  if (!chip) return;
-  skFamily = chip.dataset.family;
+$('#skills-sources').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-source-key]');
+  if (!btn) return;
+  skSource = btn.dataset.sourceKey;
   paintSkills(skillsCache, $('#skills-search').value);
 });
 $('#skills-state').addEventListener('click', (e) => {
@@ -6015,6 +5880,31 @@ $('#skills-state').addEventListener('click', (e) => {
   skState = btn.dataset.state;
   $('#skills-state').querySelectorAll('[data-state]').forEach((b) => b.classList.toggle('is-active', b === btn));
   paintSkills(skillsCache, $('#skills-search').value);
+});
+$('#sk-bulk').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const counts = skPrefixCounts(skillsCache);
+  const scope = skSource === 'all'
+    ? skillsCache
+    : skillsCache.filter((sk) => skSourceKey(sk, counts) === skSource);
+  const turnOn = scope.some((sk) => sk.disabled);
+  // One pass over the members that disagree with the target, then a single
+  // reload: each toggle renames a directory, so the paths only settle once
+  // every rename is done.
+  let changed = 0;
+  for (const sk of scope) {
+    if (!!sk.disabled === !turnOn) continue;
+    const r = await window.husk.skills.toggle({ id: sk.id, source: sk.source, dirName: sk.id });
+    if (r.ok) changed += 1;
+  }
+  toast(changed
+    ? `${changed} ${changed === 1 ? 'skill' : 'skills'} ${turnOn ? 'enabled' : 'disabled'} · restart agent to apply`
+    : 'Nothing to change', changed ? 'success' : 'info');
+  await renderSkills();
+  refreshStats();
+  btn.disabled = false;
 });
 $('#skills-search').addEventListener('input', debounce((e) => paintSkills(skillsCache, e.target.value), 120));
 $('#btn-skills-refresh').addEventListener('click', renderSkills);
