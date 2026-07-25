@@ -5772,8 +5772,12 @@ function skReach(sk) {
 // Only 'manual' carries an action. An auto-loaded skill needs nothing from
 // this page but the switch: offering a button to invoke it would imply the
 // agent were not going to, which is the opposite of what Auto means.
+//
+// Only the exceptions are named. Auto is what nearly every row is, and a word
+// repeated down ninety rows stops being read; the dot marks the row as live
+// and the column header carries the meaning.
 const SK_REACH = {
-  auto: { label: 'Auto', hint: 'The agent loads this itself whenever it is relevant', action: '', actionHint: '' },
+  auto: { label: '', hint: 'The agent loads this itself whenever it is relevant', action: '', actionHint: '' },
   manual: { label: 'Manual', hint: 'Nothing loads this on its own; send it when you want it', action: 'Send', actionHint: 'Put this text in the chat' },
   off: { label: 'Off', hint: 'Switched off on disk, so the agent cannot see it', action: '', actionHint: '' },
 };

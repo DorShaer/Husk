@@ -251,7 +251,7 @@ test('the switch enables and disables a skill on disk', async () => {
       () => fs.existsSync(path.join(skillsDir, 'Agents')),
       { timeout: 10_000 },
     ).toBe(true);
-    expect(await stateOf(win, 'Agents')).toBe('Auto');
+    expect(await stateOf(win, 'Agents')).toBe('');
   } finally { await app.close(); }
 });
 
@@ -261,15 +261,27 @@ test('an auto-loaded skill offers no action, because the agent invokes it', asyn
   try {
     const win = await openSkills(app);
     const row = rowFor(win, 'Research');
-    expect(await stateOf(win, 'Research')).toBe('Auto');
+    // Auto is the default, so the cell names nothing and the dot carries it.
+    expect(await stateOf(win, 'Research')).toBe('');
     // Nothing to press. Availability is the switch; invoking is the agent's
     // call, and a button here would imply otherwise.
     expect(await row.locator('[data-use]').count()).toBe(0);
     expect(await row.locator('[data-toggle]').count()).toBe(1);
-    // Every auto row agrees, so this is the rule and not one row's quirk.
-    const autoWithAction = await win.evaluate(() => [...document.querySelectorAll('.sk-row[data-reach="auto"]')]
-      .filter((r) => r.querySelector('[data-use]')).length);
-    expect(autoWithAction).toBe(0);
+    // Every auto row agrees, so this is the rule and not one row's quirk, and
+    // none of them spends a word restating the default.
+    const strays = await win.evaluate(() => {
+      const auto = [...document.querySelectorAll('.sk-row[data-reach="auto"]')];
+      return {
+        total: auto.length,
+        withAction: auto.filter((r) => r.querySelector('[data-use]')).length,
+        withWord: auto.filter((r) => r.querySelector('.sk-row-state').textContent.trim()).length,
+      };
+    });
+    expect(strays.total).toBeGreaterThan(1);
+    expect(strays.withAction).toBe(0);
+    expect(strays.withWord).toBe(0);
+    // The exceptions still say which they are.
+    expect(await stateOf(win, 'explain-this')).toBe('Manual');
   } finally { await app.close(); }
 });
 
@@ -317,7 +329,7 @@ test('clicking a row opens its detail rather than toggling it', async () => {
       { timeout: 10_000 },
     ).toBe(true);
     // The row that was clicked is untouched; only the switch may change state.
-    expect(await stateOf(win, 'Interceptor')).toBe('Auto');
+    expect(await stateOf(win, 'Interceptor')).toBe('');
   } finally { await app.close(); }
 });
 
