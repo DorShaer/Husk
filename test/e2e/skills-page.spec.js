@@ -18,8 +18,19 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FAMILY = ['xss', 'sqli', 'ssrf', 'idor', 'rce'];
 const PLAIN = ['Agents', 'Research', 'Interceptor'];
 
+// Use launches the agent when no chat is open, so the fixture ships a stub on
+// PATH rather than leaving that path to fail silently.
+const STUB = [
+  '#!/usr/bin/env bash',
+  'cat >/dev/null',
+  '',
+].join('\n');
+
 function boot() {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-skills-'));
+  const binDir = path.join(homeDir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, 'claude'), STUB, { mode: 0o755 });
   const cfgDir = path.join(homeDir, '.config', 'husk');
   const promptsDir = path.join(cfgDir, 'prompts');
   const skillsDir = path.join(homeDir, '.claude', 'skills');
@@ -31,7 +42,9 @@ function boot() {
   const mk = (name, description) => {
     const dir = path.join(skillsDir, name);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n`);
+    // A body, not just frontmatter: injecting strips the frontmatter, and a
+    // skill with nothing under it is a no-op by design.
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n\nSteps for ${name}.\n`);
   };
   FAMILY.forEach((f) => mk(`zed-hunt-${f}`, `Hunting skill for ${f}.`));
   PLAIN.forEach((p) => mk(p, `The ${p} skill.`));
@@ -39,8 +52,8 @@ function boot() {
   mk('rare-alpha', 'A prefix too rare to group.');
   mk('rare-beta', 'A prefix too rare to group.');
   mk('_disabled_retired', 'A skill that is switched off.');
-  fs.writeFileSync(path.join(promptsDir, 'explain-this.md'), '---\ndescription: Walks through code.\n---\n');
-  return { homeDir };
+  fs.writeFileSync(path.join(promptsDir, 'explain-this.md'), '---\ndescription: Walks through code.\n---\n\nExplain the code.\n');
+  return { homeDir, binDir };
 }
 
 function launch(env) {
@@ -53,6 +66,7 @@ function launch(env) {
       USERPROFILE: env.homeDir,
       ELECTRON_DISABLE_SANDBOX: '1',
       HUSK_E2E: '1',
+      PATH: `${env.binDir}:${process.env.PATH}`,
     },
     timeout: 30_000,
   });
@@ -197,6 +211,75 @@ test('a column header sorts the body and flips on a second click', async () => {
     expect(await win.locator('.sk-th[data-sort="name"].is-sorted').count()).toBe(0);
     const states = await col(win, '.sk-row-state');
     expect(states[states.length - 1]).toBe('Disabled');
+  } finally { await app.close(); }
+});
+
+// These drive the controls rather than measuring their styles, so a row whose
+// handlers are not bound fails here. Each addresses its row by name: the filter
+// matches descriptions too, so narrowing the table is not the same as isolating
+// a single row.
+const rowFor = (win, name) => win.locator(`.sk-row[data-name="${name}"]`);
+const stateOf = (win, name) => win.evaluate(
+  (n) => document.querySelector(`.sk-row[data-name="${n}"] .sk-row-state`)?.textContent.trim(), name,
+);
+
+test('the switch enables and disables a skill on disk', async () => {
+  test.setTimeout(90_000);
+  const env = boot();
+  const app = await launch(env);
+  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  try {
+    const win = await openSkills(app);
+    const row = rowFor(win, 'Agents');
+    await row.hover();
+    await row.locator('[data-toggle]').click();
+    await expect.poll(
+      () => fs.existsSync(path.join(skillsDir, '_disabled_Agents')),
+      { timeout: 10_000 },
+    ).toBe(true);
+    expect(await stateOf(win, 'Agents')).toBe('Disabled');
+
+    // And back, which is the path that has to keep working once the row has
+    // been re-keyed to the renamed directory.
+    await row.hover();
+    await row.locator('[data-toggle]').click();
+    await expect.poll(
+      () => fs.existsSync(path.join(skillsDir, 'Agents')),
+      { timeout: 10_000 },
+    ).toBe(true);
+    expect(await stateOf(win, 'Agents')).toBe('Enabled');
+  } finally { await app.close(); }
+});
+
+test('Use injects the skill and opens the chat', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app);
+    const row = rowFor(win, 'Research');
+    await row.hover();
+    await row.locator('[data-use]').click();
+    // Injecting leaves the Skills page for the chat, and names what it sent.
+    await expect.poll(
+      () => win.evaluate(() => document.querySelector('.page-chat')?.hidden === false),
+      { timeout: 10_000 },
+    ).toBe(true);
+    await expect(win.locator('.toast', { hasText: 'Research' }).first()).toBeVisible({ timeout: 5_000 });
+  } finally { await app.close(); }
+});
+
+test('clicking a row opens its detail rather than toggling it', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app);
+    await rowFor(win, 'Interceptor').locator('.sk-row-desc').click();
+    await expect.poll(
+      () => win.evaluate(() => document.querySelector('#detail-panel')?.hidden === false),
+      { timeout: 10_000 },
+    ).toBe(true);
+    // The row that was clicked is untouched; only the switch may change state.
+    expect(await stateOf(win, 'Interceptor')).toBe('Enabled');
   } finally { await app.close(); }
 });
 

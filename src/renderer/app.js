@@ -5864,6 +5864,55 @@ function paintSkillSortHeads() {
     th.classList.toggle('is-desc', on && skSortDesc);
   });
 }
+// Delegated once at the body: the table repaints on every keystroke, facet and
+// sort, and rebinding three handlers per row would make each repaint
+// proportional to the library's size.
+$('#skills-list').addEventListener('click', async (e) => {
+  const row = e.target.closest('.sk-row');
+  if (!row) return;
+  const useBtn = e.target.closest('[data-use]');
+  const toggleBtn = e.target.closest('[data-toggle]');
+  if (useBtn) {
+    e.stopPropagation();
+    const r = await window.husk.skills.read(row.dataset.mdpath);
+    if (!r.ok) { toast(r.error || 'Could not read', 'error'); return; }
+    injectPromptToChat(r.content);
+    toast(`Injected: ${row.dataset.name}`, 'success');
+    return;
+  }
+  if (toggleBtn) {
+    e.stopPropagation();
+    const id = row.dataset.id || row.dataset.dirname;
+    const source = row.dataset.source || 'claude';
+    const wasOn = toggleBtn.classList.contains('on');
+    // Optimistic flip, CSS transition needs the same node, not a re-rendered one.
+    toggleBtn.classList.toggle('on');
+    row.classList.toggle('disabled');
+    const result = await window.husk.skills.toggle({ id, source, dirName: id });
+    if (result.ok) {
+      // The dir/file was renamed on disk. Update the data-id and data-dirname
+      // so the next click targets the new path.
+      row.dataset.id = result.id || result.dirName;
+      row.dataset.dirname = result.dirName || result.id;
+      toggleBtn.classList.toggle('on', !result.disabled);
+      row.classList.toggle('disabled', !!result.disabled);
+      toggleBtn.title = `${result.disabled ? 'Enable' : 'Disable'} skill`;
+      const state = row.querySelector('.sk-row-state');
+      if (state) state.lastChild.textContent = result.disabled ? 'Disabled' : 'Enabled';
+      const cached = skillsCache.find((s) => s.mdPath === row.dataset.mdpath);
+      if (cached) { cached.disabled = !!result.disabled; cached.id = row.dataset.id; }
+      toast(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success');
+      refreshStats();
+    } else {
+      // Revert.
+      toggleBtn.classList.toggle('on', wasOn);
+      row.classList.toggle('disabled', !wasOn);
+      toast(result.error || 'Toggle failed', 'error');
+    }
+    return;
+  }
+  openSkillDetail(row.dataset);
+});
 // Clicking the sorted column flips it; clicking another takes over ascending,
 // which is what a table header is expected to do.
 document.querySelector('.sk-thead').addEventListener('click', (e) => {
