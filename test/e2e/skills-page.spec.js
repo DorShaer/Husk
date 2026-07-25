@@ -3,8 +3,9 @@
 // The library is a sortable table filtered three ways at once. These check that
 // the family column is derived only where it earns a name, that the name cell
 // drops the prefix that column repeats without losing it for search, that the
-// facet, state and text filters compose instead of overriding each other, and
-// that sorting a column actually reorders the body.
+// facet, state and text filters compose instead of overriding each other, that
+// sorting a column reorders the body, and that a row only offers an action
+// when nothing else can reach the entry.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');
@@ -18,10 +19,10 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FAMILY = ['xss', 'sqli', 'ssrf', 'idor', 'rce'];
 const PLAIN = ['Agents', 'Research', 'Interceptor'];
 
-// Use launches the agent when no chat is open, so the fixture ships a stub on
-// PATH rather than leaving that path to fail silently.
-// Records what actually reaches the agent's stdin, one character at a time so
-// nothing sits in a buffer, which is the only way to prove what Husk sent.
+// Send launches the agent when no chat is open, so the fixture ships a stub on
+// PATH. It records what actually reaches the agent's stdin, one character at a
+// time so nothing sits in a buffer, which is the only way to prove what Husk
+// put in the chat.
 const STUB = [
   '#!/usr/bin/env bash',
   ': > "$HOME/agent-stdin.log"',
@@ -254,28 +255,21 @@ test('the switch enables and disables a skill on disk', async () => {
   } finally { await app.close(); }
 });
 
-test('Ask names an auto-loaded skill instead of pasting it', async () => {
+test('an auto-loaded skill offers no action, because the agent invokes it', async () => {
   test.setTimeout(90_000);
-  const env = boot();
-  const app = await launch(env);
-  const log = path.join(env.homeDir, 'agent-stdin.log');
+  const app = await launch(boot());
   try {
     const win = await openSkills(app);
     const row = rowFor(win, 'Research');
-    // An auto-loaded skill offers Ask, never Send.
-    await expect(row.locator('[data-use]')).toHaveText('Ask');
     expect(await stateOf(win, 'Research')).toBe('Auto');
-    await row.hover();
-    await row.locator('[data-use]').click();
-    await expect.poll(
-      () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : ''),
-      { timeout: 15_000 },
-    ).toContain('Use the Research skill to');
-    // The body never goes near the chat: that is the whole point of the skill
-    // being loaded on demand by the agent.
-    expect(fs.readFileSync(log, 'utf8')).not.toContain('Steps for Research.');
-    // And it is left unsent, so the user says what they want done with it.
-    expect(fs.readFileSync(log, 'utf8')).not.toContain('\r');
+    // Nothing to press. Availability is the switch; invoking is the agent's
+    // call, and a button here would imply otherwise.
+    expect(await row.locator('[data-use]').count()).toBe(0);
+    expect(await row.locator('[data-toggle]').count()).toBe(1);
+    // Every auto row agrees, so this is the rule and not one row's quirk.
+    const autoWithAction = await win.evaluate(() => [...document.querySelectorAll('.sk-row[data-reach="auto"]')]
+      .filter((r) => r.querySelector('[data-use]')).length);
+    expect(autoWithAction).toBe(0);
   } finally { await app.close(); }
 });
 
@@ -332,8 +326,10 @@ test('the resting table keeps its per-row controls out of the way', async () => 
   const app = await launch(boot());
   try {
     const win = await openSkills(app);
+    // A Manual row is the one that carries both controls, so it is the row
+    // that can prove they stay hidden until the pointer arrives.
     const at = async () => win.evaluate(() => {
-      const r = document.querySelector('.sk-row');
+      const r = document.querySelector('.sk-row[data-reach="manual"]');
       return {
         use: getComputedStyle(r.querySelector('.sk-use')).opacity,
         toggle: getComputedStyle(r.querySelector('.toggle')).opacity,
@@ -342,7 +338,7 @@ test('the resting table keeps its per-row controls out of the way', async () => 
     const resting = await at();
     expect(Number(resting.use)).toBe(0);
     expect(Number(resting.toggle)).toBe(0);
-    await win.locator('.sk-row').first().hover();
+    await win.locator('.sk-row[data-reach="manual"]').first().hover();
     await win.waitForTimeout(260);
     const hovered = await at();
     expect(Number(hovered.use)).toBe(1);

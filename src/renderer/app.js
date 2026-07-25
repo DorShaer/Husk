@@ -5707,25 +5707,9 @@ function applyPromptsLabels() {
     const n = skillsCache.length || ((lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null);
     const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
     skillsSub.textContent = count + (agentKindCache === 'claude'
-      ? 'the agent loads what it needs; Ask names one for it'
+      ? 'the agent loads what it needs on its own; switch off anything it should not see'
       : 'this agent does not auto-load skills; Send puts one in the chat');
   }
-}
-// Hands the chat a reference and stops there: no newline, so the line waits at
-// the prompt for the user to say what they actually want done with it.
-async function mentionSkillInChat(name) {
-  if (!name) return;
-  const line = `Use the ${name} skill to `;
-  setPage('chat');
-  if (!TABS.size && $('#chat-empty')?.classList.contains('show')) {
-    await launchAgent({ initialPrompt: line });
-    return;
-  }
-  $('#chat-empty').classList.remove('show');
-  setTimeout(() => {
-    try { window.husk.pty.write(line); } catch (_) {}
-    try { term.focus(); } catch (_) {}
-  }, 60);
 }
 async function injectPromptToChat(content) {
   if (!content) return;
@@ -5785,8 +5769,11 @@ function skReach(sk) {
   if (sk.source === 'husk') return 'manual';
   return agentKindCache === 'claude' ? 'auto' : 'manual';
 }
+// Only 'manual' carries an action. An auto-loaded skill needs nothing from
+// this page but the switch: offering a button to invoke it would imply the
+// agent were not going to, which is the opposite of what Auto means.
 const SK_REACH = {
-  auto: { label: 'Auto', hint: 'Loaded by the agent whenever it is relevant', action: 'Ask', actionHint: 'Name this skill in the chat and let the agent load it itself' },
+  auto: { label: 'Auto', hint: 'The agent loads this itself whenever it is relevant', action: '', actionHint: '' },
   manual: { label: 'Manual', hint: 'Nothing loads this on its own; send it when you want it', action: 'Send', actionHint: 'Put this text in the chat' },
   off: { label: 'Off', hint: 'Switched off on disk, so the agent cannot see it', action: '', actionHint: '' },
 };
@@ -5908,14 +5895,6 @@ $('#skills-list').addEventListener('click', async (e) => {
   const toggleBtn = e.target.closest('[data-toggle]');
   if (useBtn) {
     e.stopPropagation();
-    // An auto-loaded skill is already available to the agent, and its body is
-    // meant to be read at the moment it is invoked. Naming it is the whole
-    // job; pasting it would spend the context the skill exists to save and
-    // take the decision to invoke away from the model.
-    if (useBtn.dataset.use === 'auto') {
-      mentionSkillInChat(row.dataset.name);
-      return;
-    }
     const r = await window.husk.skills.read(row.dataset.mdpath);
     if (!r.ok) { toast(r.error || 'Could not read', 'error'); return; }
     injectPromptToChat(r.content);
