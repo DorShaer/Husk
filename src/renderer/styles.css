@@ -5144,8 +5144,8 @@ input[type="checkbox"]:checked::before {
   background: #ffffff;
 }
 
-/* A section only partly enabled parks its knob mid-track, so 53 of 54 reads as
-   neither on nor off. */
+/* A partly enabled group parks its knob mid-track, so it reads as neither on
+   nor off. */
 .toggle.is-mixed {
   background: color-mix(in srgb, var(--accent) 42%, var(--bg-3));
   border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
@@ -7599,9 +7599,6 @@ kbd {
   .page-head-right .ghost-input { min-width: 0; flex: 1 1 100%; }
   .page-title { font-size: 22px; }
   .prompts-grid,
-  /* Description and family are the two columns a narrow window can lose and
-     still leave the table readable. Both the cell and its heading go, so the
-     tracks keep matching. */
   .modal-card,
   .modal-card.modal-wide,
   .modal-card.modal-card-wide {

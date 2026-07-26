@@ -5689,8 +5689,8 @@ async function renderSkills() {
     listEl.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
     return;
   }
-  // Husk prompts have a page of their own; mixing them in here is what made
-  // one row mean two different things.
+  // Husk prompts have a page of their own. Nothing auto-loads a prompt, so
+  // listing one here would make a row mean two different things.
   skillsCache = (res.skills || []).filter((sk) => sk.source !== 'husk');
   agentKindCache = res.agentKind || 'claude';
   document.body.dataset.agentKind = agentKindCache;
