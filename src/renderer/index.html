@@ -266,23 +266,26 @@
       </div>
     </div>
 
-    <!-- What's new (shown once after an update, and in the first-run flow) -->
-    <div id="whatsnew" class="modal whatsnew" hidden>
-      <div class="modal-card whatsnew-card">
-        <div class="wn-head">
-          <!-- Kernel is cloned in from the onboarding SVG at show time; the
-               clone references the original's gradient defs, which resolve
-               even while the onboarding overlay is hidden. -->
-          <div class="wn-kernel-slot" id="wn-kernel-slot" aria-hidden="true"></div>
-          <div class="wn-head-text">
-            <div class="wn-eyebrow" id="wn-version">What's new</div>
-            <h2 class="wn-title">What's new in Husk</h2>
-          </div>
-        </div>
-        <img class="wn-hero" id="wn-hero" alt="" hidden />
-        <ul class="wn-list" id="wn-list"></ul>
-        <button class="btn-primary wn-cta" id="wn-cta" type="button">Got it</button>
+    <!-- What's new. A page, not a dialog: one change per screen, stepped
+         through with Next, or skipped straight into the app. Shown once per
+         version, and replayable from Preferences. -->
+    <div id="whatsnew" class="onboarding wn-page" hidden data-step="0">
+      <div class="ob-ambient" aria-hidden="true">
+        <div class="ob-aurora"><i></i><i></i></div>
+        <div class="ob-embers"><i></i><i></i><i></i><i></i><i></i><i></i></div>
       </div>
+      <header class="ob-topbar">
+        <button class="ob-nav" id="wn-back" type="button" hidden>
+          <span class="ob-nav-arrow">&#8592;</span> Back
+        </button>
+        <button class="ob-nav ob-nav-skip" id="wn-skip" type="button">
+          Skip <span class="ob-nav-arrow">&#8594;</span>
+        </button>
+      </header>
+
+      <div class="ob-stage" id="wn-stage"></div>
+
+      <div class="ob-dots" id="wn-dots" aria-hidden="true"></div>
     </div>
 
     <!-- Drag overlay -->

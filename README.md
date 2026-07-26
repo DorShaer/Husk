@@ -35,8 +35,8 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 <br /><br />
 
 <img src="docs/images/husk-agents.png" alt="Agents page" width="450" />
-<img src="docs/images/husk-workflows.png" alt="Workflows graph editor" width="450" />
-<br /><sub><i>Curate the agent personas active for the next session. Build multi-step automations with conditional branching in the Workflows graph editor.</i></sub>
+<img src="docs/images/husk-workflows.png" alt="Workflows hub" width="450" />
+<br /><sub><i>Curate the agent personas active for the next session. Start a multi-step automation from a ready-made topology, or build your own in the graph editor.</i></sub>
 
 <br /><br />
 
@@ -53,7 +53,7 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <img src="docs/images/husk-skills.png" alt="Skills page" width="450" />
 <img src="docs/images/husk-mcp.png" alt="MCP servers page" width="450" />
-<br /><sub><i>Skills with one-click <b>Use</b>, animated toggles, and source badges. MCP servers with live connection state and a curated catalog.</i></sub>
+<br /><sub><i>Browse skills by source, switch them on per skill or a whole folder at once, and see what was added recently. MCP servers with live connection state and a curated catalog.</i></sub>
 
 <br /><br />
 

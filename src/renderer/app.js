@@ -670,6 +670,35 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.10.0': {
+    items: [
+      {
+        title: 'Workflows start from a pattern',
+        body: 'The page opens on the shapes that keep showing up in agent systems, wired and ready to edit. Fan work out to three reviewers, gate a release on the literal test output, or route to one specialist.',
+        media: 'assets/wn-2100-workflows.png',
+      },
+      {
+        title: 'The canvas explains itself',
+        body: 'Every step opens a proper composer: a prompt editor that wraps, its own settings, and room to widen when you need it. A legend on the canvas says how to remove a node or a connection, so nothing is a guess.',
+        media: 'assets/wn-2100-editor.png',
+      },
+      {
+        title: 'Every project gets a workspace',
+        body: 'Pin a folder and the board shows its branch, uncommitted work, sessions and runs at a glance. Open one and the whole picture is there in place, so you stop guessing which folder the agent is standing in.',
+        media: 'assets/wn-2100-projects.png',
+      },
+      {
+        title: 'Skills browse by source',
+        body: 'Pick a folder on the left to see only its skills. Switch one on, or a whole source at once. Recently added shows what just arrived, and Import brings in a skill you already have, straight from disk.',
+        media: 'assets/wn-2100-skills.png',
+      },
+      {
+        title: 'Files follow the project you are in',
+        body: 'The file tree opens on the project the agent is working in rather than a saved root, and Sessions lists only your real conversations instead of every background job that ever ran.',
+        media: 'assets/wn-2100-files.png',
+      },
+    ],
+  },
   '2.9.0': {
     media: 'assets/whatsnew-workflows.png',
     mediaAlt: 'A workflow of Plan, Implement, Review and Ship steps on the graph canvas',
@@ -737,39 +766,6 @@ function latestWhatsNewVersion() {
   };
   return Object.keys(WHATS_NEW).sort(bySemver).pop() || '';
 }
-// Clone Kernel out of the onboarding SVG into the What's new header. Ids on
-// the clone (gradients, clip paths) are re-prefixed so its url(#...) refs
-// stay self-contained instead of pointing into the hidden onboarding
-// subtree, where clip paths do not resolve. The mouth is swapped for an
-// open smile, the pod is posed open, and a spark burst repeats while the
-// modal is up.
-function mountWhatsNewKernel(slot) {
-  const src = $('#ob-kernel');
-  if (!src || !slot) return null;
-  const markup = src.outerHTML
-    .replaceAll('id="hk-', 'id="wnhk-')
-    .replaceAll('url(#hk-', 'url(#wnhk-')
-    .replace('id="ob-kernel"', '');
-  // eslint-disable-next-line no-unsanitized/property -- own static SVG markup, id-prefixed
-  slot.innerHTML = markup;
-  const hk = slot.querySelector('svg');
-  if (!hk) return null;
-  hk.removeAttribute('style');
-  hk.className.baseVal = 'hk';
-  const mouth = hk.querySelector('.hk-mouth');
-  if (mouth) {
-    mouth.setAttribute('d', 'M89 109 C 95 123, 105 123, 111 109 Z');
-    mouth.setAttribute('fill', '#6b2f10');
-  }
-  hk.classList.add('is-open', 'is-peek');
-  hk.classList.add('is-pop');
-  const sparks = setInterval(() => {
-    hk.classList.remove('is-pop');
-    void hk.getBoundingClientRect();
-    hk.classList.add('is-pop');
-  }, 4200);
-  return () => { clearInterval(sparks); };
-}
 // Clone Kernel into an empty-state stage, posed peeking from the open pod with
 // an idle blink and a wiggle+spark that lands as the page's prop animation
 // loops, so he reads as "doing" the task rather than just sitting there. Ids are
@@ -796,32 +792,80 @@ function mountEmptyKernel(slot) {
   hk.setAttribute('viewBox', '40 -14 120 176');
   return null;
 }
+// Older entries are a flat list of strings with a bold lead-in. Both shapes
+// render as slides, so replaying an old version still works.
+function wnSlides(entry) {
+  return (entry.items || []).map((item) => {
+    if (typeof item !== 'string') return item;
+    const m = /^<strong>(.*?)<\/strong>\s*(.*)$/s.exec(item);
+    return m ? { title: m[1].replace(/\.$/, ''), body: m[2] } : { title: '', body: item };
+  });
+}
 function showWhatsNew(version) {
   return new Promise((resolve) => {
     const entry = whatsNewFor(version);
-    const modal = $('#whatsnew');
-    if (!entry || !modal) { resolve(); return; }
-    const v = $('#wn-version'); if (v) v.textContent = version ? `Version ${version}` : 'Latest update';
-    // A release can lead with a hero image (bundled under assets/, so it loads
-    // under the 'self' CSP). Entries without one keep the image slot hidden.
-    const hero = $('#wn-hero');
-    if (hero) {
-      if (entry.media) { hero.src = entry.media; hero.alt = entry.mediaAlt || ''; hero.hidden = false; }
-      else { hero.hidden = true; hero.removeAttribute('src'); }
-    }
-    // Each item is wrapped in a span so the bold lead-in flows inline with
-    // the rest of the text instead of becoming its own flex column.
-    // eslint-disable-next-line no-unsanitized/property -- Items are trusted static strings.
-    $('#wn-list').innerHTML = entry.items.map((t) => `<li><span>${t}</span></li>`).join('');
-    const unmountKernel = mountWhatsNewKernel($('#wn-kernel-slot'));
-    modal.hidden = false;
-    const cta = $('#wn-cta');
+    const page = $('#whatsnew');
+    if (!entry || !page) { resolve(); return; }
+    const slides = wnSlides(entry);
+    if (!slides.length) { resolve(); return; }
+
+    const stage = $('#wn-stage');
+    const dots = $('#wn-dots');
+    const backBtn = $('#wn-back');
+    const skipBtn = $('#wn-skip');
+    // eslint-disable-next-line no-unsanitized/property -- Slide copy is trusted static text.
+    stage.innerHTML = slides.map((sl, i) => `
+      <section class="ob-step wn-step" data-step="${i}"${i ? ' hidden' : ''}>
+        <div class="wn-step-head">
+          <div class="wn-eyebrow">Version ${escapeHtml(version)} · ${i + 1} of ${slides.length}</div>
+          <h2 class="wn-title">${sl.title || "What's new in Husk"}</h2>
+          <p class="wn-body">${sl.body || ''}</p>
+        </div>
+        ${sl.media ? `<img class="wn-shot" src="${escapeAttr(sl.media)}" alt="${escapeAttr(sl.mediaAlt || sl.title || '')}" />` : ''}
+        <button class="btn-primary ob-cta wn-next" type="button" data-next="${i}">
+          ${i === slides.length - 1 ? 'Start using Husk' : 'Next'} <span class="ob-nav-arrow">&#8594;</span>
+        </button>
+      </section>`).join('');
+    // eslint-disable-next-line no-unsanitized/property -- Static markup, count only.
+    dots.innerHTML = slides.map(() => '<span class="ob-dot"></span>').join('');
+    const steps = $$('.wn-step', page);
+    const dotEls = $$('.ob-dot', dots);
+
+    const ac = new AbortController();
+    const on = (el, ev, fn) => el && el.addEventListener(ev, fn, { signal: ac.signal });
+    let step = 0;
+    const show = (i) => {
+      step = Math.max(0, Math.min(steps.length - 1, i));
+      page.dataset.step = String(step);
+      steps.forEach((sec, idx) => { sec.hidden = idx !== step; });
+      dotEls.forEach((d, idx) => d.classList.toggle('active', idx === step));
+      backBtn.hidden = step === 0;
+      // The last slide's own button finishes, so Skip would be a second way to
+      // do the same thing.
+      skipBtn.hidden = step === steps.length - 1;
+      stage.scrollTop = 0;
+    };
     const done = () => {
-      if (unmountKernel) unmountKernel();
-      modal.hidden = true;
+      ac.abort();
+      page.hidden = true;
       resolve();
     };
-    if (cta) cta.onclick = done;
+    on(stage, 'click', (e) => {
+      const btn = e.target.closest('.wn-next');
+      if (!btn) return;
+      if (step >= steps.length - 1) done(); else show(step + 1);
+    });
+    on(backBtn, 'click', () => show(step - 1));
+    on(skipBtn, 'click', done);
+    on(window, 'keydown', (e) => {
+      if (page.hidden) return;
+      if (e.key === 'Escape') done();
+      else if (e.key === 'ArrowRight') show(step + 1);
+      else if (e.key === 'ArrowLeft') show(step - 1);
+    });
+
+    page.hidden = false;
+    show(0);
   });
 }
 async function copyTerminalSelection() {
