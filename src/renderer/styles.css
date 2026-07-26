@@ -7303,9 +7303,12 @@ body[data-mode="light"] .ob-wordmark span {
   text-align: center;
   transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
+/* The tint mixes into the card's own surface rather than into transparency:
+   mixed with nothing it lets the dark scrim through, which puts the label back
+   on a dark card on a light canvas. */
 .drag-target.dragover {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-1));
   box-shadow: 0 0 0 6px var(--accent-glow), inset 0 0 50px color-mix(in srgb, var(--accent) 8%, transparent);
   transform: scale(1.02);
 }
