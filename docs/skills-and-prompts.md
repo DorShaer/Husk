@@ -1,76 +1,77 @@
 # Skills and prompts
 
-Husk's Skills page is a unified surface for two different stores. Each row carries a small badge so you always know which kind of thing you are looking at.
+Husk keeps two different things on two different pages, because they behave differently.
 
-## The two stores
+| | Skills | Prompts |
+|---|---|---|
+| Live in | `~/.claude/skills/` | `~/.config/husk/prompts/` |
+| Loaded by | the agent, on its own | nothing; you send them |
+| Page | **Skills** | **Prompts** |
 
-### Claude skills: `~/.claude/skills/`
+## Skills: `~/.claude/skills/`
 
-These are the skills the **agent** auto-loads when it starts. Each skill is a folder containing a `SKILL.md` (plus optionally extra files). Claude reads the front-matter `name` + `description` from `SKILL.md` and decides on its own when to invoke that skill, based on the description.
+A skill is a folder holding a `SKILL.md`, plus any files it needs. The agent reads the front-matter `name` and `description` at startup and decides for itself when a skill is relevant, then reads the body at the moment it invokes it.
 
-Husk does not load these into the chat. Claude does. Husk's job here is to:
+That is the whole contract, and it is why the Skills page has no "run this" button. An enabled skill is already available; pasting its body into the chat would spend the context the skill exists to save and take the decision away from the model.
 
-- **List** every skill folder under `~/.claude/skills/`, including disabled ones (those prefixed with `_disabled_`).
-- **Toggle** them on or off. Toggling renames the directory between `<name>` and `_disabled_<name>` so claude either picks it up or skips it on the next launch.
-- **Show** their description so you can scan the library at a glance.
+Husk's job is to manage what the agent can see:
 
-Source badge: `skill`.
+- **List** every skill folder, including disabled ones (prefixed `_disabled_`).
+- **Enable or disable**, one at a time or a whole source at once. Toggling renames the directory between `<name>` and `_disabled_<name>`, so the agent picks it up or skips it on its next launch.
+- **Import** a skill you already have.
+- **Show** each description, so the library is scannable.
 
-### Husk-managed prompts: `~/.config/husk/prompts/`
+Changes reach the agent when a session starts, so the confirmation carries a **Restart agent** button.
 
-These are **template strings** Husk owns. They never auto-load into the agent. Instead each one has a "Use ▶" button. Click it and Husk types the prompt into the active chat. The agent receives it as if you had typed it yourself.
+## The Skills page
 
-This is how Husk gives non-claude CLIs (copilot, codex, aider, gemini) something useful to do on the Skills page even though those agents don't have a skill loader.
+Two panes. Sources on the left, their skills on the right.
 
-Toggling here is a "hide from list" flag (rename `<name>.md` to `<name>.md.disabled`). User edits to a prompt's text never get overwritten by Husk upgrades.
+```
+SOURCES                shiv                                 All on  ●
+  All skills    82     23 of 23 enabled
+  Recently added 2     ─────────────────────────────────────────────
+  Library       54     hunt-xss     Hunting skill for xss…        ●
+▏ shiv          23     hunt-sqli    Hunting skill for sqli…       ●
+SHOW                   hunt-ssrf    Hunting skill for ssrf…       ●
+  All
+  Enabled
+  Disabled
+```
 
-Source badge: `husk`.
+- **Sources** come from the folder prefix a name already carries. A prefix earns its own entry once at least three skills share it, so `shiv-hunt-xss` and its siblings group under `shiv`; everything else stays under `Library`. The row then drops the prefix its source already states, showing `hunt-xss`, while search still matches the full name.
+- **Recently added** lists what was installed in the last 14 days, newest first. It appears only when something qualifies. Install time comes from the skill directory's own mtime, so enabling or disabling a skill does not make it look new.
+- **Show** filters by state, and composes with the selected source rather than replacing it.
+- **The header switch** enables or disables everything currently in view. It sits mid-track when a source is only partly on.
+- **The row switch** is the only per-skill control.
 
-## Default prompts shipped with Husk
+Clicking a row opens its detail panel with the full `SKILL.md`.
 
-On first launch Husk seeds `~/.config/husk/prompts/` from `installer/prompts/`. The seed never overwrites a file the user already has, so editing a default prompt and then upgrading Husk is safe.
+### Adding a skill
+
+- **Create skill** writes a new one from a name, description and body.
+- **Import** picks one or more `.md` files and installs each as `~/.claude/skills/<name>/SKILL.md`.
+- **Drag a `.md` onto the window** and choose **Install as skill**, which lands in the same place. The other target, **Add to context**, copies into `~/.claude/MEMORY/CONTEXT/` and puts the quoted path in the agent's pending input instead.
+
+## Prompts: `~/.config/husk/prompts/`
+
+Prompts are template strings Husk owns. Nothing auto-loads them. Each has a **Send** action that types the prompt into the active chat, exactly as if you had typed it. That is how a CLI without a skill loader still gets something useful.
+
+Toggling a prompt hides it from the list by renaming `<name>.md` to `<name>.md.disabled`. Your edits are never overwritten by a Husk upgrade.
+
+### Default prompts shipped with Husk
+
+On first launch Husk seeds `~/.config/husk/prompts/` from `installer/prompts/`. The seed never overwrites a file you already have, so editing a default and then upgrading is safe.
 
 | File | What it does |
 |------|--------------|
 | `explain-this-code.md` | Asks for a file or paste, then explains the code in plain language with a flow trace, dependencies, risks, and a "if you change one thing, change this" pointer. |
-| `plan-a-feature.md` | 8-question PM-intake protocol. Walks the user through naming the user, problem, success metric, MVP scope, anti-scope. Emits a baked spec at the end. |
+| `plan-a-feature.md` | 8-question PM-intake protocol. Walks you through naming the user, problem, success metric, MVP scope, anti-scope. Emits a baked spec at the end. |
 | `write-pr-description.md` | Generates a clean PR description from a diff or branch range. Conventional-commits title, "why not what" summary, test plan, risk notes. |
 | `audit-for-security.md` | Methodical security review. Trust boundaries, input handling at each, AuthN/AuthZ, crypto sanity, OWASP-class issues with severity tags. |
 | `summarize-this-document.md` | Three-layer summary: TL;DR, key points (5 to 8 bullets), section-by-section. No filler. |
 | `debug-this-error.md` | Guided triage. Quote the error literally, translate, narrow cause, ask one question if needed, propose surgical fix, verify. |
 
-## The Skills page UI
+## Why two pages
 
-```
-[ Filter skills...  ]  ↻  Open folder  + Create skill
-
-Agents       SKILL  Use ▶  ●        compose CUSTOM agents...
-refactor     SKILL  Use ▶  ●        guided multi-file refactor...
-review       SKILL  Use ▶  ●        diff-aware code review...
-explain-this-code  HUSK  Use ▶  ●  plain-language code explanation...
-...
-```
-
-- **Use ▶** on any row pastes the prompt into the active chat. Works for both stores.
-- **Toggle** flips the on/off state in place (animated iOS-style switch, same shared component as everywhere else in the product).
-- **Source badge** (`SKILL` or `HUSK`) tells you which store the row belongs to.
-- **Filter** does fuzzy match across name + description.
-
-## Page label per agent
-
-The page is always called "Skills" regardless of which CLI you picked. The cross-CLI handling is internal: claude auto-loads `~/.claude/skills/`, generic agents only see `Use ▶`. The subtitle adapts:
-
-- claude: `auto-loaded by claude · click Use to inject manually`
-- generic: `click Use to inject any skill into the chat`
-
-## Adding a new prompt
-
-The fast path: click `+ Create skill` in the Skills page header. The modal asks for name (lowercase letters/digits/dashes, must start with a letter), description, and content. Husk picks the right store based on the active agent (claude → `~/.claude/skills/<name>/SKILL.md`, otherwise → `~/.config/husk/prompts/<name>.md`).
-
-The slow path: drop a `.md` file onto the Husk window. The drag overlay offers two targets:
-- **Add to context** → copy into `~/.claude/MEMORY/CONTEXT/` and drop the quoted path into the agent's pending input (no trailing newline, so you add your question and send both together)
-- **Install as skill** → copy into `~/.claude/skills/<basename>/SKILL.md`
-
-## Why one page
-
-Showing two stores side-by-side keeps the user's mental model simple: "things I can use with my agent". The internal split: auto-loaded vs. paste-on-click: is a badge, not a separate page. New users do not need to learn the difference to be productive.
+A skill and a prompt answer different questions. "What is my agent allowed to reach for?" is a library you curate and then leave alone. "What do I want to say right now?" is something you fire. Putting both in one list made a single row mean two different things: some rows were invoked by the model, others only by you, and the page had to explain the difference in a badge on every line. Splitting them lets each page state one rule.
