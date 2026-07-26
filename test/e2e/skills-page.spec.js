@@ -63,6 +63,11 @@ function launch(env) {
 
 async function openSkills(app) {
   const win = await app.firstWindow({ timeout: 30_000 });
+  // Below a 720px panel the rail lies down and the description column drops,
+  // so the size is set here rather than inherited from the runner.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: 1500, height: 1000 });
+  });
   await win.waitForLoadState('domcontentloaded');
   await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20_000 });
   await win.evaluate(() => setPage('skills'));                // eslint-disable-line no-undef

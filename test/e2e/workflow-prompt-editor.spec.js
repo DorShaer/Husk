@@ -36,6 +36,12 @@ async function openStepPanel(homeDir) {
     timeout: 30_000,
   });
   const win = await app.firstWindow({ timeout: 30_000 });
+  // Widening is capped at window.innerWidth - 140, so on a small default window
+  // the wide width collapses onto the narrow one and the panel cannot grow.
+  // The size is set here rather than inherited from whatever the runner gives.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: 1600, height: 1000 });
+  });
   await win.waitForLoadState('domcontentloaded');
   await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20_000 });
   await win.evaluate(() => setPage('workflows'));
@@ -123,6 +129,12 @@ test('widening the panel gives the prompt the room and remeasures the gutter', a
   const homeDir = makeHome();
   const { app, win } = await openStepPanel(homeDir);
   try {
+    // The wide width is capped by the window, so on a small screen it collapses
+    // onto the narrow one. Stated as a precondition, a failure here names that
+    // instead of comparing two equal widths further down.
+    const room = await win.evaluate(() => wfDrawerWide());   // eslint-disable-line no-undef
+    expect(room, 'window too narrow for widening to do anything').toBeGreaterThan(560);
+
     await win.fill('#wf-np-prompt', PROMPT);
     await win.waitForTimeout(300);
     const narrow = await win.evaluate(readEditor);
