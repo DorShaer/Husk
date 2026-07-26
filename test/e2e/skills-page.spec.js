@@ -376,3 +376,34 @@ test('the recent view is absent when nothing is new', async () => {
     expect((await sources(win)).map((r) => r.key)).not.toContain('__recent');
   } finally { await app.close(); }
 });
+
+test('a skill you already have can be imported from disk', async () => {
+  test.setTimeout(90_000);
+  const env = boot();
+  const app = await launch(env);
+  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  // A skill file sitting somewhere else on disk, as if handed over.
+  const inbox = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-inbox-'));
+  const src = path.join(inbox, 'handover.md');
+  fs.writeFileSync(src, '---\nname: handover\ndescription: Arrived from elsewhere.\n---\n\nBody.\n');
+  try {
+    const win = await openSkills(app);
+    expect(await rowNames(win)).not.toContain('handover');
+    // The picker is a native dialog. The contextBridge surface is frozen, so it
+    // is stubbed in the main process, which keeps the real IPC path under test.
+    await app.evaluate(async ({ dialog }, p) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] });
+    }, src);
+    await win.click('#btn-skills-import');
+    await expect.poll(
+      () => fs.existsSync(path.join(skillsDir, 'handover', 'SKILL.md')),
+      { timeout: 10_000 },
+    ).toBe(true);
+    // It lands in the list, with its description read from the file it came
+    // from rather than from the name.
+    await expect.poll(() => rowNames(win), { timeout: 10_000 }).toContain('handover');
+    await expect(rowFor(win, 'handover').locator('.sk-row-desc')).toHaveText('Arrived from elsewhere.');
+    // And it counts as new, which is the whole reason the view exists.
+    expect((await sources(win)).map((r) => r.key)).toContain('__recent');
+  } finally { await app.close(); }
+});

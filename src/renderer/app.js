@@ -5947,6 +5947,23 @@ $('#skills-search').addEventListener('input', debounce((e) => paintSkills(skills
 $('#btn-skills-refresh').addEventListener('click', renderSkills);
 $('#btn-skills-open').addEventListener('click', () => lastStats && window.husk.fs.open(lastStats.skillsDir));
 $('#btn-skills-new').addEventListener('click', openCreateSkillModal);
+// Installing a skill you already wrote, on the same path a dropped file takes.
+$('#btn-skills-import').addEventListener('click', async () => {
+  const picked = await window.husk.dialog.pickFile();
+  const files = (picked || []).filter((p) => /\.md$/i.test(p));
+  if (!picked || !picked.length) return;
+  if (!files.length) { toast('Pick a .md file', 'error'); return; }
+  const failed = [];
+  let added = 0;
+  for (const p of files) {
+    const r = await window.husk.fs.dropFile({ sourcePath: p, kind: 'skill' });
+    if (r.ok) added += 1; else failed.push(`${p.split('/').pop()}: ${r.error}`);
+  }
+  await renderSkills();
+  refreshStats();
+  if (failed.length) toast(failed.join(' · '), 'error');
+  if (added) toastRestart(`${added} ${added === 1 ? 'skill' : 'skills'} imported`);
+});
 
 function openCreateSkillModal() {
   $('#ns-name').value = '';
