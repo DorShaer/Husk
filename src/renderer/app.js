@@ -1694,9 +1694,13 @@ async function refreshStats() {
     // agent-aware while the count remains current.
     applyPromptsLabels();
     // Sessions subheader is refined by renderSessions once the active agent's
-    // sessions are read; show an agent-appropriate hint until then.
-    const agentNow = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0];
-    $('#sessions-sub').textContent = `${agentNow} sessions · click to preview, Resume to continue`;
+    // sessions are read. This is a hint until that happens, and it stands down
+    // afterwards: stats refresh on their own schedule, and overwriting the
+    // detailed line drops the count of Autopilot sessions kept out of the list.
+    if (!sessionsSubOwned) {
+      const agentNow = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0];
+      $('#sessions-sub').textContent = `${agentNow} sessions · click to preview, Resume to continue`;
+    }
   } catch (err) { console.warn('stats error', err); }
 }
 
@@ -6036,6 +6040,9 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
 
 // ─── Sessions page ───────────────────────────────────────────────────────────────
 let sessionsCache = [];
+// Set once renderSessions has written the detailed subheader, so the periodic
+// stats pass stops replacing it with the placeholder.
+let sessionsSubOwned = false;
 let sessionsAgent = 'claude';
 let sessionsDir = '';
 let sessionsSelectMode = false;
@@ -6062,6 +6069,7 @@ async function renderSessions() {
     subEl.textContent = res.supported === false
       ? `Session history for ${sessionsAgent} is not available yet`
       : `${sessionsAgent} sessions at ${sessionsDir || ''} · click to preview, Resume to continue${hiddenText}`;
+    sessionsSubOwned = true;
   }
   if (res.supported === false) {
     // eslint-disable-next-line no-unsanitized/property -- Static, agent name escaped.
