@@ -289,3 +289,23 @@ test('the switch is the product switch, in both themes', async () => {
     } finally { await app.close(); }
   }
 });
+
+test('the restart notice carries the restart it asks for', async () => {
+  test.setTimeout(90_000);
+  const app = await launch(boot());
+  try {
+    const win = await openSkills(app);
+    await rowFor(win, 'Agents').locator('[data-toggle]').click();
+    // The Skills page has no terminal, so a notice telling the reader to
+    // restart has to bring the restart with it.
+    const action = win.locator('.toast .toast-action', { hasText: 'Restart agent' });
+    await expect(action.first()).toBeVisible({ timeout: 10_000 });
+    await action.first().click();
+    // It lands on the chat with a live session rather than leaving the reader
+    // to find the way there.
+    await expect.poll(
+      () => win.evaluate(() => ({ page: currentPage, tabs: TABS.size })),  // eslint-disable-line no-undef
+      { timeout: 15_000 },
+    ).toEqual({ page: 'chat', tabs: 1 });
+  } finally { await app.close(); }
+});

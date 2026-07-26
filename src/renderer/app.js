@@ -149,6 +149,16 @@ function toastAction(msg, actionLabel, onAction, kind = 'error') {
   btn.addEventListener('click', () => { try { onAction(); } catch (_) {} dismissNotif(card); });
   body.appendChild(btn);
 }
+// Changes to skills, plugins and MCP only reach a session when it starts, and
+// the pages that make those changes have no terminal of their own. The notice
+// that asks for a restart carries the restart, so the instruction is something
+// the reader can act on where they are standing.
+function toastRestart(message, kind = 'success') {
+  toastAction(`${message} · restart the agent to apply`, 'Restart agent', async () => {
+    setPage('chat');
+    await restartPty();
+  }, kind);
+}
 // Run-completion notification: a prominent card with a title.
 function runEndBanner(msg, kind = '') {
   // Map the run outcome to a notification style.
@@ -5856,7 +5866,7 @@ $('#skills-list').addEventListener('click', async (e) => {
       // path changes along with its state and whether it still passes the
       // filter; re-reading is the only version of that update which cannot go
       // stale.
-      toast(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success');
+      toastRestart(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'}`);
       await renderSkills();
       refreshStats();
     } else {
@@ -5899,9 +5909,8 @@ $('#sk-bulk').addEventListener('click', async (e) => {
     const r = await window.husk.skills.toggle({ id: sk.id, source: sk.source, dirName: sk.id });
     if (r.ok) changed += 1;
   }
-  toast(changed
-    ? `${changed} ${changed === 1 ? 'skill' : 'skills'} ${turnOn ? 'enabled' : 'disabled'} · restart agent to apply`
-    : 'Nothing to change', changed ? 'success' : 'info');
+  if (changed) toastRestart(`${changed} ${changed === 1 ? 'skill' : 'skills'} ${turnOn ? 'enabled' : 'disabled'}`);
+  else toast('Nothing to change', 'info');
   await renderSkills();
   refreshStats();
   btn.disabled = false;
@@ -5971,7 +5980,7 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
     actions: [
       { label: isDisabled ? 'Enable' : 'Disable', kind: 'ghost', onClick: async () => {
         const r = await window.husk.skills.toggle(dirname);
-        if (r.ok) { toast(`${name} ${r.disabled ? 'disabled' : 'enabled'} · restart agent to apply`, 'success'); closeDetail(); renderSkills(); refreshStats(); }
+        if (r.ok) { toastRestart(`${name} ${r.disabled ? 'disabled' : 'enabled'}`); closeDetail(); renderSkills(); refreshStats(); }
         else toast(r.error || 'Toggle failed', 'error');
       }},
       { label: 'Edit in OS', kind: 'ghost', onClick: () => window.husk.fs.open(mdpath) },
@@ -7518,7 +7527,7 @@ $('#pref-hidden').addEventListener('change', async (e) => {
 });
 $('#pref-recap').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ recap: e.target.checked });
-  toast(`Recap ${cfg.recap ? 'enabled' : 'disabled'} · restart agent to apply`, 'success');
+  toastRestart(`Recap ${cfg.recap ? 'enabled' : 'disabled'}`);
 });
 $('#pref-pai') && $('#pref-pai').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ paiEnabled: e.target.checked });
@@ -8067,7 +8076,7 @@ async function applyMcpChange(label) {
   // the change shows as Pending (snapshot is unchanged) and applies on the next
   // agent restart (Restart button), which is when the snapshot is recaptured.
   if (currentPage === 'mcp') paintMcpSections();
-  toast(`${label || 'MCP change'} saved · restart the agent to apply`, 'success');
+  toastRestart(`${label || 'MCP change'} saved`);
 }
 
 function bindMcpRows(scope) {
@@ -8713,7 +8722,7 @@ async function runPluginAction(action, id, btn) {
     if (action === 'update') {
       const output = String(r.output || '');
       if (before && after && before.version && after.version && before.version !== after.version) {
-        toast(`${id.split('@')[0]} updated to v${after.version} · restart agent to apply`, 'success');
+        toastRestart(`${id.split('@')[0]} updated to v${after.version}`);
       } else if (/already|latest|up[- ]?to[- ]?date|no update/i.test(output)) {
         toast(`${id.split('@')[0]} is already on the latest version`, 'info');
       } else {
@@ -8721,7 +8730,7 @@ async function runPluginAction(action, id, btn) {
       }
     } else {
       const verbed = { install: 'installed', uninstall: 'removed', enable: 'enabled', disable: 'disabled' }[action] || action;
-      toast(`${id.split('@')[0]} ${verbed} · restart agent to apply`, 'success');
+      toastRestart(`${id.split('@')[0]} ${verbed}`);
     }
     paintPlugins($('#plugins-search').value);
   } finally {
@@ -8819,7 +8828,7 @@ async function savePluginFile() {
   peCurrent.dirty = false;
   $('#pe-save').disabled = true;
   $('#pe-status').textContent = 'saved';
-  toast(`${peCurrent.relPath} saved · restart agent to apply`, 'success');
+  toastRestart(`${peCurrent.relPath} saved`);
 }
 
 async function closePluginEditor() {
