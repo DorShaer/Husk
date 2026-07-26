@@ -1069,8 +1069,19 @@ body[data-page="boot"] .page { display: none !important; }
   transition: background 0.14s var(--ease), color 0.14s var(--ease), border-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
 }
 .ghost-btn:hover { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg-3)); }
-.ghost-btn-danger { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 30%, var(--line)); }
-.ghost-btn-danger:hover { color: #fff; background: var(--rose); border-color: var(--rose); }
+.ghost-btn-danger {
+  color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 7%, transparent);
+  border-color: color-mix(in srgb, var(--rose) 30%, var(--line));
+}
+/* The tint stays light and the label keeps the colour, so contrast holds on a
+   white canvas as well as a dark one. Filling with the accent and writing in
+   white only works while the surface underneath is dark. */
+.ghost-btn-danger:hover:not(:disabled) {
+  color: var(--rose);
+  border-color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 14%, transparent);
+}
 
 /* Slim banner: no-op placeholder. The full Autopilot page is the live UI. */
 .autopilot-banner { display: none; }
@@ -3087,10 +3098,13 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 }
 .aut-empty-actions { margin-top: 4px; }
 
+/* Armed is the confirm step, so it goes solid. The fill is darkened rather
+   than the label lightened, because several themes ship a pale rose that white
+   text cannot sit on. */
 .ghost-btn-danger.is-armed {
   color: #fff;
-  background: var(--rose);
-  border-color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 82%, #000);
+  border-color: color-mix(in srgb, var(--rose) 82%, #000);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -5192,15 +5206,6 @@ input[type="checkbox"]:disabled {
   width: 16px; height: 16px;
   cursor: pointer;
 }
-.ghost-btn-danger {
-  color: var(--danger, #ef4444);
-  border-color: color-mix(in srgb, var(--danger, #ef4444) 35%, var(--line));
-}
-.ghost-btn-danger:hover:not(:disabled) {
-  color: #fff;
-  border-color: var(--danger, #ef4444);
-  background: color-mix(in srgb, var(--danger, #ef4444) 18%, var(--bg-3));
-}
 .session-task { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .session-task strong {
   font-weight: 600; font-size: 14px;
@@ -6477,9 +6482,9 @@ input[type="checkbox"]:disabled {
 }
 .modal-section { text-align: left; margin-bottom: 16px; }
 .modal-label { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-3); margin-bottom: 8px; font-weight: 700; }
-.req { color: var(--danger, #ef4444); margin-left: 3px; font-weight: 700; font-size: 16px; line-height: 0; vertical-align: -2px; }
+.req { color: var(--rose); margin-left: 3px; font-weight: 700; font-size: 16px; line-height: 0; vertical-align: -2px; }
 input.field-invalid,
-textarea.field-invalid { border-color: var(--danger, #ef4444); box-shadow: 0 0 0 1px var(--danger, #ef4444); }
+textarea.field-invalid { border-color: var(--rose); box-shadow: 0 0 0 1px var(--rose); }
 .modal-card input[type="text"] {
   width: 100%; padding: 10px 12px; font-size: 13px;
   background: var(--bg); color: var(--text);
@@ -7709,8 +7714,10 @@ kbd {
   border-left: 1px solid rgba(255, 255, 255, 0.07);
 }
 
-/* Buttons. Default = quiet glass. Primary = brand gradient with a soft glow. */
-[data-mode="dark"] .ghost-btn,
+/* Buttons. Default = quiet glass. Primary = brand gradient with a soft glow.
+   The destructive variant is excluded: this sets a neutral colour and would
+   leave a delete button looking exactly like an ordinary one until hovered. */
+[data-mode="dark"] .ghost-btn:not(.ghost-btn-danger),
 [data-mode="dark"] .iconbtn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.10);
@@ -7720,7 +7727,9 @@ kbd {
   border-radius: 10px;
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
-[data-mode="dark"] .ghost-btn:hover,
+/* The destructive variant keeps its own hover: this generic polish carries the
+   same specificity and would otherwise replace the red tint with plain white. */
+[data-mode="dark"] .ghost-btn:not(.ghost-btn-danger):hover,
 [data-mode="dark"] .iconbtn:hover {
   background: rgba(255, 255, 255, 0.10);
   border-color: rgba(255, 255, 255, 0.18);
