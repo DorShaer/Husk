@@ -141,7 +141,13 @@ test('widening the panel gives the prompt the room and remeasures the gutter', a
     expect(narrow.widenLabel).toBe('Widen');
 
     await win.click('#wf-np-widen');
-    await win.waitForTimeout(500);
+    // The panel animates to its new width. On a virtual display frames are
+    // throttled enough that the transition outlasts any fixed sleep, so this
+    // waits for the width itself rather than for a clock.
+    await win.waitForFunction((target) => {
+      const p = document.querySelector('#wf-node-panel .wf-drawer-panel');
+      return p && Math.round(p.getBoundingClientRect().width) >= target;
+    }, room, { timeout: 10_000 });
     const wide = await win.evaluate(readEditor);
 
     expect(wide.panelWidth).toBeGreaterThan(narrow.panelWidth);
