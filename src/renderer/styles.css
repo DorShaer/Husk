@@ -7139,41 +7139,44 @@ body[data-mode="light"] .ob-wordmark span {
 /* What's new modal. Sits above the Preferences overlay (z 201) so the
    Release Notes entry there can pop it on top. */
 .modal.whatsnew { z-index: 300; }
-.whatsnew-card { width: 660px; max-width: 92vw; text-align: left; padding: 28px 32px 24px; }
-.wn-head { display: flex; align-items: center; gap: 20px; margin-bottom: 18px; }
-.wn-head-text { min-width: 0; }
-.wn-kernel-slot { flex: 0 0 auto; width: 104px; height: 112px; }
-.wn-kernel-slot .hk {
-  width: 104px; height: 112px;
-  cursor: default;
-  animation: wn-excited 1.9s ease-in-out 0.4s infinite;
+/* What's new is a page on the onboarding shell: one change per screen, a shot
+   big enough to actually read, and a Next that walks through them. */
+.wn-page .ob-stage { justify-content: center; padding: 2vh 24px 1vh; }
+/* The onboarding step caps at 560px, which is a column of text. A slide is
+   mostly picture, so it takes the page. */
+.wn-step {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 16px; width: 100%; max-width: min(1500px, 96vw); text-align: center;
 }
-/* Excited: a double hop with a small tilt on each landing. */
-@keyframes wn-excited {
-  0%, 52%, 100% { translate: 0 0; rotate: 0deg; }
-  12%           { translate: 0 -9px; rotate: -3deg; }
-  26%           { translate: 0 0; rotate: 0deg; }
-  38%           { translate: 0 -5px; rotate: 3deg; }
+.wn-step-head { max-width: 860px; }
+.wn-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--accent); font-weight: 600; margin-bottom: 10px;
 }
-.wn-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
-.wn-title { font-family: var(--font-display); font-weight: 600; font-size: 24px; color: var(--text); margin: 0; letter-spacing: -0.01em; }
-.wn-hero {
-  display: block; width: 100%; height: auto; max-height: 300px; object-fit: cover;
-  object-position: center top;
-  border: 1px solid var(--line-2); border-radius: 12px;
-  margin-bottom: 18px; background: var(--bg-2);
+.wn-title {
+  margin: 0 0 10px; font-family: var(--font-display);
+  font-size: 32px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+  color: var(--text);
 }
-.wn-list {
-  list-style: none; margin: 0 0 24px; padding: 0; text-align: left;
-  display: flex; flex-direction: column; gap: 12px;
-  max-height: min(48vh, 460px); overflow-y: auto;
+.wn-body { margin: 0; font-size: 15px; line-height: 1.55; color: var(--text-2); }
+/* A slide with nothing to show still holds the same frame, so stepping onto it
+   does not feel like landing on a different screen. */
+.wn-step:not(:has(.wn-shot)) .wn-step-head { min-height: 46vh; display: flex;
+  flex-direction: column; justify-content: center; }
+/* The shot is the point of the slide, so it gets the room: as wide as the
+   column allows, capped by height so a wide image cannot push the button off.
+   The box takes the image's own ratio, so the border sits on the picture
+   rather than around a band of empty panel. */
+.wn-shot {
+  display: block; width: auto; max-width: 100%; max-height: 62vh;
+  object-fit: contain; object-position: center;
+  border: 1px solid var(--line-2); border-radius: 14px;
+  background: var(--bg-2); box-shadow: var(--elev-3);
 }
-.wn-list li { display: flex; gap: 10px; font-size: 14px; color: var(--text-2); line-height: 1.5; }
-.wn-list li::before { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 7px; }
-.wn-list li strong { color: var(--text); font-weight: 600; }
-.wn-cta { width: 100%; height: var(--control-h-lg); font-size: 14px; }
+.wn-page .wn-next { min-width: 220px; }
+
 @media (prefers-reduced-motion: reduce) {
-  .wn-kernel-slot .hk { animation: none; }
 }
 .modal-card textarea {
   width: 100%; min-height: 160px; padding: 12px 14px;
