@@ -5744,6 +5744,13 @@ async function injectPromptToChat(content) {
 // the folder prefix; the rest live under Library.
 const SK_SOURCE_MIN = 3;
 const SK_LIBRARY = '__library';
+// Recent is a view across the folders rather than a folder of its own, so it
+// filters like All does instead of claiming skills away from their source.
+const SK_RECENT = '__recent';
+const SK_RECENT_DAYS = 14;
+function skIsRecent(sk) {
+  return !!sk.installedAt && (Date.now() - sk.installedAt) < SK_RECENT_DAYS * 864e5;
+}
 let skSource = 'all';
 let skState = 'all';
 
@@ -5754,7 +5761,11 @@ function skSourceKey(sk, counts) {
   if (counts && (counts.get(key) || 0) < SK_SOURCE_MIN) return SK_LIBRARY;
   return key;
 }
-function skSourceLabel(key) { return key === SK_LIBRARY ? 'Library' : key; }
+function skSourceLabel(key) {
+  if (key === SK_LIBRARY) return 'Library';
+  if (key === SK_RECENT) return 'Recently added';
+  return key;
+}
 // The rail carries the source, so the row drops the prefix it repeats. The
 // full name stays on the row for search, the tooltip and the detail view.
 function skShortName(sk, key) {
@@ -5776,10 +5787,18 @@ function skSourceOrder(a, b) {
   // Library first because it is the default home for anything unprefixed.
   return (a === SK_LIBRARY ? 0 : 1) - (b === SK_LIBRARY ? 0 : 1) || a.localeCompare(b);
 }
+// What the header, its switch and the bulk toggle all act on. One definition,
+// so the count above the list and the switch beside it cannot disagree.
+function skScope(list, counts) {
+  if (skSource === 'all') return list;
+  if (skSource === SK_RECENT) return list.filter(skIsRecent);
+  return list.filter((sk) => skSourceKey(sk, counts) === skSource);
+}
 function skMatches(sk, q, counts) {
   if (skState === 'on' && sk.disabled) return false;
   if (skState === 'off' && !sk.disabled) return false;
-  if (skSource !== 'all' && skSourceKey(sk, counts) !== skSource) return false;
+  if (skSource === SK_RECENT) { if (!skIsRecent(sk)) return false; }
+  else if (skSource !== 'all' && skSourceKey(sk, counts) !== skSource) return false;
   if (!q) return true;
   return (sk.name + ' ' + (sk.description || '')).toLowerCase().includes(q);
 }
@@ -5788,7 +5807,8 @@ function paintSkills(list, query) {
   const q = (query || '').toLowerCase().trim();
   const counts = skPrefixCounts(list);
   const keys = [...new Set(list.map((sk) => skSourceKey(sk, counts)))].sort(skSourceOrder);
-  if (skSource !== 'all' && !keys.includes(skSource)) skSource = 'all';
+  const recent = list.filter(skIsRecent);
+  if (skSource === SK_RECENT ? !recent.length : (skSource !== 'all' && !keys.includes(skSource))) skSource = 'all';
 
   // Left rail: every source, with how many it holds.
   const tally = new Map();
@@ -5796,7 +5816,13 @@ function paintSkills(list, query) {
     const k = skSourceKey(sk, counts);
     tally.set(k, (tally.get(k) || 0) + 1);
   }
-  const entries = [['all', 'All skills', list.length], ...keys.map((k) => [k, skSourceLabel(k), tally.get(k)])];
+  // Offered only when there is something to show, so the rail never carries a
+  // row that leads to an empty pane.
+  const entries = [
+    ['all', 'All skills', list.length],
+    ...(recent.length ? [[SK_RECENT, skSourceLabel(SK_RECENT), recent.length]] : []),
+    ...keys.map((k) => [k, skSourceLabel(k), tally.get(k)]),
+  ];
   // eslint-disable-next-line no-unsanitized/property -- Labels are escaped below.
   $('#skills-sources').innerHTML = entries.map(([key, label, n]) => `
     <button type="button" class="sk-source${skSource === key ? ' is-active' : ''}" data-source-key="${escapeAttr(key)}">
@@ -5804,12 +5830,16 @@ function paintSkills(list, query) {
       <span class="sk-source-n">${n}</span>
     </button>`).join('');
 
+  // Newest first under Recent, where the order is the whole point; alphabetical
+  // everywhere else.
   const rows = list.filter((sk) => skMatches(sk, q, counts))
-    .sort((a, b) => skShortName(a, skSourceKey(a, counts))
-      .localeCompare(skShortName(b, skSourceKey(b, counts))));
+    .sort((a, b) => (skSource === SK_RECENT
+      ? b.installedAt - a.installedAt
+      : skShortName(a, skSourceKey(a, counts))
+        .localeCompare(skShortName(b, skSourceKey(b, counts)))));
 
   // Header: what is being shown, and one switch for the whole of it.
-  const scope = skSource === 'all' ? list : list.filter((sk) => skSourceKey(sk, counts) === skSource);
+  const scope = skScope(list, counts);
   const live = scope.filter((sk) => !sk.disabled).length;
   $('#sk-title').textContent = skSource === 'all' ? 'All skills' : skSourceLabel(skSource);
   $('#sk-sub').textContent = scope.length
@@ -5896,9 +5926,7 @@ $('#sk-bulk').addEventListener('click', async (e) => {
   if (btn.disabled) return;
   btn.disabled = true;
   const counts = skPrefixCounts(skillsCache);
-  const scope = skSource === 'all'
-    ? skillsCache
-    : skillsCache.filter((sk) => skSourceKey(sk, counts) === skSource);
+  const scope = skScope(skillsCache, counts);
   const turnOn = scope.some((sk) => sk.disabled);
   // One pass over the members that disagree with the target, then a single
   // reload: each toggle renames a directory, so the paths only settle once

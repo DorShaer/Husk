@@ -4838,7 +4838,13 @@ function listClaudeSkills() {
         }
         let description = '';
         try { description = extractDescription(fs.readFileSync(mdPath, 'utf8')); } catch (_) {}
-        return { source: 'claude', name, id: dirName, path: dir, mdPath, description, disabled };
+        // The directory's own mtime is when its files were written, which is
+        // the install. Enabling or disabling renames the directory, and a
+        // rename touches the parent rather than the entry, so this survives
+        // the switch being flipped.
+        let installedAt = 0;
+        try { installedAt = fs.statSync(dir).mtimeMs; } catch (_) {}
+        return { source: 'claude', name, id: dirName, path: dir, mdPath, description, disabled, installedAt };
       });
   } catch (_) { return []; }
 }

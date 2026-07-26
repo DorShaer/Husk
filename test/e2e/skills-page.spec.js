@@ -29,12 +29,16 @@ function boot() {
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
     firstRunDone: true, skipWelcome: true, agentCommand: 'claude',
   }));
+  // Backdated well past the recency window: this stands for a library that has
+  // been there a while, so only what a test installs itself counts as new.
+  const SETTLED = Date.now() - 40 * 864e5;
   const mk = (name, description) => {
     const dir = path.join(skillsDir, name);
     fs.mkdirSync(dir, { recursive: true });
     // A body, not just frontmatter: injecting strips the frontmatter, and a
     // skill with nothing under it is a no-op by design.
     fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n\nSteps for ${name}.\n`);
+    fs.utimesSync(dir, new Date(SETTLED), new Date(SETTLED));
   };
   FAMILY.forEach((f) => mk(`zed-hunt-${f}`, `Hunting skill for ${f}.`));
   PLAIN.forEach((p) => mk(p, `The ${p} skill.`));
@@ -86,6 +90,18 @@ const sources = (win) => win.evaluate(
   })),
 );
 const rowFor = (win, name) => win.locator(`.sk-row[data-name="${name}"]`);
+// Husk seeds its bundled skills into a fresh home on first launch, so those
+// are legitimately new. Backdating them after the fact gives a settled library
+// to test against.
+async function settleLibrary(win, env) {
+  const dir = path.join(env.homeDir, '.claude', 'skills');
+  const when = new Date(Date.now() - 40 * 864e5);
+  for (const d of fs.readdirSync(dir)) {
+    try { fs.utimesSync(path.join(dir, d), when, when); } catch (_) { /* raced with a write */ }
+  }
+  await win.click('#btn-skills-refresh');
+  await win.waitForTimeout(400);
+}
 const pickSource = async (win, key) => {
   await win.locator(`.sk-source[data-source-key="${key}"]`).click();
   await win.waitForTimeout(220);
@@ -93,9 +109,11 @@ const pickSource = async (win, key) => {
 
 test('a folder earns its own source only once enough skills share it', async () => {
   test.setTimeout(90_000);
-  const app = await launch(boot());
+  const env = boot();
+  const app = await launch(env);
   try {
     const win = await openSkills(app);
+    await settleLibrary(win, env);
     const rail = await sources(win);
     const keys = rail.map((r) => r.key);
     // Five entries share "zed", so it gets its own source. Two share "rare",
@@ -312,5 +330,49 @@ test('the restart notice carries the restart it asks for', async () => {
       () => win.evaluate(() => ({ page: currentPage, tabs: TABS.size })),  // eslint-disable-line no-undef
       { timeout: 15_000 },
     ).toEqual({ page: 'chat', tabs: 1 });
+  } finally { await app.close(); }
+});
+
+test('recently added skills get their own view, newest first', async () => {
+  test.setTimeout(90_000);
+  const env = boot();
+  const app = await launch(env);
+  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  try {
+    const win = await openSkills(app);
+    await settleLibrary(win, env);
+
+    const install = (name, at) => {
+      const dir = path.join(skillsDir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Freshly installed.\n---\n\nBody.\n`);
+      fs.utimesSync(dir, new Date(at), new Date(at));
+    };
+    install('older-arrival', Date.now() - 3 * 864e5);
+    install('newest-arrival', Date.now() - 60_000);
+    await win.click('#btn-skills-refresh');
+    await win.waitForTimeout(400);
+
+    const recent = (await sources(win)).find((r) => r.key === '__recent');
+    expect(recent, 'the rail offers a recently added view').toBeTruthy();
+    expect(recent.n).toBe(2);
+
+    await pickSource(win, '__recent');
+    // Newest first, because that ordering is the whole point of the view.
+    expect(await rowNames(win)).toEqual(['newest-arrival', 'older-arrival']);
+    // The header counts the same set its switch would act on.
+    await expect(win.locator('#sk-sub')).toHaveText('2 of 2 enabled');
+  } finally { await app.close(); }
+});
+
+test('the recent view is absent when nothing is new', async () => {
+  test.setTimeout(90_000);
+  const env = boot();
+  const app = await launch(env);
+  try {
+    const win = await openSkills(app);
+    await settleLibrary(win, env);
+    // A rail entry that leads to an empty pane is worse than no entry.
+    expect((await sources(win)).map((r) => r.key)).not.toContain('__recent');
   } finally { await app.close(); }
 });
