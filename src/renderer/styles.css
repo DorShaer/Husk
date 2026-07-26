@@ -7295,7 +7295,11 @@ body[data-mode="light"] .ob-wordmark span {
 .drag-target {
   width: 320px; padding: 36px 24px;
   border: 2.5px dashed var(--line-2); border-radius: 18px;
-  background: rgba(0,0,0,0.3);
+  /* Themed surface and an explicit label colour: the panel sits on a dark
+     scrim in either theme, so inheriting the page's text colour puts near
+     black type on a near black card on a light canvas. */
+  background: var(--bg-1);
+  color: var(--text);
   text-align: center;
   transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
