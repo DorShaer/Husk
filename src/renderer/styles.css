@@ -105,7 +105,7 @@
     radial-gradient(900px circle at 12% 0%, rgba(99, 140, 255, 0.12), transparent 65%),
     radial-gradient(800px circle at 82% 14%, rgba(120, 90, 255, 0.09), transparent 60%),
     radial-gradient(1000px circle at 60% 95%, rgba(60, 120, 220, 0.08), transparent 65%);
-  --term-bg: #0a0e17;
+  --term-bg: #0d1220;
   --term-fg: #e8ecf4;
 }
 
@@ -1039,7 +1039,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .page {
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
-  padding: 28px 32px 20px;
+  padding: var(--space-5) var(--space-6) var(--space-5);
   overflow: hidden;
 }
 body[data-page="boot"] .page { display: none !important; }
@@ -1067,7 +1067,7 @@ body[data-page="boot"] .page { display: none !important; }
 }
 .page-title {
   font-family: var(--font-display);
-  font-size: var(--fs-h1);
+  font-size: var(--fs-display);
   font-weight: 600;
   letter-spacing: -0.02em;
   margin: 0;
@@ -3049,7 +3049,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   background: rgba(255, 92, 122, 0.12);
   border: 1px solid color-mix(in srgb, var(--rose) 50%, var(--line));
   cursor: pointer;
-  transition: background 160ms var(--ease), border-color 160ms var(--ease), transform 80ms var(--ease);
+  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), transform var(--motion-fast) var(--ease);
 }
 .btn-stop:hover {
   background: rgba(255, 92, 122, 0.20);
@@ -3105,7 +3105,7 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   border-radius: var(--radius-md);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 140ms var(--ease), color 140ms var(--ease), border-color 140ms var(--ease);
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 .aut-seg-btn:hover,
 .sk-seg-btn:hover { color: var(--text); }
@@ -7989,7 +7989,7 @@ kbd {
   color: var(--text);
   box-shadow: var(--elev-3);
   opacity: 1; transform: translateX(0);
-  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+  transition: opacity var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out);
 }
 /* Entrance: inserted with .is-enter, removed on the next frame so the card
    slides in from the right. Exit adds .is-out. A transition (not a keyframe)
@@ -8164,7 +8164,7 @@ kbd {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
+    transition-duration: 0.var(--motion-fast) !important;
   }
 }
 
@@ -8192,7 +8192,6 @@ kbd {
   font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: -0.025em;
-  font-size: var(--fs-display);
   line-height: 1.1;
 }
 
@@ -8264,7 +8263,7 @@ kbd {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border-radius: var(--radius-lg);
-  transition: background 160ms var(--ease), border-color 160ms var(--ease), transform 160ms var(--ease);
+  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
 /* The destructive variant keeps its own hover: this generic polish carries the
    same specificity and would otherwise replace the red tint with plain white. */
@@ -8285,7 +8284,7 @@ kbd {
     0 6px 16px -8px rgba(0, 0, 0, 0.45);
   font-weight: 600;
   letter-spacing: -0.005em;
-  transition: box-shadow 180ms var(--ease), transform 180ms var(--ease);
+  transition: box-shadow var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
 [data-mode="dark"] .btn-primary:hover,
 [data-mode="dark"] .iconbtn-primary:hover {
@@ -8330,7 +8329,7 @@ kbd {
   color: var(--text);
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius-lg);
-  transition: border-color 140ms var(--ease), background 140ms var(--ease), box-shadow 140ms var(--ease);
+  transition: border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
 [data-mode="dark"] input[type="text"]:focus,
 [data-mode="dark"] input[type="number"]:focus,
@@ -8398,7 +8397,7 @@ kbd {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-radius: var(--radius-xl);
-  transition: background 160ms var(--ease), border-color 160ms var(--ease), transform 160ms var(--ease);
+  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
 [data-mode="dark"] .agent-card:hover,
 [data-mode="dark"] .session-row:hover,
@@ -9009,7 +9008,7 @@ kbd {
   padding: 0 16px;
   font-family: inherit; font-size: var(--fs-small); font-weight: 600;
   cursor: pointer;
-  transition: background 160ms var(--ease), border-color 160ms var(--ease);
+  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease);
 }
 .wfx-hero-secondary:hover { background: var(--bg-2); border-color: var(--line-2); }
 .wfx-hero-stats {
@@ -9113,7 +9112,7 @@ kbd {
   border: 1px solid var(--line);
   text-align: left; font-family: inherit; color: inherit;
   cursor: pointer;
-  transition: border-color 180ms var(--ease), background 180ms var(--ease), transform 120ms var(--ease), box-shadow 180ms var(--ease);
+  transition: border-color var(--motion-base) var(--ease), background var(--motion-base) var(--ease), transform var(--motion-fast) var(--ease), box-shadow var(--motion-base) var(--ease);
 }
 .wfx-pattern:hover {
   border-color: color-mix(in srgb, var(--accent) 50%, var(--line-2));
@@ -9149,7 +9148,7 @@ kbd {
 .wfx-pattern-shape .wf-mini-node {
   fill: var(--bg-4);
   stroke: color-mix(in srgb, var(--accent) 48%, var(--line-3));
-  transition: stroke 180ms var(--ease), fill 180ms var(--ease);
+  transition: stroke var(--motion-base) var(--ease), fill var(--motion-base) var(--ease);
 }
 .wfx-pattern:hover .wf-mini-node { stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 16%, var(--bg-4)); }
 .wfx-pattern-body { font-size: var(--fs-micro); line-height: var(--lh-base); color: var(--text-2); flex: 1; }
@@ -9168,7 +9167,7 @@ kbd {
   display: inline-flex; align-items: center; gap: 5px;
   color: var(--accent); font-weight: 600;
   opacity: 0; transform: translateX(-4px);
-  transition: opacity 160ms var(--ease), transform 160ms var(--ease);
+  transition: opacity var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
 .wfx-pattern:hover .wfx-pattern-use { opacity: 1; transform: translateX(0); }
 .wfx-pattern-use svg { width: 12px; height: 12px; }
@@ -9221,7 +9220,7 @@ kbd {
   cursor: pointer;
   background: transparent; border: 0; text-align: left;
   font-family: inherit; color: inherit;
-  transition: background 160ms var(--ease);
+  transition: background var(--motion-base) var(--ease);
 }
 .wfx-run-row + .wfx-run-row { border-top: 1px solid var(--line); }
 .wfx-run-row:hover { background: var(--bg-2); }
