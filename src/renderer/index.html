@@ -528,7 +528,10 @@
 
                 <section class="wfx-hero">
                   <div class="wfx-hero-art" aria-hidden="true">
-                    <svg class="wfx-dag" viewBox="0 0 760 300" preserveAspectRatio="xMidYMid meet">
+                    <!-- The viewBox is cropped to the drawing's actual extents
+                         (y 30..275) rather than the 300-unit canvas, so the meet
+                         fit does not letterbox empty rows inside the art column. -->
+                    <svg class="wfx-dag" viewBox="0 20 760 262" preserveAspectRatio="xMidYMid meet">
                         <defs>
                           <linearGradient id="wfx-card-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="wfx-cg0"/><stop offset="1" class="wfx-cg1"/></linearGradient>
                           <pattern id="wfx-grid" width="16" height="16" patternUnits="userSpaceOnUse"><circle class="wfx-grid-dot" cx="8" cy="8" r="1"/></pattern>
@@ -1059,11 +1062,11 @@
               <h2 class="aut-hero-title">Hand off entire tasks.<br/>Reach further while you focus.</h2>
               <p class="aut-hero-body">Husk snapshots your workspace, audits every agent step in a hash-chained log, and caps the run on time, tokens, or dollars. Stop anytime. Revert anything.</p>
               <div class="aut-hero-actions">
-                <button class="btn-primary aut-hero-cta" id="aut-page-start-2">Start a new run</button>
+                <button class="btn-primary aut-hero-cta" id="aut-page-start-2">Start a run</button>
                 <button class="aut-hero-secondary" id="aut-configure-orch">Configure models</button>
                 <button class="aut-hero-secondary" id="aut-jump-presets">Browse presets</button>
               </div>
-              <div class="aut-hero-stats">
+              <div class="aut-hero-stats" id="aut-hero-stats" hidden>
                 <div class="aut-hero-stat">
                   <div class="aut-hero-stat-value" id="aut-hero-runs">0</div>
                   <div class="aut-hero-stat-label">runs completed</div>
@@ -1483,7 +1486,7 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Prompts</h1>
-              <span class="page-sub">starter prompts; click Run to send into the chat</span>
+              <span class="page-sub">pick a prompt to read it, then run it into the chat</span>
             </div>
             <div class="page-head-right">
               <input type="search" id="prompts-search" class="ghost-input" placeholder="Filter prompts…" />
@@ -1491,7 +1494,7 @@
               <button class="btn-primary" id="btn-prompts-new" title="Create a new prompt"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create prompt</button>
             </div>
           </div>
-          <div class="prompts-grid" id="prompts-grid"></div>
+          <div class="pr" id="prompts-pane"></div>
         </div>
 
         <!-- Create prompt modal -->
@@ -1541,10 +1544,10 @@
               <button class="btn-primary" id="btn-skills-new" title="Create a new skill"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create skill</button>
             </div>
           </div>
-          <!-- Two panes: sources on the left, their skills on the right. A
-               library this size is navigated, not scrolled. -->
+          <!-- One filter bar over one full-width list. A library this size is
+               read description-first, so the width belongs to the list. -->
           <div class="sk">
-            <aside class="sk-rail">
+            <aside class="sk-rail" aria-label="Filters">
               <div class="sk-rail-cap">Sources</div>
               <nav class="sk-sources" id="skills-sources" aria-label="Skill sources"></nav>
               <div class="sk-rail-cap">Show</div>
@@ -1575,7 +1578,7 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Sessions</h1>
-              <span class="page-sub" id="sessions-sub">click a session to preview, then resume in chat</span>
+              <span class="page-sub" id="sessions-sub">Click a session to preview, Resume to continue</span>
             </div>
             <div class="page-head-right">
               <input type="search" id="sessions-search" class="ghost-input" placeholder="Filter sessions…" />
@@ -1641,17 +1644,30 @@
             </div>
           </div>
           <div class="plugins-body" id="plugins-body">
-            <section class="mcp-section">
+            <!-- Shown instead of both sections when nothing is installed and no
+                 marketplace is configured: one icon, one instruction, one action. -->
+            <div class="plugins-zero" id="plugins-zero" hidden>
+              <div class="empty-state">
+                <div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg></div>
+                <div class="es-title">No plugins yet</div>
+                <div class="es-msg">Plugins bundle commands, agents, hooks and MCP servers for the active agent. Add a marketplace from the agent CLI, then refresh to browse and install from it.</div>
+                <div class="plugins-zero-cmd">/plugin marketplace add owner/repo</div>
+                <div class="plugins-zero-actions">
+                  <button class="btn-primary" id="plugins-zero-refresh">Refresh plugins</button>
+                </div>
+              </div>
+            </div>
+            <section class="mcp-section" id="plugins-section-installed">
               <div class="mcp-section-head">Installed</div>
               <div class="plugins-installed" id="plugins-installed"></div>
             </section>
-            <section class="mcp-section">
+            <section class="mcp-section plugins-section-browse" id="plugins-section-browse">
               <div class="mcp-section-head" id="plugins-browse-head">Browse marketplaces</div>
               <div class="plugins-grid" id="plugins-catalog"></div>
             </section>
           </div>
           <div class="plugins-unsupported" id="plugins-unsupported" hidden>
-            <div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg></div><div class="es-msg">The active agent does not expose a plugin system. Switch to an agent with plugin support to manage plugins here.</div></div>
+            <div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg></div><div class="es-title">Plugins are not available here</div><div class="es-msg">The active agent does not expose a plugin system. Switch to an agent with plugin support to manage plugins here.</div></div>
           </div>
         </div>
 
@@ -1722,9 +1738,38 @@
             </aside>
             <section class="fx-preview" id="fx-preview">
               <div class="fx-preview-empty" id="fx-preview-empty">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
-                <div class="fx-preview-empty-title">Select a file to preview</div>
-                <div class="fx-preview-empty-sub">Search above, or open the Changed tab to see what git thinks changed.</div>
+                <div class="fx-ov">
+                  <header class="fx-ov-head">
+                    <div class="fx-ov-headline">
+                      <div class="fx-ov-eyebrow">Workspace</div>
+                      <h2 class="fx-ov-title" id="fx-ov-title">Files</h2>
+                      <p class="fx-preview-empty-sub" id="fx-ov-sub">Pick a file on the left to read or edit it in place.</p>
+                    </div>
+                    <div class="fx-ov-stats" id="fx-ov-stats"></div>
+                  </header>
+                  <div class="fx-ov-grid">
+                    <section class="fx-ov-card">
+                      <div class="fx-ov-card-head">
+                        <span class="fx-ov-card-title">Working tree</span>
+                        <button type="button" class="fx-ov-link" id="fx-ov-see-changed" hidden>See all</button>
+                      </div>
+                      <div class="fx-ov-rows" id="fx-ov-changed"></div>
+                    </section>
+                    <section class="fx-ov-card">
+                      <div class="fx-ov-card-head">
+                        <span class="fx-ov-card-title">Entry points</span>
+                      </div>
+                      <div class="fx-ov-rows" id="fx-ov-key"></div>
+                    </section>
+                  </div>
+                  <div class="fx-ov-types" id="fx-ov-types" hidden></div>
+                  <footer class="fx-ov-hints">
+                    <span class="fx-ov-hint"><kbd class="fx-ov-kbd">/</kbd> search files</span>
+                    <span class="fx-ov-hint"><kbd class="fx-ov-kbd">&uarr;</kbd><kbd class="fx-ov-kbd">&darr;</kbd> move</span>
+                    <span class="fx-ov-hint"><kbd class="fx-ov-kbd">Enter</kbd> open</span>
+                    <span class="fx-ov-hint"><kbd class="fx-ov-kbd">Ctrl</kbd><kbd class="fx-ov-kbd">S</kbd> save</span>
+                  </footer>
+                </div>
               </div>
               <div class="fx-preview-body" id="fx-preview-body" hidden>
                 <header class="fx-preview-head">

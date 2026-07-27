@@ -2205,6 +2205,7 @@ function paintProjectsSurface() {
 
 const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
 const WS_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+const WS_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 
 // Git chip for one project, shared by board rows and the workspace header.
 function wsBranchChip(st) {
@@ -2227,6 +2228,8 @@ function wsWorkChips(p) {
 // One table row. The full path lives in the tooltip; the cell shows the
 // home-relative form. Empty cells carry a dim placeholder so the columns keep
 // their rhythm; an ellipsis placeholder means derived state has not landed yet.
+// The action column always has exactly one occupant: "Open" launches into the
+// folder, "Current" states that the agent is already there.
 function wsRowHtml(p, attn) {
   const st = wsStateOf(p.id);
   const isActive = p.id === activeProjectId;
@@ -2235,13 +2238,13 @@ function wsRowHtml(p, attn) {
   const statusCell = wsWorkChips(p) || (pending ? '<span class="ws-skel ws-skel-cell"></span>' : `<span class="ws-cell-dim">${st.isGit ? 'Clean' : '&middot;'}</span>`);
   return `
     <div class="ws-row${isActive ? ' is-active' : ''}${attn ? ' is-attn' : ''}" data-id="${escapeHtml(p.id)}" tabindex="0" role="button" aria-label="Open workspace ${escapeHtml(p.name)}">
-      <div class="ws-col-name">${st.live ? '<span class="tv-dot" title="agent live"></span>' : ''}<span class="ws-row-title">${escapeHtml(p.name)}</span>${isActive ? '<span class="project-card-pill">active</span>' : ''}</div>
+      <div class="ws-col-name">${st.live ? '<span class="tv-dot" title="agent live"></span>' : ''}<span class="ws-row-title">${escapeHtml(p.name)}</span></div>
       <div class="ws-col-path" title="${escapeHtml(p.path)}">${escapeHtml(wsShortPath(p.path))}</div>
       <div class="ws-col-git">${branchCell}</div>
       <div class="ws-col-state">${statusCell}</div>
       <div class="ws-col-time">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
       <div class="ws-col-actions">
-        ${isActive ? '' : `<button class="ghost-btn ws-launch" data-id="${escapeHtml(p.id)}" title="Launch the agent in this folder">Open</button>`}
+        ${isActive ? '<span class="ws-current" title="The agent already runs in this folder">Current</span>' : `<button class="ghost-btn ws-launch" data-id="${escapeHtml(p.id)}" title="Launch the agent in this folder">Open</button>`}
         <button class="card-delete project-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete project" aria-label="Delete project">${WS_TRASH_SVG}</button>
       </div>
     </div>`;
@@ -2285,7 +2288,13 @@ function paintBoard(filter) {
       ${needs.length ? groupRow('Needs you', needs.length) + needs.map((p) => wsRowHtml(p, true)).join('') : ''}
       ${act.length ? groupRow(projectGroups ? 'Active' : 'Projects', act.length) + act.map((p) => wsRowHtml(p, false)).join('') : ''}
       ${quiet.length ? groupRow('Quiet', quiet.length) + quiet.map((p) => wsRowHtml(p, false)).join('') : ''}
+      <button type="button" class="ws-addrow" title="Pin another folder">${WS_PLUS_SVG}Add project</button>
+      <div class="ws-fill" aria-hidden="true"></div>
     </div>`;
+  // The add row mirrors the header button so there is one modal and one code
+  // path behind both entry points.
+  const addRow = board.querySelector('.ws-addrow');
+  if (addRow) addRow.addEventListener('click', () => { const b = $('#btn-projects-new'); if (b) b.click(); });
   board.querySelectorAll('.ws-launch').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openProject(e.currentTarget.dataset.id); }));
   board.querySelectorAll('.project-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
   board.querySelectorAll('.ws-row').forEach((row) => row.addEventListener('click', (e) => {
@@ -2771,7 +2780,7 @@ function wfDur(ms) {
 function wfMiniGraph(graph, lastRun) {
   const nodes = (graph && graph.nodes) || [];
   const edges = (graph && graph.edges) || [];
-  if (!nodes.length) return '<div class="wf-mini is-empty">no steps yet</div>';
+  if (!nodes.length) return '<div class="wf-mini is-empty"><span>no steps yet</span></div>';
 
   const W = 250;
   const H = 74;
@@ -3123,6 +3132,11 @@ function paintWorkflowList() {
   const mine = $('#wfx-mine-section');
   const mineSub = $('#wfx-mine-sub');
   if (mine) mine.hidden = !workflowsCache.length;
+  // The full hero is the pitch for an empty workspace. Once flows exist the
+  // saved cards are the point, so the hero drops to a band and hands the fold
+  // back to them.
+  const hero = document.querySelector('.wfx-hero');
+  if (hero) hero.classList.toggle('is-compact', workflowsCache.length > 0);
   if (mineSub) {
     mineSub.textContent = workflowsCache.length === 1
       ? '1 flow saved in this workspace'
@@ -3162,7 +3176,15 @@ function paintWorkflowList() {
           <button class="card-cta wf-run-btn" data-id="${escapeAttr(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>`;
-  }).join('');
+  // The trailing tracks of the row would otherwise be empty background, so the
+  // grid ends on the action that belongs there. No data-id, so the shared
+  // .wf-card click handler opens the builder on a blank graph.
+  }).join('') + `
+      <button type="button" class="wf-card wf-ghost-card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>New workflow</span>
+        <small>start from a blank graph</small>
+      </button>`;
 
   grid.querySelectorAll('.wf-run-btn').forEach((btn) => btn.addEventListener('click', (e) => {
     e.stopPropagation(); runWorkflow(e.currentTarget.dataset.id);
@@ -5554,60 +5576,167 @@ $('#agent-modal-back') && $('#agent-modal-back').addEventListener('click', () =>
 
 // ─── Prompts page ──────────────────────────────────────────────────────────────
 let promptsCache = [];
+// The row the right pane is showing, and the bodies already pulled off disk.
+// Filtering re-renders the whole pane, so the cache is what keeps typing in
+// the search field from re-reading files on every keystroke.
+let selectedPromptMd = '';
+const promptBodyCache = new Map();
+
+const PR_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+const PR_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const PR_ARROW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>';
+
 async function renderPrompts() {
-  const grid = $('#prompts-grid');
-  if (!grid) return;
+  const pane = $('#prompts-pane');
+  if (!pane) return;
+  pane.classList.add('is-empty');
   // eslint-disable-next-line no-unsanitized/property -- Static loading template.
-  grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading prompts…</div></div>';
+  pane.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading prompts…</div></div>';
   const res = await window.husk.prompts.list();
   if (!res.ok) {
+    pane.classList.add('is-empty');
     // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
+    pane.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
     return;
   }
   promptsCache = res.prompts || [];
+  promptBodyCache.clear();
   paintPrompts(promptsCache, ($('#prompts-search') || {}).value || '');
 }
 
+// A prompt file name has to be lowercase letters, digits and dashes, so a
+// search term seeded into the composer gets folded into that shape first.
+function promptSlug(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^[^a-z]+/, '')
+    .replace(/-+$/, '');
+}
+
+function openPromptComposer(seedName) {
+  const btn = document.getElementById('btn-prompts-new');
+  if (!btn) return;
+  btn.click();
+  const nameEl = document.getElementById('np-name');
+  if (nameEl && seedName) nameEl.value = seedName;
+}
+
 function paintPrompts(items, filter) {
-  const grid = $('#prompts-grid');
-  if (!grid) return;
+  const pane = $('#prompts-pane');
+  if (!pane) return;
   const q = (filter || '').toLowerCase().trim();
   const filtered = q
     ? items.filter((p) => (p.name + ' ' + (p.description || '')).toLowerCase().includes(q))
     : items;
+
   if (!filtered.length) {
-    const msg = q ? `No prompts match "${escapeHtml(q)}"` : 'No prompts yet. Drop markdown files in ~/.config/husk/prompts/';
-    // eslint-disable-next-line no-unsanitized/property -- escapeHtml above; rest is static.
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">${msg}</div></div>`;
+    const seed = q ? promptSlug(q) : '';
+    const head = q ? `No prompt matches “${escapeHtml(q)}”` : 'No prompts yet';
+    const sub = q
+      ? 'Nothing in the library uses that word. Write it instead and it saves to disk as markdown.'
+      : 'Prompts are markdown files in ~/.config/husk/prompts/. Write one here, or drop a file in that folder and refresh.';
+    const cta = seed
+      ? `Create “${escapeHtml(seed)}”`
+      : (items.length ? 'Create a prompt' : 'Create your first prompt');
+    pane.classList.add('is-empty');
+    // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml above.
+    pane.innerHTML = `<div class="empty-state">
+        <div class="es-icon">⌬</div>
+        <div class="es-msg">${head}</div>
+        <div class="pr-empty-sub">${sub}</div>
+        <button class="pr-run pr-empty-cta" type="button">${PR_PLUS_SVG}${cta}</button>
+      </div>`;
+    const ctaBtn = pane.querySelector('.pr-empty-cta');
+    if (ctaBtn) ctaBtn.addEventListener('click', () => openPromptComposer(seed));
     return;
   }
-  const cards = filtered.map((p) => `
-    <div class="prompt-card${p.disabled ? ' is-disabled' : ''}" data-md="${escapeHtml(p.mdPath)}" tabindex="0">
-      <button class="card-delete prompt-delete" data-md="${escapeHtml(p.mdPath)}" data-name="${escapeHtml(p.name)}" title="Delete prompt" aria-label="Delete prompt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
-      <div class="prompt-card-head">
-        <div class="prompt-card-title">${escapeHtml(p.name)}</div>
-        ${p.disabled ? '<span class="prompt-card-pill">disabled</span>' : ''}
+
+  pane.classList.remove('is-empty');
+  if (!filtered.some((p) => p.mdPath === selectedPromptMd)) selectedPromptMd = filtered[0].mdPath;
+  const active = filtered.find((p) => p.mdPath === selectedPromptMd) || filtered[0];
+
+  const rows = filtered.map((p) => {
+    const isActive = p.mdPath === selectedPromptMd;
+    return `<div class="pr-item${isActive ? ' is-active' : ''}${p.disabled ? ' is-disabled' : ''}" data-md="${escapeAttr(p.mdPath)}" role="button" aria-current="${isActive}" tabindex="0">
+      <div class="pr-item-top">
+        <span class="pr-item-name">${escapeHtml(p.name)}</span>
+        ${p.disabled ? '<span class="pr-pill">off</span>' : ''}
       </div>
-      <div class="prompt-card-body">${escapeHtml(p.description || '')}</div>
-      <div class="prompt-card-actions">
-        <button class="ghost-link prompt-preview" data-md="${escapeHtml(p.mdPath)}" title="Preview body">Preview</button>
-        <button class="card-cta prompt-run" data-md="${escapeHtml(p.mdPath)}" title="Send into chat">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+      ${p.description ? `<span class="pr-item-desc">${escapeHtml(p.description)}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  const count = q ? `${filtered.length} of ${items.length}` : `${items.length} prompt${items.length === 1 ? '' : 's'}`;
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml/escapeAttr above.
+  pane.innerHTML = `<div class="pr-list">
+      <div class="pr-list-head"><span>Library</span><span>${escapeHtml(count)}</span></div>
+      <div class="pr-items" aria-label="Prompts">
+        ${rows}
+        <button class="pr-new" type="button">${PR_PLUS_SVG}New prompt</button>
       </div>
     </div>
-  `).join('');
-  // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml above.
-  grid.innerHTML = cards;
-  grid.querySelectorAll('.prompt-run').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); runPrompt(e.currentTarget.dataset.md); }));
-  grid.querySelectorAll('.prompt-preview').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); previewPrompt(e.currentTarget.dataset.md); }));
-  grid.querySelectorAll('.prompt-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deletePrompt(e.currentTarget.dataset.md, e.currentTarget.dataset.name); }));
-  /* Whole-card click previews; explicit Run button commits. Clicking inside
-     the actions row routes to the right button via stopPropagation above. */
-  grid.querySelectorAll('.prompt-card').forEach((card) => card.addEventListener('click', (e) => {
-    if (e.target.closest('.prompt-card-actions') || e.target.closest('.card-delete')) return;
-    const md = card.dataset.md;
-    if (md) previewPrompt(md);
-  }));
+    <div class="pr-detail">
+      <div class="pr-detail-head">
+        <div class="pr-detail-heading">
+          <div class="pr-eyebrow">Prompt${active.disabled ? '<span class="pr-pill">off</span>' : ''}</div>
+          <h2 class="pr-detail-title">${escapeHtml(active.name)}</h2>
+          ${active.description ? `<div class="pr-detail-desc">${escapeHtml(active.description)}</div>` : ''}
+          <div class="pr-detail-path" title="${escapeAttr(active.mdPath)}">${escapeHtml(active.mdPath)}</div>
+        </div>
+        <div class="pr-detail-actions">
+          <button class="pr-iconbtn pr-delete" type="button" title="Delete prompt" aria-label="Delete prompt">${PR_TRASH_SVG}</button>
+          <button class="pr-run pr-run-btn" type="button" title="Send into chat">Run${PR_ARROW_SVG}</button>
+        </div>
+      </div>
+      <pre class="pr-body is-muted">Loading…</pre>
+    </div>`;
+
+  const selectRow = (md) => {
+    if (!md || md === selectedPromptMd) return;
+    selectedPromptMd = md;
+    paintPrompts(items, filter);
+  };
+  pane.querySelectorAll('.pr-item').forEach((row) => {
+    row.addEventListener('click', () => selectRow(row.dataset.md));
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(row.dataset.md); }
+    });
+  });
+  const newRow = pane.querySelector('.pr-new');
+  if (newRow) newRow.addEventListener('click', () => openPromptComposer(''));
+  const runBtn = pane.querySelector('.pr-run-btn');
+  if (runBtn) runBtn.addEventListener('click', () => runPrompt(active.mdPath));
+  const delBtn = pane.querySelector('.pr-delete');
+  if (delBtn) delBtn.addEventListener('click', () => deletePrompt(active.mdPath, active.name));
+  fillPromptBody(active.mdPath);
+}
+
+// Loads the prompt text into the right pane. Cached bodies paint before the
+// first await, so a re-render from filtering or selection never flashes.
+async function fillPromptBody(mdPath) {
+  const paint = (text, muted) => {
+    const el = $('#prompts-pane .pr-body');
+    if (!el) return;
+    el.classList.toggle('is-muted', !!muted);
+    el.textContent = text;
+  };
+  if (promptBodyCache.has(mdPath)) {
+    const body = promptBodyCache.get(mdPath);
+    paint(body || 'This prompt has no body yet. Open the file and write one.', !body);
+    return;
+  }
+  paint('Loading…', true);
+  const res = await window.husk.skills.read(mdPath);
+  if (selectedPromptMd !== mdPath) return;
+  if (!res || !res.ok) {
+    paint((res && res.error) || 'Could not read this prompt.', true);
+    return;
+  }
+  // Strip the frontmatter block; the body is what actually gets sent.
+  const body = String(res.content || '').replace(/^---[\s\S]*?---\n?/, '').trim();
+  promptBodyCache.set(mdPath, body);
+  paint(body || 'This prompt has no body yet. Open the file and write one.', !body);
 }
 
 async function deletePrompt(mdPath, name) {
@@ -5638,23 +5767,6 @@ async function runPrompt(mdPath) {
   // Send the prompt body to the agent's PTY. Append a newline so the agent
   // treats it as a complete user turn. setPage('chat') focuses the terminal.
   setTimeout(() => { try { armRecap(); window.husk.pty.write(body + '\n'); } catch (_) {} }, 60);
-}
-
-async function previewPrompt(mdPath) {
-  if (!mdPath) return;
-  const res = await window.husk.skills.read(mdPath);
-  if (!res.ok) return;
-  const body = (res.content || '').replace(/^---[\s\S]*?---\n?/, '').trim();
-  // Reuse the existing detail panel scaffolding if present; fall back to alert.
-  const eyebrow = $('#dp-eyebrow'); const title = $('#dp-title'); const sub = $('#dp-sub'); const bodyEl = $('#dp-body'); const panel = $('#detail-panel');
-  if (panel && title && bodyEl) {
-    if (eyebrow) eyebrow.textContent = 'Prompt';
-    title.textContent = mdPath.split('/').pop().replace(/\.md$/, '');
-    if (sub) sub.textContent = mdPath;
-    bodyEl.textContent = body;
-    document.body.dataset.detail = 'open';
-    panel.hidden = false;
-  }
 }
 
 // Wire prompts search + refresh + create.
@@ -5905,9 +6017,17 @@ function paintSkills(list, query) {
 
   const body = $('#skills-list');
   if (!rows.length) {
-    const msg = list.length ? 'Nothing matches this filter' : 'No skills yet. Drop a folder in, or use Create skill.';
-    // eslint-disable-next-line no-unsanitized/property -- Static message text.
-    body.innerHTML = `<div class="sk-empty">${msg}</div>`;
+    // The empty view carries the way out of itself: back to the whole library
+    // when a filter hid it, straight to a new skill when there is none.
+    const filtered = list.length > 0;
+    const msg = filtered
+      ? 'Nothing matches this filter.'
+      : 'No skills yet. Drop a folder in, import one you already wrote, or create one here.';
+    // eslint-disable-next-line no-unsanitized/property -- Static message and action text.
+    body.innerHTML = `<div class="sk-empty">
+      <p class="sk-empty-msg">${msg}</p>
+      <button type="button" class="ghost-btn" data-sk-empty="${filtered ? 'clear' : 'new'}">${filtered ? 'Show all skills' : 'Create skill'}</button>
+    </div>`;
     return;
   }
   // eslint-disable-next-line no-unsanitized/property -- Skill fields are escaped via escapeHtml/escapeAttr.
@@ -5927,6 +6047,18 @@ function paintSkills(list, query) {
 // rebinding a handler per row would make each repaint proportional to the
 // library's size.
 $('#skills-list').addEventListener('click', async (e) => {
+  const emptyBtn = e.target.closest('[data-sk-empty]');
+  if (emptyBtn) {
+    if (emptyBtn.dataset.skEmpty === 'new') { openCreateSkillModal(); return; }
+    // One click puts every filter back, including the search box that is not
+    // part of the bar.
+    skSource = 'all';
+    skState = 'all';
+    $('#skills-search').value = '';
+    $('#skills-state').querySelectorAll('[data-state]').forEach((b) => b.classList.toggle('is-active', b.dataset.state === 'all'));
+    paintSkills(skillsCache, '');
+    return;
+  }
   const row = e.target.closest('.sk-row');
   if (!row) return;
   const toggleBtn = e.target.closest('[data-toggle]');
@@ -6091,13 +6223,60 @@ let sessionsAgent = 'claude';
 let sessionsDir = '';
 let sessionsSelectMode = false;
 const sessionsSelected = new Set();
+
+// One shape for every state that leaves the list without rows: real icon,
+// headline, one support line, then the actions that state offers. Callers
+// escape their own interpolations; everything else here is static.
+function sessionsEmptyCard({ title, msg, actions = '', hints = '' }) {
+  return `<div class="empty-state">
+    <div class="es-icon">${ICONS.sessions}</div>
+    <div class="se-title">${title}</div>
+    <div class="es-msg">${msg}</div>
+    ${actions}
+    ${hints}
+  </div>`;
+}
+
+// The card is rebuilt on every paint, so its buttons are bound on every paint.
+function wireSessionsEmpty(host) {
+  const start = host.querySelector('#se-start-chat');
+  if (start) start.addEventListener('click', () => setPage('chat'));
+  const open = host.querySelector('#se-open-folder');
+  if (open) open.addEventListener('click', openSessionsFolder);
+  const retry = host.querySelector('#se-retry');
+  if (retry) retry.addEventListener('click', renderSessions);
+  const clear = host.querySelector('#se-clear-filter');
+  if (clear) {
+    clear.addEventListener('click', () => {
+      const search = $('#sessions-search');
+      search.value = '';
+      paintSessions(sessionsCache, '');
+      search.focus();
+    });
+  }
+}
+
+function openSessionsFolder() {
+  const dir = sessionsDir || (lastStats && lastStats.sessionsDir);
+  if (dir) window.husk.fs.open(dir);
+}
+
 async function renderSessions() {
   const list = $('#sessions-list');
-  list.innerHTML = '<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">Loading sessions…</div></div>';
+  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
+  list.innerHTML = sessionsEmptyCard({
+    title: 'Loading sessions',
+    msg: 'Reading the session files on disk.',
+  });
   const res = await window.husk.sessions.list();
   if (!res.ok) {
     // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
-    list.innerHTML = `<div class="empty-state"><div class="es-icon">!</div><div class="es-msg">${escapeHtml(res.error || 'Unknown error')}</div></div>`;
+    list.innerHTML = sessionsEmptyCard({
+      title: 'Could not read sessions',
+      msg: escapeHtml(res.error || 'Unknown error'),
+      actions: '<div class="se-actions"><button class="btn-primary" id="se-retry" type="button">Try again</button><button class="ghost-btn" id="se-open-folder" type="button">Open folder</button></div>',
+    });
+    wireSessionsEmpty(list);
     return;
   }
   sessionsCache = res.sessions;
@@ -6107,17 +6286,28 @@ async function renderSessions() {
   const subEl = $('#sessions-sub');
   if (subEl) {
     const hidden = Number(res.hiddenAutopilotSessions) || 0;
-    const hiddenText = hidden
-      ? ` · ${hidden} Autopilot ${hidden === 1 ? 'session is' : 'sessions are'} hidden here and kept under Autopilot Recent runs`
+    const hiddenHTML = hidden
+      ? `<span class="ss-note">${hidden} Autopilot ${hidden === 1 ? 'session is' : 'sessions are'} hidden here and kept under Autopilot Recent runs</span>`
       : '';
-    subEl.textContent = res.supported === false
-      ? `Session history for ${sessionsAgent} is not available yet`
-      : `${sessionsAgent} sessions at ${sessionsDir || ''} · click to preview, Resume to continue${hiddenText}`;
+    if (res.supported === false) {
+      subEl.textContent = `Session history for ${sessionsAgent} is not available yet`;
+    } else {
+      // The hint reads as prose; the agent and its directory sit in a mono chip
+      // that truncates, so a deep project path cannot widen the head.
+      const where = `${sessionsAgent} sessions at ${sessionsDir || ''}`;
+      // eslint-disable-next-line no-unsanitized/property -- Agent and path are escaped here.
+      subEl.innerHTML = '<span>Click a session to preview, Resume to continue</span>'
+        + (sessionsDir ? `<span class="ss-path" title="${escapeAttr(where)}">${escapeHtml(where)}</span>` : '')
+        + hiddenHTML;
+    }
     sessionsSubOwned = true;
   }
   if (res.supported === false) {
     // eslint-disable-next-line no-unsanitized/property -- Static, agent name escaped.
-    $('#sessions-list').innerHTML = `<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">Husk does not read ${escapeHtml(sessionsAgent)} sessions yet. Switch the active agent to claude or copilot to browse sessions.</div></div>`;
+    $('#sessions-list').innerHTML = sessionsEmptyCard({
+      title: 'Not available for this agent',
+      msg: `Husk does not read ${escapeHtml(sessionsAgent)} sessions yet. Switch the active agent to claude or copilot to browse sessions.`,
+    });
     return;
   }
   // Drop selections that no longer exist (e.g. after delete + refresh).
@@ -6152,9 +6342,25 @@ function paintSessions(list, query) {
     (s.title + ' ' + s.id + ' ' + s.projectPath + ' ' + (s.prdPhase || '')).toLowerCase().includes(q)
   ) : list;
   if (!filtered.length) {
-    const msg = list.length ? `No sessions match "${escapeHtml(query)}"` : 'No sessions yet. Start a chat to create one.';
+    const card = list.length
+      ? sessionsEmptyCard({
+        title: 'No matching sessions',
+        msg: `Nothing in ${list.length} session${list.length === 1 ? '' : 's'} matches "${escapeHtml(query)}".`,
+        actions: '<div class="se-actions"><button class="ghost-btn" id="se-clear-filter" type="button">Clear filter</button></div>',
+      })
+      : sessionsEmptyCard({
+        title: 'No sessions yet',
+        msg: 'Every chat you start is written to disk, so you can come back later, read what happened and pick the thread up again.',
+        actions: '<div class="se-actions"><button class="btn-primary" id="se-start-chat" type="button">Start a chat</button><button class="ghost-btn" id="se-open-folder" type="button">Open folder</button></div>',
+        hints: `<div class="se-hints">
+            <div class="se-hint"><span class="se-hint-n">1</span><span>Start a chat. <b>Husk saves it for you</b> while you work.</span></div>
+            <div class="se-hint"><span class="se-hint-n">2</span><span>It shows up in this list. <b>Click a row</b> to preview the transcript.</span></div>
+            <div class="se-hint"><span class="se-hint-n">3</span><span>Press <b>Resume</b> to reopen that session in a new chat tab.</span></div>
+          </div>`,
+      });
     // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
-    ul.innerHTML = `<div class="empty-state"><div class="es-icon">⊕</div><div class="es-msg">${msg}</div></div>`;
+    ul.innerHTML = card;
+    wireSessionsEmpty(ul);
     return;
   }
   ul.classList.toggle('select-mode', sessionsSelectMode);
@@ -6257,10 +6463,7 @@ async function deleteSelectedSessions() {
 
 $('#sessions-search').addEventListener('input', debounce((e) => paintSessions(sessionsCache, e.target.value), 120));
 $('#btn-sessions-refresh').addEventListener('click', renderSessions);
-$('#btn-sessions-open').addEventListener('click', () => {
-  const dir = sessionsDir || (lastStats && lastStats.sessionsDir);
-  if (dir) window.husk.fs.open(dir);
-});
+$('#btn-sessions-open').addEventListener('click', openSessionsFolder);
 $('#btn-sessions-select').addEventListener('click', enterSelectMode);
 $('#btn-sessions-cancel').addEventListener('click', exitSelectMode);
 $('#btn-sessions-delete').addEventListener('click', deleteSelectedSessions);
@@ -6505,7 +6708,7 @@ const FX_ICONS = {
   ts: ['TS', 'ic-ts'], tsx: ['TS', 'ic-ts'],
   json: ['{}', 'ic-json'], css: ['#', 'ic-css'], scss: ['#', 'ic-css'],
   html: ['<>', 'ic-html'], htm: ['<>', 'ic-html'],
-  md: ['M', 'ic-md'], markdown: ['M', 'ic-md'],
+  md: ['MD', 'ic-md'], markdown: ['MD', 'ic-md'],
   py: ['PY', 'ic-py'], sh: ['$', 'ic-sh'], bash: ['$', 'ic-sh'], zsh: ['$', 'ic-sh'],
   go: ['GO', 'ic-go'], rs: ['RS', 'ic-rs'], c: ['C', 'ic-c'], h: ['H', 'ic-c'],
   yml: ['Y', 'ic-yml'], yaml: ['Y', 'ic-yml'], toml: ['T', 'ic-yml'],
@@ -6561,7 +6764,7 @@ function fxBuildTreeNode(name, isDir, parentRel, depth) {
   const row = document.createElement('div');
   row.className = 'fx-trow' + (isDir ? ' is-dir' : ' is-file');
   if (!isDir && rel === fx.selected) row.classList.add('is-selected');
-  row.style.paddingLeft = (8 + depth * 14) + 'px';
+  row.style.paddingLeft = (8 + depth * 12) + 'px';
   row.dataset.path = rel;
 
   const chevron = document.createElement('span');
@@ -6694,7 +6897,194 @@ function fxShowEmptyPreview(msg) {
   if (body) body.hidden = true;
   if (empty) {
     empty.hidden = false;
-    if (msg) { const s = empty.querySelector('.fx-preview-empty-sub'); if (s) s.textContent = msg; }
+    fxRenderOverview(msg);
+  }
+}
+
+// ── Workspace overview ─────────────────────────────────────────────────────
+// With no file selected the preview pane shows an overview of the folder
+// instead of a placeholder: what git says changed, the files a person opens
+// first in an unfamiliar repo, and the type mix. Every row opens a file and
+// every type chip applies the extension filter, so the pane is a starting
+// point rather than a sign that says "start somewhere else".
+const FX_ENTRY_FILES = [
+  'readme.md', 'claude.md', 'agents.md', 'contributing.md', 'security.md', 'license',
+  'package.json', 'pyproject.toml', 'cargo.toml', 'go.mod', 'makefile',
+  'dockerfile', 'docker-compose.yml', 'tsconfig.json', 'index.html', 'main.js',
+];
+const FX_OV_ROWS = 12;
+const FX_OV_TYPES = 10;
+const FX_SVG_NS = 'http://www.w3.org/2000/svg';
+
+function fxOvIcon(d) {
+  const svg = document.createElementNS(FX_SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.7');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(FX_SVG_NS, 'path');
+  p.setAttribute('d', d);
+  svg.appendChild(p);
+  return svg;
+}
+
+function fxOvEmptyBox(text, iconPath) {
+  const box = document.createElement('div');
+  box.className = 'fx-ov-empty';
+  box.appendChild(fxOvIcon(iconPath || 'M20 6L9 17l-5-5'));
+  const t = document.createElement('span');
+  t.textContent = text;
+  box.appendChild(t);
+  return box;
+}
+
+// One clickable file row: type monogram, basename at full contrast, dimmed
+// parent path, and the git status when there is one.
+function fxOvRow(path, status) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'fx-ov-row';
+  row.title = path;
+  const cut = path.lastIndexOf('/');
+  const base = cut >= 0 ? path.slice(cut + 1) : path;
+  row.appendChild(fxFileIconEl(base));
+  const nameEl = document.createElement('span');
+  nameEl.className = 'fx-ov-row-base';
+  nameEl.textContent = base;
+  row.appendChild(nameEl);
+  const dirEl = document.createElement('span');
+  dirEl.className = 'fx-ov-row-dir';
+  dirEl.textContent = cut > 0 ? path.slice(0, cut) : '';
+  row.appendChild(dirEl);
+  if (status) {
+    const st = document.createElement('span');
+    st.className = 'fx-ov-status ' + fxGitClass(status);
+    st.textContent = status;
+    row.appendChild(st);
+  }
+  row.addEventListener('click', () => fxOpenFile(path, status || ''));
+  return row;
+}
+
+// The conventional entry points, shallowest first. A folder with none of them
+// falls back to its shallowest files, which is what a person opens first when
+// the folder is not a repo they recognize.
+function fxEntryPoints() {
+  if (!fx.index.length) return [];
+  const rank = new Map(FX_ENTRY_FILES.map((n, i) => [n, i]));
+  const scored = [];
+  for (const p of fx.index) {
+    const base = (p.split('/').pop() || p).toLowerCase();
+    if (!rank.has(base)) continue;
+    scored.push({ p, r: rank.get(base), depth: p.split('/').length });
+  }
+  scored.sort((a, b) => a.depth - b.depth || a.r - b.r || a.p.length - b.p.length);
+  if (scored.length) return scored.slice(0, FX_OV_ROWS).map((s) => s.p);
+  return fx.index.slice()
+    .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b))
+    .slice(0, FX_OV_ROWS);
+}
+
+function fxTypeCounts() {
+  const counts = new Map();
+  for (const p of fx.index) {
+    const base = p.split('/').pop() || p;
+    const dot = base.lastIndexOf('.');
+    if (dot <= 0) continue;
+    const ext = base.slice(dot + 1).toLowerCase();
+    if (!ext || ext.length > 8) continue;
+    counts.set(ext, (counts.get(ext) || 0) + 1);
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, FX_OV_TYPES);
+}
+
+function fxOvStat(value, label) {
+  const box = document.createElement('div');
+  box.className = 'fx-ov-stat';
+  const n = document.createElement('span');
+  n.className = 'fx-ov-stat-n';
+  n.textContent = value;
+  const l = document.createElement('span');
+  l.className = 'fx-ov-stat-l';
+  l.textContent = label;
+  box.appendChild(n);
+  box.appendChild(l);
+  return box;
+}
+
+function fxRenderOverview(msg) {
+  const changedBox = $('#fx-ov-changed');
+  const keyBox = $('#fx-ov-key');
+  if (!changedBox || !keyBox) return;
+  const root = fx.root ? fx.root.replace(/\/+$/, '') : '';
+  const title = $('#fx-ov-title');
+  if (title) title.textContent = root ? (root.split('/').pop() || root) : 'No folder open';
+  const sub = $('#fx-ov-sub');
+  if (sub) {
+    sub.textContent = msg || fx.indexError || (root
+      ? 'Pick a file on the left to read or edit it in place, or start from what changed below.'
+      : 'Choose a folder with Open folder, or pin a project in the chat and this page follows it.');
+  }
+  const stats = $('#fx-ov-stats');
+  if (stats) {
+    while (stats.firstChild) stats.removeChild(stats.firstChild);
+    stats.appendChild(fxOvStat(String(fx.index.length) + (fx.truncated ? '+' : ''), fx.index.length === 1 ? 'file' : 'files'));
+    stats.appendChild(fxOvStat(String(fx.changed.length), 'changed'));
+  }
+
+  while (changedBox.firstChild) changedBox.removeChild(changedBox.firstChild);
+  const seeAll = $('#fx-ov-see-changed');
+  if (fx.changed.length) {
+    for (const c of fx.changed.slice(0, FX_OV_ROWS)) changedBox.appendChild(fxOvRow(c.path, c.status));
+    if (seeAll) {
+      seeAll.hidden = fx.changed.length <= FX_OV_ROWS;
+      seeAll.textContent = `See all ${fx.changed.length}`;
+    }
+  } else {
+    if (seeAll) seeAll.hidden = true;
+    changedBox.appendChild(fxOvEmptyBox(root ? 'Working tree clean.' : 'No folder open.'));
+  }
+
+  while (keyBox.firstChild) keyBox.removeChild(keyBox.firstChild);
+  const entries = fxEntryPoints();
+  if (entries.length) {
+    for (const p of entries) keyBox.appendChild(fxOvRow(p, fx.gitByPath.get(p) || ''));
+  } else {
+    keyBox.appendChild(fxOvEmptyBox(
+      fx.indexError || (root ? 'Nothing indexed in this folder.' : 'No folder open.'),
+      'M12 8v5M12 16.5v.01M12 3l9 16H3z',
+    ));
+  }
+
+  const typesBox = $('#fx-ov-types');
+  if (typesBox) {
+    while (typesBox.firstChild) typesBox.removeChild(typesBox.firstChild);
+    const types = fxTypeCounts();
+    typesBox.hidden = types.length === 0;
+    for (const [ext, n] of types) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'fx-ov-type';
+      chip.title = `Filter the list to .${ext}`;
+      const label = document.createElement('span');
+      label.textContent = '.' + ext;
+      const count = document.createElement('span');
+      count.className = 'fx-ov-type-n';
+      count.textContent = String(n);
+      chip.appendChild(label);
+      chip.appendChild(count);
+      chip.addEventListener('click', () => {
+        fx.filter = ext;
+        const inp = $('#fx-filter-input'); if (inp) inp.value = ext;
+        fxToggleFilter(true);
+        fxRenderFilterChips();
+        fxRefreshList();
+      });
+      typesBox.appendChild(chip);
+    }
   }
 }
 
@@ -6953,6 +7343,8 @@ function initFilesCommandCenter() {
   }
   $('#fx-tab-all') && $('#fx-tab-all').addEventListener('click', () => fxSetTab('all'));
   $('#fx-tab-changed') && $('#fx-tab-changed').addEventListener('click', () => fxSetTab('changed'));
+  // The overview's "See all" jumps the left index to the full changed set.
+  $('#fx-ov-see-changed') && $('#fx-ov-see-changed').addEventListener('click', () => fxSetTab('changed'));
   $('#fx-act-open') && $('#fx-act-open').addEventListener('click', () => { if (fx.selected) window.husk.fs.open(joinRoot(fx.selected)); });
   $('#fx-act-diff') && $('#fx-act-diff').addEventListener('click', fxToggleDiff);
   $('#fx-act-mention') && $('#fx-act-mention').addEventListener('click', () => {
@@ -8714,8 +9106,16 @@ async function renderPlugins() {
   const body = $('#plugins-body');
   const unsupported = $('#plugins-unsupported');
   const installedEl = $('#plugins-installed');
+  // Back to the two-section layout while the fetch runs; paintPlugins decides
+  // again afterwards whether the single zero state is the right answer.
+  const zeroEl = $('#plugins-zero');
+  if (zeroEl) zeroEl.hidden = true;
+  const installedSection = $('#plugins-section-installed');
+  const browseSection = $('#plugins-section-browse');
+  if (installedSection) installedSection.hidden = false;
+  if (browseSection) browseSection.hidden = false;
   // eslint-disable-next-line no-unsanitized/property -- Static loading template.
-  installedEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">Loading...</div></div>`;
+  installedEl.innerHTML = `<div class="empty-state plugins-hint"><div class="es-msg">Loading...</div></div>`;
   const [li, cat] = await Promise.all([window.husk.plugins.list(), window.husk.plugins.catalog()]);
   if (!li.supported) {
     body.hidden = true;
@@ -8739,13 +9139,29 @@ function paintPlugins(query) {
   const canToggle = pluginsCapabilities.canEnableDisable !== false;
   const canEdit = pluginsCapabilities.canEdit !== false;
 
+  // Nothing installed and no marketplace to install from: the two sections
+  // would each render their own icon and their own message, and the second
+  // would contradict the first. One full-height state with one action instead.
+  const nothingAnywhere = !pluginsInstalledCache.length && !pluginsCatalogCache.length;
+  const zeroEl = $('#plugins-zero');
+  const installedSection = $('#plugins-section-installed');
+  const browseSection = $('#plugins-section-browse');
+  if (zeroEl) zeroEl.hidden = !nothingAnywhere;
+  if (installedSection) installedSection.hidden = nothingAnywhere;
+  if (browseSection) browseSection.hidden = nothingAnywhere;
+  if (nothingAnywhere) return;
+
   const inst = q
     ? pluginsInstalledCache.filter((p) => (p.name + ' ' + p.marketplace).toLowerCase().includes(q))
     : pluginsInstalledCache;
   if (!inst.length) {
-    const msg = pluginsInstalledCache.length ? `No installed plugins match "${escapeHtml(query)}"` : 'No plugins installed yet. Pick one below.';
+    const msg = pluginsInstalledCache.length
+      ? `No installed plugins match "${escapeHtml(query)}"`
+      : 'Nothing installed yet. Pick one from the marketplaces below.';
+    // A one-line hint rather than a tall illustration: the catalog underneath
+    // is the thing worth the vertical space.
     // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
-    installedEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">${msg}</div></div>`;
+    installedEl.innerHTML = `<div class="empty-state plugins-hint"><div class="es-msg">${msg}</div></div>`;
   } else {
     // eslint-disable-next-line no-unsanitized/property -- Plugin fields are escaped via escapeHtml/escapeAttr.
     installedEl.innerHTML = inst.map((p) => {
@@ -8771,15 +9187,24 @@ function paintPlugins(query) {
     ? avail.filter((c) => (c.name + ' ' + c.description + ' ' + c.category).toLowerCase().includes(q))
     : avail;
   const head = $('#plugins-browse-head');
-  if (head) head.textContent = `Browse marketplaces · ${found.length} available`;
+  if (head) head.textContent = found.length ? `Browse marketplaces · ${found.length} available` : 'Browse marketplaces';
+  // An empty grid is laid out as flex so the message centers in the whole
+  // section instead of the first 280px column.
+  catalogEl.classList.toggle('is-empty', !found.length);
   if (!found.length) {
-    // eslint-disable-next-line no-unsanitized/property -- Static empty-state template.
-    catalogEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">Nothing matches.</div></div>`;
+    // Three different reasons for an empty catalog, three different answers.
+    const msg = q
+      ? `No plugin matches "${escapeHtml(query)}"`
+      : (pluginsCatalogCache.length
+        ? 'Every plugin from your marketplaces is already installed.'
+        : 'No marketplaces configured. Add one from the agent CLI, then refresh.');
+    // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
+    catalogEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">${msg}</div></div>`;
   } else {
     // Grid renders at most 120 cards to keep the DOM light; the trailing
     // hint makes the cut explicit and search reaches everything.
     const overflow = found.length > 120
-      ? `<div class="empty-state"><div class="es-msg">${found.length - 120} more match · narrow the search to see them</div></div>`
+      ? `<div class="empty-state plugins-hint plugins-more"><div class="es-msg">${found.length - 120} more match · narrow the search to see them</div></div>`
       : '';
     // eslint-disable-next-line no-unsanitized/property -- Catalog fields are escaped via escapeHtml/escapeAttr.
     catalogEl.innerHTML = found.slice(0, 120).map((c) => `
@@ -8952,6 +9377,7 @@ $('#pe-open-folder').addEventListener('click', () => { if (peCurrent.id) window.
 $('#plugin-editor').addEventListener('click', (e) => { if (e.target.id === 'plugin-editor') closePluginEditor(); });
 $('#plugins-search').addEventListener('input', debounce((e) => paintPlugins(e.target.value), 120));
 $('#btn-plugins-refresh').addEventListener('click', renderPlugins);
+$('#plugins-zero-refresh').addEventListener('click', renderPlugins);
 
 // ─── Agent quick-switch (rail pill + dropdown) ──────────────────────────────────
 let agentMenuOpen = false;
@@ -10500,6 +10926,7 @@ async function refreshAutopilotHistory() {
   const heroRuns = $('#aut-hero-runs');
   const heroFiles = $('#aut-hero-files');
   const heroSpend = $('#aut-hero-spend');
+  const heroStats = $('#aut-hero-stats');
   if (!list) return;
   const active = projectsCache.find((p) => p && p.id === activeProjectId);
   const workspaceRoot = active && active.path ? active.path : null;
@@ -10512,6 +10939,7 @@ async function refreshAutopilotHistory() {
     empty.className = 'aut-page-feed-empty';
     empty.textContent = 'Could not load history.';
     list.appendChild(empty);
+    if (heroStats) heroStats.hidden = true;
     return;
   }
   const runs = r.runs || [];
@@ -10522,11 +10950,15 @@ async function refreshAutopilotHistory() {
     empty.textContent = 'No prior runs in this project.';
     list.appendChild(empty);
     if (meta) meta.textContent = 'no runs yet';
+    // A row of three zeros is a 128px band of nothing. The strip only earns
+    // its space once there is a number worth reading.
+    if (heroStats) heroStats.hidden = true;
     if (heroRuns) heroRuns.textContent = '0';
     if (heroFiles) heroFiles.textContent = '0';
     if (heroSpend) heroSpend.textContent = '$0';
     return;
   }
+  if (heroStats) heroStats.hidden = false;
   // Selection survives a refresh only for sessions that still exist.
   const present = new Set(runs.flatMap((r) => Array.isArray(r.sessionIds) ? r.sessionIds : [r.sessionId]));
   for (const sid of [...selectedRunSessions]) if (!present.has(sid)) selectedRunSessions.delete(sid);
