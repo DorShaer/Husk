@@ -6880,6 +6880,44 @@ function fxRenderList(rows) {
   }
 }
 
+// Keyboard navigation over whatever the list is currently showing.
+//
+// The list has two render modes: a nested tree while browsing, and a flat list
+// once you search or switch to Changed. The previous handler walked fx.results,
+// which tree mode leaves empty, and it was bound to the search input's keydown,
+// so the arrows the footer advertises did nothing unless that box already had
+// focus. Both paths now navigate the rendered rows.
+function fxNavRows() {
+  const list = $('#fx-list');
+  if (!list) return [];
+  // offsetParent is null inside a collapsed folder, so a row behind a closed
+  // chevron is skipped rather than silently selected.
+  return [...list.querySelectorAll('.fx-row, .fx-trow')].filter((el) => el.offsetParent !== null);
+}
+
+function fxMove(delta) {
+  const rows = fxNavRows();
+  if (!rows.length) return;
+  const cur = rows.findIndex((el) => el.classList.contains('is-active-key'));
+  const next = cur < 0
+    ? (delta > 0 ? 0 : rows.length - 1)
+    : Math.min(rows.length - 1, Math.max(0, cur + delta));
+  rows.forEach((el, i) => el.classList.toggle('is-active-key', i === next));
+  // Keep the flat-mode index in step, since other code reads fx.activeKey.
+  fx.activeKey = fx.results.length ? next : -1;
+  rows[next].scrollIntoView({ block: 'nearest' });
+}
+
+// Enter opens a file and expands or collapses a folder, matching what a click
+// on the same row does.
+function fxActivateRow() {
+  const row = fxNavRows().find((el) => el.classList.contains('is-active-key'));
+  if (!row) return;
+  if (row.classList.contains('is-dir')) { row.click(); return; }
+  const path = row.dataset && row.dataset.path;
+  if (path) fxOpenFile(path, fx.gitByPath.get(path) || '');
+}
+
 function fxSyncActiveKey() {
   const rows = $('#fx-list').children;
   for (let i = 0; i < rows.length; i++) {
@@ -7335,12 +7373,26 @@ function initFilesCommandCenter() {
   if (search) {
     search.addEventListener('input', () => { fx.query = search.value.trim(); fxRefreshList(); });
     search.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); if (fx.activeKey < fx.results.length - 1) { fx.activeKey++; fxSyncActiveKey(); } }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); if (fx.activeKey > 0) { fx.activeKey--; fxSyncActiveKey(); } }
-      else if (e.key === 'Enter') { e.preventDefault(); const row = fx.results[fx.activeKey]; if (row) fxOpenFile(row.path, row.status); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); fxMove(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); fxMove(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); fxActivateRow(); }
       else if (e.key === 'Escape') { if (search.value) { search.value = ''; fx.query = ''; fxRefreshList(); } else search.blur(); }
     });
   }
+  // Page-level, so the footer's arrow hint is true wherever focus sits. The
+  // search input keeps its own handler, since a keydown inside it is consumed
+  // there and never reaches this listener.
+  document.addEventListener('keydown', (e) => {
+    if (document.body.dataset.page !== 'files') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); fxMove(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); fxMove(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); fxActivateRow(); }
+    else if (e.key === '/') { e.preventDefault(); const el = $('#fx-search'); if (el) el.focus(); }
+  });
+
   $('#fx-tab-all') && $('#fx-tab-all').addEventListener('click', () => fxSetTab('all'));
   $('#fx-tab-changed') && $('#fx-tab-changed').addEventListener('click', () => fxSetTab('changed'));
   // The overview's "See all" jumps the left index to the full changed set.
