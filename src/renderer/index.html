@@ -1647,14 +1647,65 @@
             <!-- Shown instead of both sections when nothing is installed and no
                  marketplace is configured: one icon, one instruction, one action. -->
             <div class="plugins-zero" id="plugins-zero" hidden>
-              <div class="empty-state">
+              <div class="pz-lead">
                 <div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg></div>
-                <div class="es-title">No plugins yet</div>
-                <div class="es-msg">Plugins bundle commands, agents, hooks and MCP servers for the active agent. Add a marketplace from the agent CLI, then refresh to browse and install from it.</div>
-                <div class="plugins-zero-cmd">/plugin marketplace add owner/repo</div>
-                <div class="plugins-zero-actions">
-                  <button class="btn-primary" id="plugins-zero-refresh">Refresh plugins</button>
+                <div class="pz-lead-text">
+                  <h2 class="pz-title">No plugins yet</h2>
+                  <p class="pz-sub">A plugin bundles slash commands, agents, hooks and MCP servers, and installs them into the active agent in one step.</p>
                 </div>
+              </div>
+
+              <div class="pz-main">
+              <ol class="pz-steps">
+                <li class="pz-step">
+                  <span class="pz-step-n">1</span>
+                  <div class="pz-step-body">
+                    <div class="pz-step-title">Point the agent at a marketplace</div>
+                    <p class="pz-step-msg">Run this in any chat. A marketplace is a git repo that lists the plugins it publishes.</p>
+                    <button type="button" class="pz-cmd" id="plugins-zero-cmd" data-cmd="/plugin marketplace add owner/repo" title="Copy to clipboard">
+                      <code>/plugin marketplace add owner/repo</code>
+                      <span class="pz-cmd-copy" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                      </span>
+                    </button>
+                  </div>
+                </li>
+                <li class="pz-step">
+                  <span class="pz-step-n">2</span>
+                  <div class="pz-step-body">
+                    <div class="pz-step-title">Refresh this page</div>
+                    <p class="pz-step-msg">Husk re-reads the agent's plugin list and shows everything the marketplace publishes.</p>
+                    <button class="ghost-btn" id="plugins-zero-refresh">Refresh plugins</button>
+                  </div>
+                </li>
+                <li class="pz-step">
+                  <span class="pz-step-n">3</span>
+                  <div class="pz-step-body">
+                    <div class="pz-step-title">Install what you need</div>
+                    <p class="pz-step-msg">Installed plugins appear above and load the next time the agent starts.</p>
+                  </div>
+                </li>
+              </ol>
+
+              <aside class="pz-facets">
+                <div class="pz-facets-head">What a plugin can carry</div>
+                <div class="pz-facet">
+                  <div class="pz-facet-k">Commands</div>
+                  <div class="pz-facet-v">Slash commands you can run in any chat</div>
+                </div>
+                <div class="pz-facet">
+                  <div class="pz-facet-k">Agents</div>
+                  <div class="pz-facet-v">Named specialists the model can delegate to</div>
+                </div>
+                <div class="pz-facet">
+                  <div class="pz-facet-k">Hooks</div>
+                  <div class="pz-facet-v">Scripts that fire on tool calls and lifecycle events</div>
+                </div>
+                <div class="pz-facet">
+                  <div class="pz-facet-k">MCP servers</div>
+                  <div class="pz-facet-v">Tools and data sources the agent can reach</div>
+                </div>
+              </aside>
               </div>
             </div>
             <section class="mcp-section" id="plugins-section-installed">

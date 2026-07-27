@@ -9149,6 +9149,13 @@ function paintPlugins(query) {
   if (zeroEl) zeroEl.hidden = !nothingAnywhere;
   if (installedSection) installedSection.hidden = nothingAnywhere;
   if (browseSection) browseSection.hidden = nothingAnywhere;
+  // Nothing to filter: leaving the input live invites a keystroke that cannot
+  // do anything, since this function returns before it reaches a list.
+  const searchEl = $('#plugins-search');
+  if (searchEl) {
+    searchEl.disabled = nothingAnywhere;
+    searchEl.placeholder = nothingAnywhere ? 'No plugins to filter' : 'Filter plugins...';
+  }
   if (nothingAnywhere) return;
 
   const inst = q
@@ -9378,6 +9385,17 @@ $('#plugin-editor').addEventListener('click', (e) => { if (e.target.id === 'plug
 $('#plugins-search').addEventListener('input', debounce((e) => paintPlugins(e.target.value), 120));
 $('#btn-plugins-refresh').addEventListener('click', renderPlugins);
 $('#plugins-zero-refresh').addEventListener('click', renderPlugins);
+$('#plugins-zero-cmd')?.addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.cmd || '');
+    btn.classList.add('is-copied');
+    toast('Command copied', 'success');
+    setTimeout(() => btn.classList.remove('is-copied'), 1600);
+  } catch (_) {
+    toast('Could not copy to the clipboard', 'error');
+  }
+});
 
 // ─── Agent quick-switch (rail pill + dropdown) ──────────────────────────────────
 let agentMenuOpen = false;

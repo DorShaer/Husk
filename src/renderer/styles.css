@@ -6519,30 +6519,146 @@ input[type="checkbox"]:disabled {
 .page-plugins .empty-state .es-icon { opacity: 0.75; }
 /* Single zero state: shown in place of both sections when there is nothing
    installed and no marketplace to install from. */
-.plugins-zero:not([hidden]) { flex: 1; display: flex; min-height: 0; }
-.plugins-zero .empty-state { flex: 1; gap: var(--space-3); }
+/* Zero state as onboarding, not as an announcement of absence.
+   The previous version centred a 366x265 island in a 1519x1012 region: 329px
+   of dead air above it, 335px below, and its only call to action re-rendered
+   the same screen. The real next step happens in the agent CLI, so the page
+   now teaches that path and uses the width to say what a plugin actually is. */
+.plugins-zero:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-6);
+  padding: var(--space-5) 0;
+  overflow-y: auto;
+}
+/* Centred rather than top-anchored, because the block is now a full onboarding
+   surface rather than a small island. Leftover height is split above and below
+   instead of collecting in one band under the content, which is what made the
+   previous version read as a page that ran out. */
+
+.pz-lead { display: flex; gap: var(--space-4); align-items: flex-start; }
+.pz-lead-text { min-width: 0; }
 .page-plugins .plugins-zero .es-icon {
-  width: 56px; height: 56px;
-  align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   background: var(--bg-2);
   color: var(--accent);
   opacity: 1;
+}
+.plugins-zero .es-icon svg { width: 22px; height: 22px; }
+.pz-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: var(--tracking-tight);
+}
+.pz-sub {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  line-height: var(--lh-base);
+  max-width: 68ch;
+}
+
+/* Numbered path. Each step owns one instruction, so the command sits with the
+   sentence that tells you where to run it rather than floating on its own. */
+/* Two columns: the path on the left, what you get on the right. A single
+   72ch column left the right half of a 1519px page empty, which is the defect
+   this rewrite exists to fix. */
+.pz-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  gap: var(--space-7);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .pz-main { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+}
+.pz-steps {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  gap: var(--space-1);
+}
+.pz-step { display: flex; gap: var(--space-4); align-items: flex-start; padding: var(--space-3) 0; }
+.pz-step + .pz-step { border-top: 1px solid var(--line); }
+.pz-step-n {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: var(--fs-nano);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pz-step-body { min-width: 0; flex: 1; }
+.pz-step-title { font-size: var(--fs-small); font-weight: 600; color: var(--text); }
+.pz-step-msg {
+  margin: 2px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: var(--lh-base);
+}
+.pz-step .ghost-btn { margin-top: var(--space-3); }
+
+/* The command is the one thing on this page the user has to move elsewhere.
+   It is a button so it can be copied in one click, instead of a chip styled
+   like a disabled input that has to be drag-selected. */
+.pz-cmd {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  margin-top: var(--space-3);
+  height: var(--control-h);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.pz-cmd code { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); }
+.pz-cmd-copy { display: flex; color: var(--text-3); transition: color var(--motion-fast) var(--ease); }
+.pz-cmd-copy svg { width: 14px; height: 14px; }
+.pz-cmd:hover { background: var(--bg-3); border-color: var(--line-3); color: var(--text); }
+.pz-cmd:hover .pz-cmd-copy { color: var(--accent); }
+.pz-cmd:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.pz-cmd.is-copied { border-color: color-mix(in srgb, var(--emerald) 55%, var(--line-2)); color: var(--text); }
+.pz-cmd.is-copied .pz-cmd-copy { color: var(--emerald); }
+
+/* What you get, across the width the steps do not need. */
+.pz-facets { display: flex; flex-direction: column; gap: var(--space-2); }
+.pz-facets-head {
+  font-size: var(--fs-nano);
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-3);
   margin-bottom: var(--space-1);
 }
-.plugins-zero .es-icon svg { width: 26px; height: 26px; }
-.plugins-zero-cmd {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: var(--fs-micro);
-  color: var(--text-2);
-  background: var(--bg-2);
+.pz-facet {
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
-  user-select: all;
+  border-radius: var(--radius-lg);
+  background: var(--bg-1);
 }
-.plugins-zero-actions { display: flex; gap: var(--space-2); margin-top: var(--space-1); }
+.pz-facet-k { font-size: var(--fs-micro); font-weight: 600; color: var(--text); }
+.pz-facet-v {
+  margin-top: 2px;
+  font-size: var(--fs-nano);
+  color: var(--text-3);
+  line-height: var(--lh-base);
+}
 /* One-line hint, not an illustration: used where the list below it is the
    thing worth the vertical space. */
 .plugins-hint {
