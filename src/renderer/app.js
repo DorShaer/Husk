@@ -7386,7 +7386,15 @@ function initFilesCommandCenter() {
     if (document.body.dataset.page !== 'files') return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    const isText = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    // Only defer to a field the user can actually see. xterm parks focus in a
+    // hidden helper textarea belonging to the chat page, and nothing blurs it
+    // when you navigate away, so after Ctrl+K or Alt+N the active element is a
+    // textarea on a page that is no longer showing. Treating that as "typing"
+    // swallowed every arrow key on this page.
+    const onScreen = isText && t.closest
+      && t.closest('.page:not([hidden]), .modal:not([hidden]), #palette:not([hidden]), #topbar');
+    if (onScreen) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); fxMove(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); fxMove(-1); }
     else if (e.key === 'Enter') { e.preventDefault(); fxActivateRow(); }
