@@ -5691,6 +5691,15 @@ input[type="checkbox"]:disabled {
    and the tree, which is the default browse view. Styling only .fx-row meant
    the arrows moved an invisible highlight through the tree, so the keys the
    footer advertises appeared to do nothing at all. */
+/* One ring, whether the row became current by Tab or by an arrow. The generic
+   button:focus-visible rule would otherwise draw a second, differently shaped
+   ring on overview rows, which is what made Tab and the arrows look like two
+   separate selections. */
+.fx-ov-row:focus,
+.fx-ov-row:focus-visible,
+.fx-row:focus,
+.fx-trow:focus { outline: none; box-shadow: none; }
+
 .fx-row.is-active-key,
 .fx-trow.is-active-key,
 .fx-ov-row.is-active-key {

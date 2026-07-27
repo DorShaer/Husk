@@ -6926,12 +6926,50 @@ function fxClearCursor() {
   });
 }
 
+// The cursor IS the focus. Overview rows are buttons and take a native focus
+// ring on Tab, while list rows are divs driven by a class, so keeping the two
+// separate meant Tab and the arrows each left their own highlight and the page
+// showed two selected rows. Moving focus with the cursor collapses them into
+// one thing that both inputs drive.
+//
+// Roving tabindex: the cursor row is the single tab stop for its pane, so
+// tabbing in lands on the cursor rather than walking every row.
 function fxSetCursor(row, pane) {
   if (!row) return;
   fxClearCursor();
   row.classList.add('is-active-key');
   if (pane) fxPane = pane;
+  const host = fxPaneEl(fxPane);
+  if (host) {
+    const sel = fxPane === 'list' ? '.fx-row, .fx-trow' : '.fx-ov-row';
+    host.querySelectorAll(sel).forEach((el) => { el.tabIndex = -1; });
+  }
+  row.tabIndex = 0;
+  // preventScroll: scrollIntoView already positions the row, and letting focus
+  // scroll as well jumps the pane.
+  try { row.focus({ preventScroll: true }); } catch (_) { }
 }
+
+// Tab moves focus without going through fxSetCursor, so mirror it back onto
+// the cursor. Setting the class only, never focus, so this cannot recurse.
+// When Tab carries focus out of all three panes the cursor is dropped too,
+// otherwise a stale highlight sits in the list while the real focus ring is on
+// some other control, which reads as two selected things again.
+document.addEventListener('focusin', (e) => {
+  if (document.body.dataset.page !== 'files') return;
+  const panes = [['#fx-list', 'list'], ['#fx-ov-changed', 'ov0'], ['#fx-ov-key', 'ov1']];
+  for (const [sel, pane] of panes) {
+    const host = document.querySelector(sel);
+    if (!host || !host.contains(e.target)) continue;
+    const row = e.target.closest('.fx-row, .fx-trow, .fx-ov-row');
+    if (!row || row.classList.contains('is-active-key')) return;
+    fxClearCursor();
+    row.classList.add('is-active-key');
+    fxPane = pane;
+    return;
+  }
+  fxClearCursor();
+});
 
 function fxMove(delta) {
   const rows = fxNavRows();
@@ -6967,6 +7005,24 @@ function fxMovePane(delta) {
 
 // Enter opens a file and expands or collapses a folder, matching what a click
 // on the same row does.
+function fxEscape() {
+  const hadCursor = !!document.querySelector('#fx-list .is-active-key, #fx-ov-changed .is-active-key, #fx-ov-key .is-active-key');
+  if (hadCursor) {
+    fxClearCursor();
+    fxPane = 'list';
+    fx.activeKey = -1;
+    try { document.activeElement && document.activeElement.blur(); } catch (_) { }
+    return;
+  }
+  // No cursor left to drop: close the open file and return to the overview.
+  if (fx.selected) {
+    fx.selected = null;
+    fx.diffOpen = false;
+    $$('#fx-list .is-selected').forEach((el) => el.classList.remove('is-selected'));
+    fxShowEmptyPreview('');
+  }
+}
+
 function fxActivateRow() {
   const row = fxNavRows().find((el) => el.classList.contains('is-active-key'));
   if (!row) return;
@@ -7459,6 +7515,7 @@ function initFilesCommandCenter() {
     else if (e.key === 'ArrowRight') { e.preventDefault(); fxMovePane(1); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); fxMovePane(-1); }
     else if (e.key === 'Enter') { e.preventDefault(); fxActivateRow(); }
+    else if (e.key === 'Escape') { e.preventDefault(); fxEscape(); }
     else if (e.key === '/') { e.preventDefault(); const el = $('#fx-search'); if (el) el.focus(); }
   });
 
