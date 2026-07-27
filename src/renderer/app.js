@@ -9070,6 +9070,20 @@ $('#btn-mcp-add-custom').addEventListener('click', openMcpCustomModal);
 let pluginsInstalledCache = [];
 let pluginsCatalogCache = [];
 let pluginsCapabilities = { canEnableDisable: true, canEdit: true, canBrowse: true };
+// Every catalog card already carries a category badge. Until now it was
+// decoration: 272 plugins rendered as one flat alphabetical grid with no way
+// to narrow them except free text.
+let pluginsCategory = '';
+
+// Cut on a word boundary and strip the punctuation the cut leaves behind, so a
+// truncated description ends in an ellipsis rather than a dangling comma.
+function clampWords(text, max) {
+  const t = String(text).trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(' ');
+  return (at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,;:.\-]+$/, '') + '...';
+}
 // Set of in-flight plugin ids so a slow install cannot be double-clicked.
 const pluginsBusy = new Set();
 
@@ -9190,9 +9204,47 @@ function paintPlugins(query) {
   }
 
   const avail = pluginsCatalogCache.filter((c) => !installedIds.has(c.id));
-  const found = q
-    ? avail.filter((c) => (c.name + ' ' + c.description + ' ' + c.category).toLowerCase().includes(q))
-    : avail;
+  const matchesText = (c) => !q || (c.name + ' ' + c.description + ' ' + c.category).toLowerCase().includes(q);
+  // Counts come from the text-filtered set, so a chip never promises results
+  // that the active search has already excluded.
+  const textMatched = avail.filter(matchesText);
+  const counts = new Map();
+  textMatched.forEach((c) => {
+    const k = (c.category || '').trim();
+    if (k) counts.set(k, (counts.get(k) || 0) + 1);
+  });
+  if (pluginsCategory && !counts.has(pluginsCategory)) pluginsCategory = '';
+  const found = pluginsCategory
+    ? textMatched.filter((c) => (c.category || '').trim() === pluginsCategory)
+    : textMatched;
+
+  const catsEl = $('#plugins-cats');
+  if (catsEl) {
+    const chips = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    if (chips.length < 2) {
+      catsEl.hidden = true;
+      catsEl.textContent = '';
+    } else {
+      catsEl.hidden = false;
+      const chip = (val, label, n, on) =>
+        `<button type="button" class="plugins-cat${on ? ' is-on' : ''}" data-cat="${escapeAttr(val)}" aria-pressed="${on}">`
+        + `${escapeHtml(label)}<span class="plugins-cat-n">${n}</span></button>`;
+      // eslint-disable-next-line no-unsanitized/property -- Labels are escaped above.
+      // capitalize turns "ai" into "Ai"; anything this short is an acronym.
+      const label = (k) => (k.length <= 3 ? k.toUpperCase() : k);
+      catsEl.innerHTML = chip('', 'All', textMatched.length, !pluginsCategory)
+        + chips.map(([k, n]) => chip(k, label(k), n, pluginsCategory === k)).join('');
+    }
+  }
+
+  const instHead = document.querySelector('#plugins-section-installed .mcp-section-head');
+  if (instHead) {
+    const on = pluginsInstalledCache.filter((p) => p.enabled).length;
+    instHead.textContent = pluginsInstalledCache.length
+      ? `Installed · ${pluginsInstalledCache.length}${on < pluginsInstalledCache.length ? `, ${on} enabled` : ''}`
+      : 'Installed';
+  }
+
   const head = $('#plugins-browse-head');
   if (head) head.textContent = found.length ? `Browse marketplaces · ${found.length} available` : 'Browse marketplaces';
   // An empty grid is laid out as flex so the message centers in the whole
@@ -9220,7 +9272,7 @@ function paintPlugins(query) {
           <span class="plugin-card-name">${escapeHtml(c.name)}</span>
           ${c.category ? `<span class="plugin-badge">${escapeHtml(c.category)}</span>` : ''}
         </div>
-        <div class="plugin-card-desc">${escapeHtml((c.description || '').slice(0, 180))}</div>
+        <div class="plugin-card-desc">${escapeHtml(clampWords(c.description || '', 170))}</div>
         <div class="plugin-card-foot">
           <span class="plugin-card-mp">${escapeHtml(c.marketplace)}</span>
           <button class="btn-primary plugin-install" data-act="install">Install</button>
@@ -9385,6 +9437,15 @@ $('#plugin-editor').addEventListener('click', (e) => { if (e.target.id === 'plug
 $('#plugins-search').addEventListener('input', debounce((e) => paintPlugins(e.target.value), 120));
 $('#btn-plugins-refresh').addEventListener('click', renderPlugins);
 $('#plugins-zero-refresh').addEventListener('click', renderPlugins);
+$('#plugins-cats')?.addEventListener('click', (e) => {
+  const chip = e.target.closest('.plugins-cat');
+  if (!chip) return;
+  const val = chip.dataset.cat || '';
+  // Clicking the active chip clears it, so the filter never becomes a trap.
+  pluginsCategory = pluginsCategory === val ? '' : val;
+  paintPlugins($('#plugins-search').value);
+});
+
 $('#plugins-zero-cmd')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   try {

@@ -6499,7 +6499,42 @@ input[type="checkbox"]:disabled {
 /* Browse takes whatever the installed list leaves over, so the catalog (or
    its empty state) uses the page instead of stopping a third of the way down. */
 .plugins-body .plugins-section-browse { flex: 1 0 auto; }
-.plugins-section-browse .plugins-grid { flex: 1; }
+.plugins-section-browse /* Category filter. The badges on the cards were already there; this makes
+   them navigable instead of decorative. */
+.plugins-cats {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.plugins-cat {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.plugins-cat { text-transform: capitalize; }
+.plugins-cat[data-cat=""], .plugins-cat[data-cat="ai"] { text-transform: none; }
+.plugins-cat:hover { background: var(--bg-2); border-color: var(--line-2); color: var(--text); }
+.plugins-cat:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.plugins-cat.is-on {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-1));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2));
+  color: var(--text);
+}
+.plugins-cat-n {
+  font-size: var(--fs-nano);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.plugins-cat.is-on .plugins-cat-n { color: var(--accent); }
+
+.plugins-grid { flex: 1; }
 .plugins-installed { display: flex; flex-direction: column; gap: var(--space-3); }
 .plugins-unsupported:not([hidden]) { flex: 1; display: flex; padding: 0 0 var(--space-4); }
 /* Empty-state type on this page: the title reads as a heading and the message
@@ -6674,6 +6709,7 @@ input[type="checkbox"]:disabled {
   background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg);
 }
 .plugin-row.disabled { opacity: 0.55; }
+.plugin-row.disabled .ghost-btn-danger { color: var(--text-3); }
 .plugin-row-main { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .plugin-row-name { font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .plugin-row-meta { color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); }
@@ -6716,7 +6752,25 @@ input[type="checkbox"]:disabled {
 .plugin-card-top { display: flex; align-items: center; gap: 10px; }
 .plugin-card-name { font-weight: 600; font-size: var(--fs-body); color: var(--text); flex: 1; }
 .plugin-card-desc { font-size: var(--fs-micro); color: var(--text-2); line-height: 1.5; flex: 1; }
-.plugin-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.plugin-card-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-1); }
+/* A grid of 272 cards previously rendered 272 filled accent buttons, so no
+   single one read as a decision. The action resolves on approach instead. */
+/* Specificity note: [data-mode="dark"] .btn-primary is (0,2,0) and sits later
+   in the file, so a (0,2,0) rule here loses on order. Naming both classes
+   makes this (0,3,0) and wins regardless of position. */
+.plugin-card .plugin-install.btn-primary {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--line-2);
+  box-shadow: none;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.plugin-card:hover .plugin-install.btn-primary,
+.plugin-card .plugin-install.btn-primary:focus-visible {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: transparent;
+}
 .plugin-card-mp { color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); }
 .plugin-install { padding: 4px 12px; font-size: var(--fs-micro); }
 
