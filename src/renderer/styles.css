@@ -4612,8 +4612,8 @@ body[data-page="chat"] #chats-panel { display: flex; }
 /* Agents grid: 3-column at wide widths, comfortable gap. */
 .agents-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-4);
   align-content: start;
 }
 
@@ -4624,7 +4624,6 @@ body[data-page="chat"] #chats-panel { display: flex; }
   border-radius: var(--radius-lg);
   padding: 14px 16px;
   position: relative;
-  box-shadow: var(--elev-1);
   display: flex; flex-direction: column; gap: 8px;
   cursor: pointer;
   transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
@@ -4651,7 +4650,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
   min-height: 24px;
 }
 .agent-card-title {
-  font-size: var(--fs-body); font-weight: 600; color: var(--text);
+  font-size: var(--fs-h3); font-weight: 600; color: var(--text);
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   letter-spacing: -0.005em;
@@ -4671,7 +4670,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
   flex: 0 0 auto;
 }
 .agent-card-desc {
-  font-size: var(--fs-body); color: var(--text-2); line-height: 1.5;
+  font-size: var(--fs-small); color: var(--text-2); line-height: var(--lh-base);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
   margin: 0;
@@ -5573,6 +5572,14 @@ input[type="checkbox"]:disabled {
 .mcp-installed > .empty-state {
   grid-column: 1 / -1;
   min-height: 360px;
+}
+
+/* Having installed nothing yet is the starting state, not an event. Reserving
+   a third of the viewport to say so pushes the catalog, which is the only
+   thing on this page you can act on, below the fold. */
+.mcp-installed > .empty-state {
+  min-height: 0;
+  padding: var(--space-4) 0 var(--space-5);
 }
 
 /* ─── Files page (tree) ─────────────────────────────────────────────────── */
