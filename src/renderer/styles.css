@@ -5687,7 +5687,22 @@ input[type="checkbox"]:disabled {
 }
 .fx-row:hover { background: var(--bg-2); color: var(--text); }
 .fx-row.is-selected { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); color: var(--text); }
-.fx-row.is-active-key { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Keyboard cursor. This has to read on BOTH row shapes: the flat search list
+   and the tree, which is the default browse view. Styling only .fx-row meant
+   the arrows moved an invisible highlight through the tree, so the keys the
+   footer advertises appeared to do nothing at all. */
+.fx-row.is-active-key,
+.fx-trow.is-active-key {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  color: var(--text);
+}
+/* When a row is both the keyboard cursor and the open file, the cursor wins on
+   the outline and the selection keeps its heavier fill. */
+.fx-trow.is-selected.is-active-key {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-2));
+}
 .fx-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .fx-row-name span { direction: ltr; unicode-bidi: plaintext; }
 .fx-row-match { color: var(--accent); font-weight: 700; }
