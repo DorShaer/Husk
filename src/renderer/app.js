@@ -6816,6 +6816,7 @@ function fxBuildTreeNode(name, isDir, parentRel, depth) {
         }
         loaded = true;
       }
+      fxSetCursor(row, 'list');
       const open = !children.hidden;
       children.hidden = open;
       row.classList.toggle('is-open', !open);
@@ -6826,6 +6827,7 @@ function fxBuildTreeNode(name, isDir, parentRel, depth) {
       const prev = $('#fx-list').querySelector('.fx-trow.is-selected');
       if (prev) prev.classList.remove('is-selected');
       row.classList.add('is-selected');
+      fxSetCursor(row, 'list');
       fxOpenFile(rel, status);
     });
   }
@@ -6864,7 +6866,7 @@ function fxRenderList(rows) {
     name.appendChild(inner);
     el.appendChild(badge);
     el.appendChild(name);
-    el.addEventListener('click', () => { fx.activeKey = i; fxOpenFile(row.path, row.status); fxSyncActiveKey(); });
+    el.addEventListener('click', () => { fx.activeKey = i; fxSetCursor(el, 'list'); fxOpenFile(row.path, row.status); });
     list.appendChild(el);
   });
   // Surface truncation and result caps so a big root never looks complete when
@@ -6887,12 +6889,48 @@ function fxRenderList(rows) {
 // which tree mode leaves empty, and it was bound to the search input's keydown,
 // so the arrows the footer advertises did nothing unless that box already had
 // focus. Both paths now navigate the rendered rows.
-function fxNavRows() {
-  const list = $('#fx-list');
-  if (!list) return [];
+// Which region the keys drive: the file list, or one of the two overview
+// columns. Left and Right move between them, Up and Down move inside one.
+let fxPane = 'list';
+
+function fxPaneEl(pane) {
+  if (pane === 'ov0') return $('#fx-ov-changed');
+  if (pane === 'ov1') return $('#fx-ov-key');
+  return $('#fx-list');
+}
+
+// The overview only exists while no file is open, so the two extra panes are
+// reachable only in that state.
+function fxOverviewOpen() {
+  const empty = $('#fx-preview-empty');
+  return !!empty && !empty.hidden;
+}
+
+function fxNavRows(pane) {
+  const which = pane || fxPane;
+  const host = fxPaneEl(which);
+  if (!host) return [];
+  const sel = which === 'list' ? '.fx-row, .fx-trow' : '.fx-ov-row';
   // offsetParent is null inside a collapsed folder, so a row behind a closed
   // chevron is skipped rather than silently selected.
-  return [...list.querySelectorAll('.fx-row, .fx-trow')].filter((el) => el.offsetParent !== null);
+  return [...host.querySelectorAll(sel)].filter((el) => el.offsetParent !== null);
+}
+
+// One cursor for the whole page. Clearing every pane first is what stops a
+// mouse click and the keyboard each leaving a highlight behind, which read as
+// two files being selected at once.
+function fxClearCursor() {
+  ['list', 'ov0', 'ov1'].forEach((p) => {
+    const host = fxPaneEl(p);
+    if (host) host.querySelectorAll('.is-active-key').forEach((el) => el.classList.remove('is-active-key'));
+  });
+}
+
+function fxSetCursor(row, pane) {
+  if (!row) return;
+  fxClearCursor();
+  row.classList.add('is-active-key');
+  if (pane) fxPane = pane;
 }
 
 function fxMove(delta) {
@@ -6902,10 +6940,29 @@ function fxMove(delta) {
   const next = cur < 0
     ? (delta > 0 ? 0 : rows.length - 1)
     : Math.min(rows.length - 1, Math.max(0, cur + delta));
-  rows.forEach((el, i) => el.classList.toggle('is-active-key', i === next));
+  fxSetCursor(rows[next]);
   // Keep the flat-mode index in step, since other code reads fx.activeKey.
-  fx.activeKey = fx.results.length ? next : -1;
+  if (fxPane === 'list') fx.activeKey = fx.results.length ? next : -1;
   rows[next].scrollIntoView({ block: 'nearest' });
+}
+
+// Left and Right walk the panes: the list, then the two overview columns. The
+// overview panes drop out of the chain when a file is open, since they are not
+// rendered then.
+function fxMovePane(delta) {
+  const chain = fxOverviewOpen() ? ['list', 'ov0', 'ov1'] : ['list'];
+  let at = Math.max(0, chain.indexOf(fxPane));
+  // Step over panes that render nothing. A clean working tree leaves the first
+  // overview column empty, and stopping there would strand the cursor on a
+  // column with no rows and no way forward.
+  for (let i = at + delta; i >= 0 && i < chain.length; i += delta) {
+    const rows = fxNavRows(chain[i]);
+    if (rows.length) {
+      fxSetCursor(rows[0], chain[i]);
+      rows[0].scrollIntoView({ block: 'nearest' });
+      return;
+    }
+  }
 }
 
 // Enter opens a file and expands or collapses a folder, matching what a click
@@ -6913,6 +6970,8 @@ function fxMove(delta) {
 function fxActivateRow() {
   const row = fxNavRows().find((el) => el.classList.contains('is-active-key'));
   if (!row) return;
+  // Overview rows already carry their own click behaviour.
+  if (fxPane !== 'list') { row.click(); return; }
   if (row.classList.contains('is-dir')) { row.click(); return; }
   const path = row.dataset && row.dataset.path;
   if (path) fxOpenFile(path, fx.gitByPath.get(path) || '');
@@ -7397,6 +7456,8 @@ function initFilesCommandCenter() {
     if (onScreen) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); fxMove(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); fxMove(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); fxMovePane(1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); fxMovePane(-1); }
     else if (e.key === 'Enter') { e.preventDefault(); fxActivateRow(); }
     else if (e.key === '/') { e.preventDefault(); const el = $('#fx-search'); if (el) el.focus(); }
   });

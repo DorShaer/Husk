@@ -5692,7 +5692,8 @@ input[type="checkbox"]:disabled {
    the arrows moved an invisible highlight through the tree, so the keys the
    footer advertises appeared to do nothing at all. */
 .fx-row.is-active-key,
-.fx-trow.is-active-key {
+.fx-trow.is-active-key,
+.fx-ov-row.is-active-key {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
@@ -5835,10 +5836,15 @@ input[type="checkbox"]:disabled {
   transition: color var(--motion-fast) var(--ease);
 }
 .fx-ov-link:hover { color: var(--text); text-decoration: underline; }
+/* The top padding is not decoration: the rows scroll inside a box whose card
+   clips overflow, so with zero padding the first row's focus ring drew outside
+   the padding box and came back cut off along its top edge. scroll-margin
+   keeps that ring clear of the edge when a row is scrolled into view too. */
 .fx-ov-rows {
   flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
-  padding: 0 var(--space-2) var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-2);
 }
+.fx-ov-row { scroll-margin-block: var(--space-1); }
 .fx-ov-rows::-webkit-scrollbar { width: 7px; }
 .fx-ov-rows::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
 .fx-ov-row {
