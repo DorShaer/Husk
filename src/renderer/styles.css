@@ -1752,7 +1752,10 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   padding: var(--space-4);
   border-radius: var(--radius-xl, 12px);
   background: var(--bg-1);
-  border: 1px solid var(--line-2);
+  /* --line-2 measured 1.48:1 against this fill in the light themes, which is a
+     card edge you have to hunt for. --line-3 is the strongest neutral rule in
+     the palette and is what the denser surfaces already use. */
+  border: 1px solid var(--line-3);
   box-shadow: var(--elev-2);
   cursor: pointer;
   text-align: left;
