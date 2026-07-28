@@ -8025,7 +8025,11 @@ function fillOrchSelect(sel, customInput, vendor, current) {
     for (const m of models) {
       const o = document.createElement('option');
       o.value = m.value;
-      o.textContent = m.label === m.value ? m.value : `${m.label}: ${m.value}`;
+      // The label already names the model. Appending the raw id repeated it in
+      // a second vocabulary and pushed the useful half of longer rows out of
+      // the control's width, so the id moves to the tooltip.
+      o.textContent = m.label || m.value;
+      if (m.label !== m.value) o.title = m.value;
       group.appendChild(o);
     }
     sel.appendChild(group);

@@ -48,7 +48,9 @@ function isExplicitModelValueUsable(value) {
   // older catalog parsing) must never reach the CLI as --model.
   if (/\.(json|jsonc|ya?ml|md|txt|log|lock|toml|ini|cfg|conf|sh|mjs|cjs|js|ts)$/i.test(raw)) return false;
   if (/(^|[-./_])(api|sdk|cli|docs?|settings|config|readme|help)$/i.test(raw)) return false;
-  return /^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(raw);
+  // A trailing [1m] selects the long-context tier and is part of the id the
+  // CLI accepts, so it survives the character check rather than failing it.
+  return /^[A-Za-z0-9][A-Za-z0-9._:+/-]*(\[1m\])?$/i.test(raw);
 }
 
 // Classify a goal into a model tier. Conservative by design: only route DOWN
