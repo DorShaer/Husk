@@ -4162,9 +4162,16 @@ function catalogModelLabel(id, command = null) {
   const want = key(raw);
   const hit = models.find((m) => key(m.value) === want);
   if (!hit) return '';
-  // Catalog labels read "Opus 5 · Best for everyday use". The status panel has
-  // room for the name, not the blurb.
-  return String(hit.label || '').split('·')[0].trim();
+  // Catalog labels read "Opus 5 With 1M Context · Best for everyday use". The
+  // panel wants the model's name: not the blurb, and not the context tier,
+  // which it already reports on its own row and which is a property of the
+  // session rather than part of what the model is called. The dropdown keeps
+  // the full wording, since choosing a tier is the point there.
+  return String(hit.label || '').split('·')[0]
+    .replace(/\bwith\s+1m\s+context\b/ig, '')
+    .replace(/\(1m context\)/ig, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 async function discoverModelCatalog({ refresh = false, command = null, fast = false } = {}) {
