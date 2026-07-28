@@ -12193,7 +12193,12 @@ function updateAutopilotBudget(b) {
   const partial = !!b.tokensPartial;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    tv2.textContent = (approx && processed > 0 ? '~' : '') + formatTokens(processed);
+    // The headline is the quantity the cap ring measures. It used to add cache
+    // READS on top, while the ring below used input + output + cache writes, so
+    // a capped run could read "6.1M" beside a ring at a quarter of its limit.
+    // Cache reads are the cached prefix re-sent on every request: across 160
+    // requests they reach millions while the context window never grows.
+    tv2.textContent = (approx && tk > 0 ? '~' : '') + formatTokens(tk);
     tv2.title = partial
       ? 'Partial token accounting: this agent did not expose full input/context totals'
       : 'Every token the model processed: input + output + cache writes + cache reads.';
@@ -12248,7 +12253,7 @@ function renderUsageStripLive() {
   let warnTokens = false;
   let warnDollars = false;
   let earliest = 0;
-  let brk = { input: 0, output: 0, cw: 0, cr: 0, baseline: 0, agents: 0, exact: false, approx: false, partial: false };
+  let brk = { input: 0, output: 0, cw: 0, cr: 0, baseline: 0, agents: 0, requests: 0, exact: false, approx: false, partial: false };
   for (const run of activeRuns.values()) {
     const b = run.budget;
     if (run.startedAt && (!earliest || run.startedAt < earliest)) earliest = run.startedAt;
@@ -12264,6 +12269,7 @@ function renderUsageStripLive() {
     // agent, so it scales with agent count rather than with the task.
     const base = Number(b.baselineContextTokens) || 0;
     if (base > 0) { brk.baseline += base; brk.agents += 1; }
+      brk.requests += Number(b.requestCount) || 0;
     if (b.tokensExact) brk.exact = true;
     if (b.tokensReported || b.tokensEstimated) { anyApprox = true; brk.approx = true; }
     if (b.tokensPartial) brk.partial = true;
@@ -12277,7 +12283,12 @@ function renderUsageStripLive() {
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    tv2.textContent = (anyApprox && processed > 0 ? '~' : '') + formatTokens(processed);
+    // The headline is the quantity the cap ring measures. It used to add cache
+    // READS on top, while the ring below used input + output + cache writes, so
+    // a capped run could read "6.1M" beside a ring at a quarter of its limit.
+    // Cache reads are the cached prefix re-sent on every request: across 160
+    // requests they reach millions while the context window never grows.
+    tv2.textContent = (anyApprox && tokens > 0 ? '~' : '') + formatTokens(tokens);
     tv2.title = brk.partial
       ? 'Partial token accounting: at least one agent did not expose full input/context totals'
       : 'Every token the models processed: input + output + cache writes + cache reads. Cache reads are the bulk and bill at a tenth of input.';
@@ -12312,13 +12323,25 @@ function renderTokenBreakdown(brk) {
     const context = brk.cw + brk.cr;
     if (context > generated) {
       split.hidden = false;
-      // Naming the per-agent figure is the point: it says the cost scales with
-      // how many agents were launched, not with how much work was asked for.
+      // Say what each quantity IS, because the totals invite the wrong reading.
+      // Context is loaded once per agent and is small. Cache reads are that same
+      // prefix re-sent on every request, so they climb into the millions across a
+      // few hundred requests while the context window never grows. Saying "6.1M
+      // context" implied 6.1M was loaded, which contradicted the per-agent figure
+      // printed beside it.
       const perAgent = brk.agents > 0 ? Math.round(brk.baseline / brk.agents) : 0;
-      split.textContent = brk.agents > 1 && perAgent > 0
-        ? `${formatTokens(generated)} generated \u00b7 ${formatTokens(context)} context `
-          + `(${brk.agents} agents \u00d7 ~${formatTokens(perAgent)} loaded)`
-        : `${formatTokens(generated)} generated \u00b7 ${formatTokens(context)} context`;
+      const parts = [`${formatTokens(generated)} generated`];
+      if (perAgent > 0) {
+        parts.push(brk.agents > 1
+          ? `${brk.agents} \u00d7 ~${formatTokens(perAgent)} context loaded`
+          : `~${formatTokens(perAgent)} context loaded`);
+      }
+      if (brk.cr > 0) {
+        parts.push(brk.requests > 0
+          ? `${formatTokens(brk.cr)} re-read over ${brk.requests} requests`
+          : `${formatTokens(brk.cr)} re-read`);
+      }
+      split.textContent = parts.join(' \u00b7 ');
       split.title = 'Generated is what the models actually wrote and read as new input. Context is the '
         + 'workspace, skills and tool definitions each agent loads before it starts: written to cache '
         + 'once, reread every turn at a tenth of the price.';
