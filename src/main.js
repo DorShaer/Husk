@@ -1538,17 +1538,16 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    // Model preference. The transcript records the model on every assistant
-    // turn, so when this tab owns its transcript it is the live truth for the
-    // session: it reflects mid-session switches that happen server-side
-    // without settings.json ever changing (settings only knows what was
-    // configured, not what the session is actually running). settings.json
-    // still fills the gap before the first assistant turn. When the tab has
-    // NO resolved transcript of its own (bare files[0] fallback below), keep
-    // settings first so a stale newest-by-mtime file cannot mislabel it.
+    // Model preference. settings.json is the model the user selected and the
+    // same value the CLI's own picker reports, so it answers "what is this
+    // running" directly and cannot name some other session. A transcript can
+    // only answer it by first being the right transcript, and this directory
+    // holds hundreds written by hooks, title generators and agent runs; picking
+    // the wrong one reports a model the user never chose. Transcripts are used
+    // for turn counts and occupancy, which are per-file by nature, and for the
+    // model only when settings names none.
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
-    const ownTranscript = Boolean(sess && latest);
-    let effModel = ownTranscript ? (model || settingsModel) : (settingsModel || model);
+    let effModel = settingsModel || model;
     // Model label fallback, DISPLAY ONLY. If neither settings.json nor this
     // tab's own transcript yielded a model (a brand-new tab before its first
     // turn, or a non-claude tab), borrow the model from the newest transcript
