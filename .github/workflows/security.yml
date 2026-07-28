@@ -64,6 +64,7 @@ jobs:
           gitleaks version
 
       - name: Run Gitleaks
+        id: gitleaks
         # Context values arrive as environment variables. An expression is
         # substituted into the script text before bash parses it, so the rule
         # is applied uniformly rather than argued per value.
@@ -96,24 +97,36 @@ jobs:
           fi
           # --redact masks the matched value in stdout and in the report.
           # Run logs on a public repository are readable without an account.
+          sarif="$RUNNER_TEMP/gitleaks/gitleaks.sarif"
+          set +e
           if [ "$USE_RANGE" = "1" ]; then
             gitleaks detect --config .gitleaks.toml --redact --log-opts="$BEFORE..$HEAD" \
-              --report-format=sarif --report-path="$RUNNER_TEMP/gitleaks/gitleaks.sarif"
+              --report-format=sarif --report-path="$sarif"
           else
             gitleaks detect --config .gitleaks.toml --redact \
-              --report-format=sarif --report-path="$RUNNER_TEMP/gitleaks/gitleaks.sarif"
+              --report-format=sarif --report-path="$sarif"
           fi
+          status=$?
+          set -e
+          # The next step needs to know whether there is a file to upload, and it
+          # cannot find out for itself: hashFiles only resolves paths under
+          # GITHUB_WORKSPACE, so any test it runs against a runner-temp path is
+          # false no matter what is on disk. A step output is read from the
+          # runner, so it reports what is actually there.
+          if [ -f "$sarif" ]; then echo "sarif=true" >> "$GITHUB_OUTPUT"; else echo "sarif=false" >> "$GITHUB_OUTPUT"; fi
+          # A leak exits non-zero, and that is the gate. Report it after the
+          # output is written so the findings still reach code scanning.
+          exit $status
 
       # Code scanning is the private destination: alerts are visible to users
       # with security access to the repository, not to anonymous visitors, and
       # the values inside are already redacted above.
       # 8.30.1 writes the report on a clean run too, with zero results, and
       # uploading that is what closes an alert whose finding is now fixed. The
-      # guard covers the other case: upload-sarif errors on a missing file, and
-      # whether a report is written at all is a per-version detail. hashFiles is
-      # empty when the path matches nothing, which is the condition to skip on.
+      # guard covers the other case, since whether a report is written at all is
+      # a per-version detail and upload-sarif errors on a missing file.
       - name: Upload findings to code scanning
-        if: always() && hashFiles(format('{0}/gitleaks/gitleaks.sarif', runner.temp)) != ''
+        if: always() && steps.gitleaks.outputs.sarif == 'true'
         uses: github/codeql-action/upload-sarif@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3
         with:
           sarif_file: ${{ runner.temp }}/gitleaks/gitleaks.sarif
