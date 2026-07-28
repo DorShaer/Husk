@@ -69,6 +69,18 @@ libs/pai/**/ratings.jsonl
 libs/pai/**/*reflections*.jsonl
 libs/pai/**/history.jsonl
 
+# The same private-data shapes under ANY vendored framework, not just the one
+# that happened to be vendored first. Re-vendoring under a new directory name
+# otherwise arrives with no protection, and a missing ignore rule is silent
+# until a sync tool drops real data in. Templates stay tracked: these match
+# populated data, and every shipped USER file declares template provenance.
+libs/**/MEMORY/
+libs/**/LEARNING/
+libs/**/.credentials.json
+libs/**/ratings.jsonl
+libs/**/*reflections*.jsonl
+libs/**/history.jsonl
+
 # ─── Agent tooling artifacts ────────────────────────────────────────────────
 # Per-session identity files Husk rewrites at runtime.
 .github/copilot-instructions.md
@@ -85,3 +97,9 @@ GEMINI.md
 
 # PAI Algorithm task artifacts (per-task working state, never shipped).
 ISA*.md
+
+# Local exposure scanning suite. Deliberately not tracked: it exists to be run
+# before a push to main, from a pre-push hook, so its findings and reports stay
+# on this machine rather than in a public repository or a world readable CI log.
+scripts/exposure/
+docs/exposure-runbook.md

@@ -1,14 +1,19 @@
 [extend]
 useDefault = true
 
+# One allowlist table, not several. gitleaks 8.22 parses the plural
+# [[allowlists]] form without complaint and then ignores it, so a config split
+# across both forms is enforced wherever the newer binary runs and silently
+# inert everywhere else. Keep this file working on both, and pin the version
+# anywhere the result is relied on.
 [allowlist]
 description = """
 Content we ship but do not author, where the default rules fire on ordinary \
 text rather than on anything secret.
 
-The vendored assistant framework, whose docs and fixtures carry placeholder \
-and example tokens. Three paths are listed because a history scan still \
-reaches the two this tree lived at before (libs/pai, and pai/ further back).
+Earlier vendored locations of the assistant framework. Two paths are listed \
+because a history scan still reaches where this tree lived before (libs/pai, \
+and pai/ further back).
 
 Vendored browser bundles. Minified code trips the generic-api-key rule on \
 identifiers such as `t.FourKeyMap=t.TwoKeyMap`: high entropy, the word "Key", \
@@ -18,13 +23,53 @@ The generated apt index published to the gh-pages branch. Its `Depends:` lines \
 name real Debian packages, and `libsecret-1-0` is enough for the same rule to \
 fire.
 
+The framework's current path, libs/lifeos, is deliberately NOT excluded as a \
+tree. Doing so hid 11.5 MB from every scan, and the extraResources build step \
+copies that whole tree into resources/lifeos, so a credential vendored into it \
+later would have been invisible to the scanner and shipped in every release at \
+once. Scanning it costs 286 ms and produces exactly the four files listed \
+below, each allowed by name:
+
+  ArbolSystem.md   a curl example whose host is a placeholder subdomain
+  SecurityFilter   a fixture asserting the redactor masks API keys, so the
+                   match is test input for the code that hides such values
+  nuclei system.md prose describing a generate_jwt helper's signature
+  eightsleep.ts    the vendor's own mobile-app OAuth constants, taken from the
+                   open-source Home Assistant integration and documented as
+                   such in the file header. Not personal credentials, and
+                   rotating them is the vendor's to do.
+
+Those four patterns anchor on a /lifeos/ path segment rather than on the tree
+that contains it, so one entry covers all three layouts the same file is seen
+in: libs/lifeos/... in the repo, resources/lifeos/... in an installed app, and
+a bare lifeos/... when the resources directory itself is the scan root. Paths
+in a report are relative to the scan root, which is why anchoring on the repo
+layout alone silently stops matching the moment a package is scanned.
+
+Built .asar archives. A local working copy has dist/ in it, which is
+gitignored and so never present in CI; a scan of the working tree therefore
+reports findings on a developer's machine that the gate cannot see. The
+archive is one concatenated blob, so those findings carry no usable path and
+no line number that maps to a file. package-scan.sh extracts every archive and
+scans the contents with this same config, which is where an asar is actually
+inspected.
+
+Path patterns are anchored with (^|/) rather than ^ so they still match when \
+the same file is scanned from a packaged layout. Inside app.asar every file \
+collapses to one blob path, so scanning a package means extracting the archive \
+first rather than pointing a scanner at it.
+
 Scope is deliberately per-path rather than repo-wide: a scan of our own source \
 still runs with the full default rule set.
 """
 paths = [
-  '''libs/lifeos/.*''',
   '''libs/pai/.*''',
   '''^pai/.*''',
-  '''^(src/renderer|web)/vendor/.*''',
+  '''(^|/)(src/renderer|web)/vendor/.*''',
   '''^apt/dists/.*''',
+  '''\.asar$''',
+  '''(^|/)lifeos/LIFEOS/DOCUMENTATION/Arbol/ArbolSystem\.md$''',
+  '''(^|/)lifeos/skills/Daemon/Tools/SecurityFilter\.ts$''',
+  '''(^|/)lifeos/skills/Fabric/Patterns/write_nuclei_template_rule/system\.md$''',
+  '''(^|/)lifeos/LIFEOS/TOOLS/healthsync/eightsleep\.ts$''',
 ]
