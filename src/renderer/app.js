@@ -12248,7 +12248,7 @@ function renderUsageStripLive() {
   let warnTokens = false;
   let warnDollars = false;
   let earliest = 0;
-  let brk = { input: 0, output: 0, cw: 0, cr: 0, exact: false, approx: false, partial: false };
+  let brk = { input: 0, output: 0, cw: 0, cr: 0, baseline: 0, agents: 0, exact: false, approx: false, partial: false };
   for (const run of activeRuns.values()) {
     const b = run.budget;
     if (run.startedAt && (!earliest || run.startedAt < earliest)) earliest = run.startedAt;
@@ -12260,6 +12260,10 @@ function renderUsageStripLive() {
     brk.output += Number(b.outputTokens) || 0;
     brk.cw += Number(b.cacheCreateTokens) || 0;
     brk.cr += Number(b.cacheReadTokens) || 0;
+    // Context each agent loaded before starting. A fleet pays this once per
+    // agent, so it scales with agent count rather than with the task.
+    const base = Number(b.baselineContextTokens) || 0;
+    if (base > 0) { brk.baseline += base; brk.agents += 1; }
     if (b.tokensExact) brk.exact = true;
     if (b.tokensReported || b.tokensEstimated) { anyApprox = true; brk.approx = true; }
     if (b.tokensPartial) brk.partial = true;
@@ -12308,7 +12312,13 @@ function renderTokenBreakdown(brk) {
     const context = brk.cw + brk.cr;
     if (context > generated) {
       split.hidden = false;
-      split.textContent = `${formatTokens(generated)} generated · ${formatTokens(context)} context`;
+      // Naming the per-agent figure is the point: it says the cost scales with
+      // how many agents were launched, not with how much work was asked for.
+      const perAgent = brk.agents > 0 ? Math.round(brk.baseline / brk.agents) : 0;
+      split.textContent = brk.agents > 1 && perAgent > 0
+        ? `${formatTokens(generated)} generated \u00b7 ${formatTokens(context)} context `
+          + `(${brk.agents} agents \u00d7 ~${formatTokens(perAgent)} loaded)`
+        : `${formatTokens(generated)} generated \u00b7 ${formatTokens(context)} context`;
       split.title = 'Generated is what the models actually wrote and read as new input. Context is the '
         + 'workspace, skills and tool definitions each agent loads before it starts: written to cache '
         + 'once, reread every turn at a tenth of the price.';
