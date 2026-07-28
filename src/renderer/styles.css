@@ -2159,7 +2159,13 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   letter-spacing: 0.1em;
   color: var(--text-2);
 }
-.aut-stat-huge .aut-huge-cap {
+.aut-stat-huge .aut-huge-split {
+  margin-top: 2px;
+  font-size: var(--fs-nano);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.aut-huge-cap {
   font-size: var(--fs-nano);
   text-transform: uppercase;
   letter-spacing: 0.1em;

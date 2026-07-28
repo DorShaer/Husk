@@ -12297,6 +12297,25 @@ function renderTokenBreakdown(brk) {
   if (!total) { box.hidden = true; return; }
   box.hidden = false;
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = formatTokens(v); };
+  // The headline counts every tier, so a cancelled 27s run can read half a
+  // million tokens while the model generated almost nothing. Cache writes are
+  // the context each agent loads before doing any work, and across a fleet they
+  // are the bulk of the number. Splitting them out under the count is what
+  // stops it being read as work that happened.
+  const split = document.getElementById('aut-page-split-tokens');
+  if (split) {
+    const generated = brk.input + brk.output;
+    const context = brk.cw + brk.cr;
+    if (context > generated) {
+      split.hidden = false;
+      split.textContent = `${formatTokens(generated)} generated · ${formatTokens(context)} context`;
+      split.title = 'Generated is what the models actually wrote and read as new input. Context is the '
+        + 'workspace, skills and tool definitions each agent loads before it starts: written to cache '
+        + 'once, reread every turn at a tenth of the price.';
+    } else {
+      split.hidden = true;
+    }
+  }
   set('aut-tb-input', brk.input);
   set('aut-tb-output', brk.output);
   set('aut-tb-cw', brk.cw);
