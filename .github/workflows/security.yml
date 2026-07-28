@@ -49,15 +49,35 @@ jobs:
         # limits intermittently; keep same-major minor/patch bumps reviewed.
         env:
           GITLEAKS_VERSION: "8.30.1"
+          # sha256 of gitleaks_8.30.1_linux_x64.tar.gz from the release's own
+          # checksums file. Pinning a version authenticates nothing by itself:
+          # a release asset can be replaced, and this binary runs with the
+          # workflow's token over the full history. Bump both fields together.
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
         run: |
           set -euo pipefail
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar xz -C /usr/local/bin gitleaks
+          tarball="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -sSfL -o "$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${tarball}" | sha256sum -c -
+          tar xz -C /usr/local/bin -f "$tarball" gitleaks
           gitleaks version
 
       - name: Run Gitleaks
+        # Context values arrive as environment variables. An expression is
+        # substituted into the script text before bash parses it, so the rule
+        # is applied uniformly rather than argued per value.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
-          mkdir -p security-reports
+          # Reports go to the runner temp directory, never to security-reports/,
+          # because that directory is uploaded as an artifact and artifacts on a
+          # public repository are downloadable by anyone for their whole
+          # retention window. A scanner that finds a real secret and then
+          # publishes it has done more damage than the commit it flagged.
+          mkdir -p "$RUNNER_TEMP/gitleaks"
           # github.event.before is unreliable in two cases:
           #   - first push of a new branch: it is the all-zeros sha
           #   - force-push: it points to a now-orphaned sha that may
@@ -65,28 +85,39 @@ jobs:
           # In either case the diff range is invalid and gitleaks
           # exits non-zero. Fall back to a full-repo scan, which is
           # the same path the pull_request event takes.
-          BEFORE='${{ github.event.before }}'
-          HEAD='${{ github.sha }}'
+          BEFORE="$BEFORE_SHA"
+          HEAD="$HEAD_SHA"
           ZERO_SHA='0000000000000000000000000000000000000000'
           USE_RANGE=0
-          if [ "${{ github.event_name }}" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "$ZERO_SHA" ]; then
+          if [ "$EVENT_NAME" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "$ZERO_SHA" ]; then
             if git merge-base --is-ancestor "$BEFORE" "$HEAD" 2>/dev/null; then
               USE_RANGE=1
             fi
           fi
+          # --redact masks the matched value in stdout and in the report.
+          # Run logs on a public repository are readable without an account.
           if [ "$USE_RANGE" = "1" ]; then
-            gitleaks detect --config .gitleaks.toml --log-opts="$BEFORE..$HEAD" --report-format=json --report-path=security-reports/gitleaks-report.json
+            gitleaks detect --config .gitleaks.toml --redact --log-opts="$BEFORE..$HEAD" \
+              --report-format=sarif --report-path="$RUNNER_TEMP/gitleaks/gitleaks.sarif"
           else
-            gitleaks detect --config .gitleaks.toml --report-format=json --report-path=security-reports/gitleaks-report.json
+            gitleaks detect --config .gitleaks.toml --redact \
+              --report-format=sarif --report-path="$RUNNER_TEMP/gitleaks/gitleaks.sarif"
           fi
 
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      # Code scanning is the private destination: alerts are visible to users
+      # with security access to the repository, not to anonymous visitors, and
+      # the values inside are already redacted above.
+      # 8.30.1 writes the report on a clean run too, with zero results, and
+      # uploading that is what closes an alert whose finding is now fixed. The
+      # guard covers the other case: upload-sarif errors on a missing file, and
+      # whether a report is written at all is a per-version detail. hashFiles is
+      # empty when the path matches nothing, which is the condition to skip on.
+      - name: Upload findings to code scanning
+        if: always() && hashFiles(format('{0}/gitleaks/gitleaks.sarif', runner.temp)) != ''
+        uses: github/codeql-action/upload-sarif@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3
         with:
-          name: secret-detection-report
-          path: security-reports/
-          retention-days: 30
+          sarif_file: ${{ runner.temp }}/gitleaks/gitleaks.sarif
+          category: gitleaks
 
   npm-audit:
     name: Dependency audit (npm)
@@ -233,7 +264,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: semgrep/semgrep:latest
+      # Pinned by digest. `:latest` means the scanner that gates this repo can
+      # change between two runs of the same commit.
+      image: semgrep/semgrep:1.171.0@sha256:bdf7013b2c3634a487671158da77c554f531742326b543a9464d2adf6c433ac8
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -346,18 +379,29 @@ jobs:
     if: always()
     steps:
       - name: Job summary
+        env:
+          R_SECRET: ${{ needs.secret-detection.result }}
+          R_AUDIT: ${{ needs.npm-audit.result }}
+          R_JS: ${{ needs.javascript-security.result }}
+          R_CODEQL: ${{ needs.codeql.result }}
+          R_SEMGREP: ${{ needs.semgrep.result }}
+          R_TRIVY: ${{ needs.trivy.result }}
         run: |
+          # A job result is one of success/failure/cancelled/skipped, so this
+          # maps it to a word rather than interpolating an expression into the
+          # script text.
+          verdict() { [ "$1" = "success" ] && printf '%s' "$2" || printf 'FAILED'; }
           {
             echo "# Security scan summary"
             echo
             echo "| Check | Status |"
             echo "|-------|--------|"
-            echo "| Secret detection | ${{ needs.secret-detection.result == 'success' && 'CLEAN' || 'FAILED' }} |"
-            echo "| npm audit | ${{ needs.npm-audit.result == 'success' && 'PASSED' || 'FAILED' }} |"
-            echo "| JavaScript security | ${{ needs.javascript-security.result == 'success' && 'PASSED' || 'FAILED' }} |"
-            echo "| CodeQL | ${{ needs.codeql.result == 'success' && 'PASSED' || 'FAILED' }} |"
-            echo "| Semgrep OWASP | ${{ needs.semgrep.result == 'success' && 'PASSED' || 'FAILED' }} |"
-            echo "| Trivy CVEs | ${{ needs.trivy.result == 'success' && 'PASSED' || 'FAILED' }} |"
+            echo "| Secret detection | $(verdict "$R_SECRET" CLEAN) |"
+            echo "| npm audit | $(verdict "$R_AUDIT" PASSED) |"
+            echo "| JavaScript security | $(verdict "$R_JS" PASSED) |"
+            echo "| CodeQL | $(verdict "$R_CODEQL" PASSED) |"
+            echo "| Semgrep OWASP | $(verdict "$R_SEMGREP" PASSED) |"
+            echo "| Trivy CVEs | $(verdict "$R_TRIVY" PASSED) |"
             echo
             echo "Reports are in the Artifacts section of this run."
           } >> "$GITHUB_STEP_SUMMARY"

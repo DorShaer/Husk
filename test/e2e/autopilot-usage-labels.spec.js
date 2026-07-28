@@ -31,7 +31,7 @@ async function readCard(win) {
     };
   });
 }
-test('plan user: dollar is API-equivalent, tokens = full processed total', async () => {
+test('plan user: dollar is API-equivalent, tokens = the quantity the cap measures', async () => {
   test.setTimeout(60000);
   const app = await boot({ ANTHROPIC_API_KEY: '' });  // no key -> plan
   try {
@@ -42,8 +42,11 @@ test('plan user: dollar is API-equivalent, tokens = full processed total', async
     await win.waitForTimeout(600);
     const c = await readCard(win);
     console.log('  PLAN:', JSON.stringify(c));
-    expect(c.tokensLabel).toBe('Tokens processed');
-    expect(c.tokens).toMatch(/18(\.\d)?M/);   // 1.9M + 16M = ~18M (verifiable total)
+    expect(c.tokensLabel).toBe('Tokens generated');
+    // The headline is the quantity the cap ring measures: input + output +
+    // cache writes. The 16M of cache reads is the prefix re-sent each request
+    // and is reported under the split, not here.
+    expect(c.tokens).toMatch(/1\.9M/);
     expect(c.dollarsLabel).toBe('API-equivalent');
     expect(c.dollarsTitle).toMatch(/plan|not per-token|flat monthly/i);
   } finally { await app.close(); }
