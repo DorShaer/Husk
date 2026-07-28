@@ -899,6 +899,24 @@ function listTranscriptNames(projDir) {
   } catch (_) { return []; }
 }
 
+// Whether a transcript belongs to a person typing in a terminal. Hooks, title
+// generators and agent SDK calls all write into the same project directory and
+// often land there before the chat's own first turn, so creation order cannot
+// identify a tab's transcript. The CLI records how the session was entered:
+// an interactive one is "cli", everything programmatic is "sdk-cli"/"sdk-py".
+function isInteractiveTranscript(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(64 * 1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      const head = buf.toString('utf8', 0, n);
+      if (/"entrypoint"\s*:\s*"sdk/.test(head)) return false;
+      return /"entrypoint"\s*:\s*"cli"/.test(head);
+    } finally { fs.closeSync(fd); }
+  } catch (_) { return false; }
+}
+
 // The last claude session id Husk bound for a given project dir, so a fresh
 // app boot can resume the ongoing discussion instead of starting a new one.
 function lastClaudeSessionForCwd(encodedCwd, projDir) {
@@ -1413,15 +1431,19 @@ function readActiveSessionStats() {
       // CLI writes the continuation to a new file. Reading the id it was handed
       // reports the source conversation forever: its model, its turn count, its
       // occupancy, none of them moving. The live file is the one that was not in
-      // the directory when this tab spawned. Take the earliest such file rather
-      // than the newest, because background agents write here too and the tab's
-      // own transcript is the first to appear after launch.
+      // the directory when this tab spawned, written by an interactive session.
+      // The interactive test is what makes this reliable: hooks and title
+      // generators spawn their own sessions into the same directory, and one of
+      // them routinely appears before the chat's own first turn, so arrival
+      // order alone picks a two-turn helper. Earliest-first among the survivors,
+      // since the tab's transcript precedes any agent it goes on to spawn.
       const claimed = new Set();
       for (const o of sessions.values()) if (o !== sess && o.transcript) claimed.add(o.transcript);
       const prior = sess.priorTranscripts || new Set();
       const fresh = files
         .filter((f) => !prior.has(path.basename(f.p)) && !claimed.has(f.p))
-        .sort((a, b) => (a.btime || a.mtime) - (b.btime || b.mtime))[0];
+        .sort((a, b) => (a.btime || a.mtime) - (b.btime || b.mtime))
+        .find((f) => isInteractiveTranscript(f.p));
       if (fresh) {
         latest = fresh.p;
         sess.transcript = fresh.p;
