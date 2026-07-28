@@ -1563,7 +1563,7 @@ function readActiveSessionStats() {
     // record in the file's tail, so it stays correct even for huge transcripts.
     const ctxWindow = resolveContextWindow(activePtyCwd, effModel, ctxTokens);
     const ctxPct = ctxWindow ? Math.round((ctxTokens / ctxWindow) * 1000) / 10 : 0;
-    return { turns, chars, tokens: Math.round(chars / 4), file: latest, model: effModel, ctxTokens, ctxWindow, ctxPct };
+    return { turns, chars, tokens: Math.round(chars / 4), file: latest, model: effModel, modelLabel: catalogModelLabel(effModel), ctxTokens, ctxWindow, ctxPct };
   } catch (_) { return null; }
 }
 
@@ -4134,6 +4134,37 @@ function runAiderModelProbe(agentCommand) {
     child.on('error', (err) => done({ ok: false, output, error: (err && err.message) || String(err) }));
     child.on('close', () => done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list exited with no output' }));
   });
+}
+
+// What the CLI itself calls a model, taken from the catalog its own /model
+// picker produced. Deriving a name from the id can only ever print what the id
+// already spells out: the alias "opus[1m]" carries no version, so it reads as a
+// bare "Opus" until a transcript turn happens to name the full id. The catalog
+// is the provider's own wording, so a model Husk has never heard of arrives
+// correctly named the day it ships.
+//
+// Returns '' for a full versioned id such as claude-opus-5, on purpose: the
+// name derived from it is already right, and resolving it through an alias row
+// would report whatever the alias points at today, relabelling an older session
+// as the current model. '' is also the answer before the catalog has been read.
+// Both cases leave the id-derived name in place.
+function catalogModelLabel(id, command = null) {
+  const raw = String(id || '').trim();
+  if (!raw) return '';
+  const head = safeAgentCommandHead(command || config.agentCommand || 'claude');
+  if (!head) return '';
+  const cached = modelCatalogCache.get(`${head.base}:${head.exe}`);
+  const models = cached && cached.value && Array.isArray(cached.value.models) ? cached.value.models : null;
+  if (!models || !models.length) return '';
+  // Compare with the context tier and vendor prefix removed, so "opus[1m]",
+  // "opus" and "claude-opus-5" all reach the same catalog row.
+  const key = (s) => String(s || '').toLowerCase().replace(/\[[^\]]*\]/g, '').replace(/^claude-/, '');
+  const want = key(raw);
+  const hit = models.find((m) => key(m.value) === want);
+  if (!hit) return '';
+  // Catalog labels read "Opus 5 · Best for everyday use". The status panel has
+  // room for the name, not the blurb.
+  return String(hit.label || '').split('·')[0].trim();
 }
 
 async function discoverModelCatalog({ refresh = false, command = null, fast = false } = {}) {
@@ -8694,6 +8725,12 @@ if (!gotLock) {
     try { reconcileOrphanWorktrees(); } catch (_) {}
     createWindow();
     setupAutoUpdater();
+    // Read the active CLI's model catalog once in the background so the status
+    // panel can name the running model in the provider's own words from the
+    // first poll. The probe drives the CLI's picker in a PTY and takes seconds,
+    // so it must never sit in front of the window opening; until it lands the
+    // panel falls back to the name derived from the model id.
+    setTimeout(() => { discoverModelCatalog().catch(() => {}); }, 4000);
   });
   app.on('window-all-closed', () => {
     killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();

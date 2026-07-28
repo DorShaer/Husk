@@ -1915,8 +1915,14 @@ async function refreshStatusline() {
   // (claude from ~/.claude, copilot from ~/.copilot), so it always names
   // the agent's real model, never a different CLI's session. The ctx
   // fallback is claude-only (context window is a claude-transcript figure).
-  const modelLabel = prettyModelLabel((u.session && u.session.model)
-    || (agentKindCache === 'claude' && ctx && ctx.model) || '');
+  // The CLI's own name for the model wins when the catalog has been read: an
+  // id-derived name can only print what the id spells out, so a bare alias
+  // renders without its version. Falls back to the derived name until then.
+  const modelId = (u.session && u.session.model)
+    || (agentKindCache === 'claude' && ctx && ctx.model) || '';
+  const modelLabel = (u.session && u.session.modelLabel)
+    || (agentKindCache === 'claude' && ctx && ctx.modelLabel)
+    || prettyModelLabel(modelId);
   // The active agent CLI (claude, codex, copilot, ...) and its version, so the
   // Build section reflects whichever agent is selected, not a fixed one.
   const agentLabel = (s.agent || 'claude').replace(/^\w/, (c) => c.toUpperCase());
@@ -1957,7 +1963,7 @@ async function refreshStatusline() {
       <div class="sp-section-head"><span class="sp-h-icon">▣</span><span>Build</span></div>
       <div class="sp-section-body">
         <div class="sp-row"><span class="sp-muted">${escapeHtml(agentLabel)} ${spInfo('Installed CLI version of the active agent.')}</span><span class="sp-mono">${escapeHtml(s.agentVersion || 'unknown')}</span></div>
-        ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model ${spInfo('The AI model the active session is running.')}</span><span class="sp-mono sp-accent" title="${escapeHtml((u.session && u.session.model) || (ctx && ctx.model) || '')}">${escapeHtml(modelLabel)}</span></div>` : ''}
+        ${modelLabel ? `<div class="sp-row"><span class="sp-muted">Model ${spInfo('The AI model the active session is running.')}</span><span class="sp-mono sp-accent" title="${escapeHtml(modelId)}">${escapeHtml(modelLabel)}</span></div>` : ''}
         <div class="sp-row"><span class="sp-muted">Husk ${spInfo('Installed Husk app version.')}</span><span class="sp-mono">${escapeHtml(s.huskVer || '0.2')}</span></div>
       </div>
     </div>
