@@ -2165,7 +2165,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.aut-huge-cap {
+.aut-stat-huge .aut-huge-cap {
   font-size: var(--fs-nano);
   text-transform: uppercase;
   letter-spacing: 0.1em;
