@@ -119,6 +119,8 @@ function createBudgetMeter(opts = {}) {
   // but cost a tenth -- do not blow the token cap (they are excluded from
   // the cap basis; only fresh work counts there).
   let cacheCreateTokens = 0;
+  let baselineContextTokens = 0;
+  let requestCount = 0;
   let cacheReadTokens = 0;
   const CACHE_CREATE_MULT = 1.25;
   const CACHE_READ_MULT = 0.1;
@@ -145,12 +147,26 @@ function createBudgetMeter(opts = {}) {
     const now = Number.isFinite(input.now) ? input.now : Date.now();
     if (Number.isFinite(input.inputTokens))  inputTokens  += Math.max(0, input.inputTokens);
     if (Number.isFinite(input.outputTokens)) outputTokens += Math.max(0, input.outputTokens);
-    if (Number.isFinite(input.cacheCreateTokens)) cacheCreateTokens += Math.max(0, input.cacheCreateTokens);
+    if (Number.isFinite(input.cacheCreateTokens)) {
+      const cc = Math.max(0, input.cacheCreateTokens);
+      // The first cache write of a run is the prompt prefix the agent had to
+      // load before doing any work: system prompt, tool definitions, skill and
+      // agent listings, project context. Every later write is that prefix
+      // growing as the conversation extends. Keeping the two apart is the only
+      // way to say what a run cost to START versus what it cost to RUN, which
+      // the cumulative total cannot distinguish.
+      if (baselineContextTokens === 0 && cc > 0) baselineContextTokens = cc;
+      cacheCreateTokens += cc;
+    }
     if (Number.isFinite(input.cacheReadTokens))   cacheReadTokens   += Math.max(0, input.cacheReadTokens);
     if ((!Number.isFinite(input.inputTokens) && !Number.isFinite(input.outputTokens))
         && Number.isFinite(input.charsFromAgent) && input.charsFromAgent > 0) {
       estOutputTokens += Math.floor(input.charsFromAgent / 4);
       estimatedFlag = true;
+    }
+    if (Number.isFinite(input.inputTokens) || Number.isFinite(input.outputTokens)
+        || Number.isFinite(input.cacheCreateTokens) || Number.isFinite(input.cacheReadTokens)) {
+      requestCount += 1;
     }
     lastTickAt = now;
     return state(now);
@@ -230,6 +246,11 @@ function createBudgetMeter(opts = {}) {
       outputTokens: source === 'estimate' ? estOutputTokens : outputTokens,
       cacheCreateTokens,
       cacheReadTokens,
+      // What the agent loaded before doing any work, and how many requests it
+      // made. A fleet pays baselineContextTokens once per agent, so this is the
+      // figure that scales with agent count rather than with the task.
+      baselineContextTokens,
+      requestCount,
       totalTokens,
       tokensEstimated: source === 'estimate',
       tokensReported: reportedTotal != null,

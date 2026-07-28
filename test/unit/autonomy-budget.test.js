@@ -280,3 +280,33 @@ test('setModel re-pins the billing rate to the model that actually ran', () => {
   // 100k*5 + 100k*25, /1e6 = 0.5 + 2.5 = 3.0
   assert.ok(Math.abs(mo.state(T0).dollars - 3.0) < 1e-9, `opus ${mo.state(T0).dollars}`);
 });
+
+// The first cache write of a run is the prompt prefix the agent loaded before
+// doing any work. Every later write is that prefix growing. The cumulative
+// total cannot tell the two apart, which is what made a 27-second cancelled
+// run read as half a million tokens.
+test('baseline context is the first cache write, not the running total', () => {
+  const m = createBudgetMeter({ startedAt: T0 });
+  m.tick({ inputTokens: 3000, outputTokens: 200, cacheCreateTokens: 120000, cacheReadTokens: 0 });
+  m.tick({ inputTokens: 40, outputTokens: 900, cacheCreateTokens: 4000, cacheReadTokens: 120000 });
+  m.tick({ inputTokens: 20, outputTokens: 700, cacheCreateTokens: 6000, cacheReadTokens: 124000 });
+  const s = m.state(T0 + 1000);
+  assert.equal(s.baselineContextTokens, 120000, 'baseline stays at the first write');
+  assert.equal(s.cacheCreateTokens, 130000, 'cumulative keeps summing every write');
+  assert.equal(s.requestCount, 3);
+});
+
+test('baseline ignores leading zero-cache turns', () => {
+  const m = createBudgetMeter({ startedAt: T0 });
+  m.tick({ inputTokens: 10, outputTokens: 5, cacheCreateTokens: 0, cacheReadTokens: 0 });
+  m.tick({ inputTokens: 10, outputTokens: 5, cacheCreateTokens: 90000, cacheReadTokens: 0 });
+  assert.equal(m.state(T0 + 10).baselineContextTokens, 90000);
+});
+
+test('a run with no cache tier reports a zero baseline', () => {
+  const m = createBudgetMeter({ startedAt: T0 });
+  m.tick({ inputTokens: 500, outputTokens: 500 });
+  const s = m.state(T0 + 10);
+  assert.equal(s.baselineContextTokens, 0);
+  assert.equal(s.requestCount, 1);
+});
