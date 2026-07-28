@@ -9410,9 +9410,9 @@ function paintPlugins(query) {
       const chip = (val, label, n, on) =>
         `<button type="button" class="plugins-cat${on ? ' is-on' : ''}" data-cat="${escapeAttr(val)}" aria-pressed="${on}">`
         + `${escapeHtml(label)}<span class="plugins-cat-n">${n}</span></button>`;
-      // eslint-disable-next-line no-unsanitized/property -- Labels are escaped above.
       // capitalize turns "ai" into "Ai"; anything this short is an acronym.
       const label = (k) => (k.length <= 3 ? k.toUpperCase() : k);
+      // eslint-disable-next-line no-unsanitized/property -- Labels are escaped above.
       catsEl.innerHTML = chip('', 'All', textMatched.length, !pluginsCategories.size)
         + chips.map(([k, n]) => chip(k, label(k), n, pluginsCategories.has(k))).join('');
     }
