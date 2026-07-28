@@ -891,6 +891,14 @@ function killPtyTree() {
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
 
+// Transcript file names present in a project dir right now. Used to tell a
+// resumed tab's successor transcript apart from the one it was resumed from.
+function listTranscriptNames(projDir) {
+  try {
+    return fs.readdirSync(projDir).filter((f) => f.endsWith('.jsonl'));
+  } catch (_) { return []; }
+}
+
 // The last claude session id Husk bound for a given project dir, so a fresh
 // app boot can resume the ongoing discussion instead of starting a new one.
 function lastClaudeSessionForCwd(encodedCwd, projDir) {
@@ -1093,10 +1101,18 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   }
   if (s.claudeSessionId) {
     try {
-      const pinned = path.join(CLAUDE_DIR, 'projects', encodedCwd, `${s.claudeSessionId}.jsonl`);
+      const projDir = path.join(CLAUDE_DIR, 'projects', encodedCwd);
+      const pinned = path.join(projDir, `${s.claudeSessionId}.jsonl`);
       // Resume: the file exists already. New chat: it appears once claude starts
       // writing, so until then the session has no transcript and reads 0 context.
-      s.transcript = fs.existsSync(pinned) ? pinned : null;
+      const resumed = fs.existsSync(pinned);
+      s.transcript = resumed ? pinned : null;
+      // --resume names the conversation to continue, not the file that will be
+      // written: the CLI opens a fresh transcript under a new id and leaves the
+      // one it was handed frozen. Snapshot the directory so the successor is
+      // identifiable later as the file that was not here when this tab spawned.
+      s.resumedTranscript = resumed;
+      s.priorTranscripts = resumed ? new Set(listTranscriptNames(projDir)) : null;
     } catch (_) { s.transcript = null; }
   }
 
@@ -1380,7 +1396,7 @@ function readActiveSessionStats() {
       .filter((f) => f.endsWith('.jsonl'))
       .map((f) => {
         const p = path.join(dir, f);
-        try { const st = fs.statSync(p); return { p, mtime: st.mtimeMs, size: st.size }; } catch (_) { return null; }
+        try { const st = fs.statSync(p); return { p, mtime: st.mtimeMs, btime: st.birthtimeMs, size: st.size }; } catch (_) { return null; }
       })
       .filter(Boolean)
       .sort((a, b) => b.mtime - a.mtime);
@@ -1392,7 +1408,33 @@ function readActiveSessionStats() {
     // with the conversation; it re-resolves only when that file disappears.
     const sess = activeSessionId ? sessions.get(activeSessionId) : null;
     let latest = null;
-    if (sess && sess.claudeSessionId) {
+    if (sess && sess.resumedTranscript) {
+      // A resumed tab was handed the id of the conversation to continue, and the
+      // CLI writes the continuation to a new file. Reading the id it was handed
+      // reports the source conversation forever: its model, its turn count, its
+      // occupancy, none of them moving. The live file is the one that was not in
+      // the directory when this tab spawned. Take the earliest such file rather
+      // than the newest, because background agents write here too and the tab's
+      // own transcript is the first to appear after launch.
+      const claimed = new Set();
+      for (const o of sessions.values()) if (o !== sess && o.transcript) claimed.add(o.transcript);
+      const prior = sess.priorTranscripts || new Set();
+      const fresh = files
+        .filter((f) => !prior.has(path.basename(f.p)) && !claimed.has(f.p))
+        .sort((a, b) => (a.btime || a.mtime) - (b.btime || b.mtime))[0];
+      if (fresh) {
+        latest = fresh.p;
+        sess.transcript = fresh.p;
+        sess.claudeSessionId = path.basename(fresh.p, '.jsonl');
+        sess.resumedTranscript = false;
+        sess.priorTranscripts = null;
+        rememberClaudeSession(encoded, sess.claudeSessionId);
+      } else if (sess.transcript && fs.existsSync(sess.transcript)) {
+        // Nothing new yet: keep showing the resumed conversation rather than a
+        // blank panel, since that is what the pane is displaying too.
+        latest = sess.transcript;
+      }
+    } else if (sess && sess.claudeSessionId) {
       // This tab owns exactly <claudeSessionId>.jsonl in its cwd, so tabs that
       // share a cwd stay distinct. The file appears on the chat's first turn;
       // until then there is nothing to read and the context reads 0.
