@@ -12188,20 +12188,18 @@ function updateAutopilotBudget(b) {
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
   updateRing('aut-page-ring-time', caps.minutes > 0 ? elapsedMin / caps.minutes : 0, meters[0]);
   const tk = Number(b.totalTokens) || 0;          // fresh work, for the cap ring
-  const processed = displayProcessed(b);          // every tier, for the headline
   const approx = !!(b.tokensReported || b.tokensEstimated);
   const partial = !!b.tokensPartial;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    // The headline is the quantity the cap ring measures. It used to add cache
-    // READS on top, while the ring below used input + output + cache writes, so
-    // a capped run could read "6.1M" beside a ring at a quarter of its limit.
-    // Cache reads are the cached prefix re-sent on every request: across 160
-    // requests they reach millions while the context window never grows.
+    // The headline is the quantity the cap ring measures, so the two agree.
+    // Cache reads sit outside it: they are the cached prefix re-sent on every
+    // request, so across 160 requests they reach millions while the context
+    // window never grows, and folding them in would read as work that happened.
     tv2.textContent = (approx && tk > 0 ? '~' : '') + formatTokens(tk);
     tv2.title = partial
       ? 'Partial token accounting: this agent did not expose full input/context totals'
-      : 'Every token the model processed: input + output + cache writes + cache reads.';
+      : 'Input, output and cache writes. Cache reads are the cached prefix re-sent each request and are counted separately below.';
   }
   updateRing('aut-page-ring-tokens', caps.tokens > 0 ? tk / caps.tokens : 0, meters[1]);
   const usd = Number(b.dollars) || 0;
@@ -12232,13 +12230,6 @@ function applyDollarLabel() {
   }
 }
 
-// Total tokens the model processed: every tier summed, so the headline equals
-// the input + output + cache write + cache read breakdown beneath it. totalTokens
-// already holds the first three; cache reads are added here.
-function displayProcessed(b) {
-  return (Number(b.totalTokens) || 0) + (Number(b.cacheReadTokens) || 0);
-}
-
 // Live usage strip across the whole fleet: tokens and spend sum over all
 // runs, time counts from the earliest start, warn when ANY run crosses
 // 80% of a cap.
@@ -12246,7 +12237,6 @@ function renderUsageStripLive() {
   const caps = autopilotState.caps;
   const meters = document.querySelectorAll('.aut-page-meter');
   let tokens = 0;      // fresh work (input+output+cache write); drives the cap
-  let processed = 0;   // every tier summed; the honest, verifiable headline
   let dollars = 0;
   let anyApprox = false;
   let warnTime = false;
@@ -12259,7 +12249,6 @@ function renderUsageStripLive() {
     if (run.startedAt && (!earliest || run.startedAt < earliest)) earliest = run.startedAt;
     if (!b) continue;
     tokens += Number(b.totalTokens) || 0;
-    processed += displayProcessed(b);
     dollars += Number(b.dollars) || 0;
     brk.input += Number(b.inputTokens) || 0;
     brk.output += Number(b.outputTokens) || 0;
@@ -12283,15 +12272,14 @@ function renderUsageStripLive() {
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    // The headline is the quantity the cap ring measures. It used to add cache
-    // READS on top, while the ring below used input + output + cache writes, so
-    // a capped run could read "6.1M" beside a ring at a quarter of its limit.
-    // Cache reads are the cached prefix re-sent on every request: across 160
-    // requests they reach millions while the context window never grows.
+    // The headline is the quantity the cap ring measures, so the two agree.
+    // Cache reads sit outside it: they are the cached prefix re-sent on every
+    // request, so across a fleet they reach millions while the context window
+    // never grows, and folding them in would read as work that happened.
     tv2.textContent = (anyApprox && tokens > 0 ? '~' : '') + formatTokens(tokens);
     tv2.title = brk.partial
       ? 'Partial token accounting: at least one agent did not expose full input/context totals'
-      : 'Every token the models processed: input + output + cache writes + cache reads. Cache reads are the bulk and bill at a tenth of input.';
+      : 'Input, output and cache writes. Cache reads are the cached prefix re-sent each request and are counted separately below.';
   }
   const dv = $('#aut-page-val-dollars');
   if (dv) dv.textContent = formatDollars(dollars);
