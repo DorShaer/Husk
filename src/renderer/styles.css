@@ -8103,6 +8103,59 @@ body[data-mode="light"] .ob-wordmark span {
 .palette-list .pi-icon { color: var(--accent); width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .palette-list .pi-icon svg { width: 16px; height: 16px; display: block; }
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: var(--fs-nano); font-family: 'JetBrains Mono', monospace; }
+/* ─── Agents under the chat that started them ──────────────────────────────
+   Children sit on the list background with no surface of their own, tethered by
+   a rail and indented. Recessing them with a darker fill cannot work across the
+   themes: in the dark family the bg steps are translucent lifts, in the light
+   family they are solid and run the other way, so a "recess" inverts. Indent
+   and tether read the same in both. */
+.session-agents {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  align-self: flex-start;
+  margin: calc(var(--space-1) * -1) 0 0 var(--space-5);
+  padding: 3px 10px 3px 5px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: transparent; color: var(--text-3);
+  font-size: var(--fs-nano); font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  cursor: pointer; width: fit-content;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.session-agents:hover, .session-agents:focus-visible { color: var(--text); border-color: var(--line-3); background: var(--bg-1); }
+.session-agents .sa-caret { width: 12px; height: 12px; transition: transform var(--motion-fast) var(--ease); }
+.session-agents[aria-expanded="true"] { color: var(--text-2); border-color: var(--line-2); }
+.session-agents[aria-expanded="true"] .sa-caret { transform: rotate(180deg); }
+.sa-live { color: var(--accent); margin-left: var(--space-2); }
+
+.agent-group {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  margin: 0 0 var(--space-1) var(--space-6);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--line-2);
+}
+.agent-row {
+  display: grid; grid-template-columns: 18px 8px minmax(0, 1fr) auto auto;
+  align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-lg);
+  background: transparent; color: var(--text);
+  font-family: inherit; text-align: left; cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.agent-row:hover, .agent-row:focus-visible { background: var(--bg-1); border-color: var(--line); }
+.agent-row.is-done { opacity: .82; }
+.agent-idx { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.agent-row.is-running .agent-dot { background: var(--accent); animation: ap-pulse 1.6s ease-in-out infinite; }
+.agent-row.is-blocked .agent-dot { background: var(--amber); }
+.agent-row.is-done .agent-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.agent-desc { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.agent-desc strong { font-weight: 600; font-size: var(--fs-small); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-live { font-size: var(--fs-nano); color: var(--text-3); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-stat { font-size: var(--fs-nano); color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+.agent-row.is-running .agent-stat:nth-of-type(1) { color: var(--accent); }
+.agent-row.is-blocked .agent-stat:nth-of-type(1) { color: var(--amber); }
+@media (prefers-reduced-motion: reduce) { .agent-row.is-running .agent-dot { animation: none; } }
+
 /* ─── Agent switcher ───────────────────────────────────────────────────────
    Rows inherit the palette shell. They carry more per row than an action does,
    because every agent in a chat is titled after that chat: the name cannot tell

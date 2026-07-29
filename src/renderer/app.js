@@ -6288,6 +6288,7 @@ async function renderSessions() {
   sessionsCache = res.sessions;
   sessionsAgent = res.agent || 'claude';
   sessionsDir = res.sessionsDir || '';
+  await loadSessionAgents();
   // Reflect which agent's sessions are shown, and where they live.
   const subEl = $('#sessions-sub');
   if (subEl) {
@@ -6341,12 +6342,76 @@ function fmtSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Which listed sessions are actually agents a chat started, keyed by session id,
+// plus the parent each one belongs to. The list of sessions on disk cannot tell
+// them apart: an agent is a fork of its chat, so it inherits that chat's title
+// and looks like a peer conversation. The tool's own agent listing is
+// authoritative, so ask it rather than inferring from transcripts.
+let sessionAgents = { bySession: new Map(), byParent: new Map() };
+let sessionAgentsExpanded = new Set();
+
+async function loadSessionAgents() {
+  sessionAgents = { bySession: new Map(), byParent: new Map() };
+  let res = null;
+  try { res = await window.husk.bgAgents.list({ all: true }); } catch (_) { return; }
+  if (!res || !res.ok || !Array.isArray(res.agents)) return;
+  for (const a of res.agents) {
+    if (!a || !a.sessionId) continue;
+    sessionAgents.bySession.set(a.sessionId, a);
+    if (!a.parentSessionId) continue;
+    if (!sessionAgents.byParent.has(a.parentSessionId)) sessionAgents.byParent.set(a.parentSessionId, []);
+    sessionAgents.byParent.get(a.parentSessionId).push(a);
+  }
+  for (const arr of sessionAgents.byParent.values()) arr.sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0));
+}
+
+function agentChildRowsHTML(parentId) {
+  const kids = sessionAgents.byParent.get(parentId) || [];
+  if (!kids.length || !sessionAgentsExpanded.has(parentId)) return '';
+  const rows = kids.map((a, i) => {
+    const state = a.running ? (a.state === 'blocked' ? 'is-blocked' : 'is-running') : 'is-done';
+    const word = a.running ? (a.state === 'blocked' ? 'needs input' : 'working') : 'done';
+    return `
+      <button class="agent-row ${state}" type="button" data-agent="${escapeAttr(a.sessionId)}">
+        <span class="agent-idx">${i + 1}</span>
+        <span class="agent-dot" aria-hidden="true"></span>
+        <span class="agent-desc">
+          <strong>${escapeHtml(a.name || a.id)}</strong>
+          <span class="agent-live">${escapeHtml(agentSubtitle(a))}</span>
+        </span>
+        <span class="agent-stat">${escapeHtml(word)}</span>
+        <span class="agent-stat">${escapeHtml(agentAgeLabel(a.startedAt))}</span>
+      </button>`;
+  }).join('');
+  return `<div class="agent-group">${rows}</div>`;
+}
+
+function agentChipHTML(parentId) {
+  const kids = sessionAgents.byParent.get(parentId) || [];
+  if (!kids.length) return '';
+  const live = kids.filter((a) => a.running).length;
+  const open = sessionAgentsExpanded.has(parentId);
+  return `<span class="session-agents" role="button" tabindex="0" data-agents-for="${escapeAttr(parentId)}" aria-expanded="${open ? 'true' : 'false'}">
+      <svg class="sa-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      ${kids.length} agent${kids.length === 1 ? '' : 's'}${live ? `<span class="sa-live">${live} running</span>` : ''}
+    </span>`;
+}
+
 function paintSessions(list, query) {
   const ul = $('#sessions-list');
   const q = (query || '').toLowerCase().trim();
-  const filtered = q ? list.filter((s) =>
+  const matched = q ? list.filter((s) =>
     (s.title + ' ' + s.id + ' ' + s.projectPath + ' ' + (s.prdPhase || '')).toLowerCase().includes(q)
   ) : list;
+  // An agent is a fork of its chat, so it carries that chat's title and sits in
+  // the list as a peer conversation with the same name. Show it under the chat
+  // that started it instead. Only when that chat is actually in view: reparenting
+  // a row onto something not on screen would remove it with nowhere to go.
+  const present = new Set(matched.map((s) => s.id));
+  const filtered = matched.filter((s) => {
+    const a = sessionAgents.bySession.get(s.id);
+    return !(a && a.parentSessionId && present.has(a.parentSessionId));
+  });
   if (!filtered.length) {
     const card = list.length
       ? sessionsEmptyCard({
@@ -6391,6 +6456,8 @@ function paintSessions(list, query) {
         ${progressHTML || `<span class="session-progress">${escapeHtml(fmtSize(s.sizeBytes))}</span>`}
         ${phaseHTML}
       </button>
+      ${agentChipHTML(s.id)}
+      ${agentChildRowsHTML(s.id)}
     `;
   }).join('');
   ul.querySelectorAll('.session-row').forEach((r) =>
@@ -6401,6 +6468,23 @@ function paintSessions(list, query) {
       } else {
         openSessionDetail(r.dataset);
       }
+    })
+  );
+  const toggleAgents = (parentId) => {
+    if (sessionAgentsExpanded.has(parentId)) sessionAgentsExpanded.delete(parentId);
+    else sessionAgentsExpanded.add(parentId);
+    paintSessions(list, query);
+  };
+  ul.querySelectorAll('.session-agents').forEach((chip) => {
+    chip.addEventListener('click', () => toggleAgents(chip.dataset.agentsFor));
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAgents(chip.dataset.agentsFor); }
+    });
+  });
+  ul.querySelectorAll('.agent-row').forEach((row) =>
+    row.addEventListener('click', () => {
+      const a = sessionAgents.bySession.get(row.dataset.agent);
+      if (a) openBgAgent(a);
     })
   );
 }
