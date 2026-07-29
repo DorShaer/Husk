@@ -1115,9 +1115,15 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   const resumeMatch = (rawCmd || '').match(/--resume[=\s]+([A-Za-z0-9][A-Za-z0-9-]{6,})/);
   const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
+  // A subcommand runs a different program with its own flags: `claude agents`
+  // manages background agents and rejects the session flags the chat form takes.
+  // Only the bare chat invocation gets bound to a transcript.
+  // Only the first token decides: a flag's value is also a bare word, so
+  // `--permission-mode default` must not read as a subcommand.
+  const isSubcommand = agentArgs.length > 0 && !String(agentArgs[0]).startsWith('-');
   if (resumeMatch) {
     s.claudeSessionId = resumeMatch[1];
-  } else if (isClaudeAgent && !isWin32 && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
+  } else if (isClaudeAgent && !isWin32 && !isSubcommand && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
     // Keep one discussion in one transcript across restarts (project switch, MCP
     // reload, manual restart). Within a process the tab reuses its own
     // claudeSessionId. Across a full app restart that in-memory id is gone, so

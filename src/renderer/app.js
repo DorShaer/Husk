@@ -9940,7 +9940,7 @@ const PALETTE_ACTIONS = [
   // Ahead of the pages, because three entries answer "agent" and the palette
   // preselects the first: someone hunting a running agent was landing on the
   // page of agent definitions instead. The rail order below is untouched.
-  { icon: ICONS.agents,      label: 'Find a running agent',           run: () => openAgentSwitch(), shortcut: 'Alt A' },
+  { icon: ICONS.agents,      label: 'Find a running agent',           run: () => openAgentSwitch(), shortcut: 'Alt+A' },
   { icon: ICONS.agents,      label: 'Switch to Agents',               run: () => setPage('agents') },
   { icon: ICONS.workflows,   label: 'Switch to Workflows',            run: () => setPage('workflows') },
   { icon: ICONS.autopilot,    label: 'Switch to Autopilot',             run: () => setPage('autopilot') },
