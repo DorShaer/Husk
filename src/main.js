@@ -4202,7 +4202,12 @@ function catalogModelLabel(id, command = null) {
   const head = safeAgentCommandHead(command || config.agentCommand || 'claude');
   if (!head) return '';
   const cached = modelCatalogCache.get(`${head.base}:${head.exe}`);
-  const models = cached && cached.value && Array.isArray(cached.value.models) ? cached.value.models : null;
+  const live = cached && cached.value && Array.isArray(cached.value.models) ? cached.value.models : null;
+  // The live catalog is only there once something has asked the CLI for it, and
+  // asking means driving its picker in a terminal. Not worth spawning the user's
+  // agent binary unprompted just to title a row, so fall back to the names we
+  // already know for this vendor.
+  const models = (live && live.length) ? live : fallbackModelsFor(head.base);
   if (!models || !models.length) return '';
   // Compare with the context tier and vendor prefix removed, so "opus[1m]",
   // "opus" and "claude-opus-5" all reach the same catalog row.
@@ -8918,12 +8923,6 @@ if (!gotLock) {
     try { reconcileOrphanWorktrees(); } catch (_) {}
     createWindow();
     setupAutoUpdater();
-    // Read the active CLI's model catalog once in the background so the status
-    // panel can name the running model in the provider's own words from the
-    // first poll. The probe drives the CLI's picker in a PTY and takes seconds,
-    // so it must never sit in front of the window opening; until it lands the
-    // panel falls back to the name derived from the model id.
-    setTimeout(() => { discoverModelCatalog().catch(() => {}); }, 4000);
   });
   app.on('window-all-closed', () => {
     killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();
