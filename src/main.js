@@ -4614,18 +4614,19 @@ function countLines(p) { try { return fs.readFileSync(p, 'utf8').split('\n').fil
 // Resolve the active agent CLI's version by running `<cmd> --version`. Uses the
 // agent spawn env so the command resolves against the user's real PATH (a macOS
 // GUI app starts with a minimal PATH that augmentUserPathAsync fills in shortly
-// after launch). Only a successful lookup is cached, so an early poll that runs
-// before the PATH is ready retries on the next poll instead of sticking.
+// after launch). Every result (including empty) is cached so that each CLI is
+// probed at most once per app session; this avoids repeated side-effectful
+// spawns on every stats poll when the version string cannot be parsed.
 const _agentVersionCache = {};
 function getAgentVersion(cmd) {
-  if (_agentVersionCache[cmd]) return _agentVersionCache[cmd];
+  if (cmd in _agentVersionCache) return _agentVersionCache[cmd];
   let v = '';
   try {
     const out = require('child_process').execFileSync(cmd, ['--version'], { timeout: 4000, encoding: 'utf8', env: buildAgentEnv() });
     const m = String(out).match(/\d+\.\d+(?:\.\d+)?/);
     v = m ? m[0] : String(out).trim().split('\n')[0].slice(0, 40);
   } catch (_) { v = ''; }
-  if (v) _agentVersionCache[cmd] = v;
+  _agentVersionCache[cmd] = v;
   return v;
 }
 
