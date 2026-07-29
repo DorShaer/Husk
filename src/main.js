@@ -1017,6 +1017,12 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   const userTokens = rawCmd.split(/\s+/).filter(Boolean);
   let agentExe = userTokens.shift() || 'claude';
   let agentArgs = userTokens;
+  // A subcommand runs a different program under the same binary: `claude agents`
+  // manages background agents and takes none of the chat flags. Decided from the
+  // command as typed, because injected flags are prepended below and would
+  // otherwise hide the subcommand behind them. Only the first token counts, so a
+  // flag's bare value ("--permission-mode default") is not mistaken for one.
+  const isSubcommand = agentArgs.length > 0 && !String(agentArgs[0]).startsWith('-');
 
   // Resolve a bare program name to an absolute path up front (which/where via a
   // login shell if needed) so the spawn does not depend on the child PATH being
@@ -1040,7 +1046,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // folder trust remains in ~/.claude.json.
   const isWin32 = process.platform === 'win32';
   let injectionPlan = { method: 'none' };
-  if (!isWin32 && !agentArgs.includes('--settings')) {
+  if (!isWin32 && !isSubcommand && !agentArgs.includes('--settings')) {
     injectionPlan = AgentInject.planInjection({
       agentCommand: rawCmd,
       agentName: config.agentName,
@@ -1115,12 +1121,6 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   const resumeMatch = (rawCmd || '').match(/--resume[=\s]+([A-Za-z0-9][A-Za-z0-9-]{6,})/);
   const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
-  // A subcommand runs a different program with its own flags: `claude agents`
-  // manages background agents and rejects the session flags the chat form takes.
-  // Only the bare chat invocation gets bound to a transcript.
-  // Only the first token decides: a flag's value is also a bare word, so
-  // `--permission-mode default` must not read as a subcommand.
-  const isSubcommand = agentArgs.length > 0 && !String(agentArgs[0]).startsWith('-');
   if (resumeMatch) {
     s.claudeSessionId = resumeMatch[1];
   } else if (isClaudeAgent && !isWin32 && !isSubcommand && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
