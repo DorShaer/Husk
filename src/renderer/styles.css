@@ -8103,6 +8103,47 @@ body[data-mode="light"] .ob-wordmark span {
 .palette-list .pi-icon { color: var(--accent); width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .palette-list .pi-icon svg { width: 16px; height: 16px; display: block; }
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: var(--fs-nano); font-family: 'JetBrains Mono', monospace; }
+/* ─── Agent switcher ───────────────────────────────────────────────────────
+   Rows inherit the palette shell. They carry more per row than an action does,
+   because every agent in a chat is titled after that chat: the name cannot tell
+   two of them apart, so state, activity and age have to. */
+.as-row {
+  display: grid;
+  grid-template-columns: 16px 8px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 11px;
+  padding: 9px 13px; border-radius: var(--radius-lg);
+  color: var(--text-2); cursor: pointer;
+}
+.as-row.active, .as-row:hover { background: color-mix(in srgb, var(--accent) 12%, var(--bg-3)); color: var(--text); }
+.as-idx { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.as-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+/* Three states, three signals each, so the difference survives grayscale. */
+.as-row.is-running .as-dot { background: var(--accent); animation: ap-pulse 1.6s ease-in-out infinite; }
+.as-row.is-blocked .as-dot { background: var(--amber); }
+.as-row.is-done    .as-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.as-row.is-done { opacity: .82; }
+.as-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.as-text strong { font-weight: 600; font-size: var(--fs-small); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-sub { font-size: var(--fs-nano); color: var(--text-3); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-state { font-size: var(--fs-pico); text-transform: uppercase; letter-spacing: .1em; font-weight: 700; color: var(--text-3); }
+.as-row.is-running .as-state { color: var(--accent); }
+.as-row.is-blocked .as-state { color: var(--amber); }
+.as-age { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.as-empty { display: flex; flex-direction: column; gap: 4px; padding: 22px 16px; text-align: center; }
+.as-empty strong { font-size: var(--fs-small); font-weight: 600; color: var(--text-2); }
+.as-empty span { font-size: var(--fs-nano); color: var(--text-3); }
+/* The list has known geometry, so placeholders keep its shape rather than
+   replacing it with a spinner that says less. */
+.as-skel {
+  height: 38px; margin: 4px 0; border-radius: var(--radius-lg);
+  background: linear-gradient(90deg, var(--bg-3) 25%, var(--bg-2) 50%, var(--bg-3) 75%);
+  background-size: 200% 100%;
+  animation: ws-shimmer 1.1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .as-row.is-running .as-dot, .as-skel { animation: none; }
+}
+
 .palette-foot {
   display: flex; gap: 14px;
   padding: 9px 16px;

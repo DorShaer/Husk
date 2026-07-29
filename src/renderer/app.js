@@ -1240,7 +1240,7 @@ async function openNewChatTab(opts = {}) {
   chatHasInput = false;
   resetSpeechState();
   clearSessionContext();
-  await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
+  await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id, env: opts.env || null });
   tab.term.focus();
   maybeShowTrustBanner();
   // skipWelcome: the caller is about to write into this chat, so painting the
@@ -9859,6 +9859,160 @@ const PALETTE_ACTIONS = [
 ];
 
 let paletteSel = 0;
+// ─── Agent switcher ──────────────────────────────────────────────────────────
+// A chat can start agents that keep working after it moves on. They are their
+// own sessions, so the only way to reach one has been to leave Husk and drive
+// the CLI's picker by hand. This is that picker, owned by Husk.
+let agentSwitch = { rows: [], sel: 0, loading: false, error: '', supported: true, parent: null };
+
+function agentAgeLabel(ms) {
+  if (!ms) return '';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${(s / 3600).toFixed(s < 36000 ? 1 : 0)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+
+// Rows are titled from the parent chat, so the title alone cannot tell two
+// agents apart. What the agent is doing right now can.
+function agentSubtitle(a) {
+  if (a.detail) return a.detail;
+  if (a.needs) return a.needs;
+  if (a.intent) return a.intent;
+  return a.running ? 'starting' : 'no activity recorded';
+}
+
+async function openAgentSwitch() {
+  const el = $('#agent-switch');
+  if (!el) return;
+  el.hidden = false;
+  $('#agent-switch-input').value = '';
+  agentSwitch = { rows: [], sel: 0, loading: true, error: '', supported: true };
+  renderAgentSwitch('');
+  $('#agent-switch-input').focus();
+  let res = null;
+  // No cwd: main scopes to the active chat's directory, which is the one whose
+  // agents the user is asking about.
+  try { res = await window.husk.bgAgents.list({}); } catch (err) { res = { ok: false, error: (err && err.message) || 'could not reach the agent list' }; }
+  if (el.hidden) return;                       // closed while we were loading
+  agentSwitch.loading = false;
+  agentSwitch.supported = !res || res.supported !== false;
+  agentSwitch.error = res && res.ok === false ? (res.error || 'could not list agents') : '';
+  agentSwitch.rows = (res && Array.isArray(res.agents) ? res.agents : [])
+    .slice()
+    .sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0));
+  renderAgentSwitch($('#agent-switch-input').value);
+}
+
+function closeAgentSwitch() {
+  const el = $('#agent-switch');
+  if (el) el.hidden = true;
+  if (term) term.focus();
+}
+
+function agentSwitchMatches(query) {
+  const q = String(query || '').toLowerCase().trim();
+  if (!q) return agentSwitch.rows;
+  return agentSwitch.rows.filter((a) =>
+    (a.name || '').toLowerCase().includes(q)
+    || (a.detail || '').toLowerCase().includes(q)
+    || (a.intent || '').toLowerCase().includes(q));
+}
+
+function renderAgentSwitch(query) {
+  const list = $('#agent-switch-list');
+  if (!list) return;
+  const esc = escapeHtml;
+  if (agentSwitch.loading) {
+    // Shape-preserving placeholders: the list has known geometry, so a spinner
+    // would say less than the rows it is about to be replaced by.
+    // eslint-disable-next-line no-unsanitized/property -- Static markup, no interpolation.
+    list.innerHTML = '<li class="as-skel"></li><li class="as-skel"></li><li class="as-skel"></li>';
+    return;
+  }
+  if (!agentSwitch.supported) {
+    // eslint-disable-next-line no-unsanitized/property -- Static markup, no interpolation.
+    list.innerHTML = '<li class="as-empty"><strong>This tool has no background agents</strong><span>Husk shows them for tools that start them.</span></li>';
+    return;
+  }
+  if (agentSwitch.error) {
+    // eslint-disable-next-line no-unsanitized/property -- Only the escaped error text is interpolated.
+    list.innerHTML = `<li class="as-empty"><strong>Could not list agents</strong><span>${esc(agentSwitch.error)}</span></li>`;
+    return;
+  }
+  const rows = agentSwitchMatches(query);
+  if (!rows.length) {
+    const msg = agentSwitch.rows.length
+      ? '<strong>No agent matches</strong><span>Clear the filter to see them all.</span>'
+      : '<strong>No agents yet</strong><span>Agents this chat starts in the background show up here.</span>';
+    // eslint-disable-next-line no-unsanitized/property -- Both branches are literals.
+    list.innerHTML = `<li class="as-empty">${msg}</li>`;
+    return;
+  }
+  if (agentSwitch.sel >= rows.length) agentSwitch.sel = rows.length - 1;
+  if (agentSwitch.sel < 0) agentSwitch.sel = 0;
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolated value is escaped above.
+  list.innerHTML = rows.map((a, i) => {
+    const state = a.running ? (a.state === 'blocked' ? 'is-blocked' : 'is-running') : 'is-done';
+    const stateWord = a.running ? (a.state === 'blocked' ? 'needs input' : 'working') : 'done';
+    return `
+    <li class="as-row ${state} ${i === agentSwitch.sel ? 'active' : ''}" data-idx="${i}">
+      <span class="as-idx">${i < 9 ? i + 1 : ''}</span>
+      <span class="as-dot" aria-hidden="true"></span>
+      <span class="as-text">
+        <strong>${esc(a.name || a.id)}</strong>
+        <span class="as-sub">${esc(agentSubtitle(a))}</span>
+      </span>
+      <span class="as-state">${esc(stateWord)}</span>
+      <span class="as-age">${esc(agentAgeLabel(a.startedAt))}</span>
+    </li>`;
+  }).join('');
+  list.querySelectorAll('li.as-row').forEach((li, i) => {
+    li.addEventListener('mouseenter', () => { agentSwitch.sel = i; renderAgentSwitch($('#agent-switch-input').value); });
+    li.addEventListener('click', () => openAgentFromSwitch(i));
+  });
+}
+
+async function openAgentFromSwitch(idx) {
+  const rows = agentSwitchMatches($('#agent-switch-input').value);
+  const a = rows[idx];
+  if (!a) return;
+  closeAgentSwitch();
+  await openBgAgent(a);
+}
+
+// A running agent belongs to its worker and cannot be resumed like a chat; the
+// tool refuses and says so. Its own agent view is the supported way in, and it
+// opens straight onto this agent when told which one. A finished agent has no
+// worker left, so it resumes normally.
+async function openBgAgent(a) {
+  let res = null;
+  try {
+    res = await window.husk.bgAgents.openCommand({
+      id: a.id, sessionId: a.sessionId, running: !!a.running, cwd: a.cwd || '',
+    });
+  } catch (err) { res = { ok: false, error: (err && err.message) || 'could not open that agent' }; }
+  if (!res || !res.ok) {
+    toast((res && res.error) || 'could not open that agent', 'error');
+    return;
+  }
+  setPage('chat');
+  const tab = await openNewChatTab({
+    command: res.command,
+    env: res.env || null,
+    cwd: a.cwd || null,
+    skipContext: true,
+    skipWelcome: true,
+  });
+  if (tab) {
+    tab.customTitle = a.name || a.id;
+    tab.agentId = a.sessionId || '';
+    renderTabStrip();
+  }
+  toast(`Opened ${a.name || a.id}`, 'success');
+}
+
 function openPalette() {
   $('#palette').hidden = false;
   $('#palette-input').value = '';
@@ -9907,6 +10061,23 @@ $('#palette-input').addEventListener('keydown', (e) => {
   }
 });
 $('#palette').addEventListener('click', (e) => { if (e.target.id === 'palette') closePalette(); });
+
+$('#agent-switch-input').addEventListener('input', (e) => { agentSwitch.sel = 0; renderAgentSwitch(e.target.value); });
+$('#agent-switch-input').addEventListener('keydown', (e) => {
+  const value = $('#agent-switch-input').value;
+  const rows = agentSwitchMatches(value);
+  if (e.key === 'Escape') { e.preventDefault(); closeAgentSwitch(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); agentSwitch.sel = Math.min(rows.length - 1, agentSwitch.sel + 1); renderAgentSwitch(value); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); agentSwitch.sel = Math.max(0, agentSwitch.sel - 1); renderAgentSwitch(value); return; }
+  if (e.key === 'Enter') { e.preventDefault(); openAgentFromSwitch(agentSwitch.sel); return; }
+  // Number keys jump, but only while the filter is empty: once the user is
+  // typing, a digit belongs to the search text.
+  if (!value && /^[1-9]$/.test(e.key)) {
+    const idx = Number(e.key) - 1;
+    if (idx < rows.length) { e.preventDefault(); openAgentFromSwitch(idx); }
+  }
+});
+$('#agent-switch').addEventListener('click', (e) => { if (e.target.id === 'agent-switch') closeAgentSwitch(); });
 $('#btn-palette').addEventListener('click', openPalette);
 // On the chat page, if focus is on the page body (nothing focused) and a
 // printable/edit key is pressed, focus the active terminal first so the
@@ -9937,6 +10108,11 @@ window.addEventListener('keydown', (e) => {
     const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp' };
     if (map[e.key]) { e.preventDefault(); setPage(map[e.key]); }
     if (e.key === '6') { e.preventDefault(); openPrefsModal(); }
+    // Alt-keyed like the rest of the chrome so it never eats terminal input.
+    if (String(e.key || '').toLowerCase() === 'a') {
+      e.preventDefault();
+      if ($('#agent-switch') && $('#agent-switch').hidden) openAgentSwitch(); else closeAgentSwitch();
+    }
   }
   // Ctrl/Cmd +/-/0 for renderer zoom
   if (e.ctrlKey || e.metaKey) {
