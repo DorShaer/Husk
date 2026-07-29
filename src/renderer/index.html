@@ -317,6 +317,27 @@
       </div>
     </div>
 
+    <!-- Agents this chat started that keep working on their own. -->
+    <div id="agent-switch" class="palette" hidden>
+      <div class="palette-card">
+        <!-- The glyph holds the same column the row dots do, so the query text
+             starts on the left edge every result title and section label uses. -->
+        <div class="as-head">
+          <svg class="as-head-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+          <input type="text" id="agent-switch-input" placeholder="Filter agents" autocomplete="off" spellcheck="false" role="combobox" aria-controls="agent-switch-list" aria-expanded="true" aria-autocomplete="list" />
+        </div>
+        <ul id="agent-switch-list" class="palette-list" role="listbox" aria-label="Agents"></ul>
+        <div class="palette-foot">
+          <span class="as-foot-nav" id="as-nav-hints">
+            <span><kbd>↑↓</kbd> navigate</span>
+            <span><kbd>↵</kbd> open</span>
+          </span>
+          <span class="as-foot-count" id="as-foot-count"></span>
+          <span class="as-foot-esc"><kbd>Esc</kbd> close</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Topbar -->
     <header id="topbar">
       <button class="topbar-project" id="topbar-project" title="Active project (click to switch)" hidden>
@@ -324,6 +345,17 @@
         <span class="tp-name" id="topbar-project-name"></span>
       </button>
       <div class="topbar-spacer"></div>
+      <!-- Agents this project has. Silent until there is one. The label is
+           rewritten by a poll, so it stays out of the live region: a chip that
+           re-announces itself every few seconds is noise, and the title says
+           the same thing on demand. -->
+      <button class="iconbtn topbar-agents" id="topbar-agents" type="button" hidden>
+        <span class="ta-dot" aria-hidden="true"></span>
+        <span class="ta-count" id="topbar-agents-count"></span>
+        <span class="ta-word" id="topbar-agents-word"></span>
+        <span class="ta-needs" id="topbar-agents-needs" hidden></span>
+        <span class="ta-key" aria-hidden="true">Alt+A</span>
+      </button>
       <button class="iconbtn" id="btn-palette" title="Command palette (Ctrl+K)">⌘K</button>
       <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Chat</button>
       <button class="iconbtn iconbtn-square" id="btn-status-toggle" title="Toggle status panel" aria-label="Toggle status panel">
@@ -494,6 +526,12 @@
             <div class="terminal-wrap">
               <div id="tab-strip" class="tab-strip"></div>
               <div id="terminal"></div>
+              <!-- Covers the tool's own agent picker while Husk drives it. -->
+              <div id="agent-boot" class="agent-boot" hidden>
+                <span class="ab-dot" aria-hidden="true"></span>
+                <span class="ab-name" id="agent-boot-name"></span>
+                <span class="ab-sub">Opening</span>
+              </div>
             </div>
           </div>
         </div>

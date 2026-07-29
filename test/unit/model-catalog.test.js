@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { fallbackModelsFor, isCliStatusLine, isModelValueUsable, modelFlagFor, modelIdFromDisplayLabel, parseModelCatalog, providerLabel, titleFromId, uniqueModels } = require('../../src/lib/model-catalog');
+const { modelArgsFor } = require('../../src/lib/model-routing');
 
 test('modelFlagFor knows routed provider flags', () => {
   assert.equal(modelFlagFor('copilot'), '--model');
@@ -160,6 +161,32 @@ test('parseModelCatalog extracts Claude slash-model choices', () => {
     { value: 'sonnet', label: 'Sonnet 5 · Efficient' },
     { value: 'haiku', label: 'Haiku 4.5 · Fastest' },
   ]);
+});
+
+test('claude long-context row keeps its own id and reads like the other rows', () => {
+  const out = `
+    Select model
+    1. Default (recommended) - Opus 5
+    2. (selected) Opus - Opus 5 · Best for everyday use
+    3. Opus (1M context) - Opus 5 with 1M context · Best for everyday use
+    4. Fable — Fable 5 · Most capable
+    5. Haiku — Haiku 4.5 · Fastest
+  `;
+  assert.deepEqual(parseModelCatalog(out, 'claude'), [
+    { value: 'opus', label: 'Opus 5 · Best for everyday use' },
+    { value: 'opus[1m]', label: 'Opus 5 With 1M Context · Best for everyday use' },
+    { value: 'fable', label: 'Fable 5 · Most capable' },
+    { value: 'haiku', label: 'Haiku 4.5 · Fastest' },
+  ]);
+});
+
+test('the long-context id survives every gate between the picker and --model', () => {
+  assert.equal(isModelValueUsable('opus[1m]', 'claude'), true);
+  assert.equal(isModelValueUsable('claude-opus-5[1m]', 'claude'), true);
+  assert.deepEqual(
+    modelArgsFor('claude', 'smart', { claude: { flag: '--model', smart: 'opus[1m]' } }),
+    ['--model', 'opus[1m]'],
+  );
 });
 
 test('claude probe noise (config paths, API references) yields no model candidates', () => {

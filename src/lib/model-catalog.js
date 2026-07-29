@@ -18,7 +18,8 @@ const PROVIDER_LABELS = Object.freeze({
 
 const FALLBACK_MODEL_CATALOGS = Object.freeze({
   claude: [
-    ['opus', 'Opus 4.8'],
+    ['opus', 'Opus 5'],
+    ['opus[1m]', 'Opus 5 With 1M Context'],
     ['fable', 'Fable 5'],
     ['sonnet', 'Sonnet 5'],
     ['haiku', 'Haiku 4.5'],
@@ -119,6 +120,22 @@ function titleFromId(id) {
     .join(' ')
     .replace(/\bGpt\b/g, 'GPT')
     .replace(/\bAi\b/g, 'AI');
+}
+
+// Every picker row reads "<Name> · <what it is for>". The long-context row
+// breaks that shape: it repeats its tier inside the name, in the picker's own
+// lowercase wording. Normalize the name half and keep the description after the
+// separator so the row sits in the dropdown looking like its siblings.
+function longContextLabel(description, family) {
+  const parts = String(description || '').split('·');
+  const name = parts[0]
+    .replace(/\(1m context\)/ig, '')
+    .replace(/\bwith\s+1m\s+context\b/ig, '')
+    .replace(/\s+/g, ' ')
+    .trim() || titleFromId(family);
+  const rest = parts.slice(1).join('·').replace(/\s+/g, ' ').trim();
+  const named = `${name} With 1M Context`;
+  return rest ? `${named} · ${rest}` : named;
 }
 
 function cleanLabel(label) {
@@ -257,8 +274,17 @@ function modelCandidateFromLine(line, vendor) {
       if (tag) rest = rest.slice(tag[0].length).trim();
       const fam = rest.match(/^(opus|fable|sonnet|haiku)\b/i);
       if (fam) {
-        const label = rest.slice(fam[0].length).trim().replace(/^[-\u2014\u2013]/, '').trim().slice(0, 160);
-        const value = fam[1].toLowerCase();
+        let value = fam[1].toLowerCase();
+        rest = rest.slice(fam[0].length).trim();
+        // The long-context row qualifies the family name rather than naming a
+        // separate one: "Opus (1M context)". The tier belongs to the id the CLI
+        // accepts, so it moves into the value. Left in the label it both reads
+        // as a description and collapses onto the base family, which drops one
+        // of the two rows on the way to the picker.
+        const tier = rest.match(/^\(1m context\)/i);
+        if (tier) { value += '[1m]'; rest = rest.slice(tier[0].length).trim(); }
+        let label = rest.replace(/^[-\u2014\u2013]/, '').trim().slice(0, 160);
+        if (tier) label = longContextLabel(label, fam[1]);
         return { value, label: cleanLabel(label || titleFromId(value)) };
       }
     }
@@ -328,7 +354,7 @@ function isModelValueUsable(value, vendor) {
   const normalized = normalizeModelId(raw);
   if (!normalized || normalized !== raw.replace(/[),.;:]+$/g, '')) return false;
   if (looksLikeModelId(normalized, vendor)
-    || /^(opus|fable|sonnet|haiku|opusplan)$/i.test(normalized)
+    || /^(opus|fable|sonnet|haiku|opusplan)(\[1m\])?$/i.test(normalized)
     || /^(kimi|mai)-/i.test(normalized)) return true;
   // aider routes to arbitrary providers (openrouter/x/y, bare aliases like
   // flash or r1), so a saved aider value that passed the garbage checks
@@ -349,9 +375,10 @@ function looksLikeModelId(id, vendor) {
   if (/(^|[-./_])(api|sdk|cli|docs?|settings|config|readme|help)$/.test(x)) return false;
   if (v === 'claude') {
     // The claude CLI accepts tier aliases and claude-* ids only; anything
-    // else scraped from its TUI is narration, not a selectable model.
-    if (/^(haiku|sonnet|opus|fable|opusplan)$/.test(x)) return true;
-    return /^claude-[a-z0-9][a-z0-9.-]*$/.test(x);
+    // else scraped from its TUI is narration, not a selectable model. Either
+    // form may carry the long-context suffix, as in opus[1m].
+    if (/^(haiku|sonnet|opus|fable|opusplan)(\[1m\])?$/.test(x)) return true;
+    return /^claude-[a-z0-9][a-z0-9.-]*(\[1m\])?$/.test(x);
   }
   // One optional "provider/" prefix, stripped before the vendor-word check so
   // the regex stays flat.

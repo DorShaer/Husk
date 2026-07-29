@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
@@ -891,6 +891,32 @@ function killPtyTree() {
 
 // ─── PTY ─────────────────────────────────────────────────────────────────────────
 
+// Transcript file names present in a project dir right now. Used to tell a
+// resumed tab's successor transcript apart from the one it was resumed from.
+function listTranscriptNames(projDir) {
+  try {
+    return fs.readdirSync(projDir).filter((f) => f.endsWith('.jsonl'));
+  } catch (_) { return []; }
+}
+
+// Whether a transcript belongs to a person typing in a terminal. Hooks, title
+// generators and agent SDK calls all write into the same project directory and
+// often land there before the chat's own first turn, so creation order cannot
+// identify a tab's transcript. The CLI records how the session was entered:
+// an interactive one is "cli", everything programmatic is "sdk-cli"/"sdk-py".
+function isInteractiveTranscript(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(64 * 1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      const head = buf.toString('utf8', 0, n);
+      if (/"entrypoint"\s*:\s*"sdk/.test(head)) return false;
+      return /"entrypoint"\s*:\s*"cli"/.test(head);
+    } finally { fs.closeSync(fd); }
+  } catch (_) { return false; }
+}
+
 // The last claude session id Husk bound for a given project dir, so a fresh
 // app boot can resume the ongoing discussion instead of starting a new one.
 function lastClaudeSessionForCwd(encodedCwd, projDir) {
@@ -909,7 +935,28 @@ function rememberClaudeSession(encodedCwd, sessionId) {
   saveConfig(config);
 }
 
-function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null, resumeLast = false) {
+// Environment variables the renderer is allowed to set on a spawned agent.
+// An allowlist rather than a passthrough: the renderer hands this straight to a
+// child process, and names like PATH, LD_PRELOAD or NODE_OPTIONS decide which
+// code runs, not merely how it behaves. Values are single-line and bounded so a
+// crafted string cannot carry a newline into the environment block.
+const SPAWN_ENV_ALLOW = new Set(['CLAUDE_AGENTS_SELECT']);
+function sanitizeSpawnEnv(env) {
+  if (!env || typeof env !== 'object') return null;
+  const out = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (!SPAWN_ENV_ALLOW.has(k)) continue;
+    const value = String(v == null ? '' : v);
+    if (!value || value.length > 200 || /[\r\n\0]/.test(value)) continue;
+    out[k] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// extraEnv reaches the child process and nothing else. Attaching to a running
+// background agent is selected by an environment variable the CLI reads at
+// startup, so there is no command-line form to express it.
+function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null, resumeLast = false, extraEnv = null) {
   // Target an existing session (Restart replaces just that tab's child) or
   // create a new one (New Chat passes a fresh id so the running agents keep
   // going). Falls back to the active session, then a generated id.
@@ -951,7 +998,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     // right panel already surfaces. PAI side checks $HUSK_HOST and
     // early-exits.
     HUSK_HOST: '1',
-  });
+  }, extraEnv && typeof extraEnv === 'object' ? extraEnv : {});
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
   // ~/.local/bin is where the native claude installer (and other user CLIs)
@@ -970,6 +1017,12 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   const userTokens = rawCmd.split(/\s+/).filter(Boolean);
   let agentExe = userTokens.shift() || 'claude';
   let agentArgs = userTokens;
+  // A subcommand runs a different program under the same binary: `claude agents`
+  // manages background agents and takes none of the chat flags. Decided from the
+  // command as typed, because injected flags are prepended below and would
+  // otherwise hide the subcommand behind them. Only the first token counts, so a
+  // flag's bare value ("--permission-mode default") is not mistaken for one.
+  const isSubcommand = agentArgs.length > 0 && !String(agentArgs[0]).startsWith('-');
 
   // Resolve a bare program name to an absolute path up front (which/where via a
   // login shell if needed) so the spawn does not depend on the child PATH being
@@ -993,7 +1046,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // folder trust remains in ~/.claude.json.
   const isWin32 = process.platform === 'win32';
   let injectionPlan = { method: 'none' };
-  if (!isWin32 && !agentArgs.includes('--settings')) {
+  if (!isWin32 && !isSubcommand && !agentArgs.includes('--settings')) {
     injectionPlan = AgentInject.planInjection({
       agentCommand: rawCmd,
       agentName: config.agentName,
@@ -1070,7 +1123,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
   if (resumeMatch) {
     s.claudeSessionId = resumeMatch[1];
-  } else if (isClaudeAgent && !isWin32 && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
+  } else if (isClaudeAgent && !isWin32 && !isSubcommand && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
     // Keep one discussion in one transcript across restarts (project switch, MCP
     // reload, manual restart). Within a process the tab reuses its own
     // claudeSessionId. Across a full app restart that in-memory id is gone, so
@@ -1093,10 +1146,18 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   }
   if (s.claudeSessionId) {
     try {
-      const pinned = path.join(CLAUDE_DIR, 'projects', encodedCwd, `${s.claudeSessionId}.jsonl`);
+      const projDir = path.join(CLAUDE_DIR, 'projects', encodedCwd);
+      const pinned = path.join(projDir, `${s.claudeSessionId}.jsonl`);
       // Resume: the file exists already. New chat: it appears once claude starts
       // writing, so until then the session has no transcript and reads 0 context.
-      s.transcript = fs.existsSync(pinned) ? pinned : null;
+      const resumed = fs.existsSync(pinned);
+      s.transcript = resumed ? pinned : null;
+      // --resume names the conversation to continue, not the file that will be
+      // written: the CLI opens a fresh transcript under a new id and leaves the
+      // one it was handed frozen. Snapshot the directory so the successor is
+      // identifiable later as the file that was not here when this tab spawned.
+      s.resumedTranscript = resumed;
+      s.priorTranscripts = resumed ? new Set(listTranscriptNames(projDir)) : null;
     } catch (_) { s.transcript = null; }
   }
 
@@ -1380,7 +1441,7 @@ function readActiveSessionStats() {
       .filter((f) => f.endsWith('.jsonl'))
       .map((f) => {
         const p = path.join(dir, f);
-        try { const st = fs.statSync(p); return { p, mtime: st.mtimeMs, size: st.size }; } catch (_) { return null; }
+        try { const st = fs.statSync(p); return { p, mtime: st.mtimeMs, btime: st.birthtimeMs, size: st.size }; } catch (_) { return null; }
       })
       .filter(Boolean)
       .sort((a, b) => b.mtime - a.mtime);
@@ -1392,7 +1453,37 @@ function readActiveSessionStats() {
     // with the conversation; it re-resolves only when that file disappears.
     const sess = activeSessionId ? sessions.get(activeSessionId) : null;
     let latest = null;
-    if (sess && sess.claudeSessionId) {
+    if (sess && sess.resumedTranscript) {
+      // A resumed tab was handed the id of the conversation to continue, and the
+      // CLI writes the continuation to a new file. Reading the id it was handed
+      // reports the source conversation forever: its model, its turn count, its
+      // occupancy, none of them moving. The live file is the one that was not in
+      // the directory when this tab spawned, written by an interactive session.
+      // The interactive test is what makes this reliable: hooks and title
+      // generators spawn their own sessions into the same directory, and one of
+      // them routinely appears before the chat's own first turn, so arrival
+      // order alone picks a two-turn helper. Earliest-first among the survivors,
+      // since the tab's transcript precedes any agent it goes on to spawn.
+      const claimed = new Set();
+      for (const o of sessions.values()) if (o !== sess && o.transcript) claimed.add(o.transcript);
+      const prior = sess.priorTranscripts || new Set();
+      const fresh = files
+        .filter((f) => !prior.has(path.basename(f.p)) && !claimed.has(f.p))
+        .sort((a, b) => (a.btime || a.mtime) - (b.btime || b.mtime))
+        .find((f) => isInteractiveTranscript(f.p));
+      if (fresh) {
+        latest = fresh.p;
+        sess.transcript = fresh.p;
+        sess.claudeSessionId = path.basename(fresh.p, '.jsonl');
+        sess.resumedTranscript = false;
+        sess.priorTranscripts = null;
+        rememberClaudeSession(encoded, sess.claudeSessionId);
+      } else if (sess.transcript && fs.existsSync(sess.transcript)) {
+        // Nothing new yet: keep showing the resumed conversation rather than a
+        // blank panel, since that is what the pane is displaying too.
+        latest = sess.transcript;
+      }
+    } else if (sess && sess.claudeSessionId) {
       // This tab owns exactly <claudeSessionId>.jsonl in its cwd, so tabs that
       // share a cwd stay distinct. The file appears on the chat's first turn;
       // until then there is nothing to read and the context reads 0.
@@ -1474,17 +1565,16 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    // Model preference. The transcript records the model on every assistant
-    // turn, so when this tab owns its transcript it is the live truth for the
-    // session: it reflects mid-session switches that happen server-side
-    // without settings.json ever changing (settings only knows what was
-    // configured, not what the session is actually running). settings.json
-    // still fills the gap before the first assistant turn. When the tab has
-    // NO resolved transcript of its own (bare files[0] fallback below), keep
-    // settings first so a stale newest-by-mtime file cannot mislabel it.
+    // Model preference. settings.json is the model the user selected and the
+    // same value the CLI's own picker reports, so it answers "what is this
+    // running" directly and cannot name some other session. A transcript can
+    // only answer it by first being the right transcript, and this directory
+    // holds hundreds written by hooks, title generators and agent runs; picking
+    // the wrong one reports a model the user never chose. Transcripts are used
+    // for turn counts and occupancy, which are per-file by nature, and for the
+    // model only when settings names none.
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
-    const ownTranscript = Boolean(sess && latest);
-    let effModel = ownTranscript ? (model || settingsModel) : (settingsModel || model);
+    let effModel = settingsModel || model;
     // Model label fallback, DISPLAY ONLY. If neither settings.json nor this
     // tab's own transcript yielded a model (a brand-new tab before its first
     // turn, or a non-claude tab), borrow the model from the newest transcript
@@ -1521,7 +1611,7 @@ function readActiveSessionStats() {
     // record in the file's tail, so it stays correct even for huge transcripts.
     const ctxWindow = resolveContextWindow(activePtyCwd, effModel, ctxTokens);
     const ctxPct = ctxWindow ? Math.round((ctxTokens / ctxWindow) * 1000) / 10 : 0;
-    return { turns, chars, tokens: Math.round(chars / 4), file: latest, model: effModel, ctxTokens, ctxWindow, ctxPct };
+    return { turns, chars, tokens: Math.round(chars / 4), file: latest, model: effModel, modelLabel: catalogModelLabel(effModel), ctxTokens, ctxWindow, ctxPct };
   } catch (_) { return null; }
 }
 
@@ -1531,7 +1621,7 @@ function readActiveSessionStats() {
 function targetSession(sessionId) {
   return (sessionId && sessions.get(sessionId)) || activeSession();
 }
-ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast));
+ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast, env } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast, sanitizeSpawnEnv(env)));
 // List the chat PTYs that are still alive, so a reloaded renderer can rebuild
 // its tabs and reattach instead of orphaning them and minting a fresh chat.
 ipcMain.handle('pty:list', () => {
@@ -4092,6 +4182,49 @@ function runAiderModelProbe(agentCommand) {
     child.on('error', (err) => done({ ok: false, output, error: (err && err.message) || String(err) }));
     child.on('close', () => done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list exited with no output' }));
   });
+}
+
+// What the CLI itself calls a model, taken from the catalog its own /model
+// picker produced. Deriving a name from the id can only ever print what the id
+// already spells out: the alias "opus[1m]" carries no version, so it reads as a
+// bare "Opus" until a transcript turn happens to name the full id. The catalog
+// is the provider's own wording, so a model Husk has never heard of arrives
+// correctly named the day it ships.
+//
+// Returns '' for a full versioned id such as claude-opus-5, on purpose: the
+// name derived from it is already right, and resolving it through an alias row
+// would report whatever the alias points at today, relabelling an older session
+// as the current model. '' is also the answer before the catalog has been read.
+// Both cases leave the id-derived name in place.
+function catalogModelLabel(id, command = null) {
+  const raw = String(id || '').trim();
+  if (!raw) return '';
+  const head = safeAgentCommandHead(command || config.agentCommand || 'claude');
+  if (!head) return '';
+  const cached = modelCatalogCache.get(`${head.base}:${head.exe}`);
+  const live = cached && cached.value && Array.isArray(cached.value.models) ? cached.value.models : null;
+  // The live catalog is only there once something has asked the CLI for it, and
+  // asking means driving its picker in a terminal. Not worth spawning the user's
+  // agent binary unprompted just to title a row, so fall back to the names we
+  // already know for this vendor.
+  const models = (live && live.length) ? live : fallbackModelsFor(head.base);
+  if (!models || !models.length) return '';
+  // Compare with the context tier and vendor prefix removed, so "opus[1m]",
+  // "opus" and "claude-opus-5" all reach the same catalog row.
+  const key = (s) => String(s || '').toLowerCase().replace(/\[[^\]]*\]/g, '').replace(/^claude-/, '');
+  const want = key(raw);
+  const hit = models.find((m) => key(m.value) === want);
+  if (!hit) return '';
+  // Catalog labels read "Opus 5 With 1M Context · Best for everyday use". The
+  // panel wants the model's name: not the blurb, and not the context tier,
+  // which it already reports on its own row and which is a property of the
+  // session rather than part of what the model is called. The dropdown keeps
+  // the full wording, since choosing a tier is the point there.
+  return String(hit.label || '').split('·')[0]
+    .replace(/\bwith\s+1m\s+context\b/ig, '')
+    .replace(/\(1m context\)/ig, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 async function discoverModelCatalog({ refresh = false, command = null, fast = false } = {}) {
@@ -7759,6 +7892,144 @@ ipcMain.handle('sessions:resumeCommand', (_e, payload = {}) => {
     return { ok: true, command: `gemini --resume ${index}` };
   }
   return { ok: false, error: `resume is not supported for ${agent} sessions` };
+});
+
+// ─── Background agents ───────────────────────────────────────────────────────
+// A chat can start agents that keep working on their own. They are separate
+// top-level sessions, not turns inside the chat, which is why they surface as
+// peers in a naive session listing and why resuming one the ordinary way fails:
+// the CLI refuses while the agent is still running and points at its own picker.
+
+// The parent a background agent was forked from. Two records carry it and
+// neither is sufficient alone. The transcript's snake_case `session_id` is the
+// id of the process that wrote the line, so on a forked file it keeps naming
+// the parent while `sessionId` names the child; it is exact, but only once the
+// agent has written a turn. The daemon roster is exact from the moment of
+// spawn, and is dropped the moment the worker exits. Together they cover the
+// whole lifetime.
+function bgAgentParent(sessionId, projDir) {
+  try {
+    const roster = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'daemon', 'roster.json'), 'utf8'));
+    const workers = (roster && roster.workers) || {};
+    for (const w of Object.values(workers)) {
+      if (!w || w.sessionId !== sessionId) continue;
+      const launch = w.dispatch && w.dispatch.launch;
+      if (launch && launch.fork && typeof launch.sessionId === 'string') {
+        return path.basename(launch.sessionId).replace(/\.jsonl$/, '');
+      }
+    }
+  } catch (_) {}
+  try {
+    // Bounded: the first line carrying session_id sits within a couple of MB
+    // even when early turns drag large attachments with them.
+    const head = readHead(path.join(projDir, `${sessionId}.jsonl`), 2 * 1024 * 1024);
+    for (const line of head.split('\n')) {
+      const m = line.match(/"session_id":"([0-9a-f-]{16,})"/);
+      if (m && m[1] !== sessionId) return m[1];
+    }
+  } catch (_) {}
+  return '';
+}
+
+// Durable per-agent state. Survives the worker, unlike the roster, and is where
+// the one-line "what it is doing" comes from.
+function bgAgentJobState(shortId) {
+  if (!shortId) return {};
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'jobs', shortId, 'state.json'), 'utf8'));
+    return {
+      state: j.state || '',
+      detail: typeof j.detail === 'string' ? j.detail.replace(/\s+/g, ' ').trim().slice(0, 160) : '',
+      intent: typeof j.intent === 'string' ? j.intent.replace(/\s+/g, ' ').trim().slice(0, 400) : '',
+      needs: typeof j.needs === 'string' ? j.needs.slice(0, 160) : '',
+      tokens: Number(j.tokens) || 0,
+      updatedAt: Number(j.updatedAt) || 0,
+    };
+  } catch (_) { return {}; }
+}
+
+ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
+  const agent = activeAgentName();
+  // Tool-agnostic by construction: a CLI with no agent concept reports that it
+  // has none, rather than the UI naming a vendor it happens to know about.
+  if (agent !== 'claude') return { ok: true, supported: false, agents: [] };
+  const cwd = String((payload && payload.cwd) || activePtyCwd || '').trim();
+  const args = ['agents', '--json'];
+  if (cwd) args.push('--cwd', cwd);
+  if (payload && payload.all) args.push('--all');
+  const env = buildAgentEnv();
+  const exe = resolveAgentExe('claude', env.PATH);
+  let raw = '';
+  try {
+    raw = await new Promise((resolve, reject) => {
+      execFile(exe, args, { env, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+        if (err) reject(err); else resolve(String(stdout || ''));
+      });
+    });
+  } catch (err) {
+    return { ok: false, supported: true, agents: [], error: (err && err.message) || 'could not list agents' };
+  }
+  let rows = [];
+  try { rows = JSON.parse(raw); } catch (_) {
+    return { ok: false, supported: true, agents: [], error: 'agent list was not readable' };
+  }
+  if (!Array.isArray(rows)) return { ok: true, supported: true, agents: [] };
+  const projDir = cwd ? path.join(CLAUDE_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-')) : '';
+  const agents = rows
+    .filter((r) => r && r.kind === 'background' && r.sessionId)
+    .map((r) => {
+      const shortId = String(r.id || String(r.sessionId).slice(0, 8));
+      const job = bgAgentJobState(shortId);
+      const transcript = projDir ? path.join(projDir, `${r.sessionId}.jsonl`) : '';
+      return {
+        id: shortId,
+        sessionId: String(r.sessionId),
+        name: String(r.name || '').slice(0, 120),
+        cwd: String(r.cwd || ''),
+        // A pid means a live worker. Attaching is only valid then; once it is
+        // gone the session resumes like any other chat.
+        running: r.pid != null,
+        status: String(r.status || ''),
+        state: String(r.state || job.state || ''),
+        detail: job.detail || '',
+        intent: job.intent || '',
+        needs: job.needs || '',
+        tokens: job.tokens || 0,
+        startedAt: Number(r.startedAt) || 0,
+        updatedAt: job.updatedAt || 0,
+        parentSessionId: projDir ? bgAgentParent(String(r.sessionId), projDir) : '',
+        // An agent can be listed and running with nothing on disk yet, so the
+        // caller must not treat a missing transcript as a missing agent.
+        hasTranscript: !!(transcript && fs.existsSync(transcript)),
+        transcript,
+      };
+    });
+  return { ok: true, supported: true, agents };
+});
+
+// How to reach one agent. Validated before it is handed back, the way copilot
+// and gemini already are: returning a command blind is what produces a tab that
+// opens onto nothing.
+ipcMain.handle('bgAgents:openCommand', (_e, payload = {}) => {
+  const agent = activeAgentName();
+  if (agent !== 'claude') return { ok: false, error: `background agents are not available for ${agent}` };
+  const id = String((payload && payload.id) || '').trim();
+  const sessionId = String((payload && payload.sessionId) || '').trim();
+  if (!id && !sessionId) return { ok: false, error: 'no agent selected' };
+  if (payload && payload.running) {
+    // A running agent is owned by its worker; the CLI refuses --resume against
+    // one and says so. Its own fleet view is the supported way in, and it opens
+    // straight onto this agent when told which one.
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{2,}$/.test(id)) return { ok: false, error: 'that agent has no id to attach to' };
+    return { ok: true, mode: 'attach', command: 'claude agents', env: { CLAUDE_AGENTS_SELECT: id } };
+  }
+  if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'that agent has no session to resume' };
+  const cwd = String((payload && payload.cwd) || activePtyCwd || '');
+  const projDir = path.join(CLAUDE_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  if (!fs.existsSync(path.join(projDir, `${sessionId}.jsonl`))) {
+    return { ok: false, error: 'that agent finished without leaving a transcript' };
+  }
+  return { ok: true, mode: 'resume', command: `claude --resume ${sessionId}` };
 });
 
 ipcMain.handle('sessions:rename', (_e, payload = {}) => {

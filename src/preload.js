@@ -94,6 +94,13 @@ contextBridge.exposeInMainWorld('husk', {
     resumeCommand: (payload) => ipcRenderer.invoke('sessions:resumeCommand', payload),
     delete: (paths) => ipcRenderer.invoke('sessions:delete', { paths }),
   },
+  // Agents a chat started that keep working on their own. Distinct from
+  // `agents` below, which detects which agent CLIs are installed, and from the
+  // Agents page, which edits reusable agent definitions.
+  bgAgents: {
+    list: (payload) => ipcRenderer.invoke('bgAgents:list', payload || {}),
+    openCommand: (payload) => ipcRenderer.invoke('bgAgents:openCommand', payload || {}),
+  },
   prds: { list: () => ipcRenderer.invoke('prds:list') },
   plugins: {
     list: () => ipcRenderer.invoke('plugins:list'),
