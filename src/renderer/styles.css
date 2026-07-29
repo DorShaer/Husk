@@ -412,6 +412,14 @@ body {
   grid-template-rows: 52px 1fr;
   overflow: hidden;
   -webkit-app-region: no-drag;
+  /* Marker for "an agent is waiting on you". Declared here, on the element the
+     theme tokens land on, so it resolves against this theme's amber. Bare
+     --amber clears 3:1 against the page in the dark family and misses it in
+     the light one; folding in --text pushes the lightness away from the
+     background in whichever direction that family runs. The fold is done in
+     oklch because an sRGB fold toward a near-black text collapses the chroma
+     with the lightness and lands on an olive that reads as dim body type. */
+  --as-mark: color-mix(in oklch, var(--amber) 70%, var(--text));
 }
 
 /* ─── Topbar ────────────────────────────────────────────────────────────── */
@@ -478,6 +486,49 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
   70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); }
   100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
+/* Agents running in this project. Quiet while they work, amber the moment one
+   is waiting on the user. Tint and border, never a fill: the bg steps are
+   translucent lifts in the dark family and solid in the light one, so a filled
+   chip inverts between them. */
+.topbar-agents {
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+.topbar-agents[hidden] { display: none; }
+.ta-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: 0 0 auto; }
+.ta-count { font-weight: 700; color: var(--text); }
+.ta-word { color: var(--text-3); }
+/* Text, not a nested pill: the chip is already an enclosure, and a box inside a
+   box inside the topbar reads as chrome rather than as a count. */
+.ta-needs { color: var(--as-mark); font-size: var(--fs-micro); font-weight: 600; }
+.ta-needs[hidden] { display: none; }
+/* The chord is the only way in that does not require finding this chip first,
+   so it is on the chip rather than in a tooltip nobody hovers for. It sits
+   beside a button whose whole visible label is its own chord. */
+.ta-key {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--fs-nano); color: var(--text-3);
+  padding-left: var(--space-1);
+}
+.topbar-agents.is-running { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.topbar-agents.is-running .ta-dot { background: var(--accent); animation: ta-breathe 2s var(--ease-in-out) infinite; }
+/* A blocked agent is the one that stopped, so its marker is the still one. */
+.topbar-agents.is-blocked { border-color: color-mix(in srgb, var(--as-mark) 55%, var(--line)); }
+.topbar-agents.is-blocked .ta-dot {
+  background: var(--as-mark); animation: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--as-mark) 28%, transparent);
+}
+/* Nothing running, but agents to read. It keeps the way in without competing
+   with the live states: smaller marker, count stepped back to secondary. */
+.topbar-agents.is-idle .ta-count { color: var(--text-2); font-weight: 600; }
+.topbar-agents.is-idle .ta-dot { width: 5px; height: 5px; background: var(--text-3); animation: none; }
+@keyframes ta-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) {
+  .topbar-agents.is-running .ta-dot { animation: none; }
 }
 
 .update-pop {
@@ -5443,9 +5494,13 @@ input[type="checkbox"]:disabled {
   border-color: var(--line-3);
   background: var(--bg-2);
 }
+/* Drop the track rather than leave it empty: a zero-width column still pays its
+   column gap, which would pull the meta off the edge every other row sits on. */
+.session-row.no-phase { grid-template-columns: minmax(0, 1fr) auto auto; }
 .sessions-list.select-mode .session-row {
   grid-template-columns: auto 1fr auto auto auto;
 }
+.sessions-list.select-mode .session-row.no-phase { grid-template-columns: auto 1fr auto auto; }
 .sessions-list.select-mode .session-row:hover { transform: none; }
 .session-row.selected {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2));
@@ -5473,7 +5528,8 @@ input[type="checkbox"]:disabled {
 .session-phase.execute, .session-phase.build { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 .session-phase.observe, .session-phase.think, .session-phase.plan { background: color-mix(in srgb, var(--accent-2) 12%, transparent); color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 30%, transparent); }
 .session-progress { font-size: var(--fs-nano); color: var(--text-3); font-family: 'JetBrains Mono', monospace; }
-.session-effort { font-size: var(--fs-nano); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+/* Same grammar as the agent ages nested under it: one time column, one casing. */
+.session-effort { font-size: var(--fs-nano); color: var(--text-3); font-weight: 500; }
 
 /* Sub-line: the hint stays prose, the agent + directory ride in a mono chip
    that truncates instead of growing the head toward the control cluster. */
@@ -8104,97 +8160,387 @@ body[data-mode="light"] .ob-wordmark span {
 .palette-list .pi-icon svg { width: 16px; height: 16px; display: block; }
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: var(--fs-nano); font-family: 'JetBrains Mono', monospace; }
 /* ─── Agents under the chat that started them ──────────────────────────────
-   Children sit on the list background with no surface of their own, tethered by
-   a rail and indented. Recessing them with a darker fill cannot work across the
-   themes: in the dark family the bg steps are translucent lifts, in the light
-   family they are solid and run the other way, so a "recess" inverts. Indent
-   and tether read the same in both. */
+   A chat with agents is one card holding all of them. The card carries the
+   surface; the children sit on it with none of their own, tethered by a rail
+   and indented. Giving the children a fill cannot work across the themes: in
+   the dark family the bg steps are translucent lifts, in the light family they
+   are solid and run the other way, so a "recess" inverts. */
+.session-block {
+  /* The frame is an inset ring rather than a border so it costs no layout: with
+     a border the chat row inside starts one pixel right of every ungrouped row,
+     and titles twitch sideways as the poll adds and drops groups. */
+  --sb-inset: calc(var(--space-4) + 1px);
+  /* One arc for the card and the row inside it, declared once so the family
+     that gives its cards a wider one moves both together. */
+  --sb-arc: var(--radius-lg);
+  display: flex; flex-direction: column;
+  background: var(--bg-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: var(--sb-arc);
+  overflow: hidden;
+  transition: box-shadow var(--motion-fast) var(--ease);
+}
+.session-block:hover { box-shadow: inset 0 0 0 1px var(--line-2); }
+/* The block is the card, so the chat row inside it gives up the surface and the
+   hover lift it carries when it stands alone. Its arc follows the card's top
+   corners, so the hover band is the same shape here as it is on its own. The
+   dark family dresses cards in a later glass pass, which this has to outrank. */
+.session-block .session-row,
+[data-mode="dark"] .session-block .session-row {
+  background: transparent; border-color: transparent;
+  border-radius: var(--sb-arc) var(--sb-arc) 0 0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.session-block .session-row:hover,
+[data-mode="dark"] .session-block .session-row:hover {
+  background: var(--bg-2); border-color: transparent; transform: none;
+}
+.session-block .session-row.selected { border-color: transparent; }
+/* A control, not a strip: sized to its own label and bordered, so the click
+   target is the thing that looks clickable rather than the whole card width.
+   Its left edge is the chat title's, so the group reads as hanging off the
+   owner instead of the owner sitting indented inside the group. */
 .session-agents {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  align-self: flex-start;
-  margin: calc(var(--space-1) * -1) 0 0 var(--space-5);
-  padding: 3px 10px 3px 5px;
+  display: inline-flex; align-self: flex-start; align-items: center; gap: var(--space-2);
+  margin: var(--space-2) var(--space-4) var(--space-3) var(--sb-inset);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
   border: 1px solid var(--line); border-radius: var(--radius-pill);
-  background: transparent; color: var(--text-3);
-  font-size: var(--fs-nano); font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-  cursor: pointer; width: fit-content;
-  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+  background: transparent; color: var(--text-2);
+  font-size: var(--fs-nano);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
-.session-agents:hover, .session-agents:focus-visible { color: var(--text); border-color: var(--line-3); background: var(--bg-1); }
-.session-agents .sa-caret { width: 12px; height: 12px; transition: transform var(--motion-fast) var(--ease); }
-.session-agents[aria-expanded="true"] { color: var(--text-2); border-color: var(--line-2); }
+/* Open, the chip is the head of the group, so the rail starts at its bottom
+   edge rather than floating a gap below it. */
+.session-agents[aria-expanded="true"] { margin-bottom: 0; }
+.session-agents:hover, .session-agents:focus-visible { color: var(--text); background: var(--bg-2); border-color: var(--line-2); }
+.session-agents .sa-caret { width: 12px; height: 12px; flex: 0 0 auto; color: var(--text-3); transition: transform var(--motion-fast) var(--ease); }
 .session-agents[aria-expanded="true"] .sa-caret { transform: rotate(180deg); }
-.sa-live { color: var(--accent); margin-left: var(--space-2); }
+.sa-live { color: var(--text-2); }
+.sa-live::before { content: "·"; margin: 0 var(--space-2) 0 0; color: var(--text-3); }
+.session-agents.has-blocked .sa-live { color: var(--as-mark); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .session-agents .sa-caret { transition: none; } }
 
+/* The rail hangs from the chip and stops on the chat title's left edge. Capped
+   to a measure: across the full width of this card the state and the age land
+   half a screen from the text they belong to, with nothing between them. */
 .agent-group {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  margin: 0 0 var(--space-1) var(--space-6);
-  padding-left: var(--space-4);
-  border-left: 1px solid var(--line-2);
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 0 var(--space-4) var(--space-3) var(--sb-inset);
+  max-width: 720px;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--line-3);
 }
+/* One line: the chat these belong to is the row above, so the only fields left
+   are the ones that differ between siblings. */
 .agent-row {
-  display: grid; grid-template-columns: 18px 8px minmax(0, 1fr) auto auto;
-  align-items: center; gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent; border-radius: var(--radius-lg);
+  display: grid;
+  grid-template-columns: 14px auto minmax(0, 1fr) auto 44px;
+  align-items: center;
+  column-gap: var(--space-2);
+  min-height: 34px;
+  padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-md);
   background: transparent; color: var(--text);
   font-family: inherit; text-align: left; cursor: pointer;
-  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+  transition: background var(--motion-fast) var(--ease);
 }
-.agent-row:hover, .agent-row:focus-visible { background: var(--bg-1); border-color: var(--line); }
-.agent-row.is-done { opacity: .82; }
-.agent-idx { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); color: var(--text-3); font-variant-numeric: tabular-nums; }
-.agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
-.agent-row.is-running .agent-dot { background: var(--accent); animation: ap-pulse 1.6s ease-in-out infinite; }
-.agent-row.is-blocked .agent-dot { background: var(--amber); }
+.agent-row:hover, .agent-row:focus-visible { background: var(--bg-2); }
+.agent-dot { justify-self: center; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+/* Siblings share the chat title, so the id is the field that tells them apart.
+   It is a tiebreaker and not the line's message, so the activity outranks it
+   here and in the switcher both. */
+.agent-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--fs-nano); color: var(--text-3);
+}
+.agent-live {
+  min-width: 0;
+  font-size: var(--fs-small); color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agent-state { font-size: var(--fs-nano); color: var(--text-2); }
+.agent-age {
+  font-size: var(--fs-nano); color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+/* Motion means it is moving, and a filled disc against a hollow ring says the
+   same thing standing still: a diameter step alone disappears the moment the
+   breathing is turned off. The accent is a user preference, so it never carries
+   a status on its own. */
+.agent-row.is-running .agent-dot { background: var(--text-2); animation: ta-breathe 2s var(--ease-in-out) infinite; }
+.agent-row.is-blocked .agent-dot {
+  background: var(--as-mark); animation: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--as-mark) 24%, transparent);
+}
 .agent-row.is-done .agent-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
-.agent-desc { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.agent-desc strong { font-weight: 600; font-size: var(--fs-small); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-live { font-size: var(--fs-nano); color: var(--text-3); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-stat { font-size: var(--fs-nano); color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-.agent-row.is-running .agent-stat:nth-of-type(1) { color: var(--accent); }
-.agent-row.is-blocked .agent-stat:nth-of-type(1) { color: var(--amber); }
+.agent-row.is-done .agent-live { color: var(--text-3); }
+.agent-row.is-done .agent-state { color: var(--text-3); }
 @media (prefers-reduced-motion: reduce) { .agent-row.is-running .agent-dot { animation: none; } }
 
 /* ─── Agent switcher ───────────────────────────────────────────────────────
-   Rows inherit the palette shell. They carry more per row than an action does,
-   because every agent in a chat is titled after that chat: the name cannot tell
-   two of them apart, so state, activity and age have to. */
-.as-row {
+   The title leads: it is what a person recognises, and the id under it is the
+   field that separates two agents born of the same chat. One family, two sizes,
+   two weights: these rows get read ten at a time and every extra treatment is
+   one more thing to decode.
+   One left edge for the marks and one for the text, one right edge for
+   everything: the glyph and the row dots hold 16px, all text holds 40px, and
+   the meta column, the key hints and the footer all stop 16px from the wall.
+   The row box is the only thing inboard of that, inset 8px on both sides.
+   Every rule that lays a row out is id-prefixed. `.palette-list li` is (0,1,1)
+   and sets display, padding and gap, so a bare `.as-*` class silently loses. */
+#agent-switch .palette-card { width: 640px; }
+/* Scrim, card, radius and selection are the command palette's. Two overlays
+   that answer the same chord with unrelated drawings read as two products, and
+   the palette's neutral veil is the one that holds a card apart from the page
+   in the light family, where a tint of the page's own background does not. */
+.as-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.as-head-icon { width: 16px; height: 16px; flex: 0 0 auto; color: var(--text-3); }
+/* The dark family paints every text input as a black glass field, at a
+   specificity a class cannot reach. This one is the card's own head, not a
+   field sitting on it, so it takes the card's surface. */
+#agent-switch-input,
+#agent-switch-input:focus {
+  flex: 1 1 auto; min-width: 0;
+  background: transparent !important; color: var(--text);
+  border: 0 !important; outline: 0;
+  border-radius: 0 !important; box-shadow: none !important;
+  padding: var(--space-4) 0;
+  font-family: inherit; font-size: var(--fs-h3); font-weight: 400;
+  line-height: 1.5;
+}
+/* The field is focused the moment the overlay opens and is the only focusable
+   thing in it, so the global ring would land on frame one and say nothing. */
+#agent-switch-input:focus-visible { box-shadow: none !important; }
+#agent-switch-input::placeholder { color: var(--text-3); }
+/* No scroll snapping. A row is a snap target and a section label is not, so the
+   engine pulled the first row to the top and ate the label above it before the
+   card had been touched, which loses the one word the ordering exists to say.
+   The gutter is reserved whether or not the list scrolls: this list is polled,
+   and one agent crossing the scroll threshold would shift every row sideways.
+   Left padding only, so the row box sits 8px inboard of both card walls once
+   the 8px gutter is counted on the right. */
+#agent-switch-list {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 0 0 var(--space-2) var(--space-2);
+  max-height: min(52vh, 460px);
+  scrollbar-gutter: stable;
+}
+/* A list cut flat by the footer looks like it ends there. The ramp is an alpha
+   matte and paints nothing; it is class-gated so the last row of a short list
+   is never dimmed for a scroll that cannot happen. */
+#agent-switch-list.is-scrollable {
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0) calc(100% - 22px), rgb(0 0 0 / 0));
+  mask-image: linear-gradient(to bottom, rgb(0 0 0) calc(100% - 22px), rgb(0 0 0 / 0));
+}
+#agent-switch-list > li { flex: 0 0 auto; }
+#agent-switch-list::-webkit-scrollbar { width: 8px; }
+#agent-switch-list::-webkit-scrollbar-track { background: transparent; }
+#agent-switch-list::-webkit-scrollbar-thumb {
+  background: var(--line-2); border-radius: var(--radius-pill);
+  border: 2px solid transparent; background-clip: content-box;
+}
+/* Navigation left, the count and the way out right, so the two kinds of hint do
+   not read as one run-on sentence. Everything else about the bar, the surface
+   and the key caps included, is the command palette's: two overlays answering
+   adjacent chords with unrelated drawings read as two products. */
+#agent-switch .palette-foot { padding: var(--space-2) var(--space-4); }
+.as-foot-nav { display: contents; }
+#agent-switch .palette-foot .as-foot-count {
+  margin-left: auto; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+#agent-switch .palette-foot .as-foot-count:empty { display: none; }
+/* Three states interleaved with no order is a list, not a switcher. What is
+   waiting on a person comes first, and the label says which band you are in.
+   It sticks, so scrolling out of a band can never leave you unlabelled, and it
+   bleeds over the list's left padding so rows pass under it and not beside it. */
+#agent-switch-list .as-group {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--notif-bg);
+  display: block;
+  margin-left: calc(var(--space-2) * -1);
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  padding-left: calc(var(--space-2) + var(--space-2) + 16px + var(--space-2));
+  font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-3);
+  cursor: default;
+}
+#agent-switch-list .as-group:first-child { padding-top: var(--space-2); }
+/* A fixed meta track, not auto: with an auto column the primary text ends
+   wherever the state word happens to, and the titles come out ragged.
+   Baseline alignment per grid row, so the title sits on the state's line and
+   the id sits on the age's line however the two type sizes differ. */
+#agent-switch-list .as-row {
+  position: relative;
   display: grid;
-  grid-template-columns: 16px 8px minmax(0, 1fr) auto auto;
-  align-items: center; gap: 11px;
-  padding: 9px 13px; border-radius: var(--radius-lg);
+  grid-template-columns: 16px minmax(0, 1fr) 76px;
+  grid-template-rows: auto auto;
+  align-items: baseline; align-content: center;
+  column-gap: var(--space-2); row-gap: 2px;
+  height: 44px; padding: 0 var(--space-2);
+  border-radius: var(--radius-lg);
   color: var(--text-2); cursor: pointer;
 }
-.as-row.active, .as-row:hover { background: color-mix(in srgb, var(--accent) 12%, var(--bg-3)); color: var(--text); }
-.as-idx { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); color: var(--text-3); font-variant-numeric: tabular-nums; }
-.as-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
-/* Three states, three signals each, so the difference survives grayscale. */
-.as-row.is-running .as-dot { background: var(--accent); animation: ap-pulse 1.6s ease-in-out infinite; }
-.as-row.is-blocked .as-dot { background: var(--amber); }
-.as-row.is-done    .as-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
-.as-row.is-done { opacity: .82; }
-.as-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.as-text strong { font-weight: 600; font-size: var(--fs-small); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.as-sub { font-size: var(--fs-nano); color: var(--text-3); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.as-state { font-size: var(--fs-pico); text-transform: uppercase; letter-spacing: .1em; font-weight: 700; color: var(--text-3); }
-.as-row.is-running .as-state { color: var(--accent); }
-.as-row.is-blocked .as-state { color: var(--amber); }
-.as-age { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-nano); color: var(--text-3); font-variant-numeric: tabular-nums; }
-.as-empty { display: flex; flex-direction: column; gap: 4px; padding: 22px 16px; text-align: center; }
-.as-empty strong { font-size: var(--fs-small); font-weight: 600; color: var(--text-2); }
-.as-empty span { font-size: var(--fs-nano); color: var(--text-3); }
-/* The list has known geometry, so placeholders keep its shape rather than
-   replacing it with a spinner that says less. */
-.as-skel {
-  height: 38px; margin: 4px 0; border-radius: var(--radius-lg);
-  background: linear-gradient(90deg, var(--bg-3) 25%, var(--bg-2) 50%, var(--bg-3) 75%);
+/* One highlight at a time: the pointer moves the selection, so hover carries no
+   style of its own and an arrow key cannot leave a second row lit. */
+#agent-switch-list .as-row:hover { background: transparent; color: var(--text-2); }
+/* The fill is a neutral lift of the card's own text, not a tint. The accent is
+   user-selectable across five values and the only status hue in the card is the
+   waiting marker, so a tinted fill puts the cursor and the alarm in the same
+   register on the row the user is pointing at, and the alarm loses. The accent
+   rides a bar on the leading edge instead, where nothing competes for it. */
+#agent-switch-list .as-row.active {
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text);
+}
+#agent-switch-list .as-dot {
+  grid-column: 1; grid-row: 1 / span 2; justify-self: center; align-self: center;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-3);
+}
+/* The two stacks dissolve into the row's own grid so the left text and the
+   right meta share its rows. Nesting them in their own boxes leaves 14px type
+   and 11px type centred against each other, which lands every line a pixel or
+   so off its neighbour: too small to read as an offset, too large to look set. */
+#agent-switch-list .as-text,
+#agent-switch-list .as-meta { display: contents; }
+#agent-switch-list .as-name {
+  grid-column: 2; grid-row: 1;
+  font-weight: 600; font-size: var(--fs-body); line-height: 1.35; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Always two lines, because the id is always there: a row whose second line can
+   vanish re-centres its title and breaks the pitch the eye is tracking. */
+#agent-switch-list .as-sub {
+  grid-column: 2; grid-row: 2;
+  font-size: var(--fs-nano); line-height: 1.45; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The id is the tiebreaker between siblings, not the line's message, so the
+   activity takes the contrast. The size is stated because a monospace element
+   with no size of its own falls back to the fixed-font default, not to the
+   inherited one, and lands 2px larger than the sentence it sits in. */
+#agent-switch-list .as-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--fs-nano);
+  color: var(--text-3); margin-right: var(--space-2);
+}
+#agent-switch-list .as-state {
+  grid-column: 3; grid-row: 1; justify-self: end;
+  font-size: var(--fs-nano); line-height: 1.45; color: var(--text-2);
+}
+#agent-switch-list .as-age {
+  grid-column: 3; grid-row: 2; justify-self: end;
+  font-size: var(--fs-nano); line-height: 1.45; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* Motion means it is moving; a filled disc against a hollow ring says the same
+   thing standing still, which a 2px diameter step does not once the breathing
+   is turned off. The accent is user-selectable across five values, so it can
+   land on any of the semantic hues and cannot carry a status by itself. */
+#agent-switch-list .as-row.is-running .as-dot { background: var(--text-2); animation: ta-breathe 2s var(--ease-in-out) infinite; }
+#agent-switch-list .as-row.is-blocked .as-dot {
+  background: var(--as-mark); animation: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--as-mark) 24%, transparent);
+}
+/* A badge, not a coloured word. The marker has to clear the page in both
+   families, which forces its lightness toward the body text's, and at 11px a
+   hue shift alone then reads as ordinary type in the light one. The enclosure
+   is what makes it a state. */
+#agent-switch-list .as-row.is-blocked .as-state,
+.agent-row.is-blocked .agent-state {
+  color: var(--as-mark); font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--as-mark) 32%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-2);
+}
+/* In the list the badge carries the card's own surface rather than a
+   transparent tint, so the selection lift cannot slide underneath it and take
+   the marker's contrast down with it on exactly the row being pointed at. */
+#agent-switch-list .as-row.is-blocked .as-state {
+  background: color-mix(in srgb, var(--as-mark) 13%, var(--notif-bg));
+}
+/* Under a chat the badge lands on two different surfaces, the card and its
+   hover lift, so the tint composites instead of naming one of them. */
+.agent-row.is-blocked .agent-state {
+  background: color-mix(in srgb, var(--as-mark) 13%, transparent);
+}
+/* Finished rows recede by stepping each element back, not by fading the row:
+   a row opacity dims the age and the state too, which are wayfinding, and it
+   composites muddily against the selection fill. */
+#agent-switch-list .as-row.is-done .as-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+#agent-switch-list .as-row.is-done .as-name { color: var(--text-2); font-weight: 500; }
+#agent-switch-list .as-row.is-done .as-sub { color: var(--text-3); }
+#agent-switch-list .as-row.is-done .as-state { color: var(--text-3); }
+/* Selection restores full strength: the row you are pointing at cannot be the
+   dimmest one on screen. */
+#agent-switch-list .as-row.active .as-name { color: var(--text); font-weight: 600; }
+/* Centred on the card, not parked at the row indent: with no rows to align to,
+   a left-aligned line leaves the other five hundred pixels reading as missing. */
+#agent-switch-list .as-empty {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
+  padding: var(--space-5) var(--space-4);
+  text-align: center; cursor: default;
+}
+#agent-switch-list .as-empty svg { width: 22px; height: 22px; color: var(--text-3); margin-bottom: var(--space-1); }
+#agent-switch-list .as-empty strong { font-size: var(--fs-body); font-weight: 600; color: var(--text-2); }
+#agent-switch-list .as-empty span { font-size: var(--fs-nano); color: var(--text-3); }
+/* Placeholders take the real row's grid, cell for cell, so the card neither
+   jumps nor changes shape when the listing lands. */
+#agent-switch-list .as-skel {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 76px;
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: var(--space-2); row-gap: 2px;
+  height: 44px; margin: 0;
+  padding: 0 var(--space-2);
+  background: transparent; cursor: default;
+}
+#agent-switch-list .as-skel i,
+#agent-switch-list .as-skel-group i {
+  display: block; border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%);
   background-size: 200% 100%;
   animation: ws-shimmer 1.1s linear infinite;
 }
+#agent-switch-list .as-skel .sk-dot { grid-column: 1; grid-row: 1 / span 2; justify-self: center; align-self: center; width: 7px; height: 7px; border-radius: 50%; }
+#agent-switch-list .as-skel .sk-name { grid-column: 2; grid-row: 1; height: 9px; width: 54%; }
+#agent-switch-list .as-skel .sk-sub { grid-column: 2; grid-row: 2; height: 8px; width: 34%; }
+#agent-switch-list .as-skel .sk-meta { grid-column: 3; grid-row: 1; justify-self: end; height: 8px; width: 70%; }
+#agent-switch-list .as-skel:nth-child(3) .sk-name { width: 44%; }
+#agent-switch-list .as-skel:nth-child(4) .sk-name { width: 62%; }
+#agent-switch-list .as-skel:nth-child(5) .sk-name { width: 38%; }
+/* The section labels are part of the shape too, so one stands in for them. */
+#agent-switch-list .as-skel-group {
+  display: block; margin: 0;
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  padding-left: calc(var(--space-2) + 16px + var(--space-2));
+  background: transparent; cursor: default;
+}
+#agent-switch-list .as-skel-group i { height: 7px; width: 68px; }
+
+/* The card descends from the 14vh anchor and settles. Open state stays the one
+   [hidden] boolean the Alt+A toggle already reads, and the entrance is a
+   keyframe rather than a transition so a dropped frame loop costs the motion
+   and never the overlay. The selection itself never animates: nothing in this
+   overlay may depend on a frame loop to become visible. */
+#agent-switch:not([hidden]) { animation: as-scrim-in 110ms var(--ease); }
+#agent-switch:not([hidden]) .palette-card { transform-origin: 50% 0; animation: as-card-in 170ms var(--ease-out); }
+@keyframes as-scrim-in { from { opacity: 0; } }
+@keyframes as-card-in { from { opacity: 0; transform: translateY(-8px) scale(0.985); } }
 @media (prefers-reduced-motion: reduce) {
-  .as-row.is-running .as-dot, .as-skel { animation: none; }
+  #agent-switch-list .as-row.is-running .as-dot,
+  #agent-switch-list .as-skel i,
+  #agent-switch-list .as-skel-group i,
+  #agent-switch:not([hidden]),
+  #agent-switch:not([hidden]) .palette-card { animation: none; }
 }
 
 .palette-foot {
@@ -8701,6 +9047,13 @@ kbd {
   -webkit-backdrop-filter: blur(16px);
   border-radius: var(--radius-xl);
   transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
+}
+/* A chat with agents frames itself with an inset ring, so it takes this pass's
+   blur and its arc without the border, which would cost it a pixel of layout
+   the ungrouped rows beside it do not pay. */
+[data-mode="dark"] .session-block {
+  --sb-arc: var(--radius-xl);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
 [data-mode="dark"] .agent-card:hover,
 [data-mode="dark"] .session-row:hover,

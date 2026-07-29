@@ -436,6 +436,9 @@ function activateTab(id) {
   Promise.resolve(window.husk.pty.setActive(id))
     .then(() => refreshStats())
     .then(() => refreshStatusline())
+    // The agent count is scoped to the active chat's directory, so it is only
+    // right once the main process knows which chat that is.
+    .then(() => refreshTopbarAgents())
     .catch(() => {});
 }
 
@@ -6368,21 +6371,17 @@ async function loadSessionAgents() {
 function agentChildRowsHTML(parentId) {
   const kids = sessionAgents.byParent.get(parentId) || [];
   if (!kids.length || !sessionAgentsExpanded.has(parentId)) return '';
-  const rows = kids.map((a, i) => {
-    const state = a.running ? (a.state === 'blocked' ? 'is-blocked' : 'is-running') : 'is-done';
-    const word = a.running ? (a.state === 'blocked' ? 'needs input' : 'working') : 'done';
-    return `
-      <button class="agent-row ${state}" type="button" data-agent="${escapeAttr(a.sessionId)}">
-        <span class="agent-idx">${i + 1}</span>
+  // The chat these belong to is the row directly above, so a child carries only
+  // what its siblings do not: its id, what it is doing, how it stands, how old.
+  // Fields run state then age here and in the switcher, in one age format.
+  const rows = kids.map((a) => `
+      <button class="agent-row ${agentStateClass(a)}" type="button" data-agent="${escapeAttr(a.sessionId)}">
         <span class="agent-dot" aria-hidden="true"></span>
-        <span class="agent-desc">
-          <strong>${escapeHtml(a.name || a.id)}</strong>
-          <span class="agent-live">${escapeHtml(agentSubtitle(a))}</span>
-        </span>
-        <span class="agent-stat">${escapeHtml(word)}</span>
-        <span class="agent-stat">${escapeHtml(agentAgeLabel(a.startedAt))}</span>
-      </button>`;
-  }).join('');
+        <code class="agent-id">${escapeHtml(agentShortId(a))}</code>
+        <span class="agent-live">${escapeHtml(agentSubtitle(a))}</span>
+        <span class="agent-state">${escapeHtml(agentStateWord(a))}</span>
+        <span class="agent-age">${escapeHtml(agentAgeLabel(a.startedAt))}</span>
+      </button>`).join('');
   return `<div class="agent-group">${rows}</div>`;
 }
 
@@ -6390,10 +6389,16 @@ function agentChipHTML(parentId) {
   const kids = sessionAgents.byParent.get(parentId) || [];
   if (!kids.length) return '';
   const live = kids.filter((a) => a.running).length;
+  const blocked = kids.filter((a) => a.running && a.state === 'blocked').length;
   const open = sessionAgentsExpanded.has(parentId);
-  return `<span class="session-agents" role="button" tabindex="0" data-agents-for="${escapeAttr(parentId)}" aria-expanded="${open ? 'true' : 'false'}">
+  // One tail note, and the waiting count outranks the running one: a chat with
+  // an agent stuck on a question needs the collapsed row to say so.
+  const tail = blocked
+    ? `<span class="sa-live">${blocked} needs you</span>`
+    : (live ? `<span class="sa-live">${live} running</span>` : '');
+  return `<span class="session-agents${blocked ? ' has-blocked' : ''}" role="button" tabindex="0" data-agents-for="${escapeAttr(parentId)}" aria-expanded="${open ? 'true' : 'false'}">
       <svg class="sa-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-      ${kids.length} agent${kids.length === 1 ? '' : 's'}${live ? `<span class="sa-live">${live} running</span>` : ''}
+      <span class="sa-count">${kids.length} agent${kids.length === 1 ? '' : 's'}</span>${tail}
     </span>`;
 }
 
@@ -6437,16 +6442,18 @@ function paintSessions(list, query) {
   ul.classList.toggle('select-mode', sessionsSelectMode);
   // eslint-disable-next-line no-unsanitized/property -- Session fields are escaped via escapeHtml/escapeAttr.
   ul.innerHTML = filtered.map((s) => {
+    // No badge for the default: a filled pill reading "chat" on every chat is
+    // the loudest thing in the card and the only one carrying no information.
     const phaseHTML = s.prdPhase
       ? `<span class="session-phase ${escapeAttr(s.prdPhase)}">${escapeHtml(s.prdPhase)}</span>`
-      : `<span class="session-phase">chat</span>`;
+      : '';
     const progressHTML = s.prdProgress ? `<span class="session-progress">${escapeHtml(s.prdProgress)}</span>` : '';
     const checked = sessionsSelected.has(s.path) ? 'checked' : '';
     const checkboxHTML = sessionsSelectMode
       ? `<label class="session-check"><input class="ai-check" type="checkbox" tabindex="-1" ${checked} data-path="${escapeAttr(s.path)}" /><span class="ai-check-box"></span></label>`
       : '';
-    return `
-      <button class="session-row${sessionsSelected.has(s.path) ? ' selected' : ''}" data-id="${escapeAttr(s.id)}" data-title="${escapeAttr(s.title)}" data-project="${escapeAttr(s.projectPath)}" data-path="${escapeAttr(s.path)}" data-prdpath="${escapeAttr(s.prdPath)}" data-started="${escapeAttr(s.startedISO)}" data-mtime="${s.mtime}" data-size="${s.sizeBytes}" data-phase="${escapeAttr(s.prdPhase || '')}" data-progress="${escapeAttr(s.prdProgress || '')}">
+    const rowHTML = `
+      <button class="session-row${sessionsSelected.has(s.path) ? ' selected' : ''}${phaseHTML ? '' : ' no-phase'}" data-id="${escapeAttr(s.id)}" data-title="${escapeAttr(s.title)}" data-project="${escapeAttr(s.projectPath)}" data-path="${escapeAttr(s.path)}" data-prdpath="${escapeAttr(s.prdPath)}" data-started="${escapeAttr(s.startedISO)}" data-mtime="${s.mtime}" data-size="${s.sizeBytes}" data-phase="${escapeAttr(s.prdPhase || '')}" data-progress="${escapeAttr(s.prdProgress || '')}">
         ${checkboxHTML}
         <div class="session-task">
           <strong>${escapeHtml(s.title)}</strong>
@@ -6455,10 +6462,12 @@ function paintSessions(list, query) {
         <span class="session-effort">${escapeHtml(timeAgo(s.mtime))}</span>
         ${progressHTML || `<span class="session-progress">${escapeHtml(fmtSize(s.sizeBytes))}</span>`}
         ${phaseHTML}
-      </button>
-      ${agentChipHTML(s.id)}
-      ${agentChildRowsHTML(s.id)}
-    `;
+      </button>`;
+    // A chat and its agents are one card: the chat keeps the card's surface and
+    // the agents hang off it, so containment survives both theme families where
+    // a fill of their own would invert between them.
+    if (!(sessionAgents.byParent.get(s.id) || []).length) return rowHTML;
+    return `<div class="session-block">${rowHTML}${agentChipHTML(s.id)}${agentChildRowsHTML(s.id)}</div>`;
   }).join('');
   ul.querySelectorAll('.session-row').forEach((r) =>
     r.addEventListener('click', (e) => {
@@ -6473,7 +6482,14 @@ function paintSessions(list, query) {
   const toggleAgents = (parentId) => {
     if (sessionAgentsExpanded.has(parentId)) sessionAgentsExpanded.delete(parentId);
     else sessionAgentsExpanded.add(parentId);
+    const top = ul.scrollTop;
     paintSessions(list, query);
+    ul.scrollTop = top;
+    // The repaint replaces the chip that was just pressed, so hand focus to its
+    // replacement or the next key lands on the page body.
+    for (const chip of ul.querySelectorAll('.session-agents')) {
+      if (chip.dataset.agentsFor === parentId) { chip.focus(); break; }
+    }
   };
   ul.querySelectorAll('.session-agents').forEach((chip) => {
     chip.addEventListener('click', () => toggleAgents(chip.dataset.agentsFor));
@@ -9921,6 +9937,10 @@ const ICONS = {
 // to the focused terminal as literal input instead of switching pages.
 const PALETTE_ACTIONS = [
   { icon: ICONS.chat,        label: 'Switch to Chat',                 run: () => setPage('chat'),        shortcut: 'Alt 1' },
+  // Ahead of the pages, because three entries answer "agent" and the palette
+  // preselects the first: someone hunting a running agent was landing on the
+  // page of agent definitions instead. The rail order below is untouched.
+  { icon: ICONS.agents,      label: 'Find a running agent',           run: () => openAgentSwitch(), shortcut: 'Alt A' },
   { icon: ICONS.agents,      label: 'Switch to Agents',               run: () => setPage('agents') },
   { icon: ICONS.workflows,   label: 'Switch to Workflows',            run: () => setPage('workflows') },
   { icon: ICONS.autopilot,    label: 'Switch to Autopilot',             run: () => setPage('autopilot') },
@@ -9947,52 +9967,125 @@ let paletteSel = 0;
 // A chat can start agents that keep working after it moves on. They are their
 // own sessions, so the only way to reach one has been to leave Husk and drive
 // the CLI's picker by hand. This is that picker, owned by Husk.
-let agentSwitch = { rows: [], sel: 0, loading: false, error: '', supported: true, parent: null };
+// `view` is the list actually on screen. Every index handed back by a click, an
+// arrow or a digit means a position in that, never in the unfiltered set.
+let agentSwitch = { rows: [], view: [], sel: 0, loading: false, error: '', supported: true };
+let agentSwitchLoad = 0;
+let agentOpening = false;
+let agentSwitchPointer = { x: -1, y: -1 };
 
 function agentAgeLabel(ms) {
   if (!ms) return '';
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 60) return `${s}s`;
+  if (s < 60) return 'now';
   if (s < 3600) return `${Math.round(s / 60)}m`;
-  if (s < 86400) return `${(s / 3600).toFixed(s < 36000 ? 1 : 0)}h`;
+  if (s < 86400) return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86400)}d`;
 }
 
-// Rows are titled from the parent chat, so the title alone cannot tell two
-// agents apart. What the agent is doing right now can.
+function agentStateClass(a) {
+  if (!a || !a.running) return 'is-done';
+  return a.state === 'blocked' ? 'is-blocked' : 'is-running';
+}
+
+// Only the waiting state is worded urgently; the other two label themselves
+// quietly so one marker in the list carries the thing that needs a human.
+function agentStateWord(a) {
+  if (!a || !a.running) return 'done';
+  return a.state === 'blocked' ? 'needs you' : 'working';
+}
+
+// What the agent is doing right now.
 function agentSubtitle(a) {
   if (a.detail) return a.detail;
   if (a.needs) return a.needs;
   if (a.intent) return a.intent;
-  return a.running ? 'starting' : 'no activity recorded';
+  return a.running ? 'starting up' : 'no activity recorded';
+}
+
+// The title is what a person recognises, so it leads. It cannot stand alone:
+// every agent a chat starts inherits that chat's title, so the id rides the
+// second line as the field that is guaranteed to differ between siblings.
+function agentHeadline(a) { return a.name || a.id || ''; }
+function agentShortId(a) { return String(a.id || a.sessionId || '').slice(0, 8); }
+
+// Order is the message: what is waiting on a human first, then what is still
+// moving, then what is over. Newest first inside each of the three.
+const AGENT_SECTIONS = [
+  { key: 'blocked', label: 'Needs you', has: (a) => a.running && a.state === 'blocked' },
+  { key: 'running', label: 'Running', has: (a) => a.running && a.state !== 'blocked' },
+  { key: 'done', label: 'Finished', has: (a) => !a.running },
+];
+
+function agentSections(rows) {
+  return AGENT_SECTIONS
+    .map((sec) => ({ label: sec.label, items: rows.filter(sec.has).sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0)) }))
+    .filter((sec) => sec.items.length);
 }
 
 async function openAgentSwitch() {
   const el = $('#agent-switch');
   if (!el) return;
+  if (!$('#palette').hidden) closePalette();   // two stacked overlays would fight over the same keys
   el.hidden = false;
-  $('#agent-switch-input').value = '';
-  agentSwitch = { rows: [], sel: 0, loading: true, error: '', supported: true };
+  const input = $('#agent-switch-input');
+  input.value = '';
+  agentSwitch = { rows: [], view: [], sel: 0, loading: true, error: '', supported: true };
   renderAgentSwitch('');
-  $('#agent-switch-input').focus();
+  input.focus();
+  const token = ++agentSwitchLoad;
   let res = null;
   // No cwd: main scopes to the active chat's directory, which is the one whose
   // agents the user is asking about.
   try { res = await window.husk.bgAgents.list({}); } catch (err) { res = { ok: false, error: (err && err.message) || 'could not reach the agent list' }; }
-  if (el.hidden) return;                       // closed while we were loading
+  // Closed, or reopened while this call was in flight: the later open owns the list.
+  if (el.hidden || token !== agentSwitchLoad) return;
   agentSwitch.loading = false;
   agentSwitch.supported = !res || res.supported !== false;
   agentSwitch.error = res && res.ok === false ? (res.error || 'could not list agents') : '';
-  agentSwitch.rows = (res && Array.isArray(res.agents) ? res.agents : [])
-    .slice()
-    .sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0));
-  renderAgentSwitch($('#agent-switch-input').value);
+  agentSwitch.rows = (res && Array.isArray(res.agents) ? res.agents : []).slice();
+  renderAgentSwitch(input.value);
+  paintTopbarAgents(res);
 }
 
 function closeAgentSwitch() {
   const el = $('#agent-switch');
   if (el) el.hidden = true;
+  agentSwitch.view = [];
   if (term) term.focus();
+}
+
+// The switcher is behind a chord nobody discovers on their own, so the topbar
+// carries a standing count. It stands down only when this project has no agents
+// at all: hiding it once the last one finishes takes the only way in with it,
+// at exactly the moment there is a finished agent worth reading.
+function paintTopbarAgents(res) {
+  const el = $('#topbar-agents');
+  if (!el) return;
+  const agents = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
+  const live = agents.filter((a) => a && a.running);
+  const blocked = live.filter((a) => a.state === 'blocked').length;
+  if (!agents.length) { el.hidden = true; return; }
+  el.hidden = false;
+  const n = live.length || agents.length;
+  $('#topbar-agents-count').textContent = String(n);
+  $('#topbar-agents-word').textContent = n === 1 ? 'agent' : 'agents';
+  const needs = $('#topbar-agents-needs');
+  needs.hidden = !blocked;
+  needs.textContent = blocked ? `${blocked} needs you` : '';
+  el.classList.toggle('is-blocked', !!blocked);
+  el.classList.toggle('is-running', !!live.length && !blocked);
+  el.classList.toggle('is-idle', !live.length);
+  if (!live.length) el.title = `${n} finished agent${n === 1 ? '' : 's'} in this project (Alt+A)`;
+  else if (blocked) el.title = `${blocked} of ${n} running agent${n === 1 ? '' : 's'} is waiting on you (Alt+A)`;
+  else el.title = `${n} agent${n === 1 ? '' : 's'} running in this project (Alt+A)`;
+}
+
+async function refreshTopbarAgents() {
+  if (!$('#topbar-agents')) return;
+  let res = null;
+  try { res = await window.husk.bgAgents.list({}); } catch (_) { res = null; }
+  paintTopbarAgents(res);
 }
 
 function agentSwitchMatches(query) {
@@ -10000,67 +10093,103 @@ function agentSwitchMatches(query) {
   if (!q) return agentSwitch.rows;
   return agentSwitch.rows.filter((a) =>
     (a.name || '').toLowerCase().includes(q)
+    || (a.id || '').toLowerCase().includes(q)
     || (a.detail || '').toLowerCase().includes(q)
     || (a.intent || '').toLowerCase().includes(q));
+}
+
+// One drawing for every state the list can be in instead of rows, so an empty
+// card is centred and iconed rather than one orphaned line at the row indent.
+function agentSwitchEmptyHTML(title, hint) {
+  return `<li class="as-empty" role="presentation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6"/></svg>
+      <strong>${escapeHtml(title)}</strong><span>${escapeHtml(hint)}</span>
+    </li>`;
 }
 
 function renderAgentSwitch(query) {
   const list = $('#agent-switch-list');
   if (!list) return;
   const esc = escapeHtml;
+  agentSwitch.view = [];
+  let html = '';
+  let count = 0;
   if (agentSwitch.loading) {
     // Shape-preserving placeholders: the list has known geometry, so a spinner
-    // would say less than the rows it is about to be replaced by.
-    // eslint-disable-next-line no-unsanitized/property -- Static markup, no interpolation.
-    list.innerHTML = '<li class="as-skel"></li><li class="as-skel"></li><li class="as-skel"></li>';
-    return;
-  }
-  if (!agentSwitch.supported) {
-    // eslint-disable-next-line no-unsanitized/property -- Static markup, no interpolation.
-    list.innerHTML = '<li class="as-empty"><strong>This tool has no background agents</strong><span>Husk shows them for tools that start them.</span></li>';
-    return;
-  }
-  if (agentSwitch.error) {
-    // eslint-disable-next-line no-unsanitized/property -- Only the escaped error text is interpolated.
-    list.innerHTML = `<li class="as-empty"><strong>Could not list agents</strong><span>${esc(agentSwitch.error)}</span></li>`;
-    return;
-  }
-  const rows = agentSwitchMatches(query);
-  if (!rows.length) {
-    const msg = agentSwitch.rows.length
-      ? '<strong>No agent matches</strong><span>Clear the filter to see them all.</span>'
-      : '<strong>No agents yet</strong><span>Agents this chat starts in the background show up here.</span>';
-    // eslint-disable-next-line no-unsanitized/property -- Both branches are literals.
-    list.innerHTML = `<li class="as-empty">${msg}</li>`;
-    return;
-  }
-  if (agentSwitch.sel >= rows.length) agentSwitch.sel = rows.length - 1;
-  if (agentSwitch.sel < 0) agentSwitch.sel = 0;
-  // eslint-disable-next-line no-unsanitized/property -- Every interpolated value is escaped above.
-  list.innerHTML = rows.map((a, i) => {
-    const state = a.running ? (a.state === 'blocked' ? 'is-blocked' : 'is-running') : 'is-done';
-    const stateWord = a.running ? (a.state === 'blocked' ? 'needs input' : 'working') : 'done';
-    return `
-    <li class="as-row ${state} ${i === agentSwitch.sel ? 'active' : ''}" data-idx="${i}">
-      <span class="as-idx">${i < 9 ? i + 1 : ''}</span>
+    // would say less than the rows it is about to be replaced by. A label
+    // placeholder rides along because the loaded list is banded.
+    html = '<li class="as-skel-group" role="presentation"><i></i></li>'
+      + '<li class="as-skel" role="presentation"><i class="sk-dot"></i><i class="sk-name"></i><i class="sk-sub"></i><i class="sk-meta"></i></li>'.repeat(4);
+  } else if (!agentSwitch.supported) {
+    html = agentSwitchEmptyHTML('This tool has no background agents', 'Husk shows them for tools that start them.');
+  } else if (agentSwitch.error) {
+    html = agentSwitchEmptyHTML('Could not list agents', agentSwitch.error);
+  } else {
+    const rows = agentSwitchMatches(query);
+    if (!rows.length) {
+      html = agentSwitch.rows.length
+        ? agentSwitchEmptyHTML('No agent matches', 'Clear the filter to see them all.')
+        : agentSwitchEmptyHTML('No agents yet', 'Agents this chat starts in the background show up here.');
+    } else {
+      count = rows.length;
+      // The flat view stays the index space every click, arrow and Enter speaks
+      // in; the section labels are painted around it and own no index.
+      const sections = agentSections(rows);
+      agentSwitch.view = sections.flatMap((sec) => sec.items);
+      agentSwitch.sel = Math.min(Math.max(agentSwitch.sel, 0), agentSwitch.view.length - 1);
+      let i = 0;
+      html = sections.map((sec) => `
+    <li class="as-group" role="presentation">${esc(sec.label)}</li>` + sec.items.map((a) => {
+        const idx = i++;
+        return `
+    <li class="as-row ${agentStateClass(a)}" id="as-row-${idx}" data-idx="${idx}" role="option" aria-selected="false">
       <span class="as-dot" aria-hidden="true"></span>
       <span class="as-text">
-        <strong>${esc(a.name || a.id)}</strong>
-        <span class="as-sub">${esc(agentSubtitle(a))}</span>
+        <strong class="as-name">${esc(agentHeadline(a))}</strong>
+        <span class="as-sub"><code class="as-id">${esc(agentShortId(a))}</code>${esc(agentSubtitle(a))}</span>
       </span>
-      <span class="as-state">${esc(stateWord)}</span>
-      <span class="as-age">${esc(agentAgeLabel(a.startedAt))}</span>
+      <span class="as-meta">
+        <span class="as-state">${esc(agentStateWord(a))}</span>
+        <span class="as-age">${esc(agentAgeLabel(a.startedAt))}</span>
+      </span>
     </li>`;
-  }).join('');
+      }).join('')).join('');
+    }
+  }
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolated value is escaped or a literal.
+  list.innerHTML = html;
+  // A key hint that does nothing is worse than no hint, so the row keys stand
+  // down whenever there is no row for them to reach.
+  const navHints = $('#as-nav-hints');
+  if (navHints) navHints.hidden = !agentSwitch.view.length;
+  const foot = $('#as-foot-count');
+  if (foot) foot.textContent = count ? `${count} agent${count === 1 ? '' : 's'}` : '';
+  // Measured, not guessed: the bottom ramp is only honest while there is
+  // something below the fold, and the list is polled across that threshold.
+  list.classList.toggle('is-scrollable', list.scrollHeight > list.clientHeight + 1);
+  paintAgentSwitchSel(false);
+}
+
+// Moving the selection flips a class and never rebuilds the list: replacing the
+// rows under the pointer destroys the one being pressed, so its click is lost.
+function paintAgentSwitchSel(scroll) {
+  const list = $('#agent-switch-list');
+  const input = $('#agent-switch-input');
+  if (!list || !input) return;
+  let active = null;
   list.querySelectorAll('li.as-row').forEach((li, i) => {
-    li.addEventListener('mouseenter', () => { agentSwitch.sel = i; renderAgentSwitch($('#agent-switch-input').value); });
-    li.addEventListener('click', () => openAgentFromSwitch(i));
+    const on = i === agentSwitch.sel;
+    li.classList.toggle('active', on);
+    li.setAttribute('aria-selected', on ? 'true' : 'false');
+    if (on) active = li;
   });
+  if (active) input.setAttribute('aria-activedescendant', active.id);
+  else input.removeAttribute('aria-activedescendant');
+  if (scroll && active) active.scrollIntoView({ block: 'nearest' });
 }
 
 async function openAgentFromSwitch(idx) {
-  const rows = agentSwitchMatches($('#agent-switch-input').value);
-  const a = rows[idx];
+  const a = agentSwitch.view[idx];
   if (!a) return;
   closeAgentSwitch();
   await openBgAgent(a);
@@ -10071,33 +10200,38 @@ async function openAgentFromSwitch(idx) {
 // opens straight onto this agent when told which one. A finished agent has no
 // worker left, so it resumes normally.
 async function openBgAgent(a) {
-  let res = null;
+  if (agentOpening) return;                    // the tab takes a round trip to appear, so one press is one tab
+  agentOpening = true;
   try {
-    res = await window.husk.bgAgents.openCommand({
-      id: a.id, sessionId: a.sessionId, running: !!a.running, cwd: a.cwd || '',
+    let res = null;
+    try {
+      res = await window.husk.bgAgents.openCommand({
+        id: a.id, sessionId: a.sessionId, running: !!a.running, cwd: a.cwd || '',
+      });
+    } catch (err) { res = { ok: false, error: (err && err.message) || 'could not open that agent' }; }
+    if (!res || !res.ok) {
+      toast((res && res.error) || 'could not open that agent', 'error');
+      return;
+    }
+    setPage('chat');
+    const tab = await openNewChatTab({
+      command: res.command,
+      env: res.env || null,
+      cwd: a.cwd || null,
+      skipContext: true,
+      skipWelcome: true,
     });
-  } catch (err) { res = { ok: false, error: (err && err.message) || 'could not open that agent' }; }
-  if (!res || !res.ok) {
-    toast((res && res.error) || 'could not open that agent', 'error');
-    return;
-  }
-  setPage('chat');
-  const tab = await openNewChatTab({
-    command: res.command,
-    env: res.env || null,
-    cwd: a.cwd || null,
-    skipContext: true,
-    skipWelcome: true,
-  });
-  if (tab) {
-    tab.customTitle = a.name || a.id;
-    tab.agentId = a.sessionId || '';
-    renderTabStrip();
-  }
-  toast(`Opened ${a.name || a.id}`, 'success');
+    if (tab) {
+      tab.customTitle = a.name || a.id;
+      tab.agentId = a.sessionId || '';
+      renderTabStrip();
+    }
+    toast(`Opened ${a.name || a.id}`, 'success');
+  } finally { agentOpening = false; }
 }
 
 function openPalette() {
+  if (!$('#agent-switch').hidden) closeAgentSwitch();
   $('#palette').hidden = false;
   $('#palette-input').value = '';
   paletteSel = 0;
@@ -10148,20 +10282,45 @@ $('#palette').addEventListener('click', (e) => { if (e.target.id === 'palette') 
 
 $('#agent-switch-input').addEventListener('input', (e) => { agentSwitch.sel = 0; renderAgentSwitch(e.target.value); });
 $('#agent-switch-input').addEventListener('keydown', (e) => {
-  const value = $('#agent-switch-input').value;
-  const rows = agentSwitchMatches(value);
-  if (e.key === 'Escape') { e.preventDefault(); closeAgentSwitch(); return; }
-  if (e.key === 'ArrowDown') { e.preventDefault(); agentSwitch.sel = Math.min(rows.length - 1, agentSwitch.sel + 1); renderAgentSwitch(value); return; }
-  if (e.key === 'ArrowUp') { e.preventDefault(); agentSwitch.sel = Math.max(0, agentSwitch.sel - 1); renderAgentSwitch(value); return; }
-  if (e.key === 'Enter') { e.preventDefault(); openAgentFromSwitch(agentSwitch.sel); return; }
-  // Number keys jump, but only while the filter is empty: once the user is
-  // typing, a digit belongs to the search text.
-  if (!value && /^[1-9]$/.test(e.key)) {
-    const idx = Number(e.key) - 1;
-    if (idx < rows.length) { e.preventDefault(); openAgentFromSwitch(idx); }
+  const rows = agentSwitch.view;
+  // Nothing else may act on this Esc: the page underneath has its own, and one
+  // press must close one layer.
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAgentSwitch(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!rows.length) return;
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    agentSwitch.sel = (agentSwitch.sel + step + rows.length) % rows.length;
+    paintAgentSwitchSel(true);
+    return;
   }
+  if (e.key === 'Enter') { e.preventDefault(); openAgentFromSwitch(agentSwitch.sel); }
+});
+$('#agent-switch-list').addEventListener('mousedown', (e) => {
+  // A row cannot hold focus, so letting the press move it would strand the
+  // arrows and Enter away from the input that handles them.
+  if (e.target.closest('li.as-row')) e.preventDefault();
+});
+$('#agent-switch-list').addEventListener('click', (e) => {
+  const li = e.target.closest('li.as-row');
+  if (li) openAgentFromSwitch(Number(li.dataset.idx));
+});
+$('#agent-switch-list').addEventListener('mousemove', (e) => {
+  // Only a real pointer move re-aims the selection: scrolling a row under a
+  // parked cursor would otherwise undo the arrow key that caused the scroll.
+  if (e.clientX === agentSwitchPointer.x && e.clientY === agentSwitchPointer.y) return;
+  agentSwitchPointer = { x: e.clientX, y: e.clientY };
+  const li = e.target.closest('li.as-row');
+  if (!li) return;
+  const idx = Number(li.dataset.idx);
+  if (!Number.isInteger(idx) || idx === agentSwitch.sel) return;
+  agentSwitch.sel = idx;
+  paintAgentSwitchSel(false);
 });
 $('#agent-switch').addEventListener('click', (e) => { if (e.target.id === 'agent-switch') closeAgentSwitch(); });
+$('#topbar-agents').addEventListener('click', () => {
+  if ($('#agent-switch').hidden) openAgentSwitch(); else closeAgentSwitch();
+});
 $('#btn-palette').addEventListener('click', openPalette);
 // On the chat page, if focus is on the page body (nothing focused) and a
 // printable/edit key is pressed, focus the active terminal first so the
@@ -10686,6 +10845,11 @@ async function boot() {
     if (document.hidden) return;
     refreshRecentList();
   }, 30000);
+  refreshTopbarAgents();
+  setInterval(() => {
+    if (document.hidden) return;
+    refreshTopbarAgents();
+  }, 20000);
 
   // With skipWelcome on, boot goes straight to a chat, so the welcome screen
   // must never paint. Adding it unconditionally here made it flash for the
@@ -12072,9 +12236,10 @@ function autopilotPageVisible() {
   const page = document.querySelector('.page-autopilot');
   return !!(page && !page.hidden);
 }
+// Every overlay that floats on the palette shell, so a key aimed at one of them
+// is not also read as a key for the page underneath.
 function paletteOpen() {
-  const p = $('#palette');
-  return !!(p && !p.hidden);
+  return !!document.querySelector('.palette:not([hidden])');
 }
 // Close the topmost open modal the way the modal itself would: its own
 // close button when it has one (state cleanup runs), else the backdrop
