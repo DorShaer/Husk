@@ -10199,6 +10199,33 @@ async function openAgentFromSwitch(idx) {
 // tool refuses and says so. Its own agent view is the supported way in, and it
 // opens straight onto this agent when told which one. A finished agent has no
 // worker left, so it resumes normally.
+// Opening an agent lands on the tool's own agent list with that agent selected,
+// not inside its conversation: the environment variable chooses the row, and a
+// return key opens it. Waiting for the list to paint before sending it, because
+// a key sent into a half-drawn picker is dropped. Bounded, and sent once: if the
+// list never appears the user is simply left on whatever did.
+const AGENT_PICKER_READY = /awaiting input|to collapse|for shortcut/i;
+function confirmAgentSelection(tab) {
+  const deadline = Date.now() + 12000;
+  const tick = () => {
+    if (!tab || !tab.term || !TABS.has(tab.id)) return;
+    let text = '';
+    try {
+      const b = tab.term.buffer.active;
+      for (let i = Math.max(0, b.length - 60); i < b.length; i++) {
+        const line = b.getLine(i);
+        if (line) text += line.translateToString(true) + '\n';
+      }
+    } catch (_) { return; }
+    if (AGENT_PICKER_READY.test(text)) {
+      try { window.husk.pty.write('\r', tab.id); } catch (_) {}
+      return;
+    }
+    if (Date.now() < deadline) setTimeout(tick, 250);
+  };
+  setTimeout(tick, 600);
+}
+
 async function openBgAgent(a) {
   if (agentOpening) return;                    // the tab takes a round trip to appear, so one press is one tab
   agentOpening = true;
@@ -10225,6 +10252,7 @@ async function openBgAgent(a) {
       tab.customTitle = a.name || a.id;
       tab.agentId = a.sessionId || '';
       renderTabStrip();
+      if (res.mode === 'attach') confirmAgentSelection(tab);
     }
     toast(`Opened ${a.name || a.id}`, 'success');
   } finally { agentOpening = false; }
