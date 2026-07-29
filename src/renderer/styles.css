@@ -3315,6 +3315,24 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   min-height: 0;
   position: relative;
 }
+/* Reaching an agent means driving the tool's own picker: launch it, select the
+   row, confirm. That is machinery, not something to watch happen, so the
+   terminal stays covered until the conversation is on screen. Same frame as the
+   welcome state so it reads as the chat card loading, not a separate surface. */
+.agent-boot {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center; gap: var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--line-2); border-radius: var(--radius-lg);
+  font-size: var(--fs-small); color: var(--text-2);
+}
+.agent-boot[hidden] { display: none; }
+.agent-boot.is-leaving { opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
+.ab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: ap-pulse 1.6s ease-in-out infinite; }
+.ab-name { font-weight: 600; color: var(--text); max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ab-sub { color: var(--text-3); }
+@media (prefers-reduced-motion: reduce) { .ab-dot { animation: none; } }
+
 .chat-empty {
   position: absolute; inset: 0; z-index: 2;
   display: flex; flex-direction: column; align-items: center; justify-content: center;

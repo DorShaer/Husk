@@ -415,6 +415,8 @@ function createTab(idOverride) {
 // Show one tab, hide the rest, and re-point the active-tab pointers so the
 // shared handlers operate on it.
 function activateTab(id) {
+  // One cover for the whole terminal area, so it must not outlive its tab.
+  agentBootHide();
   const tab = TABS.get(id);
   if (!tab) return;
   // Drop the cached context reading so the next poll shows the newly-focused
@@ -10205,25 +10207,61 @@ async function openAgentFromSwitch(idx) {
 // a key sent into a half-drawn picker is dropped. Bounded, and sent once: if the
 // list never appears the user is simply left on whatever did.
 const AGENT_PICKER_READY = /awaiting input|to collapse|for shortcut/i;
+
+function agentBootShow(name) {
+  const el = $('#agent-boot');
+  if (!el) return;
+  $('#agent-boot-name').textContent = name || '';
+  el.classList.remove('is-leaving');
+  el.hidden = false;
+}
+function agentBootHide() {
+  const el = $('#agent-boot');
+  if (!el || el.hidden) return;
+  el.classList.add('is-leaving');
+  setTimeout(() => { el.hidden = true; el.classList.remove('is-leaving'); }, 140);
+}
+
+function agentTailText(tab) {
+  try {
+    const b = tab.term.buffer.active;
+    let text = '';
+    for (let i = Math.max(0, b.length - 60); i < b.length; i++) {
+      const line = b.getLine(i);
+      if (line) text += line.translateToString(true) + '\n';
+    }
+    return text;
+  } catch (_) { return ''; }
+}
+
 function confirmAgentSelection(tab) {
   const deadline = Date.now() + 12000;
+  // Poll tightly. The picker is only up for a few frames before the key lands,
+  // and every extra millisecond here is machinery the user would otherwise see.
   const tick = () => {
-    if (!tab || !tab.term || !TABS.has(tab.id)) return;
-    let text = '';
-    try {
-      const b = tab.term.buffer.active;
-      for (let i = Math.max(0, b.length - 60); i < b.length; i++) {
-        const line = b.getLine(i);
-        if (line) text += line.translateToString(true) + '\n';
-      }
-    } catch (_) { return; }
-    if (AGENT_PICKER_READY.test(text)) {
+    if (!tab || !tab.term || !TABS.has(tab.id)) { agentBootHide(); return; }
+    if (AGENT_PICKER_READY.test(agentTailText(tab))) {
       try { window.husk.pty.write('\r', tab.id); } catch (_) {}
+      waitForAgentConversation(tab, deadline);
       return;
     }
-    if (Date.now() < deadline) setTimeout(tick, 250);
+    if (Date.now() < deadline) setTimeout(tick, 40);
+    else agentBootHide();
   };
-  setTimeout(tick, 600);
+  setTimeout(tick, 40);
+}
+
+// Uncover only once the picker is off screen, so the cover never lifts onto a
+// half-drawn list. Failing open on the deadline: a stuck cover would hide a
+// working conversation, which is worse than a brief glimpse of the picker.
+function waitForAgentConversation(tab, deadline) {
+  const tick = () => {
+    if (!tab || !tab.term || !TABS.has(tab.id)) { agentBootHide(); return; }
+    if (!AGENT_PICKER_READY.test(agentTailText(tab))) { agentBootHide(); return; }
+    if (Date.now() < deadline) setTimeout(tick, 40);
+    else agentBootHide();
+  };
+  setTimeout(tick, 40);
 }
 
 async function openBgAgent(a) {
@@ -10252,7 +10290,7 @@ async function openBgAgent(a) {
       tab.customTitle = a.name || a.id;
       tab.agentId = a.sessionId || '';
       renderTabStrip();
-      if (res.mode === 'attach') confirmAgentSelection(tab);
+      if (res.mode === 'attach') { agentBootShow(a.name || a.id); confirmAgentSelection(tab); }
     }
     toast(`Opened ${a.name || a.id}`, 'success');
   } finally { agentOpening = false; }
