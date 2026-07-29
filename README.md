@@ -183,6 +183,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 3. Press the Launch button and start chatting. The agent runs in a real PTY, so everything you would normally do in the terminal works: tool calls, slash commands, stdin, ctrl-c, scrollback, keyboard interrupts, the lot.
 4. Drag files onto the window to share them with the agent. Use the topbar `+` button as a fallback file picker.
 5. Switch pages with the rail or `Alt+1..6`. Open the command palette with `Cmd/Ctrl+K`.
+6. If a chat starts agents that keep working on their own, the topbar says how many are running and how many are waiting on you. Click it or press `Alt+A` to pick one and continue its conversation.
 
 ### Pages
 
@@ -196,7 +197,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 - **MCP**: install / toggle / health-check Model Context Protocol servers.
 - **Plugins**: browse and manage Husk plugins.
 - **Files**: drag-drop file context, with a tree view of your working directory.
-- **Sessions**: resume any prior agent session from its JSONL log.
+- **Sessions**: resume any prior agent session from its JSONL log. Agents a chat started are grouped under that chat rather than listed beside it.
 
 Preferences (agent command, name, theme, accent, voice, recap, sidebar defaults) open as a modal from the rail or `Alt+6`, not as a page.
 

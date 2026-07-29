@@ -675,6 +675,26 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.10.1': {
+    items: [
+      {
+        title: 'Agents a chat starts are visible',
+        body: 'A chat can send agents off to work on their own. The topbar now says how many are running and how many are waiting on you, so you find them without knowing they exist.',
+      },
+      {
+        title: 'Open an agent and keep talking',
+        body: 'Press Alt+A, pick an agent, and land in its conversation. Running agents attach, finished ones resume, and the switcher tells them apart by what each is doing right now.',
+      },
+      {
+        title: 'Agents sit under the chat that started them',
+        body: 'The Sessions list groups them under their chat instead of listing them beside it, so one conversation is one row again.',
+      },
+      {
+        title: 'The status panel names the right model',
+        body: 'It reads the model you selected rather than guessing from whichever transcript was newest, so a resumed chat no longer reports a model it is not running.',
+      },
+    ],
+  },
   '2.10.0': {
     items: [
       {
