@@ -5510,6 +5510,93 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 }
 .pr-body.is-muted { color: var(--text-3); }
 
+/* Editing happens in the reader, so the editable body inherits the reader's
+   type and padding exactly: the text does not move when the mode changes, and
+   the pane keeps the full height it already had. */
+/* Editor with a line gutter. The two panes scroll as one: the gutter has no
+   scrollbar of its own and is driven from the textarea's scrollTop, so the
+   numbers cannot drift away from their lines. */
+.pr-editor {
+  flex: 1; min-height: 0;
+  display: flex;
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.pr-gutter {
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding-right: var(--space-3);
+  padding-left: var(--space-4);
+  border-right: 1px solid var(--line);
+  background: var(--bg-1);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: var(--fs-small);
+  line-height: var(--lh-base);
+  color: var(--text-3);
+  text-align: right;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+/* Each cell is given the height its own line renders at, so a wrapped line
+   leaves blank space under its number instead of pushing the next one up. */
+.pr-gutter-n { display: block; }
+
+textarea.pr-body-edit {
+  display: block;
+  width: 100%;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-1);
+  color: var(--text);
+  outline: none;
+}
+/* The focus treatments below are sized for a control. Around a full-height
+   editor they draw a box the length of the pane, so this one keeps the seam it
+   already had. The dark family gives form fields their own well and inset ring,
+   so it is answered on its own terms rather than through the base rule. */
+textarea.pr-body-edit:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: var(--line) !important;
+}
+[data-mode="dark"] textarea.pr-body-edit,
+[data-mode="dark"] textarea.pr-body-edit:focus,
+[data-mode="dark"] textarea.pr-body-edit:focus-visible {
+  background: var(--bg-1) !important;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+/* The heading fields sit on the same baselines the title and description used,
+   so the head keeps its shape and only gains an edge to type against. */
+.pr-edit-field {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit;
+  padding: 6px 10px;
+}
+.pr-edit-field:focus { border-color: var(--accent); }
+.pr-edit-name {
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+.pr-edit-desc {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  max-width: 68ch;
+}
+.pr-detail.is-editing .pr-detail-actions { align-items: flex-start; }
+
 /* Empty and no-match states own the whole pane so they centre in the page
    rather than in a 360px band at the top of it. */
 .pr.is-empty {

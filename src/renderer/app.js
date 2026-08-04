@@ -6566,6 +6566,82 @@ function promptSlug(text) {
     .replace(/-+$/, '');
 }
 
+// Line numbers for the prompt editor.
+//
+// The body wraps, so a logical line can occupy several visual rows and a
+// gutter that prints one number per newline drifts out of alignment the
+// moment anything wraps. Instead each number is given the height its own
+// line actually renders at, measured in a mirror element that copies the
+// textarea's width, font and padding. Wrapped continuation rows get blank
+// space, exactly as an editor shows them.
+let prMirror = null;
+function syncPromptGutter() {
+  const ta = document.querySelector('#prompts-pane .pr-body-edit');
+  const gutter = document.querySelector('#prompts-pane .pr-gutter');
+  if (!ta || !gutter) return;
+  const cs = getComputedStyle(ta);
+  if (!prMirror) {
+    // A textarea, not a div: the two do not break lines identically, and a div
+    // mirror measured the text one row short overall.
+    prMirror = document.createElement('textarea');
+    prMirror.readOnly = true;
+    prMirror.tabIndex = -1;
+    prMirror.setAttribute('aria-hidden', 'true');
+    prMirror.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;'
+      + 'top:0;left:-9999px;overflow:hidden;resize:none;border:0;height:0;min-height:0;';
+    document.body.appendChild(prMirror);
+  }
+  // Copy every property that changes where a line breaks. Missing one here
+  // means the mirror wraps at a different column than the textarea does.
+  for (const prop of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
+    'whiteSpace', 'wordBreak', 'overflowWrap', 'tabSize', 'paddingLeft', 'paddingRight',
+    'textIndent', 'boxSizing']) {
+    prMirror.style[prop] = cs[prop];
+  }
+  prMirror.style.paddingTop = '0px';
+  prMirror.style.paddingBottom = '0px';
+  prMirror.style.width = ta.clientWidth + 'px';
+  // The exact, unrounded line box. Everything below is a multiple of it.
+  const lineH = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.5);
+  const src = ta.value;
+  const rows = src.split('\n');
+  const frag = document.createDocumentFragment();
+  for (let n = 0; n < rows.length; n += 1) {
+    // An empty line still occupies one row, and a lone newline measures zero
+    // without a placeholder, so the gutter would collapse against the text.
+    prMirror.value = rows[n].length ? rows[n] : ' ';
+    // scrollHeight is an integer, so a 19.5px line measures 19 and every line
+    // loses half a pixel. Summed over a page that drifts the gutter a whole row
+    // out of step. Count the rows instead and lay them out at the exact
+    // fractional line height the text itself uses.
+    const rowCount = Math.max(1, Math.round(prMirror.scrollHeight / lineH));
+    const cell = document.createElement('div');
+    cell.className = 'pr-gutter-n';
+    cell.style.height = (rowCount * lineH) + 'px';
+    cell.textContent = String(n + 1);
+    frag.appendChild(cell);
+  }
+  gutter.replaceChildren(frag);
+  gutter.style.paddingTop = cs.paddingTop;
+  gutter.scrollTop = ta.scrollTop;
+}
+
+// The gutter scrolls with the text rather than having its own scrollbar.
+function bindPromptGutter() {
+  const ta = document.querySelector('#prompts-pane .pr-body-edit');
+  const gutter = document.querySelector('#prompts-pane .pr-gutter');
+  if (!ta || !gutter || ta.dataset.gutterBound === '1') return;
+  ta.dataset.gutterBound = '1';
+  ta.addEventListener('input', syncPromptGutter);
+  ta.addEventListener('scroll', () => { gutter.scrollTop = ta.scrollTop; });
+  // A pane resize changes where lines wrap, so the measured heights change.
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(() => syncPromptGutter());
+    ro.observe(ta);
+  }
+  syncPromptGutter();
+}
+
 function openPromptComposer(seedName) {
   const btn = document.getElementById('btn-prompts-new');
   if (!btn) return;
@@ -6574,42 +6650,62 @@ function openPromptComposer(seedName) {
   if (nameEl && seedName) nameEl.value = seedName;
 }
 
-// The prompt the composer is editing, or null when it is creating one. Read by
-// the submit handler to choose between create and update.
+// The prompt being edited in the detail pane, or null when it is being read.
+// Editing happens where the prompt is already shown: the pane is the size of
+// the thing, and a dialog would hand back less room than the reader it covers.
 let editingPromptPath = null;
 
-// Open the composer over an existing prompt. The body comes off disk rather
-// than from the rendered pane, so what gets saved back is what was there.
-async function openPromptEditor(prompt) {
+// Enter edit mode on the open prompt. The body has to be on hand before the
+// repaint so the textarea is never briefly empty over real content.
+async function beginPromptEdit(prompt) {
   if (!prompt) return;
-  const modal = document.getElementById('new-prompt-modal');
-  if (!modal) return;
-  let content = '';
-  try {
-    const res = await window.husk.skills.read(prompt.mdPath);
-    if (res && res.ok) content = stripPromptFrontmatter(res.content || '');
-  } catch (_) {}
+  if (!promptBodyCache.has(prompt.mdPath)) await fillPromptBody(prompt.mdPath);
   editingPromptPath = prompt.mdPath;
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-  set('np-name', prompt.name || '');
-  set('np-desc', prompt.description || '');
-  set('np-content', content);
-  const title = document.getElementById('np-title');
-  if (title) title.textContent = 'Edit prompt';
-  const save = document.getElementById('np-create');
-  if (save) save.textContent = 'Save prompt';
-  [document.getElementById('np-name'), document.getElementById('np-desc')]
-    .forEach((el) => el && el.classList.remove('field-invalid'));
-  modal.hidden = false;
-  setTimeout(() => { try { document.getElementById('np-content').focus(); } catch (_) {} }, 30);
+  paintPrompts(promptsCache, ($('#prompts-search') || {}).value || '');
+  const body = $('#prompts-pane .pr-body-edit');
+  if (body) { body.focus(); body.setSelectionRange(body.value.length, body.value.length); }
 }
 
-// The editor edits the prompt, not the file's bookkeeping: name and description
-// have their own fields, so the frontmatter they came from is not shown twice.
+function cancelPromptEdit() {
+  editingPromptPath = null;
+  paintPrompts(promptsCache, ($('#prompts-search') || {}).value || '');
+}
+
+// Frontmatter is the file's bookkeeping and has its own fields, so the editor
+// shows the prompt itself rather than the header it was stored behind.
 function stripPromptFrontmatter(text) {
   const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(String(text || ''));
   return (m ? String(text).slice(m[0].length) : String(text || '')).replace(/^\n+/, '');
 }
+
+async function savePromptEdit(original) {
+  const nameEl = $('#pr-edit-name');
+  const descEl = $('#pr-edit-desc');
+  const bodyEl = $('#prompts-pane .pr-body-edit');
+  if (!nameEl || !descEl || !bodyEl) return;
+  const name = nameEl.value.trim();
+  const description = descEl.value.trim();
+  const invalid = (el, msg) => { el.classList.add('field-invalid'); el.focus(); toast(msg, 'error'); };
+  [nameEl, descEl].forEach((el) => el.classList.remove('field-invalid'));
+  if (!name) return invalid(nameEl, 'Name is required');
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+    return invalid(nameEl, 'Name must be lowercase letters, digits, dashes; start with a letter.');
+  }
+  if (!description) return invalid(descEl, 'Description is required');
+
+  const res = await window.husk.prompts.update({
+    mdPath: original.mdPath, name, description, content: bodyEl.value,
+  });
+  if (!res || !res.ok) { toast((res && res.error) || 'Could not save prompt', 'error'); return; }
+  // A rename moves the file, so the selection follows it rather than falling
+  // back to whichever prompt happens to sort first.
+  promptBodyCache.delete(original.mdPath);
+  if (res.mdPath) selectedPromptMd = res.mdPath;
+  editingPromptPath = null;
+  toast(`Saved ${name}`, 'success');
+  await renderPrompts();
+}
+
 
 function paintPrompts(items, filter) {
   const pane = $('#prompts-pane');
@@ -6644,6 +6740,7 @@ function paintPrompts(items, filter) {
   pane.classList.remove('is-empty');
   if (!filtered.some((p) => p.mdPath === selectedPromptMd)) selectedPromptMd = filtered[0].mdPath;
   const active = filtered.find((p) => p.mdPath === selectedPromptMd) || filtered[0];
+  const editing = editingPromptPath === active.mdPath;
 
   const rows = filtered.map((p) => {
     const isActive = p.mdPath === selectedPromptMd;
@@ -6665,27 +6762,55 @@ function paintPrompts(items, filter) {
         <button class="pr-new" type="button">${PR_PLUS_SVG}New prompt</button>
       </div>
     </div>
-    <div class="pr-detail">
+    <div class="pr-detail${editing ? ' is-editing' : ''}">
       <div class="pr-detail-head">
         <div class="pr-detail-heading">
-          <div class="pr-eyebrow">Prompt${active.disabled ? '<span class="pr-pill">off</span>' : ''}</div>
-          <h2 class="pr-detail-title">${escapeHtml(active.name)}</h2>
-          ${active.description ? `<div class="pr-detail-desc">${escapeHtml(active.description)}</div>` : ''}
+          <div class="pr-eyebrow">${editing ? 'Editing' : 'Prompt'}${active.disabled ? '<span class="pr-pill">off</span>' : ''}</div>
+          ${editing ? `
+            <input class="pr-edit-field pr-edit-name" id="pr-edit-name" type="text" value="${escapeAttr(active.name)}"
+                   spellcheck="false" autocomplete="off" aria-label="Prompt name" />
+            <input class="pr-edit-field pr-edit-desc" id="pr-edit-desc" type="text" value="${escapeAttr(active.description || '')}"
+                   placeholder="One-line summary of what this prompt does" aria-label="Prompt description" />
+          ` : `
+            <h2 class="pr-detail-title">${escapeHtml(active.name)}</h2>
+            ${active.description ? `<div class="pr-detail-desc">${escapeHtml(active.description)}</div>` : ''}
+          `}
           <div class="pr-detail-path" title="${escapeAttr(active.mdPath)}">${escapeHtml(active.mdPath)}</div>
         </div>
         <div class="pr-detail-actions">
-          <button class="pr-iconbtn pr-edit" type="button" title="Edit prompt" aria-label="Edit prompt">${PR_PENCIL_SVG}</button>
-          <button class="pr-iconbtn pr-delete" type="button" title="Delete prompt" aria-label="Delete prompt">${PR_TRASH_SVG}</button>
-          <button class="pr-run pr-run-btn" type="button" title="Send into chat">Run${PR_ARROW_SVG}</button>
+          ${editing ? `
+            <button class="ghost-btn pr-cancel" type="button">Cancel</button>
+            <button class="btn-primary pr-save" type="button" title="Save · Ctrl+S">Save</button>
+          ` : `
+            <button class="pr-iconbtn pr-edit" type="button" title="Edit prompt" aria-label="Edit prompt">${PR_PENCIL_SVG}</button>
+            <button class="pr-iconbtn pr-delete" type="button" title="Delete prompt" aria-label="Delete prompt">${PR_TRASH_SVG}</button>
+            <button class="pr-run pr-run-btn" type="button" title="Send into chat">Run${PR_ARROW_SVG}</button>
+          `}
         </div>
       </div>
-      <pre class="pr-body is-muted">Loading…</pre>
+      ${editing
+    ? `<div class="pr-editor">
+             <div class="pr-gutter" id="pr-gutter" aria-hidden="true"></div>
+             <textarea class="pr-body pr-body-edit" spellcheck="false" aria-label="Prompt body">${escapeHtml(promptBodyCache.get(active.mdPath) || '')}</textarea>
+           </div>`
+    : '<pre class="pr-body is-muted">Loading…</pre>'}
     </div>`;
 
-  const selectRow = (md) => {
+  // Switching prompts mid-edit would drop the edit without saying so, so the
+  // list asks first and stays put when the answer is no.
+  const selectRow = async (md) => {
     if (!md || md === selectedPromptMd) return;
+    if (editingPromptPath) {
+      const leave = await openConfirmDialog({
+        title: 'Discard changes',
+        bodyHtml: `Leaves <strong>${escapeHtml(active.name)}</strong> without saving your edit.`,
+        confirmLabel: 'Discard',
+      });
+      if (!leave) return;
+      editingPromptPath = null;
+    }
     selectedPromptMd = md;
-    paintPrompts(items, filter);
+    paintPrompts(promptsCache, ($('#prompts-search') || {}).value || '');
   };
   pane.querySelectorAll('.pr-item').forEach((row) => {
     row.addEventListener('click', () => selectRow(row.dataset.md));
@@ -6698,10 +6823,29 @@ function paintPrompts(items, filter) {
   const runBtn = pane.querySelector('.pr-run-btn');
   if (runBtn) runBtn.addEventListener('click', () => runPrompt(active.mdPath));
   const editBtn = pane.querySelector('.pr-edit');
-  if (editBtn) editBtn.addEventListener('click', () => openPromptEditor(active));
+  if (editBtn) editBtn.addEventListener('click', () => beginPromptEdit(active));
   const delBtn = pane.querySelector('.pr-delete');
   if (delBtn) delBtn.addEventListener('click', () => deletePrompt(active.mdPath, active.name));
-  fillPromptBody(active.mdPath);
+  const saveBtn = pane.querySelector('.pr-save');
+  if (saveBtn) saveBtn.addEventListener('click', () => savePromptEdit(active));
+  const cancelBtn = pane.querySelector('.pr-cancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', cancelPromptEdit);
+
+  if (editing) {
+    // Numbers are measured from the rendered text, so this runs after the
+    // editor is in the DOM and has a real width to wrap against.
+    bindPromptGutter();
+    // Ctrl/Cmd+S saves and Esc leaves, so a full edit never needs the pointer.
+    pane.querySelectorAll('.pr-edit-field, .pr-body-edit').forEach((el) => {
+      el.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); savePromptEdit(active); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelPromptEdit(); }
+      });
+      el.addEventListener('input', () => el.classList.remove('field-invalid'));
+    });
+  } else {
+    fillPromptBody(active.mdPath);
+  }
 }
 
 // Loads the prompt text into the right pane. Cached bodies paint before the
@@ -6778,18 +6922,14 @@ async function runPrompt(mdPath) {
   function clearInvalid() { [nameEl, descEl].forEach((el) => el && el.classList.remove('field-invalid')); }
   function openNewPrompt() {
     if (!modal) return;
-    editingPromptPath = null;
     if (nameEl) nameEl.value = '';
     if (descEl) descEl.value = '';
     if (bodyEl) bodyEl.value = '';
-    const title = document.getElementById('np-title');
-    if (title) title.textContent = 'Create a prompt';
-    if (createBtn) createBtn.textContent = 'Create prompt';
     clearInvalid();
     modal.hidden = false;
     setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30);
   }
-  function closeNewPrompt() { if (modal) modal.hidden = true; editingPromptPath = null; }
+  function closeNewPrompt() { if (modal) modal.hidden = true; }
   async function submitNewPrompt() {
     const name = (nameEl && nameEl.value || '').trim();
     const description = (descEl && descEl.value || '').trim();
@@ -6812,20 +6952,16 @@ async function runPrompt(mdPath) {
       toast('Description is required', 'error');
       return;
     }
-    const editing = editingPromptPath;
-    const res = editing
-      ? await window.husk.prompts.update({ mdPath: editing, name, description, content })
-      : await window.husk.prompts.create({ name, description, content });
+    const res = await window.husk.prompts.create({ name, description, content });
     if (!res || !res.ok) {
-      toast((res && res.error) || `Could not ${editing ? 'save' : 'create'} prompt`, 'error');
+      toast((res && res.error) || 'Could not create prompt', 'error');
       return;
     }
-    // A rename moves the file, so the selection follows it rather than falling
-    // back to whichever prompt happens to sort first.
+    // Land on the prompt that was just written rather than on whichever one
+    // happens to sort first.
     if (res.mdPath) selectedPromptMd = res.mdPath;
-    if (editing) promptBodyCache.delete(editing);
     closeNewPrompt();
-    toast(editing ? `Saved ${name}` : `Created ${name}`, 'success');
+    toast(`Created ${name}`, 'success');
     await renderPrompts();
   }
   if (newBtn) newBtn.addEventListener('click', openNewPrompt);
