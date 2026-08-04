@@ -4060,10 +4060,23 @@ ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
 // what a human reads, so that is what is returned.
 ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
   const sessionId = String((payload && payload.sessionId) || '').trim();
-  if (!sessionId || !/^[A-Za-z0-9._-]+$/.test(sessionId)) return { ok: false, error: 'bad sessionId' };
+  // The character class alone is not enough: ".." is made entirely of allowed
+  // characters, so it passed and resolved one level above sessions/. Requiring
+  // an alphanumeric first character rejects it, along with "." and any leading
+  // dot or dash.
+  if (!sessionId || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId)) return { ok: false, error: 'bad sessionId' };
   const maxBytes = Math.min(Math.max(Number(payload.maxBytes) || 262144, 4096), 1048576);
   try {
     const file = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'transcript.log');
+    // Second layer, independent of the pattern above: resolve both sides and
+    // require the file to sit under sessions/. realpath is used where the path
+    // exists so a symlinked session directory cannot point outside the root.
+    const sessionsRoot = path.join(autopilotStorageRoot(), 'sessions');
+    const realRoot = fs.existsSync(sessionsRoot) ? fs.realpathSync(sessionsRoot) : path.resolve(sessionsRoot);
+    const realFile = fs.existsSync(file) ? fs.realpathSync(file) : path.resolve(file);
+    if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
+      return { ok: false, error: 'bad sessionId' };
+    }
     if (!fs.existsSync(file)) return { ok: true, text: '', bytes: 0, truncated: false };
     const size = fs.statSync(file).size;
     const fd = fs.openSync(file, 'r');
