@@ -90,8 +90,16 @@ test('reattaching a live session makes a full-screen agent repaint', async () =>
     return !!line && /PAINT-\d+/.test(line.translateToString(true));
   }, null, { timeout: 15_000 });
 
-  const before = await topRows(win);
-  expect(before).toMatch(/PAINT-1/);
+  // The paint count at this point depends on how many times the window settled
+  // during boot, which differs between a desktop and a CI screen. What matters
+  // is that reattaching adds one, so the count is read rather than assumed.
+  const paintCount = async () => {
+    const t = await topRows(win);
+    const m = /PAINT-(\d+)/.exec(t);
+    return m ? Number(m[1]) : 0;
+  };
+  const before = await paintCount();
+  expect(before, await topRows(win)).toBeGreaterThan(0);
 
   // Reattach at exactly the size the PTY already has, which is what a reloaded
   // renderer asks for. The agent has to paint again for the pane to fill.
@@ -103,10 +111,12 @@ test('reattaching a live session makes a full-screen agent repaint', async () =>
   }, sessionId);
   expect(reattached.ok, JSON.stringify(reattached)).toBe(true);
 
-  await win.waitForFunction(() => {
+  await win.waitForFunction((n) => {
     const line = [...TABS.values()][0].term.buffer.active.getLine(0);   // eslint-disable-line no-undef
-    return !!line && /PAINT-[2-9]/.test(line.translateToString(true));
-  }, null, { timeout: 10_000 });
+    if (!line) return false;
+    const m = /PAINT-(\d+)/.exec(line.translateToString(true));
+    return !!m && Number(m[1]) > n;
+  }, before, { timeout: 10_000 });
 
   // The repaint is not bought by leaving a wrong size behind. Each paint clears
   // the screen first, so what survives is the agent's most recent view of its

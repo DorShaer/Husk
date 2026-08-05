@@ -381,11 +381,18 @@ test('the collection fills the page and clips at the fold', async () => {
   await expect(win.locator('.ag-foot .ag-key')).toHaveCount(6);
 
   // A roster taller than the window clips its last row at the fold rather than
-  // running off the page.
+  // running off the page. The width stays inside the smallest screen this runs
+  // on, since a request wider than the display is clamped and the roster would
+  // never reach past the fold to be clipped.
   await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: 1700, height: 420 });
+    BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: 1100, height: 380 });
   });
-  await win.waitForTimeout(400);
+  // Wait for the overflow itself rather than for a fixed delay: the window
+  // manager decides when the new bounds land.
+  await win.waitForFunction(() => {
+    const l = document.querySelector('.ag-list');
+    return !!l && l.scrollHeight > l.clientHeight + 1;
+  }, null, { timeout: 10_000 });
   const fold = await win.evaluate(() => {
     const page = document.querySelector('.page-agents');
     const floor = page.getBoundingClientRect().bottom - parseFloat(getComputedStyle(page).paddingBottom);
