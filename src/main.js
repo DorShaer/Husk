@@ -4104,8 +4104,14 @@ ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
     // require the file to sit under sessions/. realpath is used where the path
     // exists so a symlinked session directory cannot point outside the root.
     const sessionsRoot = path.join(autopilotStorageRoot(), 'sessions');
-    const realRoot = fs.existsSync(sessionsRoot) ? fs.realpathSync(sessionsRoot) : path.resolve(sessionsRoot);
-    const realFile = fs.existsSync(file) ? fs.realpathSync(file) : path.resolve(file);
+    // Resolve by asking for the real path and taking the lexical form when
+    // there is nothing there to resolve. Asking whether it exists first and
+    // resolving after would answer for a path that no longer has to be the one
+    // that gets opened.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are built from the storage root
+    const realOf = (target) => { try { return fs.realpathSync(target); } catch (_) { return path.resolve(target); } };
+    const realRoot = realOf(sessionsRoot);
+    const realFile = realOf(file);
     if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
       return { ok: false, error: 'bad sessionId' };
     }
@@ -6800,8 +6806,6 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
   }
   try {
     const { target, root } = resolved;
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
-    if (!fs.existsSync(target)) return { ok: false, error: 'Prompt file not found' };
     const disabled = target.endsWith('.disabled');
     const nextPath = path.join(root, `${name}.md${disabled ? '.disabled' : ''}`);
     const body = renderPromptMd(name, description, content);
@@ -6825,21 +6829,32 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
         if (err && err.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
         throw err;
       }
+      // The other form of the same name is claimed the same way rather than
+      // asked about, then given straight back: a create that succeeds is proof
+      // the name was free, where a question is only proof it was free once.
+      let twinFd;
       try {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
-        if (fs.existsSync(twin)) {
-          fs.closeSync(fd); fd = null;
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
-          fs.unlinkSync(nextPath);
-          return { ok: false, error: `A prompt named "${name}" already exists.` };
-        }
-        fs.writeSync(fd, body);
-      } finally { if (fd !== null && fd !== undefined) { try { fs.closeSync(fd); } catch (_) {} } }
+        twinFd = fs.openSync(twin, 'wx', 0o644);
+      } catch (err) {
+        try { fs.closeSync(fd); } catch (_) {}
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+        try { fs.unlinkSync(nextPath); } catch (_) {}
+        if (err && err.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
+        throw err;
+      }
+      try { fs.closeSync(twinFd); } catch (_) {}
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+      try { fs.unlinkSync(twin); } catch (_) {}
+      try { fs.writeSync(fd, body); } finally { try { fs.closeSync(fd); } catch (_) {} }
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
       fs.unlinkSync(target);
     }
     return { ok: true, id: path.basename(nextPath), path: nextPath, mdPath: nextPath };
   } catch (err) {
+    // A prompt that is not there is reported by the operation that reached for
+    // it rather than by a question asked beforehand.
+    if (err && err.code === 'ENOENT') return { ok: false, error: 'Prompt file not found' };
     return { ok: false, error: err.message };
   }
 });
