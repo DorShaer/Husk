@@ -690,6 +690,26 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.11.0': {
+    items: [
+      {
+        title: 'MCP servers you choose per project',
+        body: 'Pick which servers each project runs. Anything you do not set follows the global list, so a project you never touch behaves exactly as it did before.',
+      },
+      {
+        title: 'The Agents page is a roster',
+        body: 'Grouped, searchable and filterable, with a reader pane for the system prompt. Arrows move the caret, Enter opens, Space pins.',
+      },
+      {
+        title: 'Edit a prompt after writing it',
+        body: 'Change a prompt in the pane you read it in. Renaming moves the file, and a name already in use is refused rather than overwriting.',
+      },
+      {
+        title: 'Autopilot keeps the run log',
+        body: 'Agent output survives the run ending, navigating away and restarting the app. Finished agents carry a View log action.',
+      },
+    ],
+  },
   '2.10.1': {
     items: [
       {
