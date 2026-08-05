@@ -87,6 +87,7 @@ libs/**/history.jsonl
 AGENTS.md
 GEMINI.md
 .husk-aider.md
+.husk-autopilot-status.json
 
 # aider's local artifacts (chat history, input history, tags cache).
 .aider*

@@ -457,7 +457,7 @@
             <button class="rail-section-action" id="btn-context-add" title="Share a file with the agent">+</button>
           </div>
           <div class="rail-sub" id="rail-context-list">
-            <div class="rail-sub-empty">Nothing shared yet. Drop a file or click +.</div>
+            <div class="rail-sub-empty">Drop a file or click +</div>
           </div>
         </div>
         </div>
@@ -1248,37 +1248,53 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Agents</h1>
-              <span class="page-sub">all agents here are available to whichever AI you run · select agents to feature them in your chat header</span>
             </div>
             <div class="page-head-right">
-              <button class="ghost-btn" id="btn-install-from-repo" title="Install an agent pack from a local repo folder or a repo URL">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>
-                Install from repo
+              <button class="ghost-btn" id="btn-agents-refresh" title="Refresh" aria-label="Refresh">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
               </button>
               <button class="ghost-btn" id="btn-import-agents">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
-                Import
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
+                Import from machine
               </button>
-              <button class="btn-primary" id="btn-new-agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Agent</button>
+              <button class="ghost-btn" id="btn-install-from-repo">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3 3 3-3"/></svg>
+                Import from repo
+              </button>
+              <button class="btn-primary" id="btn-new-agent" title="New agent · N">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                New agent
+              </button>
             </div>
           </div>
-          <div class="page-body">
-            <div class="agents-bulk">
-              <span class="agents-bulk-label">Selected agents are shown in your chat header. All agents are available to the AI regardless.</span>
-              <span class="agents-bulk-actions">
-                <button class="ghost-link" id="btn-select-all-agents">Select all</button>
-                <button class="ghost-link" id="btn-deselect-all-agents">Deselect all</button>
-              </span>
-            </div>
-            <div id="agents-active-banner" class="agents-active-banner" hidden>
-              <div class="aab-meta">
-                <span class="aab-dot"></span>
-                <span class="aab-meta-text">Selected</span>
+
+          <!-- One band of chrome over one list. Origin is a property of the agent, so
+               it groups and it filters. Pinning is a view, so it only filters.
+               The caret's agent is read in full beside the list, so knowing what
+               an agent actually says costs no click. -->
+          <div class="ag-split" id="ag-split">
+          <div class="ag" id="ag-panel">
+            <div class="ag-bar" id="ag-bar">
+              <button type="button" class="ag-pin ag-pin-master" id="ag-master" aria-pressed="false" title="Pin all shown" aria-label="Pin all shown">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.3V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.7a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+              </button>
+              <nav class="ag-facets" id="ag-origin" aria-label="Filter by origin"></nav>
+              <span class="ag-bar-sep" id="ag-bar-sep" aria-hidden="true"></span>
+              <nav class="ag-facets" id="ag-state" aria-label="Filter by pinned"></nav>
+              <span class="ag-count" id="ag-count" aria-live="polite"></span>
+              <div class="ag-search">
+                <input type="search" id="agents-search" class="ghost-input" placeholder="name or description"
+                       autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true"
+                       aria-controls="ag-list" aria-autocomplete="list" aria-label="Filter agents" />
+                <kbd class="ag-kbd ag-search-kbd" aria-hidden="true">/</kbd>
               </div>
-              <div class="aab-chips" id="aab-chips"></div>
-              <button class="ghost-link aab-clear" id="btn-deactivate-all">Clear all</button>
             </div>
-            <div class="agents-grid" id="agents-grid"></div>
+            <div class="ag-list" id="ag-list" role="listbox" aria-label="Agents"></div>
+            <div class="ag-foot">
+              <div class="ag-keys" id="ag-keys" role="note" aria-label="Keyboard shortcuts"></div>
+            </div>
+          </div>
+          <aside class="ag-detail" id="ag-detail" aria-live="polite" aria-label="Selected agent"></aside>
           </div>
         </div>
 
@@ -1290,7 +1306,7 @@
               <button class="modal-close" id="ai-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ai-hint" id="ai-hint">Husk found these agents on your machine. Pick the ones to bring in as Husk profiles.</p>
+              <p class="ai-hint" id="ai-hint">Agents found on this machine. Pick the ones to add.</p>
               <div class="ai-list-tools">
                 <button class="ghost-link" id="ai-select-all" type="button">Select all</button>
                 <button class="ghost-link" id="ai-deselect-all" type="button">Deselect all</button>
@@ -1298,13 +1314,13 @@
               <div id="ai-list" class="ai-list"></div>
             </div>
             <div class="modal-foot">
-              <label class="ai-foot-toggle" title="When on, imported agents are activated immediately for the next session">
+              <label class="ai-foot-toggle" title="Name imported agents in the chat header">
                 <input type="checkbox" id="ai-activate-after" class="ai-check" checked />
                 <span class="ai-check-box" aria-hidden="true"></span>
-                Activate after import
+                Pin after import
               </label>
               <button class="ghost-btn" id="ai-cancel">Cancel</button>
-              <button class="btn-primary" id="ai-confirm" disabled>Import 0 agents</button>
+              <button class="btn-primary" id="ai-confirm" disabled>Import</button>
             </div>
           </div>
         </div>
@@ -1378,11 +1394,11 @@
         <div id="repo-agents-modal" class="modal" hidden>
           <div class="modal-card modal-card-md">
             <div class="modal-head">
-              <h2 class="modal-title">Install agent pack from repo</h2>
+              <h2 class="modal-title">Import agent pack</h2>
               <button class="modal-close" id="ra-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">The repo should ship an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are installed into every AI tool you have (Claude, Copilot, ...) using each tool's native agents folder. If an agent reads a relative <code>skills/&lt;id&gt;/SKILL.md</code>, point Preferences &rsaquo; Working directory at that repo.</p>
+              <p class="ra-hint">The repo should ship an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are added to every AI tool on this machine, using each tool's own agents folder.</p>
               <div class="ra-sources">
                 <button type="button" class="ra-source" id="ra-src-github">
                   <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
@@ -1412,68 +1428,88 @@
             </div>
             <div class="modal-foot ra-foot">
               <div class="ra-foot-toggles">
-                <label class="ai-foot-toggle" title="Install each picked agent into every detected AI tool's native agents folder (Claude, Copilot, ...)">
-                  <input type="checkbox" id="ra-claude" class="ai-check" checked />
+                <label class="ai-foot-toggle" title="Write each picked agent into every detected AI tool's own agents folder">
+                  <input type="checkbox" id="ra-install-all" class="ai-check" checked />
                   <span class="ai-check-box" aria-hidden="true"></span>
-                  Install into all AI tools
+                  Install into every AI tool
                 </label>
-                <label class="ai-foot-toggle" title="Activate imported agents for the next chat session">
+                <label class="ai-foot-toggle" title="Name installed agents in the chat header">
                   <input type="checkbox" id="ra-activate" class="ai-check" checked />
                   <span class="ai-check-box" aria-hidden="true"></span>
-                  Activate after install
+                  Pin after install
                 </label>
               </div>
               <div class="ra-foot-actions">
                 <button class="ghost-btn" id="ra-cancel">Cancel</button>
-                <button class="btn-primary" id="ra-confirm" disabled>Install 0 agents</button>
+                <button class="btn-primary" id="ra-confirm" disabled>Install</button>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- NEW AGENT MODAL -->
+        <!-- AGENT EDITOR MODAL -->
         <div id="agent-modal" class="modal" hidden>
           <div class="modal-card modal-card-md">
             <div class="modal-head">
-              <h2 class="modal-title" id="agent-modal-title">New Agent</h2>
+              <h2 class="modal-title" id="agent-modal-title">New agent</h2>
               <button class="modal-close" id="agent-modal-close" aria-label="Close">&times;</button>
             </div>
-            <!-- Step 1: describe -->
-            <div id="agent-generate-step" class="modal-body">
-              <div class="form-row">
-                <label class="form-label">What should this agent do?</label>
-                <textarea class="form-input form-textarea" id="agent-generate-desc" rows="4" placeholder="e.g. Help me write better git commit messages, review for clarity and scope"></textarea>
-                <button class="agent-manual-link" id="btn-manual-agent">Fill in manually</button>
+
+            <div id="agent-edit-step" class="modal-body">
+              <!-- Drafting is one row at the top of the form, so the form is what
+                   opens and a draft is something you ask for. -->
+              <div class="form-row ag-gen" id="agent-generate-step">
+                <label class="form-label" for="agent-generate-desc">Draft from a description</label>
+                <div class="ag-gen-row">
+                  <input class="form-input" id="agent-generate-desc" type="text" maxlength="256"
+                         placeholder="what this agent should do" />
+                  <button class="ghost-btn" id="btn-generate-agent">Draft</button>
+                  <button class="ghost-btn" id="btn-generate-cancel" hidden>Cancel</button>
+                </div>
+                <div id="agent-generate-status" class="ag-gen-status" hidden></div>
               </div>
-              <div id="agent-generate-status" class="agent-generate-status" hidden></div>
-            </div>
-            <div id="agent-generate-foot" class="modal-foot">
-              <button class="ghost-btn" id="agent-modal-cancel">Cancel</button>
-              <button class="btn-primary" id="btn-generate-agent">Generate with AI</button>
+
+              <div class="form-row">
+                <label class="form-label" for="agent-name">Name <span class="req" aria-hidden="true">*</span></label>
+                <input class="form-input" id="agent-name" type="text" maxlength="64" placeholder="Code Reviewer" required aria-required="true" />
+                <span class="ag-cc" id="agent-name-cc">0/64</span>
+              </div>
+              <div class="form-row">
+                <label class="form-label" for="agent-description">Description</label>
+                <input class="form-input" id="agent-description" type="text" maxlength="1024" placeholder="what this agent is good at" />
+                <span class="ag-cc" id="agent-description-cc">0/1024</span>
+              </div>
+              <div class="form-row">
+                <label class="form-label" for="agent-system-prompt">System prompt</label>
+                <textarea class="form-input form-textarea ag-prompt" id="agent-system-prompt" rows="8" maxlength="262144" placeholder="You are a…"></textarea>
+                <span class="ag-cc" id="agent-system-prompt-cc">0/262144</span>
+              </div>
+
+              <div class="ag-pref-row">
+                <span class="ag-pref-text">
+                  <span class="ag-pref-label">Auto-select</span>
+                  <span class="ag-pref-desc">Pins this agent when a new chat starts.</span>
+                </span>
+                <input type="checkbox" id="agent-autoselect" class="toggle" />
+              </div>
+
+              <div class="ag-pref-row" id="agent-source-row" hidden>
+                <span class="ag-pref-text">
+                  <span class="ag-pref-label">Source</span>
+                  <span class="ag-pref-desc ag-path" id="agent-source-path"></span>
+                </span>
+                <button class="ghost-btn" id="agent-source-reveal">Reveal</button>
+              </div>
+
+              <p class="ag-note" id="agent-builtin-note" hidden>Built-in agents ship with Husk. Duplicate one to change its prompt.</p>
             </div>
 
-            <!-- Step 2: review / edit -->
-            <div id="agent-edit-step" class="modal-body" hidden>
-              <div class="form-row">
-                <label class="form-label">Name <span class="req" aria-hidden="true">*</span></label>
-                <input class="form-input" id="agent-name" type="text" maxlength="64" placeholder="Code Reviewer" required aria-required="true" />
-              </div>
-              <div class="form-row">
-                <label class="form-label">Description</label>
-                <input class="form-input" id="agent-description" type="text" maxlength="256" placeholder="What this agent is good at" />
-              </div>
-              <div class="form-row">
-                <label class="form-label">System Prompt <span class="form-hint">instructions given to the AI when active</span></label>
-                <textarea class="form-input form-textarea" id="agent-system-prompt" rows="5" maxlength="4096" placeholder="You are a..."></textarea>
-              </div>
-              <label class="form-label-check" style="margin-top:2px">
-                <input type="checkbox" id="agent-autoselect" />
-                <span>Auto-select <span class="form-hint">Husk activates this agent automatically based on context</span></span>
-              </label>
-            </div>
-            <div id="agent-edit-foot" class="modal-foot" hidden>
-              <button class="ghost-btn" id="agent-modal-back">Back</button>
-              <button class="btn-primary" id="agent-modal-save">Save Agent</button>
+            <div id="agent-edit-foot" class="modal-foot">
+              <button class="ghost-btn ghost-btn-danger" id="agent-modal-delete">Delete agent</button>
+              <span class="ag-foot-gap"></span>
+              <button class="ghost-btn" id="agent-modal-cancel">Cancel</button>
+              <button class="btn-primary" id="agent-modal-duplicate" hidden>Duplicate to edit</button>
+              <button class="btn-primary" id="agent-modal-save">Save agent</button>
             </div>
           </div>
         </div>
@@ -1541,7 +1577,7 @@
           <div class="modal-card modal-wide">
             <div class="modal-icon">📝</div>
             <div class="modal-title">Create a prompt</div>
-            <div class="modal-sub">Saved as <code>~/.config/husk/prompts/&lt;name&gt;.md</code> and shown on the Prompts page.</div>
+            <div class="modal-sub">Saved as <code>~/.config/husk/prompts/&lt;name&gt;.md</code> and shown on the Prompts page. Renaming moves the file.</div>
 
             <div class="modal-section">
               <div class="modal-label">Name <span class="req" aria-hidden="true">*</span></div>
@@ -1645,8 +1681,9 @@
             </div>
           </div>
           <div class="mcp-body">
+            <div class="mcp-scope" id="mcp-scope" hidden></div>
             <section class="mcp-section">
-              <div class="mcp-section-head">Installed</div>
+              <div class="mcp-section-head" id="mcp-installed-head">Installed</div>
               <div class="mcp-installed" id="mcp-installed">
                 <div class="empty-state"><div class="es-icon">⊟</div><div class="es-msg">No MCP servers yet. Pick one below to give the agent a new ability.</div></div>
               </div>
@@ -2115,7 +2152,7 @@
     </div>
 
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
-    <div id="confirm-modal" class="modal confirm-modal" hidden>
+    <div id="confirm-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
       <div class="modal-card">
         <div class="confirm-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2355,5 +2392,17 @@
   </div><!-- /prefs-modal -->
 
     <script src="app.js"></script>
-  </body>
+      <!-- Run log. The transcript lives on disk beside the audit log, so this
+         reads a finished run's output back rather than depending on anything
+         the renderer still holds in memory. -->
+    <div class="aut-transcript" id="aut-transcript" hidden>
+      <div class="aut-transcript-panel" role="dialog" aria-modal="true" aria-labelledby="aut-transcript-title">
+        <header class="aut-transcript-head">
+          <span class="aut-transcript-title" id="aut-transcript-title">Run log</span>
+          <button type="button" class="ghost-btn" id="aut-transcript-close">Close</button>
+        </header>
+        <pre class="aut-transcript-body" id="aut-transcript-body"></pre>
+      </div>
+    </div>
+</body>
 </html>

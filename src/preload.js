@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('husk', {
   prompts: {
     list: () => ipcRenderer.invoke('prompts:list'),
     create: (payload) => ipcRenderer.invoke('prompts:create', payload),
+    update: (payload) => ipcRenderer.invoke('prompts:update', payload),
     delete: (mdPath) => ipcRenderer.invoke('prompts:delete', mdPath),
   },
   projects: {
@@ -173,6 +174,7 @@ contextBridge.exposeInMainWorld('husk', {
     delete: (id) => ipcRenderer.invoke('profiles:delete', id),
     activate: (id) => ipcRenderer.invoke('profiles:activate', id),
     activateAll: () => ipcRenderer.invoke('profiles:activateAll'),
+    setActive: (ids) => ipcRenderer.invoke('profiles:setActive', ids),
     deactivate: (id) => ipcRenderer.invoke('profiles:deactivate', id),
     deactivateAll: () => ipcRenderer.invoke('profiles:deactivateAll'),
     generate: (description) => ipcRenderer.invoke('profiles:generate', description),
@@ -209,6 +211,7 @@ contextBridge.exposeInMainWorld('husk', {
     discardRun: (opts) => ipcRenderer.invoke('autopilot:discardRun', opts || {}),
     retained: () => ipcRenderer.invoke('autopilot:retained'),
     receipt: (opts) => ipcRenderer.invoke('autopilot:receipt', opts || {}),
+    transcript: (opts) => ipcRenderer.invoke('autopilot:transcript', opts || {}),
     race: () => ipcRenderer.invoke('autopilot:race'),
     applyWinner: (opts) => ipcRenderer.invoke('autopilot:applyWinner', opts || {}),
     fileDiff: (opts) => ipcRenderer.invoke('autopilot:fileDiff', opts || {}),
@@ -232,6 +235,10 @@ contextBridge.exposeInMainWorld('husk', {
     toggle: (id) => ipcRenderer.invoke('mcp:toggle', id),
     health: () => ipcRenderer.invoke('mcp:health'),
     parseSnippet: (text) => ipcRenderer.invoke('mcp:parseSnippet', { text }),
+    // Per-project selection: which of the servers above a given folder runs.
+    projectGet: (path) => ipcRenderer.invoke('projectMcp:get', path),
+    projectSet: (payload) => ipcRenderer.invoke('projectMcp:set', payload),
+    projectClear: (path) => ipcRenderer.invoke('projectMcp:clear', path),
   },
   dialog2: {
     pickDir: () => ipcRenderer.invoke('dialog:pickDir'),

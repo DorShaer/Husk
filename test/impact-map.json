@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "comment": "Which e2e specs a change can reach. Read by scripts/select-e2e.js. Tokens are the class, id, page and IPC-channel prefixes this codebase already names things with, so one edit to a .ag- rule resolves to the Agents specs. Anything not described here falls back to the full suite on purpose: under-selecting hides a regression, over-selecting only costs time. CI still runs everything, which is what catches drift in this file.",
+  "alwaysRun": [
+    "smoke.spec.js",
+    "lifecycle.spec.js"
+  ],
+  "fullSuiteWhenChanged": [
+    "package.json",
+    "package-lock.json",
+    "src/preload.js",
+    "src/renderer/vendor",
+    "scripts/lib/test-impact.js",
+    "test/impact-map.json"
+  ],
+  "tokenScannedPaths": [
+    "src/main.js",
+    "src/renderer/app.js",
+    "src/renderer/index.html",
+    "src/renderer/styles.css"
+  ],
+  "maxAreas": 3,
+  "sharedTokens": [
+    "modal",
+    "btn",
+    "ghost",
+    "form",
+    "page",
+    "rail",
+    "toast",
+    "es",
+    "empty",
+    "iconbtn",
+    "kbd",
+    "husk",
+    "topbar",
+    "ctx",
+    "tt"
+  ],
+  "areas": {
+    "agents": {
+      "specs": [
+        "agents-page.spec.js",
+        "agent-files.spec.js",
+        "agent-inject-clis.spec.js"
+      ],
+      "tokens": [
+        "ag",
+        "agent",
+        "agents",
+        "ai",
+        "ra",
+        "rm",
+        "page:agents",
+        "ipc:profiles",
+        "ipc:repoagents",
+        "ipc:repomcp"
+      ],
+      "paths": [
+        "src/lib/agent-file.js",
+        "src/lib/agent-md.js",
+        "src/lib/agent-inject.js",
+        "src/lib/agent-oneshot.js",
+        "src/lib/repo-agents.js"
+      ]
+    },
+    "autopilot": {
+      "specs": [
+        "autopilot-stop-confirm.spec.js",
+        "autopilot-survives-chat.spec.js",
+        "autopilot-usage-labels.spec.js"
+      ],
+      "tokens": [
+        "aut",
+        "page:autopilot",
+        "ipc:autopilot",
+        "ipc:autonomy"
+      ],
+      "paths": [
+        "src/lib/autopilot-args.js",
+        "src/lib/autopilot-history.js",
+        "src/lib/autopilot-apply.js",
+        "src/lib/autopilot-orchestrator.js",
+        "src/lib/autopilot-pool.js",
+        "src/lib/autopilot-question.js",
+        "src/lib/autopilot-status.js",
+        "src/lib/autopilot-worktree.js",
+        "src/lib/autopilot-integrate.js",
+        "src/lib/autonomy",
+        "src/lib/race-judge.js"
+      ]
+    },
+    "workflows": {
+      "specs": [
+        "workflow-canvas-edit.spec.js",
+        "workflow-parallel.spec.js",
+        "workflow-patterns.spec.js",
+        "workflow-prompt-editor.spec.js",
+        "workflow-run.spec.js"
+      ],
+      "tokens": [
+        "wf",
+        "wfx",
+        "page:workflows",
+        "ipc:workflows"
+      ],
+      "paths": [
+        "src/lib/workflow-graph.js"
+      ]
+    },
+    "projects": {
+      "specs": [
+        "workspaces.spec.js"
+      ],
+      "tokens": [
+        "ws",
+        "page:projects",
+        "ipc:projects"
+      ],
+      "paths": [
+        "src/lib/git-porcelain.js",
+        "src/lib/workspace-state.js"
+      ]
+    },
+    "prompts": {
+      "specs": [
+        "prompts-edit.spec.js"
+      ],
+      "tokens": [
+        "pr",
+        "prompt",
+        "prompts",
+        "page:prompts",
+        "ipc:prompts",
+        "prompts:create",
+        "prompts:update",
+        "prompts:delete",
+        "prompts:list"
+      ],
+      "paths": []
+    },
+    "mcp": {
+      "specs": [
+        "mcp-shared.spec.js",
+        "project-mcp.spec.js"
+      ],
+      "tokens": [
+        "mcp",
+        "mr",
+        "page:mcp",
+        "ipc:mcp",
+        "ipc:projectmcp"
+      ],
+      "paths": [
+        "src/lib/project-mcp.js",
+        "src/lib/mcp-json.js",
+        "src/lib/mcp-status.js",
+        "src/lib/repo-mcp.js",
+        "src/lib/mcp"
+      ]
+    },
+    "skills": {
+      "specs": [
+        "skills-page.spec.js"
+      ],
+      "tokens": [
+        "sk",
+        "page:skills",
+        "ipc:skills"
+      ],
+      "paths": []
+    },
+    "plugins": {
+      "specs": [
+        "plugins-editor.spec.js"
+      ],
+      "tokens": [
+        "pe",
+        "plugin",
+        "plugins",
+        "page:plugins",
+        "ipc:plugins"
+      ],
+      "paths": [
+        "src/lib/plugins.js"
+      ]
+    },
+    "sessions": {
+      "specs": [
+        "sessions-detail-panel.spec.js"
+      ],
+      "tokens": [
+        "dp",
+        "session",
+        "sessions",
+        "page:sessions",
+        "ipc:sessions",
+        "ipc:prds"
+      ],
+      "paths": [
+        "src/lib/claude-session.js",
+        "src/lib/copilot-session-title.js"
+      ]
+    },
+    "statuspanel": {
+      "specs": [
+        "chat-model.spec.js",
+        "layout-overflow.spec.js"
+      ],
+      "tokens": [
+        "sp",
+        "ipc:stats"
+      ],
+      "paths": [
+        "src/lib/model-catalog.js",
+        "src/lib/model-routing.js",
+        "src/lib/pai-state.js"
+      ]
+    },
+    "terminal": {
+      "specs": [
+        "chat-model.spec.js",
+        "per-tab-context.spec.js",
+        "pty-start-command.spec.js",
+        "recap-voice.spec.js",
+        "reload-no-copilot-session.spec.js",
+        "reload-repaint.spec.js",
+        "wheel-forward.spec.js"
+      ],
+      "tokens": [
+        "xterm",
+        "term",
+        "chat",
+        "page:chat",
+        "ipc:pty",
+        "ipc:recap"
+      ],
+      "paths": [
+        "src/lib/pty-spawn.js",
+        "src/lib/shell-quote.js",
+        "src/lib/recap-extract.js",
+        "src/lib/term-mouse.js",
+        "src/lib/wheel-seq.js",
+        "src/lib/user-path.js"
+      ]
+    },
+    "files": {
+      "specs": [
+        "ux-fixes.spec.js"
+      ],
+      "tokens": [
+        "fx",
+        "page:files",
+        "ipc:fs"
+      ],
+      "paths": [
+        "src/lib/fuzzy.js",
+        "src/lib/highlight.js",
+        "src/lib/lang-detect.js",
+        "src/lib/path-confine.js"
+      ]
+    }
+  }
+}

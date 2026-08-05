@@ -1,8 +1,12 @@
 'use strict';
 
 // On a short window the rail bottom group and status footer remain visible.
-// The rail's middle section scrolls; the status body does not scroll but scales
-// its content to fit, so every section stays on screen and nothing is clipped.
+// The rail's middle section scrolls; the status body scales its content to fit,
+// so every section stays on screen and nothing is clipped.
+//
+// The second test guards the other half of that contract: the fit tracks window
+// height only. Zoom must still reach the status panel, so its painted content
+// grows with every zoom step instead of being scaled back to one fixed size.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -97,6 +101,108 @@ test('short window keeps the rail bottom and status footer visible', async () =>
   expect(info.sectionCount).toBeGreaterThan(0);
   expect(info.fitHeight).toBeLessThanOrEqual(info.boxHeight + 1);
   expect(info.fitBottom).toBeLessThanOrEqual(info.footTop + 1);
+
+  await app.close();
+  fs.rmSync(homeDir, { recursive: true, force: true });
+});
+
+test('zooming in enlarges the status panel content', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
+  fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
+  const app = await electron.launch({
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    cwd: REPO_ROOT,
+    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
+    timeout: 30_000,
+  });
+  const win = await app.firstWindow({ timeout: 30_000 });
+  await win.waitForLoadState('domcontentloaded');
+  await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  await win.waitForFunction(() => {
+    const fit = document.getElementById('sp-fit');
+    return !!fit && fit.children.length > 0 && fit.scrollHeight > 0;
+  }, null, { timeout: 15_000 });
+
+  // Zoom shrinks the CSS pixel, so a CSS-pixel height stays flat while the panel
+  // grows on screen. devicePixelRatio carries the zoom, so multiplying by it
+  // gives the size the user actually sees.
+  const paintedHeight = () => win.evaluate(() => {
+    const fit = document.getElementById('sp-fit');
+    return fit.getBoundingClientRect().height * window.devicePixelRatio;
+  });
+
+  const painted = [await paintedHeight()];
+  for (let step = 0; step < 4; step++) {
+    await win.evaluate(() => window.husk.ui.zoomIn());
+    // The fit pass runs off a ResizeObserver, so wait for it to settle.
+    await win.waitForTimeout(400);
+    painted.push(await paintedHeight());
+  }
+
+  // Every step is strictly larger than the one before it. A fit that measured
+  // the zoomed CSS height instead would hold this flat and then reverse it.
+  for (let i = 1; i < painted.length; i++) {
+    expect(painted[i], `zoom step ${i} must paint larger than step ${i - 1}: ${JSON.stringify(painted)}`)
+      .toBeGreaterThan(painted[i - 1]);
+  }
+
+  await app.close();
+  fs.rmSync(homeDir, { recursive: true, force: true });
+});
+
+test('the status rows keep both edges at any fit scale', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
+  fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
+  const app = await electron.launch({
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    cwd: REPO_ROOT,
+    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
+    timeout: 30_000,
+  });
+  const win = await app.firstWindow({ timeout: 30_000 });
+  await win.waitForLoadState('domcontentloaded');
+  await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  await win.waitForFunction(() => {
+    const fit = document.getElementById('sp-fit');
+    return !!fit && fit.children.length > 0 && fit.scrollHeight > 0;
+  }, null, { timeout: 15_000 });
+
+  // The gutter either side of a row, measured against the scrolling box.
+  const gaps = () => win.evaluate(() => {
+    const box = document.getElementById('sp-content');
+    const fit = document.getElementById('sp-fit');
+    const row = fit.querySelector('.sp-row');
+    if (!row) return null;
+    const b = box.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    const t = getComputedStyle(fit).transform;
+    return {
+      left: Math.round(r.left - b.left),
+      right: Math.round(b.right - r.right),
+      scale: t === 'none' ? 1 : +parseFloat(t.split('(')[1].split(',')[0]).toFixed(2),
+    };
+  });
+
+  // Two window heights, both inside the smallest screen this runs on. Which of
+  // them scales is up to the display, so neither is assumed: the property under
+  // test is that the rows reach the same two edges either way.
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 760); });
+  await win.waitForTimeout(700);
+  const tall = await gaps();
+  expect(Math.abs(tall.left - tall.right), JSON.stringify(tall)).toBeLessThanOrEqual(1);
+
+  // Short enough that the fit has more work to do. How far it scales is the
+  // window manager's business, not this test's: what has to hold is that the
+  // rows reach the same two edges whatever scale comes out.
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 460); });
+  await win.waitForTimeout(900);
+  const short = await gaps();
+  expect(Math.abs(short.left - short.right), JSON.stringify(short)).toBeLessThanOrEqual(1);
+  expect(Math.abs(short.left - tall.left), JSON.stringify({ tall, short })).toBeLessThanOrEqual(1);
 
   await app.close();
   fs.rmSync(homeDir, { recursive: true, force: true });

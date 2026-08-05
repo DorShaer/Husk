@@ -43,6 +43,13 @@ function makeEnv(cliName) {
   return { home, project, capture, exe };
 }
 
+function readCapturedInvocations(capture) {
+  return fs.readFileSync(capture, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
 async function spawnAgent(env) {
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
@@ -85,7 +92,8 @@ test('aider gets Husk directives via a --read file', async () => {
 
   // The fake aider recorded its argv: Husk must have passed --read <file>.
   expect(fs.existsSync(env.capture)).toBe(true);
-  const cap = JSON.parse(fs.readFileSync(env.capture, 'utf8'));
+  const cap = readCapturedInvocations(env.capture).find((entry) => entry.argv.includes('--read'));
+  expect(cap, 'expected an aider launch invocation with --read').toBeTruthy();
   expect(cap.argv).toContain('--read');
   expect(cap.argv).toContain('.husk-aider.md');
 
