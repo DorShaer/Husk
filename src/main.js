@@ -1672,7 +1672,28 @@ ipcMain.handle('pty:list', () => {
 ipcMain.handle('pty:reattach', (_e, { sessionId, cols, rows, activate } = {}) => {
   const s = sessions.get(sessionId);
   if (!s || !s.pty) return { ok: false, error: 'no live session' };
-  try { if (cols && rows) s.pty.resize(Math.max(2, cols), Math.max(2, rows)); } catch (_) {}
+  // The reloaded terminal is empty and this stream carries no history to fill
+  // it, so the repaint has to come from the agent. A full-screen agent redraws
+  // on SIGWINCH, and the kernel raises that only when the size actually
+  // changes, so asking for the size the PTY already has delivers nothing and
+  // leaves the pane blank until something else forces a redraw.
+  //
+  // Stepping to a neighbouring size and back produces that change. The two
+  // steps have to be separated in time: on Linux the agent runs under
+  // `script`, which handles the signal asynchronously and then reads whatever
+  // the size is by the time it looks. Back-to-back calls are read once, as no
+  // change at all. A short gap is enough for each step to be seen, and the
+  // correct size is what the agent is left sitting at.
+  const c = Math.max(2, Number(cols) || 0);
+  const r = Math.max(2, Number(rows) || 0);
+  if (cols && rows) {
+    try { s.pty.resize(c > 2 ? c - 1 : c + 1, r); } catch (_) {}
+    setTimeout(() => {
+      // The session can close, or be resized again, while the gap elapses.
+      const live = sessions.get(sessionId);
+      if (live && live.pty) { try { live.pty.resize(c, r); } catch (_) {} }
+    }, 60);
+  }
   if (mainWindow) mainWindow.webContents.send('pty:mouse-mode', { sessionId, on: !!s.lastMouseOn });
   if (activate) setActiveSession(sessionId);
   return { ok: true, mouseOn: !!s.lastMouseOn, cwd: s.cwd || null, claudeSessionId: s.claudeSessionId || null };
