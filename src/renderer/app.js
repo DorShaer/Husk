@@ -5164,7 +5164,7 @@ function agRowHtml(p, pinned) {
 // The placeholder is as long as the roster was the last time this window saw
 // it, so a library of thirty does not open on a stub of eight.
 function agSkeletonHtml() {
-  let n = 8;
+  let n;
   try { n = Math.min(24, Math.max(4, Number(sessionStorage.getItem('ag.rows')) || 8)); } catch (_) { n = 8; }
   let out = '';
   for (let i = 0; i < n; i++) {

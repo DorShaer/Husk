@@ -2551,19 +2551,30 @@ function runIdleWatchdog(runId) {
 // cannot grow without bound.
 const RUN_TRANSCRIPT_CAP = 2 * 1024 * 1024;
 function appendRunTranscript(r, chunk) {
-  if (!r || !chunk) return;
+  let fd = null;
   try {
     const sessionId = r.runner && r.runner.sessionId;
     if (!sessionId) return;
-    const dir = path.join(autopilotStorageRoot(), 'sessions', String(sessionId));
-    if (!fs.existsSync(dir)) return;
-    const file = path.join(dir, 'transcript.log');
-    fs.appendFileSync(file, chunk);
-    if (fs.statSync(file).size > RUN_TRANSCRIPT_CAP) {
-      const buf = fs.readFileSync(file);
-      fs.writeFileSync(file, buf.subarray(buf.length - Math.floor(RUN_TRANSCRIPT_CAP / 2)));
+    const file = path.join(autopilotStorageRoot(), 'sessions', String(sessionId), 'transcript.log');
+    // One descriptor for the whole append-and-trim. A run writes here from the
+    // agent's output callback while the reader below may be open on the same
+    // file, so asking the path a question and then acting on the answer can act
+    // on a different file than the one that was asked. Opening once and working
+    // through the descriptor removes the gap; a missing session directory turns
+    // into the throw this already swallows.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to the run's own session dir
+    fd = fs.openSync(file, 'a+');
+    fs.appendFileSync(fd, chunk);
+    const size = fs.fstatSync(fd).size;
+    if (size > RUN_TRANSCRIPT_CAP) {
+      const keep = Math.floor(RUN_TRANSCRIPT_CAP / 2);
+      const buf = Buffer.alloc(keep);
+      fs.readSync(fd, buf, 0, keep, size - keep);
+      fs.ftruncateSync(fd, 0);
+      fs.writeSync(fd, buf, 0, keep, 0);
     }
   } catch (_) { /* a convenience file; never break a run over it */ }
+  finally { if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} } }
 }
 
 function flushRunOutput(runId) {
@@ -4098,14 +4109,20 @@ ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
     if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
       return { ok: false, error: 'bad sessionId' };
     }
-    if (!fs.existsSync(file)) return { ok: true, text: '', bytes: 0, truncated: false };
-    const size = fs.statSync(file).size;
-    const fd = fs.openSync(file, 'r');
-    const len = Math.min(size, maxBytes);
-    const buf = Buffer.alloc(len);
-    fs.readSync(fd, buf, 0, len, Math.max(0, size - len));
-    fs.closeSync(fd);
-    return { ok: true, text: buf.toString('utf8'), bytes: size, truncated: size > len };
+    // The run may still be appending, so the size is read from the descriptor
+    // that is about to be read rather than from the path.
+    let fd;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to sessions/ above
+    try { fd = fs.openSync(file, 'r'); } catch (_) {
+      return { ok: true, text: '', bytes: 0, truncated: false };
+    }
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, maxBytes);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, Math.max(0, size - len));
+      return { ok: true, text: buf.toString('utf8'), bytes: size, truncated: size > len };
+    } finally { try { fs.closeSync(fd); } catch (_) {} }
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -6787,17 +6804,39 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
     if (!fs.existsSync(target)) return { ok: false, error: 'Prompt file not found' };
     const disabled = target.endsWith('.disabled');
     const nextPath = path.join(root, `${name}.md${disabled ? '.disabled' : ''}`);
-    if (nextPath !== target) {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
-      if (fs.existsSync(nextPath) || fs.existsSync(path.join(root, `${name}.md`)) || fs.existsSync(path.join(root, `${name}.md.disabled`))) {
-        return { ok: false, error: `A prompt named "${name}" already exists.` };
+    const body = renderPromptMd(name, description, content);
+    if (nextPath === target) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
+      fs.writeFileSync(target, body, { mode: 0o644 });
+    } else {
+      // A rename has to claim the new name without overwriting a prompt that
+      // already holds it. Asking whether the name is free and then writing
+      // leaves a gap another window can write into, so the name is claimed by
+      // the create itself: 'wx' fails when the file exists. The enabled and
+      // disabled forms are both claimed, since they are the same prompt.
+      const twin = nextPath.endsWith('.disabled')
+        ? nextPath.slice(0, -'.disabled'.length)
+        : `${nextPath}.disabled`;
+      let fd;
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+        fd = fs.openSync(nextPath, 'wx', 0o644);
+      } catch (err) {
+        if (err && err.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
+        throw err;
       }
-    }
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
-    fs.writeFileSync(target, renderPromptMd(name, description, content), { mode: 0o644 });
-    if (nextPath !== target) {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
-      fs.renameSync(target, nextPath);
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+        if (fs.existsSync(twin)) {
+          fs.closeSync(fd); fd = null;
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+          fs.unlinkSync(nextPath);
+          return { ok: false, error: `A prompt named "${name}" already exists.` };
+        }
+        fs.writeSync(fd, body);
+      } finally { if (fd !== null && fd !== undefined) { try { fs.closeSync(fd); } catch (_) {} } }
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
+      fs.unlinkSync(target);
     }
     return { ok: true, id: path.basename(nextPath), path: nextPath, mdPath: nextPath };
   } catch (err) {
