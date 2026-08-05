@@ -690,7 +690,7 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
-  '2.11.0': {
+  '2.10.2': {
     items: [
       {
         title: 'MCP servers you choose per project',
