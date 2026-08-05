@@ -2136,6 +2136,7 @@ function fitStatusContent() {
   if (!box || !fit) return;
   fit.style.transform = '';
   fit.style.marginBottom = '';
+  fit.style.width = '';
   const cs = getComputedStyle(box);
   const avail = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
   if (avail <= 0) return; // panel collapsed or not laid out yet
@@ -2143,6 +2144,10 @@ function fitStatusContent() {
   const budget = avail * userZoomRatio();
   if (need <= budget) return;
   const scale = budget / need;
+  // The shrink is only wanted vertically. Widening the wrapper by the same
+  // factor it is scaled by leaves the painted width at the panel's, so the rows
+  // keep both edges instead of pulling in toward the middle.
+  fit.style.width = `${100 / scale}%`;
   fit.style.transform = `scale(${scale})`;
   // A transform leaves the layout box at full height. Pulling the freed space
   // back keeps #sp-content's scroll height equal to what is actually painted,
