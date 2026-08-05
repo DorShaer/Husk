@@ -152,17 +152,17 @@ test('renders stdio and http servers in the shape the CLIs expect', () => {
 });
 
 test('two folders sharing a basename get separate config files', () => {
-  const a = configFileName('/home/dor/work/husk');
-  const b = configFileName('/home/dor/archive/husk');
+  const a = configFileName('/home/user/work/husk');
+  const b = configFileName('/home/user/archive/husk');
   assert.notEqual(a, b);
   assert.match(a, /^husk-[0-9a-f]+\.json$/);
   // A folder keeps the same file across launches.
-  assert.equal(configFileName('/home/dor/work/husk/'), a);
+  assert.equal(configFileName('/home/user/work/husk/'), a);
 });
 
 test('writes a config file the CLIs can read back', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-pmcp-'));
-  const file = writeConfigFile(dir, '/home/dor/work/husk', [SERVERS[0]]);
+  const file = writeConfigFile(dir, '/home/user/work/husk', [SERVERS[0]]);
   assert.ok(file);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.memory.command, 'npx');
   fs.rmSync(dir, { recursive: true, force: true });
