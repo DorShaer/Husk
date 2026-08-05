@@ -309,6 +309,11 @@
   --motion-base: 0.18s;
   --motion-slow: 0.28s;
   --focus-ring: 0 0 0 3px var(--accent-glow);
+  /* The ink a keyboard ring is drawn in. On the dark family the accent itself
+     clears 3:1 against every surface it lands on; the light family needs the
+     same hue carried darker to clear the same floor on white and on the
+     selected row's fill, so the ring names its own token. */
+  --focus-ink: var(--accent);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -338,6 +343,12 @@
   /* Display face. Bundled below, so it renders the same on every machine. */
   --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-body: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Every accent palette ships a darker third stop; carried a little further
+   down it clears 3:1 on white and on the pressed-row fill in all five. */
+body[data-mode="light"] {
+  --focus-ink: color-mix(in srgb, var(--accent-3) 80%, #000);
 }
 
 /* Local file: a packaged app has no network to fetch a webfont. One variable
@@ -1131,7 +1142,6 @@ body[data-page="boot"] .page { display: none !important; }
   letter-spacing: var(--tracking-normal);
   line-height: var(--lh-snug);
 }
-
 .ghost-btn {
   background: transparent;
   color: var(--text-2);
@@ -1879,7 +1889,7 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   transition: background var(--motion-base) var(--ease);
 }
 /* Real checkbox, not a switch: the global input[type=checkbox] rule
-   morphs every checkbox into a 38px toggle. Selection is a checkbox
+   morphs every checkbox into a 38px toggle. Multi-select is a checkbox
    idiom: rounded square, crisp SVG checkmark, soft halo when active. */
 input[type="checkbox"].aut-recent-check {
   width: 18px; height: 18px;
@@ -7405,6 +7415,8 @@ input[type="checkbox"]:disabled {
   padding: 0 14px;
   height: var(--control-h);
   font-size: var(--fs-small);
+  /* The filled surface is what makes this the primary action, so the label
+     sits at the same weight every other control's label does. */
   font-weight: 500;
   /* See .iconbtn: line-height 1 misaligns the leading icon against the label. */
   line-height: normal;
@@ -7417,8 +7429,16 @@ input[type="checkbox"]:disabled {
   transition: background var(--motion-fast) var(--ease);
   letter-spacing: 0;
 }
-.btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, white); box-shadow: none; }
-.btn-primary:active { background: color-mix(in srgb, var(--accent) 88%, black); }
+.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, white); box-shadow: none; }
+.btn-primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
+/* An action that cannot run has to look like it, and it has to stop answering
+   the pointer. Matches the ghost buttons, so one disabled treatment reads the
+   same wherever it appears. */
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
 
 /* ─── Status dashboard (right column) ───────────────────────────────────── */
 
@@ -7490,17 +7510,22 @@ input[type="checkbox"]:disabled {
   50% { opacity: 0.4; transform: scale(0.85); }
 }
 .sp-content {
-  /* Fixed viewport between the head and foot border lines. Content never
-     scrolls: the .sp-fit wrapper is measured after every render and scaled
-     down (transform) when it would overflow, so all sections stay visible
-     at any window height. Top-aligned so a short panel (for example an
-     agent with fewer sections) reads as a list from the top rather than
-     floating in the middle. */
-  flex: 1; min-height: 0; overflow: hidden;
+  /* Fixed viewport between the head and foot border lines. The .sp-fit wrapper
+     is measured after every render and scaled down (transform) when the stack
+     is taller than the window allows, so all sections stay visible at any
+     window height. Zoom is deliberately excluded from that fit, so a zoomed-in
+     panel overflows and scrolls instead of shrinking back to the same physical
+     size. The scrollbar is hidden: giving it width would change the content
+     box on every fit pass and feed back into the measurement. Top-aligned so a
+     short panel (for example an agent with fewer sections) reads as a list from
+     the top rather than floating in the middle. */
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none;
   padding: 12px 14px;
   display: flex; flex-direction: column;
   justify-content: flex-start;
 }
+.sp-content::-webkit-scrollbar { width: 0; height: 0; }
 .sp-fit {
   display: flex; flex-direction: column; gap: 14px;
   /* Scale from the top so the shrunk copy stays pinned under the head
@@ -7664,7 +7689,6 @@ input[type="checkbox"]:disabled {
 }
 .form-row { display: flex; flex-direction: column; gap: 5px; }
 .form-label { font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); }
-.form-hint { font-weight: 400; color: var(--text-3); }
 .form-input {
   background: var(--bg-2);
   border: 1px solid var(--line-2);
@@ -8503,7 +8527,6 @@ body[data-mode="light"] .ob-wordmark span {
 .project-card:hover .card-delete,
 .wf-card:hover .card-delete,
 .prompt-card:hover .card-delete,
-.agent-card:hover .card-delete,
 .card-delete:focus-visible { opacity: 1; }
 .card-delete:hover {
   color: var(--rose);
@@ -9243,7 +9266,8 @@ kbd {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.var(--motion-fast) !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
   }
 }
 
@@ -9338,10 +9362,8 @@ kbd {
 [data-mode="dark"] .iconbtn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.10);
-  color: var(--text);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border-radius: var(--radius-lg);
   transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
 /* The destructive variant keeps its own hover: this generic polish carries the
@@ -9350,20 +9372,17 @@ kbd {
 [data-mode="dark"] .iconbtn:hover {
   background: rgba(255, 255, 255, 0.10);
   border-color: rgba(255, 255, 255, 0.18);
-  transform: translateY(-1px);
 }
+/* Same radius and the same weight as the controls beside it in either theme.
+   An inline button sits on the surface, so it carries no drop shadow. */
 [data-mode="dark"] .btn-primary,
 [data-mode="dark"] .iconbtn-primary {
   background: var(--grad);
   color: var(--on-accent, white);
   border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 6px 16px -8px rgba(0, 0, 0, 0.45);
-  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
   letter-spacing: -0.005em;
-  transition: box-shadow var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
+  transition: box-shadow var(--motion-base) var(--ease);
 }
 [data-mode="dark"] .btn-primary:hover,
 [data-mode="dark"] .iconbtn-primary:hover {
@@ -9373,10 +9392,8 @@ kbd {
      which reads as invisible text. */
   background: var(--grad);
   color: var(--on-accent, white);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 10px 24px -10px rgba(0, 0, 0, 0.55);
-  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  filter: brightness(1.06);
 }
 
 /* Modal: frosted card on a backdrop. */
@@ -9410,16 +9427,36 @@ kbd {
   border-radius: var(--radius-lg);
   transition: border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
+/* A pressed field deepens its well; the keyboard ring on top of it is the same
+   solid inset ring every other control in the app draws. */
 [data-mode="dark"] input[type="text"]:focus,
 [data-mode="dark"] input[type="number"]:focus,
 [data-mode="dark"] input[type="password"]:focus,
 [data-mode="dark"] input[type="search"]:focus,
 [data-mode="dark"] textarea:focus,
 [data-mode="dark"] select:focus {
-  outline: none;
-  border-color: rgba(122, 166, 255, 0.55);
+  border-color: var(--line-3);
   background: rgba(0, 0, 0, 0.45) !important;
-  box-shadow: 0 0 0 4px rgba(122, 166, 255, 0.10);
+  box-shadow: none;
+}
+[data-mode="dark"] input[type="text"]:focus-visible,
+[data-mode="dark"] input[type="number"]:focus-visible,
+[data-mode="dark"] input[type="password"]:focus-visible,
+[data-mode="dark"] input[type="search"]:focus-visible,
+[data-mode="dark"] textarea:focus-visible,
+[data-mode="dark"] select:focus-visible {
+  outline: 2px solid var(--focus-ink);
+  outline-offset: -1px;
+}
+/* An inline toolbar field sits on the surface with the buttons beside it. The
+   well belongs to the fields inside a modal, which have nothing beside them. */
+[data-mode="dark"] input.ghost-input,
+[data-mode="dark"] input[type="search"].ghost-input {
+  background: var(--bg-2) !important;
+}
+[data-mode="dark"] input.ghost-input:focus,
+[data-mode="dark"] input[type="search"].ghost-input:focus {
+  background: var(--bg-3) !important;
 }
 
 /* Autopilot dialog: rebuilt to match the glass preview. */
@@ -9461,10 +9498,9 @@ kbd {
     0 20px 50px -20px rgba(77, 214, 193, 0.30);
 }
 
-/* Cards / catalog tiles / agent cards inherit the glass treatment
-   via the existing var(--bg-1) tokens, but we need a touch more
-   blur and a subtle hover lift to feel alive. */
-[data-mode="dark"] .agent-card,
+/* Cards and catalog tiles inherit the glass treatment via the existing
+   var(--bg-1) tokens, but they need a touch more blur and a subtle hover
+   lift to feel alive. */
 [data-mode="dark"] .session-row,
 [data-mode="dark"] .mcp-row,
 [data-mode="dark"] .ai-row,
@@ -9485,7 +9521,6 @@ kbd {
   --sb-arc: var(--radius-xl);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
-[data-mode="dark"] .agent-card:hover,
 [data-mode="dark"] .session-row:hover,
 [data-mode="dark"] .mcp-row:hover,
 [data-mode="dark"] .ai-row:hover,
@@ -10957,3 +10992,56 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-sess .ws-link-btn { pointer-events: none; }
 .ws-sess-meta { color: var(--text-3); }
 .ws-cta { margin-top: 10px; padding: 4px 12px; font-size: var(--fs-micro); }
+
+/* Run log viewer. Reads a finished run's output back from disk, so it works
+   after the run ended, after navigating away, and after a restart. */
+.aut-transcript {
+  position: fixed; inset: 0; z-index: 220;
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--space-6);
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+.aut-transcript-panel {
+  display: flex; flex-direction: column;
+  width: min(1100px, 92vw); height: min(760px, 84vh);
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-4);
+  overflow: hidden;
+}
+.aut-transcript-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.aut-transcript-title {
+  font-size: var(--fs-small); font-weight: 600; color: var(--text);
+}
+.aut-transcript-body {
+  flex: 1; min-height: 0; margin: 0;
+  padding: var(--space-4);
+  overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--fs-micro);
+  line-height: var(--lh-base);
+  color: var(--text-2);
+  background: var(--bg);
+}
+/* Sits in the agent card's name row, so it reads as an action on that agent. */
+.aut-chip-log {
+  margin-left: auto;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: var(--fs-nano);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.aut-chip-log:hover { background: var(--bg-3); border-color: var(--line-3); color: var(--text); }
+.aut-chip-log:focus-visible { outline: none; box-shadow: var(--focus-ring); }

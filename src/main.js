@@ -18,7 +18,7 @@ const { buildSpawnSpec, withCopilotContextDir } = require('./lib/pty-spawn');
 const AgentInject = require('./lib/agent-inject');
 const { createMouseModeStripper } = require('./lib/term-mouse');
 const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
-const { agentFileName, renderAgentMd } = require('./lib/agent-file');
+const { agentFileName, renderAgentMd, isHuskManaged, agentMdBody } = require('./lib/agent-file');
 const { parseShellPathOutput, MARKER_START, MARKER_END } = require('./lib/user-path');
 const { pickResumeSessionId } = require('./lib/claude-session');
 const { parsePorcelain } = require('./lib/git-porcelain');
@@ -247,6 +247,15 @@ function flushSessionData(s) {
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────────
+
+// An agent's system prompt is a whole document, not a field: the ones people
+// actually write run to tens of thousands of characters. This bound exists only
+// to stop a pathological paste from bloating the config, so it sits far above
+// any real prompt. Anything lower silently rewrites the user's work, and the
+// agent files Husk mirrors to each tool are rendered from this record.
+const AGENT_PROMPT_MAX = 262144;
+const AGENT_NAME_MAX = 64;
+const AGENT_DESC_MAX = 1024;
 
 const DEFAULT_PROFILES = [
   {
@@ -2515,6 +2524,27 @@ function runIdleWatchdog(runId) {
 // wrong for TUI agents (cursor escapes, color codes, in-place repaints), so
 // authoritative token counts come from the agent's own status line, parsed
 // here from the run's raw output (per-run PTYs have no renderer terminal).
+// Cap: a long run emits megabytes of TUI repaints and none of it is worth
+// keeping past the tail a human will read. Past the cap the file is rewritten
+// from its second half, so the newest output always survives and the file
+// cannot grow without bound.
+const RUN_TRANSCRIPT_CAP = 2 * 1024 * 1024;
+function appendRunTranscript(r, chunk) {
+  if (!r || !chunk) return;
+  try {
+    const sessionId = r.runner && r.runner.sessionId;
+    if (!sessionId) return;
+    const dir = path.join(autopilotStorageRoot(), 'sessions', String(sessionId));
+    if (!fs.existsSync(dir)) return;
+    const file = path.join(dir, 'transcript.log');
+    fs.appendFileSync(file, chunk);
+    if (fs.statSync(file).size > RUN_TRANSCRIPT_CAP) {
+      const buf = fs.readFileSync(file);
+      fs.writeFileSync(file, buf.subarray(buf.length - Math.floor(RUN_TRANSCRIPT_CAP / 2)));
+    }
+  } catch (_) { /* a convenience file; never break a run over it */ }
+}
+
 function flushRunOutput(runId) {
   const r = runs.get(runId);
   if (!r) return;
@@ -2529,6 +2559,13 @@ function flushRunOutput(runId) {
       payload: { chars: chunk.length },
     });
   } catch (_) {}
+  // The audit row carries this chunk's size, not its text, so the chain stays
+  // small and tamper-evident. That left the readable output living only in the
+  // renderer's in-memory feed, which is dropped when the run ends, so cancelling
+  // destroyed the one copy of what the agent actually said. The transcript is
+  // written beside the audit log instead, surviving the run ending, navigating
+  // away, and restarting the app.
+  appendRunTranscript(r, chunk);
   if (mainWindow) mainWindow.webContents.send('autopilot:budget', {
     runId,
     ...r.runner.budgetState(),
@@ -4018,6 +4055,28 @@ ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
 // model }]; each run is summarized from its own audit log (authoritative
 // and resilient even after its worktree was applied or discarded), then
 // folded into the receipt. Pure aggregation lives in autonomy/receipt.
+// Read back the transcript written during a run. Bounded by the caller so a
+// review panel never pulls two megabytes into the renderer at once; the tail is
+// what a human reads, so that is what is returned.
+ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
+  const sessionId = String((payload && payload.sessionId) || '').trim();
+  if (!sessionId || !/^[A-Za-z0-9._-]+$/.test(sessionId)) return { ok: false, error: 'bad sessionId' };
+  const maxBytes = Math.min(Math.max(Number(payload.maxBytes) || 262144, 4096), 1048576);
+  try {
+    const file = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'transcript.log');
+    if (!fs.existsSync(file)) return { ok: true, text: '', bytes: 0, truncated: false };
+    const size = fs.statSync(file).size;
+    const fd = fs.openSync(file, 'r');
+    const len = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, Math.max(0, size - len));
+    fs.closeSync(fd);
+    return { ok: true, text: buf.toString('utf8'), bytes: size, truncated: size > len };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
 ipcMain.handle('autopilot:receipt', async (_e, payload = {}) => {
   const items = Array.isArray(payload && payload.runs) ? payload.runs : [];
   if (!items.length) return { ok: false, error: 'runs required' };
@@ -5801,7 +5860,7 @@ Create an agent profile. Return ONLY valid JSON, no markdown fences, no explanat
       if (!match) { resolve({ ok: false, error: 'AI did not return valid JSON' }); return; }
       try {
         const parsed = JSON.parse(match[0]);
-        resolve({ ok: true, name: String(parsed.name || '').slice(0, 64), description: String(parsed.description || '').slice(0, 256), systemPrompt: String(parsed.systemPrompt || '').slice(0, 4096) });
+        resolve({ ok: true, name: String(parsed.name || '').slice(0, AGENT_NAME_MAX), description: String(parsed.description || '').slice(0, AGENT_DESC_MAX), systemPrompt: String(parsed.systemPrompt || '').slice(0, AGENT_PROMPT_MAX) });
       } catch (_) { resolve({ ok: false, error: 'Could not parse AI response' }); }
     });
     child.on('error', (e) => resolve({ ok: false, error: e.message }));
@@ -5827,10 +5886,12 @@ function installedAgentDirs() {
   return out;
 }
 // Mirror every user (non-builtin) agent profile into each installed CLI's
-// agents dir. An existing file in the claude dir (the rich import source) is
-// copied verbatim to preserve all of its frontmatter; otherwise the file is
-// reconstructed from the profile. Existing targets are not overwritten, so a
-// hand-edited agent file is never clobbered.
+// agents dir. The stored record is the source of truth for every tool, so the
+// file is rendered from the profile and written over whatever is there: an
+// edited name, description or system prompt reaches disk, and no single tool's
+// copy of a file can outrank the record. The blast radius matches delete: an
+// agent file authored outside Husk whose name slugs to the same basename is
+// replaced by the stored record.
 function syncAgentFiles() {
   try {
     const dirs = installedAgentDirs();
@@ -5838,20 +5899,25 @@ function syncAgentFiles() {
     const profiles = getProfiles().filter((p) => p && !p.builtin && (p.systemPrompt || p.name));
     for (const p of profiles) {
       const fname = agentFileName(p.name);
-      let content = null;
-      const claudeFile = path.join(CLAUDE_AGENTS_DIR, fname);
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- fname is a slugified, traversal-free basename in a fixed dir
-      try { if (fs.existsSync(claudeFile)) content = fs.readFileSync(claudeFile, 'utf8'); } catch (_) {}
-      if (!content) content = renderAgentMd(p);
+      const content = renderAgentMd(p);
+      const newBody = agentMdBody(content);
       for (const dir of dirs) {
         const target = path.join(dir, fname);
         try {
-          // mkdir recursive is idempotent, and the 'wx' flag fails if the file
-          // already exists. Both avoid a check-then-act race on the target.
+          // mkdir recursive is idempotent, so it avoids a check-then-act race
+          // on the directory.
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir is a fixed CLI agents dir, fname is slugified
           fs.mkdirSync(dir, { recursive: true });
+          let existing = null;
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
-          fs.writeFileSync(target, content, { flag: 'wx' });
+          try { existing = fs.readFileSync(target, 'utf8'); } catch (_) {}
+          // A file Husk rendered is Husk's to update, so an edit reaches disk.
+          // Anything else belongs to the user or to the tool that installed it:
+          // only extend it, never trade a longer body for a shorter one. That
+          // is the shape a truncated record takes, and it is not recoverable.
+          if (existing && !isHuskManaged(existing) && agentMdBody(existing).length > newBody.length) continue;
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
+          fs.writeFileSync(target, content, { mode: 0o600 });
         } catch (_) {}
       }
     }
@@ -5890,8 +5956,8 @@ ipcMain.handle('profiles:listImportableAgents', () => {
             source: src.label,
             filename: entry.name,
             name,
-            description: (parsed.description || '').slice(0, 256),
-            systemPrompt: (parsed.body || '').slice(0, 4096),
+            description: (parsed.description || '').slice(0, AGENT_DESC_MAX),
+            systemPrompt: (parsed.body || '').slice(0, AGENT_PROMPT_MAX),
             alreadyImported: existing.has(key),
           });
         } catch (_) {}
@@ -5919,9 +5985,9 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
       const id = `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       list.push({
         id,
-        name: (parsed.name || fname.replace(/\.md$/, '')).slice(0, 64),
-        description: (parsed.description || '').slice(0, 256),
-        systemPrompt: (parsed.body || '').slice(0, 4096),
+        name: (parsed.name || fname.replace(/\.md$/, '')).slice(0, AGENT_NAME_MAX),
+        description: (parsed.description || '').slice(0, AGENT_DESC_MAX),
+        systemPrompt: (parsed.body || '').slice(0, AGENT_PROMPT_MAX),
         autoSelect: false,
         builtin: false,
       });
@@ -6078,11 +6144,11 @@ ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
             const fp = path.join(dir, entry.name);
             const text = fs.readFileSync(fp, 'utf8');
             const parsed = parseAgentMd(text);
-            const name = (parsed.name || stripAgentExt(entry.name)).slice(0, 64);
+            const name = (parsed.name || stripAgentExt(entry.name)).slice(0, AGENT_NAME_MAX);
             agents.push({
               filename: entryRel,
               name,
-              description: (parsed.description || '').slice(0, 256),
+              description: (parsed.description || '').slice(0, AGENT_DESC_MAX),
               bodyLength: (parsed.body || '').length,
               alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', entry.name)),
               alreadyImported: existingProfileNames.has(name.toLowerCase()),
@@ -6107,7 +6173,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   if (!rootCheck.ok) return rootCheck;
   const root = rootCheck.root;
   const picks = Array.isArray(payload && payload.picks) ? payload.picks : [];
-  const installToClaudeAgents = payload.installToClaudeAgents !== false;
+  const installToAllAgents = payload.installToAllAgents !== false;
   const activate = !!payload.activate;
   if (!picks.length) return { ok: false, error: 'Nothing selected. Tick at least one agent to install.' };
   const resolved = resolveRepoAgentsDir(root);
@@ -6138,7 +6204,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       const text = fs.readFileSync(src, 'utf8');
       const parsed = parseAgentMd(text);
       const name = (parsed.name || stripAgentExt(basename)).slice(0, 64);
-      if (installToClaudeAgents) {
+      if (installToAllAgents) {
         const dest = path.join(claudeAgentsDir, basename);
         try { fs.copyFileSync(src, dest); copiedToClaude.push(dest); } catch (_) {}
       }
@@ -6146,8 +6212,8 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       list.push({
         id,
         name,
-        description: (parsed.description || '').slice(0, 256),
-        systemPrompt: (parsed.body || '').slice(0, 4096),
+        description: (parsed.description || '').slice(0, AGENT_DESC_MAX),
+        systemPrompt: (parsed.body || '').slice(0, AGENT_PROMPT_MAX),
         autoSelect: false,
         builtin: false,
         repoRoot: root,
@@ -6172,7 +6238,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   // reads the repo's own .github/agents/ when run there, so no per-CLI
   // instructions file is written.
   const distributedTo = [];
-  if (installToClaudeAgents) {
+  if (installToAllAgents) {
     try { syncAgentFiles(); distributedTo.push(...installedAgentDirs()); } catch (_) {}
   }
   return {
@@ -6351,9 +6417,9 @@ ipcMain.handle('profiles:create', (_e, payload = {}) => {
   const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const entry = {
     id,
-    name: String(payload.name || 'New Agent').slice(0, 64),
-    description: String(payload.description || '').slice(0, 256),
-    systemPrompt: String(payload.systemPrompt || '').slice(0, 4096),
+    name: String(payload.name || 'New Agent').slice(0, AGENT_NAME_MAX),
+    description: String(payload.description || '').slice(0, AGENT_DESC_MAX),
+    systemPrompt: String(payload.systemPrompt || '').slice(0, AGENT_PROMPT_MAX),
     autoSelect: !!payload.autoSelect,
     builtin: false,
   };
@@ -6371,9 +6437,9 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
     if (p.id !== payload.id) return p;
     return {
       ...p,
-      name: payload.name !== undefined ? String(payload.name).slice(0, 64) : p.name,
-      description: payload.description !== undefined ? String(payload.description).slice(0, 256) : p.description,
-      systemPrompt: payload.systemPrompt !== undefined ? String(payload.systemPrompt).slice(0, 4096) : p.systemPrompt,
+      name: payload.name !== undefined ? String(payload.name).slice(0, AGENT_NAME_MAX) : p.name,
+      description: payload.description !== undefined ? String(payload.description).slice(0, AGENT_DESC_MAX) : p.description,
+      systemPrompt: payload.systemPrompt !== undefined ? String(payload.systemPrompt).slice(0, AGENT_PROMPT_MAX) : p.systemPrompt,
       autoSelect: payload.autoSelect !== undefined ? !!payload.autoSelect : (p.autoSelect || false),
     };
   });
@@ -6436,6 +6502,15 @@ ipcMain.handle('profiles:activateAll', () => {
   const ids = getProfiles().map((p) => p.id).filter(Boolean);
   writeActiveIds(ids);
   return { ok: true, activeIds: ids };
+});
+
+// Replaces the active set in one write. The renderer computes the target set,
+// so a bulk change over a filtered view costs one config write instead of N.
+ipcMain.handle('profiles:setActive', (_e, ids) => {
+  const known = new Set(getProfiles().map((p) => p.id));
+  const next = (Array.isArray(ids) ? ids : []).filter((id) => known.has(id));
+  writeActiveIds(next);
+  return { ok: true, activeIds: next };
 });
 
 // Returns just the curated Husk prompts (the markdown files seeded from
@@ -6576,9 +6651,9 @@ ipcMain.handle('projects:state', () => {
   return { ok: true, states, groups: groupBoard(projects, states, Date.now()) };
 });
 
-// Workspace-only detail for one project: the latest commit and the MCP
-// servers scoped to this folder. Kept out of projects:state because the board
-// never shows these; one git call per project would be paid for nothing.
+// Workspace-only detail for one project: the latest commit and the MCP servers
+// this folder actually runs. Kept out of projects:state because the board never
+// shows these; one git call per project would be paid for nothing.
 ipcMain.handle('projects:inspect', (_e, id) => {
   const p = _projectsList().find((x) => x && x.id === id);
   if (!p) return { ok: false, error: 'Project not found.' };

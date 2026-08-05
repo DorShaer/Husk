@@ -193,8 +193,13 @@ function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabe
     bodyEl.innerHTML = bodyHtml;
     okBtn.textContent = confirmLabel;
     cancelBtn.textContent = cancelLabel;
+    // The caller's own focus is borrowed, not taken: whichever outcome the
+    // dialog resolves, the keyboard goes back where it was standing.
+    const prev = document.activeElement;
     modal.hidden = false;
-    setTimeout(() => { try { okBtn.focus(); } catch (_) {} }, 30);
+    // Cancel takes the focus, so a stray Return resolves the safe outcome.
+    // Enter still confirms once the user tabs to the destructive button.
+    setTimeout(() => { try { cancelBtn.focus(); } catch (_) {} }, 30);
 
     const cleanup = (result) => {
       modal.hidden = true;
@@ -202,14 +207,24 @@ function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabe
       cancelBtn.removeEventListener('click', onCancel);
       modal.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
+      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+        try { prev.focus({ preventScroll: true }); } catch (_) {}
+      }
       resolve(result);
     };
     const onOk = () => cleanup(true);
     const onCancel = () => cleanup(false);
     const onBackdrop = (e) => { if (e.target === modal) cleanup(false); };
     const onKey = (e) => {
-      if (e.key === 'Escape') cleanup(false);
-      else if (e.key === 'Enter') cleanup(true);
+      if (e.key === 'Escape') { cleanup(false); return; }
+      // Two buttons and a scrim: Tab cycles between them rather than walking
+      // behind the dialog into a page the reader cannot see.
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      const stops = [cancelBtn, okBtn];
+      const i = stops.indexOf(document.activeElement);
+      const step = e.shiftKey ? stops.length - 1 : 1;
+      stops[((i < 0 ? 0 : i) + step) % stops.length].focus();
     };
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
@@ -1999,7 +2014,7 @@ async function refreshStatusline() {
         <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo(agentKindCache === 'claude' ? 'Skills in the shared library; auto-loaded by the agent. Click to open.' : 'Skills in the shared library; use Use on the Skills page to inject one into the chat. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
         <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows ${spInfo('Saved Husk workflows. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.workflows)}</span></div>
         ${s.hooksApplicable ? `<div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks ${spInfo('Hooks the agent runs at lifecycle events. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>` : ''}
-        ${mcp.supported ? `<div class="sp-row sp-clickable" data-open="mcp"><span class="sp-muted">MCP ${spInfo('MCP servers configured for the active agent. Click to open the MCP page.')}</span><span class="sp-mono sp-accent">${escapeHtml(mcp.count)}</span></div>` : ''}
+        ${mcp.supported ? `<div class="sp-row sp-clickable" data-open="mcp"><span class="sp-muted">MCP ${spInfo('MCP servers running for the active agent, out of the total configured. Click to open the MCP page.')}</span><span class="sp-mono sp-accent">${escapeHtml(mcp.enabled)}${mcp.count > mcp.enabled ? `<span class="sp-muted"> / ${escapeHtml(mcp.count)}</span>` : ''}</span></div>` : ''}
       </div>
     </div>
 
@@ -2099,21 +2114,40 @@ async function refreshStatusline() {
   });
 }
 
-// Scale the status stack down when it would overflow the space between the
-// head and foot border lines, so the panel never scrolls and every section
-// stays visible at any window height. The wrapper keeps its layout height;
-// the flex centering on #sp-content splits the overflow evenly, so the
-// scaled copy sits centered between the two border lines.
+// Chromium's zoom level maps to a 1.2^level scale factor. Every measurement in
+// the renderer is in CSS pixels, which shrink as the user zooms in, so this
+// converts the panel's measured height back to what it spans at Husk's own base
+// zoom.
+const ZOOM_STEP_BASE = 1.2;
+function userZoomRatio() {
+  const ui = window.husk && window.husk.ui;
+  if (!ui || typeof ui.zoomGet !== 'function' || typeof ui.zoomBase !== 'number') return 1;
+  try { return Math.pow(ZOOM_STEP_BASE, ui.zoomGet() - ui.zoomBase); } catch (_) { return 1; }
+}
+
+// Scale the status stack down when it is taller than the space between the head
+// and foot border lines, so every section stays visible at any window height.
+// The budget is the panel's height at base zoom, not its current CSS height:
+// those two differ by exactly the zoom factor, so fitting to the current height
+// would cancel the user's zoom and pin the panel to one physical size forever.
 function fitStatusContent() {
   const box = $('#sp-content');
   const fit = $('#sp-fit');
   if (!box || !fit) return;
   fit.style.transform = '';
+  fit.style.marginBottom = '';
   const cs = getComputedStyle(box);
   const avail = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
   if (avail <= 0) return; // panel collapsed or not laid out yet
   const need = fit.scrollHeight;
-  if (need > avail) fit.style.transform = `scale(${avail / need})`;
+  const budget = avail * userZoomRatio();
+  if (need <= budget) return;
+  const scale = budget / need;
+  fit.style.transform = `scale(${scale})`;
+  // A transform leaves the layout box at full height. Pulling the freed space
+  // back keeps #sp-content's scroll height equal to what is actually painted,
+  // so the panel scrolls only when the scaled stack really does overflow.
+  fit.style.marginBottom = `${-(need * (1 - scale))}px`;
 }
 
 // Re-fit whenever the panel itself resizes (window resize, collapse/expand).
@@ -2636,14 +2670,7 @@ async function refreshProjectsState() {
   const cmdShort = (cfg.agentCommand || 'agent').split(/\s+/)[0];
   const active = projectsCache.find((p) => p.id === activeProjectId);
   const cwdLabel = active ? active.path : (cfg.agentCwd || huskHome);
-  const activeProfiles = getActiveProfileIds()
-    .map((id) => profilesCache.find((p) => p.id === id))
-    .filter(Boolean);
-  let profileTag = '';
-  if (activeProfiles.length === 1) profileTag = activeProfiles[0].name;
-  else if (activeProfiles.length === 2) profileTag = `${activeProfiles[0].name}, ${activeProfiles[1].name}`;
-  else if (activeProfiles.length > 2) profileTag = `${activeProfiles.length} agents`;
-  if ($('#chat-sub')) $('#chat-sub').textContent = profileTag ? `${cmdShort} · ${cwdLabel} · ${profileTag}` : `${cmdShort} · ${cwdLabel}`;
+  setChatSubBase({ tool: cmdShort, dir: cwdLabel });
 }
 
 function updateActiveProjectChip() {
@@ -5932,7 +5959,7 @@ async function openAgentsImportModal() {
   if (!modal || !listEl) return;
   // eslint-disable-next-line no-unsanitized/property -- static placeholder
   listEl.innerHTML = `<div class="ai-empty">Loading...</div>`;
-  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Import 0 agents'; }
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Import'; }
   if ($('#ai-activate-after')) $('#ai-activate-after').checked = true;
   modal.hidden = false;
 
@@ -5974,9 +6001,12 @@ async function openAgentsImportModal() {
     `;
   }).join('');
 
+  // With nothing ticked the button names the action, not a count of nothing.
   const updateCount = () => {
     const n = listEl.querySelectorAll('.ai-check:checked').length;
-    if (confirmBtn) { confirmBtn.disabled = n === 0; confirmBtn.textContent = `Import ${n} agent${n !== 1 ? 's' : ''}`; }
+    if (!confirmBtn) return;
+    confirmBtn.disabled = n === 0;
+    confirmBtn.textContent = n === 0 ? 'Import' : `Import ${n} agent${n !== 1 ? 's' : ''}`;
   };
   listEl.querySelectorAll('.ai-check').forEach((el) => el.addEventListener('change', updateCount));
   const setAll = (checked) => {
@@ -6049,9 +6079,8 @@ function openRepoAgentsModal() {
   const status = $('#ra-status');
   if (status) { status.hidden = true; status.textContent = ''; status.className = 'ra-status'; }
   const confirmBtn = $('#ra-confirm');
-  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Install 0 agents'; }
-  if ($('#ra-claude')) $('#ra-claude').checked = true;
-  if ($('#ra-copilot')) $('#ra-copilot').checked = true;
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Install'; }
+  if ($('#ra-install-all')) $('#ra-install-all').checked = true;
   if ($('#ra-activate')) $('#ra-activate').checked = true;
   lastRepoScan = null;
   modal.hidden = false;
@@ -6095,7 +6124,7 @@ async function scanRepoRoot(root) {
   // eslint-disable-next-line no-unsanitized/property -- static loading placeholder
   listEl.innerHTML = `<div class="ai-empty">Looking for agents/*.md…</div>`;
   confirmBtn.disabled = true;
-  confirmBtn.textContent = 'Install 0 agents';
+  confirmBtn.textContent = 'Install';
   const res = await window.husk.repoAgents.scan(root);
   if (!res || !res.ok) {
     setRepoStatus(res && res.error ? res.error : 'Scan failed. Try again.', 'error');
@@ -6107,7 +6136,7 @@ async function scanRepoRoot(root) {
   const skillsNote = res.hasSkillsDir
     ? `Found a <code>skills/</code> directory. Agents that read <code>skills/&lt;id&gt;/SKILL.md</code> will work after install.`
     : `No <code>skills/</code> directory at this root. Agents will install but any <code>skills/</code> read will fail until you add one.`;
-  const installNote = `Imported agents install into every detected AI tool's agent folder (Claude, Copilot, ...). No tool-specific files are written.`;
+  const installNote = `Imported agents are added to every detected AI tool's own agent folder. No tool-specific files are written.`;
   setRepoStatus('');
   const statusEl = $('#ra-status');
   if (statusEl) {
@@ -6151,10 +6180,11 @@ async function scanRepoRoot(root) {
       </label>
     `;
   }).join('');
+  // With nothing ticked the button names the action, not a count of nothing.
   const updateCount = () => {
     const n = listEl.querySelectorAll('.ra-pick:checked').length;
     confirmBtn.disabled = n === 0;
-    confirmBtn.textContent = `Install ${n} agent${n !== 1 ? 's' : ''}`;
+    confirmBtn.textContent = n === 0 ? 'Install' : `Install ${n} agent${n !== 1 ? 's' : ''}`;
   };
   listEl.querySelectorAll('.ra-pick').forEach((el) => el.addEventListener('change', updateCount));
   const tools = $('#ra-list-tools');
@@ -6176,10 +6206,10 @@ async function confirmRepoAgentsInstall() {
   if (!picks.length) return;
   const btn = $('#ra-confirm');
   if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
-  const installToClaudeAgents = !!($('#ra-claude') && $('#ra-claude').checked);
+  const installToAllAgents = !!($('#ra-install-all') && $('#ra-install-all').checked);
   const activate = !!($('#ra-activate') && $('#ra-activate').checked);
   const res = await window.husk.repoAgents.install({
-    root, picks, installToClaudeAgents, activate,
+    root, picks, installToAllAgents, activate,
   });
   if (!res || !res.ok) {
     toast((res && res.error) || 'Install failed', 'error');
@@ -6748,14 +6778,18 @@ async function runPrompt(mdPath) {
   function clearInvalid() { [nameEl, descEl].forEach((el) => el && el.classList.remove('field-invalid')); }
   function openNewPrompt() {
     if (!modal) return;
+    editingPromptPath = null;
     if (nameEl) nameEl.value = '';
     if (descEl) descEl.value = '';
     if (bodyEl) bodyEl.value = '';
+    const title = document.getElementById('np-title');
+    if (title) title.textContent = 'Create a prompt';
+    if (createBtn) createBtn.textContent = 'Create prompt';
     clearInvalid();
     modal.hidden = false;
     setTimeout(() => { try { nameEl && nameEl.focus(); } catch (_) {} }, 30);
   }
-  function closeNewPrompt() { if (modal) modal.hidden = true; }
+  function closeNewPrompt() { if (modal) modal.hidden = true; editingPromptPath = null; }
   async function submitNewPrompt() {
     const name = (nameEl && nameEl.value || '').trim();
     const description = (descEl && descEl.value || '').trim();
@@ -7616,7 +7650,7 @@ async function resumeSessionInChat(d) {
   const cmdShort = resumeCommandLabel(agent, d.id.slice(0, 8)) || cmd;
   const cwd = d.project || null;
   toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
-  $('#chat-sub').textContent = `${cmdShort} · ${cwd || huskHome}`;
+  setChatSubBase({ tool: cmdShort, dir: cwd || huskHome });
   if ($('#sp-agent')) $('#sp-agent').textContent = cmdShort;
   if ($('#sp-session-id')) $('#sp-session-id').textContent = `${d.id.slice(0, 8)} · ${cwd || huskHome}`;
   // Resume in a fresh tab so the current chat keeps running alongside it.
@@ -8753,7 +8787,7 @@ function bindPrefs() {
   const agentDisplay = cfg.agentName || 'Husk';
   // Show the same cwd the agent is actually launched in (config.agentCwd
   // wins; falls back to $HOME when unset, mirroring main.js's resolution).
-  $('#chat-sub').textContent = `${cmdShort} · ${cfg.agentCwd || huskHome}`;
+  setChatSubBase({ tool: cmdShort, dir: cfg.agentCwd || huskHome });
   $('#ce-agent').textContent = agentDisplay;
   if ($('#sp-agent')) $('#sp-agent').textContent = cfg.agentCommand || 'claude';
 }
@@ -9526,7 +9560,7 @@ function refreshContextList() {
   const wrap = $('#rail-context-list');
   if (!wrap) return;
   if (!sessionContext.length) {
-    wrap.innerHTML = '<div class="rail-sub-empty">Nothing shared yet. Drop a file or click +.</div>';
+    wrap.innerHTML = '<div class="rail-sub-empty">Drop a file or click +</div>';
     return;
   }
   // eslint-disable-next-line no-unsanitized/property -- Session context fields are escaped via escapeHtml/escapeAttr.
@@ -11025,11 +11059,15 @@ const ICONS = {
 // to the focused terminal as literal input instead of switching pages.
 const PALETTE_ACTIONS = [
   { icon: ICONS.chat,        label: 'Switch to Chat',                 run: () => setPage('chat'),        shortcut: 'Alt 1' },
-  // Ahead of the pages, because three entries answer "agent" and the palette
-  // preselects the first: someone hunting a running agent was landing on the
-  // page of agent definitions instead. The rail order below is untouched.
-  { icon: ICONS.agents,      label: 'Find a running agent',           run: () => openAgentSwitch(), shortcut: 'Alt+A' },
-  { icon: ICONS.agents,      label: 'Switch to Agents',               run: () => setPage('agents') },
+  // An agent is a saved configuration; a session is a running chat. The two
+  // nouns stay apart here, so the palette's first match is the one the words
+  // asked for. The rail order below is untouched.
+  { icon: ICONS.agents,      label: 'Find a running session',         run: () => openAgentSwitch(), shortcut: 'Alt+A' },
+  { icon: ICONS.agents,      label: 'Switch to Agents',               run: () => setPage('agents'), shortcut: 'Alt 7' },
+  { icon: ICONS.plus,        label: 'New agent',                      run: () => { setPage('agents'); openAgentModal(null); } },
+  { icon: ICONS.agents,      label: 'Import agents',                  run: () => { setPage('agents'); openAgentsImportModal(); } },
+  { icon: ICONS.agents,      label: 'Import agent pack',              run: () => { setPage('agents'); openRepoAgentsModal(); } },
+  { icon: ICONS.agents,      label: 'Unpin all agents',               run: () => deactivateAllProfiles() },
   { icon: ICONS.workflows,   label: 'Switch to Workflows',            run: () => setPage('workflows') },
   { icon: ICONS.autopilot,    label: 'Switch to Autopilot',             run: () => setPage('autopilot') },
   { icon: ICONS.projects,    label: 'Switch to Projects',             run: () => setPage('projects') },
@@ -11500,7 +11538,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
-    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp' };
+    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '7': 'agents' };
     if (map[e.key]) { e.preventDefault(); setPage(map[e.key]); }
     if (e.key === '6') { e.preventDefault(); openPrefsModal(); }
     // Alt-keyed like the rest of the chrome so it never eats terminal input.
@@ -13141,6 +13179,17 @@ function renderRunCards() {
     action.className = 'aut-chip-action';
     action.textContent = String(p.subgoal || 'waiting for a free slot');
     action.title = p.subgoal || 'waiting for a free slot';
+    // The transcript is on disk beside the audit log. Offering it here is the
+    // whole point of writing it: a cancelled run used to leave the tally and
+    // throw away everything the agent actually said.
+    if (f.sessionId) {
+      const logBtn = document.createElement('button');
+      logBtn.type = 'button';
+      logBtn.className = 'aut-chip-log';
+      logBtn.textContent = 'View log';
+      logBtn.addEventListener('click', (e) => { e.stopPropagation(); openRunTranscript(f); });
+      nameRow.appendChild(logBtn);
+    }
     row.appendChild(nameRow);
     row.appendChild(action);
     appendModelDecision(row, p);
@@ -13155,6 +13204,47 @@ function renderRunCards() {
   updateRunCardsLive();
 }
 // Read-only card for a finished agent (persisted post-run record).
+// Show what an agent actually said, read back from the transcript on disk.
+// Rendered as text rather than a live lane: the run is over, so this is a
+// record to read, not a stream to follow.
+// Close on the button, on the backdrop, and on Escape: three ways out, so the
+// viewer never becomes a trap.
+$('#aut-transcript-close')?.addEventListener('click', () => { const d = $('#aut-transcript'); if (d) d.hidden = true; });
+$('#aut-transcript')?.addEventListener('click', (e) => { if (e.target && e.target.id === 'aut-transcript') e.target.hidden = true; });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const d = $('#aut-transcript');
+  if (d && !d.hidden) { e.preventDefault(); e.stopPropagation(); d.hidden = true; }
+}, true);
+
+async function openRunTranscript(f) {
+  const dlg = $('#aut-transcript');
+  const body = $('#aut-transcript-body');
+  const title = $('#aut-transcript-title');
+  if (!dlg || !body) return;
+  if (title) title.textContent = `Run log \u00b7 ${f.role || 'agent'}`;
+  body.textContent = 'Loading...';
+  dlg.hidden = false;
+  let res = null;
+  try { res = await window.husk.autopilot.transcript({ sessionId: f.sessionId }); } catch (_) { res = null; }
+  if (!res || !res.ok) {
+    body.textContent = 'Could not read the transcript for this run.';
+    return;
+  }
+  if (!res.text) {
+    body.textContent = 'This run produced no output before it ended.';
+    return;
+  }
+  // Strip the escape sequences a TUI agent paints with, so the log reads as
+  // text instead of as cursor moves and colour codes.
+  const clean = String(res.text)
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\u001b\][^\u0007]*\u0007/g, '')
+    .replace(/\r/g, '');
+  body.textContent = res.truncated ? `[showing the last ${formatTokens(res.text.length)} characters of ${formatTokens(res.bytes)}]\n\n${clean}` : clean;
+  body.scrollTop = body.scrollHeight;
+}
+
 function buildFinishedAgentCard(f) {
   const row = document.createElement('div');
   row.className = 'aut-agent-row is-done' + (f.endedOk ? '' : ' is-halted');
@@ -15203,7 +15293,11 @@ document.addEventListener('keydown', (e) => {
   // one is the most recently opened (e.g. a confirm-modal layered on
   // top of a create-modal). Close just that one so a confirm dismisses
   // before its parent.
-  open[open.length - 1].hidden = true;
+  const top = open[open.length - 1];
+  // A dialog that holds state of its own closes through its own closer, so a
+  // pending draft, a status line and a cancel token are all torn down.
+  const closer = MODAL_CLOSERS[top.id];
+  if (closer) closer(); else top.hidden = true;
 });
 
 requestAnimationFrame(() => boot());

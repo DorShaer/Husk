@@ -457,7 +457,7 @@
             <button class="rail-section-action" id="btn-context-add" title="Share a file with the agent">+</button>
           </div>
           <div class="rail-sub" id="rail-context-list">
-            <div class="rail-sub-empty">Nothing shared yet. Drop a file or click +.</div>
+            <div class="rail-sub-empty">Drop a file or click +</div>
           </div>
         </div>
         </div>
@@ -1306,7 +1306,7 @@
               <button class="modal-close" id="ai-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ai-hint" id="ai-hint">Husk found these agents on your machine. Pick the ones to bring in as Husk profiles.</p>
+              <p class="ai-hint" id="ai-hint">Agents found on this machine. Pick the ones to add.</p>
               <div class="ai-list-tools">
                 <button class="ghost-link" id="ai-select-all" type="button">Select all</button>
                 <button class="ghost-link" id="ai-deselect-all" type="button">Deselect all</button>
@@ -1314,13 +1314,13 @@
               <div id="ai-list" class="ai-list"></div>
             </div>
             <div class="modal-foot">
-              <label class="ai-foot-toggle" title="When on, imported agents are activated immediately for the next session">
+              <label class="ai-foot-toggle" title="Name imported agents in the chat header">
                 <input type="checkbox" id="ai-activate-after" class="ai-check" checked />
                 <span class="ai-check-box" aria-hidden="true"></span>
-                Activate after import
+                Pin after import
               </label>
               <button class="ghost-btn" id="ai-cancel">Cancel</button>
-              <button class="btn-primary" id="ai-confirm" disabled>Import 0 agents</button>
+              <button class="btn-primary" id="ai-confirm" disabled>Import</button>
             </div>
           </div>
         </div>
@@ -1394,11 +1394,11 @@
         <div id="repo-agents-modal" class="modal" hidden>
           <div class="modal-card modal-card-md">
             <div class="modal-head">
-              <h2 class="modal-title">Install agent pack from repo</h2>
+              <h2 class="modal-title">Import agent pack</h2>
               <button class="modal-close" id="ra-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">The repo should ship an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are installed into every AI tool you have (Claude, Copilot, ...) using each tool's native agents folder. If an agent reads a relative <code>skills/&lt;id&gt;/SKILL.md</code>, point Preferences &rsaquo; Working directory at that repo.</p>
+              <p class="ra-hint">The repo should ship an agents directory (<code>.github/agents/</code> or <code>agents/</code>). Picked agents are added to every AI tool on this machine, using each tool's own agents folder.</p>
               <div class="ra-sources">
                 <button type="button" class="ra-source" id="ra-src-github">
                   <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
@@ -2152,7 +2152,7 @@
     </div>
 
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
-    <div id="confirm-modal" class="modal confirm-modal" hidden>
+    <div id="confirm-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
       <div class="modal-card">
         <div class="confirm-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2392,5 +2392,17 @@
   </div><!-- /prefs-modal -->
 
     <script src="app.js"></script>
-  </body>
+      <!-- Run log. The transcript lives on disk beside the audit log, so this
+         reads a finished run's output back rather than depending on anything
+         the renderer still holds in memory. -->
+    <div class="aut-transcript" id="aut-transcript" hidden>
+      <div class="aut-transcript-panel" role="dialog" aria-modal="true" aria-labelledby="aut-transcript-title">
+        <header class="aut-transcript-head">
+          <span class="aut-transcript-title" id="aut-transcript-title">Run log</span>
+          <button type="button" class="ghost-btn" id="aut-transcript-close">Close</button>
+        </header>
+        <pre class="aut-transcript-body" id="aut-transcript-body"></pre>
+      </div>
+    </div>
+</body>
 </html>
