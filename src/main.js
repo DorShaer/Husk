@@ -2551,19 +2551,30 @@ function runIdleWatchdog(runId) {
 // cannot grow without bound.
 const RUN_TRANSCRIPT_CAP = 2 * 1024 * 1024;
 function appendRunTranscript(r, chunk) {
-  if (!r || !chunk) return;
+  let fd = null;
   try {
     const sessionId = r.runner && r.runner.sessionId;
     if (!sessionId) return;
-    const dir = path.join(autopilotStorageRoot(), 'sessions', String(sessionId));
-    if (!fs.existsSync(dir)) return;
-    const file = path.join(dir, 'transcript.log');
-    fs.appendFileSync(file, chunk);
-    if (fs.statSync(file).size > RUN_TRANSCRIPT_CAP) {
-      const buf = fs.readFileSync(file);
-      fs.writeFileSync(file, buf.subarray(buf.length - Math.floor(RUN_TRANSCRIPT_CAP / 2)));
+    const file = path.join(autopilotStorageRoot(), 'sessions', String(sessionId), 'transcript.log');
+    // One descriptor for the whole append-and-trim. A run writes here from the
+    // agent's output callback while the reader below may be open on the same
+    // file, so asking the path a question and then acting on the answer can act
+    // on a different file than the one that was asked. Opening once and working
+    // through the descriptor removes the gap; a missing session directory turns
+    // into the throw this already swallows.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to the run's own session dir
+    fd = fs.openSync(file, 'a+');
+    fs.appendFileSync(fd, chunk);
+    const size = fs.fstatSync(fd).size;
+    if (size > RUN_TRANSCRIPT_CAP) {
+      const keep = Math.floor(RUN_TRANSCRIPT_CAP / 2);
+      const buf = Buffer.alloc(keep);
+      fs.readSync(fd, buf, 0, keep, size - keep);
+      fs.ftruncateSync(fd, 0);
+      fs.writeSync(fd, buf, 0, keep, 0);
     }
   } catch (_) { /* a convenience file; never break a run over it */ }
+  finally { if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} } }
 }
 
 function flushRunOutput(runId) {
@@ -4093,19 +4104,31 @@ ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
     // require the file to sit under sessions/. realpath is used where the path
     // exists so a symlinked session directory cannot point outside the root.
     const sessionsRoot = path.join(autopilotStorageRoot(), 'sessions');
-    const realRoot = fs.existsSync(sessionsRoot) ? fs.realpathSync(sessionsRoot) : path.resolve(sessionsRoot);
-    const realFile = fs.existsSync(file) ? fs.realpathSync(file) : path.resolve(file);
+    // Resolve by asking for the real path and taking the lexical form when
+    // there is nothing there to resolve. Asking whether it exists first and
+    // resolving after would answer for a path that no longer has to be the one
+    // that gets opened.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are built from the storage root
+    const realOf = (target) => { try { return fs.realpathSync(target); } catch (_) { return path.resolve(target); } };
+    const realRoot = realOf(sessionsRoot);
+    const realFile = realOf(file);
     if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
       return { ok: false, error: 'bad sessionId' };
     }
-    if (!fs.existsSync(file)) return { ok: true, text: '', bytes: 0, truncated: false };
-    const size = fs.statSync(file).size;
-    const fd = fs.openSync(file, 'r');
-    const len = Math.min(size, maxBytes);
-    const buf = Buffer.alloc(len);
-    fs.readSync(fd, buf, 0, len, Math.max(0, size - len));
-    fs.closeSync(fd);
-    return { ok: true, text: buf.toString('utf8'), bytes: size, truncated: size > len };
+    // The run may still be appending, so the size is read from the descriptor
+    // that is about to be read rather than from the path.
+    let fd;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to sessions/ above
+    try { fd = fs.openSync(file, 'r'); } catch (_) {
+      return { ok: true, text: '', bytes: 0, truncated: false };
+    }
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, maxBytes);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, Math.max(0, size - len));
+      return { ok: true, text: buf.toString('utf8'), bytes: size, truncated: size > len };
+    } finally { try { fs.closeSync(fd); } catch (_) {} }
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -6783,24 +6806,55 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
   }
   try {
     const { target, root } = resolved;
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
-    if (!fs.existsSync(target)) return { ok: false, error: 'Prompt file not found' };
     const disabled = target.endsWith('.disabled');
     const nextPath = path.join(root, `${name}.md${disabled ? '.disabled' : ''}`);
-    if (nextPath !== target) {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
-      if (fs.existsSync(nextPath) || fs.existsSync(path.join(root, `${name}.md`)) || fs.existsSync(path.join(root, `${name}.md.disabled`))) {
-        return { ok: false, error: `A prompt named "${name}" already exists.` };
+    const body = renderPromptMd(name, description, content);
+    if (nextPath === target) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
+      fs.writeFileSync(target, body, { mode: 0o644 });
+    } else {
+      // A rename has to claim the new name without overwriting a prompt that
+      // already holds it. Asking whether the name is free and then writing
+      // leaves a gap another window can write into, so the name is claimed by
+      // the create itself: 'wx' fails when the file exists. The enabled and
+      // disabled forms are both claimed, since they are the same prompt.
+      const twin = nextPath.endsWith('.disabled')
+        ? nextPath.slice(0, -'.disabled'.length)
+        : `${nextPath}.disabled`;
+      let fd;
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+        fd = fs.openSync(nextPath, 'wx', 0o644);
+      } catch (err) {
+        if (err && err.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
+        throw err;
       }
-    }
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
-    fs.writeFileSync(target, renderPromptMd(name, description, content), { mode: 0o644 });
-    if (nextPath !== target) {
+      // The other form of the same name is claimed the same way rather than
+      // asked about, then given straight back: a create that succeeds is proof
+      // the name was free, where a question is only proof it was free once.
+      let twinFd;
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+        twinFd = fs.openSync(twin, 'wx', 0o644);
+      } catch (err) {
+        try { fs.closeSync(fd); } catch (_) {}
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+        try { fs.unlinkSync(nextPath); } catch (_) {}
+        if (err && err.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
+        throw err;
+      }
+      try { fs.closeSync(twinFd); } catch (_) {}
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
-      fs.renameSync(target, nextPath);
+      try { fs.unlinkSync(twin); } catch (_) {}
+      try { fs.writeSync(fd, body); } finally { try { fs.closeSync(fd); } catch (_) {} }
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
+      fs.unlinkSync(target);
     }
     return { ok: true, id: path.basename(nextPath), path: nextPath, mdPath: nextPath };
   } catch (err) {
+    // A prompt that is not there is reported by the operation that reached for
+    // it rather than by a question asked beforehand.
+    if (err && err.code === 'ENOENT') return { ok: false, error: 'Prompt file not found' };
     return { ok: false, error: err.message };
   }
 });
