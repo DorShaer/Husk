@@ -219,12 +219,13 @@
     },
     "terminal": {
       "specs": [
+        "chat-model.spec.js",
+        "per-tab-context.spec.js",
         "pty-start-command.spec.js",
         "recap-voice.spec.js",
         "reload-no-copilot-session.spec.js",
-        "wheel-forward.spec.js",
-        "per-tab-context.spec.js",
-        "chat-model.spec.js"
+        "reload-repaint.spec.js",
+        "wheel-forward.spec.js"
       ],
       "tokens": [
         "xterm",

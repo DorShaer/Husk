@@ -23,7 +23,8 @@
     "test": "node --test test/unit/*.test.js",
     "test:e2e": "playwright test --config test/playwright.config.js",
     "test:all": "npm run test && npm run test:e2e",
-    "test:perf": "playwright test --config test/playwright.perf.config.js"
+    "test:perf": "playwright test --config test/playwright.perf.config.js",
+    "test:e2e:changed": "node scripts/select-e2e.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
