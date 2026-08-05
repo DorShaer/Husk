@@ -18,20 +18,7 @@ const { execFileSync } = require('node:child_process');
 // Keyed by GHSA id. Each entry needs a reason and a review date. Reaching the
 // review date does not fail the build; it prints a warning so the entry is
 // revisited instead of living here forever.
-const ALLOWED = {
-  'GHSA-mh99-v99m-4gvg': {
-    package: 'brace-expansion',
-    reason:
-      'Unbounded brace expansion can exhaust memory. Reachable only from a '
-      + 'caller-supplied glob pattern, and the affected copies are build-time '
-      + 'dev dependencies (electron-builder, jake, rimraf, dir-compare) run '
-      + 'over this repository\'s own files. Upstream patched the 5.x line only, '
-      + 'and 5.0.8 is already in the lockfile. The 1.x and 2.x copies have no '
-      + 'patched release, and pinning them to 5.x breaks minimatch v3, which '
-      + 'the Windows installer chain depends on.',
-    review: '2026-08-25',
-  },
-};
+const ALLOWED = {};
 
 function auditJson() {
   let out;
