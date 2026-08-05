@@ -5282,7 +5282,6 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
    stacking a short card grid over empty canvas. The right pane also carries
    the full prompt text, which is the content mass the page was missing. */
 
-.page-prompts .ghost-input::placeholder { color: var(--text-3); }
 /* The rail and the status panel resize this page without the window moving,
    so the pane stacks against its own width, not the viewport's. */
 .page-prompts { container-type: inline-size; }

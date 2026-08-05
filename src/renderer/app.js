@@ -6494,6 +6494,7 @@ let selectedPromptMd = '';
 const promptBodyCache = new Map();
 
 const PR_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+const PR_PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
 const PR_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 const PR_ARROW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>';
 
@@ -6531,6 +6532,43 @@ function openPromptComposer(seedName) {
   btn.click();
   const nameEl = document.getElementById('np-name');
   if (nameEl && seedName) nameEl.value = seedName;
+}
+
+// The prompt the composer is editing, or null when it is creating one. Read by
+// the submit handler to choose between create and update.
+let editingPromptPath = null;
+
+// Open the composer over an existing prompt. The body comes off disk rather
+// than from the rendered pane, so what gets saved back is what was there.
+async function openPromptEditor(prompt) {
+  if (!prompt) return;
+  const modal = document.getElementById('new-prompt-modal');
+  if (!modal) return;
+  let content = '';
+  try {
+    const res = await window.husk.skills.read(prompt.mdPath);
+    if (res && res.ok) content = stripPromptFrontmatter(res.content || '');
+  } catch (_) {}
+  editingPromptPath = prompt.mdPath;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('np-name', prompt.name || '');
+  set('np-desc', prompt.description || '');
+  set('np-content', content);
+  const title = document.getElementById('np-title');
+  if (title) title.textContent = 'Edit prompt';
+  const save = document.getElementById('np-create');
+  if (save) save.textContent = 'Save prompt';
+  [document.getElementById('np-name'), document.getElementById('np-desc')]
+    .forEach((el) => el && el.classList.remove('field-invalid'));
+  modal.hidden = false;
+  setTimeout(() => { try { document.getElementById('np-content').focus(); } catch (_) {} }, 30);
+}
+
+// The editor edits the prompt, not the file's bookkeeping: name and description
+// have their own fields, so the frontmatter they came from is not shown twice.
+function stripPromptFrontmatter(text) {
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(String(text || ''));
+  return (m ? String(text).slice(m[0].length) : String(text || '')).replace(/^\n+/, '');
 }
 
 function paintPrompts(items, filter) {
@@ -6596,6 +6634,7 @@ function paintPrompts(items, filter) {
           <div class="pr-detail-path" title="${escapeAttr(active.mdPath)}">${escapeHtml(active.mdPath)}</div>
         </div>
         <div class="pr-detail-actions">
+          <button class="pr-iconbtn pr-edit" type="button" title="Edit prompt" aria-label="Edit prompt">${PR_PENCIL_SVG}</button>
           <button class="pr-iconbtn pr-delete" type="button" title="Delete prompt" aria-label="Delete prompt">${PR_TRASH_SVG}</button>
           <button class="pr-run pr-run-btn" type="button" title="Send into chat">Run${PR_ARROW_SVG}</button>
         </div>
@@ -6618,6 +6657,8 @@ function paintPrompts(items, filter) {
   if (newRow) newRow.addEventListener('click', () => openPromptComposer(''));
   const runBtn = pane.querySelector('.pr-run-btn');
   if (runBtn) runBtn.addEventListener('click', () => runPrompt(active.mdPath));
+  const editBtn = pane.querySelector('.pr-edit');
+  if (editBtn) editBtn.addEventListener('click', () => openPromptEditor(active));
   const delBtn = pane.querySelector('.pr-delete');
   if (delBtn) delBtn.addEventListener('click', () => deletePrompt(active.mdPath, active.name));
   fillPromptBody(active.mdPath);
@@ -6727,12 +6768,20 @@ async function runPrompt(mdPath) {
       toast('Description is required', 'error');
       return;
     }
-    const res = await window.husk.prompts.create({ name, description, content });
+    const editing = editingPromptPath;
+    const res = editing
+      ? await window.husk.prompts.update({ mdPath: editing, name, description, content })
+      : await window.husk.prompts.create({ name, description, content });
     if (!res || !res.ok) {
-      toast((res && res.error) || 'Could not create prompt', 'error');
+      toast((res && res.error) || `Could not ${editing ? 'save' : 'create'} prompt`, 'error');
       return;
     }
+    // A rename moves the file, so the selection follows it rather than falling
+    // back to whichever prompt happens to sort first.
+    if (res.mdPath) selectedPromptMd = res.mdPath;
+    if (editing) promptBodyCache.delete(editing);
     closeNewPrompt();
+    toast(editing ? `Saved ${name}` : `Created ${name}`, 'success');
     await renderPrompts();
   }
   if (newBtn) newBtn.addEventListener('click', openNewPrompt);

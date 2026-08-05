@@ -6547,6 +6547,62 @@ ipcMain.handle('prompts:delete', (_e, mdPath) => {
   }
 });
 
+// Frontmatter plus body for one prompt, rendered the way create writes it so
+// an edited file is byte-identical in shape to a freshly created one.
+function renderPromptMd(name, description, content) {
+  const safeDesc = String(description).trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const body = String(content || '').trim() || `# ${name}\n\n${String(description).trim()}\n`;
+  return `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
+}
+
+// Resolve a caller-supplied prompt path against the prompts directory. The
+// renderer hands these back from a listing, so the check is against a crafted
+// path rather than against ordinary use.
+function resolvePromptPath(mdPath) {
+  if (!mdPath || typeof mdPath !== 'string') return { error: 'Missing path' };
+  const root = path.resolve(HUSK_PROMPTS_DIR);
+  const target = path.resolve(mdPath);
+  if (!target.startsWith(root + path.sep)) return { error: 'Refusing to touch a file outside the prompts directory' };
+  return { target, root };
+}
+
+// Edit an existing prompt in place. A renamed prompt moves to the file its new
+// name implies, and a disabled one stays disabled, so editing never silently
+// switches a prompt back on.
+ipcMain.handle('prompts:update', (_e, payload = {}) => {
+  const { mdPath, name, description, content } = payload;
+  const resolved = resolvePromptPath(mdPath);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
+    return { ok: false, error: 'Name must be lowercase letters, digits, dashes; start with a letter.' };
+  }
+  if (!description || !String(description).trim()) {
+    return { ok: false, error: 'Description is required.' };
+  }
+  try {
+    const { target, root } = resolved;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
+    if (!fs.existsSync(target)) return { ok: false, error: 'Prompt file not found' };
+    const disabled = target.endsWith('.disabled');
+    const nextPath = path.join(root, `${name}.md${disabled ? '.disabled' : ''}`);
+    if (nextPath !== target) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+      if (fs.existsSync(nextPath) || fs.existsSync(path.join(root, `${name}.md`)) || fs.existsSync(path.join(root, `${name}.md.disabled`))) {
+        return { ok: false, error: `A prompt named "${name}" already exists.` };
+      }
+    }
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
+    fs.writeFileSync(target, renderPromptMd(name, description, content), { mode: 0o644 });
+    if (nextPath !== target) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
+      fs.renameSync(target, nextPath);
+    }
+    return { ok: true, id: path.basename(nextPath), path: nextPath, mdPath: nextPath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // Create a new Husk prompt. Always writes to HUSK_PROMPTS_DIR regardless of
 // agentKind (the existing skills:create handler routes by agent and would
 // instead create a claude skill for claude users; we want prompts to be
@@ -6559,9 +6615,7 @@ ipcMain.handle('prompts:create', (_e, payload = {}) => {
   if (!description || !description.trim()) {
     return { ok: false, error: 'Description is required.' };
   }
-  const safeDesc = description.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const body = (content || '').trim() || `# ${name}\n\n${description.trim()}\n`;
-  const md = `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
+  const md = renderPromptMd(name, description, content);
   try {
     fs.mkdirSync(HUSK_PROMPTS_DIR, { recursive: true });
     const fileName = `${name}.md`;

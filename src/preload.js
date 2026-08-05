@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('husk', {
   prompts: {
     list: () => ipcRenderer.invoke('prompts:list'),
     create: (payload) => ipcRenderer.invoke('prompts:create', payload),
+    update: (payload) => ipcRenderer.invoke('prompts:update', payload),
     delete: (mdPath) => ipcRenderer.invoke('prompts:delete', mdPath),
   },
   projects: {
