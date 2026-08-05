@@ -4787,15 +4787,65 @@ $('#btn-stop-wf') && $('#btn-stop-wf').addEventListener('click', async () => {
 
 let profilesCache = [];
 let editingProfileId = null;
+// Origin is a property of an agent, so it groups the list and it filters it.
+// Pinned is a view of the same list, so it only filters.
+let agOrigin = 'all';        // all | custom | builtin | repo
+let agState = 'all';         // all | pinned
+let agQuery = '';
+let agCursor = null;         // id of the row under the caret
+let agLoad = 'ready';        // ready | loading | error
+let agError = '';
+let agGenSeq = 0;            // draft-cancel token
+const AG_MOD = isMac ? '⌘' : 'Ctrl';
+const AG_BANDS = [['custom', 'custom'], ['builtin', 'built-in'], ['repo', 'from repo']];
+// Below this a band per group is more chrome than content.
+const AG_BAND_MIN = 6;
+const AG_FACET_LABEL = {
+  all: 'All', custom: 'Custom', builtin: 'Built-in', repo: 'From repo',
+  pinned: 'Pinned',
+};
+// A 24-unit glyph drawn at 14px puts a 1.5-unit stroke under one logical pixel,
+// which renders as a half-alpha smudge beside 13px text. Two units lands it
+// just over one.
+const AG_STROKE = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+const AG_EDIT_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`;
+const AG_VIEW_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const AG_TRASH_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
+const AG_PIN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.3V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.7a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`;
+
+// The single mount test. It reads the DOM rather than a page variable, so it
+// stays true no matter which route put the page on screen.
+function agentsPageOpen() {
+  const el = document.querySelector('.page-agents');
+  return !!el && !el.hidden;
+}
 
 async function renderAgents() {
-  const grid = $('#agents-grid');
-  if (!grid) return;
-  // eslint-disable-next-line no-unsanitized/property
-  grid.innerHTML = '<div class="empty-state"><div class="es-icon">⌬</div><div class="es-msg">Loading agents…</div></div>';
-  profilesCache = await window.husk.profiles.list();
+  if (!$('#ag-list')) return;
+  // A skeleton that flashes for four milliseconds is worse than none, so the
+  // placeholder waits out a local read and only ever stands in for a cold
+  // list. A refresh keeps the rows it has.
+  const cold = !profilesCache.length;
+  agLoad = 'loading'; agError = '';
+  const refreshBtn = $('#btn-agents-refresh');
+  let skelTimer = 0;
+  if (cold) skelTimer = setTimeout(() => { if (agLoad === 'loading') paintAgents(); }, 250);
+  else if (refreshBtn) refreshBtn.disabled = true;
+  try {
+    // The pinned set lives in config and anything can have moved it since the
+    // last visit, so the page reads both halves of its own truth.
+    const [list, next] = await Promise.all([window.husk.profiles.list(), window.husk.config.get()]);
+    profilesCache = Array.isArray(list) ? list : [];
+    if (next) cfg = next;
+    agLoad = 'ready';
+  } catch (err) {
+    agError = String((err && err.message) || err);
+    agLoad = 'error';
+  }
+  clearTimeout(skelTimer);
+  if (refreshBtn) refreshBtn.disabled = false;
   paintAgents();
-  updateAgentBanner();
+  updateActiveChatProfile();
 }
 
 function getActiveProfileIds() {
@@ -4803,117 +4853,643 @@ function getActiveProfileIds() {
   return cfg && cfg.activeProfileId ? [cfg.activeProfileId] : [];
 }
 
-function paintAgents() {
-  const grid = $('#agents-grid');
-  if (!grid) return;
-  if (!profilesCache.length) {
-    // eslint-disable-next-line no-unsanitized/property
-    grid.innerHTML = `<div class="empty-state"><div class="es-icon"></div><div class="es-title">No agents yet</div><div class="es-msg">Create a named configuration to shape how the AI works for a specific task.</div></div>`;
+// ── Derivation ──────────────────────────────────────────────────────────────
+
+function agOriginOf(p) { return p.builtin ? 'builtin' : (p.repoRoot ? 'repo' : 'custom'); }
+
+// The sentence that decides anything. When an agent carries no description the
+// first line of its prompt says more than an empty cell does.
+function agDesc(p) {
+  const d = String(p.description || '').trim();
+  if (d) return d;
+  const first = String(p.systemPrompt || '').split('\n').map((s) => s.trim()).find(Boolean);
+  return first ? first.slice(0, 180) : '';
+}
+
+// Behaviour only. Origin is already carried by the band the row sits under,
+// by the chip that filters on it and by the reader's own property cell, so a
+// row that repeated it would print the same word three times in one viewport.
+function agTags(p) {
+  const t = [];
+  if (p.autoSelect) t.push('auto');
+  if (!String(p.systemPrompt || '').trim()) t.push('no prompt');
+  return t.slice(0, 2);
+}
+
+function agShortPath(v) {
+  return String(v || '').replace(/^([A-Za-z]:)?[\\/](?:home|Users)[\\/][^\\/]+/, '~');
+}
+
+function agMatch(p, ids, q, origin, state) {
+  if (origin !== 'all' && agOriginOf(p) !== origin) return false;
+  if (state === 'pinned' && !ids.has(p.id)) return false;
+  if (!q) return true;
+  return (`${p.name} ${p.description || ''} ${p.systemPrompt || ''}`).toLowerCase().includes(q);
+}
+
+// Alphabetical, always. Sorting pinned rows to the top would move a row out
+// from under the pointer that just pinned it.
+function agRows(origin = agOrigin, state = agState) {
+  const ids = new Set(getActiveProfileIds());
+  const q = agQuery.toLowerCase().trim();
+  return profilesCache
+    .filter((p) => agMatch(p, ids, q, origin, state))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+function agFiltered() { return agOrigin !== 'all' || agState !== 'all' || !!agQuery.trim(); }
+
+// The sentence sits beside the name it qualifies. Sized off the longest name in
+// the whole roster, so a roster of short names carries no river and the column
+// holds still while the list filters. Capped so a single long name cannot push
+// every description off to the right.
+let agMeasureCtx = null;
+function agNameWidth(rows) {
+  const AG_NAME_FONT = '500 13px Inter, sans-serif';
+  if (!agMeasureCtx) {
+    const c = document.createElement('canvas');
+    agMeasureCtx = c.getContext && c.getContext('2d');
+  }
+  let widest = 0;
+  for (const p of rows) {
+    const name = String(p.name || '');
+    // Measured in the face the name actually renders in, so a column sized for
+    // twenty characters holds twenty characters.
+    if (agMeasureCtx) {
+      agMeasureCtx.font = AG_NAME_FONT;
+      widest = Math.max(widest, agMeasureCtx.measureText(name).width);
+    } else {
+      widest = Math.max(widest, name.length * 6.8);
+    }
+  }
+  return `${Math.round(Math.min(160, Math.max(64, widest + 2)))}px`;
+}
+function agRowEl(id) {
+  const list = $('#ag-list');
+  if (!list || !id) return null;
+  return list.querySelector(`.ag-row[data-id="${CSS.escape(id)}"]`);
+}
+
+// ── Paint ───────────────────────────────────────────────────────────────────
+
+// A chip with nothing behind it stays on the band and stops answering, so the
+// band never gains or loses a control as a side effect of a keystroke that was
+// aimed at the list.
+function agFacetHtml(axis, key, n, active) {
+  const on = key === active;
+  const off = !on && n === 0;
+  return `<button type="button" class="ag-facet${on ? ' is-active' : ''}" data-facet="${escapeAttr(axis)}" data-key="${escapeAttr(key)}" aria-pressed="${on ? 'true' : 'false'}"${off ? ' disabled aria-disabled="true"' : ''} tabindex="${on ? '0' : '-1'}">${escapeHtml(AG_FACET_LABEL[key] || key)}<span class="ag-facet-n">${escapeHtml(String(n))}</span></button>`;
+}
+
+const AG_ORIGIN_LABEL = { custom: 'Custom', builtin: 'Built-in', repo: 'From a repo' };
+
+// One property cell. The label carries the field, the value carries the state,
+// so the pane says what the row has no column for.
+function agMetaHtml(label, value, cls) {
+  // Only the path can outrun its cell, so only the path carries a tooltip.
+  const wide = cls === 'ag-dt-cell-wide';
+  return `<div class="ag-dt-cell${cls ? ` ${cls}` : ''}">`
+    + `<dt>${escapeHtml(label)}</dt>`
+    + `<dd${wide ? ` class="ag-dt-path" title="${escapeAttr(value)}"` : ''}>${escapeHtml(value)}</dd>`
+    + '</div>';
+}
+
+// The agent under the caret, read in full. It is the same record the editor
+// opens, so the list answers "what does this one actually say" without one.
+// The pane is mounted whenever the roster is, so neither a keystroke that
+// matches nothing nor the wait for the first read ever changes the column
+// count under the reader.
+function agPaintDetail() {
+  const el = $('#ag-detail');
+  const split = $('#ag-split');
+  if (!el) return;
+  // A roster that does not exist yet still holds its column, so the list never
+  // snaps between one pane and two while the first read is in flight.
+  const solo = !profilesCache.length && agLoad !== 'loading';
+  if (split) split.classList.toggle('is-solo', solo);
+  el.hidden = solo;
+  if (solo) { el.textContent = ''; return; }
+  if (agLoad === 'loading') {
+    // eslint-disable-next-line no-unsanitized/property -- static placeholder
+    el.innerHTML = '<div class="ag-dt-skel">'
+      + '<span class="ag-skel ag-skel-name"></span>'
+      + '<span class="ag-skel ag-skel-desc"></span>'
+      + '<span class="ag-skel ag-skel-block"></span>'
+      + '</div>';
     return;
   }
-  const activeIds = new Set(getActiveProfileIds());
-  // Alphabetical only; active state is purely visual, not positional.
-  const sorted = [...profilesCache].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-  const editIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`;
-  const trashIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
-
-  const cards = sorted.map((p) => {
-    const isActive = activeIds.has(p.id);
-    return `
-    <div class="agent-card${isActive ? ' is-active' : ''}" data-id="${escapeHtml(p.id)}" role="button" aria-pressed="${isActive}" tabindex="0" title="${isActive ? 'Selected. Click to deselect.' : 'Click to select.'}">
-      ${!p.builtin ? `
-        <div class="agent-card-corner">
-          <button class="agent-card-icon agent-edit" data-id="${escapeHtml(p.id)}" title="Edit agent" aria-label="Edit agent">${editIcon}</button>
-          <button class="agent-card-icon is-danger agent-delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" title="Delete agent" aria-label="Delete agent">${trashIcon}</button>
-        </div>` : ''}
-      <div class="agent-card-head">
-        <div class="agent-card-title">${escapeHtml(p.name)}</div>
-        ${isActive ? '<span class="agent-card-pill">Selected</span>' : ''}
-        ${p.builtin ? '<span class="agent-card-builtin">Built-in</span>' : ''}
-      </div>
-      ${p.description ? `<div class="agent-card-desc">${escapeHtml(p.description)}</div>` : ''}
-      ${p.repoRoot ? `<div class="agent-card-repo" title="Installed from ${escapeAttr(p.repoRoot)}">repo: ${escapeHtml(p.repoRoot.replace(/^\/home\/[^/]+/, '~'))}</div>` : ''}
-      ${p.systemPrompt ? `<div class="agent-card-prompt">${escapeHtml(p.systemPrompt)}</div>` : ''}
-    </div>
-  `;
-  }).join('');
-  // eslint-disable-next-line no-unsanitized/property
-  grid.innerHTML = cards;
-
-  // Whole-card click toggles selection; clicks on inner buttons fall through.
-  grid.querySelectorAll('.agent-card').forEach((card) => {
-    const id = card.dataset.id;
-    const toggle = () => {
-      if (activeIds.has(id)) deactivateProfile(id);
-      else activateProfile(id);
-    };
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
-      if (window.getSelection && window.getSelection().toString().length > 0) return;
-      toggle();
-    });
-    card.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
-    });
-  });
-  grid.querySelectorAll('.agent-edit').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); openAgentModal(e.currentTarget.dataset.id); }));
-  grid.querySelectorAll('.agent-delete').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProfile(e.currentTarget.dataset.id, e.currentTarget.dataset.name); }));
+  const p = profilesCache.find((x) => x.id === agCursor);
+  if (!p) {
+    // eslint-disable-next-line no-unsanitized/property -- static copy
+    el.innerHTML = '<p class="ag-dt-none">No agent selected</p>';
+    return;
+  }
+  const prompt = String(p.systemPrompt || '').trim();
+  const builtin = !!p.builtin;
+  const pinned = getActiveProfileIds().includes(p.id);
+  const name = String(p.name || '');
+  const openTitle = builtin ? `View · ${AG_MOD} Enter` : `Edit · ${AG_MOD} Enter`;
+  const openLabel = builtin ? `View ${name}` : `Edit ${name}`;
+  // The pin is a control here rather than a printed value, so the pane gains
+  // the verb instead of echoing a state the row already shows.
+  const acts = `<button type="button" class="ag-pin" data-ag-dt-act="pin" aria-pressed="${pinned ? 'true' : 'false'}" aria-label="${pinned ? 'Unpin' : 'Pin'} ${escapeAttr(name)}" title="${escapeAttr(agPinTitle(pinned))}">${AG_PIN_SVG}</button>`
+    + `<button type="button" class="ag-act-btn" data-ag-dt-act="edit" aria-label="${escapeAttr(openLabel)}" title="${escapeAttr(openTitle)}">${builtin ? AG_VIEW_SVG : AG_EDIT_SVG}</button>`
+    + (builtin ? '' : `<button type="button" class="ag-act-btn is-danger" data-ag-dt-act="del" aria-label="Delete ${escapeAttr(name)}" title="Delete · ${escapeAttr(AG_MOD)} Backspace">${AG_TRASH_SVG}</button>`);
+  const meta = agMetaHtml('Origin', AG_ORIGIN_LABEL[agOriginOf(p)] || 'Custom')
+    + agMetaHtml('Auto-select', p.autoSelect ? 'On' : 'Off')
+    + (p.repoRoot ? agMetaHtml('Source', agShortPath(p.repoRoot), 'ag-dt-cell-wide') : '');
+  // The row prints the sentence in full whenever its column fits it, and the
+  // truncated ones are exactly the rows already carrying a title, so the pane
+  // repeats nothing the list can show.
+  const row = agRowEl(p.id);
+  const desc = row && row.querySelector('.ag-desc[title]') ? agDesc(p) : '';
+  // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
+  el.innerHTML = `<div class="ag-dt-head"><h2 class="ag-dt-name" title="${escapeAttr(name)}">${escapeHtml(name)}</h2><span class="ag-dt-acts">${acts}</span></div>`
+    + (desc ? `<p class="ag-dt-desc">${escapeHtml(desc)}</p>` : '')
+    + `<dl class="ag-dt-meta">${meta}</dl>`
+    + '<p class="ag-dt-label">System prompt</p>'
+    + (prompt
+      ? `<pre class="ag-dt-prompt">${escapeHtml(prompt)}</pre>`
+      : '<p class="ag-dt-none">No prompt of its own.</p>');
+  // A block only earns a tab stop when there is something under the fold to
+  // scroll to, so a one-line prompt costs the keyboard nothing.
+  const pre = el.querySelector('.ag-dt-prompt');
+  if (pre && pre.scrollHeight > pre.clientHeight + 1) {
+    pre.tabIndex = 0;
+    pre.setAttribute('role', 'region');
+    pre.setAttribute('aria-label', 'System prompt');
+  }
 }
+
+// One toggle, not two: unpinned is the roster minus pinned, and every row
+// already prints its own pin state. The chip is mounted for as long as the
+// roster has anything pinned at all, so a query that happens to exclude every
+// pinned agent greys the chip instead of deleting it from the band. Updated in
+// place while it is on screen, so pinning from a row never destroys a chip the
+// keyboard might be standing on.
+function agPaintStateFacet() {
+  const el = $('#ag-state');
+  const sep = $('#ag-bar-sep');
+  if (!el) return;
+  const n = agRows(agOrigin, 'pinned').length;
+  const on = agState === 'pinned';
+  const show = on || getActiveProfileIds().length > 0;
+  const chip = el.querySelector('.ag-facet');
+  if (show && chip) {
+    const nEl = chip.querySelector('.ag-facet-n');
+    if (nEl) nEl.textContent = String(n);
+    chip.classList.toggle('is-active', on);
+    chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+    agSetFacetEnabled(chip, on || n > 0);
+  } else if (show) {
+    // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
+    el.innerHTML = agFacetHtml('state', 'pinned', n, agState);
+  } else if (chip) {
+    el.textContent = '';
+  }
+  if (sep) sep.hidden = !show;
+  agSyncFacetTabs(el);
+}
+
+function agSetFacetEnabled(chip, enabled) {
+  chip.disabled = !enabled;
+  if (enabled) chip.removeAttribute('aria-disabled');
+  else chip.setAttribute('aria-disabled', 'true');
+}
+
+function agSyncFacetTabs(group) {
+  if (!group) return;
+  const chips = [...group.querySelectorAll('.ag-facet')];
+  if (!chips.length) return;
+  // A greyed chip is not a tab stop, so the one stop each axis owns always
+  // lands somewhere the keyboard can act.
+  const live = chips.filter((c) => !c.disabled);
+  const active = chips.find((c) => c.classList.contains('is-active')) || live[0] || chips[0];
+  chips.forEach((c) => { c.tabIndex = c === active ? 0 : -1; });
+}
+
+function agPinTitle(pinned) {
+  return `${pinned ? 'Unpin from the chat header' : 'Pin to the chat header'} · Space`;
+}
+
+function agRowDomId(id) {
+  return `ag-row-${encodeURIComponent(String(id))}`;
+}
+
+function agRowHtml(p, pinned) {
+  const name = String(p.name || '');
+  const desc = agDesc(p);
+  const builtin = !!p.builtin;
+  const tags = agTags(p).map((t) => `<span class="ag-tag">${escapeHtml(t)}</span>`).join('');
+  const openLabel = builtin ? `View ${name}` : `Edit ${name}`;
+  const openTitle = builtin ? `View · ${AG_MOD} Enter` : `Edit · ${AG_MOD} Enter`;
+  // A built-in has no trash button at all rather than a disabled one; the
+  // remaining verb takes the trailing slot, so the right rail stays flush.
+  const del = builtin ? '' : `<button type="button" class="ag-act-btn is-danger" data-ag-act="del" tabindex="-1" aria-label="Delete ${escapeAttr(name)}" title="Delete · ${escapeAttr(AG_MOD)} Backspace">${AG_TRASH_SVG}</button>`;
+  // The row carries a stable id of its own so the search field can name it as
+  // the active record while the caret moves and focus stays in the field.
+  return `<div class="ag-row${pinned ? ' is-pinned' : ''}" id="${escapeAttr(agRowDomId(p.id))}" role="option" aria-selected="false" tabindex="-1" data-id="${escapeAttr(p.id)}" data-builtin="${builtin ? '1' : '0'}">`
+    + `<button type="button" class="ag-pin" data-ag-act="pin" tabindex="-1" aria-pressed="${pinned ? 'true' : 'false'}" aria-label="${pinned ? 'Unpin' : 'Pin'} ${escapeAttr(name)}" title="${escapeAttr(agPinTitle(pinned))}">${AG_PIN_SVG}</button>`
+    + `<span class="ag-name">${escapeHtml(name)}</span>`
+    + `<span class="ag-desc">${escapeHtml(desc)}</span>`
+    + `<span class="ag-tags">${tags}</span>`
+    + `<span class="ag-act">`
+    + `<button type="button" class="ag-act-btn" data-ag-act="edit" tabindex="-1" aria-label="${escapeAttr(openLabel)}" title="${escapeAttr(openTitle)}">${builtin ? AG_VIEW_SVG : AG_EDIT_SVG}</button>`
+    + del
+    + `</span></div>`;
+}
+
+// The placeholder is as long as the roster was the last time this window saw
+// it, so a library of thirty does not open on a stub of eight.
+function agSkeletonHtml() {
+  let n = 8;
+  try { n = Math.min(24, Math.max(4, Number(sessionStorage.getItem('ag.rows')) || 8)); } catch (_) { n = 8; }
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    out += '<div class="ag-row is-skel" role="presentation">'
+      + '<span class="ag-skel ag-skel-check"></span>'
+      + '<span class="ag-name"><span class="ag-skel ag-skel-name"></span></span>'
+      + '<span class="ag-desc"><span class="ag-skel ag-skel-desc"></span></span>'
+      + '<span class="ag-tags"><span class="ag-skel ag-skel-tag"></span></span>'
+      + '<span class="ag-act"></span></div>';
+  }
+  return out;
+}
+
+function agEmptyHtml(title, msg, actionKey, actionLabel, errText) {
+  return '<div class="ag-empty" role="presentation">'
+    + `<p class="ag-empty-title">${escapeHtml(title)}</p>`
+    + (msg ? `<p class="ag-empty-msg">${escapeHtml(msg)}</p>` : '')
+    + (errText ? `<p class="ag-empty-err">${escapeHtml(errText)}</p>` : '')
+    + `<button type="button" class="ghost-btn" data-ag-empty="${escapeAttr(actionKey)}">${escapeHtml(actionLabel)}</button>`
+    + '</div>';
+}
+
+function agSyncMaster(rows) {
+  const master = $('#ag-master');
+  if (!master) return;
+  const ids = new Set(getActiveProfileIds());
+  const on = rows.filter((p) => ids.has(p.id)).length;
+  const all = !!rows.length && on === rows.length;
+  master.disabled = !rows.length;
+  master.setAttribute('aria-pressed', all ? 'true' : 'false');
+  master.classList.toggle('is-some', !!on && !all);
+  const label = all ? 'Unpin all shown' : 'Pin all shown';
+  // One click rewrites the whole shown scope, so the control names the chord
+  // that does the same thing without the pointer.
+  master.title = `${label} · ${AG_MOD} Shift ${all ? 'D' : 'A'}`;
+  master.setAttribute('aria-label', label);
+}
+
+// Counts only. Never writes #ag-list, so a pin never destroys the row the
+// pointer or the caret is resting on.
+function agPaintCounts() {
+  $$('#ag-origin .ag-facet').forEach((b) => {
+    const n = agRows(b.dataset.key, agState).length;
+    const nEl = b.querySelector('.ag-facet-n');
+    if (nEl) nEl.textContent = String(n);
+    agSetFacetEnabled(b, b.classList.contains('is-active') || n > 0);
+  });
+  agPaintStateFacet();
+  const rows = agRows();
+  const countEl = $('#ag-count');
+  if (countEl) countEl.textContent = agFiltered() ? `${rows.length} of ${profilesCache.length}` : '';
+  agSyncMaster(rows);
+}
+
+function agSyncPinLabels(pin, pinned, label) {
+  if (!pin) return;
+  pin.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+  pin.setAttribute('aria-label', `${pinned ? 'Unpin' : 'Pin'} ${label}`);
+  pin.title = agPinTitle(pinned);
+}
+
+// The row and the reader can both be showing the same record, so both toggles
+// take the new state in place rather than through a repaint that would move
+// focus off the button that was just pressed.
+function agSyncRowLabels(id, pinned) {
+  const row = agRowEl(id);
+  const name = row && row.querySelector('.ag-name');
+  const label = name ? name.textContent : (profilesCache.find((x) => x.id === id) || {}).name || '';
+  if (row) agSyncPinLabels(row.querySelector('.ag-pin'), pinned, label);
+  if (id === agCursor) agSyncPinLabels($('#ag-detail [data-ag-dt-act="pin"]'), pinned, label);
+}
+
+function paintAgents() {
+  const list = $('#ag-list');
+  if (!list) return;
+  const total = profilesCache.length;
+  const loading = agLoad === 'loading';
+  if (!loading) { try { sessionStorage.setItem('ag.rows', String(total)); } catch (_) { /* private mode */ } }
+
+  // An origin with no members earns no chip, so a facet can never point at an
+  // empty set the user did not ask for.
+  const members = { custom: 0, builtin: 0, repo: 0 };
+  for (const p of profilesCache) members[agOriginOf(p)]++;
+  if (agOrigin !== 'all' && !members[agOrigin]) agOrigin = 'all';
+
+  const panel = $('#ag-panel');
+  if (panel) panel.classList.toggle('is-loading', loading);
+
+  // While the roster is in flight the chip set holds whatever it had, so the
+  // band never claims a count it does not know and never reflows on arrival.
+  const originEl = $('#ag-origin');
+  if (originEl && !loading) {
+    // One origin is not an axis: All and the only origin there is select the
+    // same rows, so the roster is unambiguous and the chips are dropped.
+    const present = AG_BANDS.map(([k]) => k).filter((k) => members[k]);
+    if (present.length < 2) agOrigin = 'all';
+    const keys = present.length > 1 ? ['all', ...present] : [];
+    // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
+    originEl.innerHTML = keys.map((k) => agFacetHtml('origin', k, agRows(k, agState).length, agOrigin)).join('');
+  }
+  if (!loading) agPaintStateFacet();
+  // An axis with nothing selected still owes the keyboard one way in.
+  agSyncFacetTabs(originEl);
+
+  const rows = agRows();
+  const countEl = $('#ag-count');
+  if (countEl) countEl.textContent = (!loading && agFiltered()) ? `${rows.length} of ${total}` : '';
+  agSyncMaster(rows);
+
+  const keysEl = $('#ag-keys');
+  if (keysEl) {
+    // Every binding that acts on a row, in one list of verbs. Spelled out
+    // rather than glyphed: the UI face has no return or delete symbol, so a
+    // symbol renders as a fallback box on this machine. With no row to act on,
+    // the legend names the two bindings that are the way back to one.
+    const onRows = [
+      [['↑', '↓'], 'move'], [['Enter'], 'open'], [['Space'], 'pin'],
+      [[AG_MOD, 'D'], 'duplicate'], [[AG_MOD, 'Backspace'], 'delete'], [['N'], 'new'],
+    ];
+    const wayBack = agFiltered() ? [[['Esc'], 'clear'], [['N'], 'new']] : [[['N'], 'new']];
+    const chips = (loading || rows.length) ? onRows : wayBack;
+    // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml
+    keysEl.innerHTML = chips.map(([keys, v]) => '<span class="ag-key"><span class="ag-key-caps">'
+      + keys.map((k) => `<kbd class="ag-kbd">${escapeHtml(k)}</kbd>`).join('')
+      + `</span><span class="ag-key-word">${escapeHtml(v)}</span></span>`).join('');
+  }
+
+  // Sized off the whole roster, so a keystroke that narrows the list never
+  // slides the description column sideways.
+  list.style.setProperty('--ag-name-w', agNameWidth(profilesCache));
+
+  const ids = new Set(getActiveProfileIds());
+  let body;
+  if (loading) {
+    body = agSkeletonHtml();
+  } else if (agLoad === 'error') {
+    body = agEmptyHtml('Could not load agents', '', 'retry', 'Retry', agError.slice(0, 140));
+  } else if (!total) {
+    // A heading and the one action, nothing else. The routes the sentence used
+    // to name are the buttons already on the toolbar above it.
+    body = agEmptyHtml('No agents yet', '', 'new', 'New agent');
+  } else if (!rows.length) {
+    const q = agQuery.trim();
+    body = q
+      ? agEmptyHtml('No match', '', 'create', `New "${q}"`)
+      : agEmptyHtml(`No agents in ${AG_FACET_LABEL[agOrigin === 'all' ? agState : agOrigin]}`, '', 'clear', 'Show all agents');
+  } else {
+    // Bands only earn their space in a library big enough to lose a row in,
+    // with more than one group to separate, and only when the origin facet is
+    // not already naming the scope.
+    const groups = AG_BANDS.filter(([key]) => rows.some((p) => agOriginOf(p) === key));
+    const banded = agOrigin === 'all' && total >= AG_BAND_MIN && groups.length > 1;
+    let out = '';
+    if (banded) {
+      for (const [key, label] of groups) {
+        const run = rows.filter((p) => agOriginOf(p) === key);
+        out += `<div class="ag-group" role="presentation"><span class="ag-group-name">${escapeHtml(label)}</span><span class="ag-group-n">${run.length}</span></div>`;
+        out += run.map((p) => agRowHtml(p, ids.has(p.id))).join('');
+      }
+    } else {
+      out = rows.map((p) => agRowHtml(p, ids.has(p.id))).join('');
+    }
+    body = out;
+  }
+  // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
+  list.innerHTML = body;
+  agSyncTruncationTitles(list);
+
+  if (!rows.some((p) => p.id === agCursor)) agCursor = (rows[0] && rows[0].id) || null;
+  agSyncCursor();
+}
+
+// A tooltip that repeats a label the reader can already see is noise, so the
+// title exists only on the runs the column actually cut off.
+function agSyncTruncationTitles(list) {
+  list.querySelectorAll('.ag-name, .ag-desc').forEach((el) => {
+    const text = el.textContent.trim();
+    if (text && el.scrollWidth > el.clientWidth + 1) el.title = text;
+    else el.removeAttribute('title');
+  });
+}
+
+// ── Pinning ─────────────────────────────────────────────────────────────────
+
+// Off-scope rule: inside the Pinned or Unpinned facet a toggled row stops
+// matching the filter, and it stays exactly where it is until the next
+// explicit repaint (a facet change, a search keystroke, refresh, page re-entry,
+// a create, a delete or a duplicate). Rows never move under the pointer or the
+// caret, which is what makes unpinning a whole filtered view possible at all.
+async function agToggle(id, want) {
+  const ids = getActiveProfileIds();
+  const on = ids.includes(id);
+  const next = (want === undefined) ? !on : !!want;
+  if (next === on) return;
+  const row = agRowEl(id);
+  const pin = row && row.querySelector('.ag-pin');
+  const dtPin = id === agCursor ? $('#ag-detail [data-ag-dt-act="pin"]') : null;
+  // Optimistic flip on the same nodes: the transition runs, focus survives.
+  if (row) row.classList.toggle('is-pinned', next);
+  if (pin) pin.setAttribute('aria-pressed', next ? 'true' : 'false');
+  if (dtPin) dtPin.setAttribute('aria-pressed', next ? 'true' : 'false');
+  const res = next ? await window.husk.profiles.activate(id)
+    : await window.husk.profiles.deactivate(id);
+  if (!res || !res.ok) {
+    if (row) row.classList.toggle('is-pinned', on);
+    if (pin) pin.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (dtPin) dtPin.setAttribute('aria-pressed', on ? 'true' : 'false');
+    toast('Could not update agent', 'error');
+    return;
+  }
+  cfg = await window.husk.config.get();
+  agPaintCounts();
+  agSyncRowLabels(id, next);
+  updateActiveChatProfile();
+}
+
+// One IPC and one config write for any scope, filtered or not. One gesture can
+// rewrite the whole pinned set, so it carries the same undo a delete does.
+async function agBulkPin(next) {
+  const rows = agRows();
+  if (!rows.length) return;
+  const before = getActiveProfileIds().slice();
+  const ids = new Set(before);
+  for (const p of rows) { if (next) ids.add(p.id); else ids.delete(p.id); }
+  const master = $('#ag-master');
+  if (master) master.disabled = true;
+  const res = await window.husk.profiles.setActive([...ids]);
+  if (master) master.disabled = false;
+  if (!res || !res.ok) { toast('Could not update agents', 'error'); return; }
+  cfg = await window.husk.config.get();
+  paintAgents();               // an explicit gesture, so the list is expected to settle
+  updateActiveChatProfile();
+  const n = rows.length;
+  toastAction(`${next ? 'Pinned' : 'Unpinned'} ${n} ${n === 1 ? 'agent' : 'agents'}`, 'Undo', async () => {
+    const back = await window.husk.profiles.setActive(before);
+    if (!back || !back.ok) { toast('Could not restore the pinned agents', 'error'); return; }
+    cfg = await window.husk.config.get();
+    paintAgents();
+    updateActiveChatProfile();
+  }, '');
+}
+
+// ── Cursor ──────────────────────────────────────────────────────────────────
+
+// Roving tabindex: the cursor row and its three controls are the only tab
+// stops in the list, so the list costs four stops at any agent count and every
+// control is still reachable by moving the cursor and pressing Tab.
+function agSyncCursor({ scroll = false, focus = false } = {}) {
+  const list = $('#ag-list');
+  if (!list) return;
+  list.querySelectorAll('.ag-row').forEach((r) => {
+    const on = r.dataset.id === agCursor;
+    r.classList.toggle('is-cursor', on);
+    // The caret is a state of the record, not only a fill on the row, so it
+    // is readable without the pixels.
+    if (on) r.setAttribute('aria-current', 'true'); else r.removeAttribute('aria-current');
+    r.setAttribute('aria-selected', on ? 'true' : 'false');
+    r.tabIndex = on ? 0 : -1;
+    r.querySelectorAll('.ag-pin, .ag-act-btn').forEach((c) => { c.tabIndex = on ? 0 : -1; });
+  });
+  const el = agRowEl(agCursor);
+  if (el && scroll) el.scrollIntoView({ block: 'nearest' });
+  if (el && focus) el.focus({ preventScroll: true });
+  // The arrows move the caret while the query field still holds focus, so the
+  // field names the record the caret is on and the move is announced even
+  // though nothing was focused.
+  const search = $('#agents-search');
+  if (search) {
+    if (el && !list.contains(document.activeElement)) search.setAttribute('aria-activedescendant', el.id);
+    else search.removeAttribute('aria-activedescendant');
+  }
+  agPaintDetail();
+}
+
+// Held arrow keys repeat faster than a 120ms cross-fade resolves, so the list
+// drops its transition while the keyboard owns the caret and takes it back the
+// moment the pointer moves.
+function agNavByKey() {
+  const list = $('#ag-list');
+  if (list) list.dataset.nav = 'key';
+}
+
+function agMoveCursor(delta) {
+  const rows = agRows();
+  if (!rows.length) return;
+  const i = rows.findIndex((p) => p.id === agCursor);
+  const next = Math.max(0, Math.min(rows.length - 1, (i < 0 ? 0 : i + delta)));
+  agCursor = rows[next].id;
+  agNavByKey();
+  const list = $('#ag-list');
+  const inList = !!list && list.contains(document.activeElement);
+  agSyncCursor({ scroll: true, focus: inList });
+}
+
+// Roving tabindex inside a facet group: one chip per axis is a tab stop and
+// the arrows reach the rest, so every filter on the band is a keyboard filter.
+function agMoveFacet(group, key) {
+  // A greyed chip is skipped rather than selected, so the arrows only ever
+  // land on a filter that has something behind it.
+  const chips = [...group.querySelectorAll('.ag-facet')].filter((c) => !c.disabled);
+  if (!chips.length) return;
+  const from = chips.findIndex((c) => c.contains(document.activeElement));
+  let i;
+  if (key === 'Home') i = 0;
+  else if (key === 'End') i = chips.length - 1;
+  else {
+    const step = key === 'ArrowRight' ? 1 : chips.length - 1;
+    i = ((from < 0 ? 0 : from) + step) % chips.length;
+  }
+  const want = chips[i].dataset.key;
+  agSetFacet(chips[i].dataset.facet, want);
+  paintAgents();
+  // The group element survives the repaint; its chips do not.
+  const back = group.querySelector(`.ag-facet[data-key="${CSS.escape(want)}"]`);
+  if (back) { back.tabIndex = 0; back.focus(); }
+}
+
+function agSetFacet(axis, key) {
+  if (axis === 'origin') agOrigin = key; else agState = key;
+}
+
+function agSetCursorEdge(last) {
+  const rows = agRows();
+  if (!rows.length) return;
+  agCursor = (last ? rows[rows.length - 1] : rows[0]).id;
+  agNavByKey();
+  const list = $('#ag-list');
+  const inList = !!list && list.contains(document.activeElement);
+  agSyncCursor({ scroll: true, focus: inList });
+}
+
+// ── Compatibility shims ─────────────────────────────────────────────────────
+// Callers outside this page (launch-time auto-select, the palette) keep their
+// entry points; the page keeps its nodes.
 
 async function activateProfile(id) {
   const res = await window.husk.profiles.activate(id);
   if (!res || !res.ok) return;
   cfg = await window.husk.config.get();
-  paintAgents();
-  updateAgentBanner();
   updateActiveChatProfile();
+  if (!agentsPageOpen()) return;
+  agPaintCounts();
+  const row = agRowEl(id);
+  if (row) {
+    row.classList.add('is-pinned');
+    agSyncRowLabels(id, true);
+  }
 }
 
 async function deactivateProfile(id) {
   const res = await window.husk.profiles.deactivate(id);
   if (!res || !res.ok) return;
   cfg = await window.husk.config.get();
-  paintAgents();
-  updateAgentBanner();
+  updateActiveChatProfile();
+  if (!agentsPageOpen()) return;
+  agPaintCounts();
+  const row = agRowEl(id);
+  if (row) {
+    row.classList.remove('is-pinned');
+    agSyncRowLabels(id, false);
+  }
+}
+
+async function activateAllProfiles() {
+  const res = await window.husk.profiles.setActive(profilesCache.map((p) => p.id).filter(Boolean));
+  if (!res || !res.ok) return;
+  cfg = await window.husk.config.get();
+  if (agentsPageOpen()) paintAgents();
   updateActiveChatProfile();
 }
 
 async function deactivateAllProfiles() {
-  const res = await window.husk.profiles.deactivateAll();
+  const res = await window.husk.profiles.setActive([]);
   if (!res || !res.ok) return;
   cfg = await window.husk.config.get();
-  paintAgents();
-  updateAgentBanner();
+  if (agentsPageOpen()) paintAgents();
   updateActiveChatProfile();
 }
 
-async function activateAllProfiles() {
-  const res = await window.husk.profiles.activateAll();
-  if (!res || !res.ok) return;
-  cfg = await window.husk.config.get();
-  paintAgents();
-  updateAgentBanner();
+// The chat header names the tool, the folder and the pinned agents. A resumed
+// session names its own tool and folder, so it hands them over here and they
+// hold until preferences or the active project moves. One writer, so pinning
+// survives every other thing that touches the line.
+let chatSubBase = null;
+function setChatSubBase(base) {
+  chatSubBase = base || null;
   updateActiveChatProfile();
-}
-
-function updateAgentBanner() {
-  const banner = $('#agents-active-banner');
-  const chipsEl = $('#aab-chips');
-  if (!banner || !chipsEl) return;
-  const active = getActiveProfileIds()
-    .map((id) => profilesCache.find((p) => p.id === id))
-    .filter(Boolean);
-  if (!active.length) { banner.hidden = true; chipsEl.innerHTML = ''; return; }
-  banner.hidden = false;
-  // eslint-disable-next-line no-unsanitized/property -- escapeHtml on each interpolated value
-  chipsEl.innerHTML = active.map((p) => `
-    <span class="aab-chip">
-      <span class="aab-chip-name">${escapeHtml(p.name)}</span>
-      <button class="aab-chip-x" data-id="${escapeHtml(p.id)}" aria-label="Remove ${escapeAttr(p.name)}">&times;</button>
-    </span>
-  `).join('');
-  chipsEl.querySelectorAll('.aab-chip-x').forEach((btn) => btn.addEventListener('click', (e) => { e.stopPropagation(); deactivateProfile(e.currentTarget.dataset.id); }));
 }
 
 function updateActiveChatProfile() {
@@ -4922,72 +5498,164 @@ function updateActiveChatProfile() {
   const active = getActiveProfileIds()
     .map((id) => profilesCache.find((p) => p.id === id))
     .filter(Boolean);
-  const toolName = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'claude';
-  const dir = (cfg && cfg.treeRoot) ? cfg.treeRoot.replace(/.*\//, '~') : '~';
+  const project = projectsCache.find((p) => p.id === activeProjectId);
+  const toolName = (chatSubBase && chatSubBase.tool)
+    || ((cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'agent');
+  const dir = (chatSubBase && chatSubBase.dir)
+    || (project ? project.path : ((cfg && cfg.agentCwd) || huskHome));
   let tag = '';
   if (active.length === 1) tag = active[0].name;
   else if (active.length === 2) tag = `${active[0].name}, ${active[1].name}`;
-  else if (active.length > 2) tag = `${active.length} agents`;
+  // Past two names the count stands in for them, so it has to say what the
+  // number counts: these are the agents in play, not the ones installed.
+  else if (active.length > 2) tag = `${active.length} active agents`;
   sub.textContent = tag ? `${toolName} · ${dir} · ${tag}` : `${toolName} · ${dir}`;
 }
 
-async function deleteProfile(id, name) {
-  if (!id) return;
-  const confirmed = await openConfirmDialog({
-    title: 'Delete agent?',
-    bodyHtml: `Permanently delete <strong>${escapeHtml(name || 'this agent')}</strong>.`,
+// ── Delete, duplicate ───────────────────────────────────────────────────────
+
+async function deleteProfile(id) {
+  const p = profilesCache.find((x) => x.id === id);
+  if (!p) return;
+  if (p.builtin) { toast('Built-in agents cannot be deleted', 'error'); return; }
+  const ok = await openConfirmDialog({
+    title: 'Delete agent',
+    bodyHtml: `Removes <strong>${escapeHtml(p.name)}</strong> from Husk and deletes its agent file from every AI tool folder on this machine.`,
     confirmLabel: 'Delete agent',
   });
-  if (!confirmed) return;
+  if (!ok) return;
+  const wasPinned = getActiveProfileIds().includes(id);
+  const snapshot = { ...p };
+  const rows = agRows();
+  const i = rows.findIndex((x) => x.id === id);
   const res = await window.husk.profiles.delete(id);
   if (!res || !res.ok) { toast((res && res.error) || 'Could not delete agent', 'error'); return; }
-  profilesCache = profilesCache.filter((p) => p.id !== id);
-  if (getActiveProfileIds().includes(id)) { cfg = await window.husk.config.get(); }
+  profilesCache = profilesCache.filter((x) => x.id !== id);
+  cfg = await window.husk.config.get();
+  agCursor = (rows[i + 1] || rows[i - 1] || {}).id || null;
   paintAgents();
-  updateAgentBanner();
+  // The caret lands on the neighbour, so the keyboard comes back out of the
+  // dialog standing in the list rather than on the document.
+  agSyncCursor({ scroll: true, focus: true });
+  updateActiveChatProfile();
+  // The restored record carries a new id, and a repo agent loses its repo
+  // binding, because create accepts neither. The toast promises nothing more
+  // than the name it names.
+  toastAction(`Deleted ${snapshot.name}`, 'Undo', async () => {
+    const back = await window.husk.profiles.create({
+      name: snapshot.name,
+      description: snapshot.description || '',
+      systemPrompt: snapshot.systemPrompt || '',
+      autoSelect: !!snapshot.autoSelect,
+    });
+    if (!back || !back.id) { toast('Could not restore agent', 'error'); return; }
+    profilesCache = [...profilesCache, back];
+    if (wasPinned) await window.husk.profiles.activate(back.id);
+    cfg = await window.husk.config.get();
+    agCursor = back.id;
+    paintAgents();
+    updateActiveChatProfile();
+  }, '');
 }
 
-function openAgentModal(editId) {
+// The only route that has ever existed to change a built-in's prompt.
+async function agDuplicate(id) {
+  const p = profilesCache.find((x) => x.id === id);
+  if (!p) return;
+  const base = `${p.name} copy`;
+  const taken = new Set(profilesCache.map((x) => x.name));
+  let name = base, i = 2;
+  while (taken.has(name)) name = `${base} ${i++}`;
+  const res = await window.husk.profiles.create({
+    name: name.slice(0, 64),
+    description: p.description || '',
+    systemPrompt: p.systemPrompt || '',
+    autoSelect: false,
+  });
+  if (!res || !res.id) { toast('Could not duplicate agent', 'error'); return; }
+  profilesCache = [...profilesCache, res];
+  agCursor = res.id;
+  paintAgents();
+  openAgentModal(res.id);
+}
+
+// ── Editor ──────────────────────────────────────────────────────────────────
+
+const AG_CAPS = ['#agent-name', '#agent-description', '#agent-system-prompt'];
+
+// The limit lives on the field itself, so the counter cannot drift from what
+// the field will actually accept. A denominator only earns its place once the
+// value is close enough to it to matter; below that it is noise, and on a field
+// sized for a whole document it reads as a threat.
+function agSyncCounter(sel) {
+  const el = $(sel);
+  const cc = $(`${sel}-cc`);
+  if (!el || !cc) return;
+  const cap = Number(el.maxLength) > 0 ? Number(el.maxLength) : Infinity;
+  const len = String(el.value || '').length;
+  const near = Number.isFinite(cap) && len >= Math.floor(cap * 0.9);
+  cc.textContent = near ? `${len}/${cap}` : String(len);
+  cc.classList.toggle('is-full', Number.isFinite(cap) && len >= cap);
+  cc.classList.toggle('is-near', near && len < cap);
+}
+function agSyncCounters() { for (const sel of AG_CAPS) agSyncCounter(sel); }
+
+function openAgentModal(editId, { prefillName } = {}) {
   const modal = $('#agent-modal');
   if (!modal) return;
   editingProfileId = editId || null;
   const existing = editId ? profilesCache.find((p) => p.id === editId) : null;
+  const builtin = !!(existing && existing.builtin);
+
   const titleEl = $('#agent-modal-title');
-  if (titleEl) titleEl.textContent = existing ? 'Edit Agent' : 'New Agent';
+  if (titleEl) titleEl.textContent = existing ? (builtin ? 'View agent' : 'Edit agent') : 'New agent';
+
+  if ($('#agent-name')) { $('#agent-name').value = existing ? (existing.name || '') : (prefillName || ''); $('#agent-name').classList.remove('field-invalid'); }
+  if ($('#agent-description')) $('#agent-description').value = existing ? (existing.description || '') : '';
+  if ($('#agent-system-prompt')) $('#agent-system-prompt').value = existing ? (existing.systemPrompt || '') : '';
+  if ($('#agent-autoselect')) $('#agent-autoselect').checked = !!(existing && existing.autoSelect);
+  agSyncCounters();
+
+  for (const sel of AG_CAPS) { const el = $(sel); if (el) el.readOnly = builtin; }
 
   const genStep = $('#agent-generate-step');
-  const editStep = $('#agent-edit-step');
-  const genDesc = $('#agent-generate-desc');
-  const statusEl = $('#agent-generate-status');
+  if (genStep) genStep.hidden = !!existing;
+  if ($('#agent-generate-desc')) $('#agent-generate-desc').value = '';
+  agResetGenButtons();
 
-  const genFoot = $('#agent-generate-foot');
-  const editFoot = $('#agent-edit-foot');
+  if ($('#agent-modal-delete')) $('#agent-modal-delete').hidden = !existing || builtin;
+  if ($('#agent-modal-save')) $('#agent-modal-save').hidden = builtin;
+  if ($('#agent-modal-duplicate')) $('#agent-modal-duplicate').hidden = !builtin;
+  if ($('#agent-builtin-note')) $('#agent-builtin-note').hidden = !builtin;
 
-  if (existing) {
-    if (genStep) genStep.hidden = true;
-    if (genFoot) genFoot.hidden = true;
-    if (editStep) editStep.hidden = false;
-    if (editFoot) editFoot.hidden = false;
-    if ($('#agent-name')) $('#agent-name').value = existing.name;
-    if ($('#agent-description')) $('#agent-description').value = existing.description || '';
-    if ($('#agent-system-prompt')) $('#agent-system-prompt').value = existing.systemPrompt || '';
-    if ($('#agent-autoselect')) $('#agent-autoselect').checked = !!existing.autoSelect;
-  } else {
-    if (genStep) genStep.hidden = false;
-    if (genFoot) genFoot.hidden = false;
-    if (editStep) editStep.hidden = true;
-    if (editFoot) editFoot.hidden = true;
-    if (genDesc) genDesc.value = '';
-    if (statusEl) { statusEl.hidden = true; statusEl.textContent = ''; }
-  }
+  const srcRow = $('#agent-source-row');
+  const srcPath = $('#agent-source-path');
+  const repoRoot = existing && existing.repoRoot;
+  if (srcRow) srcRow.hidden = !repoRoot;
+  if (srcPath) { srcPath.textContent = repoRoot ? agShortPath(repoRoot) : ''; srcPath.title = repoRoot || ''; }
 
   modal.hidden = false;
-  setTimeout(() => { try { (existing ? $('#agent-name') : genDesc).focus(); } catch (_) {} }, 30);
+  const first = prefillName ? '#agent-description' : (existing ? '#agent-name' : '#agent-generate-desc');
+  setTimeout(() => { try { $(first).focus(); } catch (_) {} }, 30);
+}
+
+function agResetGenButtons() {
+  const btn = $('#btn-generate-agent');
+  if (btn) { btn.disabled = false; btn.textContent = 'Draft'; }
+  const cancel = $('#btn-generate-cancel');
+  if (cancel) cancel.hidden = true;
 }
 
 function closeAgentModal() {
   const modal = $('#agent-modal');
   if (modal) modal.hidden = true;
+  agGenSeq++;
+  const status = $('#agent-generate-status');
+  if (status) { status.hidden = true; status.textContent = ''; status.classList.remove('is-error'); }
+  agResetGenButtons();
+  const genStep = $('#agent-generate-step');
+  if (genStep) genStep.hidden = false;
+  for (const sel of AG_CAPS) { const el = $(sel); if (el) el.readOnly = false; }
   editingProfileId = null;
 }
 
@@ -5008,46 +5676,245 @@ async function saveAgentModal() {
     if (res && res.ok) profilesCache = profilesCache.map((p) => p.id === editingProfileId ? { ...p, name, description, systemPrompt, autoSelect } : p);
   } else {
     res = await window.husk.profiles.create({ name, description, systemPrompt, autoSelect });
-    if (res && res.id) profilesCache = [...profilesCache, res];
+    if (res && res.id) { profilesCache = [...profilesCache, res]; agCursor = res.id; }
   }
   if (!res || (!res.ok && !res.id)) { toast('Could not save agent', 'error'); return; }
   closeAgentModal();
   paintAgents();
+  updateActiveChatProfile();
 }
 
+// The draft has no abort channel, so Cancel stops waiting for it rather than
+// claiming to stop it.
 async function generateAgentWithAI() {
   const descEl = $('#agent-generate-desc');
   const statusEl = $('#agent-generate-status');
-  const genBtn = $('#btn-generate-agent');
+  const btn = $('#btn-generate-agent');
+  const cancel = $('#btn-generate-cancel');
   const desc = descEl ? descEl.value.trim() : '';
-  if (!desc) { toast('Describe what the agent should do first', 'error'); return; }
-  if (statusEl) { statusEl.textContent = 'Generating...'; statusEl.hidden = false; }
-  if (genBtn) genBtn.disabled = true;
-  const res = await window.husk.profiles.generate(desc);
-  if (genBtn) genBtn.disabled = false;
-  if (!res || !res.ok) {
-    if (statusEl) { statusEl.textContent = res ? res.error : 'Generation failed'; statusEl.hidden = false; }
+  if (!desc) {
+    toast('Describe what the agent should do first', 'error');
+    if (descEl) descEl.focus();
     return;
   }
-  if (statusEl) statusEl.hidden = true;
-  const genStep = $('#agent-generate-step');
-  const editStep = $('#agent-edit-step');
-  const genFoot = $('#agent-generate-foot');
-  const editFoot = $('#agent-edit-foot');
-  if (genStep) genStep.hidden = true;
-  if (genFoot) genFoot.hidden = true;
-  if (editStep) editStep.hidden = false;
-  if (editFoot) editFoot.hidden = false;
+  const token = ++agGenSeq;
+  if (statusEl) { statusEl.hidden = true; statusEl.textContent = ''; statusEl.classList.remove('is-error'); }
+  if (btn) btn.disabled = true;
+  if (cancel) cancel.hidden = false;
+  // A spinner under 400ms reads as a flicker, so the button only changes when
+  // the wait is long enough to notice.
+  setTimeout(() => {
+    if (token !== agGenSeq || !btn) return;
+    // eslint-disable-next-line no-unsanitized/property -- static markup
+    btn.innerHTML = '<span class="ag-spin"></span> Drafting';
+  }, 400);
+
+  let res = null;
+  try { res = await window.husk.profiles.generate(desc); } catch (err) { res = { ok: false, error: String((err && err.message) || err) }; }
+  if (token !== agGenSeq) return;
+  agResetGenButtons();
+  if (!res || !res.ok) {
+    if (statusEl) {
+      statusEl.textContent = (res && res.error) || 'Draft failed';
+      statusEl.hidden = false;
+      statusEl.classList.add('is-error');
+    }
+    return;
+  }
   if ($('#agent-name')) $('#agent-name').value = res.name || '';
   if ($('#agent-description')) $('#agent-description').value = res.description || '';
   if ($('#agent-system-prompt')) $('#agent-system-prompt').value = res.systemPrompt || '';
-  if ($('#agent-autoselect')) $('#agent-autoselect').checked = false;
+  agSyncCounters();
   setTimeout(() => { try { $('#agent-name').focus(); } catch (_) {} }, 30);
 }
 
+// ── Events ──────────────────────────────────────────────────────────────────
+
+function agResetFilters() {
+  agOrigin = 'all'; agState = 'all'; agQuery = '';
+  const s = $('#agents-search');
+  if (s) s.value = '';
+}
+
+function agFocusSearch() {
+  const s = $('#agents-search');
+  if (!s) return;
+  s.focus();
+  s.select();
+}
+
+function onAgListClick(e) {
+  const em = e.target.closest('[data-ag-empty]');
+  if (em) {
+    const k = em.dataset.agEmpty;
+    if (k === 'retry') return void renderAgents();
+    if (k === 'new') return void openAgentModal(null);
+    if (k === 'create') {
+      const q = agQuery.trim();
+      agResetFilters();
+      paintAgents();
+      return void openAgentModal(null, { prefillName: q.slice(0, 64) });
+    }
+    agResetFilters();
+    paintAgents();
+    // The repaint destroys the button that was pressed, so the keyboard lands
+    // in the list the press just refilled.
+    agSyncCursor({ focus: true });
+    return;
+  }
+  const row = e.target.closest('.ag-row');
+  if (!row || row.classList.contains('is-skel')) return;
+  const act = e.target.closest('[data-ag-act]');
+  if (act) {
+    e.stopPropagation();
+    const kind = act.dataset.agAct;
+    if (kind === 'pin') agToggle(row.dataset.id);
+    else if (kind === 'edit') openAgentModal(row.dataset.id);
+    else deleteProfile(row.dataset.id);
+    return;
+  }
+  // Only a selection made inside this row blocks the click, so leftover
+  // selected text elsewhere on the page cannot make a row dead.
+  const sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed && row.contains(sel.anchorNode)) return;
+  agCursor = row.dataset.id;
+  agSyncCursor({ focus: true });
+}
+
+function agKeydown(e) {
+  if (!agentsPageOpen()) return;
+  // Anything layered over the page owns the keyboard while it is up, so the
+  // caret behind it never moves and Enter never reaches a row.
+  if (document.querySelector('.modal:not([hidden]), .palette:not([hidden])')) return;
+  const t = e.target;
+  const tag = t && t.tagName;
+  if (tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
+  const inInput = tag === 'INPUT' || tag === 'SELECT';
+  const key = e.key;
+  const mod = e.ctrlKey || e.metaKey;
+
+  if (mod && !e.altKey) {
+    const k = String(key).toLowerCase();
+    if (e.shiftKey && k === 'a') { e.preventDefault(); agBulkPin(true); return; }
+    if (e.shiftKey && k === 'd') { e.preventDefault(); agBulkPin(false); return; }
+    if (e.shiftKey) return;
+    if (k === 'f') { e.preventDefault(); agFocusSearch(); return; }
+    if (key === 'Enter') { e.preventDefault(); if (agCursor) openAgentModal(agCursor); return; }
+    if (k === 'd') { e.preventDefault(); if (agCursor) agDuplicate(agCursor); return; }
+    if (key === 'Backspace') { e.preventDefault(); if (agCursor) deleteProfile(agCursor); return; }
+    return;                       // every other chord belongs to the shell
+  }
+  if (e.altKey) return;
+
+  // A focused facet owns the horizontal arrows, so every chip on both axes is
+  // reachable without a pointer.
+  const group = t && t.closest && t.closest('.ag-facets');
+  if (group && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home' || key === 'End')) {
+    e.preventDefault();
+    agMoveFacet(group, key);
+    return;
+  }
+
+  // Arrows move the caret even while the search box has focus, so filtering
+  // and acting need no handoff between them. They only answer while focus is
+  // inside the page or nowhere in particular, so the rail and the shell keep
+  // their own arrow keys once something over there has taken focus.
+  const idle = !document.activeElement || document.activeElement === document.body;
+  const inPage = idle || !!(t && t.closest && t.closest('.page-agents'));
+  if (inPage) {
+    if (key === 'ArrowDown' || key === 'ArrowUp') { e.preventDefault(); agMoveCursor(key === 'ArrowDown' ? 1 : -1); return; }
+    if (key === 'PageDown' || key === 'PageUp') { e.preventDefault(); agMoveCursor(key === 'PageDown' ? 10 : -10); return; }
+    if ((key === 'Home' || key === 'End') && !inInput) { e.preventDefault(); agSetCursorEdge(key === 'End'); return; }
+  }
+
+  if (key === 'Escape') {
+    if (agQuery.trim()) {
+      agQuery = '';
+      const s = $('#agents-search');
+      if (s) s.value = '';
+      paintAgents();
+      e.preventDefault();
+      return;
+    }
+    if (agOrigin !== 'all' || agState !== 'all') {
+      agResetFilters();
+      paintAgents();
+      e.preventDefault();
+      return;
+    }
+    const s = $('#agents-search');
+    if (s && document.activeElement === s) s.blur();
+    return;
+  }
+
+  // A control that already answers the key answers it natively.
+  const onControl = !!(t && t.closest && t.closest('.ag-act-btn, .ag-pin, .ag-facet, button'));
+  // Enter opens what the caret is on, the way it does in every list. Space is
+  // the toggle, which is where a pin belongs.
+  if (key === 'Enter') {
+    if (onControl) return;
+    e.preventDefault();
+    if (agCursor) openAgentModal(agCursor);
+    return;
+  }
+  if (key === ' ') {
+    if (onControl || inInput) return;
+    e.preventDefault();
+    if (agCursor) agToggle(agCursor);
+    return;
+  }
+  if (key === '/' && !inInput) { e.preventDefault(); agFocusSearch(); return; }
+  if (!inInput && (key === 'n' || key === 'N')) { e.preventDefault(); openAgentModal(null); }
+}
+
+$('#agents-search') && $('#agents-search').addEventListener('input', (e) => { agQuery = e.target.value; paintAgents(); });
+$('#btn-agents-refresh') && $('#btn-agents-refresh').addEventListener('click', () => renderAgents());
 $('#btn-new-agent') && $('#btn-new-agent').addEventListener('click', () => openAgentModal(null));
 
-// Import agents from ~/.claude/agents/*.md
+$('#ag-bar') && $('#ag-bar').addEventListener('click', (e) => {
+  const f = e.target.closest('.ag-facet');
+  if (!f) return;
+  // The pinned axis has no All chip, so clicking the chip that is already on
+  // is how the axis clears.
+  const key = f.dataset.key;
+  const group = f.closest('.ag-facets');
+  const next = (f.dataset.facet === 'state' && agState === key) ? 'all' : key;
+  agSetFacet(f.dataset.facet, next);
+  paintAgents();
+  // The group element survives the repaint; its chips do not. Without this the
+  // arrows that traverse the band have nothing to start from.
+  const back = group && group.querySelector(`.ag-facet[data-key="${CSS.escape(key)}"]`);
+  if (back) { back.tabIndex = 0; back.focus(); }
+  else agSyncCursor({ focus: true });
+});
+$('#ag-master') && $('#ag-master').addEventListener('click', (e) => {
+  agBulkPin(e.currentTarget.getAttribute('aria-pressed') !== 'true');
+});
+
+$('#ag-detail') && $('#ag-detail').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-ag-dt-act]');
+  if (!act || !agCursor) return;
+  const kind = act.dataset.agDtAct;
+  if (kind === 'pin') agToggle(agCursor);
+  else if (kind === 'edit') openAgentModal(agCursor);
+  else deleteProfile(agCursor);
+});
+
+$('#ag-list') && $('#ag-list').addEventListener('click', onAgListClick);
+$('#ag-list') && $('#ag-list').addEventListener('pointermove', (e) => {
+  if (e.currentTarget.dataset.nav) delete e.currentTarget.dataset.nav;
+});
+$('#ag-list') && $('#ag-list').addEventListener('dblclick', (e) => {
+  const row = e.target.closest('.ag-row');
+  if (row && !e.target.closest('.ag-pin, .ag-act-btn')) openAgentModal(row.dataset.id);
+});
+$('#ag-list') && $('#ag-list').addEventListener('focusin', (e) => {
+  const row = e.target.closest('.ag-row');
+  if (row && row.dataset.id !== agCursor) { agCursor = row.dataset.id; agSyncCursor(); }
+});
+window.addEventListener('keydown', agKeydown);
+
+// Import agents already on disk, from every installed tool's agents directory.
 async function openAgentsImportModal() {
   const modal = $('#agents-import-modal');
   const listEl = $('#ai-list');
@@ -5130,12 +5997,11 @@ async function confirmAgentsImport() {
   const activate = !!($('#ai-activate-after') && $('#ai-activate-after').checked);
   const res = await window.husk.profiles.importAgents(picks, activate);
   if (!res || !res.ok) { toast((res && res.error) || 'Import failed', 'error'); if (btn) btn.disabled = false; return; }
-  toast(`Imported ${res.imported} agent${res.imported !== 1 ? 's' : ''}${activate ? ' and activated' : ''}`, 'success');
+  toast(`Imported ${res.imported} agent${res.imported !== 1 ? 's' : ''}${activate ? ' and pinned' : ''}`, 'success');
   closeAgentsImportModal();
   profilesCache = await window.husk.profiles.list();
   if (activate) cfg = await window.husk.config.get();
   paintAgents();
-  updateAgentBanner();
   updateActiveChatProfile();
 }
 
@@ -5146,12 +6012,11 @@ $('#ai-confirm') && $('#ai-confirm').addEventListener('click', confirmAgentsImpo
 $('#agents-import-modal') && $('#agents-import-modal').addEventListener('click', (e) => { if (e.target === $('#agents-import-modal')) closeAgentsImportModal(); });
 
 // ─── Install agents from a repo (local folder or https URL) ─────────────────────
-// The repo is expected to ship agents/*.md (Claude-style frontmatter) and
-// optionally skills/*.md. Husk copies each picked agent to ~/.claude/agents/
-// (Claude path), writes the body into <repo>/.github/copilot-instructions.md
-// inside HUSK-AGENTS markers (Copilot path), and stamps the resulting Husk
-// profile with repoRoot. spawnPty consumes repoRoot as the cwd, so the agent's
-// relative skills/<test_id>.md reads resolve when the chat launches.
+// The repo is expected to ship agents/*.md with markdown frontmatter, and
+// optionally skills/*.md. Husk writes each picked agent into every installed
+// tool's own agents directory and stamps the resulting profile with repoRoot.
+// spawnPty consumes repoRoot as the cwd, so the agent's relative
+// skills/<test_id>.md reads resolve when the chat launches.
 let lastRepoScan = null;
 // Two entry points share the scan/install flow below: a GitHub URL row and a
 // local folder row. Picking a source reveals its row; local also opens the
@@ -5313,15 +6178,14 @@ async function confirmRepoAgentsInstall() {
   }
   {
     const parts = [`Installed ${res.imported} agent${res.imported !== 1 ? 's' : ''}`];
-    if (installToClaudeAgents && res.distributedTo && res.distributedTo.length) parts.push(`synced to all AI tools`);
-    if (activate) parts.push('activated');
+    if (installToAllAgents && res.distributedTo && res.distributedTo.length) parts.push('synced to every AI tool');
+    if (activate) parts.push('pinned');
     toast(parts.join(' · '), 'success');
   }
   closeRepoAgentsModal();
   profilesCache = await window.husk.profiles.list();
   if (activate) cfg = await window.husk.config.get();
   paintAgents();
-  updateAgentBanner();
   updateActiveChatProfile();
 }
 $('#btn-install-from-repo') && $('#btn-install-from-repo').addEventListener('click', openRepoAgentsModal);
@@ -5584,25 +6448,41 @@ $('#repo-mcp-modal') && $('#repo-mcp-modal').addEventListener('click', (e) => { 
 $('#agent-modal-close') && $('#agent-modal-close').addEventListener('click', closeAgentModal);
 $('#agent-modal-cancel') && $('#agent-modal-cancel').addEventListener('click', closeAgentModal);
 $('#agent-modal-save') && $('#agent-modal-save').addEventListener('click', saveAgentModal);
-$('#agent-name') && $('#agent-name').addEventListener('input', () => $('#agent-name').classList.remove('field-invalid'));
-$('#btn-deactivate-all') && $('#btn-deactivate-all').addEventListener('click', () => deactivateAllProfiles());
-$('#btn-select-all-agents') && $('#btn-select-all-agents').addEventListener('click', () => activateAllProfiles());
-$('#btn-deselect-all-agents') && $('#btn-deselect-all-agents').addEventListener('click', () => deactivateAllProfiles());
-$('#agent-modal') && $('#agent-modal').addEventListener('click', (e) => { if (e.target === $('#agent-modal')) closeAgentModal(); });
-$('#btn-generate-agent') && $('#btn-generate-agent').addEventListener('click', generateAgentWithAI);
-$('#btn-manual-agent') && $('#btn-manual-agent').addEventListener('click', () => {
-  $('#agent-generate-step').hidden = true;
-  $('#agent-generate-foot').hidden = true;
-  $('#agent-edit-step').hidden = false;
-  $('#agent-edit-foot').hidden = false;
-  setTimeout(() => { try { $('#agent-name').focus(); } catch (_) {} }, 30);
+$('#agent-modal-delete') && $('#agent-modal-delete').addEventListener('click', () => {
+  const id = editingProfileId;
+  closeAgentModal();
+  if (id) deleteProfile(id);
 });
-$('#agent-modal-back') && $('#agent-modal-back').addEventListener('click', () => {
-  $('#agent-edit-step').hidden = true;
-  $('#agent-edit-foot').hidden = true;
-  $('#agent-generate-step').hidden = false;
-  $('#agent-generate-foot').hidden = false;
-  setTimeout(() => { try { $('#agent-generate-desc').focus(); } catch (_) {} }, 30);
+$('#agent-modal-duplicate') && $('#agent-modal-duplicate').addEventListener('click', () => {
+  const id = editingProfileId;
+  closeAgentModal();
+  if (id) agDuplicate(id);
+});
+$('#agent-source-reveal') && $('#agent-source-reveal').addEventListener('click', () => {
+  const p = profilesCache.find((x) => x.id === editingProfileId);
+  if (p && p.repoRoot) window.husk.fs.open(p.repoRoot);
+});
+$('#agent-name') && $('#agent-name').addEventListener('input', () => $('#agent-name').classList.remove('field-invalid'));
+for (const sel of AG_CAPS) {
+  const el = $(sel);
+  if (el) el.addEventListener('input', () => agSyncCounter(sel));
+}
+$('#agent-modal') && $('#agent-modal').addEventListener('click', (e) => { if (e.target === $('#agent-modal')) closeAgentModal(); });
+$('#agent-modal') && $('#agent-modal').addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter') return;
+  const save = $('#agent-modal-save');
+  if (!save || save.hidden) return;
+  e.preventDefault();
+  saveAgentModal();
+});
+$('#btn-generate-agent') && $('#btn-generate-agent').addEventListener('click', generateAgentWithAI);
+$('#btn-generate-cancel') && $('#btn-generate-cancel').addEventListener('click', () => {
+  agGenSeq++;
+  agResetGenButtons();
+});
+$('#btn-generate-cancel') && $('#btn-generate-cancel').setAttribute('title', 'Stop waiting for the draft');
+$('#agent-generate-desc') && $('#agent-generate-desc').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); generateAgentWithAI(); }
 });
 
 // ─── Prompts page ──────────────────────────────────────────────────────────────
@@ -14121,6 +15001,11 @@ $('#aut-review-revert') && $('#aut-review-revert').addEventListener('click', asy
 //
 // We skip on composition events so an IME's ESC-to-dismiss-popup
 // keeps working without closing the surrounding modal.
+const MODAL_CLOSERS = {
+  'agent-modal': closeAgentModal,
+  'agents-import-modal': closeAgentsImportModal,
+  'repo-agents-modal': closeRepoAgentsModal,
+};
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.isComposing) return;
   let open = $$('.modal:not([hidden])');
