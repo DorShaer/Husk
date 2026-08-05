@@ -6857,6 +6857,50 @@ input[type="checkbox"]:disabled {
 
 /* ─── MCP page ──────────────────────────────────────────────────────────── */
 .mcp-body { display: flex; flex-direction: column; gap: 22px; padding: 14px 24px 22px; overflow: auto; }
+
+/* Scope bar: which folder the list below belongs to. Only shown once a project
+   is open, since there is nothing to scope to otherwise. */
+.mcp-scope {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
+}
+.mcp-scope-seg {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--bg-3); border-radius: var(--radius-md);
+}
+.mcp-scope-btn {
+  border: 0; background: transparent; color: var(--text-3);
+  font-size: var(--fs-micro); font-weight: 600;
+  padding: 5px 12px; border-radius: calc(var(--radius-md) - 2px); cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mcp-scope-btn:hover { color: var(--text-2); }
+.mcp-scope-btn.on { background: var(--bg); color: var(--text); box-shadow: var(--hl-top); }
+.mcp-scope-note { font-size: var(--fs-micro); color: var(--text-3); flex: 1; min-width: 0; }
+.mcp-scope-warn { color: var(--amber); }
+.mcp-scope-reset { flex: 0 0 auto; }
+
+/* Three-way row control: Off / follow the global list / On, for one folder. */
+.mr-tri { display: flex; gap: 2px; padding: 2px; background: var(--bg-3); border-radius: var(--radius-md); }
+.mr-tri-btn {
+  border: 0; background: transparent; color: var(--text-3);
+  font-size: var(--fs-nano); font-weight: 600;
+  padding: 4px 10px; border-radius: calc(var(--radius-md) - 2px); cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.mr-tri-btn:hover { color: var(--text-2); }
+.mr-tri-btn.on { background: var(--bg); color: var(--text); box-shadow: var(--hl-top); }
+.mr-tri-btn[data-tri="on"].on { color: var(--emerald); }
+.mr-tri-btn[data-tri="off"].on { color: var(--text-2); }
+.mr-tag {
+  margin-left: 6px; padding: 1px 6px; border-radius: var(--radius-sm);
+  font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
+}
+
 .mcp-section { display: flex; flex-direction: column; gap: 10px; }
 .mcp-section-head {
   font-size: var(--fs-nano); font-weight: 700; letter-spacing: 0.16em;
@@ -6921,6 +6965,9 @@ input[type="checkbox"]:disabled {
 .mcp-row .mr-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .mcp-row .mr-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .mcp-row.disabled { opacity: 0.55; }
+/* A row that is off still has to show which of the three states put it there,
+   so the control keeps full contrast while the rest of the row recedes. */
+.mcp-row.disabled .mr-tri { opacity: calc(1 / 0.55); }
 .mcp-row .mr-remove,
 .mcp-row .mr-edit {
   background: transparent; border: 0; cursor: pointer;
@@ -10710,6 +10757,10 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-stat.is-live { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line-2)); }
 .ws-stat.is-dirty { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 30%, var(--line-2)); }
 .ws-stat.is-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line-2)); background: color-mix(in srgb, var(--warn) 8%, var(--bg-2)); }
+/* A server this project chose, as opposed to one it inherits. */
+.ws-stat-project { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line-2)); }
+.ws-mcp-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.ws-mcp-off { font-size: var(--fs-micro); color: var(--text-3); }
 .ws-stat.is-attn { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line-2)); background: color-mix(in srgb, var(--accent) 8%, var(--bg-2)); }
 .ws-ab { color: var(--text-3); }
 
@@ -10847,7 +10898,9 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-run-goal { color: var(--text); font-size: var(--fs-small); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ws-run-meta { color: var(--text-3); font-size: var(--fs-micro); margin-top: 2px; }
 .ws-runs-all { margin-top: 10px; padding: 4px 12px; font-size: var(--fs-micro); }
-#ws-mcp { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Stacked: the chip row, the line naming what this folder turned off, and the
+   action each need their own line to read as separate statements. */
+#ws-mcp { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 #ws-mcp.is-empty { display: block; }
 .ws-state-note {
   flex: 0 0 auto;

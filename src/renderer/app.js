@@ -2521,17 +2521,27 @@ async function wsFillInspect(p) {
 
   const mcpEl = $('#ws-mcp');
   if (mcpEl) {
-    const names = (ins && ins.ok && ins.mcpServers) || [];
-    mcpEl.classList.toggle('is-empty', !names.length);
-    if (!names.length) {
-      // eslint-disable-next-line no-unsanitized/property -- Static markup.
-      mcpEl.innerHTML = '<div class="ws-empty">None configured for this folder.</div><button class="ghost-btn ws-cta" id="ws-cta-mcp">Add server</button>';
-      const cta = $('#ws-cta-mcp');
-      if (cta) cta.addEventListener('click', () => setPage('mcp'));
-    } else {
-      // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
-      mcpEl.innerHTML = names.map((n) => `<span class="ws-stat">${escapeHtml(n)}</span>`).join(' ');
+    // The panel answers what the agent gets in this folder, so it lists the
+    // resolved set rather than one storage location. An empty result means the
+    // agent really has no servers here, not that a config key is missing.
+    const rows = (ins && ins.ok && ins.mcpRows) || [];
+    const excluded = (ins && ins.ok && ins.mcpExcluded) || [];
+    mcpEl.classList.toggle('is-empty', !rows.length);
+    let html = rows.length
+      ? `<div class="ws-mcp-list">${rows.map((r) => `<span class="ws-stat${r.source === 'project' ? ' ws-stat-project' : ''}" title="${r.source === 'project' ? 'Turned on for this project' : 'Inherited from the global list'}">${escapeHtml(r.id)}</span>`).join(' ')}</div>`
+      : '<div class="ws-empty">No MCP servers run in this folder.</div>';
+    if (excluded.length) {
+      html += `<div class="ws-mcp-off">Off here: ${excluded.map((id) => escapeHtml(id)).join(', ')}</div>`;
     }
+    html += `<button class="ghost-btn ws-cta" id="ws-cta-mcp">${rows.length || excluded.length ? 'Manage servers' : 'Add server'}</button>`;
+    // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
+    mcpEl.innerHTML = html;
+    const cta = $('#ws-cta-mcp');
+    if (cta) cta.addEventListener('click', async () => {
+      // Land on the scope the user was just looking at, not the global list.
+      if (ins && ins.mcpSupported && p && p.id === activeProjectId) mcpScope = 'project';
+      setPage('mcp');
+    });
   }
 }
 
@@ -9734,8 +9744,77 @@ async function reloadMcpHealth() {
     if (currentPage === 'mcp') paintMcpSections();
   }
 }
+// Which folder the MCP page is editing. 'global' edits the list every folder
+// inherits; a project scope edits only which of those servers that one folder
+// runs. Server definitions always live in the global list, so Add / Edit /
+// Remove stay global whatever the scope.
+let mcpScope = 'global';
+let mcpProject = null;   // { id, name, path } when scoped to a project
+let mcpProjectState = null; // last projectMcp:get result
+
+function mcpActiveProject() {
+  if (!activeProjectId) return null;
+  const p = projectsCache.find((x) => x && x.id === activeProjectId);
+  return (p && p.path) ? p : null;
+}
+
+async function reloadMcpProjectState() {
+  // The MCP page can be opened without the Projects page ever having painted,
+  // so the cache it fills is not something this can wait for.
+  if (!projectsCache.length) {
+    try {
+      const res = await window.husk.projects.list();
+      projectsCache = (res && res.projects) || [];
+      activeProjectId = (res && res.activeProjectId) || null;
+    } catch (_) {}
+  }
+  mcpProject = mcpActiveProject();
+  if (!mcpProject) { mcpScope = 'global'; mcpProjectState = null; return; }
+  try { mcpProjectState = await window.husk.mcp.projectGet(mcpProject.path); }
+  catch (_) { mcpProjectState = null; }
+}
+
+function mcpRowState(id) {
+  const rows = (mcpProjectState && mcpProjectState.rows) || [];
+  const row = rows.find((r) => r.id === id);
+  return row ? row.state : 'inherit';
+}
+
+function paintMcpScope() {
+  const bar = $('#mcp-scope');
+  if (!bar) return;
+  // Nothing to scope to until a project is open.
+  if (!mcpProject) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const unsupported = mcpProjectState && mcpProjectState.supported === false;
+  const seg = (key, label) =>
+    `<button class="mcp-scope-btn${mcpScope === key ? ' on' : ''}" data-scope="${key}">${escapeHtml(label)}</button>`;
+  const note = mcpScope === 'project'
+    ? (unsupported
+      ? `<span class="mcp-scope-note mcp-scope-warn">${escapeHtml(mcpAdapterAgent)} has no per-folder switch, so this list applies everywhere for now.</span>`
+      : '<span class="mcp-scope-note">Servers not set here follow the global list.</span>')
+    : '<span class="mcp-scope-note">Applies to every folder that does not override it.</span>';
+  const reset = (mcpScope === 'project' && mcpProjectState && mcpProjectState.customized)
+    ? '<button class="ghost-btn mcp-scope-reset" id="mcp-scope-reset">Reset to global</button>'
+    : '';
+  // eslint-disable-next-line no-unsanitized/property -- Labels go through escapeHtml.
+  bar.innerHTML = `<div class="mcp-scope-seg">${seg('global', 'Everywhere')}${seg('project', mcpProject.name || 'This project')}</div>${note}${reset}`;
+  bar.querySelectorAll('[data-scope]').forEach((b) => b.addEventListener('click', async () => {
+    mcpScope = b.dataset.scope;
+    await renderMcp();
+  }));
+  const resetBtn = $('#mcp-scope-reset');
+  if (resetBtn) resetBtn.addEventListener('click', async () => {
+    await window.husk.mcp.projectClear(mcpProject.path);
+    notify(`${mcpProject.name} follows the global MCP list again`, { kind: 'success' });
+    await renderMcp();
+  });
+}
+
 async function renderMcp() {
   await reloadMcpInventory();
+  await reloadMcpProjectState();
+  paintMcpScope();
   paintMcpSections();
   paintMcpCatalog();
   // Kick off a fresh health probe in the background. The probe shells out
@@ -9768,6 +9847,31 @@ function mcpRowHTML(s) {
   const detail = (s.transport === 'http' || s.transport === 'sse')
     ? `${s.transport.toUpperCase()} · ${s.url || ''}`
     : `${s.command || ''} ${(s.args || []).join(' ')}`.trim();
+  // In project scope the row answers "does this folder run it", so the global
+  // on/off toggle gives way to a three-way that can also defer to the global
+  // list. Edit and Remove are hidden there: they change the server everywhere,
+  // which is not what a folder-scoped row implies.
+  if (mcpScope === 'project' && mcpProject) {
+    const rows = (mcpProjectState && mcpProjectState.rows) || [];
+    const row = rows.find((r) => r.id === s.id) || { on: s.enabled !== false, state: 'inherit', globallyOn: s.enabled !== false };
+    const inheritLabel = row.globallyOn ? 'Default · on' : 'Default · off';
+    const seg = (key, label, title) =>
+      `<button class="mr-tri-btn${row.state === key ? ' on' : ''}" data-tri="${key}" title="${escapeAttr(title)}">${escapeHtml(label)}</button>`;
+    return `
+      <div class="mcp-row${row.on ? '' : ' disabled'}" data-id="${escapeAttr(s.id)}">
+        <span class="mr-icon">${escapeHtml(icon)}</span>
+        <div class="mr-info">
+          <span class="mr-name">${escapeHtml(s.id)}${row.source === 'project' ? '<span class="mr-tag">project</span>' : ''}</span>
+          <span class="mr-cmd">${escapeHtml(detail)}</span>
+        </div>
+        <div class="mr-actions mr-tri">
+          ${seg('off', 'Off', `Never run ${s.id} in this project`)}
+          ${seg('inherit', inheritLabel, 'Follow the global list')}
+          ${seg('on', 'On', `Always run ${s.id} in this project`)}
+        </div>
+      </div>`;
+  }
+
   const badge = healthBadgeHTML(s.id, s.enabled);
   return `
     <div class="mcp-row${s.enabled ? '' : ' disabled'}" data-id="${escapeAttr(s.id)}">
@@ -9831,19 +9935,52 @@ function bindMcpRows(scope) {
       await renderMcp();
       applyMcpChange(row.dataset.id);
     });
+    row.querySelectorAll('[data-tri]').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!mcpProject) return;
+      const r = await window.husk.mcp.projectSet({ path: mcpProject.path, id: row.dataset.id, state: btn.dataset.tri });
+      if (!r || !r.ok) { toast((r && r.error) || 'Could not save', 'error'); return; }
+      await renderMcp();
+      // The set only reaches the agent at launch, so say so rather than
+      // implying the running session just changed.
+      applyMcpChange(row.dataset.id);
+    }));
   });
 }
 function paintMcpSections() {
   const wrap = $('#mcp-installed');
-  const enabled = mcpInstalled.filter((s) => s.enabled);
-  const disabled = mcpInstalled.filter((s) => !s.enabled);
-  const loaded   = enabled.filter((s) => loadedMcpSnapshot.has(s.id));
-  const pending  = enabled.filter((s) => !loadedMcpSnapshot.has(s.id));
+  const head = $('#mcp-installed-head');
+  if (head) head.textContent = mcpScope === 'project' && mcpProject ? `Running in ${mcpProject.name}` : 'Installed';
 
   if (!mcpInstalled.length) {
     wrap.innerHTML = '<div class="empty-state"><div class="es-icon">⊟</div><div class="es-msg">No MCP servers yet. Pick one below to give the agent a new ability.</div></div>';
     return;
   }
+
+  if (mcpScope === 'project' && mcpProject) {
+    // Project scope splits on what this folder ends up running, not on the
+    // global on/off, because that is the question the scope is here to answer.
+    const rows = (mcpProjectState && mcpProjectState.rows) || [];
+    const on = mcpInstalled.filter((s) => (rows.find((r) => r.id === s.id) || {}).on);
+    const off = mcpInstalled.filter((s) => !(rows.find((r) => r.id === s.id) || {}).on);
+    let phtml = '';
+    if (on.length) {
+      phtml += '<div class="mcp-subhead"><span class="mcp-dot mcp-dot-on"></span>On in this project</div>';
+      phtml += on.map((s) => mcpRowHTML(s)).join('');
+    }
+    if (off.length) {
+      phtml += '<div class="mcp-subhead"><span class="mcp-dot mcp-dot-off"></span>Off in this project</div>';
+      phtml += off.map((s) => mcpRowHTML(s)).join('');
+    }
+    // eslint-disable-next-line no-unsanitized/property -- MCP row templates escape dynamic values.
+    wrap.innerHTML = phtml;
+    bindMcpRows(wrap);
+    return;
+  }
+
+  const enabled = mcpInstalled.filter((s) => s.enabled);
+  const disabled = mcpInstalled.filter((s) => !s.enabled);
+  const loaded   = enabled.filter((s) => loadedMcpSnapshot.has(s.id));
+  const pending  = enabled.filter((s) => !loadedMcpSnapshot.has(s.id));
 
   let html = '';
   if (loaded.length) {

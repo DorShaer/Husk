@@ -309,6 +309,10 @@ const DEFAULT_CONFIG = {
   // launch resume the ongoing discussion for that project instead of minting a
   // new session and splitting one conversation across many transcripts.
   lastClaudeSessions: {},
+  // Map of project path -> { mcpServerId: 'on' | 'off' }. A server with no
+  // entry inherits the global list, so an untouched project behaves exactly as
+  // it did before this existed. See src/lib/project-mcp.js.
+  projectMcp: {},
 };
 
 // The theme a config was running under before `theme` became a stored key. Any
@@ -1108,6 +1112,15 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     agentArgs,
     contextDir: path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT'),
   });
+
+  // Narrow this launch to the MCP servers the folder actually wants. Only the
+  // folders the user has customized get flags; everywhere else the CLI reads
+  // its own config exactly as before. Nothing on disk is rewritten, so running
+  // the CLI outside Husk still sees the user's own global set.
+  if (!isSubcommand) {
+    const mcpArgs = projectMcpLaunchArgs(agentExe, cwd, agentArgs);
+    if (mcpArgs.length) agentArgs = [...agentArgs, ...mcpArgs];
+  }
 
   // Bind this tab to a definite claude session id so stats/recent/resume read
   // exactly this tab's transcript. On resume the id comes from --resume; for a
@@ -4559,6 +4572,80 @@ ipcMain.handle('mcp:list', () => {
   };
 });
 
+// ─── Per-project MCP selection ──────────────────────────────────────────────
+// The global list above says which servers exist; this says which of them a
+// given folder runs. Husk stores the mapping itself rather than using any one
+// CLI's project scope, because the CLIs disagree on whether they have one and
+// none of them can subtract a global server for a single folder.
+
+const ProjectMcp = require('./lib/project-mcp');
+
+const projectMcpDir = () => path.join(app.getPath('userData'), 'project-mcp');
+
+// The effective set for one folder, plus per-server provenance for the UI.
+function resolveProjectMcp(cwd) {
+  const servers = (() => {
+    try {
+      const r = SharedMcp.list(config.agentCommand, { sync: false });
+      return (r && Array.isArray(r.servers)) ? r.servers : [];
+    } catch (_) { return []; }
+  })();
+  return ProjectMcp.resolveEffective(servers, ProjectMcp.overridesFor(config.projectMcp, cwd));
+}
+
+// Flags that pin one launch to the folder's resolved set. Writes the config
+// file the flags point at when the CLI needs one.
+function projectMcpLaunchArgs(agentExe, cwd, existingArgs) {
+  try {
+    const resolved = resolveProjectMcp(cwd);
+    if (!resolved.customized) return [];
+    const forFile = ProjectMcp.serversForConfigFile(agentExe, resolved);
+    const configFile = forFile.length ? ProjectMcp.writeConfigFile(projectMcpDir(), cwd, forFile) : null;
+    return ProjectMcp.buildLaunchArgs({ agentExe, resolved, configFile, existingArgs });
+  } catch (_) { return []; }
+}
+
+ipcMain.handle('projectMcp:get', (_e, cwd) => {
+  const resolved = resolveProjectMcp(cwd);
+  return {
+    ok: true,
+    path: ProjectMcp.normalizeProjectPath(cwd),
+    rows: resolved.rows,
+    effective: resolved.servers.map((s) => s.id),
+    customized: resolved.customized,
+    // Tells the UI whether the active CLI can honor a per-folder set at all.
+    supported: !!ProjectMcp.agentKind(config.agentCommand),
+  };
+});
+
+ipcMain.handle('projectMcp:set', (_e, payload = {}) => {
+  const { path: cwd, id, state } = payload;
+  const key = ProjectMcp.normalizeProjectPath(cwd);
+  if (!key) return { ok: false, error: 'No project path' };
+  if (!id) return { ok: false, error: 'No server id' };
+  const map = { ...(config.projectMcp || {}) };
+  const entry = { ...(map[key] || {}) };
+  // Inherit is the absence of an entry, so the folder keeps following the
+  // global list instead of pinning today's value forever.
+  if (state === ProjectMcp.STATE_ON || state === ProjectMcp.STATE_OFF) entry[id] = state;
+  else delete entry[id];
+  if (Object.keys(entry).length) map[key] = entry;
+  else delete map[key];
+  config = { ...config, projectMcp: map };
+  saveConfig();
+  return { ok: true };
+});
+
+ipcMain.handle('projectMcp:clear', (_e, cwd) => {
+  const key = ProjectMcp.normalizeProjectPath(cwd);
+  if (!key) return { ok: false, error: 'No project path' };
+  const map = { ...(config.projectMcp || {}) };
+  delete map[key];
+  config = { ...config, projectMcp: map };
+  saveConfig();
+  return { ok: true };
+});
+
 ipcMain.handle('mcp:health', () => activeMcpAdapter().health());
 ipcMain.handle('mcp:add', (_e, payload = {}) => SharedMcp.add(payload));
 ipcMain.handle('mcp:update', (_e, payload = {}) => {
@@ -6506,10 +6593,15 @@ ipcMain.handle('projects:inspect', (_e, id) => {
     }
   } catch (_) { /* a repo with no commits yet has no latest commit */ }
   try {
-    // Project-scoped MCP servers live under projects[cwd].mcpServers in the
-    // CLI's own config; names only, the MCP page owns the editing.
-    const entry = ((readClaudeJson() || {}).projects || {})[p.path] || {};
-    out.mcpServers = Object.keys(entry.mcpServers || {}).slice(0, 24);
+    // What the agent actually gets in this folder: the global list with this
+    // project's overrides applied. Each row carries where it came from so the
+    // panel can separate an inherited server from one this project chose.
+    const resolved = resolveProjectMcp(p.path);
+    out.mcpServers = resolved.servers.map((s) => s.id).slice(0, 24);
+    out.mcpRows = resolved.rows.filter((r) => r.on).slice(0, 24).map((r) => ({ id: r.id, source: r.source }));
+    out.mcpExcluded = resolved.excluded.slice(0, 24);
+    out.mcpCustomized = resolved.customized;
+    out.mcpSupported = !!ProjectMcp.agentKind(config.agentCommand);
   } catch (_) {}
   return out;
 });

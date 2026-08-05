@@ -233,6 +233,10 @@ contextBridge.exposeInMainWorld('husk', {
     toggle: (id) => ipcRenderer.invoke('mcp:toggle', id),
     health: () => ipcRenderer.invoke('mcp:health'),
     parseSnippet: (text) => ipcRenderer.invoke('mcp:parseSnippet', { text }),
+    // Per-project selection: which of the servers above a given folder runs.
+    projectGet: (path) => ipcRenderer.invoke('projectMcp:get', path),
+    projectSet: (payload) => ipcRenderer.invoke('projectMcp:set', payload),
+    projectClear: (path) => ipcRenderer.invoke('projectMcp:clear', path),
   },
   dialog2: {
     pickDir: () => ipcRenderer.invoke('dialog:pickDir'),
