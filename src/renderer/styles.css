@@ -1121,6 +1121,7 @@ body[data-page="boot"] .page { display: none !important; }
   flex: 1; min-height: 0;
   overflow-y: auto;
 }
+
 /* Workflows page has three swappable sub-views. The visible one must fill
    the page and be a flex column so its .page-body can scroll. */
 .page-workflows > div:not([hidden]) {
@@ -5247,7 +5248,6 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 
 .ws-board {
   flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
-  padding-right: 4px;
 }
 /* The workspace view is a fixed cockpit: crumbs, hero, and tiles stay put
    while each column scrolls its own content when it overflows. */
@@ -6953,7 +6953,7 @@ input[type="checkbox"]:disabled {
 .accent-swatch[data-c="rose"]    { background: linear-gradient(135deg, #fb7185, #f9a8d4); }
 
 /* ─── MCP page ──────────────────────────────────────────────────────────── */
-.mcp-body { display: flex; flex-direction: column; gap: 22px; padding: 14px 24px 22px; overflow: auto; }
+.mcp-body { display: flex; flex-direction: column; gap: 22px; padding: 14px 0 22px 24px; overflow: auto; }
 
 /* Scope bar: which folder the list below belongs to. Only shown once a project
    is open, since there is nothing to scope to otherwise. */
@@ -11132,3 +11132,43 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .aut-chip-log:hover { background: var(--bg-3); border-color: var(--line-3); color: var(--text); }
 .aut-chip-log:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* One position for every page-level scrollbar.
+   Autopilot scrolls the page element itself, so its bar rides the window edge
+   with the page's own padding holding the content clear of it. Every other page
+   keeps its padding on .page and scrolls a child inside it, which lands the bar
+   one gutter short and hard against the content. Reaching back across that
+   padding puts the bar where Autopilot's sits.
+   The padding that comes back is short by the bar's own width, because a
+   reserved gutter is taken out of the content box: paying it back exactly is
+   what keeps the rows on the same right edge as the page head above them,
+   scrolling or not. That only holds if the bar is the width named here, so the
+   width is set alongside rather than left to the platform.
+   Pages whose scroll belongs to a panel rather than to the page are left alone:
+   Skills and Agents scroll a bordered list, Prompts and Files scroll one column
+   of a two-pane layout, and in each the bar belongs to that box, not the page. */
+.page-body,
+.mcp-body,
+.plugins-body,
+.ws-board,
+.sessions-list {
+  --page-bar-w: 8px;
+  margin-right: calc(-1 * var(--space-6));
+  padding-right: calc(var(--space-6) - var(--page-bar-w));
+  scrollbar-gutter: stable;
+}
+.page-body::-webkit-scrollbar,
+.mcp-body::-webkit-scrollbar,
+.plugins-body::-webkit-scrollbar,
+.ws-board::-webkit-scrollbar,
+.sessions-list::-webkit-scrollbar { width: var(--page-bar-w); }
+.page-body::-webkit-scrollbar-thumb,
+.mcp-body::-webkit-scrollbar-thumb,
+.plugins-body::-webkit-scrollbar-thumb,
+.ws-board::-webkit-scrollbar-thumb,
+.sessions-list::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: var(--radius-sm); }
+.page-body::-webkit-scrollbar-track,
+.mcp-body::-webkit-scrollbar-track,
+.plugins-body::-webkit-scrollbar-track,
+.ws-board::-webkit-scrollbar-track,
+.sessions-list::-webkit-scrollbar-track { background: transparent; }
