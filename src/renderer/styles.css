@@ -435,6 +435,17 @@ body {
      oklch because an sRGB fold toward a near-black text collapses the chroma
      with the lightness and lands on an olive that reads as dim body type. */
   --as-mark: color-mix(in oklch, var(--amber) 70%, var(--text));
+  /* The general warning ink, for halted runs, blocked lanes, incomplete
+     reviews and missing workspace state. Twenty rules across this file already
+     ask for it and nothing declared it, so every one of them resolved to an
+     invalid value: the colors inherited body text and the backgrounds and
+     borders fell back to their initial value. The treatment was not subtle or
+     wrong, it was absent, which is why an incomplete review looked identical
+     to a complete one. It shares --as-mark's fold rather than restating it,
+     because the two mean the same thing to a reader (something here wants your
+     attention) and a second amber at a different lightness would read as a
+     third state that does not exist. */
+  --warn: var(--as-mark);
 }
 
 /* ─── Topbar ────────────────────────────────────────────────────────────── */
