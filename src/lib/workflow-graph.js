@@ -15,6 +15,21 @@ const ALLOWED_AGENT_COMMANDS = new Set([
   'gemini',
 ]);
 
+// Truncating a string by UTF-16 code unit can cut an astral character in half.
+// The high surrogate left behind is not text: it survives JSON as a \udXXX
+// escape, it reaches a CLI argument and a DOM node, and the artifact validator
+// refuses any string carrying one, so a step whose prompt merely ran long came
+// back as "this workflow contains an unpaired surrogate" and blamed the author
+// for a half character the cap had just manufactured. Dropping the orphan
+// costs one character of a string that was already over the limit.
+function clipText(value, max) {
+  const s = String(value);
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return (last >= 0xd800 && last <= 0xdbff) ? cut.slice(0, -1) : cut;
+}
+
 // isAllowedAgentCommand(value) returns true when the first whitespace-
 // separated token's basename (case-insensitive) is in the allowlist.
 function isAllowedAgentCommand(value) {
@@ -32,18 +47,18 @@ function isAllowedAgentCommand(value) {
 // allowlist at run time.
 function sanitizeNode(n) {
   n = n || {};
-  const raw = String(n.agentCommand || '').slice(0, 128);
+  const raw = clipText(n.agentCommand || '', 128);
   const agentCommand = (raw && isAllowedAgentCommand(raw)) ? raw : null;
   return {
     id: n.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    name: String(n.name || 'Step').slice(0, 64),
+    name: clipText(n.name || 'Step', 64),
     agentCommand,
     // A pinned model id, e.g. "claude-opus-4-8" or "gemini-2.5-pro". Free text so
     // a new model works without a Husk update; the run engine only passes it when
     // the vendor exposes a model flag.
-    model: n.model ? String(n.model).slice(0, 128) : null,
+    model: n.model ? clipText(n.model, 128) : null,
     branchMode: n.branchMode === 'ai' ? 'ai' : 'parallel',
-    prompt: String(n.prompt || '').slice(0, 8192),
+    prompt: clipText(n.prompt || '', 8192),
     passContext: ['full', 'last50', 'none'].includes(n.passContext) ? n.passContext : 'full',
     x: Number.isFinite(n.x) ? n.x : 0,
     y: Number.isFinite(n.y) ? n.y : 0,
@@ -59,7 +74,7 @@ function sanitizeEdge(e) {
     to: String(e.to || ''),
     condition: {
       type: ['always', 'contains', 'regex', 'otherwise'].includes(c.type) ? c.type : 'always',
-      value: String(c.value || '').slice(0, 256),
+      value: clipText(c.value || '', 256),
     },
   };
 }
@@ -113,8 +128,27 @@ function graphToOrderedSteps(graph) {
   // Breadth-first from every root (a node with no incoming edge). A
   // pure-cycle graph has no root, so seed with the first node to stay
   // terminating while still emitting every node.
-  const roots = g.nodes.filter((n) => !hasIncoming.has(n.id));
-  const queue = (roots.length ? roots : [g.nodes[0]]).map((n) => n.id);
+  //
+  // The roots are seeded in wiring order, not in node-array order. The
+  // adjacency above already takes branch order from how the user wired the
+  // graph, and taking the seed order from the same place is what makes this
+  // walk a function of the graph rather than of the array the graph happened
+  // to arrive in. Two files describing one workflow whose node arrays were
+  // serialised in a different order would otherwise list their steps in two
+  // different orders, and this order is what the workflow list, the run view
+  // and the imported-workflow consent gate all read: same fingerprint, two
+  // readings. Roots wired to nothing at all have no wiring order to take, so
+  // they follow in node order, after the wired ones.
+  const rooted = new Set();
+  const queue = [];
+  const seedRoot = (id) => {
+    if (rooted.has(id) || hasIncoming.has(id) || !byId.has(id)) return;
+    rooted.add(id);
+    queue.push(id);
+  };
+  for (const e of g.edges) seedRoot(e.from);
+  for (const n of g.nodes) seedRoot(n.id);
+  if (!queue.length) queue.push(g.nodes[0].id);
   while (queue.length) {
     const id = queue.shift();
     if (seen.has(id)) continue;
@@ -203,6 +237,7 @@ function wfResolveNext(graph, node, output, byId) {
 
 module.exports = {
   ALLOWED_AGENT_COMMANDS,
+  clipText,
   isAllowedAgentCommand,
   sanitizeNode,
   sanitizeEdge,
