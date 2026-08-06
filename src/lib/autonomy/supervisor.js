@@ -26,6 +26,11 @@ const Snapshot = require('./snapshot');
 const Audit = require('./audit');
 const Budget = require('./budget');
 const Progress = require('./progress');
+// The canonical serializer used to be defined below this line. It is shared
+// with the workflow artifact fingerprint now, so it lives in one file that
+// both requires: a second copy would let loop detection and graph hashing
+// drift apart without either side changing.
+const { stableJson } = require('../stable-json');
 
 // A stable action signature for loop detection. Returns a string only
 // when the event carries an identifiable action (a command, tool, or
@@ -45,13 +50,6 @@ function stableHash(value) {
   const json = stableJson(value);
   if (!json || json === '{}') return null;
   return crypto.createHash('sha256').update(json).digest('hex').slice(0, 16);
-}
-
-function stableJson(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
-  const keys = Object.keys(value).sort();
-  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableJson(value[k])).join(',') + '}';
 }
 
 function startRun(opts = {}) {
