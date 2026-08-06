@@ -324,6 +324,10 @@
   /* Typographic scale. Display for hero, h1 for page titles, h2 for cards/modals,
      body for prose, small for captions, micro for eyebrow labels. */
   --fs-hero: 46px;
+  /* The two page heroes (Workflows, Autopilot) share one headline size so the
+     cards read as one system. Kept separate from --fs-hero, which also sizes
+     the empty-state and drag-target glyphs and must not move with the heroes. */
+  --fs-page-hero: 38px;
   --fs-display: 32px;
   --fs-h1: 22px;
   --fs-h2: 18px;
@@ -1722,7 +1726,7 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
    on the largest type in the app. */
 .aut-hero-title {
   font-family: var(--font-display);
-  font-size: var(--fs-hero, 46px);
+  font-size: var(--fs-page-hero);
   font-weight: 700;
   letter-spacing: -0.025em;
   line-height: 1.05;
@@ -1764,7 +1768,7 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 }
 .aut-hero-stat-value {
   font-family: var(--font-display);
-  font-size: var(--fs-display);
+  font-size: var(--fs-h1);
   font-weight: 700;
   letter-spacing: -0.015em;
   color: var(--text);
@@ -10044,11 +10048,14 @@ kbd {
 
 .wfx-grid-dot { fill: color-mix(in srgb, var(--text) 9%, transparent); }
 
-/* The stage rail. Set above the graph, so it can never meet the stats rule. */
+/* The stage rail. Set above the graph, so it can never meet the stats rule.
+   Sized in viewBox units, not CSS pixels: the 760-wide graph renders at
+   roughly 0.6 scale in the hero, so a --fs-pico rail landed near 6 device px
+   and read as a smudge. 17 units lands close to 10 real pixels. */
 .wfx-stage {
-  fill: color-mix(in srgb, var(--text) 38%, transparent);
+  fill: color-mix(in srgb, var(--text) 46%, transparent);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: var(--fs-pico); font-weight: 700; letter-spacing: 2.6px; text-anchor: middle;
+  font-size: 14px; font-weight: 700; letter-spacing: 3.6px; text-anchor: middle;
 }
 .wfx-rule { stroke: color-mix(in srgb, var(--text) 10%, transparent); stroke-width: 1; }
 
@@ -10190,7 +10197,7 @@ kbd {
 .wfx-hero-title {
   grid-column: 1; grid-row: 2;
   font-family: var(--font-display);
-  font-size: var(--fs-hero); font-weight: 700;
+  font-size: var(--fs-page-hero); font-weight: 700;
   letter-spacing: -0.025em; line-height: 1.05;
   color: var(--text);
   margin: 0 0 var(--space-4) 0;
@@ -10198,9 +10205,11 @@ kbd {
 }
 .wfx-hero-body {
   grid-column: 1; grid-row: 3;
-  font-size: var(--fs-body); line-height: var(--lh-relaxed);
+  /* Stated to match .aut-hero-body. The two page heroes are separate CSS
+     blocks that drifted apart, so both scales are now written the same. */
+  font-size: var(--fs-h3); line-height: 1.6;
   color: var(--text-2);
-  max-width: 600px;
+  max-width: 620px;
   margin: 0 0 var(--space-5) 0;
 }
 .wfx-hero-actions {
@@ -10249,20 +10258,24 @@ kbd {
    the saved cards and their Run buttons clear the fold. Toggled from
    paintWorkflowList() off the same count that reveals "Your workflows". */
 .wfx-hero.is-compact {
-  grid-template-columns: minmax(0, 1fr) 40%;
-  padding: var(--space-5) var(--space-6);
+  /* The graph is the page's one picture of what a workflow is, so compact
+     buys its height back from the copy column, not from the art. */
+  grid-template-columns: minmax(0, 1fr) 48%;
+  padding: var(--space-4) var(--space-6);
 }
 .wfx-hero.is-compact .wfx-hero-eyebrow { margin-bottom: var(--space-2); }
 .wfx-hero.is-compact .wfx-hero-title {
-  font-size: var(--fs-display);
-  letter-spacing: var(--tracking-tight);
+  /* Compact gives up padding and stat layout, not type size. The headline
+     holds the Autopilot hero's scale so both cards read as one system. */
+  font-size: var(--fs-page-hero);
+  letter-spacing: -0.025em;
   margin-bottom: var(--space-3);
-  max-width: 520px;
+  max-width: 600px;
 }
 .wfx-hero.is-compact .wfx-hero-body {
-  font-size: var(--fs-small); line-height: var(--lh-base);
-  max-width: 560px;
-  margin-bottom: var(--space-4);
+  font-size: var(--fs-h3); line-height: 1.6;
+  max-width: 620px;
+  margin-bottom: var(--space-3);
   /* Two lines, reserved, so the panel's height does not track the copy. */
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
@@ -10277,7 +10290,7 @@ kbd {
   display: flex; align-items: baseline; gap: var(--space-2);
 }
 .wfx-hero.is-compact .wfx-hero-stat-value {
-  font-size: var(--fs-h2); margin-bottom: 0;
+  font-size: var(--fs-h1); margin-bottom: 0;
 }
 .wfx-hero.is-compact .wfx-hero-stat-label { font-size: var(--fs-micro); }
 /* Sized against the hero, not the window: the status panel and the collapsed
