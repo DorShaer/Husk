@@ -49,3 +49,41 @@ test('model args are preserved before each CLI prompt form', () => {
     ['--model', 'opus', '--message', 'x', '--yes-always'],
   );
 });
+
+// ─── untrusted invocation ────────────────────────────────────────────────────
+//
+// A workflow that arrived as a file carries somebody else's instructions. The
+// two convenience flags below each trade away a check, and neither trade is the
+// author's to make on the importer's machine.
+
+test('an untrusted codex call keeps the git repo check', () => {
+  assert.deepEqual(oneShotArgs('codex', 'x', { untrusted: true }), ['exec', 'x']);
+  assert.ok(!oneShotArgs('codex', 'x', { untrusted: true }).includes('--skip-git-repo-check'));
+});
+
+test('an untrusted aider call does not pre-answer its confirmations', () => {
+  assert.deepEqual(oneShotArgs('aider', 'x', { untrusted: true }), ['--message', 'x']);
+  assert.ok(!oneShotArgs('aider', 'x', { untrusted: true }).includes('--yes-always'));
+});
+
+test('untrusted keeps the model pin, which is what the receipt was earned on', () => {
+  assert.deepEqual(
+    oneShotArgs('codex', 'x', { untrusted: true, modelArgs: ['--model', 'gpt-5'] }),
+    ['exec', '--model', 'gpt-5', 'x'],
+  );
+});
+
+test('a trusted call is unchanged, so nothing that shipped before behaves differently', () => {
+  assert.deepEqual(oneShotArgs('codex', 'x', {}), ['exec', '--skip-git-repo-check', 'x']);
+  assert.deepEqual(oneShotArgs('aider', 'x', {}), ['--message', 'x', '--yes-always']);
+  assert.deepEqual(oneShotArgs('codex', 'x', { untrusted: false }), ['exec', '--skip-git-repo-check', 'x']);
+});
+
+// Only the literal true opts in. An absent or truthy-but-not-true value must not
+// silently harden a local run, because a stalled aider step with no explanation
+// is a bug report, and it must not silently soften an imported one either.
+test('only a literal true counts as untrusted', () => {
+  for (const v of [undefined, null, 0, '', 'yes', 1, {}]) {
+    assert.deepEqual(oneShotArgs('aider', 'x', { untrusted: v }), ['--message', 'x', '--yes-always']);
+  }
+});
