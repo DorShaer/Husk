@@ -2151,6 +2151,927 @@
       </div>
     </div>
 
+    <!-- ═══ Portable workflows ═══════════════════════════════════════════════
+         Install, publish and the first-run consent gate are the same shell:
+         .modal > .modal-card.wfx-sheet, a flex column whose body is the only
+         scroller. They are one family and not three because the same number
+         appears on all three screens, and a datum that changes size when you
+         walk from one to the next teaches the reader that they are unrelated
+         screens when they are one screen at three moments.
+
+         Every pane of every state ships here rather than being assembled on
+         demand. A state that only appears when a stranger's file is malformed
+         is the state most likely to ship broken, so it gets to be as
+         reviewable as the happy path.
+
+         The content inside .wfx-pane-ready is a worked example, laid out in
+         the order wfx-artifact-ui.js builds it. At run time that host is
+         emptied and rebuilt with el(): every string in a manifest is
+         attacker-controlled and this window's preload exposes workflows.create
+         and workflows.run, so manifest text reaches the DOM as a text node or
+         it does not reach it at all. Nothing below is wired to anything; the
+         listeners land in a later slice.
+    -->
+
+    <!-- Install a workflow. Register wfxCloseInstall in MODAL_CLOSERS so global
+         Escape aborts an in-flight clone and drops the staged install rather
+         than just hiding the card over a running child process. -->
+    <div class="modal" id="wfx-install-modal" hidden>
+      <div class="modal-card wfx-sheet" data-state="idle" role="dialog" aria-modal="true"
+           aria-labelledby="wfx-in-title">
+
+        <div class="modal-head">
+          <h2 class="modal-title" id="wfx-in-title">Install a workflow</h2>
+          <button class="modal-close" id="wfx-in-x" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- One short live region per sheet. The busy pane announces itself
+               because its own content is two words, but the ready pane is
+               several hundred and putting aria-live on it would read the whole
+               artifact aloud on every state change. The builder writes one
+               sentence here instead: what state was reached and why. -->
+          <span class="wfx-sr" role="status" id="wfx-in-say"></span>
+
+          <p class="ra-hint">A <code>workflow.husk.json</code> carries the graph, what it needs to run, and receipts from its author's runs. The file is read on this machine and nothing is sent anywhere.</p>
+
+          <div class="ra-sources">
+            <button type="button" class="ra-source selected" id="wfx-in-src-repo" aria-pressed="true">
+              <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+              <span class="ra-source-title">From a repository</span>
+              <span class="ra-source-desc">Husk clones it and looks for <code>*.husk.json</code></span>
+            </button>
+            <button type="button" class="ra-source" id="wfx-in-src-file" aria-pressed="false">
+              <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span>
+              <span class="ra-source-title">From a file</span>
+              <span class="ra-source-desc">Pick a <code>.husk.json</code> already on this disk</span>
+            </button>
+          </div>
+
+          <div class="ra-pathrow" id="wfx-in-row-repo">
+            <input type="text" id="wfx-in-url" class="ra-root" spellcheck="false" autocomplete="off"
+                   placeholder="https://github.com/dev/flows" aria-label="Repository URL" />
+            <button class="ghost-btn" id="wfx-in-fetch">Fetch</button>
+          </div>
+          <div class="ra-pathrow" id="wfx-in-row-file" hidden>
+            <input type="text" id="wfx-in-path" class="ra-root" spellcheck="false" autocomplete="off"
+                   placeholder="/path/to/workflow.husk.json" aria-label="File path" />
+            <button class="ghost-btn" id="wfx-in-browse">Choose file…</button>
+          </div>
+
+          <div class="ra-status ra-status-info" id="wfx-in-status" hidden>
+            <span>Cloning <code>github.com/lex-mm/husk-flows</code> into a scratch directory. Husk reads it there and copies nothing else out.</span>
+          </div>
+
+          <!-- The error variant, shipped rather than left to setRepoStatus.
+               Only the info form was in this file, so the one error state
+               these sheets can reach had never been rendered by anybody. The
+               borrowed builder emits a circle-exclamation at stroke 1.75,
+               which would put a third mark idiom on a surface that already
+               runs an enclosed X at stroke 2 for the blocking preflight row
+               and for both refusals, and a triangle at stroke 2 for a caution;
+               the card's own comment insists on one stroke weight and one
+               idiom across all three. So the glyph here is the blocker's,
+               exactly.
+
+               THE BUILDER CLONES THIS RATHER THAN CALLING setRepoStatus, and
+               on an install that failed it also writes the reason onto
+               #wfx-in-foot with .is-error and scrolls this banner into view.
+               This block sits at the top of a 1900px scroller and Install is
+               in the pinned footer, so on its own it is feedback the reader
+               who pressed the button cannot see. -->
+          <div class="ra-status ra-status-error" id="wfx-in-err" hidden role="alert">
+            <span class="ra-status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+            <span>Nothing was written. Husk could not create <code>.husk/workflows</code> in ~/code/orbit: EACCES. The staged install is still here, so fixing the permission and pressing Install again costs nothing.</span>
+          </div>
+
+          <!-- Idle: the sheet has a resting state instead of a void. -->
+          <div class="wfx-pane wfx-pane-idle">
+            <div class="wfx-empty">
+              <p class="wfx-empty-t">What arrives with the file</p>
+              <p class="wfx-empty-m">The graph and every prompt in it, the concrete agents and tools it needs, and whatever run history its author chose to attach. Husk recomputes the graph's fingerprint here before it shows you any of the numbers.</p>
+            </div>
+          </div>
+
+          <!-- Busy: only the clone. Its duration is unbounded, so the shape is
+               pre-committed and the wait is reported in prose above.
+
+               It has to be the shape it stands in for. Three text bars at
+               100/72/54% promised a paragraph and measured 46px against the
+               1883px body that arrives, so the sheet's own claim that "the
+               skeleton already committed the layout" was contradicted by every
+               render of it: the card went from about 430px to its 86vh cap the
+               instant the clone landed. These are the ready pane's own
+               containers with skeleton bars in the slots that get filled, so
+               the fingerprint card, the identity block, the graph frame and
+               the four-tile figure grid all reserve their real geometry and
+               wfx-settle really does land content into space already held.
+               Every one of them is aria-hidden; the live region is the
+               sentence at the end. -->
+          <div class="wfx-pane wfx-pane-busy" role="status" aria-live="polite">
+            <div class="ra-status ra-status-info" aria-hidden="true">
+              <i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i>
+            </div>
+            <div class="wfx-note" aria-hidden="true">
+              <i class="wfx-sk"></i><i class="wfx-sk"></i>
+            </div>
+            <div class="wf-card-graph" aria-hidden="true">
+              <i class="wfx-sk wf-mini"></i>
+            </div>
+            <div class="wfx-figs" aria-hidden="true">
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+            </div>
+            <div class="wfx-pf" aria-hidden="true">
+              <div class="wfx-pf-h"><i class="wfx-sk"></i></div>
+              <div class="wfx-pf-row"><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-pf-row"><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-pf-row"><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+            </div>
+            <span class="wfx-sr">Reading the manifest</span>
+          </div>
+
+          <!-- Refused: the file itself is not usable. No Install control exists
+               on this path in any state; a disabled primary in a refusal reads
+               as a lock to pick and sends people hunting for the override.
+               The two fingerprints are rendered whole, because this is where a
+               person is asked to decide and an eight character prefix match is
+               not a verdict. -->
+          <div class="wfx-pane wfx-pane-refused" role="alert">
+            <div class="wfx-refuse">
+              <!-- The glyph is the same enclosed silhouette the blocking
+                   preflight row uses, so severity is one language on this
+                   surface rather than two. Without it the refusal had hue and
+                   nothing else, and hue alone is not a channel. It is a direct
+                   child rather than a header row with the title beside it,
+                   because the block is a two-column grid now: one icon gutter,
+                   one text column, the shape .wfx-pf-row already uses. -->
+              <span class="wfx-refuse-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+              <p class="wfx-refuse-t" id="wfx-in-ref-t">These receipts do not belong to this workflow</p>
+              <p class="wfx-refuse-m" id="wfx-in-ref-m">The fingerprint written into this file is not the one Husk computed from the graph inside the same file. Either the graph was edited after the receipts were attached, or the receipts were taken from a different workflow. Nothing here can be trusted to describe what would run, so nothing is offered to install.</p>
+              <!-- A description list rather than a padded <pre>. The two values
+                   this block exists to compare are 64 hex characters each and
+                   they wrap; in a pre-formatted table the tail of each landed
+                   back in the label gutter, which is the one place it must not
+                   be. -->
+              <dl class="wfx-refuse-e" id="wfx-in-ref-e">
+                <dt>code</dt><dd>hash-mismatch</dd>
+                <dt>file</dt><dd>husk-flows/triage-patch-verify.husk.json</dd>
+                <dt>declared</dt><dd>husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914</dd>
+                <dt>recomputed</dt><dd>husk-wfg-1:sha256:a7f31c05e9b842dd6710fa3b2c85049e17d6ba33f0c25e894ab71d60f3e8c542</dd>
+              </dl>
+            </div>
+          </div>
+
+          <!-- Ready: emptied and rebuilt by wfx-artifact-ui.js on open. Every
+               child is a text node or an element built with el(); nothing here
+               is innerHTML, because a manifest is untrusted third-party JSON
+               and this renderer's preload exposes workflows.create and
+               workflows.run. The static copy below is the shape that builder
+               produces, so this pane can be reviewed before it is wired. -->
+          <div class="wfx-pane wfx-pane-ready" id="wfx-in-ready">
+
+            <!-- Every chip in this feature sits inside a plain wrapper rather
+                 than directly in a flex column. .wfx-claim is inline-flex, and
+                 a flex item stretches on the cross axis whatever its display
+                 is, so a bare chip in a column becomes a full width band and
+                 stops reading as a chip. -->
+            <div class="ra-status ra-status-info">
+              <!-- The fingerprint is 78 monospace characters a reader is
+                   explicitly invited to compare against the source repo, and
+                   the only way to get it out was a mouse drag across the whole
+                   string. The publish sheet's git line, which is less
+                   consequential, has had a Copy beside it all along. The
+                   keyboard path in the spec opens the ready pane here. -->
+              <div class="wfx-fp-h">
+                <span><span class="wfx-claim is-computed"><i class="wfx-claim-m" aria-hidden="true"></i>computed here</span></span>
+                <button type="button" class="ghost-btn" id="wfx-in-fp-copy" aria-label="Copy the fingerprint">Copy</button>
+              </div>
+              <code>husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914</code>
+              <span>Recomputed from the bytes of this file, not read out of them. Every receipt below declares the same fingerprint.</span>
+            </div>
+
+            <!-- .wfx-note, not .wfx-empty. This is the artifact's identity,
+                 which is a conclusion the sheet reached, not a placeholder
+                 standing in for one. -->
+            <div class="wfx-note">
+              <p class="wfx-note-t">Triage, patch, verify &middot; lex-mm</p>
+              <p class="wfx-note-m">Reproduces a failing test, writes the smallest patch that makes it pass, then reruns the suite and loops back while anything is red.</p>
+            </div>
+
+            <div class="wf-card-graph">
+              <svg class="wf-mini" viewBox="0 0 250 74" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M171.3 39.1 C 191.7 39.1, 191.7 18.5, 212 18.5" class="wf-mini-edge" /><path d="M171.3 39.1 C 125 39.1, 125 55.5, 78.7 55.5" class="wf-mini-edge" /><path d="M104.7 55.5 C 125 55.5, 125 39.1, 145.3 39.1" class="wf-mini-edge" /><path d="M38 43.2 C 58.4 43.2, 58.4 55.5, 78.7 55.5" class="wf-mini-edge" /><rect x="145.3" y="32.6" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="212.0" y="12.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="78.7" y="49.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="12.0" y="36.7" width="26" height="13" rx="4" class="wf-mini-node" /></svg>
+            </div>
+
+            <!-- Four figures, four chips. The chip is a child of the tile it
+                 describes, so there is no arrangement of this markup that
+                 renders a number without rendering where it came from. -->
+            <div class="wfx-figs">
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">31</span>
+                <span class="wfx-fig-l">runs</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">4m 48<span class="wfx-fig-u">s</span></span>
+                <span class="wfx-fig-l">median run</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">26<span class="wfx-fig-u">/31</span></span>
+                <span class="wfx-fig-l">zero exit</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <!-- "at your rates" rides on the value line in .wfx-fig-q, not
+                   in the label. Twenty-eight characters of uppercase at 0.12em
+                   tracking will not fit a 166px grid track, so carrying the
+                   qualifier in the label wrapped this one tile to two lines
+                   while its three siblings held one, and the fragment "YOUR
+                   RATES" read as a second label. The copy rule is satisfied by
+                   the rendered string, not by which element holds it. -->
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">&asymp;$0.41 <span class="wfx-fig-q">at your rates</span></span>
+                <span class="wfx-fig-l">your estimate</span>
+                <span><span class="wfx-claim is-computed"><i class="wfx-claim-m" aria-hidden="true"></i>computed here</span></span>
+              </div>
+            </div>
+
+            <div class="ra-pathrow">
+              <span class="wfx-path">
+                <span class="wfx-path-dir">/home/user/code/</span>
+                <span class="wfx-path-file">orbit</span>
+              </span>
+              <button type="button" class="ghost-btn" id="wfx-in-cwd-change">Change directory</button>
+            </div>
+
+            <!-- Sorted by severity: block, then caution, then ok. The builder
+                 emits them in this order too. The blocking row used to be
+                 second, under a green tick, so the footer named a blocker the
+                 reader then had to scroll past a pass to find, and the rose
+                 bar that exists because the row is hard to find was being
+                 asked to make up for where the row was put.
+
+                 One stroke weight and one idiom across all three marks. At
+                 2.5 the bare checkmark read heaviest of the three while the
+                 triangle's interior stroke smudged, and a naked glyph beside
+                 two enclosed shapes is not a set. -->
+            <div class="wfx-pf">
+              <div class="wfx-pf-h">Against this machine</div>
+
+              <div class="wfx-pf-row is-block">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+                <span class="wfx-pf-n"><code>codex</code> is not on your PATH</span>
+                <span class="wfx-pf-note">Step 04, Report, names it, and a step whose agent cannot be resolved stops the run. Husk will not substitute your own agent for the author's: that would run a different program and quietly keep the author's numbers. Install codex, or ask lex-mm for a revision that does not need it.</span>
+                <button type="button" class="ghost-link wfx-pf-fix">Where Husk looks for agents</button>
+              </div>
+
+              <div class="wfx-pf-row is-caution">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                <span class="wfx-pf-n">You have an MCP server called <code>postgres</code></span>
+                <span class="wfx-pf-note">It is not the one this was written against. The author's entry and yours hash differently, which means two different servers wearing the same name, and the author's prompts were written for theirs. Husk changes nothing here.</span>
+                <button type="button" class="ghost-link wfx-pf-fix">Show both fingerprints</button>
+              </div>
+
+              <div class="wfx-pf-row is-caution">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                <span class="wfx-pf-n">The skill <code>test-writer</code> is not installed here</span>
+                <span class="wfx-pf-note">The manifest marks it optional and step 02's prompt mentions it by name. The step will run without it and will read differently than the receipts describe.</span>
+                <button type="button" class="ghost-link wfx-pf-fix">Browse skills</button>
+              </div>
+
+              <div class="wfx-pf-row is-ok">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+                <span class="wfx-pf-n"><code>claude</code> is on your PATH</span>
+                <span class="wfx-pf-note">/home/user/.local/bin/claude, reporting version 2.1.4. Three of the four steps name it.</span>
+              </div>
+
+              <div class="wfx-pf-row is-ok">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+                <span class="wfx-pf-n">The four model pins will hold</span>
+                <span class="wfx-pf-note">claude and codex both take a model flag, so claude-sonnet-5, claude-opus-4-8 and gpt-5.4-codex reach the CLI they were written for.</span>
+              </div>
+
+              <div class="wfx-pf-row is-ok">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+                <span class="wfx-pf-n"><code>package.json</code> is in ~/code/orbit</span>
+                <span class="wfx-pf-note">The author declares it as the marker for <code>bun test</code>, and ~/code/orbit is inside a git work tree, which this workflow also declares it needs.</span>
+              </div>
+            </div>
+
+            <div class="wfx-steps">
+              <details class="wfx-step">
+                <summary>
+                  <span class="wfx-step-n">01</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Reproduce</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-sonnet-5 &middot;</span> <span class="wfx-step-pc">carries nothing forward</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Read the failing test named in the task. Reproduce it and report the exact assertion that fails, the file and the line. Do not fix anything.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">02</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Patch</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">You have the failure report above:
+
+<mark>{{previousOutput}}</mark>
+
+Write the smallest patch that makes that one assertion pass. Touch no other file unless the compiler forces you to. If the repo has a test-writer skill, follow its conventions for the regression test.</pre>
+              </details>
+
+              <details class="wfx-step">
+                <summary>
+                  <span class="wfx-step-n">03</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Verify</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the last 50 lines</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Run the full test suite with bun test. If every test passes, end your response with the exact line ALL TESTS PASS. If anything fails, end with the exact line TESTS FAIL followed by the first failing assertion.</pre>
+              </details>
+
+              <details class="wfx-step">
+                <summary>
+                  <span class="wfx-step-n">04</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Report</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">codex &middot; gpt-5.4-codex &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Summarize what broke, why, and what the patch changed. Three bullets, no preamble.</pre>
+              </details>
+            </div>
+
+            <!-- The argumentative point of the whole sheet, so it takes the
+                 heading rank rather than the placeholder rank it was set in.
+                 At 13 over 12 the collapsed step names above it outshouted
+                 the paragraph that says what those steps prove. -->
+            <div class="wfx-note">
+              <p class="wfx-note-t">What the numbers above are worth</p>
+              <p class="wfx-note-m">This file ships no run log, so 31 runs, 4m 48s and 26 of 31 runs finishing with a zero exit are the author's own account and nothing on this machine checked them. Exit code is all that "zero exit" means. One of the 31 was killed at the five minute per-step limit, so the median is cut off at the top. Installing writes a file and runs nothing.</p>
+            </div>
+          </div>
+
+          <!-- The success state takes the same shape the two refusals take: an
+               icon gutter, an enclosed glyph at the same stroke weight, a
+               bordered block with a wash. It was two bare paragraphs centred
+               in a 386px body, which made the one terminal state that went
+               right the only state in the feature with no mark, no container
+               and no way forward, while its own sentence described an action
+               the reader then had to close the sheet and go hunt for. The
+               bound directory is the most relevant fact this pane holds and
+               about fifty pixels of the void it was floating in; the footer's
+               Run it is the rest of it, so the sentence now names a control
+               that is on screen. -->
+          <div class="wfx-pane wfx-pane-done" aria-live="polite">
+            <div class="wfx-affirm">
+              <span class="wfx-affirm-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+              <p class="wfx-note-t">Installed.</p>
+              <p class="wfx-note-m" id="wfx-in-done-m">Triage, patch, verify is saved and has not run. Run it opens all four prompts once more and waits for you to say yes before anything spawns.</p>
+              <span class="wfx-path">
+                <span class="wfx-path-dir">/home/user/code/</span>
+                <span class="wfx-path-file">orbit</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- aria-disabled, not disabled. `disabled` takes a button out of the
+             tab order entirely, so a keyboard or screen-reader user is never
+             told why the commit is withheld: tabbing the blocked install sheet
+             ran last fix link, last prompt, Cancel, end, with Install absent
+             from the sequence and the missing agent named only in a bare span
+             nothing pointed at. aria-describedby binds the button to that
+             sentence and the button stays focusable so it can be read.
+
+             THE CLICK HANDLER MUST NO-OP WHILE aria-disabled IS "true". An
+             aria-disabled button is still clickable and the guard is the
+             listener; nothing else stops it. Re-announcing the blocker through
+             #wfx-in-say is the useful thing to do there.
+
+             Run it is the done state's forward move and it is a ghost, not the
+             primary. Leaving is the safe default after a write, and the risk
+             in this feature is entirely at the moment a stranger's prompts
+             reach a CLI, so the control that gets there is offered and not
+             preselected. It opens #wfx-consent-modal on the workflow just
+             written, which is the gate that would have opened from the card
+             anyway. -->
+        <div class="modal-foot">
+          <span class="wfx-foot-note" id="wfx-in-foot">Installing writes a file. It does not run anything.</span>
+          <button class="ghost-btn" id="wfx-in-cancel">Cancel</button>
+          <button class="ghost-btn" id="wfx-in-run" hidden>Run it</button>
+          <button class="btn-primary" id="wfx-in-go" hidden aria-disabled="true" aria-describedby="wfx-in-foot">Install</button>
+          <button class="btn-primary" id="wfx-in-done" hidden>Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Publish a workflow as a file. Single column, unconditionally: the
+         two-up layout left the content column 208px inside a 600px card, and
+         its max-width media query could never fire because the card's width
+         has nothing to do with the viewport's. -->
+    <div class="modal" id="wfx-publish-modal" hidden>
+      <div class="modal-card wfx-sheet" data-state="ready" role="dialog" aria-modal="true"
+           aria-labelledby="wfx-pub-title">
+
+        <div class="modal-head">
+          <h2 class="modal-title" id="wfx-pub-title">Publish this workflow</h2>
+          <button class="modal-close" id="wfx-pub-x" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <span class="wfx-sr" role="status" id="wfx-pub-say"></span>
+
+          <!-- Publishing refuses too, and until now it had nowhere to say so.
+               Slice 8's own done-condition is a clear refusal when the log
+               exceeds the byte budget, and EACCES on the destination, a
+               destination directory deleted between Change and Publish, and a
+               repo that stopped being a work tree all land here as well. The
+               shared shell already routes data-state="refused"; this sheet
+               simply never built the pane it routes to. -->
+          <div class="wfx-pane wfx-pane-refused" role="alert">
+            <div class="wfx-refuse">
+              <span class="wfx-refuse-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+              <p class="wfx-refuse-t" id="wfx-pub-ref-t">The run log is larger than a workflow file may carry</p>
+              <p class="wfx-refuse-m" id="wfx-pub-ref-m">Evidence travels inline or not at all, and the budget is 512 KiB. Thirty-one runs of a four-step graph is more audit rows than that. Publish without the log and the receipts travel as your own account, which is what a reader will be told; nothing is silently trimmed, because a log cut to fit is a log that no longer matches the numbers beside it.</p>
+              <dl class="wfx-refuse-e" id="wfx-pub-ref-e">
+                <dt>code</dt><dd>evidence-too-large</dd>
+                <dt>budget</dt><dd>524288 bytes</dd>
+                <dt>measured</dt><dd>1341902 bytes across 4 sessions</dd>
+              </dl>
+            </div>
+          </div>
+
+          <div class="wfx-pane wfx-pane-ready" id="wfx-pub-ready">
+            <p class="ra-hint">One file, committed wherever you like. Whoever installs it sees the preview below and re-derives the fingerprint on their own machine before Husk shows them a single number.</p>
+
+            <div class="wf-card-graph">
+              <svg class="wf-mini" viewBox="0 0 250 74" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M171.3 39.1 C 191.7 39.1, 191.7 18.5, 212 18.5" class="wf-mini-edge" /><path d="M171.3 39.1 C 125 39.1, 125 55.5, 78.7 55.5" class="wf-mini-edge" /><path d="M104.7 55.5 C 125 55.5, 125 39.1, 145.3 39.1" class="wf-mini-edge" /><path d="M38 43.2 C 58.4 43.2, 58.4 55.5, 78.7 55.5" class="wf-mini-edge" /><rect x="145.3" y="32.6" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="212.0" y="12.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="78.7" y="49.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="12.0" y="36.7" width="26" height="13" rx="4" class="wf-mini-node" /></svg>
+            </div>
+
+            <!-- The figures carry the chips the INSTALLER will see, not the
+                 ones this machine would be entitled to. With the log left
+                 off they read "author states" on the other side of the file,
+                 and showing them any other way here would be a preview of a
+                 screen that does not exist. -->
+            <div class="wfx-figs">
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">31</span>
+                <span class="wfx-fig-l">runs</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">4m 48<span class="wfx-fig-u">s</span></span>
+                <span class="wfx-fig-l">median run</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">26<span class="wfx-fig-u">/31</span></span>
+                <span class="wfx-fig-l">zero exit</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <div class="wfx-fig is-null">
+                <span class="wfx-fig-v">no log</span>
+                <span class="wfx-fig-l">evidence</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+            </div>
+
+            <!-- The record, with each caveat attached to the figure it
+                 qualifies rather than gathered into a paragraph nobody reads
+                 at the bottom.
+
+                 is-plain, because these rows have no severity to report. Every
+                 one of them was filling the verdict column with a horizontal
+                 rule, six times running, in the slot the install sheet has
+                 just taught this reader to read as pass, caution or block. -->
+            <div class="wfx-pf is-plain">
+              <div class="wfx-pf-h">What gets written, and what it means</div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n">31 runs, 9 January to 6 February</span>
+                <span class="wfx-pf-note">Every stored run of this exact graph. Husk keeps the last 200 and this workflow has not reached that, so the file says the window is complete.</span>
+              </div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n">26 completed, 4 failed, 1 timed out</span>
+                <span class="wfx-pf-note">Counted from process exit codes, which is the only thing a run records. A step that answers confidently wrong and exits 0 is one of the 26. The file carries that basis so no reader can print these as a pass rate.</span>
+              </div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n">Median run 4m 48s, 1 run censored</span>
+                <span class="wfx-pf-note">One run hit the five minute per-step limit and is recorded at exactly that value, so the top of the distribution is cut off. The count travels with the median.</span>
+              </div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n">Median 9,110 in / 806 out tokens</span>
+                <span class="wfx-pf-note">Plus 12,800 cache reads. No dollar figure is written into the file: four of the five agents are priced at zero in this build, so a cost would publish as free. The reader prices it with their own table.</span>
+              </div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n">Nothing about what the runs produced</span>
+                <span class="wfx-pf-note">No files-changed count and no pass rate. Both need a denominator that survives the trip to someone else's repo, and neither has one.</span>
+              </div>
+            </div>
+
+            <div class="wfx-pf is-plain">
+              <div class="wfx-pf-h">What the file will require of a reader</div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n"><code>claude</code> and <code>codex</code>, with four model pins</span>
+                <span class="wfx-pf-note">Bare basenames, resolved on their PATH and never from a directory inside the repo. Your own paths are not in the file.</span>
+              </div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n">An MCP server named <code>postgres</code>, and the skill <code>test-writer</code></span>
+                <span class="wfx-pf-note">Names and content fingerprints only, so a reader can be told theirs is a different server rather than shown a green tick. No command, no arguments and no environment leaves this machine.</span>
+              </div>
+
+              <div class="wfx-pf-row">
+                <span class="wfx-pf-n">A git work tree with <code>package.json</code>, running <code>bun test</code></span>
+                <span class="wfx-pf-note">You declared these; Husk cannot derive them, because which tool a step uses lives in prose inside its prompt. They travel labelled as your claim.</span>
+              </div>
+            </div>
+
+            <div class="ra-pathrow">
+              <span class="wfx-path">
+                <span class="wfx-path-dir">/home/user/code/orbit/.husk/workflows/</span>
+                <span class="wfx-path-file">triage-patch-verify.husk.json</span>
+              </span>
+              <button type="button" class="ghost-btn" id="wfx-pub-dest-change">Change</button>
+            </div>
+
+            <!-- The sentence is the toggle's own copy, so it hangs under the
+                 label's words rather than under the checkbox. Aligned to the
+                 box it started 23px left of what it explains and read as an
+                 unrelated paragraph that happened to follow. -->
+            <div class="wfx-note wfx-ack">
+              <label class="ai-foot-toggle" for="wfx-pub-attach">
+                <input type="checkbox" id="wfx-pub-attach" class="ai-check" />
+                <span class="ai-check-box" aria-hidden="true"></span>
+                Attach the run log
+              </label>
+              <p class="wfx-empty-m wfx-pub-note">An audit row carries the goal text you typed and the absolute path of the workspace it ran in. Attaching lets a reader recompute the median and the counts from the log instead of taking your word; it also publishes those two things. Off by default.</p>
+            </div>
+
+            <details class="wfx-step">
+              <summary>
+                <span class="wfx-step-n">RAW</span>
+                <span class="wfx-step-b">
+                  <span class="wfx-step-name">The exact bytes this writes</span>
+                  <span class="wfx-step-sub"><span class="wfx-step-meta">4.1 KB &middot; 1 receipt &middot;</span> <span class="wfx-step-pc">no log attached</span></span>
+                </span>
+                <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+              </summary>
+<pre class="wfx-prompt" tabindex="0">{
+  "kind": "husk.workflow",
+  "schemaVersion": 1,
+  "artifactId": "wfa_3q7kd8f2mn6r1vb9xz4c0hjtwp",
+  "revision": 3,
+  "name": "Triage, patch, verify",
+  "description": "Reproduces a failing test, writes the smallest patch that makes it pass, then reruns the suite and loops back while anything is red.",
+  "publishedAt": "2026-02-06T10:02:41.117Z",
+  "publisher": { "name": "lex-mm", "url": "https://github.com/lex-mm/husk-flows" },
+  "huskVersion": "2.11.0",
+  "graph": {
+    "nodes": [
+      { "id": "n0", "name": "Verify", "agentCommand": "claude", "model": "claude-opus-4-8",
+        "branchMode": "parallel", "passContext": "last50", "x": 560, "y": 100,
+        "prompt": "Run the full test suite with bun test. If every test passes, end your response with the exact line ALL TESTS PASS. If anything fails, end with the exact line TESTS FAIL followed by the first failing assertion." },
+      { "id": "n1", "name": "Report", "agentCommand": "codex", "model": "gpt-5.4-codex",
+        "branchMode": "parallel", "passContext": "full", "x": 840, "y": 0,
+        "prompt": "Summarize what broke, why, and what the patch changed. Three bullets, no preamble." },
+      { "id": "n2", "name": "Patch", "agentCommand": "claude", "model": "claude-opus-4-8",
+        "branchMode": "parallel", "passContext": "full", "x": 280, "y": 180,
+        "prompt": "You have the failure report above:\n\n{{previousOutput}}\n\nWrite the smallest patch that makes that one assertion pass. Touch no other file unless the compiler forces you to. If the repo has a test-writer skill, follow its conventions for the regression test." },
+      { "id": "n3", "name": "Reproduce", "agentCommand": "claude", "model": "claude-sonnet-5",
+        "branchMode": "parallel", "passContext": "none", "x": 0, "y": 120,
+        "prompt": "Read the failing test named in the task. Reproduce it and report the exact assertion that fails, the file and the line. Do not fix anything." }
+    ],
+    "edges": [
+      { "id": "e0", "from": "n0", "to": "n1", "condition": { "type": "contains", "value": "ALL TESTS PASS" } },
+      { "id": "e1", "from": "n0", "to": "n2", "condition": { "type": "contains", "value": "TESTS FAIL" } },
+      { "id": "e2", "from": "n2", "to": "n0", "condition": { "type": "always", "value": "" } },
+      { "id": "e3", "from": "n3", "to": "n2", "condition": { "type": "always", "value": "" } }
+    ]
+  },
+  "graphHash": "husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914",
+  "requires": {
+    "agentCommands": ["claude", "codex"],
+    "models": [
+      { "node": "n0", "model": "claude-opus-4-8" },
+      { "node": "n1", "model": "gpt-5.4-codex" },
+      { "node": "n2", "model": "claude-opus-4-8" },
+      { "node": "n3", "model": "claude-sonnet-5" }
+    ],
+    "mcpServers": [
+      { "name": "postgres", "fingerprint": "sha256:1f5c8ad70b3e94612ca0df85b7620e3348d91ac5f07b26e8d43ba190c7f52e6b", "optional": false }
+    ],
+    "skills": [
+      { "id": "test-writer", "fingerprint": "sha256:6d02b41ce7f8a9530bd14e6072cf83a195d7be40128fc6a3e59b0d7412ac835f", "optional": true }
+    ],
+    "workspace": { "vcs": "git", "markerFiles": ["package.json"], "commands": ["bun test"] },
+    "huskMin": "2.11.0"
+  },
+  "receipts": [
+    {
+      "id": "rcp_9f02aa41c7d6b380",
+      "graphHash": "husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914",
+      "runs": 31,
+      "runsWindowed": false,
+      "window": { "firstRunAt": "2026-01-09T08:11:03.220Z", "lastRunAt": "2026-02-06T09:35:00.860Z" },
+      "outcomes": { "completed": 26, "failed": 4, "stopped": 0, "timedOut": 1 },
+      "outcomeBasis": "process-exit",
+      "medianDurationMs": 288000,
+      "durationCensored": 1,
+      "medianTokens": { "input": 9110, "output": 806, "cacheRead": 12800, "cacheCreate": 0 },
+      "environment": {
+        "agentResolved": "claude",
+        "agentVersion": "2.1.4",
+        "modelResolved": "claude-opus-4-8",
+        "os": "linux",
+        "huskVersion": "2.11.0",
+        "workspace": { "vcs": "git", "trackedFiles": "1k-10k", "languages": ["typescript"] }
+      },
+      "evidence": "none",
+      "chain": null
+    }
+  ],
+  "notes": "The loop back from Verify to Patch is bounded by the 5 minute per-step timeout."
+}</pre>
+            </details>
+          </div>
+
+          <div class="wfx-pane wfx-pane-done" aria-live="polite">
+            <div class="wfx-note">
+              <p class="wfx-note-t">Written.</p>
+              <p class="wfx-note-m">4.1 KB, one receipt, no run log attached. It is not committed yet.</p>
+            </div>
+
+            <span class="wfx-path">
+              <span class="wfx-path-dir">/home/user/code/orbit/.husk/workflows/</span>
+              <span class="wfx-path-file">triage-patch-verify.husk.json</span>
+            </span>
+
+            <!-- Pre-written rather than described, because the one thing left
+                 to do is a command, and a command a reader has to reconstruct
+                 from prose is a command they get subtly wrong. -->
+            <div class="ra-pathrow">
+<pre class="wfx-prompt" tabindex="0">git add .husk/workflows/triage-patch-verify.husk.json &&
+git commit -m "workflow: triage, patch, verify (revision 3)"</pre>
+              <button type="button" class="ghost-btn" id="wfx-pub-copy" aria-label="Copy the git command">Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Two primaries, one per verdict. The install sheet's refusal ends
+             the road, because there the artifact itself cannot be trusted and
+             there is nothing safe to offer. This one is a size check on the
+             publisher's own run log: routine, recoverable, their data, and the
+             refusal body names the fix in its own words before a footer with a
+             single dismiss button deletes the control that performs it. So the
+             sheet declares the forward move, .is-refusal-go swaps the two, and
+             the ordinary Publish steps aside for the one that says what the
+             refusal costs. Declared rather than relabelled at runtime, which
+             keeps both states of this footer reviewable in the file. -->
+        <div class="modal-foot">
+          <span class="wfx-foot-note" id="wfx-pub-foot">Nothing leaves this machine. Publishing writes one file where you point it.</span>
+          <button class="ghost-btn" id="wfx-pub-cancel">Cancel</button>
+          <button class="btn-primary" id="wfx-pub-go">Publish</button>
+          <button class="btn-primary is-refusal-go" id="wfx-pub-go-nolog">Publish without the log</button>
+          <button class="btn-primary" id="wfx-pub-done" hidden>Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- First run of an imported workflow. This gate is at Run and not at
+         Install because installing writes a file and executes nothing; the
+         risk is entirely at the moment a stranger's 8192 characters per step
+         reach an agent CLI with a working directory bound to your code. -->
+    <div class="modal" id="wfx-consent-modal" hidden>
+      <div class="modal-card wfx-sheet" data-state="ready" role="dialog" aria-modal="true"
+           aria-labelledby="wfx-cs-title">
+
+        <div class="modal-head">
+          <h2 class="modal-title" id="wfx-cs-title">Read this before it runs</h2>
+          <button class="modal-close" id="wfx-cs-x" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <span class="wfx-sr" role="status" id="wfx-cs-say"></span>
+
+          <div class="wfx-pane wfx-pane-ready" id="wfx-cs-ready">
+            <div class="wfx-note">
+              <p class="wfx-note-t">Triage, patch, verify</p>
+              <p class="wfx-note-m">Installed from github.com/lex-mm/husk-flows on 6 February. You have not run it. Husk asks once, on the first run, and never again for this workflow.</p>
+            </div>
+
+            <span class="wfx-path">
+              <span class="wfx-path-dir">/home/user/code/</span>
+              <span class="wfx-path-file">orbit</span>
+            </span>
+
+            <p class="ra-hint">Steps 01 to 03 spawn <code>claude</code> and step 04 spawns <code>codex</code>, each in that directory, each with the prompt below and the previous step's output pasted in where the prompt asks for it. Because this workflow was imported, codex keeps its own refusal to run outside a trusted git directory and aider would run with auto-commit off, so no step here can approve itself or write a commit under your name.</p>
+
+            <div class="wfx-steps">
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">01</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Reproduce</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-sonnet-5 &middot;</span> <span class="wfx-step-pc">carries nothing forward</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Read the failing test named in the task. Reproduce it and report the exact assertion that fails, the file and the line. Do not fix anything.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">02</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Patch</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">You have the failure report above:
+
+<mark>{{previousOutput}}</mark>
+
+Write the smallest patch that makes that one assertion pass. Touch no other file unless the compiler forces you to. If the repo has a test-writer skill, follow its conventions for the regression test.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">03</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Verify</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the last 50 lines</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Run the full test suite with bun test. If every test passes, end your response with the exact line ALL TESTS PASS. If anything fails, end with the exact line TESTS FAIL followed by the first failing assertion.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">04</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Report</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">codex &middot; gpt-5.4-codex &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Summarize what broke, why, and what the patch changed. Three bullets, no preamble.</pre>
+              </details>
+            </div>
+
+            <!-- The control that unlocks Run it, in a container, because it
+                 had none: it floated bare under the last prompt card as the
+                 least present thing on the surface it gates. -->
+            <div class="wfx-ack">
+              <label class="ai-foot-toggle" for="wfx-cs-ack">
+                <input type="checkbox" id="wfx-cs-ack" class="ai-check" />
+                <span class="ai-check-box" aria-hidden="true"></span>
+                I have read all four prompts
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- The note names the precondition, not the consequence. Run it opens
+             disabled and the checkbox that enables it is at the bottom of a
+             1900px scroll, so a footer that said only where the prompts would
+             be sent left the reader with a locked control and no instruction.
+             The consequence is already the lede's whole subject. The builder
+             swaps this for the sent-from sentence once #wfx-cs-ack is ticked;
+             aria-describedby makes the withheld button announce the
+             precondition without waiting for anyone to find it.
+
+             aria-disabled and not disabled, for the reason spelled out on the
+             install footer: `disabled` drops the button out of the tab order,
+             which means the description written for it can never be reached by
+             the thing it describes. THE CLICK HANDLER MUST NO-OP WHILE
+             aria-disabled IS "true". -->
+        <div class="modal-foot">
+          <span class="wfx-foot-note" id="wfx-cs-foot">Read the four prompts, then tick the box at the end to enable Run it.</span>
+          <button class="ghost-btn" id="wfx-cs-cancel">Cancel</button>
+          <button class="btn-primary" id="wfx-cs-go" aria-describedby="wfx-cs-foot" aria-disabled="true">Run it</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- The card receipts strip, one template per state. It is cloned into the
+         .wf-card between .wf-card-graph and .wf-card-status, above the auto
+         margin that bottom-anchors status, footer and Run, so a strip that is
+         taller on one card than another cannot break the alignment across a
+         row and nothing needs a reserved height.
+
+         Templates rather than a string in app.js: the strip is markup, it
+         belongs with the markup, and a <template> keeps it out of the layout
+         until something clones it. The figures are filled in from the local
+         receipt store; the chip word is decided by the same validator that
+         decided the tier, never by the code doing the filling.
+
+         The chip is a real <button>, so it becomes the first keyboard-reachable
+         control the saved workflow card has ever had. Clicking it opens the
+         install sheet as a read-only inspector over that workflow's stored
+         artifact.
+
+         Which is why it carries an aria-label. Without one its accessible name
+         was the two words inside it, so tabbing a grid of twelve cards
+         announced "author states, button" twelve times: no workflow name, no
+         figures (those are sibling spans and not part of the button), and
+         nothing saying a press opens anything. The labels below are worked
+         examples matching the example figures beside them; the builder rewrites
+         each one with setAttribute when it clones the template, so an imported
+         workflow name reaches the accessible name as a string and never as
+         markup, the same rule every other imported string in this feature
+         follows. -->
+
+    <!-- 31 runs, evidence "none". Nothing on this machine checked any of it. -->
+    <template id="wfx-rcp-tpl">
+      <div class="wfx-rcp">
+        <div class="wfx-figs is-inline">
+          <span class="wfx-fig"><span class="wfx-fig-v">31</span><span class="wfx-fig-l">runs</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">4m 48<span class="wfx-fig-u">s</span></span><span class="wfx-fig-l">median</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">26<span class="wfx-fig-u">/31</span></span><span class="wfx-fig-l">zero exit</span></span>
+        </div>
+        <button type="button" class="wfx-claim is-said" data-wfx-receipt=""
+                aria-label="Receipts for Triage, patch, verify: 31 runs, author states. Open the record.">
+          <i class="wfx-claim-m" aria-hidden="true"></i>author states
+        </button>
+      </div>
+    </template>
+
+    <!-- Same three figures, evidence "inline" and the chain re-hashed here.
+         The ceiling is still not the word verified: the chain is anchored at a
+         public genesis constant with no signature, so what this proves is that
+         the shipped log is internally consistent with the numbers beside it. -->
+    <template id="wfx-rcp-tpl-log">
+      <div class="wfx-rcp">
+        <div class="wfx-figs is-inline">
+          <span class="wfx-fig"><span class="wfx-fig-v">31</span><span class="wfx-fig-l">runs</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">4m 48<span class="wfx-fig-u">s</span></span><span class="wfx-fig-l">median</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">26<span class="wfx-fig-u">/31</span></span><span class="wfx-fig-l">zero exit</span></span>
+        </div>
+        <button type="button" class="wfx-claim is-consistent" data-wfx-receipt=""
+                aria-label="Receipts for Triage, patch, verify: 31 runs, matches the shipped log. Open the record.">
+          <i class="wfx-claim-m" aria-hidden="true"></i>matches the shipped log
+        </button>
+      </div>
+    </template>
+
+    <!-- Two runs. A median of two numbers is the two numbers, so the word goes
+         away and the pair is shown instead.
+
+         The two figures derived from that pair also carry is-thin. The copy
+         rule protected the duration by renaming it a range and left the
+         outcome alone, so "2/2" was set in the same tabular 600 as "26/31" and
+         the thinnest possible sample published the strongest possible claim.
+         The run count itself keeps full weight: two is two.
+
+         The .wfx-sr is the card's only channel for that qualifier and it is
+         screen-reader-only, which is the right trade at 254px and the wrong
+         one anywhere with room. AT PANEL DENSITY THE BUILDER EMITS THE VISIBLE
+         FORM INSTEAD: a .wfx-fig-q inside the value slot reading "of 2 runs",
+         which is the slot the dollar tile's "at your rates" already uses and
+         which the grid already reserves a line for. -->
+
+    <template id="wfx-rcp-tpl-thin">
+      <div class="wfx-rcp">
+        <div class="wfx-figs is-inline">
+          <span class="wfx-fig"><span class="wfx-fig-v">2</span><span class="wfx-fig-l">runs</span></span>
+          <span class="wfx-fig is-thin"><span class="wfx-fig-v">3m 51<span class="wfx-fig-u">s</span> &ndash; 6m 12<span class="wfx-fig-u">s</span></span><span class="wfx-fig-l">range</span></span>
+          <span class="wfx-fig is-thin"><span class="wfx-fig-v">2<span class="wfx-fig-u">/2</span></span><span class="wfx-fig-l">zero exit</span><span class="wfx-sr">from 2 runs, too few to rate</span></span>
+        </div>
+        <button type="button" class="wfx-claim is-said" data-wfx-receipt=""
+                aria-label="Receipts for Triage, patch, verify: 2 runs, author states. Open the record.">
+          <i class="wfx-claim-m" aria-hidden="true"></i>author states
+        </button>
+      </div>
+    </template>
+
+    <!-- No receipts. Names what would change it rather than apologising. -->
+    <template id="wfx-rcp-tpl-none">
+      <div class="wfx-rcp is-none">
+        <span>No receipts yet &middot; run it to earn one</span>
+      </div>
+    </template>
+
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
     <div id="confirm-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
       <div class="modal-card">

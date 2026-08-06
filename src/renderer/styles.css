@@ -10492,6 +10492,1564 @@ kbd {
   background: color-mix(in srgb, var(--rose) 10%, transparent);
 }
 
+/* ═══ Portable workflows ══════════════════════════════════════════════════════
+   One dialog shell for install, publish and the consent gate, plus one figure
+   component and one trust chip that every surface reads from. The three
+   dialogs differ only in what fills the body; sharing the shell is what stops
+   the same datum rendering at four sizes in four places.
+
+   --warn is declared on body on this branch and resolves to amber folded 70%
+   toward --text, which is byte for byte what --as-mark already is. This block
+   reaches for --as-mark directly rather than through the alias: a second name
+   for one colour is one more hop to trace the next time somebody asks why a
+   caution is amber, and it invites the two to drift apart later.
+   ------------------------------------------------------------------------- */
+
+/* The card is a flex column with its own scroller. .modal is a fixed centred
+   scrim with no overflow of its own and .modal-card declares no max-height, so
+   a tall body pushes the head off the top and the foot off the bottom at once
+   and neither the close button nor the commit button can be reached. The
+   Autopilot diff card already solved this by hand; this generalises it.
+   Padding moves off the card and onto the three children, so the body scrolls
+   its content rather than scrolling its own padding away. */
+.modal-card.wfx-sheet {
+  /* One reading measure for the whole sheet, declared here so every prose role
+     inside it reads from the same number. The column used to run from 44ch on
+     the foot note to no cap at all on the lede, which put six ragged right
+     edges in one scroll and left the widest of them on the sentence the sheet
+     exists to make somebody read. ch and not px, because a caption at 11px and
+     a lede at 13px want the same characters per line, not the same width.
+
+     52 and not 64, because ch is the advance of the digit zero and Inter's
+     zero is about 1.35 times its average lowercase advance. 64ch bought 85
+     rendered characters on the closing note and 84 on the preflight notes,
+     measured by walking a Range over every glyph and bucketing by line box,
+     so the smallest type on the surface was carrying the longest measure. At
+     52ch the same walk returns the high sixties in both roles, which is the
+     band this cap was always trying to name.
+
+     The cost is a gutter, and it is deliberate rather than overlooked. On the
+     publish sheet's four consecutive .wfx-pf.is-plain rows every drawn box
+     runs to 719 and every line inside it stops at 477, so 241px of each row is
+     empty. The sheet cannot narrow to meet the prose: 720 is set by the
+     82-character fingerprint plus the card's insets, and prose width is set by
+     the eye, so the two constraints never meet at one number. Capping those
+     tables at the measure was tried and is worse, because the table then ends
+     at 509 under a figure grid ending at 719, which is the same right-edge
+     notch the figure grid removed from itself two hundred lines below. A
+     ragged gutter inside a row is cheaper than a notch in the column.
+
+     The rose ink lives here for the same reason the measure does. Emerald and
+     amber are folded toward --text everywhere they are used as ink; rose was
+     the one severity left raw, so the blocking preflight icon measured 2.15
+     against its own tinted row in nord and the refusal border 1.91, both under
+     the 3:1 a non-text indicator owes. The fold is oklch for the reason the
+     chips give: an sRGB blend collapses chroma into lightness and lands rose
+     on a dusty brown. The 7% tints below stay on raw --rose, because a wash is
+     not an indicator and folding it too would erase the hue entirely. */
+  --wfx-measure: 52ch;
+  --wfx-rose-ink: color-mix(in oklch, var(--rose) 70%, var(--text));
+  /* The same fold on the other severity, for the same reason and at the same
+     ratio. It was written out twice as a literal, once on the passing
+     preflight mark and once on the computed chip, and the chip has since gone
+     its own way on ink strength; naming the indicator fold here keeps the two
+     graphical uses of emerald from drifting the way the two rose ones did. */
+  --wfx-emerald-ink: color-mix(in oklch, var(--emerald) 70%, var(--text));
+  width: min(720px, 94vw);
+  max-height: min(86vh, 900px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  text-align: left;
+}
+/* The head is a fixed band and the body slides under it, so it needs the same
+   edge the foot already declares. Without it a scrolled card was sliced flat
+   15px below the title: a rounded top corner cut to a straight one mid-row,
+   no rule, no shadow, no fade, which is the rendering-fault read this file
+   objects to elsewhere. .modal-foot has carried border-top since it was
+   written; the two bands are now declared symmetrically. */
+.wfx-sheet > .modal-head {
+  flex: 0 0 auto;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+/* The block-start padding is new and it belongs to the rule above: with the
+   head declaring an edge, a body that opened at 0 put its first card against
+   that edge with nothing between them. It scrolls away with the content, which
+   is what a top padding on a scroller does and what this one is for. */
+/* The ramps are the same alpha matte #agent-switch-list.is-scrollable uses, for
+   the same reason its comment gives: a list cut flat looks like it ends there.
+   This is the longest scroller in the app and it was cut flat at both ends, so
+   a half-height row of letters sat under the head's hairline reading as a
+   rendering fault rather than as more content above.
+
+   Ungated, unlike that list, and the ramp length is why. There the matte runs
+   22px into a list with no block padding, so a short list would have its last
+   row dimmed and the class is what stops that. Here the ramp is exactly the
+   body's own block padding, so on a pane that does not scroll it fades 16px of
+   empty inset and nothing else; content only ever enters that band by
+   scrolling into it. A class nobody sets would be dead CSS, and a gate that
+   costs nothing to remove is one fewer thing for the builder to remember. */
+.wfx-sheet > .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+  gap: var(--space-4);
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0) 0, rgb(0 0 0) var(--space-4), rgb(0 0 0) calc(100% - var(--space-4)), rgb(0 0 0 / 0) 100%);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0) 0, rgb(0 0 0) var(--space-4), rgb(0 0 0) calc(100% - var(--space-4)), rgb(0 0 0 / 0) 100%);
+}
+/* space-5 at the block end, matching the head's block start. The card was
+   optically top-heavy by about two to one, 24 above the title against 16 below
+   the buttons, which only shows when both insets are visible at once: the done
+   state is short enough that the title floated while the primary was crowded
+   into the bottom edge. */
+.wfx-sheet > .modal-foot {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding: var(--space-3) var(--space-5) var(--space-5);
+  gap: var(--space-2);
+}
+/* The sheet owns its vertical rhythm and the blocks it borrows do not know
+   that. .ra-hint, .ra-sources, .ra-pathrow and .ra-status were written for a
+   card with no gap and each carries its own bottom margin, which lands on top
+   of the gap rather than replacing it: the column measured 28, 28, 26, 16, 16,
+   16, 26, 16, 16, and neither 26 nor 28 is on the spacing scale at all.
+   Zeroing them hands every gap in the sheet back to var(--space-4). */
+.wfx-sheet > .modal-body > *,
+.wfx-sheet .wfx-pane > * { margin-bottom: 0; }
+
+/* The borrowed lede opens all three surfaces and shipped with no measure cap
+   and a raw 1.55 leading, so the operative sentence of the consent gate ran
+   about 100 characters a line while every purpose-built paragraph beside it
+   was disciplined. Corrected here rather than in the .ra-* block, which still
+   serves the agent-install card at a width that needs neither. */
+.wfx-sheet .ra-hint,
+.wfx-sheet .ra-status > span { max-width: var(--wfx-measure); line-height: var(--lh-base); }
+/* The source cards' description line is the first paragraph anybody reads on
+   the install sheet and it shipped at --text-3, which is tuned against --bg
+   and drops on the card's own ground: 3.70 in nord, 3.93 in dracula, 4.09 in
+   sepia, 4.12 in light, 4.21 in dark. Corrected in the sheet's scope for the
+   same reason the measure cap above is, since the agent-install card these
+   were written for needs neither.
+
+   The leading came with it. 12 over 16.8 is 1.400, and the scale offers 1.15,
+   1.5 and 1.7 and nothing between; the .ra-hint two rules up was pulled onto
+   --lh-base for exactly this and then this block was reached into for colour
+   alone, leaving one off-scale paragraph 40px above a column of 1.5 ones.
+
+   And the literal inside it drops a rank, which is the same ~0.9 optical
+   ratio the foot note argues for below: mono's set width at one size outruns
+   Inter's, so `*.husk.json` at 12-in-12 read larger than the words around it
+   while `workflow.husk.json` in the lede above, at 12-in-13, read level. It
+   does not take the lede's chip treatment: this one sits inside a pressable
+   card that already has a fill and a selected state, and a second box inside
+   that box is a border too many. No kerning pull either, since neither string
+   is followed by punctuation. */
+.wfx-sheet .ra-source-desc { color: var(--text-2); line-height: var(--lh-base); }
+.wfx-sheet .ra-source-desc code { font-size: var(--fs-nano); }
+/* The fingerprint block borrows .ra-status, which carries a raw 8px/10px
+   inset from a card with no other bordered neighbours. In this column it put
+   the chip's left edge at 60 while every purpose-built card in the same scroll
+   started at 62, so four bordered blocks 16px apart each began somewhere
+   different. 10 is not on the spacing scale either.
+
+   The other three borrowed blocks carried the same raw insets and were left
+   alone when that one was corrected: probed in the idle state, .ra-source-title
+   started at 64 and .ra-root at 60 while every purpose-built card started at
+   62, and the fetch row sits directly above the fingerprint card, so the two
+   adjacent blocks a reader meets first were the two that disagreed. The 10px
+   card gap was off the scale in both directions. */
+.wfx-sheet .ra-status,
+.wfx-sheet .ra-root { padding: var(--space-2) var(--space-3); }
+/* The fingerprint card is a top-level plate in this column and it was the one
+   left on --bg-2 while its neighbours moved to the opaque recipe; see the note
+   on .wfx-pf for why that recipe and not the other way round. Scoped off the
+   error variant, whose rose wash is the whole of its treatment. */
+.wfx-sheet .ra-status:not(.ra-status-error) { background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg); }
+.wfx-sheet .ra-source { padding: var(--space-3); }
+.wfx-sheet .ra-sources { gap: var(--space-3); }
+/* The fingerprint itself, which is the one string in the feature a person is
+   asked to compare character for character against a source repo. It rendered
+   at 11px here and at 12px in the refusal's detail list, one datum at two
+   sizes in one feature, which is the defect the whole .wfx-fig component was
+   built to prevent. Scoped to the direct child, because the busy banner's
+   `github.com/...` is a literal inside a 12px sentence and belongs a rank
+   below its host for the reason the foot note gives; this one is a block on
+   its own line with nothing to be optically level with.
+
+   overflow-wrap comes with it. The string is `husk-wfg-1:sha256:` plus 64 hex,
+   and hex has no break opportunity at all, so below about a 640px card the
+   tail ran outside its box and was clipped: at a 489px card, 487px of content
+   in 413px of box. The refusal pane already solves this for the identical
+   string, and solved it in the same word. */
+.wfx-sheet .ra-status > code { font-size: var(--fs-micro); overflow-wrap: anywhere; }
+
+/* The card's height thrashed across the state arc and .modal re-centres it
+   every time: 434 idle, 469 busy, 774 ready, 209 done at 1440x900. The drop
+   into done moved the card's top edge 282px and put the Done button that
+   replaces Install 282px above the pointer that had just clicked Install, on
+   the happy path, every time. Busy to ready was +305 in the other direction.
+
+   The busy half is fixed in the markup: the skeleton is the ready pane's own
+   blocks now, so busy and ready both reach the cap and that step is zero. This
+   is the other half, and a floor on the short states is the whole of it a
+   stylesheet can do. Stamping the resolved height on commit is better and
+   belongs to the builder; this holds the box within about 300px across the arc
+   instead of 565 and moves the footer 153 instead of 283, at every window
+   height because it is proportional. vh rather than a token because the thing
+   being matched is the viewport-relative max-height two rules up, and the px
+   ceiling stops a tall monitor from opening a 900px dialog to hold two
+   sentences.
+
+   The done pane centres itself in the box that floor creates. Held at the top
+   of it the success state read as a dialog that had failed to finish drawing,
+   with four hundred pixels of void under three lines of text; centred, the
+   same three lines read as the confirmation they are. safe center rather than
+   center, because a flex scroller that centres overflowing content puts the
+   overflow above the scroll origin where no scrollbar can reach it, and the
+   plain keyword is left in front of it for anything that does not know the
+   safe form. */
+.wfx-sheet[data-state="busy"],
+.wfx-sheet[data-state="done"] { min-height: min(52vh, 520px); }
+.wfx-sheet[data-state="done"] > .modal-body {
+  justify-content: center;
+  justify-content: safe center;
+}
+
+/* .modal-foot is justify-content:flex-end, so a left-aligned note claims the
+   slack with a spacer rather than by fighting the parent's alignment. */
+/* No measure cap. The reading measure is right for a column of stacked
+   paragraphs and wrong for a single-row band whose right neighbour already
+   sets the limit: at 52ch the refusal's one sentence broke with "again." alone
+   on a second line while 153px of footer sat empty beside it. margin-right and
+   the flex gap bound it now, which is the bound that actually exists.
+
+   --text-2 rather than --text-3. This sits on the card's own panel ground
+   rather than on the page --text-3 is tuned against, where it composited to
+   4.42:1 in nord, and it is the last line anybody reads before committing. */
+.wfx-foot-note { margin-right: auto; font-size: var(--fs-nano); color: var(--text-2); }
+/* The one error in this feature that had no component. A rejected install is
+   routed to .ra-status-error at the TOP of the body, and the body is a 1900px
+   scroller whose tail is where a reader stands when they press Install: the
+   banner renders 1700px above the fold and the entire visible feedback for a
+   write that did not happen is the button's label reverting from Installing to
+   Install. The footer is the only band that shares a viewport with the commit
+   control at every scroll position, and this note is already the button's
+   aria-describedby target, so the sentence reaches the control that failed
+   through a binding that exists.
+
+   THE BUILDER OWES TWO THINGS HERE: put the reason on this note and add
+   is-error, and scrollIntoView({block:'nearest'}) the status banner so the
+   detail is reachable rather than merely present.
+
+   The weight comes with the hue, because hue alone is not a channel and this
+   ink is the third warm colour a footer can carry. --wfx-rose-ink rather than
+   raw --rose for the reason it is declared: raw rose measured 2.15 against a
+   tinted ground in nord. */
+.wfx-foot-note.is-error { color: var(--wfx-rose-ink); font-weight: 600; }
+/* Mono inside an 11px sentence at 11px outranks its own host: JetBrains Mono's
+   x-height and set width are far larger than Inter's at one size, so the agent
+   names read bigger than the sentence that names them, in the last line
+   anybody reads before committing. A rank down restores the ~0.9 optical ratio
+   .ra-hint and .wfx-pf-n already use for the same pairing. */
+.wfx-foot-note code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: var(--fs-pico);
+  padding: 1px var(--space-1); border-radius: var(--radius-sm);
+  background: var(--bg-3); color: var(--text);
+}
+/* A padded inline chip draws its right padding before the punctuation that
+   follows it, so `<code>postgres</code>,` renders as "postgres , and". The
+   pull is a kerning correction rather than a layout trick: 4px of padding
+   less 2px puts the comma back against the glyph and leaves the chip its box.
+   Raw 2px because the spacing scale starts at 4 and nothing on it is this
+   small. It rides on the class rather than on the strings because most of
+   these strings arrive from an imported manifest. */
+.wfx-sheet .ra-hint code,
+.wfx-pf-n code,
+.wfx-foot-note code { margin-right: -2px; }
+.wfx-sheet .ra-hint code { padding: 1px var(--space-1); }
+
+/* One attribute selects exactly one pane. Nine panes toggled by hand is where
+   two-visible-at-once bugs live, and the whole point of this feature is that
+   its failure states are as finished as its success state. The panes cannot
+   use [hidden] for this, because the global [hidden]{display:none!important}
+   would beat the show rule. */
+.wfx-pane { display: none; flex-direction: column; gap: var(--space-4); }
+/* One gap ran the whole 1700px ready pane: the same space-4 between the
+   fingerprint card and the identity note as between the preflight card and the
+   prompt list, so nine blocks read at equal weight and the eye had nothing to
+   hold. There are three groups in that scroll, what the file is, what this
+   machine says about running it, and what it will actually send, and the two
+   breaks between them go where the groups change. space-2 on top of the 16
+   already there lands both at 24, which is the next step on the scale. */
+.wfx-pane-ready > .ra-pathrow,
+.wfx-pane-ready > .wfx-steps { margin-top: var(--space-2); }
+.wfx-sheet[data-state="idle"]      .wfx-pane-idle,
+.wfx-sheet[data-state="busy"]      .wfx-pane-busy,
+.wfx-sheet[data-state="refused"]   .wfx-pane-refused,
+.wfx-sheet[data-state="ready"]     .wfx-pane-ready,
+.wfx-sheet[data-state="working"]   .wfx-pane-ready,
+.wfx-sheet[data-state="done"]      .wfx-pane-done { display: flex; }
+/* The pane fades in; nothing geometric animates, because the skeleton already
+   committed the layout and moving it would undo the only thing the skeleton
+   was for. */
+.wfx-sheet[data-state="ready"] .wfx-pane-ready { animation: wfx-settle var(--motion-base) var(--ease-out); }
+@keyframes wfx-settle { from { opacity: 0; } to { opacity: 1; } }
+
+/* Committing freezes the whole body, not one pane inside it. The source cards,
+   the URL field and Fetch live outside .wfx-pane-ready, so scoping the
+   treatment to the pane left the brightest and most clickable half of the
+   sheet fully live, still offering to fetch a different file while the write
+   ran. A dialog that offers to discard what it is committing is not
+   committing.
+
+   The freeze is signalled on the controls rather than by a blanket opacity.
+   At 0.62 every string in the pane measured under 3:1 in all six themes,
+   including the prompt text that is the entire security argument for this
+   sheet, at the one moment somebody is committing to it. Dimming what cannot
+   be used and leaving what has to be read is what this comment always claimed
+   the treatment did.
+
+   Two of the five things the selector used to reach were content rather than
+   controls, so the claim was still not true. .wfx-path is the bound directory,
+   the single fact that says where the install lands, and at 0.5 it measured
+   2.08 in sepia at the exact moment it is being committed to. summary carries
+   the step name and the agent line, which land at 1.96 in light. Neither was
+   ever usable and neither stopped needing to be read. What is left is the
+   things a pointer could have pressed, plus the chevron, which is the step
+   card's only affordance. */
+.wfx-sheet[data-state="working"] > .modal-body { pointer-events: none; }
+.wfx-sheet[data-state="working"] > .modal-body :is(button, input, .ra-source),
+.wfx-sheet[data-state="working"] > .modal-body summary .wfx-step-c { opacity: 0.5; }
+
+/* Once the file has been read, the picker that read it is chrome. On ready it
+   collapses to the single path row, which is the reversible affordance and
+   puts the fingerprint at the top of the body where the sheet's own copy says
+   to start; on done the whole acquisition block goes, because the only thing
+   left to do is leave and a completion state that still offers a live form is
+   a screen whose visual subject is a form you must not use. Refused keeps all
+   of it: there the fetch row is the fix path.
+
+   Scoped to direct children of the body, because .ra-pathrow is also the ready
+   pane's bound directory and the publish done pane's git line.
+
+   The lede goes with the picker. It explains what a workflow.husk.json is and
+   what reading one costs, which is a question the reader has already had
+   answered by the time a fingerprint is on screen. At the app's minimum window
+   the scrolling body is 322px tall and the lede plus the fetch row were 94 of
+   it, so 29% of the ready pane was acquisition chrome sitting above the
+   fingerprint the sheet's own copy says to start at. The fetch row stays: that
+   is the reversible affordance. The consent gate's and the publish sheet's own
+   ledes live inside their ready panes rather than beside them, so this reaches
+   neither. */
+.wfx-sheet[data-state="ready"]   > .modal-body > .ra-sources,
+.wfx-sheet[data-state="working"] > .modal-body > .ra-sources,
+.wfx-sheet[data-state="done"]    > .modal-body > .ra-sources,
+.wfx-sheet[data-state="ready"]   > .modal-body > .ra-hint,
+.wfx-sheet[data-state="working"] > .modal-body > .ra-hint,
+.wfx-sheet[data-state="done"]    > .modal-body > .ra-pathrow,
+.wfx-sheet[data-state="done"]    > .modal-body > .ra-hint,
+.wfx-sheet[data-state="done"]    > .modal-body > .ra-status { display: none; }
+/* The install sheet's refusal offers no primary: there the file itself cannot
+   be trusted, so a disabled commit button reads as a lock to pick and sends
+   people hunting for the override. The publish sheet's refusal is a size check
+   on the user's own run log, which is routine, recoverable and entirely their
+   data, and its own body sentence names the fix ("publish without the log")
+   before a footer holding one dismiss button deletes the control that performs
+   it. So the hide is scoped to primaries that are not the refusal's own, and a
+   sheet that has a forward move declares it in the markup rather than being
+   relabelled at runtime, which keeps every state of the footer reviewable in
+   the file. */
+.wfx-sheet[data-state="refused"] > .modal-foot .btn-primary:not(.is-refusal-go),
+.wfx-sheet:not([data-state="refused"]) > .modal-foot .btn-primary.is-refusal-go { display: none; }
+
+/* The safety story of all three sheets is that the commit control is revealed
+   and disabled so a reader can see exactly what is being withheld, and the
+   global treatment is an opacity wash: the label measured 1.76 to 1.95 against
+   its own fill across the six themes, and in the light family it was a
+   near-white word on pale salmon. Full opacity and a neutral hue keep the word
+   legible and keep the footer from carrying a third warm hue beside the rose
+   blocker and the amber caution, all three meaning different things.
+
+   The fill went with it. --bg-3 behind --text-2 with a --line-2 ring is a
+   description of .ghost-btn with more fill and a heavier edge, so the withheld
+   Install outranked the live Cancel beside it: same ink, twice the background,
+   plus a ring Cancel does not have. In the two states whose whole argument is
+   that the commit is revealed and withheld, the heaviest thing in the footer
+   was the one control you cannot press. Transparent with --text-3 and the
+   lighter --line drops it a rank below the ghost it has to sit under, and the
+   ring still says a control lives there.
+
+   [aria-disabled] rides alongside :disabled because the two commit buttons
+   carry the ARIA form: `disabled` takes a control out of the tab order, so the
+   sentence naming what is blocking it can never be announced by the thing it
+   describes. Visual treatment identical, which is the point.
+
+   --text-2 and not --text-3. --text-3 measured 4.41 against the transparent
+   footer ground in nord, under AA on the one word this comment spends a
+   paragraph arguing has to stay legible; at --text-2 the six themes run 5.61
+   to 9.06. The rank argument above is carried by the fill and the ring rather
+   than by the ink: this stays transparent behind a --line hairline while
+   Cancel keeps its --bg-3 fill and its heavier --line-2 edge, so the withheld
+   commit is still a step under the live ghost beside it. */
+.wfx-sheet > .modal-foot .btn-primary:is(:disabled, [aria-disabled="true"]) {
+  opacity: 1;
+  filter: none;
+  background: transparent;
+  color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: not-allowed;
+}
+.wfx-sheet > .modal-foot .btn-primary[aria-disabled="true"]:hover { background: transparent; }
+
+/* The same argument, for the other disabled control this feature creates and
+   for the one moment it matters most. During the clone #wfx-in-fetch falls to
+   the global button:disabled wash, and "Fetching" measured 1.99 in sepia, 2.05
+   in nord and 2.14 in light: the only text channel for an unbounded network
+   operation was the least legible string on the surface while the skeleton
+   beside it was the loudest. It takes the fill the footer rule used to have,
+   which is the right rank for a control that is busy rather than withheld.
+
+   */
+.wfx-sheet .ghost-btn:disabled {
+  opacity: 1;
+  filter: none;
+  background: var(--bg-3);
+  color: var(--text-2);
+  border-color: var(--line-2);
+  cursor: not-allowed;
+}
+#wfx-in-fetch:disabled { cursor: progress; }
+
+/* The footer while a write is in flight. .modal-foot is not a child of
+   .modal-body, so the freeze above never reached it and Cancel sat at full
+   brightness as the most prominent control on the card, mid-write, with
+   nothing in the copy saying what pressing it would do. The write is one file
+   and it is not abortable, so the honest answer is that the whole card freezes
+   and the sheet reaches done or install-failed on its own.
+
+   The two treatments are the other way round from the blocked state, because
+   the fact being reported is the other way round. There the primary is
+   withheld and the ghost is live, so the primary recedes. Here the primary is
+   the only thing happening and the ghost is the one that has stopped, so the
+   busy fill goes on the primary and the ghost takes the receding treatment. */
+.wfx-sheet[data-state="working"] > .modal-foot .ghost-btn {
+  pointer-events: none;
+  opacity: 1;
+  filter: none;
+  background: transparent;
+  color: var(--text-3);
+  border-color: var(--line);
+}
+.wfx-sheet[data-state="working"] > .modal-foot .btn-primary {
+  background: var(--bg-3);
+  color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  cursor: progress;
+}
+
+/* The label swaps from Fetch to Fetching on click and the button grows about
+   38px with it, which shrinks the field by the same amount under the cursor
+   that just clicked. 92px is the longer label at 13px/500 plus the button's
+   own side padding; no token expresses a text width. */
+#wfx-in-fetch { min-width: 92px; }
+
+/* ── The figure component ──────────────────────────────────────────────────
+   Three densities, declared once. Before this there were five competing
+   declarations of "median duration" across the feature at 13, 18, 22 and 32px
+   with two different label treatments, and a user moving from the install
+   sheet to a saved card watched the same number change size for no reason. */
+.wfx-figs {
+  display: grid;
+  /* An explicit count, not auto-fit. auto-fit collapses empty tracks and
+     stretches the survivors, so a single figure on a wide window renders in a
+     1100px track with a 10px label alone in it. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  /* --radius-lg, the corner .wfx-pf, .wfx-step and .wfx-refuse all use. At
+     --radius-xl this was the only 12px corner in a column of 8px ones.
+
+     No width cap either. The old 560px stopped the grid 112px short of the
+     preflight card and the step list directly below it, so the one block of
+     numbers in the sheet was also the one block with its own right edge. Four
+     tracks across the full column are 168px each, comfortably more than the
+     widest figure needs. */
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+/* Fold before a tile gets narrower than the thing inside it. The card is
+   min(720px, 94vw) so it can live in a narrow Electron window, and at a 526px
+   card each of the four tracks is 118 against a 111px chip in a 94px content
+   box: the chip crossed its tile's right edge and .wfx-figs clips, so the pill
+   was sliced through its cap. At a 489px card all four were cut. That is a
+   figure rendered without its provenance, which is the one thing this
+   component exists to make impossible, so the grid folds rather than the chip
+   shrinking or truncating. Two 250px tiles at that width hold the chip whole.
+   Still an explicit count and not auto-fit, for the reason given above. The
+   breakpoint is the window width where the arithmetic stops working. */
+@media (max-width: 700px) {
+  .wfx-figs:not(.is-inline) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.wfx-fig {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-3);
+  /* Opaque surface: see the note on .wfx-hero. --bg-1 is a white alpha in
+     seven of the ten themes, so a single-layer fill lets the window's ambient
+     corner pools read through and the tile changes brightness with its scroll
+     position. The 1px gap over a --line ground is the divider, so there are no
+     border rules to keep in sync and no doubled hairline between tiles. */
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+}
+/* The chip is the last row of every tile and it bottom-anchors there. The grid
+   already stretches all four tiles to one height, so the auto margin has slack
+   to spend; without it the chip's position was set by whatever happened to sit
+   above it, and the dollar tile's two-line label pushed its chip 22px below
+   the three beside it. The provenance mark is the whole point of the
+   component, and in a row built to be read column-down it was the one thing
+   that jittered. */
+.wfx-figs:not(.is-inline) .wfx-fig > :last-child { margin-top: auto; align-self: start; }
+.wfx-fig-v {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: var(--fs-h2); font-weight: 600;
+  line-height: var(--lh-tight); letter-spacing: var(--tracking-tight);
+  /* Tabular figures are load-bearing: four medians in a grid are read column
+     down as much as row across, and proportional digits make 0.11 look
+     narrower than 0.88 at a glance. */
+  font-variant-numeric: tabular-nums;
+  /* A face correction, not a spacing choice, which is why it is not on the
+     spacing scale: the scale has no unit for a gap inside a word. JetBrains
+     Mono spends a full advance on its space, so "4m 48s", the one value in the
+     grid that is a single quantity made of two parts, opened a 10.52px gap at
+     18px where Inter's space measures 4.54 and read as two figures sharing a
+     tile beside a unitary "31" and "26/31". em rather than px so it tracks all
+     three densities: it lands the space near 6.3px at 18 and 4.6px at 13. */
+  word-spacing: -0.25em;
+  color: var(--text);
+}
+/* A unit or denominator is grammar, not measurement, so it drops a rank and
+   gets out of the number's way. The tracking is restated rather than
+   inherited: --tracking-tight is an em value that the parent already resolved
+   to an absolute -0.27px at 18px, and inheriting that number into a 12px span
+   is half again the tracking the token asks for.
+
+   --text-2 rather than --text-3 for both the unit and the label. --text-3 is
+   tuned as a roughly 4.5 token against --bg; these sit on the tile's own
+   opaque fill and on the saved card, where the labels composited to 4.46 in
+   nord. The correction the preflight header already carries runs through every
+   --text-3 role in this block that sits on a panel rather than on the page,
+   which is what that comment claimed and what this now is. */
+.wfx-fig-u { font-size: var(--fs-micro); font-weight: 500; letter-spacing: var(--tracking-tight); color: var(--text-2); }
+/* --tracking-normal, and the reason is a collision rather than the label
+   itself. .wfx-pf-h, the header that names a whole block of rows, computed
+   11px / 16.5px / 600 / 1.32px / uppercase / --text-2, and so did this, which
+   names one number inside one tile. Two structural ranks rendering byte for
+   byte identically leaves a reader scanning the column with no cue for which
+   uppercase run is a section and which is a caption. Tracking is the one axis
+   that separates them for free: the section header keeps the wide setting that
+   is the idiom for a section header, and the caption drops to the normal one.
+   Neither moves off the 11px floor and neither loses ink. */
+.wfx-fig-l {
+  font-size: var(--fs-nano); font-weight: 600;
+  letter-spacing: var(--tracking-normal); text-transform: uppercase;
+  color: var(--text-2);
+}
+/* The dollar tile's qualifier. It is words rather than grammar, so it takes
+   the unit slot's rank but not the value's monospace: 28 characters of
+   uppercase at 0.12em tracking will not fit a 166px grid track, so carrying it
+   in the label wrapped that one tile to two lines while its three siblings
+   held one, and "YOUR RATES" alone on a second line reads as a second label
+   because uppercase plus wide tracking removes every word-shape cue the eye
+   would use to rejoin it. In the value slot it is one phrase in the sheet's
+   own face, and the copy rule is satisfied by the rendered string.
+
+   On its own line inside that slot, because "≈$0.41 at your rates" is 150px
+   against a 143px track at the sheet's own width and less at the app's
+   minimum, so beside the number it wrapped to two ragged lines of its own.
+
+   IT IS ALSO THE SLOT FOR A THIN SAMPLE'S QUALIFIER, and the builder owes it
+   there. At panel density .is-thin buys one weight step and one ink step and
+   nothing else, so "2/2 ZERO EXIT" still sits as a headline figure beside
+   "2 RUNS" with no words anywhere saying two runs is too few: the chip reads
+   "author states", which it would read at n=31 too, and the only prose that
+   could carry it is the builder-generated closing note, whose shipped example
+   is written for 31. Every .is-thin tile in a sheet emits
+   <span class="wfx-fig-q">of 2 runs</span> inside its value. The reserve two
+   rules down already holds the line for it, so it costs no layout. The card
+   keeps the .wfx-sr form instead, because at card density there is no room for
+   the visible one. */
+.wfx-fig-q {
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--fs-micro); font-weight: 400;
+  letter-spacing: normal; white-space: nowrap;
+  /* Inter's own space, not the numeral face's negative one. The correction on
+     .wfx-fig-v is for a gap inside a quantity; this is a four-word English
+     phrase and it inherits into every child of the value slot. */
+  word-spacing: normal;
+  color: var(--text-2);
+}
+/* Which means the tile carrying it reserves two lines. That reserve is what
+   keeps the four labels on one baseline and the four chips on another:
+   without it the qualifier pushes one label 20px below its siblings, which is
+   the defect it was moved out of the label to fix. The arithmetic is the
+   value's own two line boxes, so it follows the type scale rather than
+   restating a pixel somebody measured once.
+
+   :has(), so the SECOND line exists only where something needs it. It used to
+   run on every panel-density value in the feature, and the publish sheet has
+   no qualifier anywhere in its grid, so four tiles there each paid a phantom
+   line box to align with a line nothing was going to occupy: "31" floated a
+   full line above RUNS for the benefit of a tile that does not exist on that
+   sheet. Subgrid is the other instrument and it is wrong here, because this
+   grid draws its dividers as 1px gaps over a --line ground, and a second row
+   of tracks would paint that ground straight across the tiles.
+
+   The first line is reserved unconditionally, and that one is not a phantom:
+   three of the four tiles occupy it, and it is what lets the null tile drop to
+   --fs-body without lifting its own label 5px off the line its siblings share.
+   That is the alignment the old comment was defending when it refused to move
+   the size; the reserve does it without freezing the type. */
+.wfx-figs:not(.is-inline) .wfx-fig-v { min-height: calc(var(--lh-tight) * var(--fs-h2)); }
+.wfx-figs:not(.is-inline):has(.wfx-fig-q) .wfx-fig-v { min-height: calc(2 * var(--lh-tight) * var(--fs-h2)); }
+/* Inline density, for a saved card: one line, same tokens. */
+.wfx-figs.is-inline { display: flex; gap: var(--space-3); background: none; border: 0; border-radius: 0; }
+.wfx-figs.is-inline .wfx-fig { padding: 0; background: none; gap: 0; }
+.wfx-figs.is-inline .wfx-fig-v { font-size: var(--fs-small); font-weight: 500; }
+/* 11px, not 10. The trust-chip comment eleven hundred lines up states the rule
+   this broke: 11px is the floor, and no state-carrying text goes below it.
+   RUNS, MEDIAN and ZERO EXIT are the only thing on the card that says what 31
+   and 26/31 mean, so they are state-carrying by definition, and at 10px in
+   --text-3 they measured 3.20 against the resolved card ground in light and
+   4.79 in nord while the numerals beside them sat at 13.4.
+
+   The weight drop is what stops the caption outranking its own number at this
+   density, and it is here rather than on the base rule because the inversion
+   only exists here. On a thin sample the value falls three size ranks and a
+   weight rank going from panel to card, 18/600 down to 13/500 and then to 400,
+   while the label was pinned at the 11px floor and fell nothing: "3m 51s –
+   6m 12s" at 13/400 under "RANGE" at 11/600 in the same ink, and squinted the
+   label row was the stronger band of the two. The two demotions were designed
+   apart and compounded. Keeping the floor and the ink and spending a weight
+   step instead leaves the is-thin demotion doing what it was for, which is
+   saying something about the value and nothing about its caption. */
+.wfx-figs.is-inline .wfx-fig-l { font-size: var(--fs-nano); font-weight: 500; }
+/* The value falls three ranks between panel and card density and the unit
+   falls with it, but only to the floor. "/31" is the denominator of the one
+   number on the card that could be mistaken for a rate, so it carries state
+   and the 11px rule covers it exactly as it covers the labels. Two pixels
+   under a 13px value instead of one is a wider gap than the panel density
+   uses, and it is the gap the floor leaves. */
+.wfx-figs.is-inline .wfx-fig-u { font-size: var(--fs-nano); }
+
+/* A figure with no honest value keeps its slot so the record's shape stays
+   constant, and loses its weight and its ink so it cannot be mistaken for a
+   measurement.
+
+   .is-thin is the same treatment for the thinnest samples. The copy rule
+   already protects the duration figure by calling two runs a range, but the
+   outcome figure had no equivalent, so "2/2" was set in the same tabular 600
+   as "26/31" and the smallest possible sample published the strongest
+   possible claim.
+
+   Declared after the inline rules because both selectors weigh the same and
+   the last one wins; at card density this has to beat the 500 above it. */
+.wfx-fig.is-null .wfx-fig-v,
+.wfx-fig.is-thin .wfx-fig-v { font-weight: 400; color: var(--text-2); }
+/* The two branches part company on everything except weight and ink, because
+   only one of them is still a measurement. .is-thin holds a duration or a
+   count and keeps the numeral face and the figure rank; .is-null holds words.
+   "no log" and "not priceable here" are English, and set at --fs-h2 in tabular
+   monospace with the tight tracking the null tile was the loudest thing in a
+   row of real numbers and wrapped to two lines across a 166px track. The file
+   already made this argument forty lines up, for .wfx-fig-q: words rather than
+   grammar take the rank without taking the value's monospace. The publish
+   sheet was showing "at your rates" in Inter and "no log" in mono, two prose
+   strings in one component one tile apart.
+
+   The size can move now, and the old comment saying it could not is why it is
+   being said again here. That reasoning was that --fs-body drops the line box
+   5px and lifts the tile's label off the line its siblings share; the reserve
+   two rules above has held the line box independently of the tile's own font
+   size ever since it was written, so the thing the size was being kept for is
+   held by something else. */
+.wfx-figs:not(.is-inline) .wfx-fig.is-null .wfx-fig-v { font-size: var(--fs-body); }
+.wfx-fig.is-null .wfx-fig-v {
+  font-family: var(--font-body);
+  font-variant-numeric: normal;
+  letter-spacing: var(--tracking-normal);
+  word-spacing: normal;
+}
+
+/* ── The trust chip ────────────────────────────────────────────────────────
+   Three tiers, and none of them is the word "verified". The chain format is
+   anchored at a public genesis constant with no signature anywhere, so a
+   passing chain means the JSONL is internally well formed and nothing more.
+
+   The tier is carried by THREE channels: the word, the ink, and the mark's
+   shape. Hue alone cannot do it, because the accent axis is independent of the
+   theme axis and a user on the emerald accent would read the computed chip as
+   ordinary chrome. 11px is the floor: at 10px these folds measure under 4.5:1
+   in nord, sepia and gruvbox.
+
+   The folds below are the ones that were measured rather than the ones that
+   were intended, and the ORDER of the two emerald folds is the whole of it.
+   The mix percentage is emerald's share, so a lower number is more --text and
+   therefore more contrast against the chip's own tinted fill. The top tier was
+   set at 70% emerald and the middle at 45%, which put more --text in the
+   middle tier than in the top one, and the ladder rendered upside down in
+   every theme: computed / consistent / said measured 8.80 / 10.12 / 9.26 in
+   midnight, 9.54 / 11.17 / 10.10 in dark, 4.72 / 5.53 / 5.64 in nord, 7.13 /
+   7.91 / 8.11 in dracula, 5.32 / 9.14 / 6.09 in light and 5.00 / 6.40 / 4.81
+   in sepia. "computed here", the only tier this machine actually measured, was
+   the faintest of the three in five of six themes and the strongest in none,
+   and in light the middle tier ran 1.7 times its contrast. At 45% the middle
+   tier had also lost most of its chroma, rgb(200,214,188) in nord and
+   rgb(90,81,34) in sepia, so it was simultaneously the loudest chip in the row
+   and the one that read as neutral pill chrome.
+
+   Swapped: 45% emerald on the top tier, 75% on the middle, tints unchanged.
+   That reads computed / consistent / said as 9.59 / 9.00 / 9.26, 10.60 / 9.71
+   / 10.10, 5.27 / 4.81 / 5.64, 7.49 / 7.44 / 8.11, 8.85 / 4.94 / 6.09 and
+   6.23 / 4.90 / 4.81. Computed leads consistent in all six, nothing falls
+   under 4.8, and the fold order finally matches the tier order this comment
+   describes. The folds are done in oklch because an sRGB blend collapses
+   amber's chroma with its lightness and lands on olive.
+
+   The marks are 8px and structurally different rather than radius-different.
+   At 6px the only thing separating tier two from tier three was one
+   antialiased corner pixel, which is not a channel that survives the
+   greyscale test it was written to pass. */
+.wfx-claim {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  /* --tracking-normal, because 0.02em is 0.22px at 11px and 0.22px is under
+     the perceptual threshold, so the invented value was buying nothing and
+     costing a fifth distinct tracking across four 11px roles a reader is meant
+     to parse as one system. */
+  font-size: var(--fs-nano); font-weight: 600; letter-spacing: var(--tracking-normal);
+  white-space: nowrap;
+  /* The opaque --notif-bg base matters more than the tint. A transparent fill
+     lets a row hover slide underneath and drop the chip's contrast on exactly
+     the row being pointed at, which is the one the user is reading. */
+  background: var(--notif-bg);
+  /* The card strip's chip is a real <button>, so with no border declared it
+     inherited the user agent's 2px outset bevel: computed rgb(0,0,0) in all
+     six themes, an ink belonging to no theme in the file, and 4px added to a
+     box that has to fit three figures and itself inside a 254px card. The same
+     component rendered flat inside the sheets and beveled on a saved card. */
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--text-2);
+}
+/* The chip on a saved card is the first keyboard-reachable control that card
+   has ever had and the only door into the receipt inspector, and it rendered
+   identically to the twelve inert spans inside the sheets, with the arrow
+   cursor actively saying it could not be pressed. Scoped by element so the
+   spans stay inert. --wfx-ink is declared per tier, so one pair of rules
+   covers all three chips; the fallback is the base pill's own ink. */
+button.wfx-claim {
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+button.wfx-claim:hover {
+  background: color-mix(in srgb, var(--wfx-ink, var(--text-2)) 18%, var(--notif-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wfx-ink, var(--text-2)) 52%, transparent);
+}
+/* The global focus rule paints an accent glow and replaces box-shadow, which
+   on this chip means the tier ring, one of the three channels the component
+   deliberately carries, disappears for the duration of focus, and on the amber
+   tier the accent halo reads as the same chip slightly warmer. The dense
+   surfaces in this file already left that rule; so does this. currentColor
+   keeps the ring on the tier's own ink and independent of the accent axis. */
+.wfx-claim:focus-visible {
+  outline: 2px solid var(--focus-ink); outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.wfx-claim-m { width: 8px; height: 8px; flex: none; }
+.wfx-claim.is-computed {
+  --wfx-ink: color-mix(in oklch, var(--emerald) 45%, var(--text));
+  color: var(--wfx-ink);
+  background: color-mix(in srgb, var(--wfx-ink) 10%, var(--notif-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wfx-ink) 34%, transparent);
+}
+/* Filled square: this machine measured it. */
+.wfx-claim.is-computed .wfx-claim-m { background: currentColor; border-radius: 1px; }
+/* The middle tier, declared rather than inherited. It used to fall through to
+   the base pill's grey, so the row read strong / absent / medium and the tier
+   that took the most work to earn, this machine re-hashing the author's own
+   evidence, was the one that looked like disabled chrome. Same family as
+   computed, one step back from it, unmistakably ahead of the base. Back means
+   more emerald and less --text here; see the fold note above. */
+.wfx-claim.is-consistent {
+  --wfx-ink: color-mix(in oklch, var(--emerald) 75%, var(--text));
+  color: var(--wfx-ink);
+  background: color-mix(in srgb, var(--wfx-ink) 8%, var(--notif-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wfx-ink) 30%, transparent);
+}
+/* Hollow square: this machine checked the author's evidence against itself. */
+.wfx-claim.is-consistent .wfx-claim-m { box-shadow: inset 0 0 0 1px currentColor; border-radius: 1px; }
+.wfx-claim.is-said {
+  /* Its own fold rather than a borrowed --as-mark. That token is tuned for a
+     mark sitting on the page background; used as ink on a 13% wash of itself
+     it measured 4.13 in sepia and cleared light with no headroom at all.
+     Amber at 60% toward --text over a 10% tint measures 4.81 in sepia, 6.09
+     in light and 5.6 or better in the dark four. */
+  --wfx-ink: color-mix(in oklch, var(--amber) 60%, var(--text));
+  color: var(--wfx-ink);
+  background: color-mix(in srgb, var(--wfx-ink) 10%, var(--notif-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wfx-ink) 34%, transparent);
+}
+/* Dotted circle: nobody checked anything. Round against two squares, and the
+   broken edge is the part that survives desaturation, where a solid hollow
+   circle and a hollow square are one blurred 8px blob apart.
+
+   It was a slashed circle, which is the international prohibition sign, worn
+   by the tier the spec expects most published workflows to carry on day one.
+   The genuinely denied states, the blocking preflight row and the refusal,
+   both use an enclosed cross, so the normal case and the refused case were
+   marked with the same vocabulary and three "author states" chips sat eight
+   pixels above a red circle-X meaning "this will not run". A broken ring reads
+   as unconfirmed rather than forbidden, and 1.5px is the weight that renders
+   as discrete dots on an 8px circumference rather than a grey ring; the
+   spacing scale has nothing at this size and a hairline would blur to one. */
+.wfx-claim.is-said .wfx-claim-m {
+  box-shadow: none; border-radius: var(--radius-pill);
+  border: 1.5px dotted currentColor;
+  background: none;
+}
+
+/* ── Refusal ───────────────────────────────────────────────────────────────
+   Reached when the fingerprint does not match, the chain fails, or the file is
+   not readable. Never degrades into the attested tier: a receipt contradicted
+   by its own evidence is worse than no receipt. Left aligned like .ag-empty
+   rather than centred, because it replaces a block in place and a centred
+   glyph would move everything around it. */
+/* One icon gutter and one text column, which is the shape .wfx-pf-row already
+   uses three hundred pixels below. As a flex column with the icon inline
+   against the title, the title started at x=426 while the sentence it titles,
+   the detail list under that and nothing else in the block started at 402: one
+   heading hanging 24px right of its own body, on the surface whose entire job
+   is being read slowly and exactly, and the only block in the feature with two
+   left edges. The two severity components now agree about where text starts. */
+.wfx-refuse {
+  display: grid;
+  grid-template-columns: var(--fs-h3) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-4);
+  /* The rose at 34% into --line reached 1.42 against the card in nord and
+     1.66 in dracula, so the strongest verdict in the feature arrived as a
+     faintly mauve rectangle with words in it. 55% is an edge. The inset bar
+     is the second channel, and it is deliberately the same
+     inset-with-negative-spread the blocking preflight row already uses, so
+     the worst row in a checklist and the worst state on the surface speak one
+     language rather than two.
+
+     --radius-lg, matching every other block in this column. At --radius-2xl
+     the refusal was both the roundest thing on the surface and the only one
+     wearing the modal card's own corner at a quarter of its size. */
+  border: 1px solid var(--wfx-rose-ink);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--rose) 7%, var(--bg-2));
+  box-shadow: inset 3px 0 0 -0.5px var(--wfx-rose-ink);
+}
+/* The header row is gone: the icon and the title are grid cells now, so the
+   icon takes column one and everything with words in it takes column two. */
+.wfx-refuse-i { grid-column: 1; width: var(--fs-h3); height: var(--fs-h3); color: var(--wfx-rose-ink); }
+.wfx-refuse-t, .wfx-refuse-m, .wfx-refuse-e { grid-column: 2; }
+.wfx-refuse-i svg { width: 100%; height: 100%; display: block; }
+/* margin:0 on both, for the same reason .wfx-refuse-e below carries it: these
+   land on <p> elements, the stylesheet has no global element reset, and the
+   user agent's 1em block margins do not collapse inside a flex column. Without
+   this the gap in a refusal is the 8px this block asked for plus 25px nobody
+   asked for, and the title floats away from the sentence it titles. */
+/* --fs-h3, joining .wfx-note-t sixty lines down, and for the argument that
+   comment already makes: at 14 over a 13px sentence the whole distinction
+   rides on weight, one pixel of size is under the perceptual threshold, and
+   the pair squints down to one grey block. That fix went to .wfx-note-t and
+   .wfx-empty-t and skipped the refusal, which left three sizes for one role in
+   one feature and ranked the sentence that stops an install a step BELOW the
+   workflow's own name on the same surface. Two ranks now: --fs-small for a
+   placeholder title, --fs-h3 for a real heading. --fs-body disappears from
+   these surfaces entirely, which is correct, because it was never a role here.
+   The 8px gap under it is the grid's, so nothing else moves. */
+.wfx-refuse-t { margin: 0; font-size: var(--fs-h3); font-weight: 600; color: var(--text); }
+.wfx-refuse-m { margin: 0; font-size: var(--fs-small); line-height: var(--lh-base); color: var(--text-2); max-width: var(--wfx-measure); }
+/* The verifier's own words get their own monospace slot and never enter the
+   sentence above. An explanation a person can act on and a hash a machine
+   produced are two registers, and mixing them makes both unreadable.
+
+   Stacked, not columned. Each declared or recomputed value is 82 characters,
+   `husk-wfg-1:sha256:` plus 64 hex, which needs 590px at 12px in this face.
+   The two-column form spent 165 of the row on the words "declared" and
+   "recomputed", left 525 for the value, and broke after the hyphen in the
+   rule-set prefix: nine characters orphaned on the first line and 73 on the
+   second, on the one string the whole refusal exists to let somebody compare.
+   Label above, value full width beneath, and both hashes set unbroken and
+   align character for character.
+
+   --lh-base, not --lh-relaxed. .wfx-prompt is the same face at the same size
+   two blocks down; two mono panes on one surface at two leadings is a
+   difference a reader has to account for, and there is nothing to account. */
+.wfx-refuse-e {
+  display: block;
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: var(--fs-micro); line-height: var(--lh-base);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.wfx-refuse-e dt { font-size: var(--fs-nano); color: var(--text-2); }
+.wfx-refuse-e dd { margin: 0 0 var(--space-2); color: var(--text); }
+.wfx-refuse-e dd:last-child { margin-bottom: 0; }
+/* Below about 760 the card is at 94vw and the text column loses the last 20px
+   the 82-character fingerprint needs, so the prefix orphans again exactly as
+   it did in the two-column form. There the detail list takes the card's own
+   padding edge rather than the icon gutter's: it is a machine's own output
+   rather than a sentence, and one unbroken hash is worth more at that width
+   than one shared left edge. Above it the gutter holds and this never fires.
+   The breakpoint is the window width at which the arithmetic stops working,
+   not a device size. */
+@media (max-width: 760px) {
+  .wfx-refuse-e { grid-column: 1 / -1; }
+}
+
+/* ── Success ───────────────────────────────────────────────────────────────
+   The terminal state that had nothing. Both refusal panes get an enclosed
+   glyph, a bordered block and a route out; the publish done pane gets the
+   written path, the pre-written git line and a Copy; the install done pane was
+   two bare paragraphs floating in a centred 386px body whose own copy pointed
+   at an action somewhere else in the app. Failure was a finished component and
+   success was a shrug.
+
+   It is .wfx-refuse's shape with the severity taken out: the same icon gutter,
+   the same 1px edge, the same 7% wash, so the two verdicts of this feature are
+   one language rather than two, read at a glance by hue and glyph. What it
+   does not take is the left bar. That bar exists because a blocking row has to
+   be findable inside a list of rows without being read, and this block is the
+   only thing on the surface; borrowing it would spend an alarm channel on a
+   confirmation. */
+.wfx-affirm {
+  display: grid;
+  grid-template-columns: var(--fs-h3) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-4);
+  border: 1px solid var(--wfx-emerald-ink);
+  border-radius: var(--radius-lg);
+  /* The same 7% wash the refusal carries, but folded into --bg-1 rather than
+     --bg-2, and that is measured rather than tidy. Emerald is the pale
+     severity in half the themes, so 7% of it over --bg-2 LIFTS the ground:
+     this pane's own sentence composited to 4.42 in nord, under AA, where the
+     rose block at the identical recipe sits at 4.66. Over --bg-1 it reads 4.63
+     there and gains headroom in all six. */
+  background: color-mix(in srgb, var(--emerald) 7%, var(--bg-1));
+}
+.wfx-affirm-i { grid-column: 1; width: var(--fs-h3); height: var(--fs-h3); color: var(--wfx-emerald-ink); }
+.wfx-affirm-i svg { width: 100%; height: 100%; display: block; }
+.wfx-affirm > :not(.wfx-affirm-i) { grid-column: 2; }
+/* The bound directory the install just committed to, which is the most
+   relevant fact the pane holds and about 50px of the void it was floating in.
+   It stretches for the reason .wfx-pane-done > .wfx-path stretches on the
+   publish sheet: one right edge for the pane. */
+.wfx-affirm > .wfx-path { justify-self: stretch; width: auto; margin-top: var(--space-1); }
+
+/* ── Empty, and its opposite ───────────────────────────────────────────────
+   .wfx-empty is the "nothing here yet" component: a diminished title over a
+   diminished sentence, which is the correct rank for a placeholder. It names
+   what is still true and attaches the action that would change it, rather than
+   apologising.
+
+   It was also carrying two things that are not placeholders: the flow's
+   success headline, and the 340-character statement about what the numbers are
+   worth, which is the argumentative point of the whole install sheet. At 13
+   over 12 that argument was set smaller than the step names shouting above it.
+   .wfx-note is the same shape one rank up, and it is what fills the hole
+   between the 18px modal title and a body that was otherwise entirely 11, 12
+   and 13. */
+.wfx-empty, .wfx-note { display: flex; flex-direction: column; gap: var(--space-2); }
+/* margin:0 for the reason given on .wfx-refuse-t: these are all <p>. */
+.wfx-empty-t { margin: 0; font-size: var(--fs-small); font-weight: 600; color: var(--text); }
+.wfx-empty-m { margin: 0; font-size: var(--fs-micro); line-height: var(--lh-base); color: var(--text-2); max-width: var(--wfx-measure); }
+/* --fs-h3, two ranks over the sentence under it. At 14 over 13 the whole
+   distinction rode on weight, because one pixel of size is under the
+   perceptual threshold, and the pair read as one grey block: the workflow's
+   name, the identity of the thing being installed, was out-weighed by the
+   figure row, the fingerprint block and the red preflight bar and landed fifth
+   in the squint order on a surface where it should be second. The same 14 over
+   13 repeated on "What the numbers above are worth" and on "Installed.", so
+   the flaw was the pattern rather than one heading. */
+.wfx-note-t { margin: 0; font-size: var(--fs-h3); font-weight: 600; color: var(--text); }
+.wfx-note-m { margin: 0; font-size: var(--fs-small); line-height: var(--lh-base); color: var(--text-2); max-width: var(--wfx-measure); }
+/* The borrowed toggle is the one element on the publish sheet that is an
+   actual decision, and it shipped at 12px/500 directly over a 12px/400
+   paragraph explaining it: 100 weight units and nothing else, which at 12px
+   Inter is under the threshold at reading distance, so the control and its own
+   footnote merged. Every static row title in the same scroll is 13px/600. This
+   is at least that. */
+.wfx-sheet .ai-foot-toggle { font-size: var(--fs-small); font-weight: 600; color: var(--text); }
+/* The sentence explains the toggle above it, so it starts where the toggle's
+   words start rather than where its box does. Aligned to the checkbox it read
+   as an unrelated paragraph that happened to follow. 16px is .ai-check-box's
+   declared size and var(--space-2) is the gap .ai-foot-toggle sets after it. */
+.wfx-pub-note { padding-left: calc(16px + var(--space-2)); }
+/* The fingerprint card's first line: the provenance chip on the left, the copy
+   control on the right. A row rather than a stack, because the chip is short
+   and a 32px control on its own line would put more height into the header of
+   this block than the hash it introduces. */
+.wfx-fp-h { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+/* The single checkbox that unlocks Run it had no container at all: it floated
+   under the last prompt card with a gap either side, the least present thing
+   on the surface it gates. It gets the row treatment every other decision on
+   these sheets already has. */
+.wfx-ack {
+  padding: var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  /* The top-level plate recipe, for the reason given on .wfx-pf. */
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+}
+
+/* ── Path row ──────────────────────────────────────────────────────────────
+   Two spans, not one clever string. A single element with direction:rtl and
+   unicode-bidi:plaintext resolves LTR on any path beginning with a Latin
+   character, so the ellipsis lands on the tail and eats the filename, which is
+   the one part of the path the row exists to show. The directory truncates;
+   the filename never does.
+
+   The box matches the 32px control it sits beside. At 8px of block padding it
+   measured 36 against the Change button's 32 and every path row in the feature
+   read as a dropped bottom edge. 4px plus the 18px line box is 26; the
+   min-height carries the remaining 6 and centres the contents in it. */
+.wfx-path {
+  display: inline-flex; align-items: center; min-width: 0;
+  min-height: var(--control-h);
+  width: max-content; max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  /* The top-level plate recipe, for the reason given on .wfx-pf. */
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: var(--fs-micro); color: var(--text-2);
+}
+/* Paired with a button it fills the row. Alone, as on the consent gate, it
+   shrinks to the path: a 20-character path in a 672px bordered box is a box
+   with 600px of nothing in it. */
+.ra-pathrow > .wfx-path { width: auto; flex: 1 1 auto; }
+/* The publish done pane's written path has no .ra-pathrow around it, so the
+   shrink written for the consent gate's 20-character directory fired on a
+   60-character path and stopped it at 550 while the sentence above ended at
+   719 and the git block below at 648: four right edges in 180px of height,
+   under a comment four rules down that says "one right edge for the pane".
+   Scoped to the done pane so the consent gate keeps the shrink it earns. */
+.wfx-pane-done > .wfx-path { width: auto; align-self: stretch; }
+.wfx-path-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wfx-path-file { flex: 0 0 auto; color: var(--text); }
+
+/* The card's graph preview, reused at sheet width. It is the largest block
+   above the fold on two of the three sheets, and 63% of it was bare dot grid:
+   a 670x80 frame holding a 226px drawing with 222px of empty ground on each
+   side.
+
+   The width cap that was supposed to be controlling that did nothing at all.
+   wfMiniGraph emits viewBox="0 0 250 74" with preserveAspectRatio="xMidYMid
+   meet", and .wf-mini declares height 74px, so meet resolves to min(w/250,
+   h/74) and the height pins the scale at exactly 1:1 for any width past 250.
+   Setting the element to 520px wide left the node rects at 26x13 and did not
+   move them; setting the height to 132px scaled them to 46.4x23.2 across
+   403px. The height was always the control and the width declaration was
+   inert, so the previous comment's argument about "the density it was drawn
+   for" was describing a rule that could not have had that effect.
+
+   Driven from the height now, and the frame keeps the full column, so the
+   right rail the previous fix bought is untouched: everything in the sheet
+   still ends at the same edge. At 1440x900 the drawing renders 403 of 664px,
+   1.6x, well under the 2.7 the old comment objected to, and the band reads as
+   a graph rather than a slab of dots. The clamp is in the drawing's own units:
+   74 is the height the viewBox was authored at and the floor, 120 is where the
+   scale reaches about 1.6, and 14vh is what moves between them. At the app's
+   520px minimum window height the scrolling body is 313px tall, so the clamp
+   collapses back to 74 rather than spending 40% of it on a preview. */
+.wfx-pane .wf-card-graph { max-width: none; }
+.wfx-pane .wf-mini { height: clamp(74px, 14vh, 120px); }
+/* Under 3:1 in all six themes, and the light-family correction written to fix
+   that was inert on one channel and backwards on the other. The stroke it
+   re-declared was already --line-3 from the base rule, so it moved nothing;
+   the fill it changed from --bg-4 to --bg-3 is a step TOWARD a light ground,
+   measured at 1.12 against 1.26 with the rule reverted in light and 1.17
+   against 1.35 in sepia. The comment above it said the lozenges carried almost
+   no contrast and the rule under it made them paler.
+
+   The correction belongs on the stroke and it belongs unscoped, because the
+   dark family is the worse case: node stroke against the composited dot ground
+   measured 1.95 midnight, 1.91 dark, 2.00 nord, 2.04 dracula, 2.42 light, 2.54
+   sepia. A fold of --text carries it in both families at once and clears the
+   3:1 a graphical object owes in every theme, with sepia binding because its
+   --text is a warm brown rather than a black. The fill stays on the base
+   --bg-4, which is what the light rule was moving it away from. */
+.wfx-pane .wf-mini-node { stroke: color-mix(in srgb, var(--text) 60%, transparent); }
+
+/* ── Prompt review ─────────────────────────────────────────────────────────
+   The actual risk surface: up to 8192 unreviewed characters per step handed to
+   an agent CLI, with the previous step's output interpolated. Native <details>
+   gives Enter and Space toggling and correct announcement for free on a page
+   that already repaints aggressively. */
+.wfx-steps { display: flex; flex-direction: column; gap: var(--space-2); }
+.wfx-step {
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  overflow: hidden;
+}
+/* space-3 on all four sides. At space-4 across the ordinal started at 66 while
+   the figure tiles, the path row and every preflight row started at 62 and the
+   borrowed fingerprint card at 60, so four bordered cards sitting 16px apart
+   in one scroll each began their content somewhere different. One inset for
+   the column. */
+.wfx-step > summary {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-3);
+  padding: var(--space-3);
+  cursor: pointer; list-style: none;
+  transition: background var(--motion-fast) var(--ease);
+}
+.wfx-step > summary::-webkit-details-marker { display: none; }
+.wfx-step > summary:hover { background: var(--bg-2); }
+/* The global focus rule paints an accent glow plus border-color !important. On
+   a dense summary row that glow measures under 2:1, and the !important would
+   also overwrite any border a state used. Outline plus --focus-ink is what
+   every other dense surface in this file switched to. */
+.wfx-step > summary:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+.wfx-step-n {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  /* --tracking-wide, which is what .wfx-pf-h and .wfx-fig-l use: the three
+     micro-labels on these surfaces now track alike instead of at 0.08em,
+     0.12em and 0.02em, three invented or borrowed values in a block whose
+     every other axis is a token. Nothing in the previous comment explained why
+     0.08 rather than 0.12, because there was no reason; a numeral pair is the
+     one string where wider tracking is unambiguously right anyway. */
+  font-size: var(--fs-nano); font-weight: 700; letter-spacing: var(--tracking-wide);
+  /* Off the accent axis. --accent is theme-independent, so folding it toward
+     --text raises lightness in the dark family and barely moves it in the
+     light one: these ordinals measured 2.88 in sepia and 3.70 in light. They
+     also aggregated to more accent area than the commit button did, on a
+     screen whose one accented thing ought to be the thing that commits.
+
+     Cap-aligned to the name rather than centred against the pair. The summary
+     is a two-line block, so centring put the numeral's baseline in the gap
+     between the name and the model string, attached to neither, four times a
+     sheet on the column the eye scans first. The 2px is the optical difference
+     between an 11px mono cap and the 13px name's; no token expresses a
+     cap-height delta, and the index labels the name, not the pair. */
+  color: var(--text-2);
+  align-self: start; padding-top: 2px;
+}
+.wfx-step-b { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.wfx-step-name { font-size: var(--fs-small); font-weight: 600; color: var(--text); }
+/* The subtitle line held three registers in one monospace run: `claude` and
+   `claude-opus-4-8` are machine tokens a reader could type, and "carries the
+   whole transcript" is English that exists nowhere they could. Monospace says
+   a string is literal and copyable, so applying it to the phrase was a false
+   signal, and it cost geometry as well: 54 characters of 11px mono spans about
+   390px, which put more ink on the subtitle than the 13px/600 step name above
+   it, so "Patch" competed with its own description. The two spans share a line
+   because .wfx-step-sub is a plain block and both of them are inline; the
+   middot stays inside the mono run, where it separates machine tokens. */
+.wfx-step-sub { min-width: 0; }
+.wfx-step-meta { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-nano); color: var(--text-2); }
+.wfx-step-pc { font-size: var(--fs-nano); color: var(--text-2); }
+/* The one glyph in the row whose job is to say "this opens" was the only thing
+   in the row that did not answer the pointer: the summary lifts to --bg-2 on
+   hover and the chevron sat inert at --text-3, which is also the faintest mark
+   on the card. On the same duration and easing the background already uses, so
+   the row moves as one thing rather than as two. */
+.wfx-step-c {
+  width: 14px; height: 14px; color: var(--text-3);
+  transition: transform var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.wfx-step > summary:hover .wfx-step-c { color: var(--text-2); }
+.wfx-step[open] > summary .wfx-step-c { transform: rotate(90deg); }
+.wfx-prompt {
+  margin: 0;
+  /* space-3, so the prompt text starts where the ordinal above it does and
+     where every other card in the column starts. */
+  padding: var(--space-3);
+  background: var(--bg-2);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: var(--fs-micro); line-height: var(--lh-base); color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+  /* Height is capped so an 8192-character prompt does not push every other
+     step off the page and the list stays navigable. Width is capped by the
+     padding rule below rather than by max-width. */
+  max-height: 380px; overflow-y: auto;
+}
+/* The measure fix, and it belongs to the step list rather than to the pane.
+   A prompt rendered at 85 to 88 characters a line, counted with a Range walk
+   across three of them, which is the widest measure in the feature on the one
+   block the consent gate exists to make somebody read before a stranger's 8192
+   characters reach a CLI. Monospace wants a shorter measure than proportional
+   text, not a longer one: every glyph carries the same advance and there is no
+   word shape to help the eye find the return.
+
+   The comment this replaces argued the cap was dropped because a ch max-width
+   left the pane's background stopping 51px short of the step border, leaving a
+   bare notch of card. That is a real objection to the wrong instrument.
+   Padding shortens the line and keeps the fill meeting the border on all four
+   sides. 18ch is in this pane's own advance, because that is the unit the
+   thing being shortened is measured in. Scoped to a step's own prompt: the
+   publish done pane's git line is two short lines beside a Copy button, where
+   the same gutter is dead fill.
+
+   18 and not the 10 this shipped with, which is the arithmetic being corrected
+   rather than the argument. At 10ch the same Range walk over the four consent
+   prompts returns line lengths of [75,65], [35,1,19,1,76,77,47], [79,79,51]
+   and [73,9]: past the band, in monospace, on the one block the consent gate
+   exists to make somebody read before a stranger's 8192 characters reach a
+   CLI. 18ch takes the text column from 574 to 518 at the sheet's own width and
+   lands the measure at 72. */
+/* The divider goes with it, for the same reason and in the same scope. Inside
+   a step the border is the rule between the summary and the prompt it opens.
+   The publish done pane reuses .wfx-prompt for the pre-written git line, where
+   there is no summary above it, so the border was a bare hairline floating
+   over the top edge of a code block with no left, right or bottom sibling: at
+   --line in the dark four it is invisible and the light family's hairline
+   correction promoted it into a stray rule that two themes had and four did
+   not. Declaring it here rather than on the base means the light correction
+   has a real divider to correct. */
+.wfx-step > .wfx-prompt {
+  padding-inline-end: calc(var(--space-3) + 18ch);
+  border-top: 1px solid var(--line);
+}
+/* Scrollable and keyboard-reachable. A <pre> with overflow is not scrollable
+   by keyboard in Chromium without a tabindex, so without this the back half of
+   a long prompt is mouse-only. */
+.wfx-prompt:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; }
+/* The pre is a flex item with no basis, so in the publish done pane it shrank
+   to its longest line and parked Copy in the middle of the column while the
+   written-path row directly above it ran the full width. One right edge for
+   the pane. */
+.ra-pathrow > .wfx-prompt { flex: 1 1 auto; min-width: 0; }
+/* And the control beside it aligns to the line it copies rather than to the
+   box that holds it. A two-line code block is 61px and a ghost button is 32,
+   so top-aligned the label's centre sat at y+16 while the first line of code
+   sat at y+25: nine pixels, which reads as neither aligned nor centred, and
+   centring in the box would have put it nine the other way. The offset is the
+   pre's own block padding plus half its line box less half the control, so it
+   is written in the three tokens it is derived from and moves if any of them
+   does rather than being a number somebody measured once. */
+.ra-pathrow > .wfx-prompt + .ghost-btn {
+  align-self: flex-start;
+  margin-top: calc(var(--space-3) + (var(--fs-micro) * var(--lh-base) - var(--control-h)) / 2);
+}
+/* {{previousOutput}} means this step reads whatever the step before it
+   produced, which is how a stranger's prompt reaches the output of a step you
+   did trust. Worth marking, not burying. The mark is wrapped by walking text
+   nodes on an already-populated <pre>, never by replacing into markup.
+
+   Mixed in oklch, matching the chip folds above rather than repeating the
+   mistake they were written to avoid: an sRGB blend of amber into transparent
+   collapses the chroma with the lightness, and composited over this pane the
+   result measured 1.24 to 1.66 across the six themes and went fully
+   achromatic in nord. The one flag on the step that eats a stranger's previous
+   output was reading as highlighter residue. The corrected tint measures 1.37
+   to 2.13, which is a tint and not a channel, so the ring carries the weight
+   at full --as-mark: 4.28 in sepia and 5.18 or better in the other five, clear
+   of the 3:1 a non-text indicator owes in every theme.
+
+   18 and not 26, because that comment measured the ring and never measured the
+   text sitting inside the tint: composited in nord the ground came out at
+   rgb(109,107,103) and --text on it at 4.34, under AA, on the one marker that
+   says a stranger's step eats the previous step's output. At 18 the text
+   clears 5:1 there and the ring is untouched, since the ring is what carries
+   the channel.
+
+   The ring is folded now rather than raw, and 80% is where the two constraints
+   on it meet. Raw --as-mark measured 9.91 against this pane in midnight, 10.53
+   in dark, 6.47 in nord and 9.71 in dracula, against prompt text at 7.19, 8.25,
+   4.90 and 6.12: a 1px ring outranking the eight thousand characters it is
+   drawn on top of, in four of six themes, which is what turns an inline
+   highlight into something that reads as an editable field. It is also the one
+   ring in this feature at full strength while every other is a 30 to 52 percent
+   mix. The obvious answer, matching the chips at 40%, is measurably wrong: at
+   40 the ring falls to 1.66 in sepia and 1.77 in light, well under the 3:1 a
+   non-text indicator owes, and the light family is where it has least room.
+   Swept across the six, 80% is the last step that holds the floor: 3.05 sepia,
+   3.50 light, 4.82 nord, 6.85 to 7.26 in the rest, which puts the ring under
+   its own prompt text everywhere except dracula and at parity there. */
+.wfx-prompt mark {
+  background: color-mix(in oklch, var(--as-mark) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--as-mark) 80%, transparent);
+  color: var(--text); padding: 0 var(--space-1); border-radius: var(--radius-sm);
+}
+
+/* ── Preflight ─────────────────────────────────────────────────────────────
+   Three severities, because two is a lie: "will not run here" and "will run
+   differently than the receipt describes" are different facts and only the
+   first should stop anything. */
+/* Same ground as .wfx-step and .wfx-fig, which is the point of changing it.
+   The sheet holds two lists of rows about the same object and they were built
+   on opposite ends of the surface scale: .wfx-step and .wfx-fig on --bg-1 over
+   --bg, .wfx-pf, .wfx-path and .wfx-ack on --bg-2. In the dark family --bg-1
+   is a 3.5% white alpha and --bg-2 a 6% one, so the step cards sat a level
+   under the preflight panel; in the light family --bg-1 is #ffffff and --bg-2
+   is #f6f6f6, so the same two blocks swapped. Two peer blocks in one column
+   should not trade elevation when somebody changes theme.
+
+   The panel recipe wins rather than --bg-2, because it is what every other
+   top-level plate in this file already uses and because it is opaque: see the
+   note on .wfx-hero. Nested fills stay on --bg-2, which is one step along the
+   surface scale, and the direction that step travels is a property of the
+   scale in each family rather than of this block. Controls are exempt: the
+   source cards and the URL field are pressable and typeable and legitimately
+   sit above the plate they are on, which is what --bg-2 is for. */
+.wfx-pf { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-lg); background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg); overflow: hidden; }
+.wfx-pf-h {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-nano); font-weight: 600;
+  letter-spacing: var(--tracking-wide); text-transform: uppercase;
+  /* --text-2, not --text-3. --text-3 is tuned as a 4.5-ish token against --bg;
+     on this card's --bg-2 ground it drops to 4.39 in light and 4.33 in sepia.
+     The same correction runs through every --text-3 role in this block that
+     sits on a panel rather than on the page. */
+  color: var(--text-2);
+  border-bottom: 1px solid var(--line);
+}
+.wfx-pf-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  /* align-items:start, not baseline. Baseline aligns first lines only, so a
+     note that wraps to two lines leaves the name pinned to the top of a taller
+     row with the icon centred against nothing. */
+  align-items: start;
+  padding: var(--space-3);
+  font-size: var(--fs-micro); color: var(--text-2);
+}
+.wfx-pf-row + .wfx-pf-row { border-top: 1px solid var(--line); }
+/* Sized to the name it marks rather than a rank below it, so a 13px row name
+   and its verdict are one pair rather than a label with a smaller thing beside
+   it. The row is align-items:start, so the offset centres the 14px box in the
+   name's 19.5px line box: (19.5 - 14) / 2 rounds to 3. It is a raw px because
+   it is derived from two type values rather than from the spacing scale, and
+   it changes if either of them does. */
+.wfx-pf-i { display: grid; place-items: center; width: var(--fs-body); height: var(--fs-body); margin-top: 3px; }
+.wfx-pf-i svg { width: 100%; height: 100%; display: block; }
+/* --fs-small, a rank up. Every non-title element on these surfaces used to
+   land in 11, 12 or 13, so the record table a publisher is meant to actually
+   read was carried by a one-pixel step plus an alpha change and squinted down
+   to one grey texture with bold flecks in it. The row names are the structure
+   of that table and they take the rank that says so. */
+.wfx-pf-n { color: var(--text); font-size: var(--fs-small); font-weight: 600; }
+.wfx-pf-n code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-nano);
+  padding: 1px var(--space-1); border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text);
+}
+/* --fs-micro. One role, explanatory prose under a heading, existed at 11, 12
+   and 13 inside a single scroll of the install sheet, and the publish sheet
+   used two of the three within four hundred pixels of each other. The figure
+   component was built around the argument that one datum must not render at
+   four sizes in four places; the prose roles never got the same treatment.
+   Two ranks now: --fs-micro for prose bound to a row or a control, --fs-small
+   for a standalone paragraph. It also lifts the densest text on the surface
+   off the 11px floor, which is where the longest measure in the sheet was. */
+.wfx-pf-note { grid-column: 2; font-size: var(--fs-micro); color: var(--text-2); line-height: var(--lh-base); max-width: var(--wfx-measure); }
+/* The same chip its sibling in the row title gets. Without it the identical
+   token rendered as a chip on one line and as bare mono two lines below, and
+   the mono space advance inside the run is 6.61px against Inter's 3.09, so
+   `bun test` read as a typed double space with nothing to explain the gap.
+   The -2px is the kerning correction declared on .wfx-pf-n code above. */
+.wfx-pf-note code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-nano);
+  padding: 1px var(--space-1); border-radius: var(--radius-sm);
+  background: var(--bg-3); color: var(--text); margin-right: -2px;
+}
+/* One fix per row, on its own line under the note, so it never competes with
+   the name for the first read. A row with two actions is a row where you pick
+   the wrong one. .ghost-link ships with zero padding, which is a 14px target;
+   it gets a real one here.
+
+   It also ships var(--text-3) with no underline, which is the note's own
+   colour one pixel larger: "Browse skills" and "Where Husk looks for agents"
+   read as a fourth line of explanation, and the only actionable thing on a
+   blocking row was the least visible thing in it. Underline plus --text-2
+   makes it a control without spending accent, which these sheets reserve for
+   the commit button and the selected source card. --text-2 also clears AA on
+   the rose-tinted blocker ground, where the inherited --text-3 measured 3.96
+   in light and sepia.
+
+   The focus ring is the outline treatment, not the global accent glow: on the
+   blocker row that glow measured visibly weaker than the same ring on a step
+   summary, because it is competing with a tint. */
+.wfx-pf-fix {
+  grid-column: 2; justify-self: start;
+  padding: var(--space-1) 0; min-height: 24px;
+  font-size: var(--fs-micro); font-weight: 500;
+  color: var(--text-2); text-decoration: underline; text-underline-offset: 2px;
+}
+.wfx-pf-fix:hover { color: var(--text); }
+.wfx-pf-fix:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: 2px; box-shadow: none; }
+.wfx-pf-row.is-ok      .wfx-pf-i { color: var(--wfx-emerald-ink); }
+.wfx-pf-row.is-caution .wfx-pf-i { color: var(--as-mark); }
+.wfx-pf-row.is-block   .wfx-pf-i { color: var(--wfx-rose-ink); }
+/* A blocker is the one row that must be findable without reading. The inset
+   shadow with a negative spread runs the bar the full row height instead of
+   stopping a pixel short of each rule. Both the mark and the bar take the
+   folded ink for the reason given where it is declared: raw --rose against
+   this row's own tint measured 2.15 in nord and 3.14 in dracula, so all three
+   channels of "this will not run" were under the floor at once and the only
+   one still working was the words. */
+.wfx-pf-row.is-block { background: color-mix(in srgb, var(--rose) 7%, transparent); box-shadow: inset 2.5px 0 0 -0.5px var(--wfx-rose-ink); }
+/* The publish sheet borrows these rows for its record table and has no
+   severities to report, so every row was filling the verdict column with a
+   horizontal rule, six times running, in the slot the install sheet had just
+   taught the reader to read as pass, caution or block. A semantic column is
+   not decoration; when there is nothing to put in it, it comes out. */
+.wfx-pf.is-plain .wfx-pf-row { grid-template-columns: minmax(0, 1fr); }
+.wfx-pf.is-plain .wfx-pf-note,
+.wfx-pf.is-plain .wfx-pf-fix { grid-column: 1; }
+
+/* ── Skeleton ──────────────────────────────────────────────────────────────
+   Only for the clone, whose duration is unbounded. Everything else in this
+   feature is local filesystem work that finishes inside a frame, and an
+   indeterminate affordance for zero-cost work is decoration wearing the
+   language of intent. Shares the ws-shimmer keyframe already declared once. */
+.wfx-sk {
+  display: block; border-radius: var(--radius-sm); height: 10px;
+  /* Anchored one step up the surface scale. The old --bg-2 to --bg-3 sweep
+     peaked at 1.10 against the card in light and 1.14 in sepia, which is not
+     a band anybody sees, and this is the visual channel for the one operation
+     in the feature that can take arbitrarily long. The crest is --line-2
+     rather than --bg-4 because the light family compresses its surface tokens:
+     --bg-4 peaks at 1.32 there against --line-2's 1.48, and 1.5 to 1.7 is
+     where a shimmer starts registering without becoming a stripe. */
+  background: linear-gradient(90deg, var(--bg-3) 25%, var(--line-2) 50%, var(--bg-3) 75%);
+  background-size: 200% 100%;
+  animation: ws-shimmer 1.1s linear infinite;
+}
+/* The bars fill containers that already carry their own gap, so the adjacency
+   margin the loose form needs would double it. */
+.wfx-sk + .wfx-sk { margin-top: var(--space-2); }
+.wfx-pane-busy .wfx-sk + .wfx-sk { margin-top: 0; }
+/* The busy pane's shells, declared here rather than as widths on the elements,
+   because the shape is a property of the pane and not of the markup that
+   happens to sit in it. Each block is the ready pane's own container with bars
+   in the slots that get filled: three lines in the fingerprint card, a name
+   over a description, the graph at its drawn height, and four figure tiles
+   each holding a value and a label. Ragged widths, because a skeleton of equal
+   bars reads as a progress bar lying on its side. */
+.wfx-pane-busy .ra-status .wfx-sk:nth-child(1) { width: 30%; }
+.wfx-pane-busy .ra-status .wfx-sk:nth-child(3) { width: 62%; }
+.wfx-pane-busy .wfx-note .wfx-sk:nth-child(1) { width: 44%; height: 16px; }
+.wfx-pane-busy .wfx-note .wfx-sk:nth-child(2) { width: 86%; }
+/* No height of its own: the skeleton's whole job is to reserve the geometry
+   the ready pane arrives into, and the graph frame's height is a clamp now, so
+   restating 74 here would put the busy-to-ready jump back for anything but the
+   shortest window. The shared rule above covers both. */
+.wfx-pane-busy .wf-mini { border-radius: var(--radius-md); }
+.wfx-pane-busy .wfx-fig .wfx-sk:nth-child(1) { height: 18px; width: 68%; }
+.wfx-pane-busy .wfx-fig .wfx-sk:nth-child(2) { width: 82%; }
+.wfx-pane-busy .wfx-fig:nth-child(2) .wfx-sk:nth-child(1) { width: 86%; }
+.wfx-pane-busy .wfx-fig:nth-child(3) .wfx-sk:nth-child(1) { width: 54%; }
+.wfx-pane-busy .wfx-fig:nth-child(4) .wfx-sk:nth-child(1) { width: 78%; }
+.wfx-pane-busy .wfx-pf-h .wfx-sk { width: 38%; }
+.wfx-pane-busy .wfx-pf-row { display: block; }
+.wfx-pane-busy .wfx-pf-row .wfx-sk:nth-child(1) { width: 42%; height: 13px; }
+.wfx-pane-busy .wfx-pf-row .wfx-sk:nth-child(2) { width: 88%; margin-top: var(--space-2); }
+.wfx-pane-busy .wfx-pf-row:nth-child(3) .wfx-sk:nth-child(1) { width: 56%; }
+.wfx-pane-busy .wfx-pf-row:nth-child(4) .wfx-sk:nth-child(1) { width: 34%; }
+/* Announced but never drawn: the skeleton is the visual channel, this is the
+   one screen readers get. */
+.wfx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ── Card strip ────────────────────────────────────────────────────────────
+   Sits ABOVE .wf-card-status, whose margin-top:auto bottom-anchors status,
+   footer and Run so they land on one line across a whole row. Everything above
+   that auto margin is free-flowing, so a strip that is taller on one card than
+   another cannot break the alignment and needs no reserved height. Putting it
+   below the anchor would have required reserving a height, and a reservation
+   computed from the spacing scale rather than measured is how a block ends up
+   32px tall next to a 55px sibling.
+
+   Two rows, deliberately. At the shipped 288px grid track the card's content
+   box is 254px and three inline figures plus an 11px chip need 290, so the
+   single space-between row this was drawn as wrapped on every card that had
+   any receipts at all, dropped the chip hard left under the figures, and left
+   justify-content with nothing to do. auto-fill with minmax(288px,1fr) holds
+   the track between roughly 288 and 322 at every common window width, so the
+   one-line form was unreachable in practice. The form that renders is the form
+   that gets styled: two rows at 8px rather than a wrap inheriting 12. */
+.wfx-rcp {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--line);
+}
+/* Editorial copy, so not the machine's face. Everywhere else in this feature
+   mono is reserved for something a machine produced, and the identical message
+   at panel density is set in Inter, so the typeface was being chosen by
+   density rather than by register. */
+.wfx-rcp.is-none { font-size: var(--fs-nano); color: var(--text-2); }
+
+/* ── Light and sepia ───────────────────────────────────────────────────────
+   The dark family inherits --bg-1..4 and --line-* from :root as white alphas;
+   the light and sepia families redeclare them as solid hexes running the other
+   way, so a surface built from stacked alphas inverts across the boundary.
+   Three corrections cover this block: heavier hairlines, and a recess that
+   stays a recess rather than becoming a highlight. Every surface built on the
+   1px --line hairline needs it, including the figure grid, whose 1px gaps are
+   drawn by its own background rather than by borders, and the divider between
+   a step summary and its prompt, where the two backgrounds sit within 2% of
+   each other in light and the rule is all there is.
+
+   Both figure-grid corrections are scoped off the inline density. The grid's
+   border and its 1px-gap ground belong to the panel form; .is-inline sets
+   border:0 and background:none and lost both to a 0,2,1 selector, so every
+   saved workflow card in light and sepia got a solid slab painted behind its
+   three receipt figures, ending abruptly at the third label with the rest of
+   the card bare. It also dragged the strip under AA: the labels measured 3.20
+   on that slab in light and 2.97 in sepia, and on a thin sample the whole
+   figure went with them, so the one state built to say "distrust this sample"
+   was the one state you could not read. This is the most-seen surface in the
+   feature and it was broken in two of six themes. */
+body[data-mode="light"] .wfx-pf,
+body[data-mode="light"] .wfx-path,
+body[data-mode="light"] .wfx-figs:not(.is-inline),
+body[data-mode="light"] .wfx-ack,
+body[data-mode="light"] .wfx-step { border-color: var(--line-2); }
+body[data-mode="light"] .wfx-figs:not(.is-inline) { background: var(--line-2); }
+body[data-mode="light"] .wfx-pf-h,
+body[data-mode="light"] .wfx-pf-row + .wfx-pf-row { border-color: var(--line-2); }
+body[data-mode="light"] .wfx-rcp { border-top-color: var(--line-2); }
+/* The refusal carries two severity channels, a rose perimeter and a rose left
+   bar, and in the light family they are the same ink at the same place: where
+   --rose resolves to #dc2626 the 3px bar merges with the 1px border and the
+   block reads as one slightly thicker left edge. Dropping the perimeter to the
+   family's own solid hairline separates them, and it is affordable here in a
+   way it is not in the dark family, where --line-2 is a 14% white alpha that
+   would leave the block edgeless. The verdict is then carried by the wash, the
+   bar and the glyph, which is exactly the language .wfx-pf-row.is-block
+   already speaks: that row has no perimeter at all. The bar loses its negative
+   spread so the full 3px clears the border painted over it. */
+body[data-mode="light"] .wfx-refuse {
+  border-color: var(--line-2);
+  box-shadow: inset 4px 0 0 0 var(--wfx-rose-ink);
+}
+body[data-mode="light"] .wfx-prompt { background: var(--bg-2); color: var(--text); }
+body[data-mode="light"] .wfx-step > .wfx-prompt { border-top-color: var(--line-2); }
+
+/* ── Reduced motion ────────────────────────────────────────────────────────
+   Removal, not slowing, matching the decision the hero made about its comets:
+   a frozen shimmer is a grey smear that reads as a rendering bug. This file
+   has no global handler; it is written per block, twelve times already. */
+@media (prefers-reduced-motion: reduce) {
+  .wfx-sheet[data-state="ready"] .wfx-pane-ready { animation: none; }
+  .wfx-sk { animation: none; background: var(--bg-3); }
+  .wfx-step-c { transition: none; }
+}
+
 /* ── The card ─────────────────────────────────────────────────────────────── */
 #wf-grid {
   display: grid;
