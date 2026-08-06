@@ -3312,6 +3312,20 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     </div><!-- /prefs-modal-inner -->
   </div><!-- /prefs-modal -->
 
+    <!-- Portable workflows, four scripts in dependency order.
+
+         wfx-dom.js is first and is not optional to order: wfx-artifact-ui.js
+         reads window.WfxDom at load and exposes nothing at all when it is
+         missing, so a builder that arrives late is a surface that never
+         appears rather than one that renders a stranger's file unsafely.
+
+         All four come before app.js because app.js configures them while it
+         evaluates. They read back the other way lazily, guarded by typeof, so
+         nothing here depends on app.js having run first. -->
+    <script src="wfx-dom.js"></script>
+    <script src="wfx-artifact-ui.js"></script>
+    <script src="wfx-install.js"></script>
+    <script src="wfx-publish.js"></script>
     <script src="app.js"></script>
       <!-- Run log. The transcript lives on disk beside the audit log, so this
          reads a finished run's output back rather than depending on anything

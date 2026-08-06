@@ -2834,6 +2834,7 @@ async function renderWorkflows() {
     const res = await window.husk.workflows.runs();
     wfRunsCache = (res && res.ok && res.runs) || [];
   } catch (_) { wfRunsCache = []; }
+  await wfRefreshSidecars();
   // A run in flight owns this page: opening Workflows while one is going (or
   // after a reload) drops you back into watching it, rather than showing a list
   // that pretends nothing is happening.
@@ -2846,6 +2847,35 @@ async function renderWorkflows() {
 }
 
 let wfRunsCache = [];
+
+// Where a workflow came from, keyed on its local id. One row per workflow that
+// arrived as a file: the artifact it was installed from, the directory it is
+// bound to, and whether its prompts have been read and agreed to.
+//
+// Fetched once per paint of the page rather than once per card, and read
+// synchronously while the grid is being built. That is not only about the IPC
+// hops: paintWorkflowList replaces the whole grid, so a per-card fetch would
+// land after the paint and repaint into a click, which is the hazard the rest
+// of this page is careful about. Every honest use of this cache is cosmetic.
+// The one question that decides whether a stranger's prompts reach a CLI is
+// asked again, against the store, inside WfxArtifactUi.runWorkflow, and once
+// more in the main process, so a stale row here can only mean a redundant
+// question, never a skipped one.
+let wfSidecarsCache = {};
+
+async function wfRefreshSidecars() {
+  const api = window.husk && window.husk.workflows;
+  if (!api || typeof api.sidecars !== 'function') { wfSidecarsCache = {}; return; }
+  try {
+    const res = await api.sidecars();
+    wfSidecarsCache = (res && res.ok && res.sidecars) || {};
+  } catch (_) { wfSidecarsCache = {}; }
+}
+
+function wfSidecarFor(id) {
+  const row = wfSidecarsCache[id];
+  return (row && typeof row === 'object') ? row : null;
+}
 
 // ─── Reading a workflow at a glance ──────────────────────────────────────────
 
@@ -2870,29 +2900,58 @@ function wfDur(ms) {
 // The flow's own shape, drawn small. A workflow is recognised by its topology,
 // which is why "2 steps" told you nothing. When there is a last run, the steps
 // are coloured by what happened, so the thumbnail carries the outcome too.
+//
+// This returns markup, and the per-step status decides a class name, so two
+// rules govern what may be handed in.
+//
+// lastRun must be locally sourced. The status goes into the class attribute of
+// a <rect> and nothing escapes it there, so the day a receipt or an imported
+// file feeds this function, that attribute is a stranger's to write. Mapping
+// through WF_MINI_STATUS keeps the class to one of six literals whatever
+// arrives. The install sheet draws imported graphs with its own builder and
+// passes null here.
+//
+// Node count is the other dimension that can come from a file. Spreading the
+// coordinate arrays into Math.min throws RangeError somewhere above a hundred
+// thousand arguments, which is a blank workflows page rather than a small
+// thumbnail, so the bounds are folded and a graph past the cap gets the same
+// placeholder an empty one gets.
+const WF_MINI_STATUS = ['done', 'failed', 'skipped', 'cancelled', 'running'];
+const WF_MINI_NODE_CAP = 512;
+
 function wfMiniGraph(graph, lastRun) {
   const nodes = (graph && graph.nodes) || [];
   const edges = (graph && graph.edges) || [];
   if (!nodes.length) return '<div class="wf-mini is-empty"><span>no steps yet</span></div>';
+  if (nodes.length > WF_MINI_NODE_CAP) return '<div class="wf-mini is-empty"><span>graph too large to preview</span></div>';
 
   const W = 250;
   const H = 74;
   const PAD = 12;
   const NW = 26;
   const NH = 13;
-  const xs = nodes.map((n) => n.x || 0);
-  const ys = nodes.map((n) => n.y || 0);
-  const minX = Math.min(...xs); const maxX = Math.max(...xs);
-  const minY = Math.min(...ys); const maxY = Math.max(...ys);
+  // A coordinate that is not a number reaches an attribute as the string "NaN"
+  // and takes the whole preview with it, so they are coerced once here rather
+  // than trusted again at every arithmetic site below.
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const bounds = nodes.reduce((acc, n) => {
+    const x = num(n && n.x); const y = num(n && n.y);
+    return {
+      minX: Math.min(acc.minX, x), maxX: Math.max(acc.maxX, x),
+      minY: Math.min(acc.minY, y), maxY: Math.max(acc.maxY, y),
+    };
+  }, { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+  const minX = bounds.minX; const maxX = bounds.maxX;
+  const minY = bounds.minY; const maxY = bounds.maxY;
   const sx = (maxX - minX) || 1;
   const sy = (maxY - minY) || 1;
   // Single row or column flows would otherwise squash into a line.
   const spanX = (maxX - minX) < 1 ? 1 : sx;
   const spanY = (maxY - minY) < 1 ? 1 : sy;
-  const px = (n) => PAD + ((n.x || 0) - minX) / spanX * (W - PAD * 2 - NW);
+  const px = (n) => PAD + (num(n.x) - minX) / spanX * (W - PAD * 2 - NW);
   const py = (n) => (maxY - minY) < 1
     ? (H - NH) / 2
-    : PAD + ((n.y || 0) - minY) / spanY * (H - PAD * 2 - NH);
+    : PAD + (num(n.y) - minY) / spanY * (H - PAD * 2 - NH);
 
   const statusOf = {};
   if (lastRun) (lastRun.steps || []).forEach((st) => { statusOf[st.nodeId] = st.status; });
@@ -2913,7 +2972,7 @@ function wfMiniGraph(graph, lastRun) {
 
   const boxes = nodes.map((n) => {
     const p = pos[n.id];
-    const st = statusOf[n.id] || '';
+    const st = WF_MINI_STATUS.includes(statusOf[n.id]) ? statusOf[n.id] : '';
     return `<rect x="${p.x.toFixed(1)}" y="${p.y.toFixed(1)}" width="${NW}" height="${NH}" rx="4"
       class="wf-mini-node${st ? ` is-${st}` : ''}" />`;
   }).join('');
@@ -3279,6 +3338,36 @@ function paintWorkflowList() {
         <small>start from a blank graph</small>
       </button>`;
 
+  // The receipts strip, one per saved card, inserted in the same synchronous
+  // pass that wrote the grid. It goes above .wf-card-status, whose margin-top
+  // is auto: a strip that is taller on one card than another is absorbed there
+  // instead of pushing the status, footer and Run out of line across a row, so
+  // nothing needs a reserved height and nothing drifts.
+  //
+  // Appended rather than interpolated because the figures and the accessible
+  // name are built from an imported artifact, and everything in this feature
+  // that comes out of a file reaches the DOM as a text node. renderReceiptStrip
+  // returns an element for every input including none at all, so every card
+  // gets the same block in the same place and one unreadable stored artifact
+  // cannot take the grid with it.
+  const strip = window.WfxArtifactUi && window.WfxArtifactUi.renderReceiptStrip;
+  if (typeof strip === 'function') {
+    grid.querySelectorAll('.wf-card[data-id]').forEach((card) => {
+      const w = workflowsCache.find((x) => x.id === card.dataset.id);
+      if (!w) return;
+      const sidecar = wfSidecarFor(w.id);
+      const status = card.querySelector('.wf-card-status');
+      if (!status) return;
+      card.insertBefore(strip({
+        workflowId: w.id,
+        workflowName: w.name,
+        artifact: sidecar ? sidecar.artifact : null,
+        chainCheck: null,
+        onOpen: (id) => wfOpenReceiptRecord(id),
+      }), status);
+    });
+  }
+
   grid.querySelectorAll('.wf-run-btn').forEach((btn) => btn.addEventListener('click', (e) => {
     e.stopPropagation(); runWorkflow(e.currentTarget.dataset.id);
   }));
@@ -3299,8 +3388,8 @@ function paintWorkflowList() {
   }));
 }
 
-// Duplicate / delete, on the card rather than a permanent delete button that
-// invites the wrong click.
+// Duplicate / export / delete, on the card rather than a permanent delete
+// button that invites the wrong click.
 function wfOpenCardMenu(anchor, id) {
   document.querySelectorAll('.wf-menu-pop').forEach((m) => m.remove());
   const w = workflowsCache.find((x) => x.id === id);
@@ -3309,6 +3398,7 @@ function wfOpenCardMenu(anchor, id) {
   pop.className = 'wf-menu-pop';
   pop.innerHTML = `
     <button data-act="duplicate">Duplicate</button>
+    <button data-act="export">Export…</button>
     <button data-act="delete" class="is-danger">Delete</button>`;
   document.body.appendChild(pop);
   const r = anchor.getBoundingClientRect();
@@ -3324,6 +3414,23 @@ function wfOpenCardMenu(anchor, id) {
     await window.husk.workflows.create(copy);
     await renderWorkflows();
     toast('Workflow duplicated', 'success');
+  });
+  // Publishing is a sheet of its own: what gets written, where it lands, and
+  // whether the run log travels with it are all decisions, and a menu item
+  // that silently wrote a file would be making them on the reader's behalf.
+  // The direct call is the fallback for a window where that module did not
+  // load, and it is the same channel the sheet drives, so the file it writes
+  // is the same file with the log left off.
+  pop.querySelector('[data-act="export"]').addEventListener('click', async () => {
+    close();
+    if (window.WfxPublish && typeof window.WfxPublish.open === 'function') {
+      window.WfxPublish.open(w);
+      return;
+    }
+    const res = await window.husk.workflows.export({ workflowId: id });
+    if (res && res.ok) { toast('Workflow exported', 'success'); return; }
+    if (res && res.cancelled) return;
+    toast((res && res.message) || 'Could not export this workflow', 'error');
   });
   pop.querySelector('[data-act="delete"]').addEventListener('click', async () => {
     close();
@@ -4243,6 +4350,8 @@ function wfResetRunUi(workflow) {
   if (nameEl) nameEl.textContent = workflow.name;
   if (badge) { badge.textContent = 'Running'; badge.className = 'wf-run-status-badge'; }
   if (stopBtn) stopBtn.hidden = false;
+  // Whatever the last run was bound to says nothing about this one.
+  wfSetRunCwd(null);
   wfCloseTerm();
   wfShowView('run');
   const hint = $('#wf-run-hint');
@@ -4253,8 +4362,31 @@ function wfResetRunUi(workflow) {
   wfSetProgress(0, total);
 }
 
-async function runWorkflow(workflowId) {
-  const workflow = workflowsCache.find((w) => w.id === workflowId);
+// The directory this run is bound to, named in the run header before the first
+// step spawns. A workflow that came from a file runs somewhere the reader
+// picked, and the whole point of picking it is defeated if the only place the
+// choice is visible is a dialog that has already closed. A workflow authored
+// here answers null and the line stays out of the way: it keeps the working
+// directory it always had.
+function wfSetRunCwd(cwd) {
+  const meta = document.querySelector('#wf-run-view .wf-run-meta');
+  if (!meta) return;
+  let row = document.getElementById('wf-run-cwd');
+  if (!cwd) { if (row) row.hidden = true; return; }
+  if (!row) {
+    row = document.createElement('span');
+    row.id = 'wf-run-cwd';
+    row.className = 'wf-tag is-quiet';
+    meta.appendChild(row);
+  }
+  row.textContent = cwd;
+  row.title = `Every step of this run spawns in ${cwd}`;
+  row.hidden = false;
+}
+
+async function runWorkflow(workflowId, opts) {
+  const given = (opts && typeof opts === 'object') ? opts : {};
+  const workflow = workflowsCache.find((w) => w.id === workflowId) || given.workflow || null;
   if (!workflow) return;
   // Only refuse if the backend actually has a live run. A stale activeRunId
   // left over from a run this window did not see finish must never wedge Run.
@@ -4264,8 +4396,35 @@ async function runWorkflow(workflowId) {
     if (live) { toast('A workflow is already running', 'info'); wfShowView('run'); return; }
     activeRunId = null;
   }
-  wfResetRunUi(workflow);
-  const res = await window.husk.workflows.run(workflowId);
+  // WfxArtifactUi.runWorkflow is the only way this page starts a workflow, and
+  // it is a whole path rather than a wrapper: it reads the install record,
+  // opens the consent gate when the record says the prompts have never been
+  // read, writes consentedAt only after the reader agrees, and only then calls
+  // workflows:run. Calling workflows:run from here would be the path that
+  // skips the gate. The main process refuses independently with
+  // 'consent-required', so this is the affordance and that is the boundary.
+  const ui = window.WfxArtifactUi;
+  const sidecar = wfSidecarFor(workflowId);
+  const gated = !!(ui && typeof ui.needsConsent === 'function' && ui.needsConsent(sidecar));
+  // The gate is a dialog with several hundred words of prompts in it, so the
+  // run view is not painted behind it. Painting first would put a graph on
+  // screen looking exactly like a run already in flight while the reader is
+  // still deciding, and a cancel would strand them there watching nothing.
+  const bound = given.cwd || (sidecar && sidecar.boundCwd) || null;
+  // The binding is known from the install record before the call is made, so
+  // it is on screen while the run is starting rather than one round trip
+  // later. res.cwd is what the main process actually resolved, and it
+  // overwrites this the moment it lands.
+  if (!gated) { wfResetRunUi(workflow); wfSetRunCwd(bound); }
+  const res = (ui && typeof ui.runWorkflow === 'function')
+    ? await ui.runWorkflow(workflowId, { cwd: given.cwd || '', workflow })
+    : await window.husk.workflows.run(workflowId, given.cwd ? { cwd: given.cwd } : {});
+  // A cancelled gate is an answer, not a failure. It has no error text worth
+  // showing, and the reader is already looking at the list they pressed Run on.
+  if (res && res.cancelled) {
+    if (!gated) { wfShowView('list'); paintWorkflowList(); }
+    return;
+  }
   if (!res || !res.ok) {
     toast((res && res.error) || 'Could not start workflow', 'error');
     // The main process may be running something this window lost track of, so
@@ -4274,6 +4433,13 @@ async function runWorkflow(workflowId) {
     if (!adopted) { wfShowView('list'); paintWorkflowList(); }
     return;
   }
+  if (gated) {
+    wfResetRunUi(workflow);
+    // consentedAt has just been written, so the cached row would otherwise ask
+    // the same question again on the next press.
+    wfRefreshSidecars();
+  }
+  wfSetRunCwd((typeof res.cwd === 'string' && res.cwd) ? res.cwd : bound);
   activeRunId = res.runId;
   wfLastRunId = res.runId;
 }
@@ -4296,6 +4462,10 @@ async function wfOpenRun(workflowId, run) {
   if (nameEl) nameEl.textContent = workflow.name;
   if (stopBtn) stopBtn.hidden = true;
   if (againBtn) { againBtn.hidden = false; againBtn.dataset.id = workflowId; }
+  // Run history does not record where a run happened, so a replay says
+  // nothing about the directory rather than repeating today's binding as if
+  // it were the one that run used.
+  wfSetRunCwd(null);
   wfCloseTerm();
   wfShowView('run');
   wfBuildRunCanvas(workflow);
@@ -4506,6 +4676,169 @@ const wfxScrollTo = (sel) => {
 };
 $('#wfx-cta-patterns') && $('#wfx-cta-patterns').addEventListener('click', () => wfxScrollTo('#wfx-patterns-section'));
 $('#wfx-cta-learn') && $('#wfx-cta-learn').addEventListener('click', () => wfxScrollTo('#wfx-concepts-section'));
+
+// ─── Portable workflows: the install sheet, the record, the publish sheet ────
+//
+// Three dialogs ship as modules of their own, each owning one surface and none
+// of them knowing anything about this page. Everything they need from it is
+// handed over here: how to navigate, what the billing mode is, when the grid
+// has to be repainted, and the one function that starts a workflow. Nothing
+// below reaches into those modules' state; they are given hooks and they call
+// back.
+
+// The Workflows page head is markup this file does not own on this branch, so
+// the control that opens the install sheet is minted here, beside New
+// Workflow. It is built node by node rather than assigned as a string: the
+// sheet behind this button exists because a stranger's file is about to be
+// read, and the door into it is the last place to make an exception for
+// markup assembly.
+function wfxMountInstallControl() {
+  const head = document.querySelector('.page-workflows .page-head-right');
+  if (!head || document.getElementById('btn-wfx-install')) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost-btn';
+  btn.id = 'btn-wfx-install';
+  btn.title = 'Read a workflow file before it runs anything';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'btn-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M12 3v12M7 10l5 5 5-5M5 19h14');
+  svg.appendChild(path);
+  btn.append(svg, document.createTextNode(' Install workflow'));
+  // Before New Workflow, not after: authoring is the primary action on this
+  // page and keeps the last slot, which is where the eye and the primary
+  // styling already agree the commit lives.
+  head.insertBefore(btn, document.getElementById('btn-new-workflow'));
+  btn.addEventListener('click', wfxOpenInstallSheet);
+}
+wfxMountInstallControl();
+
+// The install sheet and the receipts record share one dialog, so the title is
+// set on the way into each of them rather than restored on the way out. Cancel
+// and the close glyph are wired by the module that owns the sheet and this
+// file cannot hook them, so a restore-on-close would be a restore that runs
+// only when Escape was the exit.
+function wfxOpenInstallSheet() {
+  if (!window.WfxInstall || typeof window.WfxInstall.open !== 'function') {
+    toast('The install sheet did not load in this window', 'error');
+    return;
+  }
+  const title = $('#wfx-in-title');
+  if (title) title.textContent = 'Install a workflow';
+  window.WfxInstall.open();
+}
+
+// The receipts chip on a card opens the record those figures came from: the
+// same inspector the install sheet shows, over the artifact this workflow was
+// installed from, with nothing to commit. Borrowing that sheet rather than
+// minting a second one keeps a single place in the app where an imported file
+// is read in full, under a single set of rules about how its strings reach the
+// screen.
+//
+// Read-only is a property of what is on screen rather than a flag: the sheet's
+// footer only offers a primary while its own state machine has staged an
+// install, and nothing here touches that state machine. The two shell controls
+// the inspector re-parents belong to the install flow, so they are taken back
+// out; the module that owns them holds its own references and puts them back
+// on its next paint.
+let wfxRecordSeq = 0;
+
+async function wfOpenReceiptRecord(workflowId) {
+  const ui = window.WfxArtifactUi;
+  const sidecar = wfSidecarFor(workflowId);
+  const artifact = sidecar && sidecar.artifact;
+  const workflow = workflowsCache.find((x) => x.id === workflowId) || null;
+  if (!ui || typeof ui.renderInspector !== 'function' || !artifact) {
+    toast('This workflow has no imported record to open', 'info');
+    return;
+  }
+  // An install in progress owns this dialog. Repainting its ready pane from
+  // here would discard a staged file the reader is halfway through checking.
+  if (window.WfxInstall && typeof window.WfxInstall.isOpen === 'function' && window.WfxInstall.isOpen()) {
+    toast('Finish or cancel the install first', 'info');
+    return;
+  }
+  const modal = $('#wfx-install-modal');
+  const card = modal && modal.querySelector('.modal-card.wfx-sheet');
+  const host = $('#wfx-in-ready');
+  if (!modal || !card || !host) return;
+
+  const seq = (wfxRecordSeq += 1);
+  const paint = (preflight) => {
+    const res = ui.renderInspector({
+      host,
+      artifact,
+      preflight,
+      cwd: sidecar.boundCwd || null,
+      billing: autBilling,
+      chainCheck: null,
+      // wfMiniGraph returns markup and this pane takes nodes, and the graph in
+      // hand came out of a file, so the preview is left to the sheet that has
+      // a builder written for exactly that input. Reading the prompts and the
+      // figures is what this view is for.
+      miniGraph: null,
+      onFix: null,
+    });
+    // One of these copies the fingerprint of the file being staged, the other
+    // rebinds the directory it would be installed into. Neither means anything
+    // over a workflow that is already installed.
+    host.querySelectorAll('#wfx-in-fp-copy, #wfx-in-cwd-change').forEach((node) => node.remove());
+    return !!(res && res.ok);
+  };
+
+  const title = $('#wfx-in-title');
+  if (title) title.textContent = workflow ? `Receipts · ${workflow.name}` : 'Receipts';
+  card.setAttribute('data-state', 'ready');
+  const painted = paint(null);
+  const foot = $('#wfx-in-foot');
+  if (foot) {
+    foot.classList.toggle('is-error', !painted);
+    foot.textContent = painted
+      ? 'This is the file this workflow was installed from. Nothing here installs or runs anything.'
+      : 'Husk could not read this record. Nothing about the installed workflow has changed.';
+  }
+  modal.hidden = false;
+  const closeBtn = $('#wfx-in-x');
+  if (closeBtn) { try { closeBtn.focus(); } catch (_) { /* focus is a courtesy, not a contract */ } }
+  if (!painted) return;
+  ui.say('wfx-in-say', 'The record this workflow was installed from, with nothing to install.');
+
+  // Preflight is about this machine today, not about the day of the install,
+  // so it is asked again and painted in when it lands. The sequence token is
+  // what makes closing the record mean something: an answer that arrives after
+  // the reader has moved on is dropped rather than painted into a dialog that
+  // is showing something else.
+  let pf = null;
+  try { pf = await window.husk.workflows.preflight({ workflowId }); } catch (_) { pf = null; }
+  if (seq !== wfxRecordSeq || modal.hidden) return;
+  if (pf && pf.ok) paint(pf);
+}
+
+// What the install sheet needs from this page. Every hook is a navigation or a
+// repaint; none of them carries a value out of the manifest, and openMcpForm
+// takes no argument at all, because a server name read out of a stranger's
+// file must not be what fills in an MCP form.
+if (window.WfxInstall && typeof window.WfxInstall.configure === 'function') {
+  window.WfxInstall.configure({
+    onInstalled: () => { renderWorkflows(); },
+    // The sheet's own Run it hands the workflow back here rather than starting
+    // it, so a run that begins in a dialog still lands in the run view with
+    // its progress, its canvas and its per-step terminals.
+    openConsent: (id, workflow, cwd) => { setPage('workflows'); runWorkflow(id, { cwd, workflow }); },
+    openMcpForm: () => { setPage('mcp'); openMcpCustomModal(); },
+    openSkills: () => setPage('skills'),
+    openAgents: () => setPage('agents'),
+    getBilling: () => autBilling,
+  });
+}
 $('#btn-wf-builder-back') && $('#btn-wf-builder-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
 $('#btn-save-workflow') && $('#btn-save-workflow').addEventListener('click', saveWorkflow);
 $('#btn-run-from-builder') && $('#btn-run-from-builder').addEventListener('click', async () => {
@@ -15438,10 +15771,29 @@ $('#aut-review-revert') && $('#aut-review-revert').addEventListener('click', asy
 //
 // We skip on composition events so an IME's ESC-to-dismiss-popup
 // keeps working without closing the surrounding modal.
+//
+// The three workflow-artifact dialogs are closed through their own modules,
+// looked up at press time rather than captured here. Each of them holds state
+// no hidden attribute can tear down: a clone still running in the main
+// process, a write that has to reach done or refused on its own, and a consent
+// gate whose promise a Run is sitting on. That last one is why this cannot be
+// left to the generic hidden = true below: a gate that vanishes without
+// settling is a run that never starts and never says why. If a module failed
+// to load its dialog cannot be open, so a missing closer falls through to the
+// generic path.
+const wfxCloser = (modalId, namespace, fn) => () => {
+  const mod = window[namespace];
+  if (mod && typeof mod[fn] === 'function') { mod[fn](); return; }
+  const m = document.getElementById(modalId);
+  if (m) m.hidden = true;
+};
 const MODAL_CLOSERS = {
   'agent-modal': closeAgentModal,
   'agents-import-modal': closeAgentsImportModal,
   'repo-agents-modal': closeRepoAgentsModal,
+  'wfx-install-modal': wfxCloser('wfx-install-modal', 'WfxInstall', 'close'),
+  'wfx-publish-modal': wfxCloser('wfx-publish-modal', 'WfxPublish', 'close'),
+  'wfx-consent-modal': wfxCloser('wfx-consent-modal', 'WfxArtifactUi', 'closeConsentGate'),
 };
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.isComposing) return;

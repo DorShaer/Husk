@@ -5293,7 +5293,13 @@ const WF_STEP_LOG_CHARS = 12000;
 function loadWorkflows() {
   try {
     if (!fs.existsSync(WORKFLOWS_PATH)) return [];
-    return JSON.parse(fs.readFileSync(WORKFLOWS_PATH, 'utf8'));
+    // The Array.isArray guard matches loadWorkflowRuns below. Without it a
+    // workflows.json that parsed to anything else (a truncated write, a hand
+    // edit, a format from before the graph model) hands a non-array to every
+    // caller, and the first .map takes the workflows page down with a
+    // TypeError rather than showing an empty grid the user can rebuild from.
+    const list = JSON.parse(fs.readFileSync(WORKFLOWS_PATH, 'utf8'));
+    return Array.isArray(list) ? list : [];
   } catch (_) { return []; }
 }
 
@@ -5445,23 +5451,33 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
   });
 });
 
-ipcMain.handle('workflows:create', (_e, payload = {}) => {
+// The single place a workflow record is minted. Installing an imported
+// artifact goes through this function rather than around it, so the field list
+// below stays the only shape that ever reaches workflows.json. That is what
+// lets the artifact's own requires and receipts blocks live in a sidecar file
+// keyed on the id this returns: if they rode on the record instead, every
+// present and future write path would need widening to carry them, and a
+// widened whitelist is a place a stranger's field can enter the store and stay
+// there forever.
+function createWorkflowRecord(payload) {
+  const p = (payload && typeof payload === 'object') ? payload : {};
   const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
   const validTriggers = ['manual', 'ai-suggested'];
   const entry = {
     id,
-    name: String(payload.name || 'New Workflow').slice(0, 80),
-    description: String(payload.description || '').slice(0, 256),
-    graph: sanitizeGraph(payload.graph),
-    trigger: validTriggers.includes(payload.trigger) ? payload.trigger : 'manual',
+    name: String(p.name || 'New Workflow').slice(0, 80),
+    description: String(p.description || '').slice(0, 256),
+    graph: sanitizeGraph(p.graph),
+    trigger: validTriggers.includes(p.trigger) ? p.trigger : 'manual',
     createdAt: now,
     updatedAt: now,
   };
-  const list = [...loadWorkflows(), entry];
-  saveWorkflows(list);
+  saveWorkflows([...loadWorkflows(), entry]);
   return entry;
-});
+}
+
+ipcMain.handle('workflows:create', (_e, payload = {}) => createWorkflowRecord(payload));
 
 ipcMain.handle('workflows:update', (_e, payload = {}) => {
   if (!payload.id) return { ok: false, error: 'missing id' };
@@ -5486,10 +5502,21 @@ ipcMain.handle('workflows:delete', (_e, id) => {
   if (live) return { ok: false, error: 'this workflow is running; stop it first' };
   if (!id) return { ok: false, error: 'missing id' };
   saveWorkflows(loadWorkflows().filter((w) => w.id !== id));
+  // The sidecar row goes with the workflow. A row left behind would outlive
+  // its workflow and, since ids are minted from the clock, could eventually be
+  // inherited by an unrelated one: a locally authored workflow that suddenly
+  // claims a stranger's receipts and a consent nobody gave.
+  pruneSidecarStore();
   return { ok: true };
 });
 
-ipcMain.handle('workflows:run', (event, workflowId) => {
+// opts is the second argument and carries the run's working directory. An
+// imported workflow must have one: without it the run falls through to
+// whichever terminal folder happened to be active, which means a stranger's
+// four agent steps edit whichever repo you last glanced at, exit 0, and record
+// a clean run. Locally authored workflows pass opts nothing and keep the
+// existing fallback chain exactly as it was.
+ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
   const already = [...activeRuns.values()].find((r) => r.status === 'running');
   if (already) {
     return { ok: false, error: 'a workflow is already running', runId: already.id, workflowId: already.workflowId };
@@ -5501,6 +5528,22 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
     return { ok: false, error: 'workflow has no steps' };
   }
 
+  // The gate runs against the directory as it is right now rather than as it
+  // was at install time. A path can be deleted, renamed, or replaced by a
+  // symlink to somewhere else between the sheet closing and Run being pressed,
+  // and the probes are three syscalls.
+  const sidecar = sidecarFor(workflowId);
+  const requested = (opts && typeof opts.cwd === 'string' && opts.cwd) ? opts.cwd : null;
+  const boundCwd = requested || (sidecar && sidecar.boundCwd) || null;
+  const resolvedCwd = boundCwd ? path.resolve(boundCwd) : null;
+  const gate = WorkflowInstall.runGateDecision(Object.assign(
+    { sidecar, cwd: resolvedCwd },
+    wfxDirFacts(resolvedCwd),
+  ));
+  if (!gate.ok) {
+    return { ok: false, error: gate.message, code: gate.code, message: gate.message, detail: gate.detail, workflowId };
+  }
+
   const runId = `run-${Date.now()}`;
   const runState = {
     id: runId,
@@ -5510,10 +5553,19 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
     currentChild: null,
     children: new Set(),   // every concurrently-running step, so Stop kills them all
     startedAt: new Date().toISOString(),
+    // null for a locally authored workflow, which is what keeps wfRunStep's
+    // original fallback chain intact for everything that existed before this.
+    cwd: gate.cwd,
+    // Whether the instructions this run is about to execute were written by
+    // somebody else. Read once here, where the sidecar is already in hand for
+    // the consent gate, rather than per step: a run cannot become trusted
+    // halfway through, and re-reading the store mid-run would let a concurrent
+    // write change the answer between two steps of the same workflow.
+    untrusted: !!(sidecar && sidecar.origin === 'imported'),
   };
   activeRuns.set(runId, runState);
   executeWorkflow(event, workflow, runState);
-  return { ok: true, runId };
+  return { ok: true, runId, cwd: gate.cwd };
 });
 
 // Returns a context block to inject at session start for ai-suggested workflows.
@@ -5590,6 +5642,686 @@ ipcMain.handle('workflows:activeRun', () => {
       edgesTaken: run.edgesTaken || [],
       startedNodes: run.startedNodes || [],
     },
+  };
+});
+
+// ─── Portable workflows ───────────────────────────────────────────────────────
+//
+// A workflow becomes one .husk.json you can commit, and someone else's file
+// shows you exactly what it will run on your machine before you press Run.
+// This section owns the four things that need the main process: writing a file
+// out, reading a stranger's file in, checking what that file needs against
+// this machine, and refusing a run that has not earned one.
+//
+// The trust boundary is the byte. Everything inside the file, including its
+// own graphHash and its own receipts, is attacker-controlled, and every check
+// worth anything lives in src/lib/workflow-artifact.js where it can be unit
+// tested against hostile fixtures. Nothing here re-implements a check; this
+// file supplies the syscalls those checks are about and hands the results to
+// pure functions.
+//
+// Two rules the handlers below are written to keep.
+//
+// No value from a manifest reaches mcp:add, mcp:addMany or mcp:parseSnippet on
+// any code path. requires.mcpServers carries a name, an optional fingerprint
+// and a boolean and nothing else, because a manifest that could describe an
+// MCP server is a manifest that can start a local process with attacker-chosen
+// argv and environment. The preflight's fix affordance is a label the renderer
+// turns into a click that opens the empty MCP form, never a prefilled one.
+//
+// Every read of a cloned tree is confined and every path component of it is
+// lstat-ed, because git materialises symlinks happily and a workflow.husk.json
+// committed as a symlink to ~/.claude.json would render MCP tokens into the
+// malformed-file pane with a Copy button next to them.
+
+const WorkflowArtifact = require('./lib/workflow-artifact');
+const WorkflowReceipt = require('./lib/workflow-receipt');
+const WorkflowInstall = require('./lib/workflow-install');
+
+// One row per workflow that came from a file, keyed on the local workflow id.
+// Deliberately a separate file from workflows.json: see createWorkflowRecord
+// above for why the record's field whitelist must never widen to hold this.
+const WORKFLOW_ARTIFACTS_PATH = path.join(CONFIG_DIR, 'workflow-artifacts.json');
+
+// Bounds on walking a cloned repository. A stranger chose its shape, so the
+// walk is bounded in three directions at once: how deep it goes, how many
+// entries it will look at in total, and how many candidates it will collect.
+// Any one of the three alone is a hole, since a tree can be wide, deep, or
+// carpeted in files named *.husk.json.
+const WFX_SCAN_DEPTH = 3;
+const WFX_SCAN_ENTRIES = 4000;
+const WFX_MAX_CANDIDATES = 32;
+const WFX_SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'vendor', 'target']);
+
+function loadSidecarStore() {
+  try {
+    if (!fs.existsSync(WORKFLOW_ARTIFACTS_PATH)) return WorkflowInstall.normalizeStore(null);
+    return WorkflowInstall.normalizeStore(JSON.parse(fs.readFileSync(WORKFLOW_ARTIFACTS_PATH, 'utf8')));
+  } catch (_) {
+    // A store that cannot be read is an empty store, which fails closed: every
+    // workflow reads as locally authored and nothing gains a consent it was
+    // never given. The alternative, throwing, would take the workflows page
+    // down over a file nothing but this feature uses.
+    return WorkflowInstall.normalizeStore(null);
+  }
+}
+
+function saveSidecarStore(store) {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    writeJsonAtomic(WORKFLOW_ARTIFACTS_PATH, WorkflowInstall.normalizeStore(store));
+    return true;
+  } catch (_) { return false; }
+}
+
+function sidecarFor(workflowId) {
+  if (typeof workflowId !== 'string' || !workflowId) return null;
+  const store = loadSidecarStore();
+  return Object.prototype.hasOwnProperty.call(store.rows, workflowId) ? store.rows[workflowId] : null;
+}
+
+function writeSidecar(row) {
+  if (!row || !row.workflowId) return null;
+  const store = loadSidecarStore();
+  store.rows[row.workflowId] = row;
+  saveSidecarStore(store);
+  return row;
+}
+
+// Called after any workflow disappears. Duplicating a workflow never calls
+// this and never copies a row, which is the point: a duplicate inherits a new
+// local id, no sidecar, and therefore no origin and no consent. A copy that
+// silently carried a stranger's consent would be the same hole with a new id.
+function pruneSidecarStore() {
+  try {
+    const live = loadWorkflows().map((w) => w && w.id).filter((id) => typeof id === 'string');
+    const pruned = WorkflowInstall.pruneStore(loadSidecarStore(), live);
+    if (pruned.removed > 0) saveSidecarStore(pruned.store);
+    return pruned.removed;
+  } catch (_) { return 0; }
+}
+
+// ─── machine facts ───────────────────────────────────────────────────────────
+
+// The three directory probes the preflight rows and the run gate both read.
+// Kept together so the sheet and the gate can never disagree about a path: two
+// separately written copies of "is this a git work tree" is how a workflow
+// gets installed with a green tick and then refused at Run.
+function wfxDirFacts(cwd) {
+  const facts = { cwdIsDir: false, cwdIsHome: false, cwdInWorkTree: false };
+  if (typeof cwd !== 'string' || !cwd) return facts;
+  const abs = path.resolve(cwd);
+  facts.cwdIsHome = abs === path.resolve(HOME);
+  try { facts.cwdIsDir = fs.statSync(abs).isDirectory(); } catch (_) { facts.cwdIsDir = false; }
+  if (facts.cwdIsDir) facts.cwdInWorkTree = wfxInWorkTree(abs);
+  return facts;
+}
+
+function wfxInWorkTree(abs) {
+  try {
+    const out = execFileSync('git', ['-C', abs, 'rev-parse', '--is-inside-work-tree'],
+      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.trim() === 'true';
+  } catch (_) { return false; }
+}
+
+// The top of the work tree the directory sits in, for the export dialog's
+// default path. A bare repository or a detached directory has none, and the
+// caller falls back rather than inventing one.
+function wfxGitRoot(abs) {
+  try {
+    const out = execFileSync('git', ['-C', abs, 'rev-parse', '--show-toplevel'],
+      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const root = out.trim();
+    return root ? root : null;
+  } catch (_) { return null; }
+}
+
+// The MCP servers configured here, reduced to the two fields a comparison is
+// allowed to see. env is dropped before the fingerprint is taken and never
+// leaves this function: it holds the tokens, and a fingerprint over it would
+// also make every honest installation mismatch, since two people never share
+// an API key.
+function wfxLocalMcpServers() {
+  try {
+    const r = SharedMcp.list(config.agentCommand, { sync: false });
+    const servers = (r && Array.isArray(r.servers)) ? r.servers : [];
+    return servers
+      .filter((s) => s && s.enabled !== false)
+      .map((s) => ({ name: String(s.id || ''), fingerprint: WorkflowInstall.mcpFingerprint(s) }));
+  } catch (_) { return []; }
+}
+
+// The skills installed here, fingerprinted by the bytes of their markdown.
+// A disabled skill is left out rather than reported as present-but-off: from
+// the workflow's point of view a skill the agent will not load is a skill that
+// is not there, and "present" with an asterisk is the kind of row a reader
+// takes as a tick.
+//
+// Both the directory name and the display name are offered, because a manifest
+// is author-declared prose and nothing in the format says which of the two the
+// author wrote down.
+function wfxLocalSkills() {
+  const out = [];
+  const seen = new Set();
+  const push = (id, fingerprint) => {
+    if (typeof id !== 'string' || !id || seen.has(id)) return;
+    seen.add(id);
+    out.push({ id, fingerprint });
+  };
+  try {
+    const items = [...listClaudeSkills(), ...listHuskPrompts()];
+    for (const it of items) {
+      if (!it || it.disabled) continue;
+      let fingerprint = null;
+      try { fingerprint = WorkflowInstall.skillFingerprint(fs.readFileSync(it.mdPath)); } catch (_) {}
+      push(it.id, fingerprint);
+      push(it.name, fingerprint);
+    }
+  } catch (_) {}
+  return out;
+}
+
+// Marker file existence in the bound directory. The names come out of a
+// stranger's file, so each one is resolved through resolveInside rather than
+// path.join: the charset already forbids "..", and a second, structural check
+// costs nothing and does not depend on that charset staying right.
+function wfxMarkerFiles(cwd, markers) {
+  const found = {};
+  if (typeof cwd !== 'string' || !cwd) return found;
+  for (const marker of (Array.isArray(markers) ? markers : [])) {
+    if (typeof marker !== 'string' || !marker) continue;
+    try { found[marker] = fs.existsSync(resolveInside(cwd, marker)); }
+    catch (_) { found[marker] = false; }
+  }
+  return found;
+}
+
+// ─── confined reads of a cloned tree ─────────────────────────────────────────
+
+// A path is safe to read out of a clone when it resolves inside the clone AND
+// no component of it, from the root down to the leaf, is a symlink. A
+// leaf-only check is defeated by a symlinked directory, which is why this
+// walks every component instead of lstat-ing the file it was handed.
+function wfxResolveConfined(root, rel) {
+  const abs = resolveInside(root, rel);
+  const rootAbs = path.resolve(root);
+  const parts = path.relative(rootAbs, abs).split(path.sep).filter(Boolean);
+  let walk = rootAbs;
+  for (const part of parts) {
+    walk = path.join(walk, part);
+    const st = fs.lstatSync(walk);
+    if (st.isSymbolicLink()) throw new Error('refusing to follow a symlink inside the cloned repository');
+  }
+  return abs;
+}
+
+// Find the .husk.json files in a cloned tree, bounded in depth, in total
+// entries looked at, and in candidates collected. Symlinked entries are
+// skipped rather than followed, both because a symlinked directory is a way
+// out of the tree and because a self-referential one is a walk that does not
+// end.
+function wfxFindArtifacts(root) {
+  const rootAbs = path.resolve(root);
+  const found = [];
+  let seen = 0;
+  const walk = (dir, rel, depth) => {
+    if (depth > WFX_SCAN_DEPTH || found.length >= WFX_MAX_CANDIDATES || seen >= WFX_SCAN_ENTRIES) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+    for (const entry of entries) {
+      if (found.length >= WFX_MAX_CANDIDATES || seen >= WFX_SCAN_ENTRIES) return;
+      seen += 1;
+      if (entry.isSymbolicLink()) continue;
+      const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (WFX_SKIP_DIRS.has(entry.name)) continue;
+        walk(path.join(dir, entry.name), entryRel, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith('.husk.json')) continue;
+      found.push({ relPath: entryRel, depth });
+    }
+  };
+  walk(rootAbs, '', 0);
+  // Shallowest first, then alphabetical, so the choice is deterministic across
+  // machines and the surface can name the one that was read without the user
+  // wondering why a different file won on someone else's laptop.
+  found.sort((a, b) => (a.depth - b.depth) || a.relPath.localeCompare(b.relPath));
+  const preferred = found.find((f) => f.relPath === 'workflow.husk.json');
+  if (preferred) {
+    found.splice(found.indexOf(preferred), 1);
+    found.unshift(preferred);
+  }
+  return found;
+}
+
+function wfxRefuse(code, message, detail, stage) {
+  return {
+    ok: false,
+    stage: stage || 'source',
+    code,
+    message: String(message),
+    detail: (detail === undefined || detail === null) ? null : String(detail).slice(0, 512),
+  };
+}
+
+// statSync before readFileSync, always, and on the resolved path rather than
+// the one we were handed. A two gigabyte file is refused by asking the
+// filesystem how big it is, which is the only version of that check that does
+// not require reading it first. parseArtifact repeats the size test on the
+// string it gets, which is the half of the pair that covers the drag-drop
+// path where there is no file to stat.
+function wfxReadArtifactAt(absPath) {
+  let st;
+  try { st = fs.statSync(absPath); } catch (err) {
+    return wfxRefuse('unreadable', 'that file could not be opened', err && err.message);
+  }
+  if (!st.isFile()) return wfxRefuse('not-a-file', 'that path is not a file', absPath);
+  if (st.size > WorkflowArtifact.MAX_ARTIFACT_BYTES) {
+    return wfxRefuse('too-large',
+      `that file is ${st.size} bytes and a Husk workflow may be ${WorkflowArtifact.MAX_ARTIFACT_BYTES}`,
+      `${st.size} bytes`);
+  }
+  let bytes;
+  try { bytes = fs.readFileSync(absPath); } catch (err) {
+    return wfxRefuse('unreadable', 'that file could not be read', err && err.message);
+  }
+  // The validator's answer travels back exactly as it came, refusal code and
+  // all. A surface keys its title and its recovery advice off that code, and
+  // rewriting it here would put a second, undocumented enum between the module
+  // that decides and the pane that explains.
+  const result = WorkflowArtifact.parseArtifact(bytes);
+  if (!result.ok) return Object.assign({ stage: 'validate' }, result);
+  return { ok: true, artifact: result.artifact, warnings: result.warnings, bytes: st.size };
+}
+
+// ─── IPC: read an artifact ───────────────────────────────────────────────────
+
+// payload: { source: 'repo' | 'file', url?, path? }
+//
+// The repo path reuses cloneAgentRepo, which is the app's one network
+// primitive for this: git clone and nothing else, so there is no raw-URL fetch
+// to point at an internal host. What it does not do is anything about
+// symlinks, which is why every read below goes through wfxResolveConfined.
+ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const source = p.source === 'file' ? 'file' : 'repo';
+
+  if (source === 'file') {
+    const raw = typeof p.path === 'string' ? p.path.trim() : '';
+    if (!raw) return wfxRefuse('no-path', 'pick a .husk.json file to read', null);
+    const abs = path.resolve(raw.startsWith('~/') ? path.join(HOME, raw.slice(2)) : raw);
+    const read = wfxReadArtifactAt(abs);
+    if (!read.ok) return read;
+    return {
+      ok: true,
+      artifact: read.artifact,
+      warnings: read.warnings,
+      bytes: read.bytes,
+      source: { kind: 'file', path: abs, relPath: path.basename(abs), root: null, url: null, candidates: [] },
+    };
+  }
+
+  const url = typeof p.url === 'string' ? p.url.trim() : '';
+  if (!url) return wfxRefuse('no-url', 'paste the https URL of a repository', null);
+  const cloned = await cloneAgentRepo(url);
+  if (!cloned.ok) return wfxRefuse('clone-failed', cloned.error || 'that repository could not be cloned', url);
+
+  const candidates = wfxFindArtifacts(cloned.root);
+  if (!candidates.length) {
+    return wfxRefuse('no-artifact-found',
+      'that repository has no .husk.json in it',
+      'Husk looks three directories deep for a file whose name ends in .husk.json');
+  }
+  let abs;
+  try { abs = wfxResolveConfined(cloned.root, candidates[0].relPath); }
+  catch (err) { return wfxRefuse('unsafe-path', 'that file is a link rather than a file, so Husk will not read it', err && err.message); }
+
+  const read = wfxReadArtifactAt(abs);
+  if (!read.ok) return Object.assign(read, { relPath: candidates[0].relPath });
+  return {
+    ok: true,
+    artifact: read.artifact,
+    warnings: read.warnings,
+    bytes: read.bytes,
+    source: {
+      kind: 'repo',
+      path: abs,
+      relPath: candidates[0].relPath,
+      root: cloned.root,
+      url,
+      candidates: candidates.map((c) => c.relPath),
+    },
+  };
+});
+
+// The file picker for the install sheet's second source. Filtered to json
+// because the double extension .husk.json is not something a native filter
+// expresses, and a filter that silently hid every candidate would be worse
+// than one that is slightly wide.
+ipcMain.handle('workflows:pickArtifactFile', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a workflow file',
+    properties: ['openFile'],
+    filters: [{ name: 'Husk workflow', extensions: ['json'] }],
+  });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
+
+// ─── IPC: preflight ──────────────────────────────────────────────────────────
+
+// payload: { artifact?, workflowId?, cwd? }
+//
+// The artifact is revalidated even though it just came back from
+// workflows:artifactRead. It crossed into the renderer and back, and the
+// renderer is the process that also draws attacker-supplied strings; a
+// validator that only runs on the way in is a validator one XSS bug away from
+// being skipped. Revalidation is microseconds and the projection it returns is
+// the one every check below reads.
+ipcMain.handle('workflows:preflight', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const stored = typeof p.workflowId === 'string' ? sidecarFor(p.workflowId) : null;
+  const candidate = p.artifact || (stored && stored.artifact) || null;
+  if (!candidate) return wfxRefuse('not-artifact', 'there is nothing to check yet', null, 'validate');
+
+  const checked = WorkflowArtifact.validateArtifact(candidate);
+  if (!checked.ok) return Object.assign({ stage: 'validate' }, checked);
+  const artifact = checked.artifact;
+
+  const cwdRaw = (typeof p.cwd === 'string' && p.cwd) ? p.cwd : (stored && stored.boundCwd) || null;
+  const cwd = cwdRaw ? path.resolve(cwdRaw) : null;
+  const dirFacts = wfxDirFacts(cwd);
+
+  const agentsOnPath = {};
+  for (const name of (artifact.requires.agentCommands || [])) agentsOnPath[name] = isOnPath(name);
+
+  const facts = Object.assign({
+    agentsOnPath,
+    mcpServers: wfxLocalMcpServers(),
+    skills: wfxLocalSkills(),
+    markerFiles: wfxMarkerFiles(cwd, artifact.requires.workspace.markerFiles),
+    cwd,
+    huskVersion: app.getVersion(),
+  }, dirFacts);
+
+  const result = WorkflowInstall.evaluatePreflight(artifact, facts);
+  if (!result.ok) return wfxRefuse('not-artifact', result.error, null, 'validate');
+  return {
+    ok: true,
+    checks: result.checks,
+    blocking: result.blocking,
+    cautions: result.cautions,
+    oks: result.oks,
+    cwd,
+    huskVersion: app.getVersion(),
+  };
+});
+
+// ─── IPC: install ────────────────────────────────────────────────────────────
+
+// payload: { artifact, cwd, source? }
+//
+// One call rather than a create followed by a sidecar write. Two calls means a
+// window where the workflow exists and its row does not, and a workflow with
+// no row reads as locally authored: it would run a stranger's prompts with no
+// consent gate and no bound directory, which is precisely the state this
+// feature exists to make impossible.
+ipcMain.handle('workflows:install', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const checked = WorkflowArtifact.validateArtifact(p.artifact);
+  if (!checked.ok) return Object.assign({ stage: 'validate' }, checked);
+  const artifact = checked.artifact;
+
+  const cwd = (typeof p.cwd === 'string' && p.cwd) ? path.resolve(p.cwd) : null;
+  if (!cwd) return wfxRefuse('cwd-required', 'pick the directory this workflow will run in', null, 'install');
+  const dirFacts = wfxDirFacts(cwd);
+  if (dirFacts.cwdIsHome) return wfxRefuse('cwd-is-home', 'Husk will not bind an imported workflow to your home directory', cwd, 'install');
+  if (!dirFacts.cwdIsDir) return wfxRefuse('cwd-not-a-directory', 'that path is not a directory', cwd, 'install');
+  if (artifact.requires.workspace.vcs === 'git' && !dirFacts.cwdInWorkTree) {
+    return wfxRefuse('cwd-not-a-work-tree', 'this workflow declares it needs git, and that directory is not inside a work tree', cwd, 'install');
+  }
+
+  const workflow = createWorkflowRecord({
+    name: artifact.name,
+    description: artifact.description || '',
+    // The canonical n0..nk ids and the quantised layout come straight across.
+    // sanitizeGraph runs over them inside createWorkflowRecord, which is the
+    // belt over the braces: the artifact validator already proved this shape.
+    graph: artifact.graph,
+    trigger: 'manual',
+  });
+
+  const row = WorkflowInstall.sidecarRow({
+    workflowId: workflow.id,
+    origin: 'imported',
+    artifact,
+    boundCwd: cwd,
+    installedAt: new Date().toISOString(),
+    // Installing writes a file and executes nothing. The risk is entirely at
+    // the moment a stranger's 8192 characters reach a CLI, so consent is asked
+    // for at the first Run and recorded here when it is given.
+    consentedAt: null,
+  });
+  writeSidecar(row);
+  return { ok: true, workflow, sidecar: row };
+});
+
+// ─── IPC: the sidecar ────────────────────────────────────────────────────────
+
+// Every row at once, because the workflows grid paints every card in one pass
+// and asking per card would be one IPC round trip per workflow on every
+// repaint. The rows carry the whole artifact, which is bounded at a megabyte
+// each by the reader that let them in.
+ipcMain.handle('workflows:sidecars', () => ({ ok: true, sidecars: loadSidecarStore().rows }));
+
+// Recording consent. The timestamp is written before the run starts rather
+// than after it finishes, so a run that crashes does not ask again for
+// something the user already read and agreed to.
+ipcMain.handle('workflows:consent', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const row = sidecarFor(p.workflowId);
+  if (!row) return wfxRefuse('no-sidecar', 'that workflow did not come from a file, so there is nothing to consent to', null, 'consent');
+  if (row.consentedAt) return { ok: true, consentedAt: row.consentedAt, sidecar: row };
+  row.consentedAt = new Date().toISOString();
+  writeSidecar(row);
+  return { ok: true, consentedAt: row.consentedAt, sidecar: row };
+});
+
+// Rebinding the directory. Changing it clears nothing: consent was given to a
+// set of prompts, not to a folder, and the folder is named in the run header
+// before the first step spawns either way.
+ipcMain.handle('workflows:bindCwd', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const row = sidecarFor(p.workflowId);
+  if (!row) return wfxRefuse('no-sidecar', 'that workflow did not come from a file', null, 'bind');
+  const cwd = (typeof p.cwd === 'string' && p.cwd) ? path.resolve(p.cwd) : null;
+  if (!cwd) return wfxRefuse('cwd-required', 'pick a directory', null, 'bind');
+  const dirFacts = wfxDirFacts(cwd);
+  if (dirFacts.cwdIsHome) return wfxRefuse('cwd-is-home', 'Husk will not bind an imported workflow to your home directory', cwd, 'bind');
+  if (!dirFacts.cwdIsDir) return wfxRefuse('cwd-not-a-directory', 'that path is not a directory', cwd, 'bind');
+  row.boundCwd = cwd;
+  writeSidecar(row);
+  return { ok: true, boundCwd: cwd, sidecar: row };
+});
+
+// ─── IPC: export ─────────────────────────────────────────────────────────────
+
+// The receipts a published file would carry, aggregated from local run
+// history. Today this always comes back empty, and it comes back empty for a
+// reason worth stating rather than hiding: recordWorkflowRun persists no
+// graphHash on a run, so aggregateRuns cannot tell which runs belong to the
+// graph about to be published and counts every one of them as `unhashed`.
+// Publishing them anyway would attach a stranger-facing claim to runs that may
+// have executed a different set of steps entirely.
+//
+// The shape of the answer is what slice 7 fills in, not the call site: when
+// runs start carrying their fingerprint, `publishable` starts coming back true
+// and the only thing missing is the environment block. Until then the summary
+// travels back so the publish sheet can say "31 runs in your history, none of
+// them fingerprinted" instead of an unexplained zero.
+function wfxReceiptsFor(workflow, graphHash) {
+  const agg = WorkflowReceipt.aggregateRuns(loadWorkflowRuns(), {
+    workflowId: workflow.id,
+    graphHash,
+    historyMax: WF_RUNS_MAX,
+    stepTimeoutMs: WF_STEP_TIMEOUT_MS,
+  });
+  if (!agg.ok) return { receipts: [], summary: null, reason: agg.error };
+  const a = agg.aggregate;
+  const summary = {
+    runs: a.runs,
+    sourceRuns: a.sourceRuns,
+    excluded: a.excluded,
+    runsWindowed: a.runsWindowed,
+    outcomes: a.outcomes,
+    outcomeBasis: a.outcomeBasis,
+    medianDurationMs: a.medianDurationMs,
+    medianDurationN: a.medianDurationN,
+    durationCensored: a.durationCensored,
+    medianTokens: a.medianTokens,
+    medianTokensN: a.medianTokensN,
+    precision: a.precision,
+    publishable: a.publishable,
+    publishBlockers: a.publishBlockers,
+  };
+  if (!a.publishable) {
+    return {
+      receipts: [],
+      summary,
+      reason: a.excluded.unhashed > 0
+        ? 'this Husk does not yet record which graph a run executed, so no run in your history can be attached to this fingerprint'
+        : `nothing publishable yet: ${a.publishBlockers.join(', ')}`,
+    };
+  }
+  // Deliberately unreachable until run rows carry a fingerprint. Left as a
+  // refusal rather than as an environment block assembled from whatever this
+  // machine looks like right now, because environment describes the machine
+  // the runs happened on and guessing it is the kind of small lie the whole
+  // format was designed to make unrepresentable.
+  return {
+    receipts: [],
+    summary,
+    reason: 'run history is not yet recorded in enough detail to describe the machine those runs happened on',
+  };
+}
+
+// The path a published file defaults to. A workflow bound to a work tree
+// belongs in that tree, committed next to the code its prompts assume, which
+// is the whole premise of the format. Anything else falls back to the
+// downloads folder rather than to a repo the workflow has nothing to do with.
+function wfxDefaultExportPath(workflow, sidecar) {
+  const fileName = WorkflowInstall.artifactFileName(workflow && workflow.name);
+  const bound = sidecar && sidecar.boundCwd ? sidecar.boundCwd : null;
+  if (bound) {
+    const root = wfxGitRoot(bound);
+    if (root) return path.join(root, '.husk', 'workflows', fileName);
+  }
+  let downloads = HOME;
+  try { downloads = app.getPath('downloads') || HOME; } catch (_) {}
+  return path.join(downloads, fileName);
+}
+
+// A .husk.json is meant to be committed, so it is written as an ordinary repo
+// file: 0644, two-space JSON, and a trailing newline. writeJsonAtomic is the
+// wrong tool here because it writes 0600 into a 0700 directory, which is right
+// for the config folder it was built for and wrong for a file whose whole
+// purpose is to be readable by everyone who checks the repo out.
+function wfxWriteArtifactAtomic(target, artifact) {
+  const text = `${JSON.stringify(artifact, null, 2)}\n`;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, text, { mode: 0o644 });
+  fs.renameSync(tmp, target);
+  return Buffer.byteLength(text, 'utf8');
+}
+
+// payload: { workflowId, targetPath?, notes?, publisher?, revision?, attachLog? }
+//
+// targetPath skips the dialog, which is what a republish onto an already
+// chosen file wants: the second publish of the same workflow writes
+// immediately and offers an Undo rather than asking the same question again.
+ipcMain.handle('workflows:export', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const raw = loadWorkflows().find((w) => w.id === p.workflowId);
+  if (!raw) return wfxRefuse('not-found', 'that workflow is not in your list any more', p.workflowId, 'export');
+  const workflow = migrateWorkflow(raw);
+
+  // The one refusal that has to name a step before the builder gets a chance
+  // to phrase it, because it is the refusal a user can actually act on: a step
+  // with no agent resolves at run time to whatever the reader's config says,
+  // so a claude-tuned workflow would execute on their gemini and the receipt
+  // would describe a different program.
+  const unbound = ((workflow.graph && workflow.graph.nodes) || [])
+    .filter((n) => n && !n.agentCommand)
+    .map((n) => ({ id: n.id, name: String(n.name || 'Step').slice(0, 64) }));
+  if (unbound.length) {
+    return Object.assign(wfxRefuse('bad-agent',
+      `the step "${unbound[0].name}" does not say which agent it runs, so a published file could not say what it does`,
+      unbound.map((s) => s.name).join(', '), 'export'),
+    { step: unbound[0], steps: unbound });
+  }
+
+  const sidecar = sidecarFor(p.workflowId);
+  const prior = sidecar && sidecar.artifact ? sidecar.artifact : null;
+  const fingerprint = WorkflowArtifact.graphHash(workflow.graph);
+  const receipts = fingerprint.ok
+    ? wfxReceiptsFor(workflow, fingerprint.hash)
+    : { receipts: [], summary: null, reason: fingerprint.error };
+
+  const built = WorkflowArtifact.buildArtifact(workflow, {
+    huskVersion: app.getVersion(),
+    // Republishing keeps the artifact's identity and moves its revision, so a
+    // reader can tell a new version of a workflow they know from a different
+    // workflow that happens to share a name.
+    artifactId: (typeof p.artifactId === 'string' && p.artifactId) || (prior && prior.artifactId) || undefined,
+    revision: Number.isSafeInteger(p.revision) ? p.revision : ((prior && prior.revision ? prior.revision : 0) + 1),
+    publisher: p.publisher === undefined ? null : p.publisher,
+    notes: typeof p.notes === 'string' ? p.notes : null,
+    requires: (p.requires && typeof p.requires === 'object') ? p.requires : (prior ? prior.requires : undefined),
+    receipts: receipts.receipts,
+  });
+  if (!built.ok) return Object.assign({ stage: 'export' }, built, { step: null });
+
+  const warnings = (built.warnings || []).slice();
+  if (p.attachLog === true) {
+    // The toggle is honoured by refusing it rather than by silently ignoring
+    // it. Workflow runs write no audit log yet, so there is no chain to
+    // attach, and evidence:"inline" with nothing behind it would be the one
+    // thing this format refuses to represent.
+    warnings.push({
+      code: 'evidence-unavailable',
+      message: 'this Husk does not write an audit log for workflow runs yet, so the file ships evidence "none"',
+    });
+  }
+  if (receipts.reason) {
+    warnings.push({ code: 'no-receipts', message: receipts.reason });
+  }
+
+  let target = (typeof p.targetPath === 'string' && p.targetPath) ? path.resolve(p.targetPath) : null;
+  if (!target) {
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export workflow',
+      defaultPath: wfxDefaultExportPath(workflow, sidecar),
+      filters: [{ name: 'Husk workflow', extensions: ['json'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    });
+    if (r.canceled || !r.filePath) return { ok: false, cancelled: true, stage: 'export', code: 'cancelled', message: 'export cancelled', detail: null };
+    target = r.filePath;
+  }
+
+  let bytes;
+  try { bytes = wfxWriteArtifactAtomic(target, built.artifact); }
+  catch (err) { return wfxRefuse('write-failed', 'that file could not be written', err && err.message, 'export'); }
+
+  return {
+    ok: true,
+    path: target,
+    bytes,
+    artifact: built.artifact,
+    warnings,
+    receiptSummary: receipts.summary,
   };
 });
 
@@ -5671,6 +6403,24 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   };
 
   const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  // isAllowedAgentCommand asks the BASENAME whether it is one of the five
+  // agents we support (workflow-graph.js:35-41). That is the right question for
+  // "do we know how to drive this" and the wrong one for "is this safe to hand
+  // to spawn": "./claude" and "/tmp/claude" both carry an allowed basename and
+  // both resolve to a binary of the writer's choosing rather than the one on
+  // PATH. spawn is reached below with this value verbatim.
+  //
+  // The import validator already refuses a separator, so a shared file cannot
+  // carry one into the store. That is one defense, and a bug in it must not be
+  // a shell. It also does not cover config.agentCommand, which reaches this
+  // same spawn without passing through the validator at all.
+  if (/[\\/]/.test(cmd)) {
+    activity('error', `Step "${step.name}" names an agent by path ("${cmd}"). Steps run the agent found on your PATH, by name only.`);
+    stepState.status = 'failed';
+    stepState.ms = Date.now() - stepState.startedAt;
+    wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: step.id, status: 'failed' });
+    return { status: 'failed', output: '' };
+  }
   if (!isAllowedAgentCommand(cmd)) {
     activity('error', `Step "${step.name}" needs one of ${Array.from(wfLib.ALLOWED_AGENT_COMMANDS).join(', ')}; got "${cmd}".`);
     stepState.status = 'failed';
@@ -5704,7 +6454,7 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   if (cmd === 'claude') {
     args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
   } else {
-    args = AgentOneShot.oneShotArgs(cmd, `${wfSystem}\n\n${prompt}`);
+    args = AgentOneShot.oneShotArgs(cmd, `${wfSystem}\n\n${prompt}`, { untrusted: run.untrusted === true });
   }
   if (step.model) {
     const flag = modelFlagFor(cmd);
@@ -5714,7 +6464,11 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   let resultText = '';
   let lineBuf = '';
   let sawAnyEvent = false;
-  const wfCwd = activePtyCwd || (config && config.treeRoot) || HOME;
+  // run.cwd is set only for a workflow that came from a file, where the
+  // directory was chosen at install, stored in the sidecar, and re-probed by
+  // the gate on this Run press. Everything authored here keeps the original
+  // fallback chain, so nothing that worked before this line changed behaviour.
+  const wfCwd = run.cwd || activePtyCwd || (config && config.treeRoot) || HOME;
   const child = spawn(cmd, args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
   run.children.add(child);
   activity('status', step.model ? `Starting ${cmd} (${step.model})...` : `Starting ${cmd}...`);

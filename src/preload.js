@@ -152,7 +152,11 @@ contextBridge.exposeInMainWorld('husk', {
     create: (payload) => ipcRenderer.invoke('workflows:create', payload),
     update: (payload) => ipcRenderer.invoke('workflows:update', payload),
     delete: (id) => ipcRenderer.invoke('workflows:delete', id),
-    run: (id) => ipcRenderer.invoke('workflows:run', id),
+    // opts.cwd binds this run to a directory. An imported workflow is refused
+    // without one; a workflow authored here ignores it and keeps the fallback
+    // chain it always had, so the existing single-argument call sites are
+    // unchanged.
+    run: (id, opts) => ipcRenderer.invoke('workflows:run', id, opts || {}),
     stop: (runId) => ipcRenderer.invoke('workflows:stop', runId),
     generateStepPrompt: (desc) => ipcRenderer.invoke('workflows:generateStepPrompt', desc),
     getSessionContext: () => ipcRenderer.invoke('workflows:getSessionContext'),
@@ -166,6 +170,27 @@ contextBridge.exposeInMainWorld('husk', {
     onNodeDone: (cb) => ipcRenderer.on('wf:node:done', (_e, d) => cb(d)),
     onEdgeTaken: (cb) => ipcRenderer.on('wf:edge:taken', (_e, d) => cb(d)),
     onRunDone: (cb) => ipcRenderer.on('wf:run:done', (_e, d) => cb(d)),
+
+    // Portable workflows: one file you can commit, and someone else's file
+    // read on this machine before it runs anything.
+    //
+    // Every one of these resolves rather than rejects. A refusal comes back as
+    // { ok: false, stage, code, message, detail } with a code the install
+    // sheet keys its title and its recovery advice off, and the codes from
+    // stage "validate" are the artifact validator's own closed enum passed
+    // through untouched. A surface that catches instead of branching on ok
+    // will render nothing at all on the paths that matter most.
+    export: (payload) => ipcRenderer.invoke('workflows:export', payload || {}),
+    artifactRead: (payload) => ipcRenderer.invoke('workflows:artifactRead', payload || {}),
+    pickArtifactFile: () => ipcRenderer.invoke('workflows:pickArtifactFile'),
+    preflight: (payload) => ipcRenderer.invoke('workflows:preflight', payload || {}),
+    install: (payload) => ipcRenderer.invoke('workflows:install', payload || {}),
+    // Every sidecar row in one call, because the grid paints every card in one
+    // pass and a per-card round trip would be one IPC hop per workflow on
+    // every repaint.
+    sidecars: () => ipcRenderer.invoke('workflows:sidecars'),
+    consent: (workflowId) => ipcRenderer.invoke('workflows:consent', { workflowId }),
+    bindCwd: (workflowId, cwd) => ipcRenderer.invoke('workflows:bindCwd', { workflowId, cwd }),
   },
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),
