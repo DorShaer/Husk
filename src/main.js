@@ -1792,7 +1792,7 @@ const pendingRuns = []; // { runId, payload, workspaceRoot } queued past the con
 const AP_MAX_CONCURRENT = 4;
 const AUT_OUTPUT_FLUSH_MS = 250;
 
-const applyWorktreeChanges = require('./lib/autopilot-apply').applyWorktreeChanges;
+const { applyWorktreeChanges, isSafeRelPath: isSafeApplyRelPath } = require('./lib/autopilot-apply');
 const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
 const { modelArgsFor, classifyTier } = require('./lib/model-routing');
@@ -3581,6 +3581,45 @@ async function finishRun(runId, detail) {
   }
 }
 
+// Apply is the only step that leaves the isolated worktree and writes into the
+// user's real project, and it used to be the only irreversible one. The pre-run
+// snapshot captures the worktree (doStartRun), the worktree is deleted right
+// after a successful apply, and Revert then restored a directory nobody was
+// looking at while every applied change stayed in the repo.
+//
+// So capture the destination side of an apply before performing it, scoped to
+// exactly the paths about to be written. Paths that do not exist yet are
+// recorded as absent, which is what lets the undo delete files the run added.
+function applyUndoSessionId(sessionId) {
+  return `${sessionId}-preapply`;
+}
+
+// Returns the undo session id on success, or null when there was nothing to
+// capture. A failure here is reported to the caller rather than swallowed:
+// applying without a usable undo is a decision the operator should make, not
+// something that happens quietly.
+function captureApplyUndo(sessionId, workspaceRoot, changes) {
+  if (!isSafeAutopilotSessionId(sessionId) || !workspaceRoot) {
+    return { ok: false, error: 'run has no session id or workspace root; cannot record an undo point' };
+  }
+  const undoId = applyUndoSessionId(sessionId);
+  if (!isSafeAutopilotSessionId(undoId)) return { ok: false, error: 'invalid undo session id' };
+  const paths = (Array.isArray(changes) ? changes : [])
+    .map((c) => c && c.path)
+    .filter((p) => isSafeApplyRelPath(p) && p !== AutopilotStatus.STATUS_FILE);
+  if (!paths.length) return { ok: true, undoId: null };
+  const { encrypt } = autopilotCrypto();
+  try {
+    const res = Autopilot.snapshot.captureSnapshot(
+      workspaceRoot, autopilotStorageRoot(), undoId, { paths, encrypt },
+    );
+    if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'undo snapshot failed' };
+    return { ok: true, undoId };
+  } catch (err) {
+    return { ok: false, error: `undo snapshot crashed: ${(err && err.message) || String(err)}` };
+  }
+}
+
 // Apply a retained run's changes into its origin workspace. A complete success
 // removes the worktree and registry entry; a partial failure keeps them so the
 // unapplied work remains reviewable/retryable.
@@ -3595,6 +3634,8 @@ ipcMain.handle('autopilot:applyRun', async (_e, payload = {}) => {
   if (entry.groupId && collabGroups.has(entry.groupId) && !entry.isIntegrator) {
     return { ok: false, error: 'this run is part of an active team; wait for the integrator to finish, then apply its result' };
   }
+  const undo = captureApplyUndo(entry.sessionId, entry.workspaceRoot, entry.changes || []);
+  if (!undo.ok) return { ok: false, runId, applied: [], failed: [], error: `${undo.error}; nothing was applied` };
   const result = applyWorktreeChanges(entry.worktreePath, entry.workspaceRoot, entry.changes || []);
   if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed };
   try { removeRunWorktree(entry.worktreePath, entry.workspaceRoot); } catch (_) {}
@@ -3661,6 +3702,8 @@ ipcMain.handle('autopilot:applyWinner', async (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
   const winner = getRetained(runId);
   if (!winner) return { ok: false, error: 'no retained run with that id' };
+  const undo = captureApplyUndo(winner.sessionId, winner.workspaceRoot, winner.changes || []);
+  if (!undo.ok) return { ok: false, runId, applied: [], failed: [], discarded: 0, error: `${undo.error}; nothing was applied` };
   const result = applyWorktreeChanges(winner.worktreePath, winner.workspaceRoot, winner.changes || []);
   if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed, discarded: 0 };
   try { removeRunWorktree(winner.worktreePath, winner.workspaceRoot); } catch (_) {}
@@ -3746,16 +3789,37 @@ ipcMain.handle('autopilot:revert', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
-  const workspaceRoot = manifestWorkspaceRoot(sessionId);
+  const storageRoot = autopilotStorageRoot();
+  // Once a run has been applied, the thing to undo is the write into the
+  // project, not the run inside a worktree that no longer exists. The
+  // pre-apply manifest is written only by an apply, so its presence is the
+  // signal, and it wins because it describes the later and more consequential
+  // of the two events.
+  const undoId = applyUndoSessionId(sessionId);
+  const targetId = Autopilot.snapshot.hasSnapshot(storageRoot, undoId) ? undoId : sessionId;
+  const workspaceRoot = manifestWorkspaceRoot(targetId);
   if (!workspaceRoot) return { ok: false, error: 'snapshot manifest has no workspace root; cannot revert safely' };
+  // Guard for runs applied before undo capture existed: their only manifest
+  // points at a worktree that Apply deleted. restoreFromSnapshot would happily
+  // recreate that directory under userData and report "restored N files" while
+  // the project kept every applied change, which is a success toast over a
+  // no-op. Say what actually happened instead.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- workspaceRoot comes from the manifest, not the caller
+  if (!fs.existsSync(workspaceRoot)) {
+    return { ok: false, error: 'the directory this snapshot was taken from no longer exists, so there is nothing to revert' };
+  }
   const { decrypt } = autopilotCrypto();
-  return Autopilot.supervisor.revertRun({
-    sessionId,
+  const res = Autopilot.supervisor.revertRun({
+    sessionId: targetId,
     workspaceRoot,
-    storageRoot: autopilotStorageRoot(),
+    storageRoot,
     decrypt,
     preserveExtras: !!payload.preserveExtras,
   });
+  // Tell the renderer which of the two things it just undid.
+  return (res && typeof res === 'object')
+    ? { ...res, scope: targetId === undoId ? 'apply' : 'run', workspaceRoot }
+    : res;
 });
 
 // Renderer-side terminal snapshot parser reports the agent's own

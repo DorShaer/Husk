@@ -148,13 +148,27 @@ function captureSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   const entries = {};
   const warnings = [];
   const seen = new Set();
-  walk(workspaceRoot, '', ignores, entries, warnings, opts, bdir, seen);
+  // Scoped capture: record only the named paths instead of walking the tree.
+  // This is what makes Apply reversible. Apply writes a known list of relative
+  // paths into the real project, so the undo only has to remember those, and
+  // the capture costs O(changed files) rather than a full project walk.
+  const scoped = Array.isArray(opts.paths);
+  if (scoped) {
+    captureScoped(workspaceRoot, opts.paths, entries, warnings, opts, bdir, seen);
+  } else {
+    walk(workspaceRoot, '', ignores, entries, warnings, opts, bdir, seen);
+  }
 
   const manifest = {
     v: 1,
     sessionId,
     capturedAt: new Date().toISOString(),
     workspaceRoot,
+    // A scoped manifest describes a slice of the tree, not the whole tree, so
+    // restore must never run its delete-everything-else pass against it. The
+    // flag travels with the manifest so that guarantee survives a caller who
+    // forgets to pass preserveExtras.
+    scoped,
     entries,
   };
   try {
@@ -225,6 +239,75 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
   return captured;
 }
 
+// captureScoped records the current state of exactly the paths it is given,
+// including the ones that do not exist yet.
+//
+// The absent entry is the point of this function. Applying a run's changes
+// creates files that were never in the project, and an undo that only knows
+// how to restore content would leave those behind. Recording "this path did
+// not exist" lets restore delete it, so the undo is symmetric with the apply.
+function captureScoped(absRoot, paths, entries, warnings, opts, bdir, seen) {
+  for (const rel of paths) {
+    if (typeof rel !== 'string' || !rel) continue;
+    const abs = joinSafely(absRoot, rel);
+    if (!abs) { warnings.push({ path: String(rel), reason: 'path escapes workspaceRoot' }); continue; }
+    const key = path.normalize(rel);
+    let lst;
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
+      lst = fs.lstatSync(abs);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') { entries[key] = { type: 'absent' }; continue; }
+      warnings.push({ path: key, reason: err.message });
+      entries[key] = { type: 'unreadable' };
+      continue;
+    }
+    try {
+      if (lst.isSymbolicLink()) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
+        entries[key] = { type: 'symlink', target: fs.readlinkSync(abs) };
+      } else if (lst.isDirectory()) {
+        entries[key] = { type: 'dir' };
+      } else if (lst.isFile()) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
+        const content = fs.readFileSync(abs);
+        const sha = sha256OfBuffer(content);
+        writeBlobAtomic(bdir, sha, content, opts.encrypt, seen);
+        entries[key] = { type: 'file', sha };
+      } else {
+        // Socket, device, fifo. Not something Apply writes; leave it alone.
+        entries[key] = { type: 'unreadable' };
+      }
+    } catch (err) {
+      warnings.push({ path: key, reason: err.message });
+      entries[key] = { type: 'unreadable' };
+    }
+  }
+}
+
+// pruneEmptyParents removes directories that Apply created on the way to a
+// file which the undo has just deleted. Without it, reverting an apply that
+// added src/new/deep/thing.js leaves three empty directories behind and the
+// project is not actually back where it started. Stops at baseAbs and at the
+// first non-empty directory.
+function pruneEmptyParents(baseAbs, fileAbs) {
+  const baseN = path.resolve(baseAbs);
+  let cur = path.dirname(path.resolve(fileAbs));
+  while (cur !== baseN && cur.startsWith(baseN + path.sep)) {
+    let names;
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under baseAbs
+      names = fs.readdirSync(cur);
+    } catch (_) { return; }
+    if (names.length) return;
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under baseAbs
+      fs.rmdirSync(cur);
+    } catch (_) { return; }
+    cur = path.dirname(cur);
+  }
+}
+
 // restoreFromSnapshot writes every entry from the manifest back to
 // workspaceRoot. Files present in workspace but NOT in the manifest
 // are deleted, so the workspace is left byte-equivalent to the
@@ -275,6 +358,21 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
     if (meta && meta.type === 'unreadable') continue;
     const abs = joinSafely(workspaceRoot, relPath);
     if (!abs) { warnings.push({ path: relPath, reason: 'path escapes workspaceRoot' }); continue; }
+    // The path did not exist when the snapshot was taken, so restoring it
+    // means removing whatever sits there now. This is how an apply that added
+    // files gets undone: a scoped manifest skips the delete-extras pass, so
+    // without this the added files would survive the revert.
+    if (meta && meta.type === 'absent') {
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to workspaceRoot
+        fs.rmSync(abs, { recursive: true, force: true });
+        pruneEmptyParents(workspaceRoot, abs);
+        restored.push(relPath);
+      } catch (err) {
+        warnings.push({ path: relPath, reason: err.message });
+      }
+      continue;
+    }
     if (!ensureRestoreParent(workspaceRoot, abs)) {
       warnings.push({ path: relPath, reason: 'ancestor path is a symlink, refusing write' });
       continue;
@@ -350,7 +448,11 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   // the user wants the snapshotted files back without losing
   // anything the agent added. Default stays strict-revert because
   // that is the trust promise (a restore matches what was captured).
-  if (opts.preserveExtras !== true) {
+  //
+  // A scoped manifest forces the additive path regardless of what the caller
+  // asked for. It only ever described a handful of paths, so the strict pass
+  // would read every other file in the project as an extra and delete it.
+  if (opts.preserveExtras !== true && manifest.scoped !== true) {
     const ignores = DEFAULT_IGNORE.slice();
     if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
     removeExtras(workspaceRoot, '', new Set(Object.keys(manifest.entries)), ignores, warnings);
@@ -560,6 +662,9 @@ function walkForDiff(absRoot, rel, ignores, manifestEntries, seen, changes, warn
 // event loop frequently enough that the renderer keeps painting.
 const YIELD_EVERY = 50;
 async function captureSnapshotAsync(workspaceRoot, storageRoot, sessionId, opts = {}) {
+  // A scoped capture touches only the paths it is handed, so there is no long
+  // walk to yield out of. One implementation, no second copy to keep in sync.
+  if (Array.isArray(opts.paths)) return captureSnapshot(workspaceRoot, storageRoot, sessionId, opts);
   if (!isSafeSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot)) {
     return { ok: false, error: 'workspaceRoot must be an absolute path' };
