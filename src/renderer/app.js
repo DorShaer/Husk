@@ -3388,7 +3388,20 @@ function wfMiniGraph(graph, lastRun, surface, width) {
   }
 
   const names = nodes.map(wfMiniName);
-  const labelled = names.every((name) => name !== null)
+  // Names are drawn on the sheets and nowhere else.
+  //
+  // The sheets are where somebody is deciding whether to run a stranger's
+  // workflow, so the steps have to be readable and the panel is wide enough for
+  // them to be. The card grid and the pattern thumbnails are neither: at that
+  // width a five-step graph truncates to "Rewr..." and "Tigh...", which is less
+  // information than the arrangement alone carried and a good deal more noise.
+  // A row of quiet pills reads as a shape you recognise; a row of clipped words
+  // reads as text that failed to load.
+  //
+  // The accessible name below is unconditional, so the step names are still
+  // announced on every surface. This is a decision about what is worth drawing
+  // at 250 pixels, not about what the graph is allowed to say.
+  const labelled = (surface === 'panel' && names.every((name) => name !== null))
     ? wfMiniLabelled(nodes, edges, statuses, names, box)
     : null;
   const svg = labelled || wfMiniCompact(nodes, edges, statuses);
