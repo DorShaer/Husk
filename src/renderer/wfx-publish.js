@@ -42,12 +42,13 @@
 // exists to protect.
 //
 // Every string that came out of a file reaches the DOM through el() from
-// wfx-dom.js. That matters here even though most of what this sheet renders is
-// the user's own workflow, because republishing an imported workflow is a
-// first-class path: the name, the description, the step names and the declared
-// requirements in that case were written by whoever published the file this
-// machine installed. The one exception is the graph thumbnail, and the
-// exception is bounded by construction; see paintGraph.
+// wfx-dom.js, with no exception left in this file. That matters here even
+// though most of what this sheet renders is the user's own workflow, because
+// republishing an imported workflow is a first-class path: the name, the
+// description, the step names and the declared requirements in that case were
+// written by whoever published the file this machine installed. The graph
+// thumbnail used to be the exception and is not one any more; see paintGraph
+// for what was traded away to keep it and why the trade was wrong.
 //
 // The git line is shell text a person pastes into a shell, so the workflow
 // name inside it is quoted rather than interpolated. Same argument as above:
@@ -381,45 +382,43 @@
 
   // ─── panes ────────────────────────────────────────────────────────────────
 
-  // The thumbnail is the one place in this file where a string reaches the DOM
-  // through innerHTML, and it is safe for a structural reason rather than
-  // because the data is trusted. wfMiniGraph is handed a projection built right
-  // here that contains nothing but synthetic ids and numbers: no step name, no
-  // prompt, no model, no agent. Its output is therefore a fixed set of SVG
-  // elements whose only variable parts are coordinates, and there is no slot in
-  // it for a manifest string to occupy. The alternative, building the SVG here,
-  // would mean a second copy of the layout arithmetic drifting against the one
-  // the workflow cards use.
+  // The thumbnail used to be the one place in this file where a string reached
+  // the DOM through innerHTML, and it was kept safe by handing wfMiniGraph a
+  // projection with every name stripped out of it: synthetic ids and
+  // coordinates, nothing a manifest string could ride in on. That was the
+  // correct trade against the builder as it was, and it was the wrong trade
+  // against this screen. A publisher is being shown what a reader of this file
+  // will see, and what a reader needs to see is which steps are in it. Four
+  // unlabelled lozenges are indistinguishable from a preview that failed to
+  // load, and on the install sheet the same drawing is the picture somebody
+  // decides on.
+  //
+  // So the graph goes in whole, names and all, and the sink is gone rather than
+  // defended: wfMiniGraph returns elements, and every step name in it reaches
+  // the DOM through the same WfxDom.text() the prompt list uses. There is
+  // nothing left here for a tripwire to watch.
   function paintGraph(host, graph) {
     if (typeof wfMiniGraph !== 'function') {
       host.replaceChildren(el('span', { class: 'wfx-empty-m' }, 'no preview available'));
       return;
     }
-    const ids = new Map();
-    const nodes = graph.nodes.map((node, i) => {
-      const id = `s${i}`;
-      ids.set(node.id, id);
-      return { id, x: Number(node.x) || 0, y: Number(node.y) || 0 };
-    });
-    const edges = [];
-    for (const edge of graph.edges) {
-      const from = ids.get(edge.from);
-      const to = ids.get(edge.to);
-      if (from && to) edges.push({ from, to });
-    }
-    const markup = String(wfMiniGraph({ nodes, edges }, null));
-    // The tripwire that turns the paragraph above from an argument about
-    // another file into a check made in this one. The projection cannot carry a
-    // string today, so this can only fire if wfMiniGraph grows a slot that
-    // takes one, and the day it does the thumbnail should disappear rather than
-    // become the feature's only unreviewed markup sink.
-    if (/<\s*(script|foreignobject|use|image|iframe)\b|\son[a-z]+\s*=|javascript:|href|src\s*=/i.test(markup)) {
-      console.error('wfx-publish: the thumbnail builder produced markup with a sink in it');
+    try {
+      // Null for the run, because this sheet has no business colouring the
+      // drawing by an outcome. The width is the host's own, measured rather
+      // than assumed: the host is already in the document, the sheet's column
+      // is a good deal wider than the floor the builder falls back to, and
+      // every pixel of that difference is a pixel a step name can use.
+      host.replaceChildren(wfMiniGraph(
+        { nodes: graph.nodes, edges: graph.edges }, null, 'panel', host.clientWidth,
+      ));
+    } catch (err) {
+      // A preview that cannot be drawn costs this sheet a picture and nothing
+      // else. Everything under it, which is the part that says what the file
+      // will contain, is still true and still publishable, so the failure is
+      // reported where a developer will see it and named where the reader will.
+      console.error('wfx-publish: the thumbnail could not be drawn', err);
       host.replaceChildren(el('span', { class: 'wfx-empty-m' }, 'no preview available'));
-      return;
     }
-    // eslint-disable-next-line no-unsanitized/property -- numeric projection, checked above
-    host.innerHTML = markup;
   }
 
   // What a reader of the file will see where the numbers go. Today that is

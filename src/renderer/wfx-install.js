@@ -37,6 +37,14 @@
 // createElementNS from a frozen table of path data, because an exception for
 // "just the icons" is an exception somebody later widens.
 //
+// The dialog is shared and this module does not always have it. app.js shows
+// the same card over the same ready pane to display the record behind a
+// workflow's receipts chip, and it does that by unhiding the modal rather than
+// by calling anything here. So every control that stages an install hangs off
+// S.owned rather than off the markup: the source picker and both path rows sit
+// above the panes, where no data-state reaches them, and a Fetch button under a
+// dialog titled Receipts is an affordance for a flow nobody started.
+//
 // One more invariant, stated because a later convenience patch is what would
 // violate it: nothing derived from a manifest may reach the MCP add channels.
 // The preflight's server rows describe what is here and what the author
@@ -67,6 +75,28 @@
     return dom;
   }
   const el = (tag, attrs, ...children) => kit().el(tag, attrs, ...children);
+
+  // A name set on one line, whatever the file put in it.
+  //
+  // el() replaces the invisible characters and deliberately leaves the three
+  // whitespace controls alone, because a prompt is rendered in a <pre> where
+  // its own newlines and tabs are the shape of the text. A step name is not:
+  // it is set in a <span>, where a newline collapses to a space, and it is
+  // executable text on the other side of that span. wfRouteInstruction joins
+  // sibling step names into the routing line the runner appends to the agent's
+  // system prompt, so a name carrying a newline shows the reader one line and
+  // hands the model two, the second of which the reader never saw. Replacing
+  // the control character with U+FFFD is the same report el() makes about the
+  // invisibles: the bytes and the pixels disagree, and the surface says so
+  // rather than quietly picking one.
+  //
+  // The durable fix is a charset rule on `name` in the import validator, which
+  // would make this dead code and is worth keeping anyway: a renderer that
+  // depends on a validator for what it puts on screen is a renderer with a
+  // second copy of that validator's bugs. wfx-artifact-ui.js carries the same
+  // two lines for the same reason; these two files share no scope.
+  const NAME_CONTROL_RE = /[\u0000-\u001F\u007F]/g;
+  const oneLine = (value) => String(value == null ? '' : value).replace(NAME_CONTROL_RE, '\uFFFD');
 
   // ── Static glyphs ──────────────────────────────────────────────────────────
   // SVG is not in el()'s tag allowlist, deliberately: it is a namespace with
@@ -133,11 +163,21 @@
     source: {
       'no-url': {
         title: 'Nothing to fetch yet',
-        message: 'Type the https URL of a repository that holds a workflow file, then press Fetch. Husk clones it into a scratch directory, reads it there, and copies nothing else out.',
+        message: 'Type the https URL of a repository that holds a workflow file, then press Fetch. Husk clones it into a directory under its own data folder, reads it there, and copies nothing else out.',
       },
       'no-path': {
         title: 'Nothing to read yet',
         message: 'Choose a .husk.json on this disk, or type its absolute path, then press Fetch.',
+      },
+      // Not a git failure, and it must not be reported as one. A path handed to
+      // git as a remote comes back through friendlyCloneError as "could not
+      // reach that host, check your network connection", which sends somebody
+      // whose file is sitting on their own disk off to look at their wifi. The
+      // shape of the value is knowable here, before anything is spawned, so it
+      // is answered here.
+      'local-path': {
+        title: 'That is a path on this disk, not a repository URL',
+        message: 'The repository field takes an https URL and Husk would have handed this to git as a remote. Husk moved it into the file field and switched the source to From a file, so pressing Fetch now reads it off this disk. Nothing was cloned and nothing was written.',
       },
       'clone-failed': {
         title: 'Husk could not clone that repository',
@@ -145,7 +185,7 @@
       },
       'no-artifact-found': {
         title: 'No workflow file in that repository',
-        message: 'The clone worked and there is no .husk.json anywhere inside it. A published workflow is a single file, usually workflow.husk.json at the root or under .husk/workflows. The scratch clone has been dropped.',
+        message: 'The clone worked and there is no .husk.json anywhere inside it. A published workflow is a single file, usually workflow.husk.json at the root or under .husk/workflows. The checkout stays in Husk\'s own data folder and is reused, and fast-forwarded, the next time you fetch that URL; nothing was read out of it and nothing was written to your workflows.',
       },
       'unsafe-path': {
         title: 'That file is reached through a symbolic link',
@@ -252,13 +292,23 @@
   // painting over a second, faster one the reader started after it, and what
   // makes Escape during a fetch mean something even though the clone in the
   // main process keeps going to its own end.
+  //
+  // `owned` says whether this module is the thing currently using the dialog.
+  // The sheet is shared: app.js opens the same card over the same ready pane to
+  // show the record a card's receipts chip points at, and does it by showing
+  // the modal itself rather than through anything here. Everything that stages
+  // an install therefore has to be a property of this flag rather than of the
+  // markup, which is why the source picker and both path rows are hidden
+  // whenever it is false. See setSource.
   const S = {
     seq: 0,
+    owned: false,
     source: 'repo',
     read: null,        // the whole ok payload from artifactRead
     artifact: null,
     cwd: null,
     preflight: null,
+    nameClash: 0,      // how many workflows already carry this file's name
     installing: false,
     installed: null,   // { workflow, sidecar }
     restoreFocus: null,
@@ -432,99 +482,33 @@
   }
 
   // ── The graph preview ──────────────────────────────────────────────────────
-  // wfMiniGraph in app.js returns a string of markup, which is the one thing
-  // this sheet may not accept: assigning it would put an imported graph's
-  // numbers through innerHTML, and the app-side function also spreads its
-  // coordinate arrays into Math.min, which throws outright on a large graph.
-  // Drawing it here from the same geometry keeps both problems away from a
-  // surface whose input is a stranger's file, and costs about thirty lines.
+  // Delegated to wfMiniGraph in app.js, which is now the only implementation.
   //
-  // Nothing but numbers this function computed itself is ever written into an
-  // attribute. Coordinates arrive as validated integers and are re-coerced
-  // anyway, because a preview is not the right place to find out the validator
-  // let something through.
-  const MINI_NODE_CAP = 512;
-
-  function num(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : 0;
-  }
-
+  // This sheet used to draw its own, for two reasons that were true when it was
+  // written and are not any more: the app-side function returned a string of
+  // markup, which this surface may never accept because assigning it would put
+  // a stranger's graph through innerHTML, and it spread its coordinate arrays
+  // into Math.min, which throws outright on a large graph. It now builds
+  // elements, caps the node count at the same 512, and takes its bounds through
+  // a reduce.
+  //
+  // So the local copy was buying nothing and costing the one thing that
+  // mattered. When the app-side drawing learned to write step names into its
+  // boxes, this copy did not, and the preview a person reads before running a
+  // stranger's workflow became the only one still showing unlabelled pills.
+  // Two implementations of one drawing is exactly how that happens, and the
+  // second one is always the one that gets forgotten.
+  //
+  // The fallback exists because a window where app.js failed to evaluate should
+  // show a placeholder rather than throw inside a dialog.
   function buildMiniGraph(graph) {
-    const nodes = (graph && Array.isArray(graph.nodes)) ? graph.nodes : [];
-    const edges = (graph && Array.isArray(graph.edges)) ? graph.edges : [];
-    if (!nodes.length) {
-      return el('div', { class: ['wf-mini', 'is-empty'] }, el('span', {}, 'no steps'));
+    if (typeof wfMiniGraph !== 'function') {
+      return el('div', { class: ['wf-mini', 'is-empty'] }, el('span', {}, 'no preview available'));
     }
-    if (nodes.length > MINI_NODE_CAP) {
-      return el('div', { class: ['wf-mini', 'is-empty'] }, el('span', {}, 'graph too large to preview'));
-    }
-
-    const W = 250; const H = 74; const PAD = 12; const NW = 26; const NH = 13;
-    // reduce rather than a spread, for the reason the app-side copy needs the
-    // same change: an argument list is bounded by the engine's stack, and a
-    // graph is the one input here whose length came from a file.
-    const bounds = nodes.reduce((acc, n) => {
-      const x = num(n && n.x); const y = num(n && n.y);
-      return {
-        minX: Math.min(acc.minX, x), maxX: Math.max(acc.maxX, x),
-        minY: Math.min(acc.minY, y), maxY: Math.max(acc.maxY, y),
-      };
-    }, { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
-
-    const flatX = (bounds.maxX - bounds.minX) < 1;
-    const flatY = (bounds.maxY - bounds.minY) < 1;
-    const spanX = flatX ? 1 : (bounds.maxX - bounds.minX);
-    const spanY = flatY ? 1 : (bounds.maxY - bounds.minY);
-    const pos = new Map();
-    nodes.forEach((n) => {
-      const id = n && typeof n.id === 'string' ? n.id : null;
-      if (id === null) return;
-      const x = PAD + ((num(n.x) - bounds.minX) / spanX) * (W - PAD * 2 - NW);
-      const y = flatY
-        ? (H - NH) / 2
-        : PAD + ((num(n.y) - bounds.minY) / spanY) * (H - PAD * 2 - NH);
-      pos.set(id, { x, y });
-    });
-
-    const svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('class', 'wf-mini');
-    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-    svg.setAttribute('aria-hidden', 'true');
-
-    // Edges first so the boxes sit over them, which is the order the app-side
-    // preview draws in and the order the shipped example markup shows.
-    edges.forEach((e) => {
-      const a = pos.get(e && e.from);
-      const b = pos.get(e && e.to);
-      if (!a || !b) return;
-      const x1 = a.x + NW; const y1 = a.y + NH / 2;
-      const x2 = b.x; const y2 = b.y + NH / 2;
-      const mx = (x1 + x2) / 2;
-      const path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', `M${x1.toFixed(1)} ${y1.toFixed(1)} C ${mx.toFixed(1)} ${y1.toFixed(1)}, ${mx.toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-      path.setAttribute('class', 'wf-mini-edge');
-      svg.appendChild(path);
-    });
-
-    nodes.forEach((n) => {
-      const p = pos.get(n && n.id);
-      if (!p) return;
-      const rect = document.createElementNS(SVG_NS, 'rect');
-      rect.setAttribute('x', p.x.toFixed(1));
-      rect.setAttribute('y', p.y.toFixed(1));
-      rect.setAttribute('width', String(NW));
-      rect.setAttribute('height', String(NH));
-      rect.setAttribute('rx', '4');
-      // One literal class and no state. The install preview has no local run
-      // history to colour by, and a status folded in from a receipt is how a
-      // manifest string would reach a class attribute.
-      rect.setAttribute('class', 'wf-mini-node');
-      svg.appendChild(rect);
-    });
-
-    return svg;
+    // The panel surface is the sheet's own column width. Passing it rather than
+    // taking the card default is what gives the labels room to be read at the
+    // size this dialog actually renders.
+    return wfMiniGraph(graph, null, 'panel');
   }
 
   // ── Figures ────────────────────────────────────────────────────────────────
@@ -638,8 +622,8 @@
 
     const publisher = (artifact.publisher && typeof artifact.publisher === 'object') ? artifact.publisher : null;
     const heading = publisher && publisher.name
-      ? `${artifact.name} · ${publisher.name}`
-      : String(artifact.name || '');
+      ? `${oneLine(artifact.name)} · ${oneLine(publisher.name)}`
+      : oneLine(artifact.name);
     out.push(el('div', { class: 'wfx-note' },
       el('p', { class: 'wfx-note-t' }, heading),
       el('p', { class: 'wfx-note-m' }, String(artifact.description || 'This file carries no description.'))));
@@ -860,7 +844,7 @@
         el('summary', {},
           el('span', { class: 'wfx-step-n' }, String(i + 1).padStart(2, '0')),
           el('span', { class: 'wfx-step-b' },
-            el('span', { class: 'wfx-step-name' }, String(n.name || '')),
+            el('span', { class: 'wfx-step-name' }, oneLine(n.name)),
             el('span', { class: 'wfx-step-sub' },
               el('span', { class: 'wfx-step-meta' }, meta ? `${meta} ·` : ''),
               ' ',
@@ -892,8 +876,31 @@
           preflight: S.preflight,
           cwd: S.cwd,
           billing: (typeof hooks.getBilling === 'function') ? hooks.getBilling() : null,
-          chainCheck: null,
-          miniGraph: buildMiniGraph(S.read.artifact.graph),
+          // The main process already re-derived the shipped log's figures and
+          // compared them to the declared ones during artifactRead, and this
+          // pane was throwing that answer away and rendering every figure as an
+          // author claim. That made the middle tier unreachable: a file could
+          // ship a log that checks out and still be read as hearsay, which is
+          // the one thing shipping a log is supposed to buy.
+          chainCheck: (S.read && S.read.chainCheck) || null,
+          // Framed, because the busy pane's skeleton reserves a framed graph
+          // and the whole point of that skeleton is that the real thing lands
+          // in the space it held. The inspector appends what it is given and
+          // does not know what surface it is on, so the frame belongs to the
+          // caller. The fallback builder below wraps it the same way.
+          // app.js owns the labelled preview, and this sheet is the one place a
+          // reader most needs the step names: they are deciding whether to run
+          // somebody else's instructions. Calling that builder rather than the
+          // local one is also what stops the two drawings drifting, since the
+          // record pane behind a card already uses it and the two views exist
+          // to be compared. Null for the run, exactly as the record pane passes,
+          // because a status here would be coloured from a stranger's receipt.
+          // buildMiniGraph stays as the fallback for a window where app.js has
+          // not finished evaluating.
+          miniGraph: el('div', { class: 'wf-card-graph' },
+            typeof window.wfMiniGraph === 'function'
+              ? window.wfMiniGraph(S.read.artifact.graph, null, 'panel')
+              : buildMiniGraph(S.read.artifact.graph)),
           onFix: (fix) => dispatchFix(fix),
         });
       } catch (_) {
@@ -946,6 +953,19 @@
   // refusal ends up hiding the part that mattered.
   const HASH_RE = /husk-wfg-1:sha256:[0-9a-f]{64}/g;
 
+  // The main process writes its messages as clause fragments, because most of
+  // them are composed into a sentence somewhere ("Husk could not install this:
+  // that path is not a directory"). This pane is the one place they are set
+  // down whole, after a full stop, so they are given the two marks that make
+  // them a sentence. Nothing is reworded: a message that already arrived
+  // punctuated keeps exactly what it arrived with.
+  function asSentence(value) {
+    const s = String(value).trim();
+    if (!s) return '';
+    const head = s.charAt(0).toUpperCase() + s.slice(1);
+    return /[.!?]$/.test(head) ? head : `${head}.`;
+  }
+
   function refusalRows(res) {
     const rows = [];
     rows.push(['code', String(res.code || 'unknown')]);
@@ -976,7 +996,7 @@
     // what it means. Neither is dropped in favour of the other.
     if (message) {
       const extra = (typeof res.message === 'string' && res.message && res.message !== copy.message)
-        ? ` ${res.message}`
+        ? ` ${asSentence(res.message)}`
         : '';
       message.textContent = `${copy.message}${extra}`;
     }
@@ -1004,8 +1024,20 @@
   // The typed URL is never cleared by a source switch. Somebody who pastes a
   // URL, clicks the file card to check something and clicks back has not asked
   // to lose what they typed.
+  //
+  // The whole picker, both path rows and both buttons are also gated on S.owned,
+  // and that is the interesting half. These controls live in the sheet's body
+  // above the panes rather than inside one, so no data-state hides them: when
+  // app.js borrows this card to show the record behind a workflow's receipts
+  // chip, the reader got a dialog titled Receipts with a repository field and a
+  // Fetch button in it. Pressing that Fetch drove this module's own state
+  // machine to a refusal under somebody else's title, over a workflow that was
+  // installed weeks ago. A control that belongs to a flow nobody started is not
+  // an affordance, so it is not on screen.
   function setSource(kind) {
     S.source = kind === 'file' ? 'file' : 'repo';
+    const m = modal();
+    const picker = m ? m.querySelector('.ra-sources') : null;
     const repoCard = byId('wfx-in-src-repo');
     const fileCard = byId('wfx-in-src-file');
     const repoRow = byId('wfx-in-row-repo');
@@ -1019,16 +1051,44 @@
       fileCard.classList.toggle('selected', !isRepo);
       fileCard.setAttribute('aria-pressed', isRepo ? 'false' : 'true');
     }
-    if (repoRow) repoRow.hidden = !isRepo;
-    if (fileRow) fileRow.hidden = isRepo;
+    if (picker) picker.hidden = !S.owned;
+    if (repoRow) repoRow.hidden = !S.owned || !isRepo;
+    if (fileRow) fileRow.hidden = !S.owned || isRepo;
   }
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
+  // The file row ships with a picker and nothing else, so once a path was in
+  // that field the only way to read it again was to walk back through the
+  // native dialog and re-select the same file. That is a real cost on the one
+  // loop this sheet is used in while a workflow is being written: edit the
+  // file, read it here, look at the prompts, edit again. The sheet's own
+  // refusal copy already promises the control ("type its absolute path, then
+  // press Fetch"), so this is the markup catching up with the sentence rather
+  // than a new idea. It is built here rather than in index.html because this
+  // module owns what Fetch does in either source; the repo row's button keeps
+  // its shipped id and this one is held by reference.
+  let fileFetchBtn = null;
+
+  function mountFileFetch() {
+    if (fileFetchBtn) return fileFetchBtn;
+    const row = byId('wfx-in-row-file');
+    if (!row) return null;
+    fileFetchBtn = el('button', { type: 'button', class: 'ghost-btn' }, 'Fetch');
+    fileFetchBtn.addEventListener('click', doFetch);
+    row.appendChild(fileFetchBtn);
+    return fileFetchBtn;
+  }
+
+  // Both buttons, because either one can be the press that started the read and
+  // a picker still live during a clone is a second read nobody asked for.
   function fetchBusy(on) {
-    const btn = byId('wfx-in-fetch');
-    if (!btn) return;
-    btn.disabled = !!on;
-    btn.textContent = on ? 'Fetching' : 'Fetch';
+    for (const btn of [byId('wfx-in-fetch'), fileFetchBtn]) {
+      if (!btn) continue;
+      btn.disabled = !!on;
+      btn.textContent = on ? 'Fetching' : 'Fetch';
+    }
+    const browse = byId('wfx-in-browse');
+    if (browse) browse.disabled = !!on;
   }
 
   // The banner that says these bytes did not come off the network. Unlike the
@@ -1054,14 +1114,91 @@
       `Read from the copy Husk already had on disk${when ? `, last updated${when}` : ''}, not from the repository. The repository could not be reached just now, so this may not be what is at that URL today.${reason}`);
   }
 
+  // How many sibling files this sentence will name before it gives up on
+  // listing them. The main process collects at most 32 candidates, so a list
+  // that fits under this number is provably the whole set and the sentence can
+  // say so; past it the wording drops the total rather than asserting a count
+  // that a truncated scan may not support.
+  const NAMED_CANDIDATES = 6;
+
+  // Which file in the repository these bytes are. A clone can hold several
+  // .husk.json and the main process reads exactly one of them: shallowest
+  // first, workflow.husk.json preferred, ties broken alphabetically so the
+  // choice is the same on every machine. None of that was on screen, so a
+  // repository with a workflow file per environment installed one of them and
+  // the sheet described it as though it were the repository's only workflow.
+  //
+  // The others are named and are not offered as controls. Making them
+  // selectable means reading a second path out of a cloned tree, and the
+  // confinement and symlink checks that guard the first read live behind the
+  // repo source in the main process, not behind the file source a control here
+  // would have to use.
+  function sourceNote(source) {
+    if (!source || source.kind !== 'repo') return null;
+    const rel = (typeof source.relPath === 'string' && source.relPath) ? source.relPath : null;
+    if (!rel) return null;
+    const others = Array.isArray(source.candidates)
+      ? source.candidates.filter((c) => typeof c === 'string' && c && c !== rel)
+      : [];
+    const parts = ['Read ', el('code', {}, rel), ' from that repository.'];
+    if (others.length && others.length <= NAMED_CANDIDATES) {
+      parts.push(' It also holds ');
+      others.forEach((name, i) => {
+        if (i > 0) parts.push(i === others.length - 1 ? ' and ' : ', ');
+        parts.push(el('code', {}, name));
+      });
+      parts.push(others.length === 1 ? ', which was not read.' : ', none of which was read.');
+    } else if (others.length) {
+      parts.push(' It holds more workflow files than this sentence will list, and none of the others was read.');
+    }
+    return el('span', {}, ...parts);
+  }
+
+  // Two facts about one fetch, and neither implies the other: which file was
+  // read, and whether the repository answered at all. .ra-status is a flex
+  // column, so they stack as two spans rather than running together into a
+  // paragraph where the second qualifies the first.
+  function fetchNote(source) {
+    const pieces = [sourceNote(source), staleNote(source)].filter(Boolean);
+    if (!pieces.length) return null;
+    return kit().frag(...pieces);
+  }
+
+  // A value the reader typed into the repository field that is plainly a path
+  // on this disk. git will take it, treat it as a remote, and fail; the error
+  // that comes back is a network error, and a sheet that repeats it sends
+  // somebody whose file is two directories away to go and look at their wifi.
+  // Everything this recognises is unambiguous: a leading separator, a home
+  // shorthand, an explicit relative prefix, a Windows drive or UNC path, or the
+  // file scheme. A bare "github.com/dev/flows" is none of those and still gets
+  // the https prefix it obviously meant.
+  const LOCAL_PATH_RE = /^(?:~|\/|\.{1,2}[/\\]|[A-Za-z]:[/\\]|\\\\|file:\/\/)/;
+
   async function doFetch() {
-    if (S.installing) return;
+    // Nothing here runs while another surface has the card. The controls that
+    // reach this are hidden in that case, so this is the second lock rather
+    // than the first, and it is cheap enough to be worth having: a fetch
+    // started from a dialog titled Receipts would repaint somebody else's pane
+    // with somebody else's file.
+    if (S.installing || !S.owned) return;
     const isRepo = S.source === 'repo';
     const field = byId(isRepo ? 'wfx-in-url' : 'wfx-in-path');
     const raw = field ? String(field.value || '').trim() : '';
     if (!raw) {
       refuse({ stage: 'source', code: isRepo ? 'no-url' : 'no-path', message: '', detail: null });
       if (field) field.focus();
+      return;
+    }
+    // A path in the URL field is answered here rather than by git. The value is
+    // carried over into the file field and the source switched, because the
+    // reader typed the right thing into the wrong box and retyping it is work
+    // this sheet can do for them.
+    if (isRepo && LOCAL_PATH_RE.test(raw)) {
+      const pathField = byId('wfx-in-path');
+      if (pathField) pathField.value = raw;
+      refuse({ stage: 'source', code: 'local-path', message: '', detail: raw });
+      setSource('file');
+      if (pathField) { try { pathField.focus(); } catch (_) { /* focus is a courtesy */ } }
       return;
     }
     // A pasted "github.com/dev/flows" is unambiguously a URL and the scheme is
@@ -1074,13 +1211,14 @@
     S.read = null;
     S.artifact = null;
     S.preflight = null;
+    S.nameClash = 0;
     setError(null);
     setState('busy');
     fetchBusy(true);
     if (isRepo) {
       setStatus(el('span', {},
         'Cloning ', el('code', {}, value),
-        ' into a scratch directory. Husk reads it there and copies nothing else out.'));
+        ' into a directory under Husk\'s own data folder. Husk reads it there and copies nothing else out.'));
     } else {
       setStatus(el('span', {}, 'Reading ', el('code', {}, value), ' from this disk.'));
     }
@@ -1103,14 +1241,58 @@
     S.read = res;
     S.artifact = res.artifact;
     S.preflight = null;
-    const stale = staleNote(res.source);
-    setStatus(stale);
+    const source = res.source || null;
+    const stale = !!(source && source.stale === true);
+    setStatus(fetchNote(source));
     setState('ready');
     paintReady();
     applyGate();
     const steps = ((res.artifact.graph && res.artifact.graph.nodes) || []).length;
-    say(`Read ${res.artifact.name}: ${steps} steps.${stale ? ' It came from a copy already on disk; the repository could not be reached.' : ''} Husk recomputed the fingerprint here. Nothing has been installed.`);
+    say(`Read ${oneLine(res.artifact.name)}: ${steps} steps.${stale ? ' It came from a copy already on disk; the repository could not be reached.' : ''} Husk recomputed the fingerprint here. Nothing has been installed.`);
     runPreflight();
+    runNameCheck();
+  }
+
+  // ── The name this file would land under ────────────────────────────────────
+  // Installing terminates in workflows:create, which does not care that a
+  // workflow of the same name is already in the list: it mints a new id and the
+  // grid grows a second card that is identical to the first from the outside.
+  // Somebody importing a revision of a workflow they already have, which is the
+  // common case for a file that lives in a repository, got two cards and no
+  // statement that they now had two.
+  //
+  // The list is asked for rather than kept, because this sheet does not own the
+  // grid and a cached copy would be stale the moment a card is renamed behind
+  // it. Nothing here blocks: a second copy under one name is a legitimate thing
+  // to want and this is a fact the reader is owed, not a rule.
+  async function runNameCheck() {
+    if (!S.artifact) return;
+    const seq = S.seq;
+    const wanted = String(S.artifact.name || '').trim().toLowerCase();
+    if (!wanted) return;
+    let list = null;
+    try {
+      list = await window.husk.workflows.list();
+    } catch (_) {
+      // No list is not a collision and must not be reported as one. The sheet
+      // says nothing extra and the install is unaffected.
+      return;
+    }
+    if (seq !== S.seq || !Array.isArray(list)) return;
+    S.nameClash = list.filter((w) => w && String(w.name || '').trim().toLowerCase() === wanted).length;
+    if (!S.nameClash) return;
+    const node = byId('wfx-in-status');
+    const already = S.nameClash === 1
+      ? el('span', {}, 'A workflow called ', el('code', {}, oneLine(S.artifact.name)),
+        ' is already in your list. Installing this file adds a second card under that name rather than replacing the first.')
+      : el('span', {}, String(S.nameClash), ' workflows called ', el('code', {}, oneLine(S.artifact.name)),
+        ' are already in your list. Installing this file adds another card under that name.');
+    if (node) {
+      node.hidden = false;
+      node.appendChild(already);
+    }
+    applyGate();
+    say('A workflow of this name is already here. Installing adds a second one.');
   }
 
   // ── Preflight and the commit gate ──────────────────────────────────────────
@@ -1170,7 +1352,14 @@
       return;
     }
     go.setAttribute('aria-disabled', 'false');
-    setFoot('Installing writes a file. It does not run anything.', false);
+    // The collision rides on the footer as well as in the banner at the top of
+    // the scroller, because the banner is not where the reader is standing when
+    // they press Install. The name itself is not repeated here: this string is
+    // written straight to textContent and every string that came out of the
+    // file goes through el(), which the banner above does.
+    setFoot(S.nameClash
+      ? 'Installing writes a file. It does not run anything. A workflow of this name is already here, so this adds a second card.'
+      : 'Installing writes a file. It does not run anything.', false);
   }
 
   // ── Binding a directory ────────────────────────────────────────────────────
@@ -1252,7 +1441,7 @@
     const steps = ((workflow && workflow.graph && workflow.graph.nodes) || []).length;
     const msg = byId('wfx-in-done-m');
     if (msg) {
-      msg.textContent = `${(workflow && workflow.name) || 'The workflow'} is saved and has not run. Run it opens all ${steps} prompt${steps === 1 ? '' : 's'} once more and waits for you to say yes before anything spawns.`;
+      msg.textContent = `${oneLine(workflow && workflow.name) || 'The workflow'} is saved and has not run. Run it opens all ${steps} prompt${steps === 1 ? '' : 's'} once more and waits for you to say yes before anything spawns.`;
     }
     writeDonePath(S.cwd || '');
     setFoot('Nothing has run. Run it asks once more first.', false);
@@ -1295,8 +1484,15 @@
     S.artifact = null;
     S.cwd = null;
     S.preflight = null;
+    S.nameClash = 0;
     S.installing = false;
     S.installed = null;
+    // Dropping ownership here rather than in close() is what makes the resting
+    // state of these controls "hidden". reset() runs at startup, on every open
+    // before the flag is taken back, and on every close, so a card shown by
+    // anything other than open() finds the source picker already put away.
+    S.owned = false;
+    setSource(S.source);
     const ready = byId('wfx-in-ready');
     if (ready) ready.replaceChildren();
     setStatus(null);
@@ -1317,6 +1513,7 @@
     if (!m) return;
     S.restoreFocus = document.activeElement;
     reset();
+    S.owned = true;
     setSource(S.source);
     m.hidden = false;
     const field = byId(S.source === 'file' ? 'wfx-in-path' : 'wfx-in-url');
@@ -1363,6 +1560,11 @@
     // button that nothing is bound to.
     adopt('wfx-in-fp-copy', () => el('button', { type: 'button', class: 'ghost-btn' }, 'Copy'));
     adopt('wfx-in-cwd-change', () => el('button', { type: 'button', class: 'ghost-btn' }, 'Change directory'));
+    // The file row's Fetch, added once, before anything can hide the row.
+    mountFileFetch();
+    // And the resting state for the source controls: hidden until open() takes
+    // the card. The sheet is closed at this point, so nothing moves on screen.
+    setSource(S.source);
 
     on('wfx-in-x', 'click', close);
     on('wfx-in-cancel', 'click', close);

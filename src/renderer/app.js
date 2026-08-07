@@ -2924,87 +2924,476 @@ function wfDur(ms) {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-// The flow's own shape, drawn small. A workflow is recognised by its topology,
-// which is why "2 steps" told you nothing. When there is a last run, the steps
-// are coloured by what happened, so the thumbnail carries the outcome too.
+// The flow's own shape, drawn small, with its steps named. A workflow is
+// recognised by its topology, which is why "2 steps" told you nothing, and it
+// is chosen by what its steps say, which is why a row of unlabelled lozenges
+// told you no more than the count did. The install sheet shows this drawing to
+// somebody deciding whether to let a stranger's commands run against a
+// directory on their disk, and "four boxes" is not something anyone can decide
+// on. Both halves have to be in the picture.
 //
-// This returns markup, and the per-step status decides a class name, so two
-// rules govern what may be handed in.
+// Everything below is one argument about space. A card gives this 250 by 74
+// CSS pixels and never fewer, twelve steps across that leaves twenty pixels a
+// name, and twenty pixels is one letter and a full stop. So how many steps a
+// preview can name is not a matter of taste: it is division, and the answer on
+// a card is somewhere around nine. Rather than shrink the type until the
+// drawing is technically labelled and practically unreadable, this works out
+// the cell the graph in hand would get on the surface it is going to, fits the
+// names into it, and takes one of two shapes depending on how many of them
+// survived:
 //
-// lastRun must be locally sourced. The status goes into the class attribute of
-// a <rect> and nothing escapes it there, so the day a receipt or an imported
-// file feeds this function, that attribute is a stranger's to write. Mapping
-// through WF_MINI_STATUS keeps the class to one of six literals whatever
-// arrives. The install sheet draws imported graphs with its own builder and
-// passes null here.
+//   labelled  a grid of named pills, in columns by reading order. The viewBox
+//             is the surface's own pixel box, so every number in the labelled
+//             path is a real CSS pixel at the smallest size that surface can
+//             render at, and a taller window only ever magnifies it.
+//   compact   the normalised scatter this function has always drawn, at the
+//             same 250 by 74, for a graph whose cells cannot hold a word. The
+//             names are still on the element as its accessible name; what is
+//             dropped is the pretence that they are legible.
 //
-// Node count is the other dimension that can come from a file. Spreading the
+// Two rules govern what may be handed in, and both survive the rewrite.
+//
+// lastRun must be locally sourced. A step's status decides a class name and
+// nothing escapes a class attribute, so mapping through WF_MINI_STATUS keeps it
+// to one of five literals whatever arrives. Both sheets pass null.
+//
+// Names are the opposite: they come out of a stranger's file as often as not,
+// because the steps of an installed workflow were named by whoever published
+// it. Every one of them reaches the DOM through WfxDom.text(), the same scrub
+// the consent gate runs its prompt list through, and a window where that module
+// failed to load draws the compact shape rather than growing a second escaping
+// rule here. There is no markup string left in this function and therefore no
+// sink: the SVG is built element by element, and the only attribute values
+// written are numbers computed in this file and class names spelled out in it.
+//
+// Node count is the last dimension that can come from a file. Spreading the
 // coordinate arrays into Math.min throws RangeError somewhere above a hundred
 // thousand arguments, which is a blank workflows page rather than a small
 // thumbnail, so the bounds are folded and a graph past the cap gets the same
 // placeholder an empty one gets.
 const WF_MINI_STATUS = ['done', 'failed', 'skipped', 'cancelled', 'running'];
 const WF_MINI_NODE_CAP = 512;
+const WF_MINI_NS = 'http://www.w3.org/2000/svg';
+const WF_MINI_ELLIPSIS = '…';
+// Past this a name is not being read, it is being scrolled, and the fitter
+// would be measuring prefixes of a megabyte. The store already clips a step
+// name to 64 characters; this is the guard for a graph that did not come
+// through it.
+const WF_MINI_NAME_CAP = 96;
+// How many names go into the accessible name before it stops being a label and
+// starts being the file. A reader who wants all sixty-four opens the workflow.
+const WF_MINI_SPOKEN_NAMES = 12;
 
-function wfMiniGraph(graph, lastRun) {
-  const nodes = (graph && graph.nodes) || [];
-  const edges = (graph && graph.edges) || [];
-  if (!nodes.length) return '<div class="wf-mini is-empty"><span>no steps yet</span></div>';
-  if (nodes.length > WF_MINI_NODE_CAP) return '<div class="wf-mini is-empty"><span>graph too large to preview</span></div>';
+// The pixel box each surface gives this drawing, written as the smallest box it
+// can ever be. #wf-grid's tracks start at 288px and grow with the window,
+// .wfx-pattern-grid's start at 300, and the sheets clamp their height between
+// 74 and 120. A caller holding the element the drawing is about to go into
+// passes its real width as well, and then these are only the fallback: the
+// width is the dimension that moves, and the difference between the floor and
+// the measurement is the difference between "Rew…" and "Rewrite".
+//
+// Nothing here reads a height from the DOM, and the reason is that .wf-mini has
+// no height until it is in the document, so measuring one would mean building
+// the drawing, inserting it, measuring, and building it again for a number that
+// changes when the window is resized anyway. The height is declared instead, and
+// being wrong low about it can only cost a label on a surface that had room for
+// one, never a layout on a surface that did not.
+const WF_MINI_SURFACES = {
+  card: { w: 250, h: 74 },
+  pattern: { w: 264, h: 62 },
+  // The sheets are the width of the modal's column and the middle of the height
+  // clamp. Declaring the clamp's floor here would leave a third of the band
+  // empty at every ordinary window size; declaring its ceiling would promise
+  // legibility the app's 520px minimum height cannot keep. At 88 the drawing
+  // fills the band at 900px of window and shrinks by a twelfth at 600.
+  panel: { w: 560, h: 88 },
+};
 
-  const W = 250;
-  const H = 74;
-  const PAD = 12;
-  const NW = 26;
-  const NH = 13;
-  // A coordinate that is not a number reaches an attribute as the string "NaN"
-  // and takes the whole preview with it, so they are coerced once here rather
-  // than trusted again at every arithmetic site below.
-  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+// The labelled layout, in the surface's pixels. maxNodeW and maxNodeH are what
+// stop a two-step flow from rendering as two slabs the size of the card: past
+// those the pills keep their size and the cells spread them out instead.
+// minLabelChars counts the ellipsis, so four characters of a name plus the mark
+// that says there was more is the least this will call a label.
+const WF_MINI_LABEL = {
+  // padY is thin on purpose. The drawing sits inside a bordered, padded frame
+  // already, so a margin inside the viewBox on top of that one is height taken
+  // from the only dimension a three-row graph has none of: two more pixels here
+  // is the difference between a fan-out that names its branches and one that
+  // does not.
+  padX: 8, padY: 4, gapX: 14, gapY: 4,
+  maxNodeW: 132, maxNodeH: 30, textPad: 5,
+  minTextW: 22, minNodeH: 14, minLabelChars: 5,
+  fontMin: 9, fontMax: 13, fontOfHeight: 0.55,
+};
+
+// The compact layout keeps the numbers it has always had, and keeps them
+// literally: the stylesheet's note on .wfx-pane .wf-mini works out the sheet's
+// scale from this viewBox, so a graph that falls back to this shape falls back
+// to the drawing that comment describes.
+const WF_MINI_COMPACT = { w: 250, h: 74, pad: 12, nodeW: 26, nodeH: 13 };
+
+function wfMiniNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// A tenth of a pixel is the finest thing worth writing into a coordinate here,
+// and rounding at the one place attributes are set keeps the path data from
+// carrying seventeen digits of float noise per point.
+function wfMiniSvg(tag, attrs) {
+  const node = document.createElementNS(WF_MINI_NS, tag);
+  for (const name of Object.keys(attrs)) {
+    const value = attrs[name];
+    if (value === null || value === undefined) continue;
+    node.setAttribute(name, typeof value === 'number' ? String(Math.round(value * 10) / 10) : String(value));
+  }
+  return node;
+}
+
+function wfMiniRound(value) { return Math.round(value * 10) / 10; }
+
+// The scrubbed form of a step name, or null when this window has no scrubber to
+// run it through. Null is the signal the caller uses to give up on labels
+// entirely: a bidi override inside a step name would otherwise reorder the
+// drawing a person is reading to decide whether to trust the file, and writing
+// a second version of that rule here is how the two versions start to disagree.
+function wfMiniName(node, index) {
+  const kit = window.WfxDom;
+  if (!kit || typeof kit.text !== 'function') return null;
+  const raw = String((node && node.name) || '').trim() || `Step ${index + 1}`;
+  try {
+    return kit.text(raw.length > WF_MINI_NAME_CAP ? raw.slice(0, WF_MINI_NAME_CAP) : raw).data;
+  } catch (_) { return null; }
+}
+
+// Text truncation in SVG has no equivalent of text-overflow, so the label is
+// cut before it is drawn and the cut has to know the real width of the real
+// glyphs: an estimate of so many pixels per character is wrong by half on
+// Hebrew, and wrong by double on Chinese, and both of those are step names
+// somebody has. A 2d context measures the same font the drawing will use
+// without laying anything out. The ruler is set ten times the drawn size
+// because a 9px measurement rounds to whole pixels on some platforms, and a
+// label cut from a rounded width either overflows its pill or gives up a
+// character it had room for.
+let wfMiniRuler = null;
+const WF_MINI_RULER_ZOOM = 10;
+
+function wfMiniMeasurer(fontPx) {
+  if (wfMiniRuler === null) {
+    try { wfMiniRuler = document.createElement('canvas').getContext('2d') || false; }
+    catch (_) { wfMiniRuler = false; }
+  }
+  let family = 'sans-serif';
+  try { family = getComputedStyle(document.body).fontFamily || family; } catch (_) { /* the body is always there in practice */ }
+  const ctx = wfMiniRuler || null;
+  // Read per call rather than cached, so the preview follows a font the user
+  // changed in preferences instead of measuring against the one that was set
+  // the first time a workflows page was painted.
+  if (ctx) ctx.font = `600 ${fontPx * WF_MINI_RULER_ZOOM}px ${family}`;
+  return (value) => (ctx
+    ? ctx.measureText(value).width / WF_MINI_RULER_ZOOM
+    // No canvas, which in this window means something is very wrong already.
+    // A full em per character is what an ideograph costs and roughly twice what
+    // a lowercase Latin letter does, so this cuts an English name early and
+    // still cannot be talked into letting a Chinese one run out of its pill.
+    // Erring the other way would put text over the drawing on the one path
+    // where nothing measured it.
+    : Array.from(value).length * fontPx);
+}
+
+function wfMiniFit(name, maxWidth, measure) {
+  if (measure(name) <= maxWidth) return name;
+  // Code points, not code units, so a cut never lands between the halves of a
+  // surrogate pair and leaves half an emoji in the label.
+  const chars = Array.from(name);
+  let lo = 0;
+  let hi = chars.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (measure(`${chars.slice(0, mid).join('')}${WF_MINI_ELLIPSIS}`) <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  const head = chars.slice(0, lo).join('').replace(/\s+$/, '');
+  return head ? `${head}${WF_MINI_ELLIPSIS}` : WF_MINI_ELLIPSIS;
+}
+
+// Columns by x, rows by y within a column. The alternative, scaling the
+// authored coordinates the way the compact shape does, cannot be used once the
+// pills are wide enough to hold a word: two steps a person dragged forty pixels
+// apart on a canvas that is three thousand wide are four pixels apart here, and
+// four pixels apart is one pill drawn on top of another. Snapping to columns
+// costs the exact arrangement and keeps the two things the arrangement was
+// saying, which are what runs before what and what fans out from where.
+//
+// The tolerance is a fraction of the graph's own width rather than a constant,
+// because a canvas has no fixed scale: the same shape drawn twice as large has
+// to cluster the same way.
+function wfMiniColumns(nodes) {
+  const xs = nodes.map((n) => wfMiniNum(n.x));
+  const bounds = xs.reduce(
+    (acc, x) => ({ min: Math.min(acc.min, x), max: Math.max(acc.max, x) }),
+    { min: Infinity, max: -Infinity },
+  );
+  const tolerance = Math.max(1, (bounds.max - bounds.min) * 0.06);
+  const order = nodes.map((n, i) => i).sort((a, b) => (xs[a] - xs[b]) || (a - b));
+  const columns = [];
+  let anchor = null;
+  for (const i of order) {
+    // Measured from the column's first member rather than from the last one, so
+    // a long ramp of steps each a little right of the one before does not
+    // collapse into a single column one tolerance at a time.
+    if (anchor === null || xs[i] - anchor > tolerance) { columns.push([]); anchor = xs[i]; }
+    columns[columns.length - 1].push(i);
+  }
+  for (const column of columns) {
+    column.sort((a, b) => (wfMiniNum(nodes[a].y) - wfMiniNum(nodes[b].y)) || (a - b));
+  }
+  return columns;
+}
+
+// One edge, drawn between two pills of the same size. Forward edges leave the
+// right face and arrive at the left one, which is the reading direction and the
+// shape both previews have always drawn. Anything else leaves the bottom and
+// arrives at the top: a curve from the right face of a pill to the left face of
+// one beside or behind it is drawn straight through the pills in between, and
+// on a labelled preview that line lands across the names.
+function wfMiniLink(from, to, width, height, taken) {
+  const forward = to.x >= from.x + width;
+  let d;
+  if (forward) {
+    const x1 = wfMiniRound(from.x + width);
+    const y1 = wfMiniRound(from.y + height / 2);
+    const x2 = wfMiniRound(to.x);
+    const y2 = wfMiniRound(to.y + height / 2);
+    const mx = wfMiniRound((x1 + x2) / 2);
+    d = `M${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+  } else {
+    const x1 = wfMiniRound(from.x + width / 2);
+    const y1 = wfMiniRound(from.y + height);
+    const x2 = wfMiniRound(to.x + width / 2);
+    const y2 = wfMiniRound(to.y);
+    const my = wfMiniRound((y1 + y2) / 2);
+    d = `M${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
+  }
+  return wfMiniSvg('path', { d, class: taken ? 'wf-mini-edge is-taken' : 'wf-mini-edge' });
+}
+
+function wfMiniFrame(width, height) {
+  return wfMiniSvg('svg', {
+    class: 'wf-mini',
+    viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: 'xMidYMid meet',
+    // The drawing says something now, so it stops being decoration. The names
+    // are inside it as text either way, but a screen reader's handling of text
+    // inside SVG is not something to bet a security surface on, and role plus
+    // the accessible name below is.
+    role: 'img',
+  });
+}
+
+function wfMiniPill(x, y, width, height, status) {
+  return wfMiniSvg('rect', {
+    x, y, width, height, rx: 4,
+    class: status ? `wf-mini-node is-${status}` : 'wf-mini-node',
+  });
+}
+
+// Returns the labelled drawing, or null when this graph cannot have one on this
+// surface. The gate lives here rather than at the call site because it is an
+// argument about geometry and it is made of the same numbers the geometry is.
+//
+// It is decided on the names in hand rather than on the cell alone, and that
+// distinction is the whole point of the rule. Six steps called Read, Draft and
+// Grade fit in cells that six steps called Regenerate every downstream fixture
+// do not, and a rule written only on the cell would either refuse the first
+// graph or accept the second and draw six pills each containing one letter and
+// a full stop. So the labels are fitted first and counted second: a label is
+// worth drawing when the whole name survived, or when four characters of it
+// did, and the drawing is worth labelling when most of them are. The minority
+// that is not still gets whatever fits, because a truncated name beside three
+// whole ones reads as a name, where six truncations in a row read as damage.
+function wfMiniLabelled(nodes, edges, statuses, names, surface) {
+  const g = WF_MINI_LABEL;
+  const columns = wfMiniColumns(nodes);
+  const rows = columns.reduce((most, column) => Math.max(most, column.length), 0);
+  const cellW = (surface.w - g.padX * 2) / columns.length;
+  const cellH = (surface.h - g.padY * 2) / rows;
+  const nodeW = Math.min(cellW - g.gapX, g.maxNodeW);
+  const nodeH = Math.min(cellH - g.gapY, g.maxNodeH);
+  const textW = nodeW - g.textPad * 2;
+  // The two floors no set of names can argue its way past: a pill this short
+  // cannot hold type at fontMin without the letters touching its edges, and one
+  // this narrow has no room for a word even when the word is "Run".
+  if (textW < g.minTextW || nodeH < g.minNodeH) return null;
+
+  const font = Math.min(g.fontMax, Math.max(g.fontMin, nodeH * g.fontOfHeight));
+  const measure = wfMiniMeasurer(font);
+  const labels = names.map((name) => wfMiniFit(name, textW, measure));
+  const readable = labels.filter((label, i) => label === names[i]
+    || Array.from(label).length >= g.minLabelChars).length;
+  if (readable * 2 < labels.length) return null;
+
+  const kit = window.WfxDom;
+  const place = [];
+  columns.forEach((column, c) => {
+    const x = g.padX + c * cellW + (cellW - nodeW) / 2;
+    // A column of one in a graph three rows deep sits level with the middle of
+    // the others rather than at the top of its own track, which is what makes a
+    // fan-out read as a fan rather than as a staircase.
+    const offset = (rows - column.length) / 2;
+    column.forEach((i, r) => {
+      place[i] = { x, y: g.padY + (r + offset) * cellH + (cellH - nodeH) / 2 };
+    });
+  });
+
+  const svg = wfMiniFrame(surface.w, surface.h);
+  for (const edge of edges) {
+    svg.appendChild(wfMiniLink(place[edge.from], place[edge.to], nodeW, nodeH,
+      wfMiniTaken(statuses, edge)));
+  }
+  labels.forEach((text, i) => {
+    const at = place[i];
+    svg.appendChild(wfMiniPill(at.x, at.y, nodeW, nodeH, statuses[i]));
+    const label = wfMiniSvg('text', {
+      x: at.x + nodeW / 2,
+      y: at.y + nodeH / 2,
+      class: 'wf-mini-label',
+      'text-anchor': 'middle',
+      'dominant-baseline': 'central',
+      // Presentation attributes rather than a rule in the stylesheet, because
+      // the size is computed per graph and the fill has to be whatever the
+      // surface's own text colour is in the theme that is on. Both are the
+      // weakest kind of declaration there is, so a later rule on .wf-mini-label
+      // overrides either without touching this file.
+      'font-size': font,
+      'font-weight': 600,
+      fill: 'currentColor',
+    });
+    label.appendChild(kit.text(text));
+    svg.appendChild(label);
+  });
+  return svg;
+}
+
+// The drawing this function has always produced, rebuilt out of elements. The
+// coordinates are the authored ones normalised into the box, which is the right
+// answer when the pills are too small to say anything: at that size the only
+// thing left to recognise is the arrangement, so the arrangement is kept
+// exactly as it was drawn.
+function wfMiniCompact(nodes, edges, statuses) {
+  const g = WF_MINI_COMPACT;
   const bounds = nodes.reduce((acc, n) => {
-    const x = num(n && n.x); const y = num(n && n.y);
+    const x = wfMiniNum(n && n.x); const y = wfMiniNum(n && n.y);
     return {
       minX: Math.min(acc.minX, x), maxX: Math.max(acc.maxX, x),
       minY: Math.min(acc.minY, y), maxY: Math.max(acc.maxY, y),
     };
   }, { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
-  const minX = bounds.minX; const maxX = bounds.maxX;
-  const minY = bounds.minY; const maxY = bounds.maxY;
-  const sx = (maxX - minX) || 1;
-  const sy = (maxY - minY) || 1;
+  const flatY = (bounds.maxY - bounds.minY) < 1;
   // Single row or column flows would otherwise squash into a line.
-  const spanX = (maxX - minX) < 1 ? 1 : sx;
-  const spanY = (maxY - minY) < 1 ? 1 : sy;
-  const px = (n) => PAD + (num(n.x) - minX) / spanX * (W - PAD * 2 - NW);
-  const py = (n) => (maxY - minY) < 1
-    ? (H - NH) / 2
-    : PAD + (num(n.y) - minY) / spanY * (H - PAD * 2 - NH);
+  const spanX = (bounds.maxX - bounds.minX) < 1 ? 1 : (bounds.maxX - bounds.minX);
+  const spanY = flatY ? 1 : (bounds.maxY - bounds.minY);
+  const place = nodes.map((n) => ({
+    x: g.pad + ((wfMiniNum(n.x) - bounds.minX) / spanX) * (g.w - g.pad * 2 - g.nodeW),
+    y: flatY
+      ? (g.h - g.nodeH) / 2
+      : g.pad + ((wfMiniNum(n.y) - bounds.minY) / spanY) * (g.h - g.pad * 2 - g.nodeH),
+  }));
 
-  const statusOf = {};
-  if (lastRun) (lastRun.steps || []).forEach((st) => { statusOf[st.nodeId] = st.status; });
+  const svg = wfMiniFrame(g.w, g.h);
+  for (const edge of edges) {
+    svg.appendChild(wfMiniLink(place[edge.from], place[edge.to], g.nodeW, g.nodeH,
+      wfMiniTaken(statuses, edge)));
+  }
+  place.forEach((at, i) => {
+    svg.appendChild(wfMiniPill(at.x, at.y, g.nodeW, g.nodeH, statuses[i]));
+  });
+  return svg;
+}
 
-  const pos = {};
-  nodes.forEach((n) => { pos[n.id] = { x: px(n), y: py(n) }; });
+// An edge counts as taken when both ends ran. A skipped end means the branch
+// was not the one the run went down, and an end with no status at all is a step
+// the run never reached.
+function wfMiniTaken(statuses, edge) {
+  const from = statuses[edge.from];
+  const to = statuses[edge.to];
+  return !!(from && from !== 'skipped' && to && to !== 'skipped');
+}
 
-  const lines = edges.map((e) => {
-    const a = pos[e.from]; const b = pos[e.to];
-    if (!a || !b) return '';
-    const x1 = a.x + NW; const y1 = a.y + NH / 2;
-    const x2 = b.x; const y2 = b.y + NH / 2;
-    const mx = (x1 + x2) / 2;
-    const taken = lastRun && statusOf[e.from] && statusOf[e.from] !== 'skipped'
-      && statusOf[e.to] && statusOf[e.to] !== 'skipped';
-    return `<path d="M${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" class="wf-mini-edge${taken ? ' is-taken' : ''}" />`;
-  }).join('');
+function wfMiniPlaceholder(message) {
+  const box = document.createElement('div');
+  box.className = 'wf-mini is-empty';
+  const text = document.createElement('span');
+  text.textContent = message;
+  box.appendChild(text);
+  return box;
+}
 
-  const boxes = nodes.map((n) => {
-    const p = pos[n.id];
-    const st = WF_MINI_STATUS.includes(statusOf[n.id]) ? statusOf[n.id] : '';
-    return `<rect x="${p.x.toFixed(1)}" y="${p.y.toFixed(1)}" width="${NW}" height="${NH}" rx="4"
-      class="wf-mini-node${st ? ` is-${st}` : ''}" />`;
-  }).join('');
+// The names again, this time for anyone not looking at the picture. It is the
+// only place the compact shape says what its lozenges are, and on the labelled
+// shape it is the unabridged version of what truncation left on screen.
+function wfMiniSpeak(svg, names, count) {
+  const heading = `${count} step${count === 1 ? '' : 's'}`;
+  const usable = names.filter((name) => typeof name === 'string' && name);
+  if (!usable.length) { svg.setAttribute('aria-label', heading); return; }
+  const spoken = usable.slice(0, WF_MINI_SPOKEN_NAMES);
+  const rest = usable.length - spoken.length;
+  svg.setAttribute('aria-label',
+    `${heading}: ${spoken.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}`);
+}
 
-  return `<svg class="wf-mini" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${lines}${boxes}</svg>`;
+// surface names one of WF_MINI_SURFACES and is how a caller says how much room
+// it is giving this. An unknown one is treated as a card, which is the smallest
+// box any of them offers and therefore the safe thing to guess. width is the
+// real width of the host in CSS pixels, for a caller that has the host in the
+// document already and can afford to read it; it is only ever used to widen.
+function wfMiniGraph(graph, lastRun, surface, width) {
+  const floor = WF_MINI_SURFACES[surface] || WF_MINI_SURFACES.card;
+  const measured = Number(width);
+  const box = {
+    w: Number.isFinite(measured) && measured > floor.w ? measured : floor.w,
+    h: floor.h,
+  };
+  const declared = (graph && Array.isArray(graph.nodes)) ? graph.nodes : [];
+  const nodes = [];
+  const at = new Map();
+  for (const node of declared) {
+    if (!node || typeof node !== 'object') continue;
+    const id = (typeof node.id === 'string' || typeof node.id === 'number') ? String(node.id) : null;
+    // A duplicate id is a graph that cannot be drawn honestly, since an edge
+    // naming it means two different things. The first one keeps the id and the
+    // second is left out rather than silently stealing the first one's edges.
+    if (id === null || at.has(id)) continue;
+    at.set(id, nodes.length);
+    nodes.push(node);
+  }
+  if (!nodes.length) return wfMiniPlaceholder('no steps yet');
+  if (nodes.length > WF_MINI_NODE_CAP) return wfMiniPlaceholder('graph too large to preview');
+
+  const edges = [];
+  for (const edge of ((graph && Array.isArray(graph.edges)) ? graph.edges : [])) {
+    if (!edge) continue;
+    const from = at.get(String(edge.from));
+    const to = at.get(String(edge.to));
+    if (from === undefined || to === undefined) continue;
+    edges.push({ from, to });
+  }
+
+  const statuses = nodes.map(() => '');
+  if (lastRun) {
+    for (const step of (lastRun.steps || [])) {
+      const index = step ? at.get(String(step.nodeId)) : undefined;
+      if (index !== undefined && WF_MINI_STATUS.includes(step.status)) statuses[index] = step.status;
+    }
+  }
+
+  const names = nodes.map(wfMiniName);
+  const labelled = names.every((name) => name !== null)
+    ? wfMiniLabelled(nodes, edges, statuses, names, box)
+    : null;
+  const svg = labelled || wfMiniCompact(nodes, edges, statuses);
+  wfMiniSpeak(svg, names, nodes.length);
+  return svg;
 }
 
 // The last few outcomes, oldest to newest. The CI trick: reliability in one row.
@@ -3238,14 +3627,26 @@ function wfPaintPatterns() {
         <div class="wfx-pattern-icon">${p.icon}</div>
         <div class="wfx-pattern-title">${escapeHtml(p.title)}</div>
       </div>
-      <div class="wfx-pattern-shape">${wfMiniGraph(p.build().graph, null)}</div>
+      <div class="wfx-pattern-shape"></div>
       <div class="wfx-pattern-body">${escapeHtml(p.blurb)}</div>
       <div class="wfx-pattern-foot">
         <span>${escapeHtml(p.trait)}</span>
         <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
       </div>`;
+    // The thumbnail is appended rather than interpolated: the builder returns
+    // elements now, so that it can put a step name in as text rather than as
+    // markup. These particular names are constants in this file, but there is
+    // no second, string-shaped builder to keep them on and no reason to want
+    // one.
+    //
+    // The card goes into the grid first so the shape can be measured. These
+    // tracks start at 300px and run to over 400 at a normal window, and the
+    // gallery is the one surface where the topology is the headline rather than
+    // a footnote, so it is worth one layout to draw it for the width it has.
     card.addEventListener('click', () => wfCreateFromPattern(p));
     grid.appendChild(card);
+    const shape = card.querySelector('.wfx-pattern-shape');
+    if (shape) shape.appendChild(wfMiniGraph(p.build().graph, null, 'pattern', shape.clientWidth));
   }
 }
 
@@ -3337,7 +3738,7 @@ function paintWorkflowList() {
           </button>
         </div>
         ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
-        <div class="wf-card-graph"${runs.length ? ` data-open-run="${escapeAttr(w.id)}" title="Open the last run"` : ''}>${wfMiniGraph(w.graph, runs[0])}</div>
+        <div class="wf-card-graph"${runs.length ? ` data-open-run="${escapeAttr(w.id)}" title="Open the last run"` : ''}></div>
         <div class="wf-card-status">${runs.length
           ? `<button class="wf-lr-btn" data-open-run="${escapeAttr(w.id)}" title="Open the last run">${wfLastRunPill(runs)}</button>`
           : '<span class="wf-lr is-never"><i></i>Never run</span>'}</div>
@@ -3364,6 +3765,19 @@ function paintWorkflowList() {
         <span>New workflow</span>
         <small>start from a blank graph</small>
       </button>`;
+
+  // The graph previews, in the same synchronous pass that wrote the grid and
+  // for the same reason the receipts strip below is: the drawing carries the
+  // step names, and on a workflow that arrived as a file those names were
+  // written by whoever published it. Everything in this feature that came out
+  // of a file reaches the DOM as a text node, so the preview is appended as
+  // elements rather than interpolated as markup.
+  grid.querySelectorAll('.wf-card[data-id]').forEach((card) => {
+    const w = workflowsCache.find((x) => x.id === card.dataset.id);
+    const host = card.querySelector('.wf-card-graph');
+    if (!w || !host) return;
+    host.appendChild(wfMiniGraph(w.graph, wfRunsFor(w.id)[0], 'card', host.clientWidth));
+  });
 
   // The receipts strip, one per saved card, inserted in the same synchronous
   // pass that wrote the grid. It goes above .wf-card-status, whose margin-top
@@ -3393,7 +3807,13 @@ function paintWorkflowList() {
         // authored workflow has nothing else, and for an imported one this is
         // the reader's own evidence rather than the author's claim.
         aggregate: wfAggregateFor(w.id),
-        chainCheck: null,
+        // This machine's own finding about the log the author shipped. The main
+        // process recomputes it on every sidecar read, so it is passed straight
+        // through rather than recomputed here. Dropping it was the whole middle
+        // tier going to waste: the figures had already been re-derived from the
+        // shipped log and found to agree, and the card said "author states"
+        // regardless, which is the one claim the reader did not need from us.
+        chainCheck: (sidecar && sidecar.chainCheck) || null,
         // The record behind the chip is the imported file. A workflow written
         // here has none, so no handler is passed and the strip draws the tier
         // as a label rather than as a control that would toast an apology.
@@ -3442,12 +3862,17 @@ function wfOpenCardMenu(anchor, id) {
   const close = () => pop.remove();
   pop.querySelector('[data-act="duplicate"]').addEventListener('click', async () => {
     close();
-    const copy = JSON.parse(JSON.stringify(w));
-    delete copy.id;
-    copy.name = `${w.name} copy`;
-    await window.husk.workflows.create(copy);
+    // The main process copies the record, because it is also the only side that
+    // can copy the sidecar. Building the copy here and calling create wrote no
+    // row, and a workflow with no row is one every check in this feature reads
+    // as locally authored: the copy of an imported workflow ran with no consent
+    // gate, no bound directory and the auto-approving agent flags restored.
+    const res = await window.husk.workflows.duplicate(w.id);
+    if (!res || !res.ok) { toast((res && res.error) || 'Could not duplicate this workflow', 'error'); return; }
     await renderWorkflows();
-    toast('Workflow duplicated', 'success');
+    toast(res.sidecar && res.sidecar.origin === 'imported'
+      ? 'Workflow duplicated. The copy needs its own confirmation before it runs.'
+      : 'Workflow duplicated', 'success');
   });
   // Publishing is a sheet of its own: what gets written, where it lands, and
   // whether the run log travels with it are all decisions, and a menu item
@@ -4861,12 +5286,18 @@ async function wfOpenReceiptRecord(workflowId) {
       // front of it described the reader's, which is two answers to one
       // question on two halves of one gesture.
       aggregate: wfAggregateFor(workflowId),
-      chainCheck: null,
-      // wfMiniGraph returns markup and this pane takes nodes, and the graph in
-      // hand came out of a file, so the preview is left to the sheet that has
-      // a builder written for exactly that input. Reading the prompts and the
-      // figures is what this view is for.
-      miniGraph: null,
+      // The same finding the card's chip is drawn from, for the same reason the
+      // aggregate above is shared: the panel and the chip are two halves of one
+      // gesture and they must not answer the tier question differently.
+      chainCheck: (sidecar && sidecar.chainCheck) || null,
+      // The graph in hand came out of a file, which used to be the reason this
+      // pane went without a preview: the builder returned markup. It returns
+      // elements now and puts every step name in as text, so the record shows
+      // the same drawing the install sheet showed before this file was ever
+      // installed, which is the comparison this view exists to let somebody
+      // make. Null for the run, because a status on this pane would be coloured
+      // from a stranger's receipt.
+      miniGraph: wfMiniGraph(artifact.graph, null, 'panel'),
       onFix: null,
     });
     // One of these copies the fingerprint of the file being staged, the other
