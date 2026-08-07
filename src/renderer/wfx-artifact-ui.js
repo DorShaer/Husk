@@ -518,6 +518,23 @@
     };
   }
 
+  // Which of the two records a surface shows when it holds both: a receipt that
+  // travelled in a file, and an aggregate of runs that happened on this
+  // machine. Local history wins, because it is the only thing here the reader
+  // measured themselves, and it carries the top tier for exactly that reason.
+  //
+  // The one exception is a shipped receipt its own log contradicts. That is a
+  // fact about the file and the reader has to be told it; showing their own
+  // clean numbers instead would bury the more dangerous of the two failures
+  // under the more comforting one.
+  function pickRecord(receipt, chainCheck, aggregate) {
+    const shipped = receipt ? recordFromReceipt(receipt, chainCheck) : null;
+    if (shipped && shipped.refused) return shipped;
+    const local = recordFromAggregate(aggregate);
+    if (local && local.runs > 0) return local;
+    return shipped || local;
+  }
+
   // Which of up to eight receipts the surfaces summarise. They are one per
   // environment, and there is no honest way to add two medians together, so the
   // largest sample is shown and the rest are counted in the chip's accessible
@@ -703,12 +720,27 @@
     return el('span', { class: 'wfx-fig-q' }, s);
   }
 
-  // The sample-size phrase, in the reader's language. "of that one run" rather
-  // than "n=1", because the tile is being read by somebody deciding whether to
-  // run a stranger's code and not by somebody reading a table.
+  // The sample, named. "that one run" rather than "n=1", because the tile is
+  // being read by somebody deciding whether to run a stranger's code and not by
+  // somebody reading a table.
+  //
+  // The phrase and its preposition are separate because two callers need two
+  // prepositions. Folding "of" into the phrase is what produced "from of that
+  // one run" in the screen reader note, and hardcoding "runs" beside a count in
+  // the other note is what produced "from 1 runs"; both were only ever audible,
+  // which is why they survived.
+  function runsPhrase(runs) {
+    return runs === 1 ? 'that one run' : `${runs} runs`;
+  }
+
   function sampleNote(runs) {
-    if (runs === 1) return 'of that one run';
-    return `of ${runs} runs`;
+    return `of ${runsPhrase(runs)}`;
+  }
+
+  // The note a screen reader gets in place of the visible qualifier, which the
+  // card has no room for.
+  function thinNote(runs) {
+    return `from ${runsPhrase(runs)}, too few to rate`;
   }
 
   // The duration tile, which is where the whole precision argument lands.
@@ -744,7 +776,7 @@
         chip,
         value,
         label: 'range',
-        srNote: inline ? `from ${record.runs} runs, too few to rate` : '',
+        srNote: inline ? thinNote(record.runs) : '',
         tier: record.tier,
       });
     }
@@ -761,7 +793,7 @@
       chip,
       value,
       label,
-      srNote: (thin && inline) ? `from ${sampleNote(record.runs)}, too few to rate` : '',
+      srNote: (thin && inline) ? thinNote(record.runs) : '',
       tier: record.tier,
     });
   }
@@ -781,7 +813,7 @@
       chip: !inline,
       value,
       label: 'zero exit',
-      srNote: (thin && inline) ? `from ${record.runs} runs, too few to rate` : '',
+      srNote: (thin && inline) ? thinNote(record.runs) : '',
       tier: record.tier,
     });
   }
@@ -841,7 +873,16 @@
     }
     return frag(
       el('div', { class: ['wfx-figs', 'is-inline'] }, tiles),
-      renderClaim({ tier: record.tier, as: 'button', dataset: o.chipDataset || null, label: o.chipLabel }));
+      // A button only when pressing it opens something. A workflow whose runs
+      // all happened here has no imported record behind the chip, and a control
+      // whose accessible name promises a record it cannot show is worse than
+      // the same word rendered as the label it actually is.
+      renderClaim({
+        tier: record.tier,
+        as: o.chipAs === 'span' ? 'span' : 'button',
+        dataset: o.chipDataset || null,
+        label: o.chipLabel,
+      }));
   }
 
   // ─── Prompts ───────────────────────────────────────────────────────────────
@@ -1056,18 +1097,16 @@
   // place. See the module header on why nothing is reserved and nothing drifts.
   //
   // `aggregate` is the shape src/lib/workflow-receipt.js returns, for a
-  // workflow whose runs happened here. No IPC channel delivers it today, so a
-  // locally authored workflow renders the empty strip; recomputing medians in
-  // the renderer instead is exactly the duplication the lifted modules exist to
-  // prevent, and two implementations of a median is two answers.
+  // workflow whose runs happened here. It arrives over workflows:receipts,
+  // aggregated in the main process, because recomputing medians in the renderer
+  // is the duplication the lifted modules exist to prevent and two
+  // implementations of a median is two answers.
   function renderReceiptStrip(opts) {
     try {
       const o = opts || {};
       const artifact = (o.artifact && typeof o.artifact === 'object') ? o.artifact : null;
       const receipt = artifact ? pickReceipt(artifact) : null;
-      const record = receipt
-        ? recordFromReceipt(receipt, o.chainCheck)
-        : recordFromAggregate(o.aggregate);
+      const record = pickRecord(receipt, o.chainCheck, o.aggregate);
 
       if (!record || record.runs <= 0) return emptyStrip();
       if (record.refused) {
@@ -1078,13 +1117,19 @@
       }
 
       const others = artifact && Array.isArray(artifact.receipts) ? Math.max(0, artifact.receipts.length - 1) : 0;
+      // The caller withholds onOpen for a workflow with no record behind it,
+      // which is every workflow written here rather than imported. Its figures
+      // are just as real; there is simply nothing to open, so the chip is the
+      // tier word and not a control.
+      const openable = typeof o.onOpen === 'function';
       const strip = el('div', { class: 'wfx-rcp' }, renderFigures(record, {
         density: 'inline',
-        chipDataset: (typeof o.workflowId === 'string' && o.workflowId) ? { wfxReceipt: o.workflowId } : null,
-        chipLabel: stripLabel(o.workflowName, record, others),
+        chipAs: openable ? 'button' : 'span',
+        chipDataset: (openable && typeof o.workflowId === 'string' && o.workflowId) ? { wfxReceipt: o.workflowId } : null,
+        chipLabel: openable ? stripLabel(o.workflowName, record, others) : null,
       }));
       const chip = strip.querySelector('.wfx-claim');
-      if (chip && typeof o.onOpen === 'function') {
+      if (chip && openable) {
         chip.addEventListener('click', (e) => {
           // The card itself is a click-only div with its own handler, so a
           // press on the chip has to stop there or it opens the builder behind
@@ -1175,6 +1220,7 @@
   //   preflight   the workflows:preflight result, or null while it resolves
   //   cwd         the bound directory, or null
   //   billing     autopilot:billingMode output, or null
+  //   aggregate   local run figures for this workflow, or null (see pickRecord)
   //   chainCheck  a caller's chain verification result, or null
   //   miniGraph   a node for the graph preview, or null (app.js owns wfMiniGraph)
   //   onFix       (fix, check) => void
@@ -1195,7 +1241,11 @@
       if (!artifact) throw new Error('no artifact');
 
       const receipt = pickReceipt(artifact);
-      const record = receipt ? recordFromReceipt(receipt, o.chainCheck) : null;
+      // aggregate is null on the install sheet, where nothing has run yet by
+      // definition, and carries local history when this pane is opened as the
+      // record behind a card's receipts strip. The strip and the record it
+      // opens have to agree about what they are describing.
+      const record = pickRecord(receipt, o.chainCheck, o.aggregate);
 
       host.appendChild(fingerprintBlock(artifact, harvested(preserved, 'wfx-in-fp-copy')));
       host.appendChild(identityBlock(artifact));

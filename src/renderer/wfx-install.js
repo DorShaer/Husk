@@ -1031,6 +1031,29 @@
     btn.textContent = on ? 'Fetching' : 'Fetch';
   }
 
+  // The banner that says these bytes did not come off the network. Unlike the
+  // fetch-in-flight banner it survives into the ready pane, because the one
+  // impression it exists to correct is the one that pane gives: a fingerprint
+  // recomputed here, from a file whose age nobody stated, under a heading that
+  // reads as the current contents of the URL in the field.
+  //
+  // The reason comes from git by way of friendlyCloneError, so it goes through
+  // el() like every other string this sheet did not write.
+  function staleNote(source) {
+    if (!source || source.stale !== true) return null;
+    let when = '';
+    const t = source.fetchedAt ? new Date(source.fetchedAt) : null;
+    if (t && !Number.isNaN(t.getTime())) {
+      try { when = ` on ${t.toLocaleString()}`; } catch (_) { when = ` on ${t.toISOString()}`; }
+    }
+    const reason = (typeof source.staleReason === 'string' && source.staleReason) ? ` ${source.staleReason}` : '';
+    // "last updated" rather than "cloned": the stamp is the last time this
+    // checkout agreed with the remote, which is the clone only until the first
+    // successful pull.
+    return el('span', {},
+      `Read from the copy Husk already had on disk${when ? `, last updated${when}` : ''}, not from the repository. The repository could not be reached just now, so this may not be what is at that URL today.${reason}`);
+  }
+
   async function doFetch() {
     if (S.installing) return;
     const isRepo = S.source === 'repo';
@@ -1080,12 +1103,13 @@
     S.read = res;
     S.artifact = res.artifact;
     S.preflight = null;
-    setStatus(null);
+    const stale = staleNote(res.source);
+    setStatus(stale);
     setState('ready');
     paintReady();
     applyGate();
     const steps = ((res.artifact.graph && res.artifact.graph.nodes) || []).length;
-    say(`Read ${res.artifact.name}: ${steps} steps. Husk recomputed the fingerprint here. Nothing has been installed.`);
+    say(`Read ${res.artifact.name}: ${steps} steps.${stale ? ' It came from a copy already on disk; the repository could not be reached.' : ''} Husk recomputed the fingerprint here. Nothing has been installed.`);
     runPreflight();
   }
 

@@ -3,7 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <title>Husk</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none';" />
+    <!-- frame-ancestors is deliberately absent. Chromium ignores it in a
+         meta-delivered policy and reports that at console level "error" on
+         every single boot, which teaches anyone watching that channel to ignore
+         the one place a real renderer fault would show up. The directive only
+         means anything as a response header: set it through
+         session.defaultSession.webRequest.onHeadersReceived in the main process
+         if this window ever loads something frameable. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self';" />
     <link rel="stylesheet" href="vendor/xterm.css" />
     <link rel="stylesheet" href="vendor/drawflow.min.css" />
     <link rel="stylesheet" href="styles.css" />

@@ -132,10 +132,7 @@ function getAgentKind() {
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// GPU acceleration hints. Electron on Linux often falls back to software
-// compositing when --no-sandbox is set or the GPU sits on a blocklist,
-// that's the "feels like 30Hz" symptom. These three switches push it to
-// the GPU path. Safe defaults for desktop Electron 32.
+// GPU acceleration safe defaults for desktop Electron 32
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -6076,6 +6073,13 @@ ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
       root: cloned.root,
       url,
       candidates: candidates.map((c) => c.relPath),
+      // Whether these bytes came off the network just now or out of a clone
+      // that could not be refreshed. The sheet says which, because a
+      // fingerprint recomputed from a copy of unknown age is a fact about the
+      // copy and not about the URL the reader typed.
+      stale: cloned.stale === true,
+      staleReason: cloned.stale === true ? (cloned.staleReason || null) : null,
+      fetchedAt: cloned.stale === true ? (cloned.fetchedAt || null) : null,
     },
   };
 });
@@ -6229,23 +6233,58 @@ ipcMain.handle('workflows:bindCwd', (_e, payload = {}) => {
   return { ok: true, boundCwd: cwd, sidecar: row };
 });
 
+// ─── IPC: receipts ───────────────────────────────────────────────────────────
+
+// The local run figures for every saved workflow, keyed on workflow id, in one
+// call. Every card on the grid carries a receipts strip and the grid paints in
+// one pass, so this follows workflows:sidecars rather than asking per card.
+//
+// Without this channel the strip had no source for a run that happened here:
+// it read the receipts inside an imported artifact and nothing else, so a
+// workflow you ran ten times said "No receipts yet" forever while the same
+// workflow exported and imported back showed one run. The aggregation was
+// already written and already correct; it was reachable only from the export
+// handler.
+//
+// The figures are aggregated against the fingerprint of the graph as it stands
+// now, so editing a step drops the strip back to empty. That is the point of
+// fingerprinting a run: those numbers were earned by a different program.
+ipcMain.handle('workflows:receipts', () => {
+  const runs = loadWorkflowRuns();
+  const aggregates = {};
+  for (const raw of loadWorkflows()) {
+    try {
+      const workflow = migrateWorkflow(raw);
+      if (!workflow || typeof workflow.id !== 'string') continue;
+      const fingerprint = WorkflowArtifact.graphHash(workflow.graph);
+      if (!fingerprint || !fingerprint.ok) continue;
+      const r = wfxReceiptsFor(workflow, fingerprint.hash, runs);
+      if (r.summary && r.summary.runs > 0) aggregates[workflow.id] = r.summary;
+    } catch (_) {
+      // One unreadable workflow costs itself its strip and nothing else. The
+      // grid is drawn from this map and a throw here would take every card's
+      // figures with it.
+    }
+  }
+  return { ok: true, aggregates };
+});
+
 // ─── IPC: export ─────────────────────────────────────────────────────────────
 
 // The receipts a published file would carry, aggregated from local run
-// history. Today this always comes back empty, and it comes back empty for a
-// reason worth stating rather than hiding: recordWorkflowRun persists no
-// graphHash on a run, so aggregateRuns cannot tell which runs belong to the
-// graph about to be published and counts every one of them as `unhashed`.
-// Publishing them anyway would attach a stranger-facing claim to runs that may
-// have executed a different set of steps entirely.
+// history, and the same figures the card's own receipts strip reads.
 //
-// The shape of the answer is what slice 7 fills in, not the call site: when
-// runs start carrying their fingerprint, `publishable` starts coming back true
-// and the only thing missing is the environment block. Until then the summary
-// travels back so the publish sheet can say "31 runs in your history, none of
-// them fingerprinted" instead of an unexplained zero.
-function wfxReceiptsFor(workflow, graphHash) {
-  const agg = WorkflowReceipt.aggregateRuns(loadWorkflowRuns(), {
+// `receipts` is the wire form and is empty unless the aggregate is publishable.
+// `summary` is the local form and is present whenever the runs could be read at
+// all, which is what the strip needs: a single run is a number a reader is
+// entitled to see on their own machine long before it is a claim anyone should
+// publish at a stranger.
+//
+// runs is passed in by callers that already hold the history, because
+// loadWorkflowRuns parses the whole file and the workflows grid asks this
+// question once per card.
+function wfxReceiptsFor(workflow, graphHash, runs) {
+  const agg = WorkflowReceipt.aggregateRuns(Array.isArray(runs) ? runs : loadWorkflowRuns(), {
     workflowId: workflow.id,
     graphHash,
     historyMax: WF_RUNS_MAX,
@@ -6262,6 +6301,10 @@ function wfxReceiptsFor(workflow, graphHash) {
     outcomeBasis: a.outcomeBasis,
     medianDurationMs: a.medianDurationMs,
     medianDurationN: a.medianDurationN,
+    // Kept off the wire by aggregateRuns and carried here on purpose: two runs
+    // are a range by the copy rule and a range needs both ends. It is the one
+    // figure a local reader can have that a published receipt cannot.
+    durationRangeMs: a.durationRangeMs,
     durationCensored: a.durationCensored,
     medianTokens: a.medianTokens,
     medianTokensN: a.medianTokensN,
@@ -6273,8 +6316,13 @@ function wfxReceiptsFor(workflow, graphHash) {
     return {
       receipts: [],
       summary,
+      // Runs are stamped with the fingerprint of the graph they executed, so an
+      // unhashed row is one recorded before that stamp existed. It cannot be
+      // attached to this graph, or to any other, and saying which of the two
+      // reasons applies is the difference between a number the publisher can
+      // act on and an unexplained zero.
       reason: a.excluded.unhashed > 0
-        ? 'this Husk does not yet record which graph a run executed, so no run in your history can be attached to this fingerprint'
+        ? 'some runs in your history were recorded before Husk stamped a run with the graph it executed, so they cannot be attached to this fingerprint'
         : `nothing publishable yet: ${a.publishBlockers.join(', ')}`,
     };
   }
@@ -6285,7 +6333,7 @@ function wfxReceiptsFor(workflow, graphHash) {
   // contributes nothing rather than a guess, and the receipt ships without an
   // environment block, which the reader sees as one fewer author claim rather
   // than as a claim that happens to be wrong.
-  const matching = loadWorkflowRuns().filter((r) => r
+  const matching = (Array.isArray(runs) ? runs : loadWorkflowRuns()).filter((r) => r
     && r.workflowId === workflow.id
     && r.graphHash === graphHash
     && r.environment && typeof r.environment === 'object');
@@ -7076,12 +7124,42 @@ function stripAgentExt(filename) {
   return filename.replace(/\.agent\.md$/, '').replace(/\.md$/, '');
 }
 
+// Two spellings of one repository are one repository: a trailing .git and a
+// trailing slash are punctuation, not identity. Anything else is a different
+// remote and a checkout that carries it is not the answer to this URL.
+function sameGitRemote(a, b) {
+  const norm = (s) => String(s || '').trim().replace(/\/+$/, '').replace(/\.git$/, '').replace(/\/+$/, '');
+  return norm(a) !== '' && norm(a) === norm(b);
+}
+
+// When a reused clone was last brought up to date. FETCH_HEAD is written by
+// every fetch and pull, so its mtime is the moment this checkout last agreed
+// with the remote. A clone that has never been pulled has none, and the
+// directory's own mtime is then the clone itself.
+function repoFetchedAt(dest) {
+  for (const rel of ['.git/FETCH_HEAD', '.git']) {
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- managed clone under userData
+      return fs.statSync(path.join(dest, rel)).mtime.toISOString();
+    } catch (_) { /* try the next one */ }
+  }
+  return null;
+}
+
 // Clone an https repo URL into a managed userData directory and return the
 // local path. The clone persists because installed agents keep repoRoot as
-// their working directory. An existing clone is refreshed with a best-effort
-// fast-forward pull instead of re-cloning. Validation and error wording live
-// in src/lib/repo-agents.js. GIT_TERMINAL_PROMPT=0 makes private repos fail
-// fast instead of hanging on a credential prompt.
+// their working directory. An existing clone is refreshed with a fast-forward
+// pull instead of re-cloning. Validation and error wording live in
+// src/lib/repo-agents.js. GIT_TERMINAL_PROMPT=0 makes private repos fail fast
+// instead of hanging on a credential prompt.
+//
+// Resolves { ok: true, root, stale, staleReason?, fetchedAt? }. `stale` is the
+// honest half of "best effort": the pull's error used to be discarded, so an
+// offline fetch resolved as a success and the install sheet painted a
+// fingerprint recomputed from a copy of unknown age under a banner saying it
+// had just cloned the repository. The copy is still returned, because an older
+// checkout beats no checkout for a reader with no network, but it is returned
+// labelled and the surface says so.
 const RepoAgents = require('./lib/repo-agents');
 function cloneAgentRepo(url) {
   return new Promise((resolve) => {
@@ -7091,19 +7169,42 @@ function cloneAgentRepo(url) {
     const dest = path.join(clonesRoot, v.dirName);
     const { execFile } = require('child_process');
     const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-    if (fs.existsSync(path.join(dest, '.git'))) {
-      execFile('git', ['-C', dest, 'pull', '--ff-only'], { timeout: 60000, env: gitEnv }, () => resolve({ ok: true, root: dest }));
-      return;
-    }
-    try { fs.mkdirSync(clonesRoot, { recursive: true }); } catch (err) {
-      return resolve({ ok: false, error: 'Husk cannot write to its data folder (permission denied).' });
-    }
-    execFile('git', ['clone', '--depth', '1', v.url, dest], { timeout: 120000, env: gitEnv }, (err) => {
-      if (err) {
-        try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
-        return resolve({ ok: false, error: RepoAgents.friendlyCloneError(err) });
+
+    const cloneFresh = () => {
+      try { fs.mkdirSync(clonesRoot, { recursive: true }); } catch (err) {
+        return resolve({ ok: false, error: 'Husk cannot write to its data folder (permission denied).' });
       }
-      resolve({ ok: true, root: dest });
+      execFile('git', ['clone', '--depth', '1', v.url, dest], { timeout: 120000, env: gitEnv }, (err) => {
+        if (err) {
+          try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
+          return resolve({ ok: false, error: RepoAgents.friendlyCloneError(err) });
+        }
+        resolve({ ok: true, root: dest, stale: false });
+      });
+    };
+
+    if (!fs.existsSync(path.join(dest, '.git'))) return cloneFresh();
+
+    // Reuse is conditional on the checkout being the repository that was
+    // asked for. The folder name now carries a digest of the URL so two
+    // repositories can no longer be given the same one, but a directory left
+    // by an older naming scheme still sits on disk under a name that collides,
+    // and reading it would answer this URL with another repository's files.
+    execFile('git', ['-C', dest, 'remote', 'get-url', 'origin'], { timeout: 15000, env: gitEnv }, (rErr, stdout) => {
+      if (rErr || !sameGitRemote(stdout, v.url)) {
+        try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
+        return cloneFresh();
+      }
+      execFile('git', ['-C', dest, 'pull', '--ff-only'], { timeout: 60000, env: gitEnv }, (pErr) => {
+        if (!pErr) return resolve({ ok: true, root: dest, stale: false });
+        resolve({
+          ok: true,
+          root: dest,
+          stale: true,
+          staleReason: RepoAgents.friendlyCloneError(pErr),
+          fetchedAt: repoFetchedAt(dest),
+        });
+      });
     });
   });
 }

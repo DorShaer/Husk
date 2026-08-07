@@ -2835,6 +2835,7 @@ async function renderWorkflows() {
     wfRunsCache = (res && res.ok && res.runs) || [];
   } catch (_) { wfRunsCache = []; }
   await wfRefreshSidecars();
+  await wfRefreshReceipts();
   // A run in flight owns this page: opening Workflows while one is going (or
   // after a reload) drops you back into watching it, rather than showing a list
   // that pretends nothing is happening.
@@ -2875,6 +2876,32 @@ async function wfRefreshSidecars() {
 function wfSidecarFor(id) {
   const row = wfSidecarsCache[id];
   return (row && typeof row === 'object') ? row : null;
+}
+
+// What this machine has actually measured about each workflow: runs, median
+// duration, outcomes, tokens, aggregated in the main process against the
+// fingerprint of the graph as it stands now. Keyed on workflow id, and fetched
+// once per paint alongside the sidecars for the same reason.
+//
+// The receipts strip on a card reads this. Before it existed the strip had only
+// the receipts inside an imported artifact to read, so a workflow that ran here
+// ten times reported "No receipts yet" forever and the only way to see local
+// evidence was to export the workflow and import the file back as a second
+// workflow.
+let wfReceiptsCache = {};
+
+async function wfRefreshReceipts() {
+  const api = window.husk && window.husk.workflows;
+  if (!api || typeof api.receipts !== 'function') { wfReceiptsCache = {}; return; }
+  try {
+    const res = await api.receipts();
+    wfReceiptsCache = (res && res.ok && res.aggregates) || {};
+  } catch (_) { wfReceiptsCache = {}; }
+}
+
+function wfAggregateFor(id) {
+  const agg = wfReceiptsCache[id];
+  return (agg && typeof agg === 'object') ? agg : null;
 }
 
 // ─── Reading a workflow at a glance ──────────────────────────────────────────
@@ -3362,8 +3389,15 @@ function paintWorkflowList() {
         workflowId: w.id,
         workflowName: w.name,
         artifact: sidecar ? sidecar.artifact : null,
+        // Runs that happened on this machine, against this graph. A locally
+        // authored workflow has nothing else, and for an imported one this is
+        // the reader's own evidence rather than the author's claim.
+        aggregate: wfAggregateFor(w.id),
         chainCheck: null,
-        onOpen: (id) => wfOpenReceiptRecord(id),
+        // The record behind the chip is the imported file. A workflow written
+        // here has none, so no handler is passed and the strip draws the tier
+        // as a label rather than as a control that would toast an apology.
+        onOpen: (sidecar && sidecar.artifact) ? ((id) => wfOpenReceiptRecord(id)) : null,
       }), status);
     });
   }
@@ -3644,6 +3678,15 @@ function wfNewNodeId() {
   return `wfn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// A stored node coordinate, or the default for a node that has none. Zero is a
+// real position and has to survive: the artifact format anchors every published
+// layout on the origin, so an imported graph always contains a node at x=0 and
+// a node at y=0.
+const WF_NODE_FALLBACK_XY = 60;
+function wfCoord(value) {
+  return Number.isFinite(value) ? value : WF_NODE_FALLBACK_XY;
+}
+
 function wfLoadGraph(graph) {
   if (!wfEditor) return;
   const idMap = {};
@@ -3657,7 +3700,7 @@ function wfLoadGraph(graph) {
       prompt: n.prompt || '',
       passContext: n.passContext || 'full',
     };
-    idMap[n.id] = wfEditor.addNode('step', 1, 1, n.x || 60, n.y || 60, 'wf-cv', data, wfNodeHtml(data));
+    idMap[n.id] = wfEditor.addNode('step', 1, 1, wfCoord(n.x), wfCoord(n.y), 'wf-cv', data, wfNodeHtml(data));
   });
   (graph.edges || []).forEach((e) => {
     const from = idMap[e.from];
@@ -4044,11 +4087,29 @@ function wfBuildRunCanvas(workflow) {
   const graph = workflow.graph || { nodes: [], edges: [] };
   wfRunGraph = graph;
 
+  // The badge is the step's place in the run, so it comes from a walk of the
+  // graph and not from the position of the node in graph.nodes. A published
+  // artifact orders that array by the hash of each step's body (see
+  // canonicalProjection in src/lib/workflow-artifact.js), which is load-bearing
+  // for the fingerprint and says nothing about execution order, so an imported
+  // workflow numbered by array index contradicted the consent gate the reader
+  // had just agreed to: the gate said "01 Reproduce, 02 Patch" over the same
+  // graph this canvas numbered the other way round.
+  //
+  // orderedSteps is the gate's own traversal, borrowed rather than
+  // reimplemented so the two surfaces cannot drift apart. wfAllNodes is the
+  // fallback for a window where that module did not load; it walks the same
+  // edges and differs only in how it seeds a multi-root graph.
+  const walk = (window.WfxArtifactUi && typeof window.WfxArtifactUi.orderedSteps === 'function')
+    ? window.WfxArtifactUi.orderedSteps(graph)
+    : wfAllNodes(graph);
+  const stepNumber = new Map(walk.map((node, i) => [node.id, i + 1]));
+
   (graph.nodes || []).forEach((n, i) => {
     const html = `
       <div class="wf-rn">
         <div class="wf-rn-top">
-          <span class="wf-rn-idx">${i + 1}</span>
+          <span class="wf-rn-idx">${stepNumber.get(n.id) || i + 1}</span>
           <span class="wf-rn-name">${escapeHtml(n.name || 'Step')}</span>
           <span class="wf-rn-timer" data-timer="${escapeAttr(n.id)}"></span>
         </div>
@@ -4060,8 +4121,14 @@ function wfBuildRunCanvas(workflow) {
           </span>
         </div>
       </div>`;
+    // Number.isFinite rather than `||`, because 0 is a coordinate. Publishing
+    // re-anchors the layout on the origin (buildArtifact in
+    // src/lib/workflow-artifact.js), so every imported graph has exactly one
+    // node at x=0 and one at y=0, and `0 || 60` shoved precisely those 60px
+    // right and down: the authored gap collapsed under the node width and the
+    // first card was drawn on top of the second.
     const dfId = wfRunEditor.addNode(
-      'step', 1, 1, n.x || 60, n.y || 60, 'wf-rn-node', { huskId: n.id }, html,
+      'step', 1, 1, wfCoord(n.x), wfCoord(n.y), 'wf-rn-node', { huskId: n.id }, html,
     );
     wfRunDfId[n.id] = dfId;
   });
@@ -4105,8 +4172,11 @@ function wfFitEditor(editor, hostSel, graph) {
   const NODE_W = 216;
   const NODE_H = 64;
   const PAD = 28;
-  const xs = nodes.map((n) => n.x || 0);
-  const ys = nodes.map((n) => n.y || 0);
+  // The same reading of a coordinate the canvases place nodes with, so the
+  // frame is drawn around where the nodes actually are. Falling back to 0 here
+  // and to 60 there put the box 60px off for any node with no stored position.
+  const xs = nodes.map((n) => wfCoord(n.x));
+  const ys = nodes.map((n) => wfCoord(n.y));
   const minX = Math.min(...xs);
   const minY = Math.min(...ys);
   const w = (Math.max(...xs) + NODE_W) - minX;
@@ -4619,9 +4689,16 @@ window.husk.workflows.onRunDone((d) => {
   }
   if (wfTermNodeId) wfRenderTermStatus();
   // The run just became history: pull it in so the card behind this view is
-  // already correct when the user goes back.
-  window.husk.workflows.runs().then((res) => {
-    wfRunsCache = (res && res.ok && res.runs) || wfRunsCache;
+  // already correct when the user goes back. The receipts strip is aggregated
+  // from that same history, so it is refreshed in the same breath; a run the
+  // user watched finish and a card that still says "no receipts yet" is the
+  // contradiction this whole strip exists to avoid.
+  Promise.all([
+    window.husk.workflows.runs().then((res) => {
+      wfRunsCache = (res && res.ok && res.runs) || wfRunsCache;
+    }),
+    wfRefreshReceipts(),
+  ]).then(() => {
     if (!$('#wf-list-view').hidden) paintWorkflowList();
   }).catch(() => {});
 });
@@ -4779,6 +4856,11 @@ async function wfOpenReceiptRecord(workflowId) {
       preflight,
       cwd: sidecar.boundCwd || null,
       billing: autBilling,
+      // The same local history the card's strip is drawn from. Without it the
+      // panel behind the chip described the author's runs while the chip in
+      // front of it described the reader's, which is two answers to one
+      // question on two halves of one gesture.
+      aggregate: wfAggregateFor(workflowId),
       chainCheck: null,
       // wfMiniGraph returns markup and this pane takes nodes, and the graph in
       // hand came out of a file, so the preview is left to the sheet that has

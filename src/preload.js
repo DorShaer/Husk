@@ -189,6 +189,10 @@ contextBridge.exposeInMainWorld('husk', {
     // pass and a per-card round trip would be one IPC hop per workflow on
     // every repaint.
     sidecars: () => ipcRenderer.invoke('workflows:sidecars'),
+    // The local run figures for every workflow, in one call for the same
+    // reason. A workflow with no finished run of its current graph is absent
+    // from the map rather than present and empty.
+    receipts: () => ipcRenderer.invoke('workflows:receipts'),
     consent: (workflowId) => ipcRenderer.invoke('workflows:consent', { workflowId }),
     bindCwd: (workflowId, cwd) => ipcRenderer.invoke('workflows:bindCwd', { workflowId, cwd }),
   },
