@@ -574,3 +574,59 @@ test('a run gate treats a missing sidecar as locally authored, so copies must ke
   assert.equal(consented.ok, false);
   assert.equal(consented.code, 'cwd-required');
 });
+
+// ─── origin is a fact, not an inference ──────────────────────────────────────
+//
+// The gate used to answer "is this a stranger's workflow" by looking for a
+// sidecar row, so absence read as trust. Absence is the one answer an attacker
+// can arrange, and it was reachable three ways: duplicating an imported card
+// copied every prompt and wrote no row, an install whose row never reached disk
+// still reported success, and one unparseable byte in the store read every
+// imported workflow on the machine as locally authored at once.
+
+test('a record that calls itself imported is refused when its row is gone', () => {
+  const gate = I.runGateDecision({
+    sidecar: null,
+    recordOrigin: 'imported',
+    cwd: '/home/user/proj',
+    cwdIsDir: true,
+    cwdIsWorkTree: true,
+  });
+  assert.equal(gate.ok, false);
+  assert.equal(gate.code, 'sidecar-missing');
+});
+
+test('an unreadable store says so rather than blaming the reader for losing it', () => {
+  const gone = I.runGateDecision({ sidecar: null, recordOrigin: 'imported' });
+  const unreadable = I.runGateDecision({
+    sidecar: null, recordOrigin: 'imported', storeUnreadable: true,
+  });
+  assert.equal(gone.code, 'sidecar-missing');
+  assert.equal(unreadable.code, 'sidecar-missing');
+  assert.notEqual(gone.message, unreadable.message);
+  assert.match(unreadable.message, /could not be read/);
+});
+
+test('a genuinely local workflow with no row still runs ungated', () => {
+  const gate = I.runGateDecision({ sidecar: null, recordOrigin: 'local' });
+  assert.equal(gate.ok, true);
+  assert.equal(gate.cwd, null);
+});
+
+test('a record with no origin at all is treated as local, as every pre-existing one is', () => {
+  const gate = I.runGateDecision({ sidecar: null });
+  assert.equal(gate.ok, true);
+});
+
+test('the row still decides once it is present, so consent is not skipped by origin alone', () => {
+  const gate = I.runGateDecision({
+    sidecar: { workflowId: 'wf-1', origin: 'imported', consentedAt: null },
+    recordOrigin: 'imported',
+  });
+  assert.equal(gate.ok, false);
+  assert.equal(gate.code, 'consent-required');
+});
+
+test('sidecar-missing is in the refusal enum, so a surface can render it', () => {
+  assert.ok(I.RUN_REFUSAL_CODES.includes('sidecar-missing'));
+});

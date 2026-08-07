@@ -5760,7 +5760,11 @@ ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
     // the consent gate, rather than per step: a run cannot become trusted
     // halfway through, and re-reading the store mid-run would let a concurrent
     // write change the answer between two steps of the same workflow.
-    untrusted: !!(sidecar && sidecar.origin === 'imported'),
+    // Either source is enough to call it untrusted. The record's origin is the
+    // one a copy carries and a damaged store cannot clear, so a duplicate of an
+    // imported workflow no longer gets aider's --yes-always and codex's
+    // --skip-git-repo-check handed back to it.
+    untrusted: workflow.origin === 'imported' || !!(sidecar && sidecar.origin === 'imported'),
   };
   activeRuns.set(runId, runState);
   executeWorkflow(event, workflow, runState);
