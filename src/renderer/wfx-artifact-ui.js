@@ -314,6 +314,30 @@
     return entry ? entry.control : null;
   }
 
+  // A name set on one line, whatever the file put in it.
+  //
+  // el() replaces the invisible characters and deliberately leaves the three
+  // whitespace controls alone, because a prompt renders in a <pre> where its
+  // own newlines and tabs are the shape of the text. A step name is not: it is
+  // set in a <span>, where a newline collapses to a space, and it is executable
+  // text on the far side of that span. wfRouteInstruction joins sibling step
+  // names into the routing line the runner appends to the agent's system
+  // prompt, so a name carrying a newline shows the reader one line and hands
+  // the model two, and the consent gate then holds a signature for a sentence
+  // it never displayed. That is a step past ordinary prompt injection, which
+  // this threat model already accepts: the step prompt is a user turn and the
+  // routing line is a system turn.
+  //
+  // Replacing the control character with U+FFFD is the report el() already
+  // makes about the invisibles rather than a new idea: the bytes and the pixels
+  // disagree, and the surface says so instead of quietly picking one. The
+  // durable fix is a charset rule on `name` in the import validator, and this
+  // stays afterwards, because a renderer that depends on a validator for what
+  // it puts on screen carries a second copy of that validator's bugs.
+  // wfx-install.js holds the same two lines; the two files share no scope.
+  const NAME_CONTROL_RE = /[\u0000-\u001F\u007F]/g;
+  const oneLine = (value) => (typeof value === 'string' ? value.replace(NAME_CONTROL_RE, '\uFFFD') : '');
+
   // A sentence in a title or a note, with one identifier lifted into a code
   // chip. Every piece is a text node; the split is by indexOf on a literal, so
   // there is no pattern for a name to be interesting inside.
@@ -933,7 +957,7 @@
     return el('summary', null,
       el('span', { class: 'wfx-step-n' }, String(index + 1).padStart(2, '0')),
       el('span', { class: 'wfx-step-b' },
-        el('span', { class: 'wfx-step-name' }, typeof node.name === 'string' ? node.name : ''),
+        el('span', { class: 'wfx-step-name' }, oneLine(node.name)),
         el('span', { class: 'wfx-step-sub' },
           el('span', { class: 'wfx-step-meta' }, meta),
           ' ',
@@ -1163,8 +1187,8 @@
   }
 
   function identityBlock(artifact) {
-    const name = typeof artifact.name === 'string' ? artifact.name : '';
-    const publisher = (artifact.publisher && typeof artifact.publisher.name === 'string') ? artifact.publisher.name : '';
+    const name = oneLine(artifact.name);
+    const publisher = oneLine(artifact.publisher && artifact.publisher.name);
     const title = publisher ? `${name} · ${publisher}` : name;
     const children = [el('p', { class: 'wfx-note-t' }, title)];
     if (typeof artifact.description === 'string' && artifact.description) {
@@ -1377,9 +1401,8 @@
     const artifact = (o.artifact && typeof o.artifact === 'object') ? o.artifact : null;
     const graph = artifact ? artifact.graph : (o.workflow && o.workflow.graph);
     const steps = orderedSteps(graph);
-    const name = (artifact && typeof artifact.name === 'string' && artifact.name)
-      ? artifact.name
-      : ((o.workflow && typeof o.workflow.name === 'string') ? o.workflow.name : '');
+    const name = oneLine(artifact && artifact.name)
+      || oneLine(o.workflow && o.workflow.name);
 
     const provenance = [];
     const publisherUrl = (artifact && artifact.publisher && typeof artifact.publisher.url === 'string')

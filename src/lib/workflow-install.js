@@ -46,6 +46,12 @@ const SEVERITY_RANK = { block: 0, caution: 1, ok: 2 };
 // sheet both key their recovery copy off these strings, and a refusal a
 // surface cannot name is a refusal the user cannot act on.
 const RUN_REFUSAL_CODES = [
+  // The record says it came from a file and the consent row is not there. It is
+  // its own code rather than another consent-required because the cure is
+  // different: consent-required is answered by reading the prompts in the gate,
+  // and this one cannot be, since the artifact those prompts would be read from
+  // is exactly what went missing.
+  'sidecar-missing',
   'consent-required',
   'cwd-required',
   'cwd-is-home',
@@ -460,6 +466,28 @@ function versionParts(v) {
 function runGateDecision(input) {
   const opts = isObject(input) ? input : {};
   const sidecar = isObject(opts.sidecar) ? opts.sidecar : null;
+
+  // The record's own origin is consulted before the sidecar, because a missing
+  // row used to mean "locally authored" and absence is the one answer an
+  // attacker can arrange. Three ways to arrange it were found: duplicating an
+  // imported card copied every prompt and wrote no row, an install whose row
+  // never reached disk still reported success, and one unparseable byte in the
+  // store turned every imported workflow on the machine into a local one at
+  // once.
+  //
+  // origin is stamped on the record at install and no manifest and no update
+  // can set it, so it survives a copy and damaging a file cannot clear it. When
+  // it says imported and the row is gone, that is not a local workflow. It is
+  // an imported one whose consent record we have lost, and the honest answer is
+  // to refuse rather than to run a stranger's prompts ungated.
+  const recordOrigin = typeof opts.recordOrigin === 'string' ? opts.recordOrigin : null;
+  if (recordOrigin === 'imported' && !sidecar) {
+    return refusal('sidecar-missing',
+      opts.storeUnreadable === true
+        ? 'this workflow came from a file, and the record of what you agreed to could not be read'
+        : 'this workflow came from a file, and the record of what you agreed to is gone',
+      'reinstall it from the file to review its steps again');
+  }
 
   // Locally authored workflows are not gated. The whole risk this gate exists
   // for is a stranger's 8192 characters reaching a CLI, and a workflow the
