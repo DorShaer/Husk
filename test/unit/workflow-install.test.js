@@ -541,3 +541,36 @@ test('the install path never reaches an MCP mutation channel', () => {
     }
   }
 });
+
+// ─── a copy is still a stranger's work ───────────────────────────────────────
+//
+// Every check in this feature reads "did somebody else write this" as the
+// PRESENCE of a sidecar row, so anything that produces a workflow without one
+// produces a workflow that is trusted by default. Duplicating used to do
+// exactly that: the copy carried the stranger's prompts and pinned agents, and
+// carried no row, so the consent gate never opened, the run fell back to
+// whichever directory was open rather than a bound one, and the auto-approving
+// agent flags came back. The gate below is the shape of that hole.
+test('a run gate treats a missing sidecar as locally authored, so copies must keep theirs', () => {
+  const { runGateDecision } = require('../../src/lib/workflow-install');
+
+  // The property that makes the hole possible, stated so it cannot drift.
+  assert.equal(runGateDecision({ sidecar: null, cwd: null }).ok, true);
+  assert.equal(runGateDecision({ sidecar: { origin: 'local' }, cwd: null }).ok, true);
+
+  // And the property that closes it: a copy that keeps origin still gates.
+  const copied = runGateDecision({
+    sidecar: { origin: 'imported', consentedAt: null, boundCwd: '/home/user/proj' },
+    cwd: '/home/user/proj',
+  });
+  assert.equal(copied.ok, false);
+  assert.equal(copied.code, 'consent-required');
+
+  // Carrying the consent across would be the same hole with a new id.
+  const consented = runGateDecision({
+    sidecar: { origin: 'imported', consentedAt: '2026-01-01T00:00:00.000Z', boundCwd: '/home/user/proj' },
+    cwd: null,
+  });
+  assert.equal(consented.ok, false);
+  assert.equal(consented.code, 'cwd-required');
+});

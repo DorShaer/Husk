@@ -150,6 +150,10 @@ contextBridge.exposeInMainWorld('husk', {
   workflows: {
     list: () => ipcRenderer.invoke('workflows:list'),
     create: (payload) => ipcRenderer.invoke('workflows:create', payload),
+    // Duplicating has its own channel rather than going through create with a
+    // copied record, so an imported workflow's origin travels with the copy
+    // while its consent does not.
+    duplicate: (workflowId) => ipcRenderer.invoke('workflows:duplicate', { workflowId }),
     update: (payload) => ipcRenderer.invoke('workflows:update', payload),
     delete: (id) => ipcRenderer.invoke('workflows:delete', id),
     // opts.cwd binds this run to a directory. An imported workflow is refused
