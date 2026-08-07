@@ -5597,6 +5597,19 @@ function createWorkflowRecord(payload) {
     description: String(p.description || '').slice(0, 256),
     graph: sanitizeGraph(p.graph),
     trigger: validTriggers.includes(p.trigger) ? p.trigger : 'manual',
+    // Where this workflow came from, stated on the record rather than inferred
+    // from whether a sidecar row can be found. Absence is the one answer an
+    // attacker can arrange, and there were three ways to arrange it:
+    // duplicating an imported card copied every prompt and wrote no row, an
+    // install whose row never reached disk still reported success, and a single
+    // unparseable byte in the store read every imported workflow on the machine
+    // as locally authored at once.
+    //
+    // Only workflows:install passes 'imported'. A manifest cannot reach this,
+    // because an artifact's fields are projected onto an allowlist long before
+    // they arrive here, and workflows:update carries its own whitelist which
+    // does not include it. Everything else is local.
+    origin: p.origin === 'imported' ? 'imported' : 'local',
     createdAt: now,
     updatedAt: now,
   };
@@ -5635,6 +5648,11 @@ ipcMain.handle('workflows:duplicate', (_e, payload = {}) => {
     description: migrated.description,
     graph: migrated.graph,
     trigger: migrated.trigger,
+    // Carried on the record as well as through the sidecar copy below, because
+    // the sidecar copy depends on the source's row being readable and this does
+    // not. A copy of a stranger's prompts is still a stranger's prompts even if
+    // the store that remembered where they came from is damaged.
+    origin: migrated.origin === 'imported' ? 'imported' : 'local',
   });
 
   const row = sidecarFor(sourceId);
@@ -5709,7 +5727,16 @@ ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
   const boundCwd = requested || (sidecar && sidecar.boundCwd) || null;
   const resolvedCwd = boundCwd ? path.resolve(boundCwd) : null;
   const gate = WorkflowInstall.runGateDecision(Object.assign(
-    { sidecar, cwd: resolvedCwd },
+    {
+      sidecar,
+      cwd: resolvedCwd,
+      // The record's own account of where it came from, and whether the store
+      // that would have held its consent row could be read at all. Together
+      // these let the gate tell "locally authored" from "imported, and the row
+      // is missing", which used to be the same answer.
+      recordOrigin: workflow.origin === 'imported' ? 'imported' : 'local',
+      storeUnreadable: loadSidecarStore().unreadable === true,
+    },
     wfxDirFacts(resolvedCwd),
   ));
   if (!gate.ok) {
@@ -5870,11 +5897,20 @@ function loadSidecarStore() {
     if (!fs.existsSync(WORKFLOW_ARTIFACTS_PATH)) return WorkflowInstall.normalizeStore(null);
     return WorkflowInstall.normalizeStore(JSON.parse(fs.readFileSync(WORKFLOW_ARTIFACTS_PATH, 'utf8')));
   } catch (_) {
-    // A store that cannot be read is an empty store, which fails closed: every
-    // workflow reads as locally authored and nothing gains a consent it was
-    // never given. The alternative, throwing, would take the workflows page
-    // down over a file nothing but this feature uses.
-    return WorkflowInstall.normalizeStore(null);
+    // An empty store is NOT the safe reading, and the comment that used to sit
+    // here had the direction backwards. "Every workflow reads as locally
+    // authored" is the ungated state, so one unparseable byte in this file
+    // silently removed the consent gate from every imported workflow on the
+    // machine at once. Measured: same workflow, same id, refused before the
+    // corruption and running with no gate after it.
+    //
+    // The store still degrades to empty rather than throwing, because taking
+    // the workflows page down over this file would be its own denial of
+    // service. What changes is that it says so, and the run gate treats a
+    // record that calls itself imported with no readable row as a refusal.
+    const empty = WorkflowInstall.normalizeStore(null);
+    empty.unreadable = true;
+    return empty;
   }
 }
 
@@ -5892,12 +5928,14 @@ function sidecarFor(workflowId) {
   return Object.prototype.hasOwnProperty.call(store.rows, workflowId) ? store.rows[workflowId] : null;
 }
 
+// Returns the row on success and null when it did not reach disk. It used to
+// return the row either way, so a caller could not tell a recorded install from
+// one whose safety record silently failed to persist.
 function writeSidecar(row) {
   if (!row || !row.workflowId) return null;
   const store = loadSidecarStore();
   store.rows[row.workflowId] = row;
-  saveSidecarStore(store);
-  return row;
+  return saveSidecarStore(store) ? row : null;
 }
 
 // Called after any workflow disappears, so a row never outlives the workflow
@@ -6283,6 +6321,9 @@ ipcMain.handle('workflows:install', (_e, payload = {}) => {
     // belt over the braces: the artifact validator already proved this shape.
     graph: artifact.graph,
     trigger: 'manual',
+    // The one call site that may say this. It is what keeps the gate honest
+    // when the sidecar row is missing for any reason at all.
+    origin: 'imported',
   });
 
   const row = WorkflowInstall.sidecarRow({
@@ -6296,7 +6337,18 @@ ipcMain.handle('workflows:install', (_e, payload = {}) => {
     // for at the first Run and recorded here when it is given.
     consentedAt: null,
   });
-  writeSidecar(row);
+  // An install whose safety record did not reach disk is not an install. It
+  // used to answer ok and paint the done pane, leaving a stranger's workflow on
+  // the grid with no row, and the very next Run started it with no consent gate
+  // and no bound directory. The record is removed rather than left behind,
+  // because a half-installed workflow is worse than none: it is one the reader
+  // believes they reviewed.
+  if (!writeSidecar(row)) {
+    try { saveWorkflows(loadWorkflows().filter((w) => w && w.id !== workflow.id)); } catch (_) {}
+    return wfxRefuse('sidecar-write-failed',
+      'the workflow could not be marked as imported, so nothing was installed',
+      null, 'install');
+  }
   return { ok: true, workflow, sidecar: row };
 });
 
