@@ -259,6 +259,27 @@
         "src/lib/lang-detect.js",
         "src/lib/path-confine.js"
       ]
+    },
+    "workflowArtifact": {
+      "specs": [
+        "workflow-artifact-e2e.spec.js"
+      ],
+      "tokens": [
+        "wfx",
+        "artifact",
+        "receipt",
+        "ipc:workflows"
+      ],
+      "paths": [
+        "src/lib/workflow-artifact.js",
+        "src/lib/workflow-receipt.js",
+        "src/lib/workflow-install.js",
+        "src/lib/stable-json.js",
+        "src/renderer/wfx-dom.js",
+        "src/renderer/wfx-install.js",
+        "src/renderer/wfx-publish.js",
+        "src/renderer/wfx-artifact-ui.js"
+      ]
     }
   }
 }

@@ -5334,14 +5334,97 @@ function recordWorkflowRun(run, workflow) {
         name: (byId.get(id) || {}).name || 'Step',
         status: st.status,
         ms: st.ms || 0,
+        // Whether the per-step timer killed this step, recorded as a fact
+        // rather than inferred later from a duration near the timeout. A step
+        // that failed on its own at 299 seconds is not the same event, and a
+        // receipt that counts it as censored is describing a run that did not
+        // happen.
+        timedOut: st.timedOut === true,
+        // The vendor's own token report for this step, kept verbatim. Only
+        // claude is run with stream-json, so this is absent for the other four
+        // and the receipt says so rather than publishing zeros.
+        usage: st.usage || null,
         entries,
         truncated: entries.length < log.entries.length,
       };
     });
     const failed = steps.find((st) => st.status === 'failed');
+    // The fingerprint of the graph as it ran, not as it stands now. A receipt
+    // has to name the program it was earned on, and a workflow that gets a step
+    // edited is a different program with the same id: without this the run
+    // history is a pile of numbers that cannot be attached to anything, which
+    // is precisely the state that made every published figure read as zero.
+    // Recomputed here rather than read from the artifact, because a locally
+    // authored workflow has no artifact and still deserves receipts.
+    let graphHash = null;
+    try {
+      const h = WorkflowArtifact.graphHash(workflow.graph);
+      if (h && h.ok) graphHash = h.hash;
+    } catch (_) { /* a graph we cannot fingerprint still gets its history row */ }
+    // The machine these steps actually ran on, recorded now rather than
+    // assembled at publish time. A receipt describes runs that already
+    // happened, so describing them with whatever this machine looks like weeks
+    // later is the kind of small lie the format exists to make unrepresentable.
+    // Only facts that are true at this moment go in: the agents the graph
+    // named, the platform, and the Husk that drove it.
+    // agentResolved is a single name because the schema holds it to one: a
+    // graph may name several agents and requires.agentCommands already lists
+    // them all, so the receipt records the one that ran the most steps rather
+    // than inventing a comma-joined value the reader's enum would refuse.
+    const agentCounts = new Map();
+    for (const n of nodes) {
+      const base = AgentOneShot.agentBaseName(n.agentCommand || config.agentCommand || 'claude');
+      if (base) agentCounts.set(base, (agentCounts.get(base) || 0) + 1);
+    }
+    const agentResolved = [...agentCounts.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0];
+    let environment = null;
+    try {
+      // git decides, not the presence of a .git entry. A directory can carry an
+      // empty .git and not be a repository at all, and asking git directly is
+      // the difference between a measurement and a guess. Failing the question
+      // means this is not a work tree, which makes both fields below true
+      // rather than dropping the block over one unanswerable field.
+      let vcs = 'none';
+      let tracked = '0';
+      if (run.cwd) {
+        const git = (args) => require('child_process').execFileSync('git', args, {
+          cwd: run.cwd, encoding: 'utf8', timeout: 4000, maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        try {
+          if (String(git(['rev-parse', '--is-inside-work-tree']) || '').trim() === 'true') {
+            vcs = 'git';
+            // Bucketed, never exact. A file count fingerprints somebody's
+            // private repository, and a reader only needs to know whether this
+            // ran against something their size.
+            const n = String(git(['ls-files']) || '').split('\n').filter(Boolean).length;
+            tracked = n === 0 ? '0'
+              : n <= 100 ? '1-100'
+                : n <= 1000 ? '100-1k'
+                  : n <= 10000 ? '1k-10k'
+                    : n <= 100000 ? '10k-100k' : '100k+';
+          }
+        } catch (_) { /* not a work tree, or no git: the defaults above are the honest answer */ }
+      }
+      environment = {
+        agentResolved: agentResolved ? agentResolved[0] : 'claude',
+        // Left empty rather than guessed. Husk does not ask the CLI its version
+        // and an empty string is a shorter claim than a wrong one.
+        agentVersion: '',
+        os: process.platform,
+        huskVersion: app.getVersion(),
+        workspace: { vcs, trackedFiles: tracked, languages: [] },
+      };
+    } catch (_) {
+      // Anything we could not measure means no environment block at all. The
+      // receipt then carries one fewer author claim, which is strictly better
+      // than carrying one that is wrong.
+      environment = null;
+    }
     const entry = {
       id: run.id,
       workflowId: run.workflowId,
+      graphHash,
+      environment,
       workflowName: workflow.name || '',
       status: run.status,
       startedAt: run.startedAt,
@@ -6195,16 +6278,50 @@ function wfxReceiptsFor(workflow, graphHash) {
         : `nothing publishable yet: ${a.publishBlockers.join(', ')}`,
     };
   }
-  // Deliberately unreachable until run rows carry a fingerprint. Left as a
-  // refusal rather than as an environment block assembled from whatever this
-  // machine looks like right now, because environment describes the machine
-  // the runs happened on and guessing it is the kind of small lie the whole
-  // format was designed to make unrepresentable.
-  return {
-    receipts: [],
-    summary,
-    reason: 'run history is not yet recorded in enough detail to describe the machine those runs happened on',
+  // The environment is taken from the runs themselves rather than from this
+  // machine as it stands now. recordWorkflowRun stamps each row at the moment
+  // it finishes, so the most recent matching row describes a machine that
+  // genuinely executed this fingerprint. A row from before that stamp existed
+  // contributes nothing rather than a guess, and the receipt ships without an
+  // environment block, which the reader sees as one fewer author claim rather
+  // than as a claim that happens to be wrong.
+  const matching = loadWorkflowRuns().filter((r) => r
+    && r.workflowId === workflow.id
+    && r.graphHash === graphHash
+    && r.environment && typeof r.environment === 'object');
+  const environment = matching.length ? matching[0].environment : null;
+
+  // Derived from what the receipt says rather than randomly, so republishing an
+  // unchanged history produces an unchanged file. A random id would make every
+  // export a diff against the last one, and a format whose whole purpose is to
+  // be committed next to code should not churn when nothing happened.
+  const receiptId = `rcp_${crypto.createHash('sha256').update([
+    graphHash,
+    String(a.runs),
+    (a.window && a.window.firstRunAt) || '',
+    (a.window && a.window.lastRunAt) || '',
+  ].join(' ')).digest('hex').slice(0, 16)}`;
+
+  const receipt = {
+    id: receiptId,
+    graphHash,
+    runs: a.runs,
+    runsWindowed: a.runsWindowed,
+    window: a.window,
+    outcomes: a.outcomes,
+    outcomeBasis: a.outcomeBasis,
+    medianDurationMs: a.medianDurationMs,
+    durationCensored: a.durationCensored,
+    medianTokens: a.medianTokens,
+    // No log is shipped unless the publisher asks for one, so a receipt on its
+    // own is an author claim and says so through this field rather than
+    // through prose a surface would have to interpret.
+    evidence: 'none',
+    chain: null,
   };
+  if (environment) receipt.environment = environment;
+
+  return { receipts: [receipt], summary, reason: null };
 }
 
 // The path a published file defaults to. A workflow bound to a work tree
@@ -6484,6 +6601,14 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
       let ev;
       try { ev = JSON.parse(line); } catch (_) { activity('text', line); continue; }
       sawAnyEvent = true;
+      // The result event is the only place the vendor states what the step
+      // cost, and it was being read for its text and thrown away otherwise.
+      // Kept verbatim in the vendor's own spelling; workflow-receipt.js reads
+      // both the camelCase and snake_case tiers precisely so nothing here has
+      // to normalize and risk disagreeing with it.
+      if (ev && ev.type === 'result' && ev.usage && typeof ev.usage === 'object') {
+        stepState.usage = ev.usage;
+      }
       handleStreamEvent(ev, activity, (txt) => { resultText = txt; });
     }
   });
@@ -6491,6 +6616,11 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
 
   const killTimer = setTimeout(() => {
     activity('error', 'Step timed out after 5 minutes, killing the agent.');
+    // Recorded before the kill, because the close handler cannot tell a step we
+    // stopped from one that failed on its own, and a receipt that cannot count
+    // its censored runs is quoting a median over a truncated sample as though
+    // it were the whole story.
+    stepState.timedOut = true;
     try { child.kill('SIGKILL'); } catch (_) {}
   }, WF_STEP_TIMEOUT_MS);
 
