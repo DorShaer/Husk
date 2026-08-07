@@ -5,6 +5,7 @@
 // Pure logic, no Electron, so it can be unit tested directly (mirrors
 // src/lib/repo-mcp.js).
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -32,8 +33,20 @@ function validateRepoUrl(input) {
   if (!segments.length) {
     return { ok: false, error: `That URL points to a site, not a repository. Expected something like ${URL_EXAMPLE}.` };
   }
-  const dirName = [u.hostname, ...segments].join('-').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 200);
-  return { ok: true, url: u.href, dirName };
+  // The readable part of the folder name flattens the URL, and flattening is
+  // lossy: host/husk-pack and host/husk/pack both read as localhost-husk-pack,
+  // and so do the same path on two different ports. The clone directory is
+  // keyed on this name, so two repositories sharing one meant the second URL
+  // silently served the first one's checkout. The suffix is what makes the
+  // name identify the URL rather than merely describe it.
+  //
+  // It is taken over a normalized URL rather than over u.href so the two
+  // spellings of one repository still share a clone: a trailing .git and a
+  // trailing slash are not different repositories.
+  const normalized = `${u.protocol}//${u.host}/${segments.join('/')}`;
+  const digest = crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 10);
+  const readable = [u.hostname, ...segments].join('-').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 180);
+  return { ok: true, url: u.href, dirName: `${readable}-${digest}` };
 }
 
 // Validate a local repository path. Returns { ok: true, root } with the

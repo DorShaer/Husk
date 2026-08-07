@@ -31,13 +31,33 @@ test('validateRepoUrl accepts a plain https repo URL', () => {
   const r = validateRepoUrl('https://github.com/dev/agent-repo');
   assert.equal(r.ok, true);
   assert.equal(r.url, 'https://github.com/dev/agent-repo');
-  assert.equal(r.dirName, 'github.com-dev-agent-repo');
+  // Readable part, then a digest of the URL the name has to identify.
+  assert.match(r.dirName, /^github\.com-dev-agent-repo-[0-9a-f]{10}$/);
 });
 
 test('validateRepoUrl strips a trailing .git from the dir name', () => {
   const r = validateRepoUrl('https://github.com/dev/agent-repo.git');
   assert.equal(r.ok, true);
-  assert.equal(r.dirName, 'github.com-dev-agent-repo');
+  // Two spellings of one repository share one clone, digest included.
+  assert.equal(r.dirName, validateRepoUrl('https://github.com/dev/agent-repo').dirName);
+});
+
+// The flattened part of the name is lossy: host/a-b and host/a/b read the same
+// once the separators are gone, and so do one path on two ports. The clone
+// directory is keyed on this name, so a collision meant one URL served another
+// repository's checkout.
+test('validateRepoUrl gives colliding URL shapes different dir names', () => {
+  const flat = validateRepoUrl('https://localhost:8443/husk-pack.git');
+  const nested = validateRepoUrl('https://localhost:8443/husk/pack.git');
+  assert.equal(flat.ok, true);
+  assert.equal(nested.ok, true);
+  assert.notEqual(flat.dirName, nested.dirName);
+});
+
+test('validateRepoUrl gives the same path on two ports different dir names', () => {
+  const a = validateRepoUrl('https://localhost:8443/husk-flows.git');
+  const b = validateRepoUrl('https://localhost:9443/husk-flows.git');
+  assert.notEqual(a.dirName, b.dirName);
 });
 
 test('validateRepoUrl rejects an empty input', () => {
