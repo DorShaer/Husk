@@ -48,6 +48,11 @@
 
 const crypto = require('crypto');
 const { stableJson } = require('./stable-json');
+// The arithmetic that turns runs into figures, borrowed rather than repeated.
+// A shipped log is re-derived through the same aggregation the publisher used,
+// so "the numbers disagree" can only ever mean the log and the receipt
+// disagree, never that two implementations of a median do.
+const WorkflowReceipt = require('./workflow-receipt');
 const {
   ALLOWED_AGENT_COMMANDS,
   clipText,
@@ -83,6 +88,62 @@ const MAX_NODES = 64;
 const MAX_EDGES = 256;
 const MAX_RECEIPTS = 8;
 const MAX_PROMPT = 8192;
+
+// How much log one receipt may carry. Four rows is the floor because a run
+// that happened at all leaves a start_run, a workflow_binding, at least one
+// step and a run_summary; anything shorter describes no run, and an empty file
+// is the specific input the raw chain verifier calls valid. The two ceilings
+// are the schema's, restated here so the reader of a chain and the validator
+// of one are bounded by the same numbers rather than by two sets of literals.
+const MIN_CHAIN_LINES = 4;
+const MAX_CHAIN_LINES = 4000;
+const MAX_CHAIN_SESSIONS = 32;
+
+// The genesis anchor, declared here rather than imported. audit.js:41 holds the
+// same constant and its header says why it is public: a verifier needs no
+// shared secret to walk the chain. Requiring that module would pull fs into a
+// file whose entire testability argument is that it has none, and one line
+// cannot drift unnoticed, because test/unit/workflow-artifact-chain.test.js
+// asserts the two values are equal.
+const GENESIS_HASH = '0'.repeat(64);
+
+// The audit row schema this Husk knows how to read (audit.js:39). A row from a
+// later version is refused rather than read hopefully: sid, seq, kind and prev
+// are exactly the fields a schema bump is free to redefine, and figures derived
+// through a misreading of them would arrive wearing the one tier that says this
+// machine checked something.
+const AUDIT_ROW_SCHEMA = 1;
+
+// The three rows that give a workflow run its shape, in the order they must
+// appear. start_run opens the session, workflow_binding names the graph the run
+// executed so the binding sits inside the chain rather than beside it, and
+// run_summary closes it, which is what makes a tail truncation visible.
+const ROW_START = 'start_run';
+const ROW_BINDING = 'workflow_binding';
+const ROW_SUMMARY = 'run_summary';
+
+// Every way a shipped log can fail, as a closed set. A caller renders one
+// sentence per predicate and a test names the one it expects, so a failure that
+// arrived through the wrong predicate is a test failure rather than a passing
+// assertion about a message string.
+const CHAIN_PREDICATES = [
+  'lines-type',
+  'empty-log',
+  'too-few-lines',
+  'too-many-lines',
+  'line-type',
+  'not-json',
+  'row-shape',
+  'row-schema',
+  'prev-hash',
+  'session-ids',
+  'session-order',
+  'session-count',
+  'seq',
+  'structure',
+  'binding',
+  'head',
+];
 
 // Safety ceilings for canonicalProjection, which is also reachable from the
 // export side where the graph is local rather than hostile. They sit far above
@@ -850,11 +911,28 @@ function validateArtifactInner(obj) {
     projectedReceipts.push(r.receipt);
   }
 
+  // The shipped logs, walked here rather than by whoever draws them. Structure
+  // was checked above; this is the part that re-hashes the rows and recomputes
+  // the figures from them, and it happens on every read so no surface can
+  // render an inline receipt without the answer already in hand.
+  //
+  // A failure here does not refuse the file. The graph is unaffected by a log
+  // that does not hold up, and refusing the whole artifact would take a
+  // perfectly installable workflow down with its author's arithmetic. What
+  // collapses is the receipt block, which the checks below say in the only
+  // vocabulary a surface reads.
+  const receiptChecks = projectedReceipts.map((r) => checkReceiptEvidence(r));
+  const chainCheck = combineEvidenceChecks(receiptChecks);
+
   const warnings = [];
   if (!projectedReceipts.length) {
     warnings.push({ code: 'no-receipts', message: 'this workflow ships no run history' });
   } else if (projectedReceipts.every((r) => r.evidence === 'none')) {
     warnings.push({ code: 'attested-only', message: 'every figure in this file is stated by its author with no log attached' });
+  } else if (chainCheck.valid !== true) {
+    warnings.push({ code: 'evidence-refused', message: 'the log this file attaches does not hold together, so its figures are withheld' });
+  } else if (chainCheck.agrees !== true) {
+    warnings.push({ code: 'evidence-disagrees', message: 'the log this file attaches does not support the figures declared beside it' });
   }
 
   // The allowlist projection. Every value here is a local that passed a check
@@ -878,7 +956,12 @@ function validateArtifactInner(obj) {
     notes,
   };
 
-  return { ok: true, artifact, warnings };
+  // chainCheck travels beside the artifact rather than inside it, because it is
+  // this machine's finding about the file and not a field of the format. A
+  // renderer that read `evidence: "inline"` off the receipt itself and promoted
+  // on it would be trusting the author's word that the author's word was
+  // checked, which is the whole feature's failure mode in one line.
+  return { ok: true, artifact, warnings, chainCheck, receiptChecks };
 }
 
 // The one sibling-name ambiguity wfResolveNext cannot resolve, found on a
@@ -1294,8 +1377,8 @@ function validateChain(chain, at, budget) {
 
   const sessionIds = get(chain, 'sessionIds');
   if (!Array.isArray(sessionIds)) return refuse('chain-invalid', `${at}.chain.sessionIds must be an array`, preview(sessionIds));
-  if (sessionIds.length < 1 || sessionIds.length > 32) {
-    return refuse('chain-invalid', `${at}.chain.sessionIds must name between one and 32 sessions`, `length ${sessionIds.length}`);
+  if (sessionIds.length < 1 || sessionIds.length > MAX_CHAIN_SESSIONS) {
+    return refuse('chain-invalid', `${at}.chain.sessionIds must name between one and ${MAX_CHAIN_SESSIONS} sessions`, `length ${sessionIds.length}`);
   }
   const validSessionIds = new Array(sessionIds.length);
   for (let i = 0; i < sessionIds.length; i++) {
@@ -1317,12 +1400,12 @@ function validateChain(chain, at, budget) {
   // and a run_summary. An audit log with fewer than that describes no run, and
   // an empty one passes the raw chain verifier by doing nothing at all.
   const lineCount = get(chain, 'lineCount');
-  const badCount = badInt(lineCount, `${at}.chain.lineCount`, 4, 4000, 'chain-invalid');
+  const badCount = badInt(lineCount, `${at}.chain.lineCount`, MIN_CHAIN_LINES, MAX_CHAIN_LINES, 'chain-invalid');
   if (badCount) return badCount;
 
   const lines = get(chain, 'lines');
   if (!Array.isArray(lines)) return refuse('chain-invalid', `${at}.chain.lines must be an array`, preview(lines));
-  if (lines.length > 4000) return refuse('chain-invalid', `${at}.chain.lines has ${lines.length} rows and the limit is 4000`, `length ${lines.length}`);
+  if (lines.length > MAX_CHAIN_LINES) return refuse('chain-invalid', `${at}.chain.lines has ${lines.length} rows and the limit is ${MAX_CHAIN_LINES}`, `length ${lines.length}`);
   if (lines.length !== lineCount) {
     return refuse('chain-invalid', `${at}.chain says it holds ${lineCount} rows and holds ${lines.length}`, `${at}.chain.lines`);
   }
@@ -1353,6 +1436,305 @@ function validateChain(chain, at, budget) {
       lines: validLines,
     },
   };
+}
+
+// ─── reading the shipped log ─────────────────────────────────────────────
+
+// verifyArtifactChain(lines, sessionIds, opts) walks a shipped audit log and
+// answers one question: do these rows hold together as the record of the runs
+// they claim to be.
+//
+// It is not verifyAuditChain and it never calls it. That function tests a
+// single predicate, row.prev === sha256(previous line), and is unsound in two
+// measurable directions for this use. An empty audit.jsonl returns valid,
+// because the filter that drops empty lines leaves nothing for the loop to
+// walk (audit.js:306, :318), so a receipt could ship zero rows of evidence and
+// pass the check a reader has heard of. And genesis anchoring protects the head
+// only, so a log with its tail cut off stays valid all the way to wherever it
+// now stops: an author whose last four runs failed could publish the first
+// eleven rows of a fifteen row log and lose nothing but the failures.
+//
+// Six predicates close both holes and three more:
+//
+//   1. at least MIN_CHAIN_LINES rows, and an empty log is its own refusal
+//      rather than a length one, because the empty case is the specific hole
+//      above and a reader deserves to be told which of the two happened
+//   2. every row's sid equals the session declared for the position it sits in
+//   3. every row's seq equals its zero-based index inside its own session
+//   4. row 0 of a session is start_run, row 1 is workflow_binding, and neither
+//      kind appears anywhere else in it
+//   5. the last row of a session is run_summary, which is what a tail
+//      truncation cannot survive
+//   6. the binding row names a graph fingerprint, and when the caller states
+//      which one it expects, that exact one
+//
+// What a passing chain means is still only that this JSONL is internally well
+// formed and self-consistent. There is no signature anywhere in
+// src/lib/autonomy/ and the genesis anchor is a public constant, so a whole
+// passing chain is about fifteen lines of JavaScript to forge. That is why the
+// tier this earns is "matches the shipped log" and why the word "verified"
+// appears nowhere near it.
+//
+// Only inline payloads are read. A blob_ref row is an opaque hash here: spilled
+// blobs go through Electron safeStorage and are bound to the keychain of the
+// machine that wrote them, so a reader could not open one and should not try.
+//
+// sessionIds may be a single id, which is the shape the format ships today, or
+// the ordered list of sessions the lines run through. Multiple sessions are
+// concatenated in order and each one re-anchors at genesis, because a session
+// is one audit.jsonl and each file starts its own chain.
+//
+// Returns { ok: true, valid: true, lineCount, head, sessionIds, sessions,
+// graphHash } where each session is { sessionId, rows }, or { ok: true, valid:
+// false, predicate, reason, atIndex } naming the predicate that failed and the
+// row it failed at. Total: any input, including a hostile one, yields one of
+// those two rather than a throw.
+function verifyArtifactChain(lines, sessionIds, opts) {
+  try {
+    return verifyArtifactChainInner(lines, sessionIds, isPlainObject(opts) ? opts : {});
+  } catch (_) {
+    // The exception text came from the same input we are refusing and would be
+    // rendered by a surface with no reason to trust it, so it does not travel.
+    return chainInvalid('lines-type', 'the shipped log raised while it was being read', -1);
+  }
+}
+
+function chainInvalid(predicate, reason, atIndex) {
+  return { ok: true, valid: false, predicate, reason, atIndex };
+}
+
+function verifyArtifactChainInner(lines, sessionIds, opts) {
+  if (!Array.isArray(lines)) {
+    return chainInvalid('lines-type', 'the shipped log is not a list of rows', -1);
+  }
+  const declared = typeof sessionIds === 'string' ? [sessionIds] : sessionIds;
+  if (!Array.isArray(declared) || declared.length < 1 || declared.length > MAX_CHAIN_SESSIONS) {
+    return chainInvalid('session-ids', `a shipped log names between one and ${MAX_CHAIN_SESSIONS} sessions`, -1);
+  }
+  const seenIds = new Set();
+  for (let i = 0; i < declared.length; i++) {
+    const sid = declared[i];
+    if (typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
+      return chainInvalid('session-ids', `session ${i} is not a plain session id`, -1);
+    }
+    // A repeated id would let two segments of one session be presented as two
+    // runs, which doubles every count in the receipt without breaking a hash.
+    if (seenIds.has(sid)) return chainInvalid('session-ids', `session "${sid}" is named twice`, -1);
+    seenIds.add(sid);
+  }
+
+  const count = lines.length;
+  if (count === 0) {
+    return chainInvalid('empty-log', 'the shipped log has no rows in it', -1);
+  }
+  if (count < MIN_CHAIN_LINES) {
+    return chainInvalid('too-few-lines', `the shipped log has ${count} rows and a run leaves at least ${MIN_CHAIN_LINES}`, count - 1);
+  }
+  if (count > MAX_CHAIN_LINES) {
+    return chainInvalid('too-many-lines', `the shipped log has ${count} rows and the limit is ${MAX_CHAIN_LINES}`, MAX_CHAIN_LINES);
+  }
+
+  const sessions = [];
+  let segment = null;          // the session being walked
+  let segmentIndex = -1;
+  let prevHash = GENESIS_HASH;
+  let graphHash = null;
+  const expected = typeof opts.graphHash === 'string' ? opts.graphHash : null;
+
+  for (let i = 0; i < count; i++) {
+    const line = lines[i];
+    if (typeof line !== 'string') return chainInvalid('line-type', `row ${i} is not a string`, i);
+    let row;
+    try { row = JSON.parse(line); } catch (_) {
+      return chainInvalid('not-json', `row ${i} is not valid JSON`, i);
+    }
+    if (!isPlainObject(row)) return chainInvalid('row-shape', `row ${i} is not an object`, i);
+    const v = get(row, 'v');
+    if (v !== AUDIT_ROW_SCHEMA) {
+      return chainInvalid('row-schema', `row ${i} is written in audit schema ${preview(v)} and this Husk reads ${AUDIT_ROW_SCHEMA}`, i);
+    }
+    const sid = get(row, 'sid');
+    const seq = get(row, 'seq');
+    const kind = get(row, 'kind');
+    const prev = get(row, 'prev');
+    if (typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) return chainInvalid('row-shape', `row ${i} has no readable session id`, i);
+    if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 0) return chainInvalid('row-shape', `row ${i} has no readable sequence number`, i);
+    if (typeof kind !== 'string' || !kind) return chainInvalid('row-shape', `row ${i} does not say what kind of event it is`, i);
+    if (typeof prev !== 'string' || prev.length !== 64 || !/^[0-9a-f]{64}$/.test(prev)) {
+      return chainInvalid('row-shape', `row ${i} has no readable previous-row hash`, i);
+    }
+
+    // A session boundary is where the sid stops being the one we are walking,
+    // and which session may sit here is decided by the declared list rather
+    // than by the rows. That is what makes a splice visible: a row lifted out
+    // of another session either names a session this log never declared, or
+    // opens one whose first row is not a start_run at seq 0.
+    //
+    // Whether the row belongs here is asked before the session it interrupts is
+    // closed, so a splice is reported as the splice it is rather than as the
+    // short session it leaves behind. Both are refusals; only one of them tells
+    // the reader what happened.
+    if (segment === null || sid !== segment.sessionId) {
+      segmentIndex += 1;
+      if (segmentIndex >= declared.length) {
+        return chainInvalid('session-count', `row ${i} belongs to a session this log does not declare`, i);
+      }
+      if (sid !== declared[segmentIndex]) {
+        return chainInvalid('session-order', `row ${i} names session "${sid}" where "${declared[segmentIndex]}" was declared`, i);
+      }
+      if (segment !== null) {
+        const closed = closeChainSegment(segment);
+        if (closed) return closed;
+      }
+      segment = { sessionId: sid, rows: [], lastIndex: i, kinds: new Map() };
+      sessions.push(segment);
+      prevHash = GENESIS_HASH;
+    }
+
+    if (prev !== prevHash) {
+      return chainInvalid('prev-hash', `row ${i} does not follow the row before it`, i);
+    }
+    if (seq !== segment.rows.length) {
+      return chainInvalid('seq', `row ${i} is numbered ${seq} and sits at position ${segment.rows.length} of its session`, i);
+    }
+
+    const position = segment.rows.length;
+    if (position === 0 && kind !== ROW_START) {
+      return chainInvalid('structure', `session "${sid}" opens with a ${kind} row rather than a ${ROW_START}`, i);
+    }
+    if (position === 1 && kind !== ROW_BINDING) {
+      return chainInvalid('structure', `session "${sid}" does not name the graph it ran in its second row`, i);
+    }
+    if (position === 1) {
+      const payload = get(row, 'payload');
+      const declaredHash = isPlainObject(payload) ? get(payload, 'graphHash') : null;
+      if (typeof declaredHash !== 'string' || !GRAPH_HASH_RE.test(declaredHash)) {
+        return chainInvalid('binding', `session "${sid}" does not carry a workflow fingerprint in its binding row`, i);
+      }
+      if (expected !== null && declaredHash !== expected) {
+        return chainInvalid('binding', `session "${sid}" was run against a different workflow than the one this receipt describes`, i);
+      }
+      // Sessions that disagree with each other are refused even when the caller
+      // named no expectation, because a receipt is one claim about one program.
+      if (graphHash !== null && declaredHash !== graphHash) {
+        return chainInvalid('binding', `session "${sid}" was run against a different workflow than the sessions before it`, i);
+      }
+      graphHash = declaredHash;
+    }
+    if (position > 1 && (kind === ROW_START || kind === ROW_BINDING)) {
+      return chainInvalid('structure', `session "${sid}" opens a second time at row ${i}`, i);
+    }
+
+    segment.kinds.set(kind, (segment.kinds.get(kind) || 0) + 1);
+    segment.rows.push(row);
+    segment.lastIndex = i;
+    prevHash = sha256Hex(line);
+  }
+
+  const closed = closeChainSegment(segment);
+  if (closed) return closed;
+  if (sessions.length !== declared.length) {
+    return chainInvalid('session-count', `this log declares ${declared.length} sessions and carries ${sessions.length}`, count - 1);
+  }
+
+  const head = `sha256:${prevHash}`;
+  if (typeof opts.head === 'string' && opts.head !== head) {
+    return chainInvalid('head', 'the head this file states is not the head of the rows it ships', count - 1);
+  }
+
+  return {
+    ok: true,
+    valid: true,
+    lineCount: count,
+    head,
+    graphHash,
+    sessionIds: sessions.map((s) => s.sessionId),
+    sessions: sessions.map((s) => ({ sessionId: s.sessionId, rows: s.rows })),
+  };
+}
+
+// The two things about a session that can only be known once it has ended: it
+// is long enough to describe a run, and it closed rather than stopped. Returns
+// a refusal or null, so the walk above reads as one guard per boundary.
+function closeChainSegment(segment) {
+  if (!segment) return null;
+  const rows = segment.rows;
+  if (rows.length < MIN_CHAIN_LINES) {
+    return chainInvalid('too-few-lines',
+      `session "${segment.sessionId}" has ${rows.length} rows and a run leaves at least ${MIN_CHAIN_LINES}`,
+      segment.lastIndex);
+  }
+  const last = rows[rows.length - 1];
+  if (get(last, 'kind') !== ROW_SUMMARY) {
+    return chainInvalid('structure',
+      `session "${segment.sessionId}" stops without a ${ROW_SUMMARY}, so rows are missing from the end of it`,
+      segment.lastIndex);
+  }
+  if ((segment.kinds.get(ROW_SUMMARY) || 0) !== 1) {
+    return chainInvalid('structure',
+      `session "${segment.sessionId}" ends more than once`,
+      segment.lastIndex);
+  }
+  return null;
+}
+
+// What this machine can and cannot say about one receipt's figures.
+//
+// The answer travels as { checked, valid, agrees, detail } because those are
+// three different states and a surface has to tell them apart. `checked` false
+// is a receipt that shipped no log, which is the common case and carries no
+// blame. `valid` false is a log that does not hold together. `agrees` false is
+// the harder failure: rows that hash together perfectly under numbers they do
+// not support, which passes the check a reader has heard of. Both failures
+// collapse the receipt block rather than dropping it a tier, because a receipt
+// contradicted by its own evidence is the one somebody believes.
+function checkReceiptEvidence(receipt) {
+  if (!receipt || receipt.evidence !== 'inline' || !receipt.chain) {
+    return { checked: false, valid: null, agrees: null, detail: null };
+  }
+  const chain = receipt.chain;
+  const walk = verifyArtifactChain(chain.lines, chain.sessionIds, {
+    graphHash: receipt.graphHash,
+    head: chain.head,
+  });
+  if (!walk.valid) {
+    return {
+      checked: true,
+      valid: false,
+      agrees: null,
+      detail: walk.atIndex >= 0 ? `${walk.reason} (row ${walk.atIndex}, ${walk.predicate})` : `${walk.reason} (${walk.predicate})`,
+    };
+  }
+  const derived = WorkflowReceipt.figuresFromChain(walk.sessions);
+  if (!derived.ok) {
+    return { checked: true, valid: false, agrees: null, detail: derived.error };
+  }
+  const compared = WorkflowReceipt.compareFigures(receipt, derived.figures);
+  if (!compared.agrees) {
+    return {
+      checked: true,
+      valid: true,
+      agrees: false,
+      detail: compared.differences
+        .map((d) => `${d.field}: this file says ${d.declared}, its log says ${d.derived}`)
+        .join('\n'),
+    };
+  }
+  return { checked: true, valid: true, agrees: true, detail: null };
+}
+
+// One answer for the whole file, because a surface draws one record and asks
+// one question of it. Any receipt that failed decides the answer for all of
+// them: a file carrying one honest receipt and one contradicted by its own log
+// has not earned a tier on the strength of the honest half.
+function combineEvidenceChecks(checks) {
+  const inline = checks.filter((c) => c.checked);
+  if (!inline.length) return { checked: false, valid: null, agrees: null, detail: null };
+  const broken = inline.find((c) => c.valid !== true);
+  if (broken) return broken;
+  const disagreeing = inline.find((c) => c.agrees !== true);
+  if (disagreeing) return disagreeing;
+  return { checked: true, valid: true, agrees: true, detail: null };
 }
 
 // ─── writing a file ──────────────────────────────────────────────────────
@@ -1630,7 +2012,27 @@ function buildArtifactInner(workflow, opts) {
   const check = validateArtifact(artifact);
   if (!check.ok) return check;
 
-  return { ok: true, artifact: check.artifact, warnings: warnings.concat(check.warnings) };
+  // A log this machine attached is a log this machine must be able to walk. The
+  // read-back above proves the file is legal; this proves the evidence in it
+  // supports the figures printed next to it, which is the only reason to ship a
+  // log at all. Publishing a receipt our own reader would collapse is a bug in
+  // this module, and it surfaces here at the moment it is introduced rather
+  // than on a stranger's screen a week later.
+  if (check.chainCheck.checked) {
+    if (check.chainCheck.valid !== true) {
+      return refuse('chain-invalid', 'the log Husk attached to this file does not hold together', check.chainCheck.detail);
+    }
+    if (check.chainCheck.agrees !== true) {
+      return refuse('receipt-invalid', 'the log Husk attached does not support the figures beside it', check.chainCheck.detail);
+    }
+  }
+
+  return {
+    ok: true,
+    artifact: check.artifact,
+    warnings: warnings.concat(check.warnings),
+    chainCheck: check.chainCheck,
+  };
 }
 
 function firstString() {
@@ -1783,6 +2185,14 @@ module.exports = {
   MAX_NODES,
   MAX_EDGES,
   MAX_RECEIPTS,
+  MIN_CHAIN_LINES,
+  MAX_CHAIN_LINES,
+  MAX_CHAIN_SESSIONS,
+  GENESIS_HASH,
+  CHAIN_PREDICATES,
+  ROW_START,
+  ROW_BINDING,
+  ROW_SUMMARY,
   REFUSAL_CODES,
   EXPORT_REFUSAL_CODES,
   TRACKED_FILES_BUCKETS,
@@ -1791,6 +2201,8 @@ module.exports = {
   buildArtifact,
   parseArtifact,
   validateArtifact,
+  verifyArtifactChain,
+  checkReceiptEvidence,
   // exported for unit tests; not part of the public API.
   _internal: { normalizeAgentCommand, isLiteralPattern, hasLoneSurrogate, quantiseCoordinate, deriveArtifactId },
 };

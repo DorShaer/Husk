@@ -805,8 +805,215 @@ function computeAggregate(runs, opts) {
   return { ok: true, aggregate };
 }
 
+// ─── figures from a shipped log ──────────────────────────────────────────────
+
+// The workflow id the reconstructed rows are keyed on.
+//
+// A published log carries no workflow id and must not: the author's local
+// `wf-1762...` says nothing to a reader and the binding row already names the
+// only identity that matters, which is the fingerprint of the graph that ran.
+// aggregateRuns filters on both, so the reconstruction gives every row the same
+// literal and hands the same one back in. The filter still runs; it just cannot
+// exclude anything, which is correct, because a log's rows are the rows.
+const CHAIN_WORKFLOW_ID = 'husk.chain';
+
+// figuresFromChain(sessions) recomputes a receipt's figures from the audit rows
+// shipped inside the file.
+//
+// `sessions` is verifyArtifactChain's output: one entry per session, each with
+// the parsed rows of one run in order. This is the half of the feature that
+// makes "matches the shipped log" mean anything. The publisher builds the
+// declared figures with this function and the reader recomputes them with the
+// same one, so a disagreement can only ever be a file that was edited between
+// the two, never two implementations of a median drifting apart. That is also
+// why the reconstruction goes back through aggregateRuns rather than adding up
+// rows directly: there is exactly one definition of a censored run, of an
+// outcome bucket and of a token total in this codebase, and it is above.
+//
+// Three figures are deliberately not derived here. `runsWindowed` is a fact
+// about the author's run history, which a log cannot see. `environment` is what
+// their machine was, which no row can prove. The run window is derived, because
+// the rows carry the timestamps, but it stays in the author-states tier
+// wherever it is rendered: a clock is as author-controlled as the rest of the
+// file, and checking it against itself would dress a tautology as a finding.
+//
+// Returns { ok: true, figures, aggregate } or { ok: false, error }.
+function figuresFromChain(sessions) {
+  try {
+    return chainFigures(sessions);
+  } catch (_) {
+    return { ok: false, error: 'the shipped log raised while its figures were being recomputed' };
+  }
+}
+
+function chainFigures(sessions) {
+  if (!Array.isArray(sessions) || sessions.length < 1) {
+    return { ok: false, error: 'the shipped log names no sessions' };
+  }
+  let graphHash = null;
+  const rows = [];
+  for (let i = 0; i < sessions.length; i += 1) {
+    const built = runFromSession(sessions[i]);
+    if (!built.ok) return built;
+    // Every session was already checked against the others by the chain walk;
+    // this is the same rule stated where the arithmetic happens, so calling
+    // this function directly cannot aggregate two programs into one figure.
+    if (graphHash !== null && built.row.graphHash !== graphHash) {
+      return { ok: false, error: 'the sessions in this log were run against different workflows' };
+    }
+    graphHash = built.row.graphHash;
+    rows.push(built.row);
+  }
+
+  const agg = aggregateRuns(rows, {
+    workflowId: CHAIN_WORKFLOW_ID,
+    graphHash,
+    // The rows are the rows: a log is not a window onto a longer history, it is
+    // the whole of what was shipped. Stating the cap above the count keeps
+    // runsWindowed false rather than letting the default make a claim about a
+    // history this side of the wire has never seen.
+    historyMax: rows.length + 1,
+    stepTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  });
+  if (!agg.ok) return { ok: false, error: agg.error };
+  const a = agg.aggregate;
+  return {
+    ok: true,
+    aggregate: a,
+    figures: {
+      graphHash,
+      sessions: rows.length,
+      runs: a.runs,
+      window: a.window,
+      outcomes: a.outcomes,
+      outcomeBasis: a.outcomeBasis,
+      medianDurationMs: a.medianDurationMs,
+      durationCensored: a.durationCensored,
+      medianTokens: a.medianTokens,
+      publishable: a.publishable,
+      publishBlockers: a.publishBlockers,
+    },
+  };
+}
+
+// One session's rows back into the run-history shape aggregateRuns reads.
+//
+// The rows were parsed by the chain walk, which means they are plain JSON and
+// not hostile objects, so this reads them directly. What it does not do is
+// trust their contents: a payload field that is missing or the wrong type
+// simply does not contribute, and the aggregation upstream already treats an
+// unreadable duration as a run that does not vote on the median rather than as
+// a run that took zero milliseconds.
+function runFromSession(session) {
+  if (!isObject(session)) return { ok: false, error: 'a session in this log is not readable' };
+  const rows = Array.isArray(session.rows) ? session.rows : null;
+  if (!rows || rows.length < 4) return { ok: false, error: 'a session in this log is too short to describe a run' };
+  const binding = payloadOf(rows[1]);
+  const graphHash = binding && typeof binding.graphHash === 'string' ? binding.graphHash : null;
+  if (!graphHash) return { ok: false, error: 'a session in this log does not name the workflow it ran' };
+
+  const start = payloadOf(rows[0]) || {};
+  const summary = payloadOf(rows[rows.length - 1]) || {};
+  const steps = [];
+  for (let i = 2; i < rows.length - 1; i += 1) {
+    const row = rows[i];
+    if (!isObject(row) || row.kind !== 'step_end') continue;
+    const p = payloadOf(row) || {};
+    steps.push({
+      status: typeof p.status === 'string' ? p.status : '',
+      ms: p.ms,
+      timedOut: p.timedOut === true,
+      usage: isObject(p.usage) ? p.usage : null,
+    });
+  }
+
+  return {
+    ok: true,
+    row: {
+      id: typeof session.sessionId === 'string' ? session.sessionId : '',
+      workflowId: CHAIN_WORKFLOW_ID,
+      graphHash,
+      status: typeof summary.status === 'string' ? summary.status : '',
+      // The run's own two ends, from the row that recorded them. runDurationMs
+      // prefers `ms` and falls back to the pair, which is the same order it
+      // applies to a local history row.
+      startedAt: typeof summary.startedAt === 'string' ? summary.startedAt
+        : (typeof start.startedAt === 'string' ? start.startedAt : ''),
+      finishedAt: typeof summary.finishedAt === 'string' ? summary.finishedAt : '',
+      ms: summary.ms,
+      steps,
+    },
+  };
+}
+
+function payloadOf(row) {
+  return isObject(row) && isObject(row.payload) ? row.payload : null;
+}
+
+// The fields whose recomputation decides whether a receipt keeps its figures.
+//
+// These five and no others. The window and `runsWindowed` are excluded because
+// they are permanently author-stated: comparing an author's timestamps against
+// the same author's timestamps would produce a finding out of a tautology, and
+// a mismatch there would collapse a receipt over a fact the tier table says
+// nobody ever claimed to have checked. `environment` is excluded for the
+// stronger version of the same reason, since no row can carry proof of the
+// machine it was written on.
+const COMPARED_FIELDS = ['runs', 'outcomes', 'medianDurationMs', 'durationCensored', 'medianTokens'];
+
+// compareFigures(receipt, figures) answers whether a receipt says what its own
+// log says. Disagreement is not a caveat to render beside the numbers: the
+// caller collapses the whole receipt block, because a figure contradicted by
+// the evidence attached to it is worse than a figure with no evidence at all.
+function compareFigures(receipt, figures) {
+  const differences = [];
+  if (!isObject(receipt) || !isObject(figures)) {
+    return { agrees: false, differences: [{ field: 'receipt', declared: 'unreadable', derived: 'unreadable' }] };
+  }
+  for (const field of COMPARED_FIELDS) {
+    const declared = receipt[field];
+    const derived = figures[field];
+    if (!sameFigure(declared, derived)) {
+      differences.push({ field, declared: describeFigure(declared), derived: describeFigure(derived) });
+    }
+  }
+  return { agrees: differences.length === 0, differences };
+}
+
+// Equality for the shapes a compared field can take: a whole number, a null, or
+// a flat record of whole numbers. Written out rather than done by serializing
+// both sides, because key order would decide the answer and a receipt that
+// arrived through JSON.parse carries the author's key order, not ours.
+function sameFigure(a, b) {
+  if (a === null || b === null) return a === b;
+  if (typeof a === 'number' || typeof b === 'number') return a === b;
+  if (!isObject(a) || !isObject(b)) return false;
+  const keys = Object.keys(b);
+  for (const key of keys) {
+    if (a[key] !== b[key]) return false;
+  }
+  for (const key of Object.keys(a)) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+  }
+  return true;
+}
+
+// A compared value as one short line for the refusal pane. Records are printed
+// field by field in a fixed order so the two sides of a difference line up
+// under each other and the eye can find the one number that moved.
+function describeFigure(v) {
+  if (v === null || v === undefined) return 'nothing';
+  if (typeof v === 'number') return String(v);
+  if (!isObject(v)) return 'unreadable';
+  return Object.keys(v).sort().map((k) => `${k} ${v[k]}`).join(', ');
+}
+
 module.exports = {
   OUTCOME_BASIS,
+  CHAIN_WORKFLOW_ID,
+  COMPARED_FIELDS,
+  figuresFromChain,
+  compareFigures,
   DEFAULT_HISTORY_MAX,
   DEFAULT_STEP_TIMEOUT_MS,
   MAX_SOURCE_RUNS,
@@ -814,5 +1021,8 @@ module.exports = {
   MAX_RECEIPT_DURATION_MS,
   aggregateRuns,
   // exported for unit tests; not part of the public API.
-  _internal: { median, isoStamp, safeCount, readUsage, runTokens, runDurationMs, isCensored, outcomeBucket, precisionFor },
+  _internal: {
+    median, isoStamp, safeCount, readUsage, runTokens, runDurationMs, isCensored, outcomeBucket, precisionFor,
+    runFromSession, sameFigure, describeFigure,
+  },
 };

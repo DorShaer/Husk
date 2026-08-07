@@ -5422,6 +5422,12 @@ function recordWorkflowRun(run, workflow) {
       workflowId: run.workflowId,
       graphHash,
       environment,
+      // Which session under the autonomy storage root holds this run's chained
+      // log, or null for a run that could not open one and for every row
+      // written before the log existed. The publisher reads this to find the
+      // rows it may attach; a row without it is a run that can only ever be
+      // author-stated, which is what the whole history was until now.
+      auditSessionId: (run.audit && run.audit.sessionId) || null,
       workflowName: workflow.name || '',
       status: run.status,
       startedAt: run.startedAt,
@@ -5437,7 +5443,48 @@ function recordWorkflowRun(run, workflow) {
       i < WF_RUNS_WITH_LOGS ? r : { ...r, steps: (r.steps || []).map((st) => ({ ...st, entries: undefined })) }
     ));
     writeJsonAtomic(WORKFLOW_RUNS_PATH, trimmed);
+    wfPruneRunLogs(trimmed);
   } catch (_) { /* history is a nicety; never fail a run over it */ }
+}
+
+// Drop the log directories of runs the history no longer holds.
+//
+// The history is capped at WF_RUNS_MAX and the logs are not, so without this
+// every workflow run any user ever started would keep a directory forever,
+// most of them belonging to runs no surface can name any more. The rule is the
+// history's: a run that fell off the end of the list can no longer be published
+// from, so its rows are of no use to anyone.
+//
+// Two guards on what may be deleted. Only directories whose name is exactly the
+// `run-<digits>` shape this feature mints are considered, so an autopilot
+// session (`auto-<base36>-<hex>`) is never a candidate however the two stores
+// come to share a root. And only a bounded number go per call, because this
+// runs at the end of a run on the main thread and a first launch against a
+// storage root full of old sessions should cost a few unlinks, not a stall.
+const WF_LOG_PRUNE_MAX = 16;
+const WF_RUN_SESSION_RE = /^run-[0-9]{1,20}$/;
+
+function wfPruneRunLogs(history) {
+  try {
+    const keep = new Set();
+    for (const row of history) {
+      if (row && typeof row.auditSessionId === 'string') keep.add(row.auditSessionId);
+    }
+    const sessionsRoot = path.join(autopilotStorageRoot(), 'sessions');
+    let entries;
+    try { entries = fs.readdirSync(sessionsRoot, { withFileTypes: true }); } catch (_) { return; }
+    let removed = 0;
+    for (const entry of entries) {
+      if (removed >= WF_LOG_PRUNE_MAX) break;
+      if (!entry.isDirectory()) continue;
+      if (!WF_RUN_SESSION_RE.test(entry.name)) continue;
+      if (keep.has(entry.name)) continue;
+      try {
+        fs.rmSync(path.join(sessionsRoot, entry.name), { recursive: true, force: true });
+        removed += 1;
+      } catch (_) { /* a directory we cannot remove is not worth a second attempt */ }
+    }
+  } catch (_) { /* pruning is housekeeping; it never costs a run its history */ }
 }
 
 // Write through a temp file and rename, so a crash mid-write cannot leave a
@@ -5558,6 +5605,51 @@ function createWorkflowRecord(payload) {
 }
 
 ipcMain.handle('workflows:create', (_e, payload = {}) => createWorkflowRecord(payload));
+
+// Duplicating carries the origin and drops the consent.
+//
+// The renderer used to do this with workflows:create and a deep copy, which
+// wrote no sidecar row at all. Every check in this feature reads "is this a
+// stranger's workflow" as the PRESENCE of a row, so a copy with none was
+// indistinguishable from something the user typed here: the consent gate never
+// opened, the run fell back to whichever directory happened to be open instead
+// of a bound one, and oneShotArgs handed back the auto-approving flags that
+// exist for work you wrote yourself. One menu click undid every protection the
+// import path spends four screens establishing.
+//
+// Dropping the row was a reasonable answer to a real question, which is that a
+// copy must not inherit a stranger's consent. The mistake was answering it by
+// deleting the origin as well. The row travels, so the copy is still a
+// stranger's work, and consentedAt is cleared, so the reader confirms it once
+// on its own terms. The decision lives here rather than in the renderer
+// because a caller that forgets is exactly how this happened the first time.
+ipcMain.handle('workflows:duplicate', (_e, payload = {}) => {
+  const sourceId = String((payload && payload.workflowId) || '').trim();
+  if (!sourceId) return { ok: false, error: 'workflowId required' };
+  const source = loadWorkflows().find((w) => w && w.id === sourceId);
+  if (!source) return { ok: false, error: 'no workflow with that id' };
+
+  const migrated = migrateWorkflow(source);
+  const copy = createWorkflowRecord({
+    name: `${migrated.name || 'Workflow'} copy`.slice(0, 80),
+    description: migrated.description,
+    graph: migrated.graph,
+    trigger: migrated.trigger,
+  });
+
+  const row = sidecarFor(sourceId);
+  if (row && row.origin === 'imported') {
+    writeSidecar({
+      workflowId: copy.id,
+      origin: 'imported',
+      artifact: row.artifact || null,
+      boundCwd: row.boundCwd || null,
+      installedAt: row.installedAt || null,
+      consentedAt: null,
+    });
+  }
+  return { ok: true, workflow: copy, sidecar: sidecarFor(copy.id) };
+});
 
 ipcMain.handle('workflows:update', (_e, payload = {}) => {
   if (!payload.id) return { ok: false, error: 'missing id' };
@@ -5808,10 +5900,12 @@ function writeSidecar(row) {
   return row;
 }
 
-// Called after any workflow disappears. Duplicating a workflow never calls
-// this and never copies a row, which is the point: a duplicate inherits a new
-// local id, no sidecar, and therefore no origin and no consent. A copy that
-// silently carried a stranger's consent would be the same hole with a new id.
+// Called after any workflow disappears, so a row never outlives the workflow
+// it describes. Duplicating is handled by workflows:duplicate, which copies the
+// row and clears its consent: a copy that carried a stranger's consent would be
+// the same hole with a new id, and a copy that carried no row at all was a
+// bigger one, because absence of a row is how every check here reads "the user
+// wrote this themselves".
 function pruneSidecarStore() {
   try {
     const live = loadWorkflows().map((w) => w && w.id).filter((id) => typeof id === 'string');
@@ -6014,7 +6108,12 @@ function wfxReadArtifactAt(absPath) {
   // that decides and the pane that explains.
   const result = WorkflowArtifact.parseArtifact(bytes);
   if (!result.ok) return Object.assign({ stage: 'validate' }, result);
-  return { ok: true, artifact: result.artifact, warnings: result.warnings, bytes: st.size };
+  // chainCheck is this machine's finding, not a field of the file, and it rides
+  // beside the artifact for exactly that reason. The sheet needs it in the same
+  // round trip that hands over the artifact: a pane that drew the figures first
+  // and learned about the log second would show a number before it knew whether
+  // it was allowed to.
+  return { ok: true, artifact: result.artifact, warnings: result.warnings, chainCheck: result.chainCheck, bytes: st.size };
 }
 
 // ─── IPC: read an artifact ───────────────────────────────────────────────────
@@ -6039,6 +6138,7 @@ ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
       ok: true,
       artifact: read.artifact,
       warnings: read.warnings,
+      chainCheck: read.chainCheck,
       bytes: read.bytes,
       source: { kind: 'file', path: abs, relPath: path.basename(abs), root: null, url: null, candidates: [] },
     };
@@ -6065,6 +6165,7 @@ ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
     ok: true,
     artifact: read.artifact,
     warnings: read.warnings,
+    chainCheck: read.chainCheck,
     bytes: read.bytes,
     source: {
       kind: 'repo',
@@ -6141,6 +6242,10 @@ ipcMain.handle('workflows:preflight', (_e, payload = {}) => {
     blocking: result.blocking,
     cautions: result.cautions,
     oks: result.oks,
+    // Recomputed on this pass rather than carried over from the read, for the
+    // same reason the artifact itself is: this object made a round trip through
+    // the renderer, and a finding is only worth the moment it was made.
+    chainCheck: checked.chainCheck,
     cwd,
     huskVersion: app.getVersion(),
   };
@@ -6201,7 +6306,46 @@ ipcMain.handle('workflows:install', (_e, payload = {}) => {
 // and asking per card would be one IPC round trip per workflow on every
 // repaint. The rows carry the whole artifact, which is bounded at a megabyte
 // each by the reader that let them in.
-ipcMain.handle('workflows:sidecars', () => ({ ok: true, sidecars: loadSidecarStore().rows }));
+//
+// Each row travels with this machine's own finding about the log inside it,
+// under `chainCheck`, recomputed on every read rather than stored. Storing the
+// verdict would mean a card drawing a tier from a JSON field that some earlier
+// build wrote, which is the same mistake as trusting the file's own `evidence`
+// value: the whole argument of this feature is that a tier above "author
+// states" is something this machine did, just now, to the bytes in front of it.
+ipcMain.handle('workflows:sidecars', () => {
+  const rows = loadSidecarStore().rows;
+  const sidecars = {};
+  for (const id of Object.keys(rows)) {
+    const row = rows[id];
+    sidecars[id] = Object.assign({}, row, { chainCheck: wfxChainCheckFor(row && row.artifact) });
+  }
+  return { ok: true, sidecars };
+});
+
+// The answer for one stored artifact, in the four-field shape the surfaces
+// read: { checked, valid, agrees, detail }. A workflow with no artifact, or one
+// whose receipts ship no log, gets checked:false, which is the honest answer to
+// "was there anything here to check" and leaves every figure author-stated.
+function wfxChainCheckFor(artifact) {
+  const unchecked = { checked: false, valid: null, agrees: null, detail: null };
+  if (!artifact || !Array.isArray(artifact.receipts) || !artifact.receipts.length) return unchecked;
+  try {
+    let answer = unchecked;
+    for (const receipt of artifact.receipts) {
+      const check = WorkflowArtifact.checkReceiptEvidence(receipt);
+      if (!check.checked) continue;
+      // The first failure decides it for the file. One honest receipt beside
+      // one contradicted by its own log has not earned a tier on the strength
+      // of the honest half.
+      if (check.valid !== true || check.agrees !== true) return check;
+      answer = check;
+    }
+    return answer;
+  } catch (_) {
+    return unchecked;
+  }
+}
 
 // Recording consent. The timestamp is written before the run starts rather
 // than after it finishes, so a run that crashes does not ask again for
@@ -6283,7 +6427,17 @@ ipcMain.handle('workflows:receipts', () => {
 // runs is passed in by callers that already hold the history, because
 // loadWorkflowRuns parses the whole file and the workflows grid asks this
 // question once per card.
-function wfxReceiptsFor(workflow, graphHash, runs) {
+// opts.attachLog asks for the runs' own audit rows to travel with the figures.
+// It changes where the figures come from, not just what rides along: with a log
+// attached the receipt is built FROM the log, over exactly the runs whose rows
+// are in it. Anything else would publish a median over thirty-one runs beside
+// evidence for six, and the reader recomputes from what they were sent, so the
+// two would disagree and the whole record would collapse on arrival. Narrowing
+// the claim to the runs that can support it is the honest version of the same
+// publish, and it is the difference between "31 runs, author states" and "6
+// runs, matches the shipped log".
+function wfxReceiptsFor(workflow, graphHash, runs, opts) {
+  const attachLog = !!(opts && opts.attachLog);
   const agg = WorkflowReceipt.aggregateRuns(Array.isArray(runs) ? runs : loadWorkflowRuns(), {
     workflowId: workflow.id,
     graphHash,
@@ -6337,7 +6491,26 @@ function wfxReceiptsFor(workflow, graphHash, runs) {
     && r.workflowId === workflow.id
     && r.graphHash === graphHash
     && r.environment && typeof r.environment === 'object');
-  const environment = matching.length ? matching[0].environment : null;
+
+  // With a log attached the figures are the log's, so the aggregate above stops
+  // being the source and becomes only the local summary the publish sheet
+  // shows. A refusal here travels back rather than being downgraded to a quiet
+  // evidence:"none": the publisher ticked a box and is owed an answer to the
+  // question they asked.
+  const evidence = attachLog
+    ? wfxCollectEvidence(workflow, graphHash, Array.isArray(runs) ? runs : loadWorkflowRuns())
+    : null;
+  if (evidence && !evidence.ok) return { receipts: [], summary, reason: null, refusal: evidence.refusal };
+  const figures = evidence ? evidence.figures : a;
+
+  // With evidence attached, the machine described is one of the machines the
+  // attached rows came from. The environment is an author claim either way and
+  // no row can prove it, but a claim about a run that is not in the envelope is
+  // a claim about nothing the reader was sent, and the session id of a run is
+  // its run id, so the pairing costs one lookup.
+  const attached = evidence ? new Set(evidence.chain.sessionIds) : null;
+  const described = attached ? matching.filter((r) => attached.has(r.id)) : matching;
+  const environment = described.length ? described[0].environment : null;
 
   // Derived from what the receipt says rather than randomly, so republishing an
   // unchanged history produces an unchanged file. A random id would make every
@@ -6345,31 +6518,224 @@ function wfxReceiptsFor(workflow, graphHash, runs) {
   // be committed next to code should not churn when nothing happened.
   const receiptId = `rcp_${crypto.createHash('sha256').update([
     graphHash,
-    String(a.runs),
-    (a.window && a.window.firstRunAt) || '',
-    (a.window && a.window.lastRunAt) || '',
+    String(figures.runs),
+    (figures.window && figures.window.firstRunAt) || '',
+    (figures.window && figures.window.lastRunAt) || '',
   ].join(' ')).digest('hex').slice(0, 16)}`;
 
   const receipt = {
     id: receiptId,
     graphHash,
-    runs: a.runs,
-    runsWindowed: a.runsWindowed,
-    window: a.window,
-    outcomes: a.outcomes,
-    outcomeBasis: a.outcomeBasis,
-    medianDurationMs: a.medianDurationMs,
-    durationCensored: a.durationCensored,
-    medianTokens: a.medianTokens,
+    runs: figures.runs,
+    // A log carries no view of the history it was drawn from, so this stays the
+    // aggregate's answer either way. It is a fact about the publisher's run
+    // list rather than about the rows in the envelope, which is why the reader
+    // never recomputes it and never compares it.
+    runsWindowed: a.runsWindowed || (evidence ? evidence.windowed : false),
+    window: figures.window,
+    outcomes: figures.outcomes,
+    outcomeBasis: figures.outcomeBasis,
+    medianDurationMs: figures.medianDurationMs,
+    durationCensored: figures.durationCensored,
+    medianTokens: figures.medianTokens,
     // No log is shipped unless the publisher asks for one, so a receipt on its
     // own is an author claim and says so through this field rather than
     // through prose a surface would have to interpret.
-    evidence: 'none',
-    chain: null,
+    evidence: evidence ? 'inline' : 'none',
+    chain: evidence ? evidence.chain : null,
   };
   if (environment) receipt.environment = environment;
 
-  return { receipts: [receipt], summary, reason: null };
+  return {
+    receipts: [receipt],
+    summary,
+    reason: null,
+    warnings: evidence ? evidence.warnings : [],
+  };
+}
+
+// One run's chained log, read off disk and bounded.
+//
+// The session id comes out of workflow-runs.json, a plain file in the config
+// directory that nothing stops a user or anything else from editing, so it is
+// charset-checked before it is joined onto a path rather than after. The size
+// is asked of the filesystem before the bytes are read, for the same reason the
+// artifact reader does it: a cap applied after the read is not a cap.
+// The two ways this fails are two different sentences for the publisher, so
+// they come back as two different reasons. A log that is simply missing is
+// nobody's fault and nothing can be done about it; a log that is larger than a
+// published file may carry is a size the publisher can be told, next to the
+// budget it passed.
+function wfxReadRunLog(sessionId) {
+  if (typeof sessionId !== 'string' || !WF_RUN_SESSION_RE.test(sessionId)) {
+    return { ok: false, reason: 'unreadable', bytes: 0 };
+  }
+  const file = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'audit.jsonl');
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) return { ok: false, reason: 'unreadable', bytes: 0 };
+    if (st.size > WorkflowArtifact.MAX_CHAIN_BYTES) return { ok: false, reason: 'too-large', bytes: st.size };
+    const raw = fs.readFileSync(file, 'utf8');
+    const lines = raw.split('\n').filter((l) => l.length > 0);
+    if (!lines.length) return { ok: false, reason: 'unreadable', bytes: st.size };
+    return { ok: true, lines, bytes: st.size };
+  } catch (_) {
+    return { ok: false, reason: 'unreadable', bytes: 0 };
+  }
+}
+
+// The evidence a publish may attach: whole sessions, newest first, each one
+// walked here before it is offered to anybody.
+//
+// Sessions go in whole or not at all. A chain is a sequence of rows that hash
+// into each other, so half of one is not weaker evidence, it is a chain that
+// fails on arrival and collapses the receipt it came with. Attaching whole
+// sessions is also what keeps the arithmetic honest, because the receipt is
+// then rebuilt from exactly what is in the envelope.
+//
+// The budget is a refusal, never a trim. Cutting rows off the end of a log to
+// make it fit produces precisely the tail-truncated chain the reader's
+// terminal-row predicate exists to catch, and cutting the middle out breaks
+// every hash after the cut. Over budget, the publisher is told both numbers and
+// can publish the same figures without the log.
+function wfxCollectEvidence(workflow, graphHash, runs) {
+  const warnings = [];
+  const rows = (Array.isArray(runs) ? runs : []).filter((r) => r
+    && r.workflowId === workflow.id
+    && r.graphHash === graphHash
+    && typeof r.auditSessionId === 'string');
+  if (!rows.length) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'none of the runs behind these figures left a log Husk can attach',
+        'a run records one only under a Husk that writes them, so the next run of this workflow will have one',
+        'export'),
+    };
+  }
+
+  // The history arrives newest first and a chain is written oldest first, so
+  // the selection is taken off the front and reversed below. A reader walking
+  // the rows in file order then walks them in the order they happened.
+  const selected = [];
+  let broken = 0;
+  let oversize = 0;
+  let oversizeBytes = 0;
+  for (const row of rows) {
+    if (selected.length >= WorkflowArtifact.MAX_CHAIN_SESSIONS) break;
+    const read = wfxReadRunLog(row.auditSessionId);
+    if (!read.ok) {
+      if (read.reason === 'too-large') { oversize += 1; oversizeBytes = Math.max(oversizeBytes, read.bytes); }
+      broken += 1;
+      continue;
+    }
+    const walk = WorkflowArtifact.verifyArtifactChain(read.lines, row.auditSessionId, { graphHash });
+    // A local log that does not check out is dropped rather than shipped. It
+    // would fail the same walk on the reader's machine and take the whole
+    // receipt down with it, and the publisher is told how many were set aside.
+    if (!walk.valid) { broken += 1; continue; }
+    selected.push({ sessionId: row.auditSessionId, lines: read.lines });
+  }
+  if (!selected.length) {
+    if (oversize === broken) {
+      return {
+        ok: false,
+        refusal: wfxRefuse('evidence-too-large',
+          'the log for these runs is larger than a published file may carry, so nothing was written',
+          `one run's log alone is ${oversizeBytes} bytes, against a budget of ${WorkflowArtifact.MAX_CHAIN_BYTES} for every log in the file. Publishing without the log writes the same figures as author-stated.`,
+          'export'),
+      };
+    }
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'the logs behind these figures do not hold together on this machine, so there is nothing to attach',
+        `${broken} log${broken === 1 ? '' : 's'} could not be read, or did not check out on this machine`,
+        'export'),
+    };
+  }
+  if (broken > 0) {
+    warnings.push({
+      code: 'evidence-partial',
+      message: `${broken} run log${broken === 1 ? ' was' : 's were'} unreadable and left out, so these figures cover the runs whose rows are attached`,
+    });
+  }
+  // Two different reasons a run can be missing from the figures, and they get
+  // two different sentences. Above: its log could not be read. Here: the loop
+  // stopped at the session cap before it ever looked, which is the one a
+  // publisher with a long history will hit and the one that makes the receipt
+  // a claim about the recent past rather than about everything.
+  const unexamined = rows.length - (selected.length + broken);
+  const windowed = selected.length < rows.length;
+  if (unexamined > 0) {
+    warnings.push({
+      code: 'evidence-windowed',
+      message: `these figures cover the ${selected.length} most recent runs, which are the ones whose logs travel with the file`,
+    });
+  }
+
+  selected.reverse();
+  const lines = [];
+  let bytes = 0;
+  for (const session of selected) {
+    for (const line of session.lines) {
+      lines.push(line);
+      bytes += Buffer.byteLength(line, 'utf8');
+    }
+  }
+  if (bytes > WorkflowArtifact.MAX_CHAIN_BYTES || lines.length > WorkflowArtifact.MAX_CHAIN_LINES) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-too-large',
+        'the logs for these runs are larger than a published file may carry, so nothing was written',
+        `${bytes} bytes across ${lines.length} rows, against a budget of ${WorkflowArtifact.MAX_CHAIN_BYTES} bytes across ${WorkflowArtifact.MAX_CHAIN_LINES}. Publishing without the log writes the same figures as author-stated.`,
+        'export'),
+    };
+  }
+
+  // Walked once more as the single chain the file will carry, because that is
+  // the thing the reader will walk. Verifying each session and then trusting
+  // the concatenation would leave the one arrangement nobody checked.
+  const sessionIds = selected.map((s) => s.sessionId);
+  const walk = WorkflowArtifact.verifyArtifactChain(lines, sessionIds, { graphHash });
+  if (!walk.valid) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'the log Husk assembled for this file does not hold together, so nothing was written',
+        `${walk.reason} (${walk.predicate})`,
+        'export'),
+    };
+  }
+  const derived = WorkflowReceipt.figuresFromChain(walk.sessions);
+  if (!derived.ok) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable', 'the figures for this file could not be recomputed from its own log', derived.error, 'export'),
+    };
+  }
+  if (!derived.figures.publishable) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'the attached runs do not add up to a receipt that can be published',
+        `nothing publishable yet: ${derived.figures.publishBlockers.join(', ')}`,
+        'export'),
+    };
+  }
+
+  return {
+    ok: true,
+    warnings,
+    windowed,
+    figures: derived.figures,
+    chain: {
+      sessionIds,
+      head: walk.head,
+      lineCount: lines.length,
+      lines,
+    },
+  };
 }
 
 // The path a published file defaults to. A workflow bound to a work tree
@@ -6432,8 +6798,12 @@ ipcMain.handle('workflows:export', async (_e, payload = {}) => {
   const prior = sidecar && sidecar.artifact ? sidecar.artifact : null;
   const fingerprint = WorkflowArtifact.graphHash(workflow.graph);
   const receipts = fingerprint.ok
-    ? wfxReceiptsFor(workflow, fingerprint.hash)
+    ? wfxReceiptsFor(workflow, fingerprint.hash, null, { attachLog: p.attachLog === true })
     : { receipts: [], summary: null, reason: fingerprint.error };
+  // The toggle is answered rather than absorbed. A publisher who asked for the
+  // log and got a file that silently says evidence:"none" has been told nothing
+  // and would have to diff two exports to find out.
+  if (receipts.refusal) return receipts.refusal;
 
   const built = WorkflowArtifact.buildArtifact(workflow, {
     huskVersion: app.getVersion(),
@@ -6450,16 +6820,11 @@ ipcMain.handle('workflows:export', async (_e, payload = {}) => {
   if (!built.ok) return Object.assign({ stage: 'export' }, built, { step: null });
 
   const warnings = (built.warnings || []).slice();
-  if (p.attachLog === true) {
-    // The toggle is honoured by refusing it rather than by silently ignoring
-    // it. Workflow runs write no audit log yet, so there is no chain to
-    // attach, and evidence:"inline" with nothing behind it would be the one
-    // thing this format refuses to represent.
-    warnings.push({
-      code: 'evidence-unavailable',
-      message: 'this Husk does not write an audit log for workflow runs yet, so the file ships evidence "none"',
-    });
-  }
+  // What the evidence collector set aside on the way to this file: logs it
+  // could not read, and runs whose logs did not fit in the envelope. Both are
+  // statements about which runs the figures cover, so they belong next to the
+  // figures rather than in a console nobody opens.
+  for (const w of (receipts.warnings || [])) warnings.push(w);
   if (receipts.reason) {
     warnings.push({ code: 'no-receipts', message: receipts.reason });
   }
@@ -6553,6 +6918,108 @@ function wfEmit(event, channel, data) {
 // bounded rather than unleashed.
 const WF_MAX_PARALLEL = 4;
 const WF_STEP_TIMEOUT_MS = 300000;
+
+// ─── the run log ──────────────────────────────────────────────────────────────
+//
+// Every workflow run writes a hash-chained audit log, the same append-only
+// JSONL the autonomy supervisor has written since Autopilot shipped and through
+// the same module. There is one chain implementation in this app and this uses
+// it rather than growing a second one that would drift.
+//
+// Without this a receipt is an assertion. A published file could say "31 runs,
+// 4m 48s median" and the only thing a reader could do with it is believe the
+// author, which is why every figure the surfaces draw today is labelled "author
+// states". The log is what lets a stranger's Husk recompute those numbers from
+// rows it re-hashes locally, and the tier of a figure it recomputes is
+// "matches the shipped log". That is the ceiling: the chain is anchored at a
+// public genesis constant with no signature anywhere, so a passing chain means
+// this JSONL is internally consistent and nothing more.
+//
+// Row 1 is the binding, immediately after row 0 opens the session, and it
+// carries the graphHash the run executed. Putting it inside the chain rather
+// than beside it is the whole point: a log lifted from one workflow onto
+// another's receipt names the wrong fingerprint, and moving it costs a rehash
+// of every row after it.
+//
+// What a row carries is bounded by what a publisher can afford to leak, because
+// these rows are the thing that gets committed to a public repo. No working
+// directory, no prompt text, no agent output: a node id, a step name that is
+// already in the graph beside it, a status, a duration and the vendor's token
+// report. Nothing here is large enough to spill into the blob store either,
+// which matters because a blob_ref row is an opaque hash to any reader (the
+// blobs go through safeStorage and are bound to this machine's keychain) and
+// would quietly drop a step out of the figures recomputed from the log.
+const WF_AUDIT_ROWS = {
+  start: WorkflowArtifact.ROW_START,
+  binding: WorkflowArtifact.ROW_BINDING,
+  stepStart: 'step_start',
+  stepEnd: 'step_end',
+  summary: WorkflowArtifact.ROW_SUMMARY,
+};
+
+// Open the log for one run and write the two rows that open a session. Returns
+// the writer, or null when anything at all went wrong.
+//
+// Null is a run with no receipt and nothing else: the workflow still executes,
+// the history row is still written, and the publish sheet says there is no log
+// to attach. A run that refused to start because its bookkeeping could not be
+// opened would be trading the feature for the thing the feature is about.
+function wfOpenRunAudit(run, workflow, graph) {
+  try {
+    // A run id is `run-${Date.now()}`, which is already inside the character
+    // set audit.js confines a session directory to, so the log lands beside the
+    // autopilot sessions under one storage root with no id translation. The
+    // `run-` prefix is also what tells the two apart on disk: autopilot mints
+    // `auto-<base36>-<hex>`, and the prune below only ever touches ours.
+    const opened = Autopilot.audit.createAuditLog(autopilotStorageRoot(), run.id, {});
+    if (!opened.ok) return null;
+    const fingerprint = WorkflowArtifact.graphHash(workflow.graph);
+    // No fingerprint, no log. A chain whose binding row cannot name the graph
+    // it ran is a chain no receipt may be built on, and writing one anyway
+    // would leave rows on disk that the publisher would later have to refuse.
+    if (!fingerprint.ok) return null;
+    const writer = opened.writer;
+    const started = writer.append({
+      kind: WF_AUDIT_ROWS.start,
+      payload: {
+        startedAt: run.startedAt,
+        steps: graph.nodes.length,
+        os: process.platform,
+        huskVersion: app.getVersion(),
+      },
+    });
+    if (!started.ok) return null;
+    const bound = writer.append({ kind: WF_AUDIT_ROWS.binding, payload: { graphHash: fingerprint.hash } });
+    if (!bound.ok) return null;
+    return { writer, sessionId: run.id, graphHash: fingerprint.hash };
+  } catch (_) {
+    return null;
+  }
+}
+
+// One row, appended to a run's log if it has one. Every call site is a place
+// something already happened, so a failure here is swallowed on purpose: a full
+// disk must not take down a run that is otherwise working, and a log that
+// stopped mid-run fails the reader's terminal-row check rather than passing
+// under a count it cannot support.
+function wfAudit(run, kind, payload) {
+  if (!run || !run.audit) return;
+  try { run.audit.writer.append({ kind, payload }); } catch (_) {}
+}
+
+// A finished step, in the shape figuresFromChain reads back. `ms` and the
+// vendor's usage record are the two figures a receipt is built from, and
+// timedOut is what keeps a censored median from being quoted as a median.
+function wfAuditStepEnd(run, node, state) {
+  const st = state || {};
+  wfAudit(run, WF_AUDIT_ROWS.stepEnd, {
+    nodeId: node.id,
+    status: typeof st.status === 'string' ? st.status : 'failed',
+    ms: Number.isFinite(st.ms) ? st.ms : 0,
+    timedOut: st.timedOut === true,
+    usage: st.usage || null,
+  });
+}
 
 // Run one step to completion: build the prompt from its incoming context, spawn
 // the agent, stream its output, and resolve with the result. Pure per-step; the
@@ -6747,6 +7214,12 @@ async function executeWorkflow(event, workflow, run) {
   run.stepStates = {};
   graph.nodes.forEach((n) => { run.stepStates[n.id] = { status: 'pending', output: '' }; });
 
+  // Opened before the first step so the binding row is written before anything
+  // has run, and against the graph this scheduler is about to walk rather than
+  // against whatever the store says later. A workflow edited while a run is in
+  // flight would otherwise leave a log bound to a program that never executed.
+  run.audit = wfOpenRunAudit(run, workflow, graph);
+
   let anyFailed = false;
   let resolveAll;
   const allSettled = new Promise((r) => { resolveAll = r; });
@@ -6776,6 +7249,11 @@ async function executeWorkflow(event, workflow, run) {
     if (nodeDone.has(n.id)) return;
     run.stepStates[n.id].status = 'skipped';
     nodeDone.add(n.id);
+    // A skipped step is logged with the rest. The run history row lists it, so
+    // a log that left it out would describe a shorter workflow than the one
+    // that ran, and a reader counting step rows would be counting a different
+    // program than the one whose fingerprint sits in row 1.
+    wfAuditStepEnd(run, n, run.stepStates[n.id]);
     wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: n.id, status: 'skipped' });
     // A skipped node takes none of its outgoing edges.
     graph.edges.filter((e) => e.from === n.id).forEach((e) => { if (edgeState.get(e.id) === 'pending') edgeState.set(e.id, 'skipped'); });
@@ -6786,6 +7264,17 @@ async function executeWorkflow(event, workflow, run) {
     if (run.status === 'running') run.status = anyFailed ? 'failed' : 'done';
     run.finishedAt = new Date().toISOString();
     run.currentNodeId = null;
+    // The terminal row, written before the history row it has to agree with.
+    // Its presence is what a tail truncation cannot fake: a reader whose last
+    // row is a step_end knows rows were cut off the end, which is the failure
+    // genesis anchoring alone cannot see, since the anchor protects the head.
+    wfAudit(run, WF_AUDIT_ROWS.summary, {
+      status: run.status,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      ms: run.startedAt ? (new Date(run.finishedAt) - new Date(run.startedAt)) : 0,
+      steps: graph.nodes.length,
+    });
     recordWorkflowRun(run, workflow);
     wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
     activeRuns.delete(run.id);
@@ -6827,7 +7316,18 @@ async function executeWorkflow(event, workflow, run) {
   const startNode = (n) => {
     running.add(n.id);
     const ctx = contextFor(n);
+    // The step rows are written here rather than inside wfRunStep, which has
+    // three exits and would need the same two lines at each of them. The
+    // scheduler has exactly one place a step begins and two where one ends, and
+    // both of those already read the step's own state.
+    wfAudit(run, WF_AUDIT_ROWS.stepStart, {
+      nodeId: n.id,
+      name: n.name || '',
+      agent: AgentOneShot.agentBaseName(n.agentCommand || config.agentCommand || 'claude') || '',
+      model: n.model || null,
+    });
     wfRunStep(event, run, graph, byId, n, ctx).then(({ status, output }) => {
+      wfAuditStepEnd(run, n, run.stepStates[n.id]);
       try { wfSettleNode(n, status, output); } catch (err) {
         wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'error', text: `scheduler error: ${err && err.message}` });
         anyFailed = true;
@@ -6835,6 +7335,10 @@ async function executeWorkflow(event, workflow, run) {
       pump();
     }).catch((err) => {
       running.delete(n.id); nodeDone.add(n.id); anyFailed = true;
+      // A step that crashed still ended, and the log says so. Leaving it out
+      // would give the session one step_start with no step_end, which is a
+      // shape the reader has no way to interpret and would rather refuse.
+      wfAuditStepEnd(run, n, Object.assign({}, run.stepStates[n.id], { status: 'failed' }));
       wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'error', text: `step crashed: ${err && err.message}` });
       pump();
     });
