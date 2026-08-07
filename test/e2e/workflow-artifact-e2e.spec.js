@@ -147,3 +147,45 @@ test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence
 
   await app.close();
 });
+
+// The loop above drives IPC directly, which proves the machinery and proves
+// nothing about whether a person can reach it. This one only clicks.
+test('a person can reach install, consent and the receipts strip by clicking', async () => {
+  test.setTimeout(180000);
+  const env = boot();
+  const app = await launch(env);
+  const win = await app.firstWindow();
+  await win.waitForLoadState('domcontentloaded');
+  await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20000 });
+
+  await win.evaluate(() => setPage('workflows'));
+
+  // The Install control is minted at runtime, so its absence is a wiring bug
+  // rather than a missing line of markup, and only a real page visit finds it.
+  await win.waitForSelector('#btn-wfx-install', { timeout: 10000 });
+  await win.click('#btn-wfx-install');
+  await win.waitForSelector('#wfx-install-modal:not([hidden])', { timeout: 10000 });
+
+  // Escape has to close it like every other dialog in the app. Asserted on the
+  // property rather than with waitForSelector, whose default state is
+  // "visible": waiting for a hidden element to become visible cannot ever pass,
+  // which reads as a broken dialog when the dialog is working.
+  await win.keyboard.press('Escape');
+  await win.waitForFunction(
+    () => document.getElementById('wfx-install-modal').hidden === true,
+    null,
+    { timeout: 10000 },
+  );
+
+  // Every card carries the strip, including one that has never run and has no
+  // artifact, because a block that appears only sometimes moves the grid.
+  await win.waitForSelector('#wf-grid .wf-card', { timeout: 10000 });
+  const strips = await win.evaluate(() => ({
+    cards: document.querySelectorAll('#wf-grid .wf-card[data-id]').length,
+    strips: document.querySelectorAll('#wf-grid .wf-card[data-id] .wfx-rcp').length,
+  }));
+  expect(strips.cards).toBeGreaterThan(0);
+  expect(strips.strips, 'a workflow card renders no receipts strip, so the evidence never reaches the page').toBeGreaterThan(0);
+
+  await app.close();
+});
