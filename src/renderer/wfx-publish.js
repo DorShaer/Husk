@@ -1,15 +1,20 @@
 'use strict';
 
-// The publish sheet: turning a workflow you have been running into one file
+// The export sheet: turning a workflow you have been running into one file
 // somebody else can read.
 //
-// The premise of this surface is that publishing is a byproduct of finishing
+// The word is export and not publish, because this writes a file to a path you
+// choose and nothing else. Nothing is uploaded, no index learns the workflow
+// exists, and the file is untracked where it lands. Sharing it is a separate
+// act the done pane hands you a git line for.
+//
+// The premise of this surface is that exporting is a byproduct of finishing
 // rather than a form to fill in. Everything the file needs is already on this
 // machine: the graph is what you drew, the agents and model pins are what the
 // steps say, the run history is what happened. So the sheet asks for exactly
 // two decisions, a destination and whether the run log travels, and spends the
 // rest of its space telling you what the bytes will say about you. Nothing
-// here has a required field, and a reader who presses Publish without reading
+// here has a required field, and a reader who presses Export without reading
 // anything still ships a file that is honest about what it does and does not
 // prove.
 //
@@ -26,8 +31,7 @@
 // what a row contains in the label's own words, and this file never changes
 // that sentence, only the state of the box under it.
 //
-// The byte disclosure is post-write and pre-commit, which is a deliberate
-// departure from the body order in the spec, and the reason is a seam in the
+// The byte disclosure lives in the done pane, and the reason is a seam in the
 // IPC contract rather than a preference. workflows:export has no dry run: it
 // builds the artifact and writes it in one call, and the artifact it returns
 // is the only object in this process that is the file. Rendering a preview
@@ -35,26 +39,37 @@
 // hash and the requires block in the renderer, which is a second
 // implementation of the canonicalizer that can disagree with the one that
 // wrote the file, and a byte pane that disagrees with the bytes is worse than
-// no byte pane at all. So Publish writes an untracked file onto your own disk,
+// no byte pane at all. So Export writes an untracked file onto your own disk,
 // the done pane shows the exact bytes it wrote, and the git line that would
 // make those bytes public sits directly under them. Nothing has been shared at
 // the moment the disclosure is read, which is the property the disclosure
 // exists to protect.
 //
+// The ready pane states what the file will contain and folds the argument for
+// each claim behind one disclosure. The claims are the sheet's thesis and stay
+// on the surface; the reasoning behind them is a thing to read once, not a
+// thing to read before every export.
+//
+// A condition that stops the write is a gate at the top of the ready pane, not
+// a sentence in the footer, and it carries the control that clears it. The one
+// gate this sheet can raise, a step that does not name its agent, is repaired
+// here because the canvas that would otherwise repair it is not open behind
+// this sheet: exporting is reached from the workflow card's own menu.
+//
 // Every string that came out of a file reaches the DOM through el() from
 // wfx-dom.js, with no exception left in this file. That matters here even
 // though most of what this sheet renders is the user's own workflow, because
-// republishing an imported workflow is a first-class path: the name, the
+// re-exporting an imported workflow is a first-class path: the name, the
 // description, the step names and the declared requirements in that case were
 // written by whoever published the file this machine installed. The graph
-// thumbnail used to be the exception and is not one any more; see paintGraph
-// for what was traded away to keep it and why the trade was wrong.
+// thumbnail goes through the same route; see paintGraph for why it carries its
+// step names rather than a projection with the names stripped out.
 //
 // The git line is shell text a person pastes into a shell, so the workflow
 // name inside it is quoted rather than interpolated. Same argument as above:
-// on a republish that name is a stranger's string, and a commit message
-// carrying $(...) inside double quotes is a command substitution that runs
-// when the paste lands.
+// on a republish that name is a stranger's string, and double quotes leave a
+// shell free to expand what sits inside them, so the quoting is what keeps the
+// pasted line a commit message and nothing more.
 
 (function () {
   // ─── shell hooks ──────────────────────────────────────────────────────────
@@ -67,10 +82,12 @@
   // somebody else's workflow under this workflow's title.
 
   const REQUIRED = [
-    'modal', 'card', 'ready', 'done', 'say', 'foot', 'go', 'goNoLog', 'doneBtn',
-    'cancel', 'close', 'attach', 'destChange', 'copy',
+    'modal', 'card', 'body', 'ready', 'done', 'say', 'foot', 'go', 'goNoLog', 'doneBtn',
+    'cancel', 'back', 'close', 'attach', 'destChange', 'copy', 'subject',
     'refTitle', 'refMessage', 'refDetail',
-    'graphHost', 'figsHost', 'recordHost', 'requiresHost', 'destPath',
+    'gate', 'gateTitle', 'gateMessage', 'gateFix', 'gateFixLabel', 'gateSel', 'gateGo', 'gateWho',
+    'graphHost', 'recordHost', 'requiresHost', 'destPath',
+    'what', 'whatName', 'whatMeta', 'whatPc',
     'raw', 'rawPre', 'rawName', 'rawMeta', 'rawPc',
     'doneNote', 'donePath', 'gitRow', 'gitPre',
   ];
@@ -80,25 +97,27 @@
     if (!modal) return null;
     const ready = document.getElementById('wfx-pub-ready');
     const done = modal.querySelector('.wfx-pane-done');
-    const pfs = ready ? ready.querySelectorAll('.wfx-pf') : [];
     const destChange = document.getElementById('wfx-pub-dest-change');
     const copy = document.getElementById('wfx-pub-copy');
-    // Scoped to the modal rather than to the ready pane, because a write moves
-    // the byte disclosure into the done pane and it stays there until the next
-    // render puts it back. Looking for it where index.html declares it would
-    // make every open after the first one report a missing sheet.
-    const raw = modal.querySelector('details.wfx-step');
+    // By id, both of them. Two details.wfx-step live in this modal, one per
+    // pane, and a structural query would hand every write to whichever the
+    // markup happens to declare first.
+    const raw = document.getElementById('wfx-pub-raw');
+    const what = document.getElementById('wfx-pub-what');
     const refs = {
       modal,
       card: modal.querySelector('.modal-card.wfx-sheet'),
+      body: modal.querySelector('.modal-body'),
       ready,
       done,
       say: document.getElementById('wfx-pub-say'),
+      subject: document.getElementById('wfx-pub-subject'),
       foot: document.getElementById('wfx-pub-foot'),
       go: document.getElementById('wfx-pub-go'),
       goNoLog: document.getElementById('wfx-pub-go-nolog'),
       doneBtn: document.getElementById('wfx-pub-done'),
       cancel: document.getElementById('wfx-pub-cancel'),
+      back: document.getElementById('wfx-pub-back'),
       close: document.getElementById('wfx-pub-x'),
       attach: document.getElementById('wfx-pub-attach'),
       destChange,
@@ -106,13 +125,24 @@
       refTitle: document.getElementById('wfx-pub-ref-t'),
       refMessage: document.getElementById('wfx-pub-ref-m'),
       refDetail: document.getElementById('wfx-pub-ref-e'),
+      gate: document.getElementById('wfx-pub-gate'),
+      gateTitle: document.getElementById('wfx-pub-gate-t'),
+      gateMessage: document.getElementById('wfx-pub-gate-m'),
+      gateFix: document.getElementById('wfx-pub-gate-fix'),
+      gateFixLabel: document.getElementById('wfx-pub-fix-label'),
+      gateSel: document.getElementById('wfx-pub-fix-agent'),
+      gateGo: document.getElementById('wfx-pub-fix-go'),
+      gateWho: document.getElementById('wfx-pub-gate-who'),
       graphHost: ready ? ready.querySelector('.wf-card-graph') : null,
-      figsHost: ready ? ready.querySelector('.wfx-figs') : null,
-      recordHost: pfs[0] || null,
-      requiresHost: pfs[1] || null,
+      recordHost: document.getElementById('wfx-pub-record'),
+      requiresHost: document.getElementById('wfx-pub-requires'),
       destPath: destChange && destChange.parentElement
         ? destChange.parentElement.querySelector('.wfx-path')
         : null,
+      what,
+      whatName: what ? what.querySelector('.wfx-step-name') : null,
+      whatMeta: what ? what.querySelector('.wfx-step-meta') : null,
+      whatPc: what ? what.querySelector('.wfx-step-pc') : null,
       raw,
       rawPre: raw ? raw.querySelector('pre') : null,
       rawName: raw ? raw.querySelector('.wfx-step-name') : null,
@@ -125,7 +155,7 @@
     };
     const missing = REQUIRED.filter((key) => !refs[key]);
     if (missing.length) {
-      console.error('wfx-publish: the publish sheet is missing', missing.join(', '));
+      console.error('wfx-publish: the export sheet is missing', missing.join(', '));
       return null;
     }
     return refs;
@@ -133,7 +163,7 @@
 
   // ─── module state ─────────────────────────────────────────────────────────
   // One sheet, one workflow at a time, so this is a small record rather than a
-  // class. lastPublish is what makes the second publish of a session immediate:
+  // class. lastPublish is what makes the second export of a session immediate:
   // it is the only thing in the app that ties a workflow to the path its file
   // was written to, because a sidecar row exists for imported workflows only
   // and carries no destination.
@@ -147,6 +177,22 @@
   let current = null;
 
   function el(tag, attrs, ...children) { return window.WfxDom.el(tag, attrs, ...children); }
+
+  // Every string that came out of a file reaches the DOM through the kit,
+  // including the ones that land in an element index.html already declared.
+  // textContent is safe on its own; routing through one function is what makes
+  // that checkable by reading this file rather than by auditing each caller.
+  function setText(node, value) {
+    if (node) node.replaceChildren(window.WfxDom.text(String(value)));
+  }
+
+  // A name somebody else chose, sitting inside a sentence written in the app's
+  // language. dir=auto lets the chip take the direction of its own first strong
+  // character, and the isolate in the stylesheet keeps that decision from
+  // leaking into the words on either side.
+  function nameChip(value) {
+    return el('code', { dir: 'auto' }, String(value));
+  }
 
   function hasKit() {
     const kit = window.WfxDom;
@@ -191,11 +237,15 @@
     return { dir: p.slice(0, cut + 1), file: p.slice(cut + 1) };
   }
 
+  // dir=ltr on both halves. A path is a left-to-right structure whatever
+  // language its segments are written in, and a directory named in a
+  // right-to-left script otherwise swaps places with the one beside it, which
+  // makes the row describe a location that does not exist.
   function paintPath(host, abs) {
     const parts = splitPath(abs);
     host.replaceChildren(
-      el('span', { class: 'wfx-path-dir' }, parts.dir),
-      el('span', { class: 'wfx-path-file' }, parts.file),
+      el('span', { class: 'wfx-path-dir', dir: 'ltr' }, parts.dir),
+      el('span', { class: 'wfx-path-file', dir: 'ltr' }, parts.file),
     );
   }
 
@@ -371,7 +421,17 @@
     const unbound = [];
     let pins = 0;
     for (const node of nodes) {
-      if (!node.agentCommand) { unbound.push(String(node.name || 'Step').slice(0, 64)); continue; }
+      if (!node.agentCommand) {
+        // The id travels with the name. The gate marks these steps in the
+        // thumbnail and the repair writes to exactly these nodes, and both
+        // need to say which node rather than which label: two steps are
+        // allowed to share a name.
+        unbound.push({
+          id: String(node.id == null ? '' : node.id),
+          name: Array.from(String(node.name || 'Step')).slice(0, 64).join(''),
+        });
+        continue;
+      }
       const base = basename(node.agentCommand);
       if (base && AGENT_NAMES.includes(base) && !agents.includes(base)) agents.push(base);
       if (node.model) pins += 1;
@@ -382,21 +442,17 @@
 
   // ─── panes ────────────────────────────────────────────────────────────────
 
-  // The thumbnail used to be the one place in this file where a string reached
-  // the DOM through innerHTML, and it was kept safe by handing wfMiniGraph a
-  // projection with every name stripped out of it: synthetic ids and
-  // coordinates, nothing a manifest string could ride in on. That was the
-  // correct trade against the builder as it was, and it was the wrong trade
-  // against this screen. A publisher is being shown what a reader of this file
-  // will see, and what a reader needs to see is which steps are in it. Four
-  // unlabelled lozenges are indistinguishable from a preview that failed to
-  // load, and on the install sheet the same drawing is the picture somebody
-  // decides on.
+  // The graph goes in whole, names and all. A publisher is being shown what a
+  // reader of this file will see, and what a reader needs to see is which steps
+  // are in it. A projection with every name stripped out of it, synthetic ids
+  // and coordinates only, draws four unlabelled lozenges, and those are
+  // indistinguishable from a preview that failed to load; on the install sheet
+  // the same drawing is the picture somebody decides on.
   //
-  // So the graph goes in whole, names and all, and the sink is gone rather than
-  // defended: wfMiniGraph returns elements, and every step name in it reaches
-  // the DOM through the same WfxDom.text() the prompt list uses. There is
-  // nothing left here for a tripwire to watch.
+  // Carrying the names costs nothing here, because there is no string sink to
+  // defend: wfMiniGraph returns elements rather than markup, and every step
+  // name in it reaches the DOM through the same WfxDom.text() the prompt list
+  // uses.
   function paintGraph(host, graph) {
     if (typeof wfMiniGraph !== 'function') {
       host.replaceChildren(el('span', { class: 'wfx-empty-m' }, 'no preview available'));
@@ -407,49 +463,25 @@
       // drawing by an outcome. The width is the host's own, measured rather
       // than assumed: the host is already in the document, the sheet's column
       // is a good deal wider than the floor the builder falls back to, and
-      // every pixel of that difference is a pixel a step name can use.
+      // every pixel of that difference is a pixel a step name can use. The
+      // measurement is why setState runs before this does; a host inside a
+      // pane the card is not currently showing measures zero.
+      //
+      // The marks are the steps the gate is about, so the picture and the gate
+      // name one set between them and a reader can find in one what they read
+      // in the other.
       host.replaceChildren(wfMiniGraph(
         { nodes: graph.nodes, edges: graph.edges }, null, 'panel', host.clientWidth,
+        new Set(graph.unbound.map((step) => step.id)),
       ));
     } catch (err) {
       // A preview that cannot be drawn costs this sheet a picture and nothing
       // else. Everything under it, which is the part that says what the file
-      // will contain, is still true and still publishable, so the failure is
+      // will contain, is still true and still exportable, so the failure is
       // reported where a developer will see it and named where the reader will.
       console.error('wfx-publish: the thumbnail could not be drawn', err);
       host.replaceChildren(el('span', { class: 'wfx-empty-m' }, 'no preview available'));
     }
-  }
-
-  // What a reader of the file will see where the numbers go. Today that is
-  // reliably nothing: a receipt has to name the graph it was earned on, and a
-  // finished run in this build records no fingerprint, so no stored run can be
-  // attached to any file. Rather than four dimmed tiles saying "none" four
-  // times, the figures give way to the empty component, which names what is
-  // true and what would change it. The tiles come back the moment a receipt
-  // exists, which is why buildFigures below is written for both cases.
-  function paintOutlook(host, history) {
-    host.replaceChildren();
-    host.hidden = true;
-    let title;
-    let message;
-    if (history.unread) {
-      title = 'Run history could not be read';
-      message = 'The file will carry the graph and its requirements. Whether any run can be attached is decided when the file is built, and the next screen says what travelled.';
-    } else if (history.total === 0) {
-      title = 'No run history to attach';
-      message = 'This workflow has not finished a run on this machine, so the file travels as a graph and a set of requirements. Run it and the next publish can carry what happened.';
-    } else if (history.fingerprinted === 0) {
-      title = `No receipts travel with this file, out of ${plural(history.total, 'stored run')}`;
-      message = 'A receipt names the graph it was earned on, and a finished run in this version of Husk does not record that fingerprint. The file carries no numbers rather than numbers that might belong to a different version of these steps.';
-    } else {
-      title = `Up to ${plural(history.fingerprinted, 'run')} may be attached`;
-      message = `${plural(history.total, 'run')} are stored for this workflow and ${history.fingerprinted} of them name this graph. The counts and the medians are computed when the file is built, and the next screen shows exactly what travelled.`;
-    }
-    const empty = injected(el('div', { class: 'wfx-empty' },
-      el('p', { class: 'wfx-empty-t' }, title),
-      el('p', { class: 'wfx-empty-m' }, message)));
-    host.parentElement.insertBefore(empty, host);
   }
 
   // The tiles as a reader of the file will see them, which is why every one of
@@ -477,47 +509,42 @@
     ];
   }
 
+  // Each row states one thing the bytes will do. The argument for why the
+  // format works that way is not here: it is a thing to understand once, and
+  // repeating it above the Export button on every export is what makes this
+  // pane an essay.
   function paintRecord(host, graph, history) {
     const rows = [
       pfRow(
-        `${plural(graph.nodes.length, 'step')} and ${plural(graph.edges.length, 'connection')}, with every prompt in full`,
-        'A reader sees the prompt text before anything runs, which is the point. Layout travels as reading order only: coordinates are moved to the origin and rounded, so nudging a step on the canvas does not change what the file fingerprints.',
+        `${plural(graph.nodes.length, 'step')}, ${plural(graph.edges.length, 'connection')}, every prompt in full`,
+        'A reader sees the prompt text before anything runs.',
       ),
       pfRow(
-        'A fingerprint of the steps and the routing',
-        'Recomputed on their machine from the bytes they received. If it disagrees with what the file claims, their Husk refuses the file outright rather than showing them numbers that belong to some other graph.',
+        'Graph fingerprint',
+        'Rechecked on the reader\'s machine before anything is shown.',
       ),
     ];
     if (history.unread) {
-      rows.push(pfRow(
-        'Run history could not be read',
-        'The file is still publishable. Whatever the builder can attach, it attaches, and the next screen names it.',
-      ));
+      rows.push(pfRow('Run history unreadable', 'Exporting still works.'));
     } else if (history.total === 0) {
-      rows.push(pfRow(
-        'No receipts, because there is nothing to count yet',
-        'Receipts are earned by running the workflow here. Until then the file says so plainly, which is a different claim from a file that reports zero.',
-      ));
+      rows.push(pfRow('No run receipts', 'Receipts are earned by running this here.'));
     } else if (history.fingerprinted === 0) {
       rows.push(pfRow(
         `${plural(history.total, 'stored run')}, none of them attachable`,
-        'This Husk does not yet record which graph a finished run executed, so no run in your history can be tied to this fingerprint. The file carries no receipts.',
+        'These runs predate the fingerprint, or ran a different version of these steps.',
       ));
     } else {
       rows.push(pfRow(
         `${plural(history.fingerprinted, 'run')} name this graph, out of ${history.total} stored`,
-        'Only runs of these exact steps can be attached. A run from before you last edited the graph describes a program the reader will not be executing.',
+        'Runs from before your last graph edit are excluded.',
       ));
     }
     rows.push(pfRow(
-      'No pass rate, and no count of what the runs produced',
-      'A step\'s status is its process exit code and nothing else, so a step that answers confidently wrong and exits zero counts as finished. The file carries the four raw outcome counts and the basis they were counted on, so no reader can print them as a percentage.',
+      'Outcome counts, not a pass rate',
+      'Status is the process exit code, so a wrong answer that exits zero counts as finished.',
     ));
-    rows.push(pfRow(
-      'No dollar figure, in any version of this file',
-      'Four of the five agents Husk can run are priced at zero in its own rate table, so a cost would publish as free. Tokens travel instead, and whoever reads the file prices them with their own table and is told it is their estimate.',
-    ));
-    pfBlock(host, 'What gets written, and what it means', rows);
+    rows.push(pfRow('Tokens, not cost', 'The reader prices them with their own table.'));
+    pfBlock(host, 'Contents', rows);
   }
 
   function paintRequires(host, graph, requires) {
@@ -528,12 +555,12 @@
           ...nameList(graph.agents, code),
           graph.pins ? `, with ${plural(graph.pins, 'model pin')}` : '',
         ],
-        'Bare basenames, resolved on the reader\'s PATH and never from a directory inside the repo they cloned. Your own paths are not in the file.',
+        'Bare basenames, resolved on the reader\'s PATH. Your paths stay here.',
       ));
     } else {
       rows.push(pfRow(
-        'No agent is named by any step',
-        'Every step has to say which agent it runs before this can be published, because a step that does not resolves at run time to whatever the reader\'s own config says.',
+        'No step names an agent',
+        'Set one on each step to export.',
       ));
     }
 
@@ -550,12 +577,11 @@
         parts.push(skills.length === 1 ? 'the skill ' : 'the skills ');
         parts.push(...nameList(skills.map((s) => String(s && s.id)), code));
       }
-      rows.push(pfRow(parts,
-        'Names and content fingerprints only, so a reader can be told theirs is a different server rather than shown a green tick. No command, no arguments and no environment leaves this machine.'));
+      rows.push(pfRow(parts, 'Names and fingerprints only. No commands, no environment.'));
     } else {
       rows.push(pfRow(
-        'No MCP server and no skill is declared',
-        'Husk cannot derive these: which tool a step uses lives in prose inside its prompt, and guessing it would be a claim presented as a fact. A declaration edited into the file by hand is carried forward when you publish again.',
+        'No MCP server or skill declared',
+        'Husk cannot derive these from a prompt.',
       ));
     }
 
@@ -567,15 +593,14 @@
       parts.push(workspace && workspace.vcs === 'git' ? 'A git work tree' : 'A working directory');
       if (markers.length) { parts.push(' with '); parts.push(...nameList(markers.map(String), code)); }
       if (commands.length) { parts.push(', running '); parts.push(...nameList(commands.map(String), code)); }
-      rows.push(pfRow(parts,
-        'You declared these; Husk cannot derive them. They travel labelled as your claim and are checked against the directory the reader binds before anything runs.'));
+      rows.push(pfRow(parts, 'Your declaration, checked before anything runs.'));
     } else {
       rows.push(pfRow(
-        'No workspace requirement is declared',
-        'Prompts embed the tooling of the repo they were written in: "run the full test suite" means one command in your tree and nothing at all in somebody else\'s. A marker file and a build command in the file are what carry that across.',
+        'No workspace requirement declared',
+        'A marker file and a build command are what carry a prompt\'s assumptions across.',
       ));
     }
-    pfBlock(host, 'What the file will require of a reader', rows);
+    pfBlock(host, 'Requires', rows);
   }
 
   function paintDestination() {
@@ -584,82 +609,309 @@
       return;
     }
     refs.destPath.replaceChildren(
-      el('span', { class: 'wfx-path-file' }, 'Husk will ask, and offer this workflow\'s repo'),
+      el('span', { class: 'wfx-path-file' }, 'Husk will ask where to save'),
     );
   }
 
-  // Pre-write, the disclosure explains itself instead of standing empty. A
-  // collapsed block with nothing in it reads as a feature that failed to load,
-  // and the one sentence a reader needs at this point is when the bytes arrive
-  // and what they will be able to do about them.
-  function paintRawPending(graph) {
-    refs.rawName.textContent = 'The exact bytes this writes';
-    refs.rawMeta.textContent = `${plural(graph.nodes.length, 'step')} · ${plural(graph.edges.length, 'connection')} ·`;
-    refs.rawPc.textContent = 'shown in full once written';
-    refs.rawPre.textContent = 'Husk builds these bytes when you press Publish, and shows the whole file here before the line that would commit it. The file is written to your own disk and is not tracked by anything until you run that line, so reading it is the last step and not a leap of faith.';
+  // Which workflow this sheet is about. The title names the operation, so
+  // without this the only thing on screen identifying the subject is a drawing.
+  //
+  // The name is the only part of this line the user wrote, and it goes in
+  // isolated rather than concatenated. A name whose first strong character is
+  // right-to-left otherwise sets the direction of the whole line, which moves
+  // the step count to the front and the name to the end: the row then reads as
+  // a different sentence than the one this builds. The element itself stays
+  // left-to-right because the separators and the counts are the app's.
+  function paintSubject() {
+    const meta = [plural(current.graph.nodes.length, 'step')];
+    const revision = current.prior && Number.isSafeInteger(current.prior.revision)
+      ? current.prior.revision + 1
+      : null;
+    if (revision) meta.push(`revision ${revision}`);
+    // Set here rather than read off the markup, because the direction is part
+    // of what this function composes: the line is the app's, the name inside it
+    // is not, and losing that distinction changes what the row says.
+    refs.subject.setAttribute('dir', 'ltr');
+    refs.subject.replaceChildren(
+      el('span', { dir: 'auto' }, String(current.workflow.name || 'Untitled workflow')),
+      ` · ${meta.join(' · ')}`,
+    );
+  }
+
+  // The summary line of the folded block, which has to say enough that opening
+  // it is a choice rather than a search.
+  function paintWhat(graph, history) {
+    setText(refs.whatName, 'What travels in this file');
+    const meta = [plural(graph.nodes.length, 'step'), plural(graph.edges.length, 'connection')];
+    if (graph.agents.length) meta.push(graph.agents.join(', '));
+    setText(refs.whatMeta, `${meta.join(' · ')} ·`);
+    if (history.unread) setText(refs.whatPc, 'run history unreadable');
+    else if (history.fingerprinted > 0) setText(refs.whatPc, `${plural(history.fingerprinted, 'attachable run')}`);
+    else setText(refs.whatPc, 'no receipts');
   }
 
   // ─── the ready pane ───────────────────────────────────────────────────────
 
   function renderReady() {
-    // The disclosure comes home before anything else touches the pane, so a
-    // second publish in one sitting opens the same screen as the first. Home is
-    // the end of the ready pane, which is where index.html declares it, and
-    // saying so here rather than remembering where the element was found is
-    // what keeps a re-resolve after a write from deciding that the done pane
-    // is where it belongs.
-    refs.ready.appendChild(refs.raw);
-    refs.raw.open = false;
+    // First, before any paint. paintGraph measures its host to decide how much
+    // room a step name has, and a host inside a pane the card is not showing
+    // measures zero: reopening the sheet after a write would otherwise draw the
+    // thumbnail at the builder's fallback width and drop the labels.
+    setState('ready');
     clearInjected();
+    refs.body.scrollTop = 0;
 
     const graph = current.graph;
+    paintSubject();
     paintGraph(refs.graphHost, graph);
-    paintOutlook(refs.figsHost, current.history);
     paintRecord(refs.recordHost, graph, current.history);
     paintRequires(refs.requiresHost, graph, current.requires);
+    paintWhat(graph, current.history);
     paintDestination();
-    paintRawPending(graph);
 
-    refs.attach.checked = false;
+    // A graph with no steps has nothing to describe, and the folded block would
+    // otherwise report zero of everything under a heading promising contents.
+    // The gate says the one true thing about that workflow.
+    refs.what.hidden = !graph.nodes.length;
+    refs.what.open = false;
+
+    // The toggle is a decision, and coming back from a refusal is not a reason
+    // to unmake it. open() is what starts it at off; this restores whatever the
+    // reader last chose in this sitting.
+    refs.attach.checked = current.attachLog === true;
     refs.go.hidden = false;
     refs.doneBtn.hidden = true;
     refs.goNoLog.hidden = false;
-    refs.go.textContent = 'Publish';
+    refs.back.hidden = true;
+    refs.go.textContent = 'Export';
     applyBlockers();
-    setState('ready');
   }
+
+  // ─── the gate ─────────────────────────────────────────────────────────────
 
   // Two conditions this sheet can see for itself, both of which the builder
   // would refuse anyway. Predicting them is worth the duplication because the
-  // refusal is one the reader can act on and neither fix lives in this sheet:
-  // a step with no agent and a workflow with no steps are both repairs made on
-  // the canvas, and hearing about them before the write saves a round trip
-  // through a refusal pane. Everything else is left to the builder, which owns
-  // the rules and states them in its own words.
-  function applyBlockers() {
-    const graph = current.graph;
-    let blocker = null;
-    if (!graph.nodes.length) {
-      blocker = 'This workflow has no steps yet, so there is nothing to publish.';
-    } else if (graph.unbound.length) {
-      const first = graph.unbound[0];
-      blocker = graph.unbound.length === 1
-        ? `The step "${first}" does not say which agent it runs. Set one on the canvas and a reader will know what the file does.`
-        : `${graph.unbound.length} steps, starting with "${first}", do not say which agent they run. Set one on each and a reader will know what the file does.`;
+  // press that would discover them is the press this sheet exists to make
+  // work, and because one of the two is repairable right here.
+  //
+  // The roster names four steps and then counts the rest. A list that grows
+  // with the graph turns the one block a reader has to act on into the tallest
+  // thing on the surface, and past four names the count is the information.
+  const ROSTER_SHOWN = 4;
+
+  function rosterOf(unbound, total) {
+    // Naming every step of a workflow where none of them is bound is a list
+    // that says nothing the count above it did not already say.
+    if (unbound.length === total) return [`Every step in this workflow`];
+    const shown = unbound.slice(0, ROSTER_SHOWN).map((step) => nameChip(step.name));
+    const rest = unbound.length - shown.length;
+    // A truncated list is a comma series, because "A, B, C and D" closes the
+    // sentence and ", and 2 more" then reopens it.
+    if (rest > 0) {
+      const parts = [];
+      shown.forEach((chip, i) => { if (i) parts.push(', '); parts.push(chip); });
+      parts.push(`, and ${rest} more`);
+      return parts;
     }
+    return nameList(shown);
+  }
+
+  function paintGate(blocker) {
+    if (!blocker) {
+      refs.gate.hidden = true;
+      refs.gateWho.replaceChildren();
+      return;
+    }
+    setText(refs.gateTitle, blocker.title);
+    setText(refs.gateMessage, blocker.message);
+    refs.gateFix.hidden = !blocker.repairable;
+    if (blocker.repairable) {
+      setText(refs.gateGo, `Set on ${plural(blocker.count, 'step')}`);
+      // Withheld until the choices land. fillAgentChoices clears it.
+      if (!agentChoicesPainted) refs.gateGo.setAttribute('aria-disabled', 'true');
+      refs.gateWho.replaceChildren(...rosterOf(current.graph.unbound, current.graph.nodes.length));
+    } else {
+      refs.gateWho.replaceChildren();
+    }
+    refs.gate.hidden = false;
+  }
+
+  function readBlocker(graph) {
+    if (!graph.nodes.length) {
+      return {
+        title: 'This workflow has no steps',
+        message: 'Add at least one step in the builder, then export.',
+        footer: 'No steps to export',
+        repairable: false,
+        count: 0,
+      };
+    }
+    if (!graph.unbound.length) return null;
+    const count = graph.unbound.length;
+    return {
+      title: count === 1 ? 'One step does not name an agent' : `${count} steps do not name an agent`,
+      message: 'An exported step names its agent, so a reader runs the same program you did. Set one on each and Export unlocks.',
+      // The footer states the consequence rather than restating the title. Two
+      // copies of one sentence at the top and bottom of a single screen read as
+      // a rendering fault, and the footer's job is to say what the button is
+      // doing, which is standing down.
+      footer: 'Export stays withheld until every step names an agent.',
+      repairable: true,
+      count,
+    };
+  }
+
+  function applyBlockers() {
+    const blocker = readBlocker(current.graph);
     current.blocked = !!blocker;
-    refs.foot.textContent = blocker
-      || 'Nothing leaves this machine. Publishing writes one file where you point it.';
+    paintGate(blocker);
+
+    setText(refs.foot, blocker
+      ? blocker.footer
+      : 'Nothing leaves this machine. Exporting writes one file where you point it.');
+    refs.foot.classList.toggle('is-error', !!blocker);
+
     if (blocker) {
       // aria-disabled rather than disabled, so the button keeps its place in
       // the tab order and the sentence naming what is blocking it can be
       // announced by the control it is about.
       refs.go.setAttribute('aria-disabled', 'true');
       refs.go.setAttribute('aria-describedby', 'wfx-pub-foot');
+      if (blocker.repairable) fillAgentChoices();
+      say(blocker.title);
     } else {
       refs.go.removeAttribute('aria-disabled');
       refs.go.removeAttribute('aria-describedby');
     }
+  }
+
+  // The choices in the repair control, which never include an empty one: a
+  // control whose job is to name an agent must not offer the value that leaves
+  // it unnamed. Only what this machine reports as installed is offered, because
+  // the repair writes a claim about what a reader will run and a name nothing
+  // here can execute is a claim nobody checked.
+  //
+  // detect() answers with a record carrying an agents array. The bare array is
+  // the older shape and is read too, which is the same pair app.js accepts.
+  //
+  // option is outside the kit's tag allowlist on purpose, so these two are
+  // built directly. Nothing here is parsed: a text node and a value attribute
+  // are inert whatever they contain.
+  let agentChoices = null;
+  let agentChoicesPainted = false;
+
+  // An empty answer is not cached. A probe that found nothing is as likely to
+  // be a probe that ran before anything was installed as a machine with
+  // nothing on it, and the cost of asking again is one IPC call per open.
+  async function loadAgentChoices() {
+    if (agentChoices && agentChoices.length) return agentChoices;
+    let rows = [];
+    try {
+      const answer = await window.husk.agents.detect();
+      rows = Array.isArray(answer)
+        ? answer
+        : ((answer && Array.isArray(answer.agents)) ? answer.agents : []);
+    } catch (_) { rows = []; }
+    agentChoices = rows
+      .filter((a) => a && a.available && a.command)
+      .map((a) => ({ command: String(a.command), label: String(a.label || a.command) }));
+    return agentChoices;
+  }
+
+  // The button is withheld until the control under it has something to say. The
+  // list arrives over IPC and the gate paints synchronously, so a press in that
+  // window would read an empty select and write nothing, which is exactly the
+  // silence this whole surface exists to remove.
+  async function fillAgentChoices() {
+    if (agentChoicesPainted) return;
+    const choices = await loadAgentChoices();
+    if (!refs || !refs.gateSel) return;
+    agentChoicesPainted = choices.length > 0;
+    const options = choices.map((choice) => {
+      const option = document.createElement('option');
+      option.setAttribute('value', choice.command);
+      option.appendChild(window.WfxDom.text(choice.label));
+      return option;
+    });
+    refs.gateSel.replaceChildren(...options);
+    if (choices.length) {
+      refs.gateGo.removeAttribute('aria-disabled');
+    } else {
+      // Nothing installed. The gate keeps its title, which is still true, and
+      // the row under it says why the repair cannot run rather than offering a
+      // name this machine has no way to execute.
+      setText(refs.gateGo, 'No agent to set');
+      setText(refs.gateFixLabel, 'Install an agent, then set it on each step.');
+      refs.gateSel.hidden = true;
+    }
+  }
+
+  // The repair. One update call carrying the id and the graph, which merges
+  // rather than replaces on the main side, so the workflow's name, description
+  // and trigger are untouched and exactly one field moves on exactly the steps
+  // that had none.
+  //
+  // Nothing is written anywhere until this runs. A workflow already on disk
+  // with unbound steps stays that way until somebody presses this button,
+  // because rebinding one on load would change what it runs at a moment with
+  // no surface to say so.
+  async function repairUnbound(command) {
+    if (busy || !current || !command) return;
+    const unbound = new Set(current.graph.unbound.map((step) => step.id));
+    if (!unbound.size) return;
+
+    busy = true;
+    refs.gateGo.setAttribute('aria-disabled', 'true');
+    say('Setting the agent on those steps');
+
+    const source = (current.workflow.graph && current.workflow.graph.nodes) || [];
+    const graph = {
+      nodes: source.map((node) => (node && unbound.has(String(node.id == null ? '' : node.id)) && !node.agentCommand
+        ? Object.assign({}, node, { agentCommand: command })
+        : node)),
+      edges: (current.workflow.graph && current.workflow.graph.edges) || [],
+    };
+
+    let res = null;
+    try { res = await window.husk.workflows.update({ id: current.workflow.id, graph }); }
+    catch (_) { res = null; }
+
+    busy = false;
+    refs.gateGo.removeAttribute('aria-disabled');
+
+    if (!res || !res.ok) {
+      shout('That change could not be saved', 'error');
+      say('Those steps were not changed');
+      return;
+    }
+
+    // The rest of the page holds its own copy of this workflow, and the builder
+    // opens from that copy. Telling it to re-read is what stops a later Save
+    // from writing the pre-repair graph back over this one.
+    if (typeof current.onChanged === 'function') {
+      try { await current.onChanged(); } catch (_) { /* the page will re-read on its own next paint */ }
+    }
+
+    // Re-read rather than patch in place. The workflow that comes back has been
+    // through the same sanitizer every ordinary save runs, so what this sheet
+    // describes from here is what is on disk. The history is re-read for the
+    // same reason: agentCommand is inside the hashed body, so the fingerprint
+    // has moved and the count of runs that name it is stale by construction.
+    const fresh = await loadWorkflow(current.workflow.id);
+    if (!fresh) {
+      // The write reported success and the record cannot be read back, so this
+      // sheet has no basis for saying what is on disk. Repainting the old
+      // blocker here would report the repair as having failed, which is a
+      // different claim and not one anything here can support.
+      shout('That workflow could not be read back', 'error');
+      say('The change was saved, but this workflow could not be read back');
+      return;
+    }
+    current.workflow = fresh;
+    current.graph = readGraph(current.workflow);
+    current.history = await loadHistory(current.workflow.id);
+    renderReady();
+    say(current.blocked ? refs.foot.textContent : 'Every step names an agent now');
   }
 
   // ─── the write ────────────────────────────────────────────────────────────
@@ -686,10 +938,11 @@
 
   async function publish(attachLog) {
     if (busy || current.blocked) return;
+    current.attachLog = attachLog === true;
     busy = true;
     setState('working');
     refs.go.setAttribute('aria-disabled', 'true');
-    refs.go.textContent = 'Publishing';
+    refs.go.textContent = 'Exporting';
     say('Writing the file');
 
     let res = null;
@@ -700,7 +953,7 @@
     } catch (_) { res = null; }
 
     busy = false;
-    refs.go.textContent = 'Publish';
+    refs.go.textContent = 'Export';
     refs.go.removeAttribute('aria-disabled');
 
     if (!res || typeof res !== 'object') {
@@ -743,23 +996,46 @@
   // that could not be attached. None of them stops the file being useful and
   // all of them change what it claims, so they are rendered as rows rather than
   // rolled into a toast that disappears.
+  // The row's name slot is a heading in the sheet's own voice. A warning code
+  // is a key the main process routes on, and printing it here puts a machine
+  // identifier in the one line of the row a person reads first. The message
+  // beside it is already prose and carries the specifics.
+  const WARNING_TITLES = {
+    'no-receipts': 'No run was attachable',
+    'edges-dropped': 'A connection was left out',
+    'regex-downgraded': 'A routing pattern was widened',
+    'evidence-skipped': 'A run log was left out',
+    'evidence-unavailable': 'A run log could not be read',
+  };
+
+  // Capped, because one row per unreadable run log is a list bounded by the run
+  // history and every one of them renders above the git command this pane
+  // exists to hand over.
+  const WARNINGS_SHOWN = 4;
+
   function buildWarnings(res, text) {
     const rows = [];
-    const warnings = Array.isArray(res.warnings) ? res.warnings : [];
-    for (const warning of warnings) {
-      if (!warning) continue;
-      rows.push(pfRow(String(warning.code || 'note'), String(warning.message || '')));
+    const warnings = (Array.isArray(res.warnings) ? res.warnings : []).filter(Boolean);
+    for (const warning of warnings.slice(0, WARNINGS_SHOWN)) {
+      const code = String(warning.code || 'note');
+      rows.push(pfRow(WARNING_TITLES[code] || 'A note about this file', String(warning.message || '')));
+    }
+    if (warnings.length > WARNINGS_SHOWN) {
+      rows.push(pfRow(
+        `${warnings.length - WARNINGS_SHOWN} further notes`,
+        'Read the file itself for the rest.',
+      ));
     }
     const measured = byteLength(text);
     if (Number.isFinite(measured) && Number.isFinite(res.bytes) && measured !== res.bytes) {
       rows.push(pfRow(
         'The pane below is a re-serialization',
-        `The writer reported ${res.bytes} bytes and the same object serializes to ${measured} here, so the text below is not byte for byte the file. Read the file itself before you commit it.`,
+        `The writer reported ${res.bytes} bytes; this pane serializes to ${measured}. Read the file on disk.`,
       ));
     }
     if (!rows.length) return null;
     return injected(el('div', { class: ['wfx-pf', 'is-plain'] },
-      el('div', { class: 'wfx-pf-h' }, 'What Husk changed, or could not do'),
+      el('div', { class: 'wfx-pf-h' }, 'Warnings'),
       ...rows));
   }
 
@@ -781,7 +1057,7 @@
       renderRefused({
         stage: 'export',
         code: 'run-output-in-file',
-        message: 'The file that was written carries raw agent output, which a published workflow must never contain. Delete it rather than committing it.',
+        message: 'The file contains raw agent output and must not be committed. Delete it.',
         detail: res.path,
       }, attachLog);
       return;
@@ -789,18 +1065,13 @@
 
     const noteTitle = refs.doneNote.querySelector('.wfx-note-t');
     const noteBody = refs.doneNote.querySelector('.wfx-note-m');
-    if (noteTitle) noteTitle.textContent = 'Written.';
-    if (noteBody) {
-      noteBody.textContent = `${fmtBytes(res.bytes)}, ${receiptPhrase(artifact)}, ${attached ? 'run log attached' : 'no run log attached'}. It is not committed yet.`;
-    }
+    setText(noteTitle, 'Written.');
+    setText(noteBody, `${fmtBytes(res.bytes)}, ${receiptPhrase(artifact)}, ${attached ? 'run log attached' : 'no run log'}. Untracked until you commit it.`);
 
     // The tiles appear only when receipts actually travelled, and they read
     // from the summary of the runs that went into them rather than from the
     // local history, so what the publisher sees here is what a reader will see
-    // on the other side of the file. No run in this build records the graph it
-    // executed, so nothing is publishable yet and this stays folded; it is
-    // written now rather than later because the alternative is a surface that
-    // silently keeps showing an empty state on the day receipts start working.
+    // on the other side of the file.
     clearInjected();
     const receiptsTravelled = Array.isArray(artifact.receipts) && artifact.receipts.length > 0;
     if (receiptsTravelled && res.receiptSummary) {
@@ -813,27 +1084,34 @@
 
     paintPath(refs.donePath, res.path);
 
-    // The disclosure moves under the git line rather than being rebuilt there,
-    // so the summary, the chevron and the keyboard-reachable pre are the same
-    // elements the ready pane offered and there is only one of them in the DOM.
-    refs.rawName.textContent = 'The exact bytes that were written';
-    refs.rawMeta.textContent = `${fmtBytes(res.bytes)} · ${receiptPhrase(artifact)} ·`;
-    refs.rawPc.textContent = attached ? 'run log attached' : 'no log attached';
-    refs.rawPre.textContent = text;
-    refs.done.insertBefore(refs.raw, refs.gitRow);
+    // The disclosure is declared in this pane, directly above the line that
+    // would make these bytes public, and it opens folded every time: a reader
+    // who wants the file asks for it, and a pane that unfolds four kilobytes of
+    // JSON on arrival buries the one command it exists to hand over.
+    setText(refs.rawName, 'The exact bytes that were written');
+    setText(refs.rawMeta, `${fmtBytes(res.bytes)} · ${receiptPhrase(artifact)} ·`);
+    setText(refs.rawPc, attached ? 'run log attached' : 'no log attached');
+    setText(refs.rawPre, text);
+    refs.raw.open = false;
 
     const command = gitCommandFor(res.path, artifact.name || current.workflow.name, artifact.revision || 1);
-    refs.gitPre.textContent = command;
+    setText(refs.gitPre, command);
     current.command = command;
-    refs.copy.textContent = 'Copy';
+    setText(refs.copy, 'Copy');
 
     refs.go.hidden = true;
     refs.goNoLog.hidden = true;
+    refs.back.hidden = true;
     refs.doneBtn.hidden = false;
-    refs.foot.textContent = repoRelative(res.path)
-      ? 'Nothing is shared yet. The file sits untracked in that repo until you run the line above.'
-      : 'Nothing is shared yet. The file sits on your disk until you put it somewhere a reader can reach.';
+    refs.foot.classList.remove('is-error');
+    setText(refs.foot, repoRelative(res.path)
+      ? 'Not shared until you run this.'
+      : 'Not shared. The file is on your disk.');
     setState('done');
+    // Focus lands on the one control this pane still offers, because the button
+    // that was focused a moment ago is hidden by the state it just entered and
+    // a hidden focus owner drops the caret to the document.
+    try { refs.doneBtn.focus({ preventScroll: true }); } catch (_) { /* the pane went away */ }
     say(`Written to ${res.path}`);
   }
 
@@ -844,26 +1122,45 @@
     'bad-agent': 'A step does not say which agent it runs',
     'name-collision': 'Two step names an AI router cannot tell apart',
     'regex-condition': 'This workflow routes on a regular expression',
-    'too-many-nodes': 'This workflow is larger than a published file may carry',
-    'bad-model': 'A model pin cannot be published as written',
-    'bad-input': 'This workflow could not be published as written',
+    'too-many-nodes': 'This workflow is larger than an exported file may carry',
+    'bad-model': 'A model pin cannot be exported as written',
+    'bad-input': 'This workflow could not be exported as written',
     'write-failed': 'That file could not be written',
     'not-found': 'That workflow is not in your list any more',
     'run-output-in-file': 'The file that was written carries raw agent output',
     'no-answer': 'Husk did not answer',
+    // The rest of what the export path can return. A code with no entry here
+    // falls through to a heading that names no fact, which is the least useful
+    // thing this pane can say at the moment it has the reader's attention.
+    'evidence-unavailable': 'The run log could not be read',
+    'chain-invalid': 'The run log does not verify against itself',
+    'receipt-invalid': 'A receipt did not survive its own check',
+    'not-artifact': 'Husk wrote a file it would refuse to read',
+    'bad-id': 'Husk built an identifier it cannot read back',
+    'edges-dropped': 'Husk dropped a connection while building the file',
+    'hash-mismatch': 'The fingerprint does not match the file Husk just built',
+    'schema-too-new': 'Husk built a file this version cannot read',
+    'cancelled': 'Nothing was written',
   };
 
-  // The forward move exists for one refusal only. The footer declares two
-  // primaries and the stylesheet swaps them on the refused state, which is
-  // right for a size check on the author's own run log: routine, recoverable,
-  // and fixed by publishing without it. Every other refusal here is about the
+  // Two refusals are about the run log, and for those the forward move is to
+  // export without it: the footer declares that primary and the stylesheet
+  // swaps it in on the refused state. Every other refusal here is about the
   // workflow itself, where there is no safe forward move and a button offering
-  // one would be a lock to pick, so it is hidden and the body sentence carries
-  // the fix in words.
+  // one would be a lock to pick.
+  //
+  // Back is the move that always exists. The destination the reader chose and
+  // the toggle they set live in the ready pane, which this state hides, so
+  // without it the only exit from a refusal is Cancel and Cancel throws both
+  // decisions away.
+  const LOG_REFUSALS = new Set([
+    'evidence-too-large', 'chain-invalid', 'evidence-unavailable', 'receipt-invalid',
+  ]);
+
   function renderRefused(res, attachLog) {
     const code = String(res.code || 'bad-input');
-    refs.refTitle.textContent = REFUSAL_TITLES[code] || 'This workflow could not be published';
-    refs.refMessage.textContent = String(res.message || 'Husk refused to write this file.');
+    setText(refs.refTitle, REFUSAL_TITLES[code] || 'This workflow could not be exported');
+    setText(refs.refMessage, String(res.message || 'Husk refused to write this file.'));
 
     const rows = [
       el('dt', {}, 'code'), el('dd', {}, code),
@@ -871,26 +1168,36 @@
     ];
     if (res.detail) { rows.push(el('dt', {}, 'detail'), el('dd', {}, String(res.detail))); }
     if (Array.isArray(res.steps) && res.steps.length) {
+      // Chips through nameList rather than a joined string, for the reason the
+      // roster uses them: a run of right-to-left names joined by commas reads
+      // back to front, and the list is the part a reader acts on.
       rows.push(el('dt', {}, 'steps'),
-        el('dd', {}, res.steps.map((s) => String((s && s.name) || '')).join(', ')));
+        el('dd', {}, ...nameList(res.steps.map((s) => nameChip(String((s && s.name) || ''))))));
     } else if (res.step && res.step.name) {
-      rows.push(el('dt', {}, 'step'), el('dd', {}, String(res.step.name)));
+      rows.push(el('dt', {}, 'step'), el('dd', {}, nameChip(String(res.step.name))));
     }
     refs.refDetail.replaceChildren(...rows);
 
-    const logIsTheProblem = attachLog === true && (code === 'evidence-too-large' || code === 'chain-invalid');
+    const logIsTheProblem = attachLog === true && LOG_REFUSALS.has(code);
     refs.goNoLog.hidden = !logIsTheProblem;
+    refs.back.hidden = false;
+    refs.foot.classList.remove('is-error');
     if (logIsTheProblem) {
-      refs.foot.textContent = 'Nothing was written. Publishing without the log writes the same file with the receipts labelled as your own account.';
+      setText(refs.foot, 'Nothing was written. Without the log, receipts ship as your own account.');
     } else if (code === 'run-output-in-file') {
       // The one refusal that arrives after the write, so it is the one that
       // must not say nothing happened. The file exists, it is untracked, and
       // deleting it is the whole fix.
-      refs.foot.textContent = 'The file was written and is untracked. Delete it; do not commit it.';
+      setText(refs.foot, 'File written and untracked. Delete it, do not commit.');
     } else {
-      refs.foot.textContent = 'Nothing was written, and nothing about this workflow has changed.';
+      setText(refs.foot, 'Nothing was written.');
     }
     setState('refused');
+    // Before the caret can be orphaned: the state change hides whichever footer
+    // primary had focus, and a hidden focus owner sends Tab back to the page
+    // behind the sheet.
+    const landing = logIsTheProblem ? refs.goNoLog : refs.back;
+    try { landing.focus({ preventScroll: true }); } catch (_) { /* the footer went away */ }
     say(refs.refTitle.textContent);
   }
 
@@ -955,7 +1262,7 @@
     return null;
   }
 
-  // The second publish of a session writes immediately and confirms with an
+  // The second export of a session writes immediately and confirms with an
   // Undo, because by then every question this sheet asks has been answered once
   // and asking again turns a byproduct back into a form. The Undo is what makes
   // an unconfirmed write to a tracked file safe: it rewrites the destination at
@@ -974,7 +1281,7 @@
     }
     lastPublish.set(workflow.id, { path: res.path, artifact: res.artifact || {} });
     const revision = (res.artifact && res.artifact.revision) || 1;
-    const message = `Published revision ${revision}, ${receiptPhrase(res.artifact)} attached`;
+    const message = `Exported revision ${revision}, ${receiptPhrase(res.artifact)} attached`;
     // Undo is offered only when there is a revision to go back to. Rewriting
     // the destination without one would not restore anything: it would write a
     // second new revision over the first, which is the opposite of the promise
@@ -1014,14 +1321,48 @@
     refs.cancel.addEventListener('click', close);
     refs.doneBtn.addEventListener('click', close);
     refs.go.addEventListener('click', () => {
-      if (!current || refs.go.getAttribute('aria-disabled') === 'true') return;
+      if (!current) return;
+      if (refs.go.getAttribute('aria-disabled') === 'true') {
+        // A press that cannot write still has to answer. Re-announcing the
+        // reason and putting the reader in front of the control that clears it
+        // is the difference between a button that is withheld and a button
+        // that is broken, which is the whole of the complaint this state
+        // exists to answer.
+        say(refs.foot.textContent);
+        if (!refs.gate.hidden) {
+          try { refs.gate.scrollIntoView({ block: 'nearest' }); } catch (_) { /* no layout here */ }
+          if (!refs.gateFix.hidden) {
+            try { refs.gateSel.focus({ preventScroll: true }); } catch (_) { /* the gate went away */ }
+          }
+        }
+        return;
+      }
       publish(refs.attach.checked === true);
     });
-    refs.goNoLog.addEventListener('click', () => { if (current) publish(false); });
+    // The toggle goes back to off with the decision it describes. Leaving it
+    // ticked after publishing without the log would show a ready pane claiming
+    // the next write carries a log the reader just declined.
+    refs.goNoLog.addEventListener('click', () => {
+      if (!current) return;
+      refs.attach.checked = false;
+      publish(false);
+    });
+
+    refs.back.addEventListener('click', () => {
+      if (busy || !current) return;
+      renderReady();
+      try { refs.card.focus({ preventScroll: true }); } catch (_) { refs.card.focus(); }
+      say(current.blocked ? refs.foot.textContent : 'Export this workflow');
+    });
+
+    refs.gateGo.addEventListener('click', () => {
+      if (!current || refs.gateGo.getAttribute('aria-disabled') === 'true') return;
+      repairUnbound(refs.gateSel.value);
+    });
 
     // Change points the write at a file that already exists, which is the
     // overwrite path. Leaving it alone is the ordinary case: the save dialog
-    // asks on Publish and offers the workflow's own repo, and that default
+    // asks on Export and offers the workflow's own repo, and that default
     // lives in the main process where the work tree is visible.
     refs.destChange.addEventListener('click', async () => {
       if (busy || !current) return;
@@ -1032,29 +1373,49 @@
       current.target = picked;
       current.prior = await loadPrior(current.workflow, current.sidecar, picked, lastPublish.get(current.workflow.id));
       paintDestination();
-      say(`Publishing to ${picked}`);
-    });
-
-    // The toggle changes one line of copy and nothing else. Its own sentence,
-    // the one that says an audit row carries the goal text and the workspace
-    // path, is static markup and is never rewritten from here: a warning that
-    // moves when you interact with it is a warning people learn to dismiss.
-    refs.attach.addEventListener('change', () => {
-      refs.rawPc.textContent = refs.attach.checked
-        ? 'log requested, if there is one to attach'
-        : 'shown in full once written';
+      say(`Exporting to ${picked}`);
     });
 
     refs.copy.addEventListener('click', async () => {
       if (!current || !current.command) return;
       try {
         await navigator.clipboard.writeText(current.command);
-        refs.copy.textContent = 'Copied';
-        setTimeout(() => { refs.copy.textContent = 'Copy'; }, 1600);
+        setText(refs.copy, 'Copied');
+        setTimeout(() => { setText(refs.copy, 'Copy'); }, 1600);
       } catch (_) { shout('That command could not be copied', 'error'); }
     });
 
+    trapFocus();
     registerCloser();
+  }
+
+  // Tab stays inside the card. Without this the sheet is a dialog only to a
+  // reader who can see it: aria-modal keeps it out of the accessibility tree
+  // below, and nothing keeps the caret out of the page behind it.
+  //
+  // Candidates are filtered by offsetParent, which is null for anything inside
+  // a pane the current state hides and for the footer primaries the stylesheet
+  // swaps out. That is one test instead of a second list to keep in step with
+  // the CSS.
+  const FOCUSABLE = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+
+  function trapFocus() {
+    refs.card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Tab') return;
+      const stops = Array.from(refs.card.querySelectorAll(FOCUSABLE))
+        .filter((node) => !node.disabled && node.offsetParent !== null);
+      if (!stops.length) return;
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      const on = document.activeElement;
+      if (event.shiftKey && (on === first || on === refs.card)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && on === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
   }
 
   // Escape has to reach this sheet through the same table every other dialog
@@ -1073,12 +1434,12 @@
   async function open(workflowOrId, opts) {
     const options = opts || {};
     if (!hasKit()) {
-      shout('The publish sheet could not load its renderer', 'error');
+      shout('The export sheet could not load its renderer', 'error');
       console.error('wfx-publish: window.WfxDom is missing, so nothing can be built safely');
       return;
     }
     refs = resolve();
-    if (!refs) { shout('The publish sheet is missing from this page', 'error'); return; }
+    if (!refs) { shout('The export sheet is missing from this page', 'error'); return; }
     bindOnce();
 
     const workflow = await loadWorkflow(workflowOrId);
@@ -1091,7 +1452,7 @@
       || null;
     const prior = await loadPrior(workflow, sidecar, target, remembered);
 
-    // A workflow published earlier in this session goes straight to the write.
+    // A workflow exported earlier in this session goes straight to the write.
     if (remembered && !options.sheet) return republish(workflow, remembered, prior);
 
     current = {
@@ -1104,9 +1465,23 @@
       requires: (prior && prior.requires) || null,
       command: null,
       blocked: false,
+      // Off at the start of every sitting, and remembered across a refusal from
+      // there. The default is the argument this sheet makes about the run log.
+      attachLog: false,
+      // How a workflow this sheet edits reaches the rest of the page.
+      onChanged: typeof options.onChanged === 'function' ? options.onChanged : null,
     };
 
-    restoreFocusTo = document.activeElement;
+    // The caller's own trigger, when it passed one. The menu item that opens
+    // this sheet closes its menu first, so by the time this runs the button
+    // that was pressed is out of the document and document.activeElement is the
+    // body. Guarded on isOpen so a re-entrant open cannot record this card as
+    // the place focus came from.
+    if (!isOpen()) {
+      restoreFocusTo = (options.returnFocusTo && typeof options.returnFocusTo.focus === 'function')
+        ? options.returnFocusTo
+        : document.activeElement;
+    }
     openFor = workflow.id;
     refs.modal.hidden = false;
 
@@ -1129,10 +1504,15 @@
     // Focus lands on the card rather than on a control, so a keyboard reader
     // starts at the top of what the sheet says and tabs forward into the two
     // decisions, instead of starting on a button whose label is the last thing
-    // they should read.
+    // they should read. A refusal moves it again; that is renderRefused's call.
     refs.card.setAttribute('tabindex', '-1');
-    try { refs.card.focus({ preventScroll: true }); } catch (_) { refs.card.focus(); }
-    say('Publish this workflow');
+    if (!options.refusal) {
+      try { refs.card.focus({ preventScroll: true }); } catch (_) { refs.card.focus(); }
+    }
+    // The live region already carries whatever the render decided, and a title
+    // announced over it would replace the one sentence that says why the sheet
+    // cannot export with a sentence naming the sheet.
+    if (!options.refusal && !current.blocked) say('Export this workflow');
     return undefined;
   }
 

@@ -167,9 +167,10 @@ function runEndBanner(msg, kind = '') {
 }
 
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
-// Reusable destructive-action confirmation. Replaces the two-click "is-armed"
-// pattern with a proper modal that names what is about to be deleted. Returns
-// a promise that resolves true on confirm, false on cancel/escape/backdrop.
+// Reusable destructive-action confirmation: a modal that names what is about to
+// be deleted, so the decision is made against the thing itself and not against a
+// bare button. Returns a promise that resolves true on confirm, false on
+// cancel/escape/backdrop.
 function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabel = 'Delete', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
@@ -2883,10 +2884,10 @@ function wfSidecarFor(id) {
 // fingerprint of the graph as it stands now. Keyed on workflow id, and fetched
 // once per paint alongside the sidecars for the same reason.
 //
-// The receipts strip on a card reads this. Before it existed the strip had only
-// the receipts inside an imported artifact to read, so a workflow that ran here
-// ten times reported "No receipts yet" forever and the only way to see local
-// evidence was to export the workflow and import the file back as a second
+// The receipts strip on a card reads this. Without it the strip has only the
+// receipts inside an imported artifact to read, so a workflow that ran here ten
+// times reports "No receipts yet" forever and the only way to see local
+// evidence is to export the workflow and import the file back as a second
 // workflow.
 let wfReceiptsCache = {};
 
@@ -2925,9 +2926,9 @@ function wfDur(ms) {
 }
 
 // The flow's own shape, drawn small, with its steps named. A workflow is
-// recognised by its topology, which is why "2 steps" told you nothing, and it
+// recognised by its topology, which is why "2 steps" tells you nothing, and it
 // is chosen by what its steps say, which is why a row of unlabelled lozenges
-// told you no more than the count did. The install sheet shows this drawing to
+// tells you no more than the count does. The install sheet shows this drawing to
 // somebody deciding whether to let a stranger's commands run against a
 // directory on their disk, and "four boxes" is not something anyone can decide
 // on. Both halves have to be in the picture.
@@ -2946,12 +2947,12 @@ function wfDur(ms) {
 //             is the surface's own pixel box, so every number in the labelled
 //             path is a real CSS pixel at the smallest size that surface can
 //             render at, and a taller window only ever magnifies it.
-//   compact   the normalised scatter this function has always drawn, at the
-//             same 250 by 74, for a graph whose cells cannot hold a word. The
-//             names are still on the element as its accessible name; what is
-//             dropped is the pretence that they are legible.
+//   compact   the normalised scatter this function draws at a fixed 250 by 74,
+//             for a graph whose cells cannot hold a word. The names are still
+//             on the element as its accessible name; what is dropped is the
+//             pretence that they are legible.
 //
-// Two rules govern what may be handed in, and both survive the rewrite.
+// Two rules govern what may be handed in, and both hold on either shape.
 //
 // lastRun must be locally sourced. A step's status decides a class name and
 // nothing escapes a class attribute, so mapping through WF_MINI_STATUS keeps it
@@ -3026,10 +3027,10 @@ const WF_MINI_LABEL = {
   fontMin: 9, fontMax: 13, fontOfHeight: 0.55,
 };
 
-// The compact layout keeps the numbers it has always had, and keeps them
-// literally: the stylesheet's note on .wfx-pane .wf-mini works out the sheet's
-// scale from this viewBox, so a graph that falls back to this shape falls back
-// to the drawing that comment describes.
+// The compact layout keeps these numbers literally: the stylesheet's note on
+// .wfx-pane .wf-mini works out the sheet's scale from this viewBox, so a graph
+// that falls back to this shape falls back to the drawing that comment
+// describes.
 const WF_MINI_COMPACT = { w: 250, h: 74, pad: 12, nodeW: 26, nodeH: 13 };
 
 function wfMiniNum(value) {
@@ -3183,7 +3184,7 @@ function wfMiniFrame(width, height) {
     class: 'wf-mini',
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: 'xMidYMid meet',
-    // The drawing says something now, so it stops being decoration. The names
+    // The drawing says something, so it is not decoration. The names
     // are inside it as text either way, but a screen reader's handling of text
     // inside SVG is not something to bet a security surface on, and role plus
     // the accessible name below is.
@@ -3268,6 +3269,10 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
       'font-size': font,
       'font-weight': 600,
       fill: 'currentColor',
+      // A step name is a run of somebody's own language sitting inside a
+      // drawing whose direction is the app's. Isolating it keeps a
+      // right-to-left name from reordering against the pill it labels.
+      'unicode-bidi': 'isolate',
     });
     label.appendChild(kit.text(text));
     svg.appendChild(label);
@@ -3314,10 +3319,15 @@ function wfMiniCompact(nodes, edges, statuses) {
 // An edge counts as taken when both ends ran. A skipped end means the branch
 // was not the one the run went down, and an end with no status at all is a step
 // the run never reached.
+// A taken edge is one both of whose steps ran, so the test is membership in the
+// run vocabulary rather than the presence of any mark at all. A step can carry
+// a mark that is not an outcome, and reading one as a completed run draws the
+// accent path of a workflow that has never executed.
 function wfMiniTaken(statuses, edge) {
   const from = statuses[edge.from];
   const to = statuses[edge.to];
-  return !!(from && from !== 'skipped' && to && to !== 'skipped');
+  return WF_MINI_STATUS.includes(from) && from !== 'skipped'
+    && WF_MINI_STATUS.includes(to) && to !== 'skipped';
 }
 
 function wfMiniPlaceholder(message) {
@@ -3347,7 +3357,11 @@ function wfMiniSpeak(svg, names, count) {
 // box any of them offers and therefore the safe thing to guess. width is the
 // real width of the host in CSS pixels, for a caller that has the host in the
 // document already and can afford to read it; it is only ever used to widen.
-function wfMiniGraph(graph, lastRun, surface, width) {
+// marks is an optional Set of node ids to draw as needing attention. It is kept
+// out of WF_MINI_STATUS so it can never collide with a run outcome: a step can
+// be both finished and unbound, and the two are read off different runs of this
+// function on different surfaces.
+function wfMiniGraph(graph, lastRun, surface, width, marks) {
   const floor = WF_MINI_SURFACES[surface] || WF_MINI_SURFACES.card;
   const measured = Number(width);
   const box = {
@@ -3385,6 +3399,15 @@ function wfMiniGraph(graph, lastRun, surface, width) {
       const index = step ? at.get(String(step.nodeId)) : undefined;
       if (index !== undefined && WF_MINI_STATUS.includes(step.status)) statuses[index] = step.status;
     }
+  }
+
+  // A run outcome outranks the mark. A drawing that reported "unbound" over a
+  // step this graph is known to have failed would be answering a question
+  // nobody asked with the one channel the failure needed.
+  if (marks instanceof Set && marks.size) {
+    nodes.forEach((node, i) => {
+      if (!statuses[i] && marks.has(String(node.id))) statuses[i] = 'unbound';
+    });
   }
 
   const names = nodes.map(wfMiniName);
@@ -3458,7 +3481,7 @@ function wfPatternGraph(spec) {
     return {
       id,
       name: n.name,
-      agentCommand: null,
+      agentCommand: wfDefaultAgentCommand(),
       model: null,
       branchMode: n.branchMode === 'ai' ? 'ai' : 'parallel',
       prompt: n.prompt,
@@ -3647,7 +3670,7 @@ function wfPaintPatterns() {
         <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
       </div>`;
     // The thumbnail is appended rather than interpolated: the builder returns
-    // elements now, so that it can put a step name in as text rather than as
+    // elements, so that it can put a step name in as text rather than as
     // markup. These particular names are constants in this file, but there is
     // no second, string-shaped builder to keep them on and no reason to want
     // one.
@@ -3822,10 +3845,10 @@ function paintWorkflowList() {
         aggregate: wfAggregateFor(w.id),
         // This machine's own finding about the log the author shipped. The main
         // process recomputes it on every sidecar read, so it is passed straight
-        // through rather than recomputed here. Dropping it was the whole middle
-        // tier going to waste: the figures had already been re-derived from the
-        // shipped log and found to agree, and the card said "author states"
-        // regardless, which is the one claim the reader did not need from us.
+        // through rather than recomputed here. Dropping it wastes the whole
+        // middle tier: the figures are already re-derived from the shipped log
+        // and found to agree, and the card would say "author states" regardless,
+        // which is the one claim the reader does not need from us.
         chainCheck: (sidecar && sidecar.chainCheck) || null,
         // The record behind the chip is the imported file. A workflow written
         // here has none, so no handler is passed and the strip draws the tier
@@ -3876,10 +3899,11 @@ function wfOpenCardMenu(anchor, id) {
   pop.querySelector('[data-act="duplicate"]').addEventListener('click', async () => {
     close();
     // The main process copies the record, because it is also the only side that
-    // can copy the sidecar. Building the copy here and calling create wrote no
+    // can copy the sidecar. Building the copy here and calling create writes no
     // row, and a workflow with no row is one every check in this feature reads
-    // as locally authored: the copy of an imported workflow ran with no consent
-    // gate, no bound directory and the auto-approving agent flags restored.
+    // as locally authored: the copy of an imported workflow would run with no
+    // consent gate, no bound directory and the auto-approving agent flags
+    // restored.
     const res = await window.husk.workflows.duplicate(w.id);
     if (!res || !res.ok) { toast((res && res.error) || 'Could not duplicate this workflow', 'error'); return; }
     await renderWorkflows();
@@ -3894,9 +3918,17 @@ function wfOpenCardMenu(anchor, id) {
   // load, and it is the same channel the sheet drives, so the file it writes
   // is the same file with the log left off.
   pop.querySelector('[data-act="export"]').addEventListener('click', async () => {
+    // The anchor is read before close() removes the menu around it, because it
+    // is where focus belongs when the sheet closes and by then the button that
+    // opened it is gone from the document.
+    const returnFocusTo = anchor;
     close();
     if (window.WfxPublish && typeof window.WfxPublish.open === 'function') {
-      window.WfxPublish.open(w);
+      // onChanged is how a workflow the sheet edited reaches the rest of the
+      // page. The builder opens from workflowsCache, so a repair that only
+      // reached disk would be overwritten the next time somebody opened that
+      // workflow and saved it.
+      window.WfxPublish.open(w, { returnFocusTo, onChanged: renderWorkflows });
       return;
     }
     const res = await window.husk.workflows.export({ workflowId: id });
@@ -3939,11 +3971,31 @@ function wfPaintLiveBand(run) {
 
 // ─── Canvas builder (Drawflow) ──────────────────────────────────────────────
 
+// Every option carries a real command. There is no "use whatever the settings
+// say" entry, because that value is one the rest of the app cannot use: a
+// published step names its agent, and a step that does not resolves on the
+// reader's machine to their config rather than to this one. Naming the
+// resolved command costs the reader nothing and is the only form the file can
+// carry.
+//
+// So a step with no agent yet lands on the resolved default preselected, and
+// the empty value survives on one kind of machine only, one with no agent CLI
+// installed, where the option is disabled and says why.
 function buildAgentOptions(currentVal) {
   const installed = (agentsCache || []).filter((a) => a.available);
-  const opts = [`<option value="">Default (from settings)</option>`];
+  if (!installed.length) return `<option value="" disabled selected>No agent CLI installed</option>`;
+  const chosen = currentVal || wfDefaultAgentCommand();
+  const opts = [];
+  // A step written against an agent this machine does not have keeps its own
+  // value, at the top and selected. Without it nothing in the list matches, the
+  // browser selects the first option, and the panel writes back on the next
+  // keystroke in any field: a step would silently change vendor because
+  // somebody edited its prompt on a different laptop.
+  if (chosen && !installed.some((a) => a.command === chosen)) {
+    opts.push(`<option value="${escapeHtml(chosen)}" selected>${escapeHtml(chosen)} · not installed here</option>`);
+  }
   installed.forEach((a) => {
-    const sel = (a.command === currentVal) ? ' selected' : '';
+    const sel = (a.command === chosen) ? ' selected' : '';
     opts.push(`<option value="${escapeHtml(a.command)}"${sel}>${escapeHtml(a.label || a.command)}</option>`);
   });
   return opts.join('');
@@ -3958,7 +4010,7 @@ function wfNodeHtml(data) {
       <div class="wf-cv-node-badge">${badge}</div>
       <div class="wf-cv-node-name">${escapeHtml(data.name || 'Step')}</div>
     </div>
-    <div class="wf-cv-node-meta">${escapeHtml(data.model ? `${data.agentCommand || 'default'} \u00b7 ${data.model}` : (data.agentCommand || 'default agent'))}</div>
+    <div class="wf-cv-node-meta">${escapeHtml(data.model ? `${data.agentCommand || 'no agent'} \u00b7 ${data.model}` : (data.agentCommand || 'no agent'))}</div>
   </div>`;
 }
 
@@ -4034,7 +4086,7 @@ function wfEnsureEditor() {
   wfEditor.force_first_input = true;
   wfEditor.start();
   // Drawflow opens a delete popover on right-click. Suppress it: a node is
-  // removed from its config panel, and the popover rendered as a stray black box.
+  // removed from its config panel, and the popover renders as a stray black box.
   const cont = $('#wf-canvas');
   if (cont) cont.addEventListener('contextmenu', (e) => e.preventDefault());
   // Open the config modal only on a real click: mousedown then mouseup on the
@@ -4103,7 +4155,7 @@ function wfAddCanvasNode(data, x, y) {
     name: (data && data.name) || 'New Step',
     model: (data && data.model) || '',
     branchMode: (data && data.branchMode) || 'parallel',
-    agentCommand: (data && data.agentCommand) || '',
+    agentCommand: (data && data.agentCommand) || wfDefaultAgentCommand(),
     prompt: (data && data.prompt) || '',
     passContext: (data && data.passContext) || 'full',
   };
@@ -4235,6 +4287,40 @@ function wfAgentCommandForPanel() {
   return (chosen || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
 }
 
+// The agent a step is born with, and the reason it is born with one at all.
+//
+// A published step names its agent, because a step that does not resolves on
+// the reader's machine to whatever their own config says: the same file would
+// then run a different program for them than it ran here, and the receipt
+// beside it would describe neither. So the artifact builder refuses a step
+// with no agent, and it is right to.
+//
+// Which makes an empty agentCommand a value nothing downstream can use. The
+// run engine papers over it with the same fallback this function performs, so
+// a step carrying one runs correctly and reads as finished, and the refusal
+// arrives only at publish time, on a surface far from the canvas that minted
+// it. Writing the resolved command onto the step at the moment it is created
+// is what keeps the canvas from producing a shape the rest of the app rejects.
+//
+// No agent name is written here. The order is the configured agent first, then
+// whatever is installed; on a machine with no agent CLI at all this returns the
+// empty string and the publish sheet says so in words.
+//
+// Only a command this machine actually reports as installed is ever returned,
+// and every one of those is a bare basename. The configured value is not a
+// substitute: config accepts a path, the graph sanitizer accepts a path because
+// it checks the basename, and the artifact builder refuses anything that is not
+// already equal to its own basename. Minting one here would produce a step the
+// publish gate reads as bound and the write refuses, which is the same defect
+// this function exists to remove, arriving one screen later.
+function wfDefaultAgentCommand() {
+  const installed = (agentsCache || []).filter((a) => a && a.available && a.command);
+  if (!installed.length) return '';
+  const configured = (cfg && cfg.agentCommand ? String(cfg.agentCommand) : '').trim().split(/\s+/)[0];
+  if (configured && installed.some((a) => a.command === configured)) return configured;
+  return String(installed[0].command);
+}
+
 function wfPaintModelOptions(catalog, pinned) {
   const sel = $('#wf-np-model');
   const custom = $('#wf-np-model-custom');
@@ -4342,7 +4428,9 @@ function wfSyncPanelToNode() {
     : (modelSel === 'Loading...' ? '' : modelSel);
   const data = {
     huskId: existing.huskId || wfNewNodeId(),
-    name: ($('#wf-np-name').value || 'Step').slice(0, 64),
+    // Cut by character rather than by code unit, so a name ending on an astral
+    // character keeps the whole character instead of the half of it that fits.
+    name: Array.from($('#wf-np-name').value || 'Step').slice(0, 64).join(''),
     agentCommand: $('#wf-np-agent').value || '',
     model: model || '',
     branchMode: (($('#wf-np-branch') || {}).value === 'ai') ? 'ai' : 'parallel',
@@ -4353,13 +4441,16 @@ function wfSyncPanelToNode() {
   const nameEl = document.querySelector(`#wf-canvas [id="node-${wfSelectedNodeId}"] .wf-cv-node-name`);
   const metaEl = document.querySelector(`#wf-canvas [id="node-${wfSelectedNodeId}"] .wf-cv-node-meta`);
   if (nameEl) nameEl.textContent = data.name;
-  // The node's own label now names its agent and model, so the graph shows the
+  // The node's own label names its agent and model, so the graph shows the
   // mix at a glance without opening anything.
   if (metaEl) metaEl.textContent = wfNodeAgentLabel(data);
 }
 
+// A step with an empty agentCommand is not configured to use a default, it is
+// a step nothing has named yet, and the publish path refuses it. The label says
+// which of those two it is.
 function wfNodeAgentLabel(d) {
-  const agent = (d.agentCommand || 'default agent');
+  const agent = (d.agentCommand || 'no agent');
   return d.model ? `${agent} \u00b7 ${d.model}` : agent;
 }
 
@@ -4387,9 +4478,9 @@ function openWorkflowBuilder(editId) {
   hideNodePanel();
   hideEdgePanel();
   // Drawflow needs the container visible and sized before start(). The view is
-  // on screen now, so force the layout and build it: a timer here meant the
-  // graph did not exist for the first frames, and anything that read it in that
-  // window (Run, Save) saw an empty canvas.
+  // on screen now, so force the layout and build it: deferring on a timer
+  // leaves the graph nonexistent for the first frames, and anything that reads
+  // it in that window (Run, Save) sees an empty canvas.
   const host = $('#wf-canvas');
   if (host) void host.offsetWidth;
   wfEnsureEditor();
@@ -4530,9 +4621,9 @@ function wfBuildRunCanvas(workflow) {
   // artifact orders that array by the hash of each step's body (see
   // canonicalProjection in src/lib/workflow-artifact.js), which is load-bearing
   // for the fingerprint and says nothing about execution order, so an imported
-  // workflow numbered by array index contradicted the consent gate the reader
-  // had just agreed to: the gate said "01 Reproduce, 02 Patch" over the same
-  // graph this canvas numbered the other way round.
+  // workflow numbered by array index contradicts the consent gate the reader
+  // has just agreed to: the gate says "01 Reproduce, 02 Patch" over the same
+  // graph this canvas would number the other way round.
   //
   // orderedSteps is the gate's own traversal, borrowed rather than
   // reimplemented so the two surfaces cannot drift apart. wfAllNodes is the
@@ -5168,7 +5259,17 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
   // Bracketed paste: the agent's TUI reads a bare newline as "send", so writing
   // this raw would submit the text a line at a time. Wrapped, it lands in the
   // prompt as one block the user can still edit.
-  const paste = `\x1b[200~${primer.replace(/\r/g, '')}\x1b[201~`;
+  //
+  // Both halves of that string are somebody else's: body is whatever the agent
+  // printed, and node.name comes from the workflow file, which on an imported
+  // workflow was written by its author. Escape is what makes the wrapper hold:
+  // a control sequence inside the text can close bracketed paste early, and
+  // the newline after it is then read as send, so a step that prints one
+  // submits a turn the user never typed. Stripping every control character
+  // except tab and newline leaves the block readable and leaves no byte that
+  // can start a sequence.
+  const pasteSafe = (s) => window.husk.text.stripControls(s);
+  const paste = `\x1b[200~${pasteSafe(primer)}\x1b[201~`;
   const deliver = (attempt = 0) => {
     try { window.husk.pty.write(paste, tab.id); } catch (_) {
       if (attempt < 3) { setTimeout(() => deliver(attempt + 1), 600); return; }
@@ -5295,21 +5396,21 @@ async function wfOpenReceiptRecord(workflowId) {
       cwd: sidecar.boundCwd || null,
       billing: autBilling,
       // The same local history the card's strip is drawn from. Without it the
-      // panel behind the chip described the author's runs while the chip in
-      // front of it described the reader's, which is two answers to one
+      // panel behind the chip describes the author's runs while the chip in
+      // front of it describes the reader's, which is two answers to one
       // question on two halves of one gesture.
       aggregate: wfAggregateFor(workflowId),
       // The same finding the card's chip is drawn from, for the same reason the
       // aggregate above is shared: the panel and the chip are two halves of one
       // gesture and they must not answer the tier question differently.
       chainCheck: (sidecar && sidecar.chainCheck) || null,
-      // The graph in hand came out of a file, which used to be the reason this
-      // pane went without a preview: the builder returned markup. It returns
-      // elements now and puts every step name in as text, so the record shows
-      // the same drawing the install sheet showed before this file was ever
-      // installed, which is the comparison this view exists to let somebody
-      // make. Null for the run, because a status on this pane would be coloured
-      // from a stranger's receipt.
+      // The graph in hand came out of a file, which is why the builder matters
+      // here: it returns elements and puts every step name in as text, so this
+      // pane can carry a preview at all. The record shows the same drawing the
+      // install sheet showed before this file was ever installed, which is the
+      // comparison this view exists to let somebody make. Null for the run,
+      // because a status on this pane would be coloured from a stranger's
+      // receipt.
       miniGraph: wfMiniGraph(artifact.graph, null, 'panel'),
       onFix: null,
     });
@@ -5463,9 +5564,9 @@ function wfDeselectNode() {
   document.querySelectorAll('#wf-canvas .drawflow-node.selected').forEach((n) => n.classList.remove('selected'));
 }
 // ─── Prompt editor ──────────────────────────────────────────────────────────
-// A prompt is prose, so it wraps. That breaks the naive gutter, which counted
+// A prompt is prose, so it wraps. That breaks a naive gutter, which counts
 // newlines and would number a five-row paragraph "1" while the rows below it
-// went unlabelled. The mirror measures each logical line at the editor's real
+// go unlabelled. The mirror measures each logical line at the editor's real
 // text width, and the gutter gives that line a block of exactly that height.
 
 function wfUpdateGutter() {
@@ -6162,8 +6263,8 @@ function paintAgents() {
   } else if (agLoad === 'error') {
     body = agEmptyHtml('Could not load agents', '', 'retry', 'Retry', agError.slice(0, 140));
   } else if (!total) {
-    // A heading and the one action, nothing else. The routes the sentence used
-    // to name are the buttons already on the toolbar above it.
+    // A heading and the one action, nothing else. The routes a longer sentence
+    // would name are the buttons already on the toolbar above it.
     body = agEmptyHtml('No agents yet', '', 'new', 'New agent');
   } else if (!rows.length) {
     const q = agQuery.trim();
@@ -7105,6 +7206,15 @@ async function confirmRepoAgentsInstall() {
     if (installToAllAgents && res.distributedTo && res.distributedTo.length) parts.push('synced to every AI tool');
     if (activate) parts.push('pinned');
     toast(parts.join(' · '), 'success');
+    // A file left alone because the user already had one by that name. Said
+    // separately and as a caution, because the line above reads as "all of it
+    // landed" and for these names nothing did.
+    const skipped = Array.isArray(res.skippedExisting) ? res.skippedExisting : [];
+    if (skipped.length) {
+      const shown = skipped.slice(0, 3).join(', ');
+      const rest = skipped.length > 3 ? `, and ${skipped.length - 3} more` : '';
+      toast(`Kept your existing ${shown}${rest}. The repo's version was not written.`, 'error');
+    }
   }
   closeRepoAgentsModal();
   profilesCache = await window.husk.profiles.list();
@@ -7269,13 +7379,13 @@ function rmAdvanceToDetail() {
   detail.innerHTML = `
     <div class="ra-status ra-status-info"><strong>${escapeHtml(rmPicked.displayName)}</strong> · <code>${escapeHtml(rmPicked.dir)}</code></div>
     ${rmPicked.needsBuild ? `
-      <label class="ai-foot-toggle" title="Run npm install + npm run build inside the server before installing">
-        <input type="checkbox" id="rm-build" class="ai-check" checked />
+      <label class="ai-foot-toggle" title="Run npm install and the repository's own build script before installing">
+        <input type="checkbox" id="rm-build" class="ai-check" />
         <span class="ai-check-box" aria-hidden="true"></span>
         Run npm install + npm run build first (the server's <code>dist/</code> is missing)
       </label>
-      <div class="ra-status ra-status-info" style="margin-top:6px;">
-        Heads up: running build executes the server's <code>package.json</code> lifecycle scripts (preinstall / install / postinstall / build). Only do this for repos you trust.
+      <div class="ra-status ra-status-warn" style="margin-top:6px;">
+        This runs the repository's own <code>build</code> script as a shell command on your machine, as you. Install hooks are already blocked with <code>--ignore-scripts</code>; the build script is not, because building is what it is for. Leave this off unless you trust the repository, and read the script first.
       </div>
     ` : ''}
     <div class="modal-section">
@@ -9006,10 +9116,10 @@ function fxRenderList(rows) {
 // Keyboard navigation over whatever the list is currently showing.
 //
 // The list has two render modes: a nested tree while browsing, and a flat list
-// once you search or switch to Changed. The previous handler walked fx.results,
-// which tree mode leaves empty, and it was bound to the search input's keydown,
-// so the arrows the footer advertises did nothing unless that box already had
-// focus. Both paths now navigate the rendered rows.
+// once you search or switch to Changed. Navigation walks the rendered rows
+// rather than fx.results, which tree mode leaves empty, and it listens at the
+// page level rather than only on the search input, so the arrows the footer
+// advertises work wherever focus sits. Both paths navigate the same rows.
 // Which region the keys drive: the file list, or one of the two overview
 // columns. Left and Right move between them, Up and Down move inside one.
 let fxPane = 'list';
@@ -9049,8 +9159,8 @@ function fxClearCursor() {
 
 // The cursor IS the focus. Overview rows are buttons and take a native focus
 // ring on Tab, while list rows are divs driven by a class, so keeping the two
-// separate meant Tab and the arrows each left their own highlight and the page
-// showed two selected rows. Moving focus with the cursor collapses them into
+// separate leaves Tab and the arrows each with their own highlight and the page
+// showing two selected rows. Moving focus with the cursor collapses them into
 // one thing that both inputs drive.
 //
 // Roving tabindex: the cursor row is the single tab stop for its pane, so
@@ -9562,8 +9672,9 @@ async function fxRefreshGitStatus() {
 function joinRoot(rel) { return fx.root.endsWith('/') ? fx.root + rel : fx.root + '/' + rel; }
 
 // Render highlighted code with a line-number gutter. highlightLines returns one
-// self-contained, span-balanced, XSS-safe HTML string per source line (all input
-// entity-escaped; only the highlighter's own span markup is HTML).
+// self-contained, span-balanced HTML string per source line: every character of
+// the file is entity-escaped first, so the only markup left in the result is the
+// highlighter's own span tags, spelled out in this app.
 async function fxToggleDiff() {
   if (!fx.selected) return;
   const diffBtn = $('#fx-act-diff');
@@ -10529,14 +10640,24 @@ $('#btn-restart').addEventListener('click', restartPty);
 // absolute (every CLI can open it as written) and quoted when it holds
 // whitespace. Nothing is submitted: the user types their question and presses
 // Enter, exactly as they would after attaching a file anywhere else.
+// A path on its way into a live agent prompt. The rule lives in
+// src/lib/terminal-safe.js, where it is shared with the main process and
+// testable on its own; a name carrying a control character comes back empty.
+const CONTROL_CHARS_RE = /[\x00-\x1F\x7F-\x9F]/;
+
 function chatFileRef(filePath) {
-  const p = String(filePath || '');
-  return /\s/.test(p) ? `"${p}" ` : `${p} `;
+  return window.husk.text.chatFileRef(filePath);
 }
+
 
 async function attachFileToChat(filePath) {
   const ref = chatFileRef(filePath);
-  if (!ref.trim()) return;
+  if (!ref.trim()) {
+    if (String(filePath || '') && CONTROL_CHARS_RE.test(String(filePath))) {
+      toast('That file name contains control characters, so it was not sent to the agent.', 'error');
+    }
+    return;
+  }
   // The welcome screen can still be up over a chat that is already running,
   // and launching a second agent there would spawn a PTY the path never
   // reaches. A live tab means write to it and clear the overlay instead.
@@ -11500,9 +11621,9 @@ $('#btn-mcp-add-custom').addEventListener('click', openMcpCustomModal);
 let pluginsInstalledCache = [];
 let pluginsCatalogCache = [];
 let pluginsCapabilities = { canEnableDisable: true, canEdit: true, canBrowse: true };
-// Every catalog card already carries a category badge. Until now it was
-// decoration: 272 plugins rendered as one flat alphabetical grid with no way
-// to narrow them except free text.
+// Every catalog card already carries a category badge, and the chips make it
+// navigable: 272 plugins in one flat alphabetical grid leave no way to narrow
+// them except free text.
 let pluginsCategories = new Set();
 
 // Cut on a word boundary and strip the punctuation the cut leaves behind, so a
@@ -11693,10 +11814,10 @@ function paintPlugins(query) {
     // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
     catalogEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">${msg}</div></div>`;
   } else {
-    // The grid used to stop at 120 and tell you to narrow the search. Measured
-    // on a 272-plugin catalog, building and laying out all of them costs 44ms
-    // against 20ms for 120, and 600 costs 48ms: the cap saved 24ms of one-time
-    // paint and hid 152 plugins behind advice the category chips replaced.
+    // The grid draws every match rather than capping at 120. Measured on a
+    // 272-plugin catalog, building and laying out all of them costs 44ms
+    // against 20ms for 120, and 600 costs 48ms: a cap buys 24ms of one-time
+    // paint and hides 152 plugins behind advice the category chips make moot.
     const overflow = '';
     // eslint-disable-next-line no-unsanitized/property -- Catalog fields are escaped via escapeHtml/escapeAttr.
     catalogEl.innerHTML = found.map((c) => `
@@ -12612,9 +12733,10 @@ window.addEventListener('keydown', (e) => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
 
-// Minimal, safe markdown -> HTML. Escapes ALL html first, then layers
-// formatting on the already-safe string. Used for workflow step output,
-// which is untrusted AI text. Order matters: escape before any tag insertion.
+// Minimal markdown -> HTML. Escapes ALL html first, then layers formatting on
+// the escaped string, so every tag in the result is one this function wrote.
+// The input is workflow step output, which is whatever the agent printed rather
+// than markup authored here. Order matters: escape before any tag insertion.
 function renderMarkdown(src) {
   let s = escapeHtml(String(src ?? ''));
   const codeBlocks = [];
@@ -13120,11 +13242,11 @@ let autopilotLastSession = null;
 // window the wizard must not be dismissable: a stray backdrop click or Esc
 // must not hide it mid-capture.
 let autopilotStarting = false;
-// Swarm: all currently active runs. N=1 → existing single-run UX unchanged (ISC-33).
+// Swarm: all currently active runs. N=1 → the plain single-run UX (ISC-33).
 const activeRuns = new Map(); // runId → { runId, sessionId, workspaceRoot, goal, startedAt, caps, budget }
 let focusedRunId = null;      // which run the detail pane displays
 const autopilotModelDecisions = new Map(); // runId/role → { model, tier, reason }
-// '_solo' is a renderer-side placeholder key for legacy starts that carried no
+// '_solo' is a renderer-side placeholder key for a start that carries no
 // runId; never send it to main, which expects a real pool key or nothing.
 function focusedRealRunId() {
   return focusedRunId && focusedRunId !== '_solo' ? focusedRunId : undefined;
@@ -14200,8 +14322,8 @@ function renderRunCards() {
     action.textContent = String(p.subgoal || 'waiting for a free slot');
     action.title = p.subgoal || 'waiting for a free slot';
     // The transcript is on disk beside the audit log. Offering it here is the
-    // whole point of writing it: a cancelled run used to leave the tally and
-    // throw away everything the agent actually said.
+    // whole point of writing it: without this button a cancelled run leaves
+    // only its tally and everything the agent actually said stays unreachable.
     if (f.sessionId) {
       const logBtn = document.createElement('button');
       logBtn.type = 'button';
@@ -14407,9 +14529,9 @@ function paintAutopilotBanner() {
   const reviewHasSnapshot = !(autopilotReviewData && autopilotReviewData.summary
     && autopilotReviewData.summary.hasSnapshot === false);
   // A retained run has a live worktree awaiting Apply/Discard. Its changes are
-  // NOT in the workspace yet, so the snapshot-era buttons (Revert/Rerun/New)
-  // are hidden in favor of Apply/Discard. Historical reviews (worktree already
-  // gone) keep the snapshot-era buttons.
+  // NOT in the workspace yet, so the snapshot-flow buttons (Revert/Rerun/New)
+  // are hidden in favor of Apply/Discard. Reviews of a run whose worktree is
+  // already gone keep the snapshot-flow buttons.
   const isRetained = !!(autopilotReview && autopilotReviewData && autopilotReviewData.retained);
   const reviewDiff = autopilotReviewData && autopilotReviewData.summary
     ? ((Array.isArray(autopilotReviewData.summary.diff) && autopilotReviewData.summary.diff.length)
@@ -15012,7 +15134,7 @@ function renderTokenBreakdown(brk) {
       // Context is loaded once per agent and is small. Cache reads are that same
       // prefix re-sent on every request, so they climb into the millions across a
       // few hundred requests while the context window never grows. Saying "6.1M
-      // context" implied 6.1M was loaded, which contradicted the per-agent figure
+      // context" would imply 6.1M is loaded, contradicting the per-agent figure
       // printed beside it.
       const perAgent = brk.agents > 0 ? Math.round(brk.baseline / brk.agents) : 0;
       const parts = [`${formatTokens(generated)} generated`];
@@ -15456,7 +15578,7 @@ function updateLaneHead(key) {
     }
   }
 }
-// Legacy entry point: route untyped lines into a lane. Tool lines carry
+// Untyped entry point: route bare lines into a lane. Tool lines carry
 // the arrow prefix from main; everything else is status narration.
 function pushActivity(lines, runKey) {
   if (!Array.isArray(lines) || !lines.length) return;
@@ -16007,7 +16129,7 @@ try {
             fleetStartedAt: r.fleetStartedAt || (r.endSummary && r.endSummary.fleetStartedAt) || null,
           })).filter((m) => m.sessionId);
           // A just-finished run retains its worktree, so this review offers
-          // Apply/Discard rather than the snapshot-era Revert.
+          // Apply/Discard rather than the snapshot-flow Revert.
           snapshotFinishedFleet();
           activeRuns.clear();
           plannedAgents = [];
@@ -16249,7 +16371,7 @@ $('#aut-review-discard') && $('#aut-review-discard').addEventListener('click', a
 });
 $('#aut-review-rerun') && $('#aut-review-rerun').addEventListener('click', () => {
   if (!autopilotReviewData) return;
-  // Pull the real goal + caps from the start_run row (now surfaced
+  // Pull the real goal + caps from the start_run row (surfaced
   // at top level on the summary payload). Do NOT fall back to
   // autopilotState.goal: that holds the display string which may be
   // the placeholder "(no goal recorded)" for runs missing data.

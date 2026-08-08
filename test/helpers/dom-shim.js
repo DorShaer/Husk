@@ -150,6 +150,22 @@ class Node {
     return this.removeChild(prev);
   }
 
+  // The renderer surfaces build a block and swap it in one call, and a string
+  // among the arguments is a text node, which is what makes it the one sink
+  // those files can use without reaching for innerHTML. Detaching first rather
+  // than iterating the live list, because insertBefore reparents and a loop
+  // over a list it is mutating drops every second child.
+  replaceChildren(...next) {
+    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    const doc = this.ownerDocument || this;
+    for (const child of next) {
+      // (Node or DOMString), so a non-Node stringifies, null included. Skipping
+      // a hole would be kinder than the platform and would let a builder that
+      // yields one pass here and render the word "undefined" on screen.
+      this.appendChild(child instanceof Node ? child : doc.createTextNode(String(child)));
+    }
+  }
+
   remove() {
     if (this.parentNode) this.parentNode.removeChild(this);
   }
