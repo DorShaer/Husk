@@ -32,7 +32,8 @@
 // wfx-dom.js. That is not a style preference: this window runs with
 // sandbox:false and its preload exposes workflows.create and workflows.run, so
 // one interpolated manifest string in an innerHTML assignment is a workflow of
-// the attacker's choosing being written and started. There is no innerHTML in
+// the file author's choosing being written and started here. There is no
+// innerHTML in
 // this file at all, not even for the static glyphs: those are built through
 // createElementNS from a frozen table of path data, because an exception for
 // "just the icons" is an exception somebody later widens.
@@ -153,7 +154,7 @@
   // Keyed by stage first, because 'too-large' means two different things: the
   // source stage refuses a file whose size was checked before it was opened,
   // and the validate stage refuses one whose parsed contents exceed a budget.
-  // A flat table would have silently collapsed them.
+  // A flat table collapses them silently.
   //
   // Every entry names what was not done as well as what went wrong. A refusal
   // that only says "failed" leaves the reader wondering whether a clone is
@@ -429,9 +430,9 @@
     }
   }
 
-  // Footer composition per state, in one place. Every earlier version of this
-  // grew a hidden-attribute assignment at each call site and ended up with two
-  // primaries visible at once on the path nobody clicks twice.
+  // Footer composition per state, in one place. A hidden-attribute assignment
+  // at each call site drifts into two primaries visible at once on the path
+  // nobody clicks twice.
   function paintFooter(state) {
     const go = byId('wfx-in-go');
     const done = byId('wfx-in-done');
@@ -482,22 +483,21 @@
   }
 
   // ── The graph preview ──────────────────────────────────────────────────────
-  // Delegated to wfMiniGraph in app.js, which is now the only implementation.
+  // Delegated to wfMiniGraph in app.js, which is the only implementation.
   //
-  // This sheet used to draw its own, for two reasons that were true when it was
-  // written and are not any more: the app-side function returned a string of
-  // markup, which this surface may never accept because assigning it would put
-  // a stranger's graph through innerHTML, and it spread its coordinate arrays
-  // into Math.min, which throws outright on a large graph. It now builds
-  // elements, caps the node count at the same 512, and takes its bounds through
-  // a reduce.
+  // The two properties this surface needs are the two that function has: it
+  // builds elements rather than returning a string of markup, which this
+  // surface may never accept because assigning it would put a stranger's graph
+  // through innerHTML, and it caps the node count at 512 and takes its bounds
+  // through a reduce rather than spreading coordinate arrays into Math.min,
+  // which throws outright on a large graph.
   //
-  // So the local copy was buying nothing and costing the one thing that
-  // mattered. When the app-side drawing learned to write step names into its
-  // boxes, this copy did not, and the preview a person reads before running a
-  // stranger's workflow became the only one still showing unlabelled pills.
-  // Two implementations of one drawing is exactly how that happens, and the
-  // second one is always the one that gets forgotten.
+  // A second local copy of the drawing buys nothing and costs the one thing
+  // that matters. The app-side drawing writes step names into its boxes, and a
+  // copy here drifts out of step with it, so the preview a person reads before
+  // running a stranger's workflow ends up the one still showing unlabelled
+  // pills. Two implementations of one drawing is exactly how that happens, and
+  // the second one is always the one that gets forgotten.
   //
   // The fallback exists because a window where app.js failed to evaluate should
   // show a placeholder rather than throw inside a dialog.
@@ -714,7 +714,7 @@
   // severity order. A blocker under a green tick is a blocker the footer names
   // and the reader then has to scroll past two passes to find, which is the
   // situation the rose bar on the row exists to compensate for; putting the
-  // row first is the fix the bar was standing in for. Sort is stable, so
+  // row first is the fix the bar stands in for. Sort is stable, so
   // within a severity the reading order the main process chose survives.
   function sortChecks(checks) {
     return checks
@@ -877,11 +877,11 @@
           cwd: S.cwd,
           billing: (typeof hooks.getBilling === 'function') ? hooks.getBilling() : null,
           // The main process already re-derived the shipped log's figures and
-          // compared them to the declared ones during artifactRead, and this
-          // pane was throwing that answer away and rendering every figure as an
-          // author claim. That made the middle tier unreachable: a file could
-          // ship a log that checks out and still be read as hearsay, which is
-          // the one thing shipping a log is supposed to buy.
+          // compared them to the declared ones during artifactRead, so that
+          // answer is handed on rather than dropped. Dropping it renders every
+          // figure as an author claim and makes the middle tier unreachable: a
+          // file could ship a log that checks out and still be read as hearsay,
+          // which is the one thing shipping a log is supposed to buy.
           chainCheck: (S.read && S.read.chainCheck) || null,
           // Framed, because the busy pane's skeleton reserves a framed graph
           // and the whole point of that skeleton is that the real thing lands
@@ -1029,11 +1029,11 @@
   // and that is the interesting half. These controls live in the sheet's body
   // above the panes rather than inside one, so no data-state hides them: when
   // app.js borrows this card to show the record behind a workflow's receipts
-  // chip, the reader got a dialog titled Receipts with a repository field and a
-  // Fetch button in it. Pressing that Fetch drove this module's own state
-  // machine to a refusal under somebody else's title, over a workflow that was
-  // installed weeks ago. A control that belongs to a flow nobody started is not
-  // an affordance, so it is not on screen.
+  // chip, an ungated picker leaves a dialog titled Receipts carrying a
+  // repository field and a Fetch button. Pressing that Fetch drives this
+  // module's own state machine to a refusal under somebody else's title, over a
+  // workflow installed weeks ago. A control that belongs to a flow nobody
+  // started is not an affordance, so it is not on screen.
   function setSource(kind) {
     S.source = kind === 'file' ? 'file' : 'repo';
     const m = modal();
@@ -1057,16 +1057,16 @@
   }
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
-  // The file row ships with a picker and nothing else, so once a path was in
-  // that field the only way to read it again was to walk back through the
-  // native dialog and re-select the same file. That is a real cost on the one
-  // loop this sheet is used in while a workflow is being written: edit the
-  // file, read it here, look at the prompts, edit again. The sheet's own
-  // refusal copy already promises the control ("type its absolute path, then
-  // press Fetch"), so this is the markup catching up with the sentence rather
-  // than a new idea. It is built here rather than in index.html because this
-  // module owns what Fetch does in either source; the repo row's button keeps
-  // its shipped id and this one is held by reference.
+  // The file row's markup carries a picker and nothing else, so without this
+  // button the only way to re-read a path already in that field is to walk back
+  // through the native dialog and re-select the same file. That is a real cost
+  // on the one loop this sheet is used in while a workflow is being written:
+  // edit the file, read it here, look at the prompts, edit again. The sheet's
+  // own refusal copy promises the control ("type its absolute path, then press
+  // Fetch"), so the button is what that sentence describes. It is built here
+  // rather than in index.html because this module owns what Fetch does in
+  // either source; the repo row's button keeps its shipped id and this one is
+  // held by reference.
   let fileFetchBtn = null;
 
   function mountFileFetch() {
@@ -1124,9 +1124,9 @@
   // Which file in the repository these bytes are. A clone can hold several
   // .husk.json and the main process reads exactly one of them: shallowest
   // first, workflow.husk.json preferred, ties broken alphabetically so the
-  // choice is the same on every machine. None of that was on screen, so a
-  // repository with a workflow file per environment installed one of them and
-  // the sheet described it as though it were the repository's only workflow.
+  // choice is the same on every machine. Left unstated, that choice is
+  // invisible: a repository with a workflow file per environment installs one
+  // of them and the sheet reads as though it were the only workflow in there.
   //
   // The others are named and are not offered as controls. Making them
   // selectable means reading a second path out of a cloned tree, and the
@@ -1258,8 +1258,8 @@
   // workflow of the same name is already in the list: it mints a new id and the
   // grid grows a second card that is identical to the first from the outside.
   // Somebody importing a revision of a workflow they already have, which is the
-  // common case for a file that lives in a repository, got two cards and no
-  // statement that they now had two.
+  // common case for a file that lives in a repository, ends up with two cards,
+  // so the count is stated before the press rather than discovered after it.
   //
   // The list is asked for rather than kept, because this sheet does not own the
   // grid and a cached copy would be stale the moment a card is renamed behind
@@ -1618,8 +1618,8 @@
   }
 
   // 78 monospace characters a reader is explicitly invited to compare against
-  // the repository they got the file from. Without this the only way to get it
-  // out of the window was a mouse drag across the whole string.
+  // the repository they got the file from. Without this control the only way to
+  // get it out of the window is a mouse drag across the whole string.
   async function copyFingerprint() {
     const hash = S.artifact ? String(S.artifact.graphHash || '') : '';
     if (!hash) return;

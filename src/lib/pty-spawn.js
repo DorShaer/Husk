@@ -95,7 +95,7 @@ function safeExists(p) {
 //            shell-escaped by shJoin from src/lib/shell-quote.js.
 //   win32    pty.spawn(resolved-via-PATHEXT, agentArgs) when resolvable;
 //            falls back to pty.spawn('cmd.exe', ['/c', rawCmd]) when the
-//            exe cannot be resolved (preserves the legacy behavior).
+//            exe cannot be resolved, so cmd's own lookup gets the last word.
 function buildSpawnSpec(opts) {
   const platform = opts.platform;
   const agentExe = opts.agentExe;

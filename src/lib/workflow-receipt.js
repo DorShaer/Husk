@@ -74,27 +74,26 @@ const DEFAULT_STEP_TIMEOUT_MS = 300000;
 //
 // The bound is spent by the walk itself, as a counter this module owns, and is
 // never requested from the container. Asking the input to cut itself down
-// (runs.slice(0, MAX_SOURCE_RUNS)) hands the one safety limit in the function
-// to a method the input defines: an Array subclass whose slice returns `this`
-// keeps every row, and an ordinary array with an own `slice` property does the
-// same with no subclassing at all. Both then walk past the wire schema's
-// ceiling and publish a run count no reader will accept.
+// (runs.slice(0, MAX_SOURCE_RUNS)) makes the one limit in the function a value
+// the list gets to choose, since `slice` is a property of the list and a list
+// that defines its own returns whatever length it likes. The walk then runs
+// past the wire schema's ceiling and publishes a run count no reader accepts.
 const MAX_SOURCE_RUNS = 10000;
 
-// The same ceiling, one level down. The outer walk over runs was written as an
-// indexed loop over a count fixed before the first read precisely because a
-// for-of hands its stopping condition to the list it is walking, and the two
-// inner walks over row.steps were left as for-of. That is the identical hazard
-// against the identical threat: a step whose own accessor appends to the array
-// keeps it one element ahead of the iterator forever, and a proxied length can
-// claim 2^53-1 positions without allocating a byte. Neither throws, so no
-// try/catch reaches them, and the thread they never return to is the Electron
-// main one.
+// The same ceiling, one level down. The outer walk over runs is an indexed loop
+// over a count fixed before the first read, because a for-of hands its stopping
+// condition to the list it is walking, and the two inner walks over row.steps
+// are indexed for the identical reason: a step whose own accessor appends to
+// the array keeps it one element ahead of the iterator forever, and a proxied
+// length can claim 2^53-1 positions without allocating a byte. Neither throws,
+// so no try/catch reaches them, and the thread they never return to is the
+// Electron main one.
 //
 // A real run has a step per workflow node, and the graph itself is capped at 64
 // nodes by sanitizeNode. 4096 is three orders of magnitude above anything the
 // product can produce and still small enough that the walk is over in
-// microseconds, so a row that passes it is not a big run, it is a hostile one.
+// microseconds, so a row that passes it is not a big run, it is a value no run
+// of this product produced.
 const MAX_RUN_STEPS = 4096;
 
 // The largest `runs` the published receipt schema accepts (spec, receipts:
@@ -120,8 +119,8 @@ const GRAPH_HASH_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 
 // The exact shape the wire format wants for a timestamp, which is also what
 // new Date().toISOString() produces. Anything a row carries is re-emitted
-// through this so a hand-edited history cannot smuggle a 40 character string
-// or a year 275760 date into a published window.
+// through this, so a 40 character string or a year 275760 date sitting in a
+// hand-edited history never reaches a published window.
 const ISO_MS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // What we are willing to read a timestamp out of. Date.parse is not usable
@@ -269,11 +268,10 @@ function isoStamp(value) {
 // ─── per-run readings ────────────────────────────────────────────────────────
 
 // How long the run took, in milliseconds. main.js records `ms` directly
-// (main.js:5343); the timestamps are the fallback for a row whose ms was lost
-// or was written by a build that did not have the field. A run whose duration
-// cannot be established either way is not guessed at: it still counts in the
-// outcome tally, it just does not vote on the median, and medianDurationN says
-// how many runs actually did.
+// (main.js:5343); the timestamps are the fallback for a row that carries no
+// usable `ms` field. A run whose duration cannot be established either way is
+// not guessed at: it still counts in the outcome tally, it just does not vote
+// on the median, and medianDurationN says how many runs actually did.
 function runDurationMs(row) {
   const direct = safeCount(row.ms);
   if (direct !== null) return direct;
@@ -314,10 +312,10 @@ function readUsage(u) {
   // Zero falls through too, and only to a sibling that carries a real count.
   // A writer that initialises a zeroed camelCase accumulator and persists it
   // beside the raw event is the shape `ms` already has in this codebase
-  // (main.js:5343 writes `st.ms || 0`), and under a strict null-only test that
-  // row read as four zeros. Forty lines below, totalOrNull calls four zeros no
+  // (main.js:5343 writes `st.ms || 0`), so a strict null-only test reads that
+  // row as four zeros. Forty lines below, totalOrNull calls four zeros no
   // report at all, so the 5200 tokens sitting in the snake_case fields next to
-  // them were never looked at and the run published as having reported nothing.
+  // them are never looked at and the run publishes as having reported nothing.
   // That is the exact outcome reading both spellings exists to prevent. A zero
   // with no counted sibling still reads as the zero it is.
   const pick = (a, b) => {
@@ -362,20 +360,19 @@ function runTokens(row) {
   // whether readUsage produced a record rather than on whether that record
   // reported anything makes four zeros beat the steps, and four zeros are the
   // one case the rule above calls no report at all: the fallback exists for
-  // precisely this row. It is reachable from plain JSON with no hostile
-  // objects, because a writer that initialises a zero accumulator and always
-  // persists it is the shape `ms` already has (main.js:5343 writes `st.ms || 0`
-  // and falls back to 0), and under the old branch that turned every claude
-  // run's medianTokens into null while the steps underneath carried the real
-  // numbers.
+  // precisely this row. It is reachable from plain JSON with no exotic objects,
+  // because a writer that initialises a zero accumulator and always persists it
+  // is the shape `ms` already has (main.js:5343 writes `st.ms || 0` and falls
+  // back to 0), so keying on presence would turn every claude run's
+  // medianTokens into null while the steps underneath carry the real numbers.
   // A tokens field that is present and unreadable is not the same fact as no
   // tokens field, and only the second one may fall through to the steps.
   // readUsage's own contract is that it rejects a record whole rather than
   // trusting half of it, because half a usage record is evidence the file was
-  // written badly. Treating its null as absence quietly undid that: a row whose
-  // run total claimed 5000 input tokens in a shape we refused would be
+  // written badly. Treating its null as absence quietly undoes that: a row whose
+  // run total claims 5000 input tokens in a shape we refused would be
   // republished at whatever its steps happened to add up to, with nothing
-  // anywhere recording that the authoritative figure had been thrown out.
+  // anywhere recording that the authoritative figure was thrown out.
   const hasDirect = isObject(row.tokens);
   const direct = hasDirect ? readUsage(row.tokens) : null;
   if (hasDirect && !direct) return null;
@@ -388,7 +385,7 @@ function runTokens(row) {
   let sawAny = false;
   // Indexed over a count read once, matching isCensored and the outer walk. A
   // bound in only one of the two inner walks does not remove the hazard, it
-  // just moves a hostile row to the other one.
+  // just moves a row that grows as it is read to the other one.
   for (let i = 0; i < n; i += 1) {
     const step = steps[i];
     if (!isObject(step)) continue;
@@ -409,7 +406,7 @@ function totalOrNull(u) {
 
 // Whether any step in this run was killed by the per-step timer. The
 // authoritative signal is the flag main.js writes; the duration heuristic
-// below is only for rows written before that flag existed, and it is
+// below speaks only for a row that carries no such flag, and it is
 // deliberately strict (a failed step at or past the full timeout) so a step
 // that failed on its own at 299 seconds is not miscounted as censored.
 function isCensored(row, stepTimeoutMs) {
@@ -479,13 +476,13 @@ function precisionFor(n) {
 // A caller-supplied limit, or the documented default when the caller did not
 // state one, or null when they stated something we cannot use.
 //
-// Both limits used to be folded through `safeCount(x) || DEFAULT`, which is
-// wrong twice over. It discards a typo in silence, so a caller who wrote
-// "60000" as a string got the 300 second default and no hint that its argument
-// had been thrown away, while every other input in this file refuses by name.
-// And it discards zero, which is the one value with a real meaning here: a
-// stepTimeoutMs of 0 says "treat any failed step as censored", and a
-// historyMax of 0 says "assume this list was already trimmed".
+// Folding both limits through `safeCount(x) || DEFAULT` is wrong twice over. It
+// discards a typo in silence, so a caller who writes "60000" as a string gets
+// the 300 second default and no hint that its argument was discarded, while
+// every other input in this file refuses by name. And it discards zero, which
+// is the one value with a real meaning here: a stepTimeoutMs of 0 says "treat
+// any failed step as censored", and a historyMax of 0 says "assume this list
+// was already trimmed".
 function readLimit(value, fallback) {
   if (value === undefined || value === null) return fallback;
   return safeCount(value);
@@ -504,10 +501,10 @@ function readLimit(value, fallback) {
 // Taking the measurement once is the point. Everything downstream is stated
 // against this single number: the walk's stopping point, the unread bucket, and
 // the sourceRuns the caller is invited to reconcile against them. Re-reading
-// length as the walk goes is what let a row that appends to the list while it
-// is being read walk forever, since the array iterator consults length on every
-// step, and it is what let a list that shrank under the walk leave the ledger
-// holding an unnamed remainder.
+// length as the walk goes lets a row that appends to the list while it is being
+// read walk forever, since the array iterator consults length on every step,
+// and it lets a list that shrinks under the walk leave the ledger holding an
+// unnamed remainder.
 function sourceLength(runs) {
   try {
     const n = safeCount(runs.length);
@@ -520,9 +517,9 @@ function sourceLength(runs) {
 // Read one row down to the handful of values the tally needs, or name the
 // bucket that excludes it.
 //
-// Every property access a hostile row could fight back on lives in this one
-// function, so the loop below can wrap a single call and know that a row which
-// raises has cost itself its place and nothing else. It also commits nothing:
+// Every property access a row could raise on lives in this one function, so the
+// loop below can wrap a single call and know that a row which raises has cost
+// itself its place and nothing else. It also commits nothing:
 // the counters are touched only after this has returned, so a row that throws
 // halfway through cannot leave `runs` and the outcome tally disagreeing, and
 // the wire format requires those two to agree exactly.
@@ -533,10 +530,10 @@ function readRow(row, workflowId, graphHash, stepTimeoutMs) {
   // story about workflows they may not even have.
   if (typeof row.workflowId !== 'string' || !row.workflowId) return { excluded: 'malformed' };
   if (row.workflowId !== workflowId) return { excluded: 'otherWorkflow' };
-  // A row with no fingerprint at all is history from before receipts existed.
-  // It is counted separately from a row that names a different graph so a
-  // surface can say "9 earlier runs predate this" rather than implying the
-  // author edited the workflow.
+  // A row with no fingerprint at all is history recorded without one, which is
+  // a different fact from a row that names a different graph. Counting the two
+  // apart lets a surface say "9 earlier runs predate this" rather than implying
+  // the author edited the workflow.
   if (typeof row.graphHash !== 'string' || !row.graphHash) return { excluded: 'unhashed' };
   if (row.graphHash !== graphHash) return { excluded: 'otherGraph' };
 
@@ -641,15 +638,15 @@ function computeAggregate(runs, opts) {
   // `unread` holds the rows past the hard cap, which were never looked at.
   // sourceRuns and excluded are published side by side as "what we looked at
   // and what we set aside", which invites a surface to subtract one from the
-  // other; before this bucket existed that subtraction left a remainder with
-  // no name on it whenever the cap fired.
+  // other, and without this bucket that subtraction leaves a remainder with no
+  // name on it whenever the cap fires.
   //
-  // Both ends of that subtraction now come from the one length reading, so the
+  // Both ends of that subtraction come from the one length reading, so the
   // bucket is a difference between a number and a clamp of itself and cannot
-  // come out negative. It used to be sourceRuns minus the length of whatever
-  // the container's own slice handed back, which is a relationship the input
-  // got to choose: a slice that returned a longer list than it was given
-  // published an excluded count of -10001, and no receipts strip can draw that.
+  // come out negative. Taking it instead as sourceRuns minus the length of
+  // whatever the container's own slice hands back makes it a relationship the
+  // input gets to choose: a slice that returns a longer list than it was given
+  // publishes an excluded count of -10001, and no receipts strip can draw that.
   const excluded = {
     otherWorkflow: 0,
     otherGraph: 0,
@@ -899,11 +896,11 @@ function chainFigures(sessions) {
 // One session's rows back into the run-history shape aggregateRuns reads.
 //
 // The rows were parsed by the chain walk, which means they are plain JSON and
-// not hostile objects, so this reads them directly. What it does not do is
-// trust their contents: a payload field that is missing or the wrong type
-// simply does not contribute, and the aggregation upstream already treats an
-// unreadable duration as a run that does not vote on the median rather than as
-// a run that took zero milliseconds.
+// not live objects with accessors, so this reads them directly. What it does
+// not do is trust their contents: a payload field that is missing or the wrong
+// type simply does not contribute, and the aggregation upstream already treats
+// an unreadable duration as a run that does not vote on the median rather than
+// as a run that took zero milliseconds.
 function runFromSession(session) {
   if (!isObject(session)) return { ok: false, error: 'a session in this log is not readable' };
   const rows = Array.isArray(session.rows) ? session.rows : null;

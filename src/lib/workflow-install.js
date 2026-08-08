@@ -32,8 +32,8 @@
 //
 // Nothing here throws and nothing here reaches the filesystem, the clock or
 // Electron. The artifact arrives having already passed validateArtifact, but
-// it arrives across an IPC boundary from a renderer that also renders
-// attacker-supplied text, so every read is still defensive.
+// it arrives across an IPC boundary from a renderer that also renders text
+// this machine did not write, so every read is still defensive.
 
 const crypto = require('crypto');
 const { stableJson } = require('./stable-json');
@@ -452,8 +452,8 @@ function versionParts(v) {
 // input:
 //   sidecar        the stored row for this workflow, or null when the
 //                  workflow was authored here. A null sidecar is the ordinary
-//                  local case and passes untouched, so nothing about the
-//                  existing behaviour of a hand-built workflow changes.
+//                  local case and passes untouched, so a hand-built workflow
+//                  runs with the gate never touching it.
 //   cwd            the resolved absolute directory the run would use, or null.
 //   cwdIsDir / cwdIsHome / cwdInWorkTree   the same probes preflight used,
 //                  re-run at the moment of the press rather than trusted from
@@ -468,18 +468,18 @@ function runGateDecision(input) {
   const sidecar = isObject(opts.sidecar) ? opts.sidecar : null;
 
   // The record's own origin is consulted before the sidecar, because a missing
-  // row used to mean "locally authored" and absence is the one answer an
-  // attacker can arrange. Three ways to arrange it were found: duplicating an
-  // imported card copied every prompt and wrote no row, an install whose row
-  // never reached disk still reported success, and one unparseable byte in the
-  // store turned every imported workflow on the machine into a local one at
-  // once.
+  // row is not evidence of local authorship. Absence is the cheapest state to
+  // produce and so the least safe one to read a verdict out of, and there are
+  // at least three ways to reach it: duplicating an imported card copies every
+  // prompt and writes no row, an install whose row never reaches disk still
+  // reports success, and one unparseable byte in the store reads every
+  // imported workflow on the machine as local at once.
   //
   // origin is stamped on the record at install and no manifest and no update
   // can set it, so it survives a copy and damaging a file cannot clear it. When
   // it says imported and the row is gone, that is not a local workflow. It is
-  // an imported one whose consent record we have lost, and the honest answer is
-  // to refuse rather than to run a stranger's prompts ungated.
+  // an imported one whose consent record is lost, and the honest answer is to
+  // refuse rather than to run a stranger's prompts ungated.
   const recordOrigin = typeof opts.recordOrigin === 'string' ? opts.recordOrigin : null;
   if (recordOrigin === 'imported' && !sidecar) {
     return refusal('sidecar-missing',
@@ -595,8 +595,8 @@ function sidecarRow(input) {
 // Deleting a workflow prunes its row, and a row whose workflow is gone for any
 // other reason goes with it. Duplicating a workflow mints a new local id and
 // never calls this, which is how a duplicate ends up with no sidecar and
-// therefore no imported origin: a copy of someone else's workflow that had
-// silently inherited their consent would be the same hole with a new id.
+// therefore no imported origin: a copy of someone else's workflow that
+// silently inherited their consent would be the same gap with a new id.
 function pruneStore(store, liveIds) {
   const normalized = normalizeStore(store);
   const live = new Set(Array.isArray(liveIds) ? liveIds.filter((id) => typeof id === 'string') : []);

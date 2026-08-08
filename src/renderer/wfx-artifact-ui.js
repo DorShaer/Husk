@@ -27,17 +27,17 @@
 // `author states`, and the word "verified" appears nowhere in this feature.
 // The chain format is anchored at a public genesis constant with no signature
 // anywhere in src/lib/autonomy/, so a passing chain means the shipped JSONL is
-// internally well formed and nothing more. Fifteen lines of JavaScript forge
-// one. "Matches the shipped log" is the ceiling the evidence can carry, and it
-// is a ceiling this build cannot even reach yet: validateChain in
-// workflow-artifact.js checks the chain's shape and says in its own header
-// that whether the rows hash together is verifyArtifactChain's job, which
-// lands with slice 6. So `evidence: "inline"` on its own buys a receipt
-// nothing at all here. A caller that has actually re-hashed the chain passes
-// the result in as `chainCheck` and the tier moves; absent that, every receipt
-// figure in this file renders as `author states`. Reading a field named
-// "evidence" and promoting on it would be the whole feature's failure mode in
-// one line.
+// internally well formed and nothing more. Any writer that follows the format
+// produces one that passes. "Matches the shipped log" is the ceiling the
+// evidence can carry, and it is a ceiling this build cannot even reach yet:
+// validateChain in workflow-artifact.js checks the chain's shape and says in
+// its own header that whether the rows hash together is verifyArtifactChain's
+// job, which lands with slice 6. So `evidence: "inline"` on its own buys a
+// receipt nothing at all here. A caller that has actually re-hashed the chain
+// passes the result in as `chainCheck` and the tier moves; absent that, every
+// receipt figure in this file renders as `author states`. Reading a field
+// named "evidence" and promoting on it would be the whole feature's failure
+// mode in one line.
 //
 // A tier never degrades from refused. When a chain was checked here and did
 // not hold, or the figures recomputed from it disagree with the ones declared
@@ -51,11 +51,12 @@
 // Every name, prompt, model id, publisher, note and path rendered here arrived
 // inside a workflow.husk.json written by a stranger. This window runs with
 // sandbox:false and its preload exposes workflows.create and workflows.run, so
-// one interpolated string reaching innerHTML is not a defacement, it is a
-// stranger writing a workflow with a pinned agentCommand and starting it. So
-// there is no template literal assigned to innerHTML in this file, there is no
-// insertAdjacentHTML, and every element is built by el() from wfx-dom.js,
-// which turns markup into text and refuses handler attributes outright.
+// a string from that file reaching innerHTML does not stop at what the pane
+// looks like: it puts bytes that came from the file on the same side of the
+// boundary as those two calls. So there is no template literal assigned to
+// innerHTML in this file, there is no insertAdjacentHTML, and every element is
+// built by el() from wfx-dom.js, which turns markup into text and refuses
+// handler attributes outright.
 //
 // Three places step outside el(), each for a reason that is not convenience,
 // and each carrying no imported data at all:
@@ -121,16 +122,16 @@
 //
 // Nothing in here throws at a caller. Every public entry point is wrapped, and
 // a failure renders the refusal block rather than leaving a half-built sheet
-// on screen, because a hostile file has to produce a finished refusal and not
-// a blank pane. The refusal never quotes the exception's message: that text
-// came from the same input being refused.
+// on screen, because a file this code cannot finish reading has to end in a
+// finished refusal and not a blank pane. The refusal never quotes the
+// exception's message: that text came from the same input being refused.
 
 (function () {
   const WfxDom = (typeof window !== 'undefined' && window.WfxDom) || null;
   if (!WfxDom) {
-    // Loud, and only in the console. Without the builder there is no safe way
-    // to draw any of this, and drawing it unsafely is the one outcome worth
-    // preventing more than drawing nothing.
+    // Loud, and only in the console. Without the builder there is no path here
+    // that writes a file's strings as text, and drawing this pane by any other
+    // path is the one outcome worth preventing more than drawing nothing.
     if (typeof console !== 'undefined') {
       console.error('wfx-artifact-ui: wfx-dom.js must load first; no workflow artifact surface will render');
     }
@@ -231,20 +232,19 @@
   // is hard to find rather than as a substitute for putting it first.
   const SEVERITY_RANK = Object.freeze({ block: 0, caution: 1, ok: 2 });
 
-  // Which check names are safe to set as a code token inside a sentence. The
-  // main process composes each row's title with the name already inside it
-  // ("codex is not on your PATH"), and the shipped markup sets that name in a
-  // code chip. Wrapping it means finding it, and finding it is only meaningful
-  // for a single identifier: the commands row joins a list with commas, and a
-  // chip around "bun test, bun lint" would be one token claiming to be a
-  // command.
+  // Which check names read as a code token inside a sentence. The main process
+  // composes each row's title with the name already inside it ("codex is not on
+  // your PATH"), and the shipped markup sets that name in a code chip. Wrapping
+  // it means finding it, and finding it is only meaningful for a single
+  // identifier: the commands row joins a list with commas, and a chip around
+  // "bun test, bun lint" would be one token claiming to be a command.
   const CODE_NAME_RE = /^[A-Za-z0-9._/-]{1,64}$/;
 
   // ─── Small DOM helpers ─────────────────────────────────────────────────────
 
   // SVG has no el(). The builder has no namespace argument and no svg tag,
   // both deliberate: every tag it does carry is inert, and svg is the one
-  // element family that brings its own script and link vectors with it. These
+  // element family that carries its own <script> and <a href> children. These
   // four glyphs carry no data at all, so they are built here from the frozen
   // table above and nothing a manifest can influence reaches them. An unknown
   // name yields null rather than an empty <svg>, so a typo is a missing mark
@@ -324,9 +324,9 @@
   // names into the routing line the runner appends to the agent's system
   // prompt, so a name carrying a newline shows the reader one line and hands
   // the model two, and the consent gate then holds a signature for a sentence
-  // it never displayed. That is a step past ordinary prompt injection, which
-  // this threat model already accepts: the step prompt is a user turn and the
-  // routing line is a system turn.
+  // it never displayed. The design already accepts that a step's prompt is
+  // content the agent reads as a user turn; the routing line is a system turn,
+  // and a name that spans two lines moves text from the one into the other.
   //
   // Replacing the control character with U+FFFD is the report el() already
   // makes about the invisibles rather than a new idea: the bytes and the pixels
@@ -749,10 +749,10 @@
   // somebody reading a table.
   //
   // The phrase and its preposition are separate because two callers need two
-  // prepositions. Folding "of" into the phrase is what produced "from of that
-  // one run" in the screen reader note, and hardcoding "runs" beside a count in
-  // the other note is what produced "from 1 runs"; both were only ever audible,
-  // which is why they survived.
+  // prepositions. Folding "of" into the phrase produces "from of that one run"
+  // in the screen reader note, and hardcoding "runs" beside a count in the
+  // other note produces "from 1 runs". Neither fault reaches the screen, only
+  // the speech, so nothing anybody looks at catches them.
   function runsPhrase(runs) {
     return runs === 1 ? 'that one run' : `${runs} runs`;
   }
@@ -916,10 +916,11 @@
   //
   // The obvious implementation is a string replace into markup, and it is the
   // bug: the prompt around the token is up to 8192 characters of a stranger's
-  // choosing, and any path that turns it back into markup hands them the
-  // renderer. Nothing new is created here at all. The existing node is split at
-  // the token's boundaries and the middle piece is moved inside the mark, so
-  // the characters on screen are the exact characters el() put there.
+  // choosing, and any path that turns it back into markup parses those
+  // characters instead of writing them. Nothing new is created here at all. The
+  // existing node is split at the token's boundaries and the middle piece is
+  // moved inside the mark, so the characters on screen are the exact characters
+  // el() put there.
   function markToken(pre, token) {
     const d = doc();
     if (!pre || !d || !token) return;
@@ -1098,8 +1099,8 @@
   // ─── Surface 4: the card receipts strip ────────────────────────────────────
 
   // The chip's accessible name, which is the whole of what a keyboard user gets
-  // from this control. Without one the name was the two words inside it, so
-  // tabbing a grid of twelve cards announced "author states, button" twelve
+  // from this control. Without one the name is the two words inside it, so
+  // tabbing a grid of twelve cards announces "author states, button" twelve
   // times: no workflow name, no figures (they are sibling spans and not part of
   // the button), and nothing saying a press opens anything.
   function stripLabel(name, record, otherRecords) {
@@ -1165,8 +1166,8 @@
       return strip;
     } catch (_) {
       // A card that cannot draw its strip still draws its card. This is the one
-      // surface rendered dozens of times on one paint, and one hostile stored
-      // artifact must not take the grid with it.
+      // surface rendered dozens of times on one paint, and one stored artifact
+      // this builder cannot draw must not take the grid with it.
       return emptyStrip();
     }
   }
@@ -1250,8 +1251,8 @@
   //   onFix       (fix, check) => void
   //
   // Returns { ok: true, record } or { ok: false, code }. A failure has already
-  // rendered the refusal into the host: a hostile file has to produce a
-  // finished refusal rather than a blank pane.
+  // rendered the refusal into the host: a file this code cannot finish drawing
+  // has to end in a finished refusal rather than a blank pane.
   function renderInspector(opts) {
     const o = opts || {};
     const host = o.host;
@@ -1276,8 +1277,8 @@
 
       // wfMiniGraph lives in app.js and reads a locally sourced lastRun. The
       // install preview passes null for it, because a status derived from a
-      // stranger's receipt would reach a class attribute, which is the hole
-      // that function's own allowlist was added to close.
+      // stranger's receipt would reach a class attribute, and that function's
+      // allowlist holds class names to a fixed set for exactly that reason.
       if (o.miniGraph) host.appendChild(o.miniGraph);
 
       if (record && record.refused) {

@@ -7,15 +7,16 @@
 // concrete things it needs in order to run, and receipts from runs on someone
 // else's machine. This module is the whole trust boundary for that file. The
 // boundary is the byte: everything inside the file, including its own
-// graphHash and its own receipts, is attacker-controlled and is treated that
-// way.
+// graphHash and its own receipts, comes from a machine this one does not
+// control and is treated that way.
 //
 // sanitizeGraph in workflow-graph.js is NOT a trust boundary and is not used
 // as one here. It caps six strings, allowlists two enums and one basename, and
 // is blind to collection sizes, id types, executable paths and the fact that
-// the prompt text it preserves perfectly is the payload. It runs in this file
-// only as a belt over the braces, after the real checks, to prove that nothing
-// was lost between what we validated and what the run engine will see.
+// the prompt text it preserves perfectly is the text that decides what the
+// agent is told to do. It runs in this file only as a belt over the braces,
+// after the real checks, to prove that nothing was lost between what we
+// validated and what the run engine will see.
 //
 // Two invariants that a later convenience patch has to violate on purpose:
 //
@@ -24,26 +25,26 @@
 //      requires.skills carry a charset-constrained name, an optional
 //      fingerprint and a boolean, and nothing else: no command, no args, no
 //      env, no url, no headers. A manifest that could describe an MCP server
-//      is a manifest that can start a local process with attacker-chosen argv.
-//      The installer's "add server" affordance opens the empty MCP form and
-//      never prefills it.
+//      is a manifest that decides the argv of a local process, with that argv
+//      chosen by whoever wrote the file rather than by this machine. The
+//      installer's "add server" affordance opens the empty MCP form and never
+//      prefills it.
 //
 //   2. agentCommand is a bare basename from a five-entry allowlist, always.
-//      isAllowedAgentCommand checks only the basename, so "./claude" and
-//      "/tmp/claude" pass it while spawn resolves them against the run's cwd.
-//      A repo shipping an executable called claude next to its manifest is
-//      remote code execution on the first Run. Here the value must already
-//      equal its own normalised basename, so anything carrying a separator,
-//      an extension or a capital letter is refused outright rather than
-//      quietly rewritten.
+//      isAllowedAgentCommand checks only the basename, so a value carrying a
+//      directory part passes it while spawn resolves that value against the
+//      run's cwd, which leaves the file rather than the allowlist deciding
+//      which executable runs. Here the value must already equal its own
+//      normalised basename, so anything carrying a separator, an extension or
+//      a capital letter is refused outright rather than quietly rewritten.
 //
 // The module is pure: no fs, no clock (the caller injects opts.now the way the
 // autonomy supervisor does), no Electron, no spawn. That is what lets the
-// hostile fixtures run as ordinary unit tests. Reading the file off disk, with
-// its size check and its symlink confinement, belongs to main.js.
+// untrusted-input fixtures run as ordinary unit tests. Reading the file off
+// disk, with its size check and its symlink confinement, belongs to main.js.
 //
-// Every exported function is total. Any input, including a hostile object with
-// throwing getters, yields either a validated result or a structured refusal.
+// Every exported function is total. Any input, including an object whose
+// getters throw, yields either a validated result or a structured refusal.
 // A validator that throws is a validator that crashed the app.
 
 const crypto = require('crypto');
@@ -75,13 +76,13 @@ const MAX_ARTIFACT_SCHEMA = 1;
 // The prefix is load-bearing and is part of the compared string. When the
 // canonicalisation rule changes, old files keep husk-wfg-1 and the reader can
 // say "canonicalised by an older rule set, receipts shown as author-stated"
-// instead of "fingerprint mismatch", which would read as tampering.
+// instead of "fingerprint mismatch", which reads as a file somebody altered.
 const GRAPH_HASH_PREFIX = 'husk-wfg-1:sha256:';
 
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
 // Summed across every chain of every receipt, not applied per item. The
 // schema's own per-item maxima multiply out to two gigabytes of schema-legal
-// file, which is a denial of service with a passing validator.
+// file, which passes every per-item check and exhausts the machine anyway.
 const MAX_CHAIN_BYTES = 512 * 1024;
 
 const MAX_NODES = 64;
@@ -146,9 +147,9 @@ const CHAIN_PREDICATES = [
 ];
 
 // Safety ceilings for canonicalProjection, which is also reachable from the
-// export side where the graph is local rather than hostile. They sit far above
-// the wire format's caps so they never fire on a real file; they exist so a
-// pathological local graph cannot hang the main process inside a sort.
+// export side where the graph is local rather than a stranger's. They sit far
+// above the wire format's caps so they never fire on a real file; they exist so
+// a pathological local graph cannot hang the main process inside a sort.
 const MAX_PROJECTION_NODES = 4096;
 const MAX_PROJECTION_EDGES = 16384;
 
@@ -556,14 +557,14 @@ function parseArtifact(bytes) {
 // ids before sanitizeGraph, the fingerprint before any receipt is believed,
 // and an allowlist projection at the end so nothing unrecognised is ever
 // carried forward. It is total by construction and by this try/catch: the
-// input may be a hostile object with getters that throw, and a refusal is
+// input may be an object whose getters throw, and a refusal is
 // always a better outcome than a stack trace in the main process.
 //
 // Every scalar is read from the input exactly once, into a local, and every
 // later use, the check, the hash and the returned projection alike, is of that
 // local. The input is not always JSON.parse output: the exported signature
 // invites a caller to hand over an object it built, and an accessor that
-// answers "claude" the first time and "/tmp/claude" the second would otherwise
+// answers "claude" the first time and a path the second would otherwise
 // put a value no check ever saw into the record that gets installed. A getter
 // that throws is caught below and refused loudly; a getter that merely lies has
 // to be structurally impossible, and reading once is what makes it so.
@@ -597,8 +598,9 @@ function validateArtifactInner(obj) {
 
   // additionalProperties: false, enforced rather than assumed. The existing
   // store carries unknown top-level keys through migrateWorkflow's ...rest and
-  // through the update handler's spread, so a key smuggled onto disk once is
-  // permanent. A stranger's file is the worst possible place to be generous.
+  // through the update handler's spread, so an unrecognised key that lands on
+  // disk once is permanent. A stranger's file is the worst possible place to
+  // be generous.
   const strayTop = unknownKey(obj, TOP_KEYS);
   if (strayTop !== null) {
     return refuse('not-artifact', 'this file carries a field this Husk does not recognise', `top level: ${JSON.stringify(strayTop).slice(0, 80)}`);
@@ -739,8 +741,8 @@ function validateArtifactInner(obj) {
 
     // The agent basename. The value must already BE its own normalised form:
     // "./claude" normalises to "claude" and is still refused, because a file
-    // that carries a path is a file written to exploit a resolver, and
-    // quietly rewriting it would hide that from the person deciding whether to
+    // that carries a path is a file written to steer a resolver, and quietly
+    // rewriting it would hide that from the person deciding whether to
     // install it.
     const agentCommand = get(n, 'agentCommand');
     if (typeof agentCommand !== 'string') {
@@ -1084,12 +1086,13 @@ function validateRequires(requires, nodes, idMap) {
     bad = badString(f, `requires.workspace.markerFiles[${i}]`, 1, 64);
     if (bad) return bad;
     // These are checked against the bound working directory on this machine and
-    // the answer is rendered back, so a marker is an existence oracle for
-    // whatever path it names. "../../.ssh/id_rsa" is the obvious probe and was
-    // already refused; "/root/.ssh/id_rsa" is the same probe written the other
-    // way, and the charset admitted it because '/' has to be legal for
-    // "src/index.js" to be. Whether it escapes depends on whether the caller
-    // joins or resolves, which is not a decision this file gets to make.
+    // the answer is rendered back, so a marker reports whether whatever path it
+    // names exists here. A relative climb out of the directory is one way to
+    // name a path outside it and an absolute path is the other, and the charset
+    // alone cannot tell the second apart from a build file, because '/' has to
+    // be legal for "src/index.js" to be. Whether such a name escapes the
+    // directory depends on whether the caller joins or resolves, which is not a
+    // decision this file gets to make, so both shapes are refused here.
     if (!MARKER_FILE_RE.test(f) || f.indexOf('..') !== -1 || /^[\\/]/.test(f)) {
       return refuse('not-artifact', `requires.workspace.markerFiles[${i}] is not a plain relative file name`, preview(f));
     }
@@ -1451,8 +1454,8 @@ function validateChain(chain, at, budget) {
 // walk (audit.js:306, :318), so a receipt could ship zero rows of evidence and
 // pass the check a reader has heard of. And genesis anchoring protects the head
 // only, so a log with its tail cut off stays valid all the way to wherever it
-// now stops: an author whose last four runs failed could publish the first
-// eleven rows of a fifteen row log and lose nothing but the failures.
+// now stops: the first eleven rows of a fifteen row log pass that predicate as
+// readily as all fifteen, and the four runs the tail recorded are simply gone.
 //
 // Six predicates close both holes and three more:
 //
@@ -1471,9 +1474,9 @@ function validateChain(chain, at, budget) {
 // What a passing chain means is still only that this JSONL is internally well
 // formed and self-consistent. There is no signature anywhere in
 // src/lib/autonomy/ and the genesis anchor is a public constant, so a whole
-// passing chain is about fifteen lines of JavaScript to forge. That is why the
-// tier this earns is "matches the shipped log" and why the word "verified"
-// appears nowhere near it.
+// passing chain is about fifteen lines of JavaScript to write by hand. That is
+// why the tier this earns is "matches the shipped log" and why the word
+// "verified" appears nowhere near it.
 //
 // Only inline payloads are read. A blob_ref row is an opaque hash here: spilled
 // blobs go through Electron safeStorage and are bound to the keychain of the
@@ -1487,7 +1490,7 @@ function validateChain(chain, at, budget) {
 // Returns { ok: true, valid: true, lineCount, head, sessionIds, sessions,
 // graphHash } where each session is { sessionId, rows }, or { ok: true, valid:
 // false, predicate, reason, atIndex } naming the predicate that failed and the
-// row it failed at. Total: any input, including a hostile one, yields one of
+// row it failed at. Total: any input at all, whatever its shape, yields one of
 // those two rather than a throw.
 function verifyArtifactChain(lines, sessionIds, opts) {
   try {
@@ -2047,9 +2050,9 @@ function firstString() {
 // publish because a title is long would be a worse answer than shortening it
 // and saying so. The shortening goes through clipText rather than String.slice
 // because a cut that lands inside an astral character manufactures the very
-// unpaired surrogate the self-check below refuses, which turned a long emoji
-// title into a reader-side "not-artifact" out of a publish button and blamed
-// the author for a half character this function had just created.
+// unpaired surrogate the self-check below refuses, which turns a long emoji
+// title into a reader-side "not-artifact" out of a publish button and blames
+// the author for a half character this function created itself.
 function clampText(value, fallback, max, warnings, field) {
   let v = typeof value === 'string' ? value : '';
   if (hasLoneSurrogate(v)) v = '';
@@ -2075,18 +2078,18 @@ function optionalText(value, max, warnings, field) {
 
 // The author's declared workspace, reduced to what the format can hold.
 //
-// These three are the only requirements the caller supplies that used to be
-// copied through and measured for the first time by the self-check at the
-// bottom of buildArtifactInner, which meant that a build command longer than
-// 128 characters, a marker file written as a glob, or a huskMin with trailing
-// junk (HUSK_VERSION_RE is unanchored at the tail on purpose, so "1.0.0" plus
-// sixty characters matches it and then fails the length cap) came back to the
-// publisher as the reader's "not-artifact" code, which is the code that means
-// "this file is not a Husk workflow" and has no export-side story at all. They
-// are clamped and warned about here, the same trade normalizeNamedRequirements
-// already makes for mcpServers and skills: what the format can carry goes in
-// the file, what it cannot is named in a warning, and nothing about a
-// declaration the author typed as documentation can sink their export.
+// These three requirements are clamped and warned about here rather than left
+// for the self-check at the bottom of buildArtifactInner to measure for the
+// first time. A build command longer than 128 characters, a marker file
+// written as a glob, or a huskMin with trailing junk (HUSK_VERSION_RE is
+// unanchored at the tail on purpose, so "1.0.0" plus sixty characters matches
+// it and then fails the length cap) would otherwise come back to the publisher
+// as the reader's "not-artifact" code, which is the code that means "this file
+// is not a Husk workflow" and has no export-side story at all. Clamping is the
+// same trade normalizeNamedRequirements makes for mcpServers and skills: what
+// the format can carry goes in the file, what it cannot is named in a warning,
+// and nothing about a declaration the author typed as documentation can sink
+// their export.
 function normalizeMarkerFiles(list, warnings) {
   if (!Array.isArray(list)) return [];
   const out = [];
@@ -2095,7 +2098,7 @@ function normalizeMarkerFiles(list, warnings) {
     if (out.length >= 8) { dropped += 1; continue; }
     // The same rule the reader enforces, including the leading separator: a
     // marker is resolved against somebody else's working directory, so an
-    // absolute path is a probe rather than a build file.
+    // absolute path names something outside it rather than a build file.
     if (typeof raw !== 'string' || raw.length < 1 || raw.length > 64
       || !MARKER_FILE_RE.test(raw) || raw.indexOf('..') !== -1 || /^[\\/]/.test(raw)) {
       dropped += 1;

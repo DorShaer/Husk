@@ -9,8 +9,8 @@
 //
 // Each row carries the sha256 of the previous row's serialized line
 // in a `prev` field. The chain is anchored at GENESIS_HASH so the
-// first row's prev is a fixed known value. Tampering with any row
-// (or splicing rows in or out) breaks the chain at the affected
+// first row's prev is a fixed known value. Any edit to a row, or
+// splicing rows in or out, breaks the chain at the affected
 // position, which `verifyAuditChain` reports as the first invalid
 // row index.
 //
@@ -60,8 +60,8 @@ function sha256Hex(data) {
 }
 
 // readLastLineSync returns the last non-empty line of the file at
-// filePath, or null if the file is empty or missing. Used to resume
-// the hash chain when re-opening an existing audit log.
+// filePath, or null if the file is empty or missing. Callers resume
+// the hash chain from it when re-opening an existing audit log.
 function readLastLineSync(filePath) {
   // Read directly in a single call rather than stat-then-read, so there is
   // no check-then-use window. A missing or empty file yields null.
@@ -204,7 +204,7 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
       return { ok: false, error: `could not write audit line: ${err.message}` };
     }
     // The chain bookkeeping happens AFTER a successful write, so a
-    // failed write does not poison the next append's prev pointer.
+    // failed write does not corrupt the next append's prev pointer.
     prevHash = sha256Hex(line);
     seq += 1;
     return { ok: true, record: row, line };

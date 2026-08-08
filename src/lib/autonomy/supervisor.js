@@ -26,10 +26,10 @@ const Snapshot = require('./snapshot');
 const Audit = require('./audit');
 const Budget = require('./budget');
 const Progress = require('./progress');
-// The canonical serializer used to be defined below this line. It is shared
-// with the workflow artifact fingerprint now, so it lives in one file that
-// both requires: a second copy would let loop detection and graph hashing
-// drift apart without either side changing.
+// The canonical serializer lives in its own file because both loop
+// detection here and the workflow artifact fingerprint require it: a
+// second copy would let loop detection and graph hashing drift apart
+// without either side changing.
 const { stableJson } = require('../stable-json');
 
 // A stable action signature for loop detection. Returns a string only
@@ -99,9 +99,8 @@ function startRun(opts = {}) {
 
   // 3b. progress governor (opt-in). Detects idle / loop / no-progress
   // stalls so a run that is burning wall-clock and tokens without doing
-  // useful work is halted early. Off unless the caller opts in, so the
-  // budget-only behaviour stays unchanged for callers that do not want
-  // the governor.
+  // useful work is halted early. Off unless the caller opts in, so a
+  // caller that does not want the governor gets budget-only halting.
   const governor = opts.governor
     ? Progress.createProgressMeter({
         startedAt: now(),
@@ -428,9 +427,9 @@ async function summarizeRunAsync(opts = {}) {
 
 // Shared shaping for both summarize variants.
 function buildSummary(audit, diff, chain, hasSnapshot) {
-  // Pull the most recent run_summary AND the original start_run row.
+  // Pull the most recent run_summary AND the first start_run row.
   // run_summary carries the final meter / diff; start_run carries the
-  // goal + caps the user originally set. Both are needed for Review +
+  // goal + caps the user set at run start. Both are needed for Review +
   // Rerun (review shows the goal; rerun pre-fills the modal with goal
   // and caps).
   let summary = null;

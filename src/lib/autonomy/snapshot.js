@@ -336,8 +336,8 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   // file not in the manifest, so restoring into the wrong root (e.g. a
   // caller that fell back to HOME for an empty workspaceRoot) would wipe
   // an unrelated directory. Refuse rather than trust the caller. A manifest
-  // with no recorded root is refused outright so the check can never be
-  // short-circuited by a legacy or hand-crafted manifest.
+  // with no recorded root is refused outright, so the check cannot be
+  // skipped by a manifest that simply omits the field.
   if (!manifest.workspaceRoot || path.resolve(manifest.workspaceRoot) !== path.resolve(workspaceRoot)) {
     return { ok: false, error: 'workspaceRoot does not match the snapshot manifest; refusing to restore' };
   }
@@ -348,8 +348,8 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
 
   // First pass: ensure every snapshot entry exists at the right state.
   // Ancestor-chain validation runs once per entry, before any fs
-  // mutation, so mkdirSync cannot accidentally resolve through a
-  // hostile or pre-existing symlink in the workspace.
+  // mutation, so mkdirSync cannot resolve through a link that already
+  // sits on the path and points outside the tree.
   for (const relPath of Object.keys(manifest.entries)) {
     const meta = manifest.entries[relPath];
     // Pre-existing file we could not read at capture time: we never
@@ -400,9 +400,9 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
         fs.symlinkSync(meta.target, abs);
       } else if (meta.type === 'file') {
         // Reject blob names that are not lowercase-hex 64-char strings.
-        // meta.sha is caller-influenced (from the manifest on disk); a
-        // tampered manifest must not be able to point us at random
-        // files outside bdir.
+        // meta.sha comes from the manifest on disk rather than from this
+        // run, so the shape check is what confines the read to a blob
+        // inside bdir.
         if (typeof meta.sha !== 'string' || !/^[a-f0-9]{64}$/.test(meta.sha)) {
           warnings.push({ path: relPath, reason: 'manifest sha is not a 64-char hex string' });
           continue;
@@ -412,14 +412,15 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
         let buf = fs.readFileSync(blobAbs);
         if (typeof opts.decrypt === 'function') buf = opts.decrypt(buf);
         // Re-hash the decrypted content and require it match the
-        // manifest. Defends against blob tampering, decrypt-with-wrong
-        // -key corruption, and any future cache-skew hazard.
+        // manifest, so a blob whose bytes do not match its digest, a
+        // decrypt with the wrong key, and any future cache skew all
+        // fail closed instead of landing in the workspace.
         if (sha256OfBuffer(buf) !== meta.sha) {
           warnings.push({ path: relPath, reason: 'blob sha mismatch after decrypt' });
           continue;
         }
-        // Pre-unlink so a hostile or pre-existing symlink at abs does
-        // not get followed by writeFileSync. Directories at this path
+        // Pre-unlink so writeFileSync cannot follow a link that already
+        // sits at abs and resolves elsewhere. Directories at this path
         // are post-snapshot type conflicts and must be replaced.
         try {
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
@@ -464,11 +465,12 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
 // validateAncestorChain returns true iff every path component
 // between baseAbs and the parent of fileAbs is either non-existent
 // (mkdirSync will create it freshly) OR a real directory. A symlink
-// anywhere on the chain is refused. This stops a hostile or
-// pre-existing symlink in the workspace from being followed when
-// writeFileSync resolves the path. There is a TOCTOU window between
-// this check and the eventual write, but for Phase 1 the threat is
-// manifest / workspace tampering, not a concurrent attacker.
+// anywhere on the chain is refused, so writeFileSync resolves the
+// path entirely inside the workspace instead of through a link that
+// lands outside it. The check and the write are separate syscalls,
+// which is fine for Phase 1: what it guards is a manifest or tree
+// whose bytes disagree with this machine, not a second writer
+// racing this one.
 function validateAncestorChain(baseAbs, fileAbs) {
   const baseN = path.resolve(baseAbs);
   const parent = path.dirname(fileAbs);
@@ -523,10 +525,10 @@ function ensureRestoreParent(baseAbs, fileAbs) {
 }
 
 function joinSafely(base, rel) {
-  // Path traversal guard: a manifest entry whose normalized form
-  // escapes the workspaceRoot is rejected, never written. Normalize
-  // base via path.resolve so a caller-supplied trailing separator
-  // does not break the prefix check.
+  // Confines the path to the root: a manifest entry whose normalized
+  // form resolves outside workspaceRoot is rejected, never written.
+  // Normalize base via path.resolve so a caller-supplied trailing
+  // separator does not break the prefix check.
   const baseN = path.resolve(base);
   const norm = path.normalize(rel);
   if (norm.startsWith('..') || path.isAbsolute(norm)) return null;

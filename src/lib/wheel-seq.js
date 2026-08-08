@@ -1,6 +1,6 @@
 'use strict';
 
-// SGR (DECSET 1006) mouse-wheel encoding. Used to forward ONLY the wheel to a
+// SGR (DECSET 1006) mouse-wheel encoding. Forwards ONLY the wheel to a
 // full-screen agent that enabled mouse reporting (e.g. copilot), so the wheel
 // scrolls the agent's own transcript while drag-to-select stays local in the
 // terminal (the agent's click/drag tracking is stripped before xterm sees it).

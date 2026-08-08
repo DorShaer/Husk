@@ -18,9 +18,10 @@ const path = require('path');
 const { isInside } = require('./path-confine');
 
 // Plugin identifiers look like "name" or "name@marketplace". Both parts
-// are slug-ish. The id is passed to the agent CLI as ONE argv element,
-// so the only real risks are flag injection (leading dash) and control
-// characters; the regex forbids both.
+// are slug-ish. The id is passed to the agent CLI as ONE argv element, so
+// it has to start with an alphanumeric (a leading dash would be read as
+// an option, not an id) and carry no control characters or whitespace.
+// The regex enforces both.
 const PLUGIN_PART_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const MAX_ID_LEN = 200;
 

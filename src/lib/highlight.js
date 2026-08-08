@@ -1,16 +1,16 @@
 'use strict';
 
-// XSS-safe syntax highlighter.
+// Syntax highlighter that escapes every value it emits.
 //
-// SECURITY MODEL (non-negotiable):
+// OUTPUT CONTRACT (non-negotiable):
 //   The input source is first split into an ordered list of segments that
 //   cover the ENTIRE input, each tagged with a token kind (or null for plain
 //   text). Rendering then escapes every segment's text with escapeHtml and
 //   only wraps already-escaped text in <span class="tok-KIND">...</span>.
 //   We NEVER run a regex replace over a string that already contains span
-//   markup, so there is no path by which raw input (e.g. '<script>') can
-//   reach the output unescaped. Token wrapping only ADDS markup around
-//   escaped text; it never re-emits raw characters.
+//   markup, so no character of the input reaches the output in raw form.
+//   Token wrapping only ADDS markup around escaped text; it never re-emits
+//   raw characters.
 
 // Escape the five HTML-significant characters. `&` must be replaced first so
 // the escape sequences we introduce are not themselves re-escaped.
@@ -217,7 +217,7 @@ function highlight(code, lang) {
 // but a viewer that renders one DOM element per line needs each line's HTML to
 // be self-contained. So a segment that straddles a newline is split at the
 // newline and each piece is wrapped in its own span. The result is an array of
-// balanced HTML strings, one per source line, each independently XSS-safe.
+// balanced HTML strings, one per source line, each fully escaped on its own.
 function highlightLines(code, lang) {
   const src = code == null ? '' : String(code);
   const rules = LANGUAGES[lang];
