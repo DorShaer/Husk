@@ -4,6 +4,7 @@ const { extractRecap } = require('./lib/recap-extract');
 const { fuzzyFilter } = require('./lib/fuzzy');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
+const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
 
 // Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
 // -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
@@ -70,6 +71,12 @@ contextBridge.exposeInMainWorld('husk', {
     highlightLines: (code, lang) => { try { return highlightLines(code, lang); } catch (_) { return null; } },
     parseGitStatus: (porcelain) => { try { return parsePorcelain(porcelain); } catch (_) { return []; } },
     gitBadge: (status) => { try { return statusBadge(status); } catch (_) { return ''; } },
+    // Guards for text on its way to a live agent's terminal. They fail closed:
+    // an error strips everything rather than passing the original through,
+    // because the original is the thing being guarded against.
+    stripControls: (s) => { try { return stripControls(s); } catch (_) { return ''; } },
+    hasControls: (s) => { try { return hasControls(s); } catch (_) { return true; } },
+    chatFileRef: (p) => { try { return chatFileRef(p); } catch (_) { return ''; } },
   },
   config: {
     get: () => ipcRenderer.invoke('config:get'),

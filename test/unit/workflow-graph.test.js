@@ -376,8 +376,25 @@ test('the workflow step runner gates the spawn behind isAllowedAgentCommand', ()
   // body so a future edit cannot accidentally re-introduce an
   // unconstrained spawn.
   const guardAt = body.indexOf('isAllowedAgentCommand(cmd)');
-  const spawnAt = body.indexOf('spawn(cmd, args');
+  // The command may be handed to spawn bare or resolved to an absolute path
+  // first; both are the same step and the ordering is what this pins.
+  const spawnMatch = body.match(/spawn\((?:spawnName\()?cmd\)?, args/);
+  const spawnAt = spawnMatch ? body.indexOf(spawnMatch[0]) : -1;
   assert.ok(guardAt > -1, 'isAllowedAgentCommand(cmd) check missing in executeWorkflow');
-  assert.ok(spawnAt > -1, 'spawn(cmd, args, ...) not found in executeWorkflow');
+  assert.ok(spawnAt > -1, 'the step spawn of cmd was not found in executeWorkflow');
   assert.ok(guardAt < spawnAt, 'isAllowedAgentCommand check must precede the spawn call');
+});
+
+// The allowlist proves the NAME is one Husk will run. On Windows it does not
+// prove which file that name refers to: libuv searches the child's working
+// directory before PATH, and a workflow's bound directory is a checkout its
+// author chose. Resolving from PATH is what closes the gap between the two.
+test('the workflow step spawn resolves its command rather than passing a bare name', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const text = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const m = text.match(/async function wfRunStep[\s\S]*?\n\}/);
+  assert.ok(m, 'wfRunStep not found');
+  assert.match(m[0], /spawn\(spawnName\(cmd\), args/,
+    'the step spawn passes a bare command name, which Windows resolves against the repo first');
 });

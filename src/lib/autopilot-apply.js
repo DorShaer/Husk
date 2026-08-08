@@ -29,6 +29,30 @@ function isSafeRelPath(rel) {
   return true;
 }
 
+// Why the string check below is not the whole confinement.
+//
+// path.resolve is pure string arithmetic: it collapses "..", it does not read
+// the filesystem, and it therefore says nothing about what a name points at. A
+// destination that is a symlink still resolves to a string under the workspace
+// root, and copyFileSync follows it and writes to the target. A directory
+// component that is a symlink does the same for everything beneath it.
+//
+// That gap is reachable here rather than theoretical. Autopilot runs the agent
+// with every approval gate disabled (see autopilot-args.js), steered by the
+// contents of a repository somebody else wrote, and git stores symlinks, so a
+// checked-in link at a path the agent is nudged into writing turns a diff the
+// operator approved for `config.json` into a write to whatever that link names.
+//
+// So the destination is confined by the filesystem's own answer: the parent
+// directory is canonicalized and re-checked, and the final component is refused
+// outright when it is a link. An apply writes the path the operator reviewed or
+// it writes nothing.
+function realParentInside(dst, workspaceRoot) {
+  const rootReal = fs.realpathSync(path.resolve(workspaceRoot));
+  const parentReal = fs.realpathSync(path.dirname(dst));
+  return parentReal === rootReal || parentReal.startsWith(rootReal + path.sep);
+}
+
 // Copy one file from the worktree into the workspace, creating parent dirs.
 function copyInto(worktreePath, workspaceRoot, rel) {
   const src = path.join(worktreePath, rel);
@@ -43,8 +67,29 @@ function copyInto(worktreePath, workspaceRoot, rel) {
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst re-confined under workspaceRoot above
     fs.mkdirSync(path.dirname(dst), { recursive: true });
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- src and dst both re-confined above
-    fs.copyFileSync(src, dst);
+
+    // The parent as the filesystem resolves it, so a symlinked directory
+    // anywhere along the path is caught rather than trusted.
+    if (!realParentInside(dst, workspaceRoot)) {
+      return { path: rel, ok: false, reason: 'destination resolves outside workspace root' };
+    }
+    // The final component, by lstat so the link itself is what is inspected.
+    let existing = null;
+    try { existing = fs.lstatSync(dst); } catch (_) { existing = null; }
+    if (existing && existing.isSymbolicLink()) {
+      return { path: rel, ok: false, reason: 'destination is a symbolic link' };
+    }
+    if (existing && !existing.isFile()) {
+      return { path: rel, ok: false, reason: 'destination is not a regular file' };
+    }
+
+    // Written through a descriptor opened with O_NOFOLLOW, so the path cannot
+    // be swapped for a link between the check above and the write. O_NOFOLLOW
+    // is POSIX; where it is absent the checks above remain the guard.
+    const buf = fs.readFileSync(src);
+    const fd = fs.openSync(dst, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+      | (fs.constants.O_NOFOLLOW || 0), 0o644);
+    try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }
     return { path: rel, ok: true, status: 'written' };
   } catch (err) {
     return { path: rel, ok: false, reason: (err && err.message) || String(err) };
@@ -52,12 +97,25 @@ function copyInto(worktreePath, workspaceRoot, rel) {
 }
 
 // Delete one file from the workspace (the run removed it in its worktree).
+// rmSync on a link removes the link and not its target, so a delete cannot
+// destroy a file outside the workspace by that route. The parent is still
+// canonicalized for the same reason as the copy: a symlinked directory
+// component would place the whole delete somewhere the operator never saw.
 function deleteFrom(workspaceRoot, rel) {
   const dst = path.join(workspaceRoot, rel);
   if (!path.resolve(dst).startsWith(path.resolve(workspaceRoot) + path.sep)) {
     return { path: rel, ok: false, reason: 'target escapes workspace root' };
   }
   try {
+    try {
+      if (!realParentInside(dst, workspaceRoot)) {
+        return { path: rel, ok: false, reason: 'target resolves outside workspace root' };
+      }
+    } catch (_) {
+      // A parent that no longer exists means there is nothing to delete, which
+      // is the same end state a successful delete reaches.
+      return { path: rel, ok: true, status: 'deleted' };
+    }
     fs.rmSync(dst, { force: true });
     return { path: rel, ok: true, status: 'deleted' };
   } catch (err) {

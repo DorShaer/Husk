@@ -49,6 +49,22 @@ function setEnabled(adapter, id, enabled) {
   return adapter.toggle(id);
 }
 
+// oldId is what separates an edit from an install, and the distinction is a
+// security boundary rather than bookkeeping.
+//
+// An MCP server is a command Husk causes to run, and its id is the only thing
+// a person recognises it by. Snippets are pasted from READMEs, docs pages and
+// chat messages, and reusing a well-known id like "filesystem" or "github"
+// costs an author nothing. Treating an install that collides with an existing
+// id as an update means such a snippet silently replaces a server the user
+// already trusts, keeps its familiar name, and reports "Installed": the
+// argument list narrowed to one safe folder, or the environment holding a
+// token, is gone with nothing on screen having said so.
+//
+// Each adapter already refuses a duplicate in its own add(). Routing a
+// collision to update() went around that decision rather than acting on it.
+// An install that collides now fails and names the collision, and the caller
+// decides; an edit still carries oldId and is unaffected.
 function addOrUpdate(adapter, oldId, payload, enabled) {
   const id = payload && payload.id;
   if (!id) return { ok: false, error: 'missing id' };
@@ -59,6 +75,9 @@ function addOrUpdate(adapter, oldId, payload, enabled) {
     if (typeof adapter.update !== 'function') return { ok: false, error: 'update not supported' };
     r = adapter.update(oldId, { ...payload, newId: id });
   } else if (existingNew) {
+    if (!oldId) {
+      return { ok: false, collision: true, error: `MCP server "${id}" already exists. Rename it, or edit the existing one.` };
+    }
     if (typeof adapter.update !== 'function') return { ok: false, error: 'update not supported' };
     r = adapter.update(id, { ...payload, newId: id });
   } else {
@@ -143,14 +162,25 @@ function add(payload = {}) {
   const id = payload && payload.id;
   const results = {};
   let failures = 0;
+  let collided = false;
   for (const [key, adapter] of writeAdapters()) {
     const r = addOrUpdate(adapter, null, payload, true);
     if (r && r.ok) results[key] = { status: 'installed', configPath: adapter.configPath };
-    else { failures++; results[key] = { status: 'error', error: (r && r.error) || 'install failed', configPath: adapter.configPath }; }
+    else {
+      failures++;
+      if (r && r.collision) collided = true;
+      results[key] = { status: 'error', error: (r && r.error) || 'install failed', configPath: adapter.configPath };
+    }
   }
-  return failures
-    ? { ok: false, id, results, error: `MCP server "${id || ''}" could not be installed for ${failures} target${failures === 1 ? '' : 's'}` }
-    : { ok: true, id, results };
+  if (!failures) return { ok: true, id, results };
+  // A name collision is a different thing from a write that failed, and it is
+  // the one the reader can act on. Counting targets tells them how widely it
+  // did not happen; it does not tell them that a server they already have is
+  // the reason, which is the whole point of refusing.
+  const error = collided
+    ? `MCP server "${id || ''}" already exists. Rename it, or edit the existing one.`
+    : `MCP server "${id || ''}" could not be installed for ${failures} target${failures === 1 ? '' : 's'}`;
+  return { ok: false, id, results, collision: collided, error };
 }
 
 function update(oldId, payload = {}) {

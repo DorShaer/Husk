@@ -12,6 +12,7 @@ const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside } = require('./lib/path-confine');
+const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec, withCopilotContextDir } = require('./lib/pty-spawn');
@@ -305,8 +306,8 @@ const DEFAULT_CONFIG = {
   // ~/.claude/. Defaults to enabled so existing Claude users get it on
   // first run, but Copilot-only users can switch it off to skip the
   // bootstrap, kill the statusline tick, and drop the framework reference
-  // from the Husk identity prompt. The key keeps its original name: renaming
-  // it would silently re-enable the framework for anyone who had turned it off.
+  // from the Husk identity prompt. The key name is load-bearing: renaming it
+  // would silently re-enable the framework for anyone who has turned it off.
   paiEnabled: true,
   profiles: DEFAULT_PROFILES,
   activeProfileId: null,
@@ -316,14 +317,14 @@ const DEFAULT_CONFIG = {
   // new session and splitting one conversation across many transcripts.
   lastClaudeSessions: {},
   // Map of project path -> { mcpServerId: 'on' | 'off' }. A server with no
-  // entry inherits the global list, so an untouched project behaves exactly as
-  // it did before this existed. See src/lib/project-mcp.js.
+  // entry inherits the global list, so a project nobody has customized runs
+  // the CLI's own set untouched. See src/lib/project-mcp.js.
   projectMcp: {},
 };
 
-// The theme a config was running under before `theme` became a stored key. Any
-// config file that predates the key was showing this, so it is what that install
-// keeps.
+// The theme an install shows when its config file carries no `theme` key.
+// Pinning it keeps that install on the look it is already displaying rather
+// than moving it to whatever a fresh install defaults to.
 const PRE_EXISTING_THEME = 'midnight';
 
 // Themes whose --term-light token is 1 in styles.css. The renderer derives the
@@ -344,7 +345,7 @@ function loadConfig() {
     if (!fs.existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
     const stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
     // A config file on disk means this is an existing install, and an update must
-    // never move its theme. Where the file carries no theme, pin the one it was
+    // never move its theme. Where the file carries no theme, pin the one it is
     // already showing so the new-install default cannot reach it.
     if (!Object.prototype.hasOwnProperty.call(stored, 'theme')) {
       stored.theme = PRE_EXISTING_THEME;
@@ -357,7 +358,8 @@ function saveConfig(cfg) {
   try {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-    // Tighten any pre-existing-but-loose perms left over from before this guard.
+    // writeFileSync applies mode only when it creates the file, so chmod the
+    // file and its directory explicitly to tighten anything already on disk.
     try { fs.chmodSync(CONFIG_PATH, 0o600); } catch (_) {}
     try { fs.chmodSync(CONFIG_DIR, 0o700); } catch (_) {}
     return true;
@@ -380,16 +382,73 @@ let config = loadConfig();
 // CLI render, so Husk has to mirror that fetch itself. See
 // refreshAnthropicUsageCache below.
 let statuslineTimer = null;
+
+// This tick executes a shell script off the user's disk every 30 seconds, so
+// which bytes it is willing to run is a security decision and not a detail.
+//
+// Husk launches agent CLIs that write files as they work, following directions
+// that come from whatever repository they were pointed at, so a script arriving
+// under ~/.claude that the user did not put there is a state this has to answer
+// for. Unchecked, that file runs within thirty seconds, with the user's whole
+// environment, and again every thirty seconds after, with nothing on screen to
+// say so.
+//
+// So the script is pinned on first sight and checked by content afterwards.
+// A machine that already has one keeps working: the first tick records what is
+// there and runs it, which is the state every existing install is in. What is
+// refused is a script that APPEARS where the pin says there was none, or whose
+// bytes stop matching the pin. Neither is something a legitimate upgrade does
+// silently: reinstalling the framework changes the file, Husk stops running it,
+// and the user re-approves by clearing the pin. Trust on first use is weaker
+// than a signature and is what is available without asking every user to hold
+// a key.
+const STATUSLINE_CANDIDATES = () => [
+  path.join(CLAUDE_DIR, 'LIFEOS', 'LIFEOS_StatusLine.sh'),
+  path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
+  path.join(CLAUDE_DIR, 'statusline-command.sh'),
+];
+
+let statuslineRefusedOnce = false;
+
+function statuslineDigest(file) {
+  // lstat, so a path swapped for a symlink is refused rather than followed to
+  // whatever it points at. The digest is then read through a descriptor opened
+  // on that same checked path.
+  const st = fs.lstatSync(file);
+  if (!st.isFile()) return null;
+  if (st.size > 4 * 1024 * 1024) return null;
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+// Returns the script to run, or null when nothing may be run. The rule itself
+// lives in src/lib/statusline-trust.js, where it is testable without spawning
+// anything; this is the part that touches disk and config.
+function statuslineScriptToRun() {
+  const pin = (config.statuslineTrust && typeof config.statuslineTrust === 'object')
+    ? config.statuslineTrust
+    : null;
+  const verdict = StatuslineTrust.decide(STATUSLINE_CANDIDATES(), pin, statuslineDigest);
+
+  if (verdict.pin) { config.statuslineTrust = verdict.pin; saveConfig(config); }
+
+  // Said once per run rather than on every tick, because the tick is every
+  // thirty seconds and a line repeated that often is a line nobody reads.
+  if (verdict.reason && !statuslineRefusedOnce) {
+    statuslineRefusedOnce = true;
+    const why = {
+      [StatuslineTrust.REFUSE_APPEARED]: 'appeared on a machine that had none when Husk last looked.',
+      [StatuslineTrust.REFUSE_CHANGED]: 'no longer matches the copy Husk last trusted.',
+      [StatuslineTrust.REFUSE_MALFORMED]: 'could not be checked against a readable trust record.',
+    }[verdict.reason] || 'did not pass its trust check.';
+    console.warn('husk: the statusline script was not run because it ' + why
+      + ' Clear statuslineTrust in the Husk config to approve the current file.');
+  }
+  return verdict.run;
+}
+
 function refreshStatuslineCacheOnce() {
   try {
-    // Current layout ships the statusline inside LIFEOS/; the two older ones
-    // kept it under PAI/ and at the root. An install upgraded in place can be
-    // on any of them, so probe newest first and take whichever exists.
-    const slPath = [
-      path.join(CLAUDE_DIR, 'LIFEOS', 'LIFEOS_StatusLine.sh'),
-      path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
-      path.join(CLAUDE_DIR, 'statusline-command.sh'),
-    ].find((p) => fs.existsSync(p));
+    const slPath = statuslineScriptToRun();
     if (!slPath) return;
     const cwd = activePtyCwd || HOME;
     // Stub session JSON for the claude-statusline contract; missing fields
@@ -442,22 +501,21 @@ function readClaudeOauthToken() {
   } catch (_) { return ''; }
 }
 
-// Security context (responding to CodeQL js/file-access-to-http and
-// js/http-to-file-access on this function):
+// This path reads a local token and then writes a remote answer back to
+// disk, so it holds three properties end to end:
 //
-// 1. The OAuth token sourced from ~/.claude/.credentials.json is sent ONLY
-//    to api.anthropic.com (hardcoded hostname + path; no user input flows
-//    into the URL). This mirrors what the bundled PAI statusline-command.sh
-//    already does on every render.
-// 2. The response body is JSON.parse'd; the cache write is restricted to a
-//    fixed allowlist of fields, each coerced to a primitive type (Number,
-//    String, ISO timestamp). The destination path is path.join(CLAUDE_DIR,
-//    'MEMORY', 'STATE', 'usage-cache.json'), no part of which is derived
-//    from the response.
-// 3. No raw nested objects from the response land in the cache, so even if
-//    the upstream response were tampered with, only typed scalars persist.
+// 1. The token reaches api.anthropic.com and nothing else. Hostname and
+//    path are literals and no caller value flows into the URL, which is
+//    the same request the bundled PAI statusline-command.sh already makes
+//    on every render.
+// 2. The cache write copies a fixed allowlist of fields, each coerced to a
+//    primitive (Number, String, ISO timestamp). The destination is
+//    path.join(CLAUDE_DIR, 'MEMORY', 'STATE', 'usage-cache.json'), no part
+//    of which is derived from the response.
+// 3. No nested object out of the response lands in the cache, so whatever
+//    the upstream body carries, only typed scalars persist.
 //
-// As a defensive timeout, anything past 5s is dropped.
+// Anything past 5s is dropped so a stalled endpoint holds nothing open.
 function _coerceISOTimestamp(s) {
   if (typeof s !== 'string') return '';
   // RFC 3339-ish timestamp: digits, dashes, T, colons, dot, plus, Z.
@@ -484,7 +542,8 @@ function refreshAnthropicUsageCache() {
     let bodyLen = 0;
     res.on('data', (chunk) => {
       bodyLen += chunk.length;
-      // Cap body size to bound the attacker (server) influence on memory.
+      // Cap body size so a remote response cannot decide how much memory this
+      // read consumes.
       if (bodyLen > 256 * 1024) { res.destroy(); return; }
       body += chunk;
     });
@@ -644,11 +703,11 @@ function bootstrapPaiIfNeeded() {
   try {
     const claudeDir = path.join(HOME, '.claude');
 
-    // An install predating this version has the older framework laid out under
-    // ~/.claude/PAI/ with a CLAUDE.md whose imports point into it. Dropping the
-    // new tree beside it would leave two frameworks side by side and a routing
-    // file addressing only the old one, so leave that install alone entirely.
-    // Removing it is the user's call, not ours.
+    // Some machines carry a framework laid out under ~/.claude/PAI/ with a
+    // CLAUDE.md whose imports point into it. Dropping this tree beside it would
+    // leave two frameworks side by side and a routing file addressing only one
+    // of them, so leave that install alone entirely. Removing it is the user's
+    // call, not ours.
     if (fs.existsSync(path.join(claudeDir, 'PAI'))) return;
 
     const bundle = findBundledFramework();
@@ -801,8 +860,8 @@ function createWindow() {
     }
   });
 
-  // Belt-and-suspenders: also catch top-level navigation attempts so
-  // the main window cannot be hijacked away from its loaded index.html.
+  // Belt-and-suspenders: also catch top-level navigation requests so
+  // the main window cannot be moved off its loaded index.html.
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url === mainWindow.webContents.getURL()) return;
     event.preventDefault();
@@ -949,7 +1008,7 @@ function rememberClaudeSession(encodedCwd, sessionId) {
 // An allowlist rather than a passthrough: the renderer hands this straight to a
 // child process, and names like PATH, LD_PRELOAD or NODE_OPTIONS decide which
 // code runs, not merely how it behaves. Values are single-line and bounded so a
-// crafted string cannot carry a newline into the environment block.
+// value from the renderer cannot carry a newline into the environment block.
 const SPAWN_ENV_ALLOW = new Set(['CLAUDE_AGENTS_SELECT']);
 function sanitizeSpawnEnv(env) {
   if (!env || typeof env !== 'object') return null;
@@ -1121,8 +1180,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
 
   // Narrow this launch to the MCP servers the folder actually wants. Only the
   // folders the user has customized get flags; everywhere else the CLI reads
-  // its own config exactly as before. Nothing on disk is rewritten, so running
-  // the CLI outside Husk still sees the user's own global set.
+  // its own config exactly as it does on its own. Nothing on disk is rewritten,
+  // so running the CLI outside Husk still sees the user's own global set.
   if (!isSubcommand) {
     const mcpArgs = projectMcpLaunchArgs(agentExe, cwd, agentArgs);
     if (mcpArgs.length) agentArgs = [...agentArgs, ...mcpArgs];
@@ -1135,8 +1194,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // a cwd. Windows is skipped because its spawn may fall back to
   // `cmd.exe /c <rawCmd>`, which ignores agentArgs.
   // Must match the agent CLI's own project-dir encoding (all non-alphanumerics
-  // become dashes, dots included); identical to the old form for paths without
-  // dots, so existing lastClaudeSessions keys stay valid.
+  // become dashes, dots included), since lastClaudeSessions is keyed on this
+  // same form and a key only resolves while the two agree.
   const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   const resumeMatch = (rawCmd || '').match(/--resume[=\s]+([A-Za-z0-9][A-Za-z0-9-]{6,})/);
   const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
@@ -1235,7 +1294,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   //            setup; argv inside the -c string is shell-escaped by shJoin
   //   win32    pty.spawn(resolved-via-PATHEXT, agentArgs) when the program
   //            name resolves to a real file; falls back to cmd.exe /c
-  //            <rawCmd> only when no candidate exists (preserves legacy)
+  //            <rawCmd> only when no candidate exists, so a command string
+  //            that names no file on disk still runs
   const spec = buildSpawnSpec({
     platform: process.platform,
     agentExe,
@@ -1252,7 +1312,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   s.cwd = cwd;
   // First-launch time of this tab's session, used to match it to the claude
   // session file it creates (so the tab can show that session's title). A
-  // restart-in-place keeps the original launch time.
+  // restart-in-place keeps the first launch time.
   if (!s.startedAt) s.startedAt = Date.now();
   lastPtyPid = s.pty.pid;
   // Coalesce PTY output: a chatty agent (build logs, a big cat) emits
@@ -2589,11 +2649,12 @@ function flushRunOutput(runId) {
     });
   } catch (_) {}
   // The audit row carries this chunk's size, not its text, so the chain stays
-  // small and tamper-evident. That left the readable output living only in the
-  // renderer's in-memory feed, which is dropped when the run ends, so cancelling
-  // destroyed the one copy of what the agent actually said. The transcript is
-  // written beside the audit log instead, surviving the run ending, navigating
-  // away, and restarting the app.
+  // small and every row still hashes over the whole of the one before it. That
+  // leaves the readable output living only in the renderer's in-memory feed,
+  // which is dropped when the run ends, so cancelling would take the one copy
+  // of what the agent actually said with it. The transcript is written beside
+  // the audit log instead, surviving the run ending, navigating away, and
+  // restarting the app.
   appendRunTranscript(r, chunk);
   if (mainWindow) mainWindow.webContents.send('autopilot:budget', {
     runId,
@@ -2634,11 +2695,11 @@ function flushRunOutput(runId) {
       if (parsed != null && parsed > maxTok) maxTok = parsed;
     }
     if (maxTok >= 0 && maxTok > (r.maxReportedTokens || 0)) {
-      // Poison guard: this scans the agent's whole output, not a trusted
+      // Bad-reading guard: this scans the agent's whole output, not a trusted
       // status-line region, so a line the agent PRINTS (editing a tokenizer,
       // cat-ing a benchmark log, echoing a cost report) can carry a huge
-      // number. Because setReportedTokens is monotonic, one poisoned reading
-      // would latch forever and SIGINT a healthy run on a fake budget cap.
+      // number. Because setReportedTokens is monotonic, one wrong reading
+      // latches forever and SIGINTs a healthy run on a budget cap it never hit.
       // Reject an implausible absolute value or a jump too large to be one
       // run's real growth; the true counter climbs smoothly and re-registers
       // on the next flush.
@@ -3579,10 +3640,10 @@ async function finishRun(runId, detail) {
 }
 
 // Apply is the only step that leaves the isolated worktree and writes into the
-// user's real project, and it used to be the only irreversible one. The pre-run
-// snapshot captures the worktree (doStartRun), the worktree is deleted right
-// after a successful apply, and Revert then restored a directory nobody was
-// looking at while every applied change stayed in the repo.
+// user's real project. The pre-run snapshot captures the worktree (doStartRun)
+// and the worktree is deleted right after a successful apply, so reverting that
+// snapshot restores a directory nobody is looking at while every applied change
+// stays in the repo.
 //
 // So capture the destination side of an apply before performing it, scoped to
 // exactly the paths about to be written. Paths that do not exist yet are
@@ -3745,10 +3806,10 @@ ipcMain.handle('autopilot:list', () => {
 });
 
 // The restore/diff target for a session is the directory the snapshot
-// was captured from, recorded in its manifest. Never trust a caller-
-// supplied workspaceRoot for a destructive revert: an empty value used
-// to fall back to HOME, and the restore deletes every file not in the
-// snapshot, so a wrong root would wipe an unrelated directory.
+// was captured from, recorded in its manifest. A revert takes its root
+// from there rather than from the caller, because the restore removes
+// every file the snapshot does not hold: a root the snapshot was never
+// taken against is a directory nobody chose for this run.
 function manifestWorkspaceRoot(sessionId) {
   if (!isSafeAutopilotSessionId(sessionId)) return null;
   try {
@@ -4024,7 +4085,8 @@ ipcMain.handle('autopilot:fileDiff', async (_e, payload = {}) => {
   const workspaceRoot = manifestWorkspaceRoot(sessionId)
     || String(payload && payload.workspaceRoot || '').trim();
   if (!workspaceRoot) return { ok: false, error: 'no workspace recorded for this session' };
-  // Path traversal guard: reuse the snapshot joinSafely contract.
+  // Confines the resolved file to the workspace: same joinSafely contract
+  // the snapshot store holds itself to.
   const safeWorkspace = path.resolve(workspaceRoot);
   const safeAbs = path.resolve(safeWorkspace, relPath);
   if (!(safeAbs === safeWorkspace || safeAbs.startsWith(safeWorkspace + path.sep))) {
@@ -4130,9 +4192,9 @@ ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   const { decrypt } = autopilotCrypto();
-  // Diff the recorded workspace only, never a caller-supplied path, so this
-  // read cannot be used to enumerate an arbitrary directory tree. Use the
-  // async walker so loading a past run from history does not freeze the UI.
+  // Diff the recorded workspace only, never a caller-supplied path, so the
+  // walk is bounded to a tree this run was already snapshotted against. Use
+  // the async walker so loading a past run from history does not freeze the UI.
   const workspaceRoot = manifestWorkspaceRoot(sessionId);
   return Autopilot.supervisor.summarizeRunAsync({
     sessionId,
@@ -4495,10 +4557,21 @@ ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ re
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('config:get', () => ({ ...config }));
+// Keys the settings screen may not write. These are decisions the main process
+// made about what it is willing to execute, and the config file is where they
+// are kept only because that is where durable state lives. A renderer able to
+// rewrite them could point a trust pin at anything, which would leave the pin
+// describing a check rather than performing one.
+const CONFIG_KEYS_MAIN_OWNS = new Set(['statuslineTrust']);
+
 ipcMain.handle('config:set', (_e, partial) => {
-  const paiChanged = Object.prototype.hasOwnProperty.call(partial || {}, 'paiEnabled')
-    && partial.paiEnabled !== config.paiEnabled;
-  config = { ...config, ...partial };
+  const incoming = {};
+  for (const key of Object.keys(partial || {})) {
+    if (!CONFIG_KEYS_MAIN_OWNS.has(key)) incoming[key] = partial[key];
+  }
+  const paiChanged = Object.prototype.hasOwnProperty.call(incoming, 'paiEnabled')
+    && incoming.paiEnabled !== config.paiEnabled;
+  config = { ...config, ...incoming };
   saveConfig(config);
   if (paiChanged) {
     // Park or restore ~/.claude/CLAUDE.md so the next agent restart sees the
@@ -4576,7 +4649,9 @@ function extraAgentBinDirs() {
   return [path.join(HOME, '.local', 'bin'), path.join(HOME, '.bun', 'bin')];
 }
 
-function isOnPath(binName) {
+// Where a bare command name actually lives, searching PATH and nothing else.
+// Returns an absolute path, or null when the name is not installed.
+function resolveOnPath(binName) {
   const isWin = process.platform === 'win32';
   // Union of: the inherited PATH, the login-shell PATH (nvm/pyenv/etc), and the
   // known user-install dirs. Deduped in order, so detection is correct whether
@@ -4595,12 +4670,36 @@ function isOnPath(binName) {
         const p = path.join(d, c);
         const st = fs.statSync(p);
         if (!st.isFile()) continue;
-        if (isWin) return true;
-        if (st.mode & 0o111) return true;
+        if (isWin) return p;
+        if (st.mode & 0o111) return p;
       } catch (_) {}
     }
   }
-  return false;
+  return null;
+}
+
+function isOnPath(binName) {
+  return resolveOnPath(binName) !== null;
+}
+
+// The command to hand spawn() when the working directory belongs to somebody
+// else, which is the ordinary case here: a cloned repository, a bound workflow
+// checkout, an MCP server directory.
+//
+// On Windows a bare name is not resolved against PATH alone. libuv searches the
+// child's working directory first, so a repository that ships npm.cmd, git.exe
+// or claude.cmd beside its own files has that file executed in place of the
+// real tool. Every allowlist upstream still passes, because the name really is
+// the allowlisted one; what changed is which file the name refers to. Passing
+// an absolute path resolved from PATH removes the ambiguity.
+//
+// POSIX has no such rule: execvp searches PATH and never the working directory,
+// so the name is returned unchanged and the behaviour is untouched. Where a
+// command cannot be found the name is returned as-is, so the spawn fails the
+// way it always did rather than failing differently here.
+function spawnName(binName) {
+  if (process.platform !== 'win32') return binName;
+  return resolveOnPath(binName) || binName;
 }
 
 ipcMain.handle('agents:detect', () => {
@@ -5426,7 +5525,7 @@ function recordWorkflowRun(run, workflow) {
       // log, or null for a run that could not open one and for every row
       // written before the log existed. The publisher reads this to find the
       // rows it may attach; a row without it is a run that can only ever be
-      // author-stated, which is what the whole history was until now.
+      // author-stated.
       auditSessionId: (run.audit && run.audit.sessionId) || null,
       workflowName: workflow.name || '',
       status: run.status,
@@ -5598,12 +5697,12 @@ function createWorkflowRecord(payload) {
     graph: sanitizeGraph(p.graph),
     trigger: validTriggers.includes(p.trigger) ? p.trigger : 'manual',
     // Where this workflow came from, stated on the record rather than inferred
-    // from whether a sidecar row can be found. Absence is the one answer an
-    // attacker can arrange, and there were three ways to arrange it:
-    // duplicating an imported card copied every prompt and wrote no row, an
-    // install whose row never reached disk still reported success, and a single
-    // unparseable byte in the store read every imported workflow on the machine
-    // as locally authored at once.
+    // from whether a sidecar row can be found. Absence of a row is a state the
+    // store reaches on its own in three different ways: a duplicate carries
+    // every prompt, an install can finish with its row never reaching disk, and
+    // a single unparseable byte makes the whole store unreadable. Inferring
+    // origin from absence answers all three with "locally authored", which is
+    // the ungated reading, so the record states its origin itself.
     //
     // Only workflows:install passes 'imported'. A manifest cannot reach this,
     // because an artifact's fields are projected onto an allowlist long before
@@ -5621,21 +5720,19 @@ ipcMain.handle('workflows:create', (_e, payload = {}) => createWorkflowRecord(pa
 
 // Duplicating carries the origin and drops the consent.
 //
-// The renderer used to do this with workflows:create and a deep copy, which
-// wrote no sidecar row at all. Every check in this feature reads "is this a
-// stranger's workflow" as the PRESENCE of a row, so a copy with none was
-// indistinguishable from something the user typed here: the consent gate never
-// opened, the run fell back to whichever directory happened to be open instead
-// of a bound one, and oneShotArgs handed back the auto-approving flags that
-// exist for work you wrote yourself. One menu click undid every protection the
-// import path spends four screens establishing.
+// Every check in this feature reads "is this a stranger's workflow" as the
+// PRESENCE of a sidecar row, so a copy without one is indistinguishable from
+// something the user typed here: the consent gate never opens, the run falls
+// back to whichever directory happens to be open instead of a bound one, and
+// oneShotArgs hands back the auto-approving flags that exist for work you wrote
+// yourself. One menu click is enough to undo every protection the import path
+// spends four screens establishing.
 //
-// Dropping the row was a reasonable answer to a real question, which is that a
-// copy must not inherit a stranger's consent. The mistake was answering it by
-// deleting the origin as well. The row travels, so the copy is still a
-// stranger's work, and consentedAt is cleared, so the reader confirms it once
-// on its own terms. The decision lives here rather than in the renderer
-// because a caller that forgets is exactly how this happened the first time.
+// A copy must not inherit a stranger's consent, and the way to say that is to
+// clear consentedAt, not to drop the origin with it. The row travels, so the
+// copy is still a stranger's work, and consentedAt is null, so the reader
+// confirms it once on its own terms. The decision lives here rather than in the
+// renderer because a caller that forgets the row is all it takes.
 ipcMain.handle('workflows:duplicate', (_e, payload = {}) => {
   const sourceId = String((payload && payload.workflowId) || '').trim();
   if (!sourceId) return { ok: false, error: 'workflowId required' };
@@ -5702,10 +5799,10 @@ ipcMain.handle('workflows:delete', (_e, id) => {
 
 // opts is the second argument and carries the run's working directory. An
 // imported workflow must have one: without it the run falls through to
-// whichever terminal folder happened to be active, which means a stranger's
-// four agent steps edit whichever repo you last glanced at, exit 0, and record
-// a clean run. Locally authored workflows pass opts nothing and keep the
-// existing fallback chain exactly as it was.
+// whichever terminal folder happens to be active, which means four agent steps
+// somebody else wrote edit whichever repo you last glanced at, exit 0, and
+// record a clean run. Locally authored workflows pass opts nothing and keep
+// wfRunStep's own fallback chain.
 ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
   const already = [...activeRuns.values()].find((r) => r.status === 'running');
   if (already) {
@@ -5733,7 +5830,7 @@ ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
       // The record's own account of where it came from, and whether the store
       // that would have held its consent row could be read at all. Together
       // these let the gate tell "locally authored" from "imported, and the row
-      // is missing", which used to be the same answer.
+      // is missing", which the sidecar on its own cannot separate.
       recordOrigin: workflow.origin === 'imported' ? 'imported' : 'local',
       storeUnreadable: loadSidecarStore().unreadable === true,
     },
@@ -5753,7 +5850,7 @@ ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
     children: new Set(),   // every concurrently-running step, so Stop kills them all
     startedAt: new Date().toISOString(),
     // null for a locally authored workflow, which is what keeps wfRunStep's
-    // original fallback chain intact for everything that existed before this.
+    // own fallback chain in play for everything with no bound directory.
     cwd: gate.cwd,
     // Whether the instructions this run is about to execute were written by
     // somebody else. Read once here, where the sidecar is already in hand for
@@ -5762,7 +5859,7 @@ ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
     // write change the answer between two steps of the same workflow.
     // Either source is enough to call it untrusted. The record's origin is the
     // one a copy carries and a damaged store cannot clear, so a duplicate of an
-    // imported workflow no longer gets aider's --yes-always and codex's
+    // imported workflow never gets aider's --yes-always or codex's
     // --skip-git-repo-check handed back to it.
     untrusted: workflow.origin === 'imported' || !!(sidecar && sidecar.origin === 'imported'),
   };
@@ -5857,25 +5954,26 @@ ipcMain.handle('workflows:activeRun', () => {
 // this machine, and refusing a run that has not earned one.
 //
 // The trust boundary is the byte. Everything inside the file, including its
-// own graphHash and its own receipts, is attacker-controlled, and every check
+// own graphHash and its own receipts, was written elsewhere, and every check
 // worth anything lives in src/lib/workflow-artifact.js where it can be unit
-// tested against hostile fixtures. Nothing here re-implements a check; this
-// file supplies the syscalls those checks are about and hands the results to
-// pure functions.
+// tested against deliberately awkward fixtures. Nothing here re-implements a
+// check; this file supplies the syscalls those checks are about and hands the
+// results to pure functions.
 //
 // Two rules the handlers below are written to keep.
 //
 // No value from a manifest reaches mcp:add, mcp:addMany or mcp:parseSnippet on
 // any code path. requires.mcpServers carries a name, an optional fingerprint
 // and a boolean and nothing else, because a manifest that could describe an
-// MCP server is a manifest that can start a local process with attacker-chosen
-// argv and environment. The preflight's fix affordance is a label the renderer
-// turns into a click that opens the empty MCP form, never a prefilled one.
+// MCP server is a manifest that decides the argv and environment of a local
+// process. The preflight's fix affordance is a label the renderer turns into a
+// click that opens the empty MCP form, never a prefilled one.
 //
 // Every read of a cloned tree is confined and every path component of it is
 // lstat-ed, because git materialises symlinks happily and a workflow.husk.json
-// committed as a symlink to ~/.claude.json would render MCP tokens into the
-// malformed-file pane with a Copy button next to them.
+// committed as a symlink points the reader at a file elsewhere on the machine,
+// whose contents would land in the malformed-file pane with a Copy button next
+// to them.
 
 const WorkflowArtifact = require('./lib/workflow-artifact');
 const WorkflowReceipt = require('./lib/workflow-receipt');
@@ -5889,8 +5987,8 @@ const WORKFLOW_ARTIFACTS_PATH = path.join(CONFIG_DIR, 'workflow-artifacts.json')
 // Bounds on walking a cloned repository. A stranger chose its shape, so the
 // walk is bounded in three directions at once: how deep it goes, how many
 // entries it will look at in total, and how many candidates it will collect.
-// Any one of the three alone is a hole, since a tree can be wide, deep, or
-// carpeted in files named *.husk.json.
+// Any one of the three alone still leaves the walk unbounded, since a tree
+// can be wide, deep, or carpeted in files named *.husk.json.
 const WFX_SCAN_DEPTH = 3;
 const WFX_SCAN_ENTRIES = 4000;
 const WFX_MAX_CANDIDATES = 32;
@@ -5901,17 +5999,15 @@ function loadSidecarStore() {
     if (!fs.existsSync(WORKFLOW_ARTIFACTS_PATH)) return WorkflowInstall.normalizeStore(null);
     return WorkflowInstall.normalizeStore(JSON.parse(fs.readFileSync(WORKFLOW_ARTIFACTS_PATH, 'utf8')));
   } catch (_) {
-    // An empty store is NOT the safe reading, and the comment that used to sit
-    // here had the direction backwards. "Every workflow reads as locally
-    // authored" is the ungated state, so one unparseable byte in this file
-    // silently removed the consent gate from every imported workflow on the
-    // machine at once. Measured: same workflow, same id, refused before the
-    // corruption and running with no gate after it.
+    // An empty store is NOT the safe reading. "Every workflow reads as locally
+    // authored" is the ungated state, so one unparseable byte in this file is
+    // the whole distance between every imported workflow on the machine holding
+    // its consent gate and none of them holding it.
     //
-    // The store still degrades to empty rather than throwing, because taking
-    // the workflows page down over this file would be its own denial of
-    // service. What changes is that it says so, and the run gate treats a
-    // record that calls itself imported with no readable row as a refusal.
+    // The store degrades to empty rather than throwing, because taking the
+    // workflows page down over this one file is its own kind of outage. It says
+    // so instead, and the run gate treats a record that calls itself imported
+    // with no readable row as a refusal.
     const empty = WorkflowInstall.normalizeStore(null);
     empty.unreadable = true;
     return empty;
@@ -5932,9 +6028,9 @@ function sidecarFor(workflowId) {
   return Object.prototype.hasOwnProperty.call(store.rows, workflowId) ? store.rows[workflowId] : null;
 }
 
-// Returns the row on success and null when it did not reach disk. It used to
-// return the row either way, so a caller could not tell a recorded install from
-// one whose safety record silently failed to persist.
+// Returns the row on success and null when it did not reach disk. The null is
+// what lets a caller tell a recorded install from one whose safety record
+// failed to persist; returning the row either way hides the difference.
 function writeSidecar(row) {
   if (!row || !row.workflowId) return null;
   const store = loadSidecarStore();
@@ -5944,10 +6040,10 @@ function writeSidecar(row) {
 
 // Called after any workflow disappears, so a row never outlives the workflow
 // it describes. Duplicating is handled by workflows:duplicate, which copies the
-// row and clears its consent: a copy that carried a stranger's consent would be
-// the same hole with a new id, and a copy that carried no row at all was a
-// bigger one, because absence of a row is how every check here reads "the user
-// wrote this themselves".
+// row and clears its consent: a copy carrying a stranger's consent is the same
+// ungated run under a new id, and a copy carrying no row at all is further
+// still from the truth, because absence of a row is how every check here reads
+// "the user wrote this themselves".
 function pruneSidecarStore() {
   try {
     const live = loadWorkflows().map((w) => w && w.id).filter((id) => typeof id === 'string');
@@ -6057,8 +6153,9 @@ function wfxMarkerFiles(cwd, markers) {
 
 // A path is safe to read out of a clone when it resolves inside the clone AND
 // no component of it, from the root down to the leaf, is a symlink. A
-// leaf-only check is defeated by a symlinked directory, which is why this
-// walks every component instead of lstat-ing the file it was handed.
+// leaf-only check still passes when a parent directory is a link that resolves
+// elsewhere, which is why this walks every component instead of lstat-ing the
+// file it was handed.
 function wfxResolveConfined(root, rel) {
   const abs = resolveInside(root, rel);
   const rootAbs = path.resolve(root);
@@ -6246,10 +6343,10 @@ ipcMain.handle('workflows:pickArtifactFile', async () => {
 //
 // The artifact is revalidated even though it just came back from
 // workflows:artifactRead. It crossed into the renderer and back, and the
-// renderer is the process that also draws attacker-supplied strings; a
-// validator that only runs on the way in is a validator one XSS bug away from
-// being skipped. Revalidation is microseconds and the projection it returns is
-// the one every check below reads.
+// renderer is the process that also draws strings out of that same file; a
+// validator that only runs on the way in is a validator one renderer bug away
+// from being skipped. Revalidation is microseconds and the projection it
+// returns is the one every check below reads.
 ipcMain.handle('workflows:preflight', (_e, payload = {}) => {
   const p = (payload && typeof payload === 'object') ? payload : {};
   const stored = typeof p.workflowId === 'string' ? sidecarFor(p.workflowId) : null;
@@ -6336,17 +6433,17 @@ ipcMain.handle('workflows:install', (_e, payload = {}) => {
     artifact,
     boundCwd: cwd,
     installedAt: new Date().toISOString(),
-    // Installing writes a file and executes nothing. The risk is entirely at
-    // the moment a stranger's 8192 characters reach a CLI, so consent is asked
-    // for at the first Run and recorded here when it is given.
+    // Installing writes a file and executes nothing. What matters is the moment
+    // a stranger's 8192 characters reach a CLI, so consent is asked for at the
+    // first Run and recorded here when it is given.
     consentedAt: null,
   });
-  // An install whose safety record did not reach disk is not an install. It
-  // used to answer ok and paint the done pane, leaving a stranger's workflow on
-  // the grid with no row, and the very next Run started it with no consent gate
-  // and no bound directory. The record is removed rather than left behind,
-  // because a half-installed workflow is worse than none: it is one the reader
-  // believes they reviewed.
+  // An install whose safety record did not reach disk is not an install.
+  // Answering ok and painting the done pane would leave a stranger's workflow
+  // on the grid with no row, and the very next Run would start it with no
+  // consent gate and no bound directory. The record is removed rather than left
+  // behind, because a half-installed workflow is worse than none: it is one the
+  // reader believes they reviewed.
   if (!writeSidecar(row)) {
     try { saveWorkflows(loadWorkflows().filter((w) => w && w.id !== workflow.id)); } catch (_) {}
     return wfxRefuse('sidecar-write-failed',
@@ -7154,10 +7251,13 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   let sawAnyEvent = false;
   // run.cwd is set only for a workflow that came from a file, where the
   // directory was chosen at install, stored in the sidecar, and re-probed by
-  // the gate on this Run press. Everything authored here keeps the original
-  // fallback chain, so nothing that worked before this line changed behaviour.
+  // the gate on this Run press. Everything authored here leaves run.cwd null
+  // and falls through the chain below instead.
   const wfCwd = run.cwd || activePtyCwd || (config && config.treeRoot) || HOME;
-  const child = spawn(cmd, args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
+  // wfCwd is the directory this workflow was bound to, which for an imported
+  // workflow is a checkout its author chose. The allowlist above proved the
+  // name; this decides which file that name refers to.
+  const child = spawn(spawnName(cmd), args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
   run.children.add(child);
   activity('status', step.model ? `Starting ${cmd} (${step.model})...` : `Starting ${cmd}...`);
 
@@ -7714,12 +7814,12 @@ function repoFetchedAt(dest) {
 // instead of hanging on a credential prompt.
 //
 // Resolves { ok: true, root, stale, staleReason?, fetchedAt? }. `stale` is the
-// honest half of "best effort": the pull's error used to be discarded, so an
-// offline fetch resolved as a success and the install sheet painted a
-// fingerprint recomputed from a copy of unknown age under a banner saying it
-// had just cloned the repository. The copy is still returned, because an older
-// checkout beats no checkout for a reader with no network, but it is returned
-// labelled and the surface says so.
+// honest half of "best effort": discarding the pull's error would resolve an
+// offline fetch as a success, and the install sheet would paint a fingerprint
+// recomputed from a copy of unknown age under a banner saying it had just
+// cloned the repository. The copy is still returned, because an older checkout
+// beats no checkout for a reader with no network, but it is returned labelled
+// and the surface says so.
 const RepoAgents = require('./lib/repo-agents');
 function cloneAgentRepo(url) {
   return new Promise((resolve) => {
@@ -7746,10 +7846,10 @@ function cloneAgentRepo(url) {
     if (!fs.existsSync(path.join(dest, '.git'))) return cloneFresh();
 
     // Reuse is conditional on the checkout being the repository that was
-    // asked for. The folder name now carries a digest of the URL so two
-    // repositories can no longer be given the same one, but a directory left
-    // by an older naming scheme still sits on disk under a name that collides,
-    // and reading it would answer this URL with another repository's files.
+    // asked for. The folder name carries a digest of the URL, so two
+    // repositories are never handed the same one, but a directory can already
+    // sit on disk under a name that collides, and reading it would answer this
+    // URL with another repository's files.
     execFile('git', ['-C', dest, 'remote', 'get-url', 'origin'], { timeout: 15000, env: gitEnv }, (rErr, stdout) => {
       if (rErr || !sameGitRemote(stdout, v.url)) {
         try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
@@ -7817,7 +7917,14 @@ ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
               name,
               description: (parsed.description || '').slice(0, AGENT_DESC_MAX),
               bodyLength: (parsed.body || '').length,
-              alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', entry.name)),
+              // Checked against the file this WILL write, which syncAgentFiles
+              // derives from the agent's declared name and not from the name it
+              // has in the repository. Those two are independent: a pack can
+              // ship helper.agent.md whose frontmatter says "Code Reviewer",
+              // and it is code-reviewer.md that gets replaced. Testing the
+              // repository's filename answered a question nobody asked and left
+              // the row showing no collision at all.
+              alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', agentFileName(name))),
               alreadyImported: existingProfileNames.has(name.toLowerCase()),
             });
           } catch (_) {}
@@ -7857,6 +7964,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const list = getProfiles().slice();
   const importedIds = [];
   const copiedToClaude = [];
+  const skippedExisting = [];
   for (const pick of picks) {
     // filename may be nested relative to the agents dir (core/reviewer.md);
     // resolve it, including any symlinks, and require the real file to live
@@ -7873,7 +7981,18 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       const name = (parsed.name || stripAgentExt(basename)).slice(0, 64);
       if (installToAllAgents) {
         const dest = path.join(claudeAgentsDir, basename);
-        try { fs.copyFileSync(src, dest); copiedToClaude.push(dest); } catch (_) {}
+        // COPYFILE_EXCL, so an agent the user already has is never replaced by
+        // one out of a repository. The basename comes from that repository, and
+        // common ones collide by coincidence often enough on their own. An
+        // agent definition is the system prompt that steers a coding agent, so
+        // replacing one silently would change how that agent behaves with
+        // nothing said. A collision is reported rather than swallowed.
+        try {
+          fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+          copiedToClaude.push(dest);
+        } catch (err) {
+          if (err && err.code === 'EEXIST') skippedExisting.push(basename);
+        }
       }
       const id = `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       list.push({
@@ -7913,6 +8032,10 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
     imported: importedIds.length,
     importedIds,
     copiedToClaude,
+    // Names the repository shares with agents the user already had. The files
+    // were left alone, and saying which ones is the difference between a
+    // partial install and one that looks complete.
+    skippedExisting,
     distributedTo,
   };
 });
@@ -7975,16 +8098,19 @@ ipcMain.handle('repoMcp:build', async (_e, payload = {}) => {
 
   const cap = Date.now() + 5 * 60 * 1000;
   const runOnce = (script) => new Promise((resolve) => {
-    // --ignore-scripts blocks preinstall/install/postinstall lifecycle hooks,
-    // which would otherwise run arbitrary code from a repo the user merely
-    // pointed at. MCP servers that genuinely need a native build run their
-    // build via the explicit `build` script below, not install hooks.
+    // --ignore-scripts holds the install to fetching packages: the
+    // preinstall/install/postinstall hooks are code the repository chose,
+    // and pointing Husk at a directory is not the same as electing to run
+    // it. MCP servers that genuinely need a native build run their build
+    // via the explicit `build` script below, not install hooks.
     const args = script === 'install'
       ? ['install', '--ignore-scripts', '--no-audit', '--no-fund']
       : ['run', script];
     let proc;
     try {
-      proc = spawn('npm', args, { cwd: dir, env: process.env, windowsHide: true });
+      // dir is a directory inside a repository somebody else wrote, so the
+      // command is resolved from PATH rather than left as a bare name.
+      proc = spawn(spawnName('npm'), args, { cwd: dir, env: process.env, windowsHide: true });
     } catch (err) {
       resolve({ ok: false, error: err.message, stdoutTail: '', stderrTail: '' });
       return;
@@ -8362,7 +8488,8 @@ ipcMain.handle('projects:markViewed', (_e, id) => {
 
 // Delete a Husk prompt. Confines the unlink to HUSK_PROMPTS_DIR by resolving
 // both the supplied path and the prompts directory, then verifying that the
-// resolved file lives directly under it. Symlink/traversal-proof.
+// resolved file lives directly under it. Resolving first is what makes the
+// check hold for a name with "..", and for a link pointing out of the tree.
 ipcMain.handle('prompts:delete', (_e, mdPath) => {
   if (!mdPath || typeof mdPath !== 'string') return { ok: false, error: 'Missing path' };
   try {
@@ -8390,8 +8517,8 @@ function renderPromptMd(name, description, content) {
 }
 
 // Resolve a caller-supplied prompt path against the prompts directory. The
-// renderer hands these back from a listing, so the check is against a crafted
-// path rather than against ordinary use.
+// renderer hands these back from a listing, so the check has to hold for any
+// path that arrives, not only the ones ordinary use produces.
 function resolvePromptPath(mdPath) {
   if (!mdPath || typeof mdPath !== 'string') return { error: 'Missing path' };
   const root = path.resolve(HUSK_PROMPTS_DIR);
@@ -8516,8 +8643,8 @@ ipcMain.handle('skills:list', () => {
 });
 
 ipcMain.handle('skills:read', (_e, mdPath) => {
-  // Confine reads to the two roots skills/prompts actually live under, so a
-  // crafted mdPath cannot exfiltrate arbitrary files via the renderer bridge.
+  // Confine reads to the two roots skills/prompts actually live under, so an
+  // mdPath from the renderer cannot return a file from anywhere else on disk.
   if (typeof mdPath !== 'string' || !mdPath) return { ok: false, error: 'Missing path' };
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   if (!isInside(skillsDir, mdPath) && !isInside(HUSK_PROMPTS_DIR, mdPath)) {
@@ -8645,8 +8772,8 @@ function activePluginContext() {
 }
 
 // Resolve a validated installed plugin's install path, confined to the
-// plugins root. Returns null when unknown or outside the root (a
-// tampered registry must not turn the editor into an arbitrary-fs API).
+// plugins root. Returns null when unknown or outside the root (a registry
+// entry Husk did not write must not turn the editor into a whole-disk API).
 function pluginInstallPath(id) {
   if (!Plugins.isSafePluginId(id)) return null;
   const ctx = activePluginContext();
@@ -10105,6 +10232,14 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
     if (!baseName || baseName.startsWith('..') || /[\/\\]/.test(baseName)) {
       return { ok: false, error: 'Invalid file name' };
     }
+    // A control character in a name is legal on POSIX and is refused here
+    // rather than carried, because the path this returns is written into a live
+    // agent prompt, where a carriage return reads as Enter and an escape opens
+    // a control sequence. Refusing at the point the file enters Husk keeps the
+    // name out of every later surface too, not just that one.
+    if (/[\x00-\x1F\x7F-\x9F]/.test(baseName)) {
+      return { ok: false, error: 'That file name contains control characters' };
+    }
     let destDir; let dest;
     if (kind === 'skill') {
       const skillName = baseName.replace(/\.md$/i, '');
@@ -10150,15 +10285,16 @@ ipcMain.handle('fs:listDir', async (_e, { dir, showHidden }) => {
 ipcMain.handle('fs:home', () => HOME);
 
 // ─── Files command-center IPC ────────────────────────────────────────────────
-// Backs the redesigned Files page: a fuzzy-searchable index, inline preview,
-// and git decoration. Every read is confined under `root` via path-confine so a
-// crafted relative path can never escape the browsed directory.
+// Backs the Files page: a fuzzy-searchable index, inline preview, and git
+// decoration. Every read is confined under `root` via path-confine so a
+// relative path from the renderer never resolves outside the browsed directory.
 const FILE_PREVIEW_MAX_BYTES = 2 * 1024 * 1024; // 2 MB: past this the renderer would jank
 const FILE_INDEX_MAX = 20000;                    // cap the flat index so search stays instant
 const { detectLanguage } = require('./lib/lang-detect');
 
 // A path is safe to read when it resolves inside root. resolveInside throws on
-// absolute/traversal/null-byte; we translate that into a uniform error.
+// an absolute path, one that climbs out of root, or one carrying a null byte;
+// we translate all three into a uniform error.
 function confinedAbs(root, rel) {
   if (rel === '' || rel === '.') return path.resolve(root);
   return resolveInside(root, rel);
@@ -10373,6 +10509,16 @@ const VOICES_DIR = path.join(PIPER_DIR, 'voices');
 const PIPER_RELEASE = IS_WIN
   ? 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip'
   : 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
+// The bytes those two URLs serve, which Husk marks executable and then runs.
+// Both point at a fixed release tag rather than a moving one, so the content is
+// immutable and a mismatch means the bytes that arrived are not the bytes this
+// release was built against, whatever the reason: a changed upstream asset, a
+// proxy that rewrites responses, or a certificate the machine was made to
+// trust. Checked before extraction, because after extraction the decision has
+// been made.
+const PIPER_SHA256 = IS_WIN
+  ? 'f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea'
+  : 'a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992';
 const VOICE_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
 const MAC_SAY_BIN = '/usr/bin/say';
 const MAC_DEFAULT_VOICE = 'Samantha';
@@ -10434,10 +10580,26 @@ ipcMain.handle('voice:install', async (_e, { voice = 'en_US-amy-medium' } = {}) 
     if (!fs.existsSync(PIPER_BIN)) {
       // Windows ships a .zip (piper.exe + DLLs + espeak-ng-data); Linux a
       // .tar.gz. `tar -xf` auto-detects both on Win10+ (bsdtar) and Linux.
-      const archivePath = path.join(os.tmpdir(), IS_WIN ? 'piper-husk.zip' : 'piper-husk.tar.gz');
-      await runStep('curl', ['-fsSL', '-o', archivePath, PIPER_RELEASE], 'Downloading Piper binary');
-      await runStep('tar', ['-xf', archivePath, '-C', HUSK_DATA], 'Extracting Piper');
-      try { fs.unlinkSync(archivePath); } catch (_) {}
+      // A private directory per install rather than a fixed name in the shared
+      // temp dir. A name that does not vary can be pre-created by any other
+      // local account on a multi-user machine, as a file or as a symlink, and
+      // curl -o writes through a link to wherever it points.
+      const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-piper-'));
+      const archivePath = path.join(stageDir, IS_WIN ? 'piper.zip' : 'piper.tar.gz');
+      const cleanup = () => { try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch (_) {} };
+      try {
+        await runStep('curl', ['-fsSL', '-o', archivePath, PIPER_RELEASE], 'Downloading Piper binary');
+
+        // Verified before anything is unpacked, so bytes that do not match the
+        // release this build was written against never become files on disk,
+        // let alone an executable one.
+        const got = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+        if (got !== PIPER_SHA256) {
+          return { ok: false, error: 'The downloaded voice engine did not match its expected checksum, so it was discarded. Nothing was installed.' };
+        }
+
+        await runStep('tar', ['-xf', archivePath, '-C', HUSK_DATA], 'Extracting Piper');
+      } finally { cleanup(); }
       if (!IS_WIN) { try { fs.chmodSync(PIPER_BIN, 0o755); } catch (_) {} }
     }
 
@@ -10648,6 +10810,13 @@ function setupAutoUpdater() {
   updaterInstance = autoUpdater;
   autoUpdater.autoDownload = false;       // we choose when to download
   autoUpdater.autoInstallOnAppQuit = false;
+  // Husk does not ship a web installer, so the update feed has no business
+  // naming one. Left at its default, a "packages" entry in the feed may carry
+  // an absolute URL on any host, which is fetched and executed as the update:
+  // it turns one writable field in a manifest into a download from somewhere
+  // the release never came from. Refusing it costs nothing here and removes
+  // that field's meaning entirely.
+  autoUpdater.disableWebInstaller = true;
 
   // Route the updater's log to a file. It defaults to `console`, whose output is
   // unreachable for a GUI-launched app, leaving field failures undiagnosable.
