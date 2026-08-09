@@ -395,3 +395,40 @@ test('the MCP repo modal offers both a URL and a folder', () => {
   assert.match(APP, /setMcpRepoSource/, 'nothing switches between the two rows');
   assert.match(APP, /#rm-fetch'\) &&/, 'the Fetch control is not wired');
 });
+
+// ─── config writes that reach disk ─────────────────────────────────────────
+
+// saveConfig takes the object to write and returns false when it cannot. Called
+// with nothing, JSON.stringify(undefined) is undefined, writeFileSync rejects
+// that, the catch swallows it and the caller reads success. The in-memory value
+// is already updated, so the setting works for the rest of the session and is
+// gone at the next launch, which is the shape that hides it.
+test('every saveConfig call passes the config it means to persist', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const bare = MAIN.match(/saveConfig\(\s*\)/g) || [];
+  assert.deepEqual(bare, [], 'saveConfig is called with no object, so the write silently fails');
+  assert.ok((MAIN.match(/saveConfig\(config\)/g) || []).length >= 4,
+    'the persisting call sites disappeared');
+});
+
+// A project is any pinned directory, and a directory inside a repository is a
+// working directory git answers for. Deciding on a .git entry beside the folder
+// reports every such project as a plain folder.
+test('project git state is decided by git, not by a .git entry beside the folder', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const handler = MAIN.match(/ipcMain\.handle\('projects:state'[\s\S]*?\n\}\);/);
+  assert.ok(handler, 'the projects:state handler was not found');
+  const body = handler[0];
+
+  const statusAt = body.indexOf("'status', '--porcelain=v1'");
+  const setTrue = body.indexOf('st.isGit = true');
+  assert.ok(statusAt > -1, 'the handler no longer asks git for status');
+  assert.ok(setTrue > -1 && setTrue > statusAt,
+    'isGit is not set from the git call that actually answers the question');
+  assert.ok(!/st\.isGit = fs\.existsSync/.test(body),
+    'isGit is still decided by a .git entry directly inside the pinned folder');
+});

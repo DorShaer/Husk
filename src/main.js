@@ -11,7 +11,7 @@ const { spawn, execFile } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
-const { resolveInside, isInside } = require('./lib/path-confine');
+const { resolveInside, isInside, realParentInside } = require('./lib/path-confine');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
@@ -4908,7 +4908,7 @@ ipcMain.handle('projectMcp:set', (_e, payload = {}) => {
   if (Object.keys(entry).length) map[key] = entry;
   else delete map[key];
   config = { ...config, projectMcp: map };
-  saveConfig();
+  saveConfig(config);
   return { ok: true };
 });
 
@@ -4918,7 +4918,7 @@ ipcMain.handle('projectMcp:clear', (_e, cwd) => {
   const map = { ...(config.projectMcp || {}) };
   delete map[key];
   config = { ...config, projectMcp: map };
-  saveConfig();
+  saveConfig(config);
   return { ok: true };
 });
 
@@ -8444,18 +8444,26 @@ ipcMain.handle('projects:state', () => {
     // each one is an open loop for the workspace it came from.
     st.retainedCount = retainedRuns.filter((r) => r && r.workspaceRoot === p.path).length;
     st.lastSessionMs = lastSessionMsForCwd(p.path);
-    // .git can be a directory or, for worktrees and submodules, a file.
-    try { st.isGit = fs.existsSync(path.join(p.path, '.git')); } catch (_) {}
-    if (st.isGit) {
-      try {
-        const txt = execFileSync('git', ['-C', p.path, 'status', '--porcelain=v1', '--branch'], {
-          encoding: 'utf8', stdio: 'pipe', timeout: 4000, maxBuffer: 4 * 1024 * 1024,
-        });
-        Object.assign(st, parseGitStatus(txt));
-      } catch (_) {
-        // A repo mid-rebase, or a machine without git, degrades to the
-        // plain-folder display rather than an error.
-      }
+    // A project is any directory the user pinned, and plenty of useful ones sit
+    // inside a repository rather than at its root: a package in a monorepo, a
+    // service folder, a docs tree. Those are working directories git answers
+    // for, so asking git is what decides this. A .git entry beside the folder,
+    // which is a directory at a repository root and a file in a worktree or
+    // submodule, is kept only as the fallback answer for the case where git
+    // cannot be reached at all.
+    let hasGitEntry = false;
+    try { hasGitEntry = fs.existsSync(path.join(p.path, '.git')); } catch (_) {}
+    try {
+      const txt = execFileSync('git', ['-C', p.path, 'status', '--porcelain=v1', '--branch'], {
+        encoding: 'utf8', stdio: 'pipe', timeout: 4000, maxBuffer: 4 * 1024 * 1024,
+      });
+      st.isGit = true;
+      Object.assign(st, parseGitStatus(txt));
+    } catch (_) {
+      // A folder that is not in a repository, a repo mid-rebase, or a machine
+      // without git. The first is a plain folder and the other two still are
+      // repositories, which is what the .git entry answers for.
+      st.isGit = hasGitEntry;
     }
   }
   return { ok: true, states, groups: groupBoard(projects, states, Date.now()) };
@@ -10417,19 +10425,32 @@ ipcMain.handle('fs:writeFile', async (_e, { root, rel, content, expectMtimeMs, f
     if (!isInside(path.resolve(root), real)) return { ok: false, error: 'path outside root' };
     abs = real;
   } catch (_) {
-    // A brand-new file has no realpath yet; confinedAbs already proved the
-    // string is inside root, so a create is allowed.
+    // Nothing at that path yet, so there is no realpath to compare and the
+    // string check above is all that has run. A string cannot see a link: if
+    // any directory along the way points elsewhere, this name resolves under
+    // root while the write lands outside it. The parent is asked of the
+    // filesystem instead, and a create only proceeds when the directory that
+    // will hold the file is itself inside root.
+    if (!realParentInside(abs, root)) return { ok: false, error: 'path outside root' };
   }
   try {
     let current = null;
-    try { current = fs.statSync(abs); } catch (_) { current = null; }
+    try { current = fs.lstatSync(abs); } catch (_) { current = null; }
     if (current) {
+      // lstat rather than stat, so a link is seen as a link. Writing through
+      // one puts the bytes wherever it points, which is a path the caller
+      // never named and the checks above never saw.
+      if (current.isSymbolicLink()) return { ok: false, error: 'path is a symbolic link' };
       if (!current.isFile()) return { ok: false, error: 'not a file' };
       if (!force && typeof expectMtimeMs === 'number' && Math.abs(current.mtimeMs - expectMtimeMs) > 1) {
         return { ok: false, error: 'conflict', reason: 'This file changed on disk since you opened it (the agent may have edited it). Reload to see the new version, or save anyway to overwrite it.' };
       }
     }
-    fs.writeFileSync(abs, content, 'utf8');
+    // O_NOFOLLOW closes the window between the checks above and the write, so
+    // the path cannot be swapped for a link in between.
+    const fd = fs.openSync(abs, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+      | (fs.constants.O_NOFOLLOW || 0), 0o644);
+    try { fs.writeFileSync(fd, content, 'utf8'); } finally { fs.closeSync(fd); }
     const st = fs.statSync(abs);
     return { ok: true, bytes: st.size, mtimeMs: st.mtimeMs };
   } catch (err) { return { ok: false, error: err.message }; }

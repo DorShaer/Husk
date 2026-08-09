@@ -17,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { STATUS_FILE } = require('./autopilot-status');
+const { realParentInside } = require('./path-confine');
 
 // A change entry is { path: <relative>, status: 'added'|'modified'|'deleted' },
 // exactly the shape diffWorkspace/diffWorkspaceAsync already emit.
@@ -47,12 +48,6 @@ function isSafeRelPath(rel) {
 // directory is canonicalized and re-checked, and the final component is refused
 // outright when it is a link. An apply writes the path the operator reviewed or
 // it writes nothing.
-function realParentInside(dst, workspaceRoot) {
-  const rootReal = fs.realpathSync(path.resolve(workspaceRoot));
-  const parentReal = fs.realpathSync(path.dirname(dst));
-  return parentReal === rootReal || parentReal.startsWith(rootReal + path.sep);
-}
-
 // Copy one file from the worktree into the workspace, creating parent dirs.
 function copyInto(worktreePath, workspaceRoot, rel) {
   const src = path.join(worktreePath, rel);

@@ -27,4 +27,30 @@ function isInside(root, target) {
   return targetAbs === rootAbs || targetAbs.startsWith(rootAbs + path.sep);
 }
 
-module.exports = { resolveInside, isInside };
+// realParentInside asks the filesystem where a path's PARENT actually is, and
+// whether that is still under root.
+//
+// The two functions above are string arithmetic. They collapse "..", they never
+// read the disk, and so they say nothing about what a name points at. That is
+// enough for a path that already exists, because the caller can canonicalize
+// the path itself and compare. It is not enough for a path that does not exist
+// yet: there is nothing to canonicalize, realpath throws, and a create that
+// falls back to the unresolved string writes through whatever the directories
+// along it happen to be. A link at any component is then a write outside root
+// that every string check approved.
+//
+// Returns false when the parent cannot be resolved at all, so a caller that
+// cannot establish where it is about to write does not write.
+function realParentInside(target, root) {
+  if (typeof target !== 'string' || typeof root !== 'string' || !target || !root) return false;
+  const fs = require('fs');
+  try {
+    const rootReal = fs.realpathSync(path.resolve(root));
+    const parentReal = fs.realpathSync(path.dirname(path.resolve(target)));
+    return parentReal === rootReal || parentReal.startsWith(rootReal + path.sep);
+  } catch (_) {
+    return false;
+  }
+}
+
+module.exports = { resolveInside, isInside, realParentInside };
