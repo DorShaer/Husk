@@ -1,137 +1,15 @@
 'use strict';
 
-// The four portable-workflow surfaces, built from one vocabulary.
+// Shared renderer for portable-workflow receipts, install evidence, trust
+// chips, local cost estimates and first-run consent.
 //
-// The card receipts strip, the evidence inspector inside the install sheet,
-// the trust chips that sit beside every figure, the local dollar estimate and
-// the first-run consent gate are all in this one file because they are all
-// one argument made at four sizes. A user reads "31 runs" on a card, opens the
-// record, sees the same 31 in a panel, installs, presses Run and reads the
-// prompts behind it. If the number changes weight, or the provenance word
-// changes, or the median is called a median in one place and a range in
-// another, the reader learns that these are unrelated screens. They are one
-// screen at four moments, so they get one builder.
-//
-// ── The rule that shapes everything below ──────────────────────────────────
-//
-// A figure is never constructed without its tier. Not "should not be": the
-// component cannot express it. renderFigures takes a normalized record whose
-// `tier` was decided by recordFromReceipt or recordFromAggregate from the
-// validator's own output, and every tile it emits carries the chip for that
-// tier as its last child. There is no argument that suppresses the chip and no
-// code path that emits a .wfx-fig without one. The install sheet's static
-// markup makes the same promise structurally, by nesting the chip inside the
-// tile it describes; this file is the runtime half of it.
-//
-// The three words are exactly `computed here`, `matches the shipped log` and
-// `author states`, and the word "verified" appears nowhere in this feature.
-// The chain format is anchored at a public genesis constant with no signature
-// anywhere in src/lib/autonomy/, so a passing chain means the shipped JSONL is
-// internally well formed and nothing more. Any writer that follows the format
-// produces one that passes. "Matches the shipped log" is the ceiling the
-// evidence can carry, and it is a ceiling this build cannot even reach yet:
-// validateChain in workflow-artifact.js checks the chain's shape and says in
-// its own header that whether the rows hash together is verifyArtifactChain's
-// job, which lands with slice 6. So `evidence: "inline"` on its own buys a
-// receipt nothing at all here. A caller that has actually re-hashed the chain
-// passes the result in as `chainCheck` and the tier moves; absent that, every
-// receipt figure in this file renders as `author states`. Reading a field
-// named "evidence" and promoting on it would be the whole feature's failure
-// mode in one line.
-//
-// A tier never degrades from refused. When a chain was checked here and did
-// not hold, or the figures recomputed from it disagree with the ones declared
-// beside them, the record is marked refused and the block collapses to a
-// refusal rather than falling back to "author states". A receipt contradicted
-// by its own evidence is worse than no receipt, because it is a receipt
-// somebody is about to believe.
-//
-// ── Why every string goes through el() ─────────────────────────────────────
-//
-// Every name, prompt, model id, publisher, note and path rendered here arrived
-// inside a workflow.husk.json written by a stranger. This window runs with
-// sandbox:false and its preload exposes workflows.create and workflows.run, so
-// a string from that file reaching innerHTML does not stop at what the pane
-// looks like: it puts bytes that came from the file on the same side of the
-// boundary as those two calls. So there is no template literal assigned to
-// innerHTML in this file, there is no insertAdjacentHTML, and every element is
-// built by el() from wfx-dom.js, which turns markup into text and refuses
-// handler attributes outright.
-//
-// Three places step outside el(), each for a reason that is not convenience,
-// and each carrying no imported data at all:
-//
-//   - The status glyphs and the disclosure chevron are SVG. el() has no SVG
-//     namespace and deliberately no such tag, so they are built here with
-//     createElementNS from a frozen table of path data written in this file.
-//     Nothing from a manifest reaches them; the only variable is which of four
-//     names the caller asked for, and an unknown name yields no icon.
-//   - The {{previousOutput}} highlight wraps a <mark>, which wfx-dom does not
-//     carry either. It is produced by splitting a text node el() has already
-//     written and scrubbed, and moving that existing node inside the mark. No
-//     new string is created, which is why this is DOM surgery rather than the
-//     string-replace-into-markup that is the obvious implementation and is the
-//     bug.
-//   - The shell's own controls inside the panes we rebuild (the fingerprint
-//     Copy button, Change directory, the consent checkbox) are detached before
-//     the pane is cleared and put back into the rebuilt tree. They are not
-//     rebuilt, and could not be: el() owns the "wfxd-" id namespace and drops
-//     anything outside it, precisely so a manifest string can never mint or
-//     name a shell id. Preserving the real nodes keeps their ids unique, keeps
-//     the label's `for` pointing at a real input, and keeps whatever listeners
-//     the install sheet bound to them at startup, which recreating the
-//     elements would silently discard.
-//
-// ── Honest precision ───────────────────────────────────────────────────────
-//
-// Two different problems wear the same name, and they get two different
-// treatments.
-//
-// A measurement over a thin sample is still exact. One run that took 4m 48s
-// took 4m 48s, and rounding it to "about 5 minutes" would be inventing an
-// error bar nobody measured. What is wrong with it is that it is one run, so
-// the fix is vocabulary and rank, not digits: the tile is demoted with
-// .is-thin, the word "median" is not used below three runs, and the sample
-// size rides along in the value slot at panel density and in the screen reader
-// slot on a card, where there is no room for it.
-//
-// An estimate extrapolated from a thin sample really does have fewer honest
-// digits, and the dollar figure is the only one here. Two cents of precision
-// on a median drawn from a single observation is a claim about a distribution
-// from a sample that cannot describe one, so the decimals fall with the count.
-//
-// ── The strip and the card's status row ────────────────────────────────────
-//
-// The strip renders identically for zero, one and thirty-one runs in the sense
-// that matters: it never moves .wf-card-status. It sits above that element,
-// whose margin-top:auto bottom-anchors status, footer and Run so they land on
-// one line across a whole row of cards. Everything above that auto margin is
-// free flowing, so a strip that is two lines on one card and one line on its
-// neighbour cannot break the alignment and needs no reserved height. This
-// builder therefore does not reserve one, and must not: a height computed from
-// the spacing scale rather than measured is how a block ends up 32px tall next
-// to a 55px sibling.
-//
-// ── Shape of the module ────────────────────────────────────────────────────
-//
-// One IIFE, one export. This is a classic script in index.html, so a top-level
-// const here shares a lexical scope with every other script on the page and a
-// name this file and wfx-dom.js both liked would be a redeclaration that stops
-// the page loading. Everything app.js and the install sheet need is on
-// window.WfxArtifactUi and nothing else escapes.
-//
-// Nothing in here throws at a caller. Every public entry point is wrapped, and
-// a failure renders the refusal block rather than leaving a half-built sheet
-// on screen, because a file this code cannot finish reading has to end in a
-// finished refusal and not a blank pane. The refusal never quotes the
-// exception's message: that text came from the same input being refused.
+// Invariants: every figure carries a provenance tier; contradicted evidence is
+// refused rather than downgraded; manifest strings go through WfxDom.el();
+// "verified" is intentionally not used for unsigned receipt chains.
 
 (function () {
   const WfxDom = (typeof window !== 'undefined' && window.WfxDom) || null;
   if (!WfxDom) {
-    // Loud, and only in the console. Without the builder there is no path here
-    // that writes a file's strings as text, and drawing this pane by any other
-    // path is the one outcome worth preventing more than drawing nothing.
     if (typeof console !== 'undefined') {
       console.error('wfx-artifact-ui: wfx-dom.js must load first; no workflow artifact surface will render');
     }
@@ -148,45 +26,24 @@
 
   // ─── Vocabulary ────────────────────────────────────────────────────────────
 
-  // The three tiers, as data. A renderer picks a tier by naming one of these,
-  // never by assembling a class string, so there is no arrangement of this file
-  // that produces a chip whose word and whose ink disagree.
+  // Data-driven tiers keep the chip text and styling coupled.
   const TIER = Object.freeze({
     computed: Object.freeze({ tier: 'computed', cls: 'is-computed', word: 'computed here' }),
     consistent: Object.freeze({ tier: 'consistent', cls: 'is-consistent', word: 'matches the shipped log' }),
     said: Object.freeze({ tier: 'said', cls: 'is-said', word: 'author states' }),
   });
 
-  // What each passContext value actually does to the next step, in the reader's
-  // language rather than the enum's. This is the field that decides whether a
-  // stranger's prompt gets to see the output of a step you did trust, so it is
-  // spelled out on every step row rather than abbreviated to its enum name.
+  // Reader-facing meaning of each passContext enum.
   const PASS_CONTEXT_COPY = Object.freeze({
     full: 'carries the whole transcript',
     last50: 'carries the last 50 lines',
     none: 'carries nothing forward',
   });
 
-  // The interpolation token the runner substitutes. Marked rather than buried,
-  // because it is the seam where one step's untrusted output becomes the next
-  // step's instructions.
+  // Seam where one step's output becomes the next step's instructions.
   const PREVIOUS_OUTPUT_TOKEN = '{{previousOutput}}';
 
-  // A local copy of the pricing table, and it is local on purpose. The reading
-  // machine prices the author's token counts at its own rates and calls the
-  // result its own estimate; importing the author's dollars would be importing
-  // a number computed from a rate table that is a frozen literal per build,
-  // whose own comment in src/lib/autonomy/budget.js says the meter is for
-  // stopping a runaway rather than for billing accuracy.
-  //
-  // The four CLI entries are here to be found and to price at nothing. Billing
-  // for copilot, codex, aider and gemini depends on the account rather than on
-  // the CLI, and Husk cannot see which mode is active, so budget.js rates them
-  // at zero to keep the dollar cap from firing on a false assumption. That is
-  // correct for a cap and catastrophic for a published figure: a workflow that
-  // costs its author four dollars a run would render as free with two decimal
-  // places. They are present so that resolveRate finds them and the tile
-  // reports that it cannot price the run, which is the true statement.
+  // Price tokens locally; zero-rate CLIs render as unpriceable, not free.
   const RATES = Object.freeze({
     'claude-fable-5': Object.freeze({ in: 10, out: 50 }),
     'claude-opus-4-8': Object.freeze({ in: 5, out: 25 }),
@@ -202,17 +59,11 @@
     gemini: Object.freeze({ in: 0, out: 0 }),
   });
 
-  // Anthropic's own multiples of the input rate, matching budget.js:125-126 so
-  // the estimate a user reads on an imported workflow and the meter they watch
-  // on their own run are the same arithmetic.
+  // Keep token-cache pricing aligned with autonomy/budget.js.
   const CACHE_CREATE_MULT = 1.25;
   const CACHE_READ_MULT = 0.1;
 
-  // Path data for the four marks this feature uses, at one stroke weight and
-  // one idiom. Enclosed silhouettes for pass and block, a triangle for caution,
-  // a chevron for a disclosure. A naked checkmark beside two enclosed shapes is
-  // not a set, which is the reason the static markup carries these exact
-  // shapes; a runtime row has to be able to sit beside a static one.
+  // Fixed SVG path data; manifest data never reaches these shapes.
   const ICONS = Object.freeze({
     ok: Object.freeze(['M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0', 'M8 12.2l2.8 2.8L16 9.8']),
     caution: Object.freeze(['M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4M12 17h.01']),
@@ -223,32 +74,15 @@
   const STATUS_CLASS = Object.freeze({ ok: 'is-ok', caution: 'is-caution', block: 'is-block' });
   const STATUS_ICON = Object.freeze({ ok: 'ok', caution: 'caution', block: 'block' });
 
-  // Severity order for the preflight list. The IPC contract emits rows in
-  // reading order (cwd, agents, models, mcp, skills, markers, commands, husk)
-  // because that is the order the artifact declares them in and the order the
-  // main process can compute them in. The reader's order is not that: a blocker
-  // buried under a green tick is a blocker the footer names and the reader then
-  // has to scroll past a pass to find, and the rose bar exists because the row
-  // is hard to find rather than as a substitute for putting it first.
+  // Show blockers before cautions before passes.
   const SEVERITY_RANK = Object.freeze({ block: 0, caution: 1, ok: 2 });
 
-  // Which check names read as a code token inside a sentence. The main process
-  // composes each row's title with the name already inside it ("codex is not on
-  // your PATH"), and the shipped markup sets that name in a code chip. Wrapping
-  // it means finding it, and finding it is only meaningful for a single
-  // identifier: the commands row joins a list with commas, and a chip around
-  // "bun test, bun lint" would be one token claiming to be a command.
+  // Single identifiers can be highlighted as code inside preflight titles.
   const CODE_NAME_RE = /^[A-Za-z0-9._/-]{1,64}$/;
 
   // ─── Small DOM helpers ─────────────────────────────────────────────────────
 
-  // SVG has no el(). The builder has no namespace argument and no svg tag,
-  // both deliberate: every tag it does carry is inert, and svg is the one
-  // element family that carries its own <script> and <a href> children. These
-  // four glyphs carry no data at all, so they are built here from the frozen
-  // table above and nothing a manifest can influence reaches them. An unknown
-  // name yields null rather than an empty <svg>, so a typo is a missing mark
-  // rather than a mark-shaped hole.
+  // SVG is built manually from fixed path data; unknown names render no icon.
   function icon(name) {
     const paths = ICONS[name];
     const d = doc();

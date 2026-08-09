@@ -53,4 +53,29 @@ function realParentInside(target, root) {
   }
 }
 
-module.exports = { resolveInside, isInside, realParentInside };
+// realPathInside is the read-side counterpart: it asks the filesystem where a
+// path that ALREADY EXISTS actually is, following every link along the way, and
+// whether that is still under root.
+//
+// Confining a read matters as much as confining a write. A tree a caller is
+// allowed to read from can contain a link pointing anywhere that process can
+// reach, and reading through it copies bytes the caller was never given access
+// to while every string check agrees the name was inside root. Resolving the
+// whole path rather than just the parent is what covers both a link as the
+// final component and a link as any directory above it.
+//
+// False when the path does not exist or cannot be resolved, so a caller that
+// cannot establish what it is about to read does not read it.
+function realPathInside(target, root) {
+  if (typeof target !== 'string' || typeof root !== 'string' || !target || !root) return false;
+  const fs = require('fs');
+  try {
+    const rootReal = fs.realpathSync(path.resolve(root));
+    const targetReal = fs.realpathSync(path.resolve(target));
+    return targetReal === rootReal || targetReal.startsWith(rootReal + path.sep);
+  } catch (_) {
+    return false;
+  }
+}
+
+module.exports = { resolveInside, isInside, realParentInside, realPathInside };

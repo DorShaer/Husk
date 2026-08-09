@@ -1,116 +1,15 @@
 'use strict';
 
-// The only DOM construction primitive the workflow artifact surfaces are
-// allowed to use.
+// Safe DOM builder for workflow surfaces that render untrusted .husk.json data.
+// It never parses markup: elements come from createElement, attributes are
+// allowlisted, and strings become scrubbed text nodes.
 //
-// The install sheet, the publish sheet, the consent gate and the card
-// receipts strip all render strings that arrived inside a
-// workflow.husk.json this machine did not write. This window runs with
-// sandbox:false and its preload exposes workflows.create and
-// workflows.run, so one interpolated string reaching innerHTML is not a
-// cosmetic defect, it is script execution, and what that reaches covers
-// writing a workflow with a pinned agentCommand and starting it. The
-// house pattern everywhere else
-// in app.js is a template literal assigned to .innerHTML; these surfaces
-// do not get to use it, and this file is what they use instead.
-//
-// el() is the whole mitigation, and it is deliberately boring: every
-// element comes from createElement, every attribute goes through
-// setAttribute against an allowlist, and every value that is not already
-// a node becomes a text node. Nothing in this file parses markup, so a
-// string shaped like a tag has nothing here to be parsed by: it is
-// content, and it stays content no matter which slot it lands in.
-//
-// Three deliberate omissions, each of which someone will eventually ask
-// for:
-//
-//   - No href, src or style attribute. Each turns a string into a
-//     navigation or a fetch (javascript: URLs, url() fetches) and none
-//     of the four surfaces needs one: they are class-driven, and their
-//     only navigation is a button with a listener bound in code.
-//   - No innerHTML escape hatch, not even a commented one. An exception
-//     granted to one call site reopens the whole hole.
-//   - No event-handler attributes. A handler belongs on the element
-//     via addEventListener, in our source, where a reader can see what
-//     it closes over.
-//
-// Beyond markup, three things this module owns because nothing
-// downstream of it can:
-//
-//   - Invisible and bidi characters are replaced with U+FFFD in every
-//     text node and every string attribute value. The consent gate is
-//     the screen a user reads before agreeing to let a stranger's
-//     commands run against a bound directory, so a string that displays
-//     differently from the way it executes is the failure this module
-//     exists to catch, not a cosmetic problem. The class of characters
-//     is defined by the Unicode tables rather than by a list somebody
-//     remembered to extend; see INVISIBLE_RE.
-//   - Every string attribute is capped and left well formed: the cut
-//     never splits a surrogate pair, the class attribute obeys the same
-//     ceiling as every other one rather than growing with the manifest,
-//     and a bigint goes through the same cap its decimal expansion
-//     would otherwise walk straight past.
-//   - id, for, headers, name and the aria attributes that name an
-//     element rather than describe one are namespaced, not free text.
-//     They point either inside the namespace this builder mints or at
-//     one of the handful of shell ids listed by hand in SHELL_REF_IDS.
-//     See ID_REF_RE for why.
-//
-// On throwing. The rest of src/lib returns { ok, error } and never
-// throws, because those modules validate input this machine did not
-// write and a validator that throws has crashed the app. This module
-// splits that line on purpose, and the split is drawn at what a
-// stranger's JSON can actually produce:
-//
-//   - Structure is written as a literal by us, in our source: the tag
-//     name, an attribute name, and the *type* of an attribute value. A
-//     wrong one is a programmer error a manifest can never reach, and
-//     it throws loudly so it dies in a unit test rather than shipping
-//     an element that silently carries a handler. Passing an object
-//     where the caller wrote { title: ... } is that kind of error: the
-//     slot has a type, and the type came from us.
-//   - Content is the stranger's data: children, class tokens and the
-//     characters inside a string value. Content is turned into text,
-//     truncated, or dropped, and it is not thrown on, because a file
-//     this machine did not write has to produce a rendered refusal
-//     rather than a blank pane. A child that is a plain object is
-//     dropped, a class token that is not a token is dropped, an id
-//     outside our namespace is dropped, and the surrounding tree still
-//     renders.
-//   - Two shapes stay loud even though they arrive in a content slot.
-//     A child that is a function, a symbol, a non-finite number or an
-//     array that contains itself is something JSON.parse cannot
-//     produce, so it can only have come from our own source. Note the
-//     wording: a *cycle*, not depth. A twenty-deep array is one line of
-//     JSON and is therefore content, and it is handled the way a
-//     twenty-deep class list is, by stopping at the cap and rendering
-//     what is above it. A child that *claims* to be a node (it carries
-//     a nodeType, its own symbol keys, or its own toString) and cannot
-//     be verified as one is refused rather than dropped, because
-//     dropping it would erase the only evidence that a value arrived
-//     carrying a node's markings without being one.
-//
-// Everything that leaves this module carries a code. setAttribute
-// cannot fail here, because every name it is handed has already passed
-// a charset stricter than the one the DOM itself enforces, but three
-// calls can fail for a reason this module did not choose: appendChild
-// answers anything that is not a Node with a TypeError, and
-// Array.isArray, Object.keys and instanceof all invoke an internal
-// method that a revoked Proxy refuses outright. Each of those goes
-// through a wrapper here, so a foreign error cannot escape mid-tree and
-// leave a half-built sheet on screen.
-//
-// createBuilder(doc) is the { ok, error } entry point and is what the
-// unit tests drive. This module touches no global of its own, so the
-// tests exercise it against a small fake document with no jsdom and no
-// new dependency.
+// Security rules: no href/src/style, no event-handler attrs, no innerHTML
+// escape hatch, and id/name/reference attributes stay within the builder
+// namespace or explicit shell ids. Programmer-shape errors throw; manifest
+// content is rendered, truncated, dropped, or refused with a code.
 
-// Tags these surfaces actually build. An allowlist rather than a
-// denylist because the interesting tags (script, iframe, object, embed,
-// link, base, meta, svg, math) are exactly the ones a denylist author
-// forgets, and because a surface that needs a new tag should have to
-// come here and think about it. Notably absent: <a> and <img>, which
-// exist only to carry a URL, and this builder has no URL attribute.
+// Allowlisted inert tags only; URL/SVG/script-capable tags stay out.
 const ALLOWED_TAGS = Object.freeze([
   'div', 'span', 'p', 'pre', 'code', 'strong', 'em', 'b', 'i', 'small',
   'ul', 'ol', 'li', 'dl', 'dt', 'dd',
@@ -123,10 +22,7 @@ const ALLOWED_TAGS = Object.freeze([
 ]);
 const TAGS = new Set(ALLOWED_TAGS);
 
-// Attribute names that are not data-* or aria-*. Everything here is
-// either inert or a well-understood UA behaviour. Anything that names a
-// resource, a target or a script is absent, which is why the list is
-// short enough to read in one pass.
+// Inert/well-understood attrs only; resource, target and script attrs stay out.
 const ALLOWED_ATTRS = Object.freeze([
   'id', 'class', 'title', 'role', 'lang', 'dir',
   'hidden', 'disabled', 'open', 'checked', 'readonly', 'multiple',
@@ -137,82 +33,34 @@ const ALLOWED_ATTRS = Object.freeze([
 ]);
 const ATTRS = new Set(ALLOWED_ATTRS);
 
-// Presence-based attributes: the HTML parser treats hidden="false" as
-// hidden, which is the footgun this set exists to close. Only a real
-// boolean is accepted for these, so a stringly-typed caller fails here
-// instead of shipping an unclickable button.
+// Presence attrs accept only real booleans: hidden="false" is still hidden.
 const BOOLEAN_ATTRS = new Set([
   'hidden', 'disabled', 'open', 'checked', 'readonly', 'multiple',
   'required', 'selected',
 ]);
 
-// `type` changes what an element *is*, so it is pinned per tag rather
-// than accepted as free text. input type="image" and type="file" each
-// bring behaviour (formaction, a file picker) that no surface here
-// wants.
+// Pin type values per tag; exclude file/image inputs and their side effects.
 const INPUT_TYPES = new Set(['checkbox', 'radio', 'text', 'search', 'number', 'hidden']);
 const BUTTON_TYPES = new Set(['button', 'submit', 'reset']);
 
-// Lowercase only, and no colon, so a name can never be written in a form
-// the HTML parser reads differently from the way we read it here.
+// Lowercase only, no colon.
 const ATTR_NAME_RE = /^[a-z][a-z0-9-]*$/;
 const DATA_SUFFIX_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
-// Every ARIA attribute in the WAI-ARIA spec is a single lowercase word
-// after the prefix (label, labelledby, describedby, pressed, modal).
 const ARIA_SUFFIX_RE = /^[a-z]+$/;
-// Mirrors DOMStringMap: dataset keys are camelCase and a dash in a key
-// is an error rather than something to guess about.
 const DATASET_KEY_RE = /^[a-z][A-Za-z0-9]*$/;
-// A class token is inert once it goes through setAttribute, so this is
-// not a security boundary; it is the token-shape guard. A
-// receipt-derived status carrying a quote and a space has to become
-// nothing at all, not a token somebody later interpolates into a
-// selector or a template.
+// Token-shape guard for class values that may later be used in selectors.
 const CLASS_TOKEN_RE = /^[A-Za-z0-9_-]+$/;
 
-// The selector argument above is really an argument about id, and about
-// the two attributes that point at one. app.js calls getElementById 45
-// times and interpolates an id straight into a selector
-// (`#wf-canvas [id="node-${wfSelectedNodeId}"]`, app.js:3765), and the
-// consent gate itself is found by id, so a manifest-derived id can both
-// change what that selector matches and shadow a real element in
-// document order.
-// This builder therefore owns exactly one namespace and writes nothing
-// outside it: an id it did not shape is dropped, the same way a class
-// token that is not a token is dropped. Nothing static in index.html
-// begins with "wfxd-", so an element built here can never answer a
-// lookup meant for the shell.
+// Builder-owned namespace for ids and id references.
 const ID_REF_RE = /^wfxd-[A-Za-z0-9_-]{1,64}$/;
-// `name` reaches no lookup in this window (these surfaces submit
-// nothing), but it is still a string somebody can search on, so it is
-// held to a plain token with no metacharacters in it.
 const NAME_TOKEN_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-// The one thing the namespace above cannot express: a built subtree
-// occasionally has to point at an element it did not build, because the
-// shell owns it. The ready pane is filled at runtime and its accessible
-// name is the sheet's static heading, so aria-labelledby has to reach
-// across the boundary or the pane is unlabelled.
-//
-// That is a reference to a specific element in index.html, not to a
-// shape, so it is spelled as a list of the exact ids rather than as a
-// pattern. A pattern is what would sink this: every control in the
-// shell is spelled "wfx-" too (wfx-in-go is the Install button), and a
-// prefix rule would hand a manifest string the run button's id. Adding
-// an entry here means opening index.html, finding the id, and deciding
-// that runtime content has a reason to name it.
+// Exact shell ids runtime content may reference for accessibility.
 const SHELL_REF_IDS = new Set([
   'wfx-in-title',
 ]);
 
-// Attributes whose value is one id, and attributes whose value is a
-// space-separated list of them. These are the ARIA half of the same
-// invariant `id`, `for` and `headers` carry: they name an element, and a
-// name that came out of a manifest names whatever the manifest chose,
-// including the shell's own controls. resolveValue alone does not settle
-// that: it caps a value at four thousand characters and has no opinion
-// about which element those characters point at, so these two lists are
-// what hold the reference to the namespace.
+// Attributes that name one id or a space-separated id list.
 const SINGLE_REF_ATTRS = new Set([
   'for', 'aria-activedescendant', 'aria-details', 'aria-errormessage',
 ]);
@@ -224,17 +72,10 @@ const REF_LIST_ATTRS = new Set([
 const MAX_ATTR_NAME = 64;
 const MAX_ATTR_VALUE = 4096;
 const MAX_CLASS_TOKEN = 64;
-// Bounds recursion through nested child and class arrays. Sixteen is
-// far past any real markup nesting, and the cap is what keeps a
-// hundred-thousand-deep array out of the stack. It is not what catches a
-// list containing itself: a cycle is caught by the path set in
-// appendAll, because a cycle and a deep list are different findings and
-// only one of them is worth losing an element over.
+// Bounds nested child/class arrays; cycles are tracked separately.
 const MAX_CHILD_DEPTH = 16;
 
-// Carries a code so a caller or a test can branch on the reason without
-// matching on message text, matching how the import validator reports
-// its refusals.
+// Coded errors let callers/tests branch without matching text.
 class WfxDomError extends Error {
   constructor(code, message) {
     super(message);

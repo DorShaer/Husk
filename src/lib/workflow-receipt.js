@@ -1,148 +1,45 @@
 'use strict';
 
-// Receipt aggregation for portable workflows.
+// Aggregates local workflow run history into the receipt figures published in
+// .husk.json artifacts. Keep this deterministic: no fs, no clock, no Electron,
+// no Date.parse/local timezone behavior.
 //
-// A receipt is what a published .husk.json says about runs that already
-// happened: how many there were, how they ended, how long the typical one
-// took, and how many tokens it moved. This module turns the local run history
-// (the newest-first list main.js keeps in workflow-runs.json) into that
-// summary and does nothing else. It does not read the file, does not mint a
-// receipt id, does not know the wire shape: the caller supplies the rows, and
-// the artifact builder projects the fields it needs onto the published
-// receipt. Keeping the arithmetic in a module with no fs, no clock and no
-// Electron is what makes 31 runs a fixture rather than an afternoon. The one
-// host facility it touches is calendar arithmetic (Date.UTC going in,
-// toISOString coming out) and never Date.now, never Date.parse and never the
-// local zone, so one history aggregates to the same figures on every machine
-// that opens the file.
-//
-// Three rules run through the whole file.
-//
-// Every figure carries its own sample size. A median over one run is a
-// stopwatch reading and a median over thirty-one is a claim about a program,
-// and the only way a surface can tell those apart is if the number arrives
-// with the count attached. So medianDurationMs travels with medianDurationN,
-// medianTokens with medianTokensN, and `precision` names which of the three
-// sentences the reader is allowed to write ("that run", "range", "median").
-// A UI that wants to imply authority from a sample of one has to work at it.
-//
-// A quantity that cannot be honestly computed is null, never zero. Zero is a
-// measurement, and a workflow that reported nothing did not measure zero. The
-// rule is enforced twice, once per run and once on the aggregate, because four
-// independent medians can each land on zero over runs that all reported real
-// usage, and a row of zeros is the same false claim however it was arrived at.
-//
-// Nothing here throws. The rows come from a JSON file on the author's disk
-// that nothing stops them from hand-editing, and a row that fights back on
-// being read (an accessor that raises, a proxy that traps every get) costs
-// itself its place in the tally and nothing else. Reads that can raise are
-// contained one row at a time, the call as a whole has a backstop under it,
-// and the refusal string never quotes the exception, since that text came from
-// the same input we are refusing.
-//
-// There is deliberately no dollar figure here and no seam where one could be
-// added. src/lib/autonomy/budget.js prices copilot, codex, aider and gemini at
-// { in: 0, out: 0 } (budget.js:58-61) because Husk cannot see which account is
-// paying, so a workflow that costs its author four dollars a run would
-// aggregate to free with two decimal places. That rate table is also a frozen
-// literal per build whose own comment (budget.js:36-37) says the meter is for
-// stopping a runaway rather than for billing accuracy, so two Husk versions
-// produce different dollars from identical tokens. Tokens are the only
-// quantity that survives the trip to a stranger's machine. The reading machine
-// multiplies them by its own rates and labels the result its own estimate.
+// Invariants: figures carry sample sizes; unknown quantities are null, not
+// zero; hostile rows are skipped without quoting their errors; dollars are
+// omitted because readers price token counts locally.
 
-// The only outcome basis v1 can emit. A step's status is its process exit code
-// and nothing else (main.js:5750), so an agent that answers confidently wrong
-// and exits 0 is recorded as done. The basis travels with the counts so no
-// surface can render them under the word "pass".
+// v1 can only claim process exits, not semantic correctness.
 const OUTCOME_BASIS = 'process-exit';
 
-// WF_RUNS_MAX in main.js:5287. History is trimmed to this length on every
-// write, so a source list that is already this long is one whose oldest runs
-// may have been discarded, and the receipt has to say so.
+// Keep aligned with the run-history trim cap in main.js.
 const DEFAULT_HISTORY_MAX = 200;
 
-// WF_STEP_TIMEOUT_MS in main.js:5658. A step killed by that timer is recorded
-// at (or a hair over) this duration, which truncates the run's duration
-// distribution from the top.
+// A timed-out step truncates the duration distribution at this value.
 const DEFAULT_STEP_TIMEOUT_MS = 300000;
 
-// Hard bound on how much history we will walk in one call. The real list is
-// capped at 200 by main.js, so this only fires for a corrupted or hand-edited
-// file; we take the newest rows and flag the result as windowed rather than
-// refusing, because a caller with too much history still deserves an answer.
-//
-// The bound is spent by the walk itself, as a counter this module owns, and is
-// never requested from the container. Asking the input to cut itself down
-// (runs.slice(0, MAX_SOURCE_RUNS)) makes the one limit in the function a value
-// the list gets to choose, since `slice` is a property of the list and a list
-// that defines its own returns whatever length it likes. The walk then runs
-// past the wire schema's ceiling and publishes a run count no reader accepts.
+// Walk with our own counter; do not trust input-owned slice/iterators.
 const MAX_SOURCE_RUNS = 10000;
 
-// The same ceiling, one level down. The outer walk over runs is an indexed loop
-// over a count fixed before the first read, because a for-of hands its stopping
-// condition to the list it is walking, and the two inner walks over row.steps
-// are indexed for the identical reason: a step whose own accessor appends to
-// the array keeps it one element ahead of the iterator forever, and a proxied
-// length can claim 2^53-1 positions without allocating a byte. Neither throws,
-// so no try/catch reaches them, and the thread they never return to is the
-// Electron main one.
-//
-// A real run has a step per workflow node, and the graph itself is capped at 64
-// nodes by sanitizeNode. 4096 is three orders of magnitude above anything the
-// product can produce and still small enough that the walk is over in
-// microseconds, so a row that passes it is not a big run, it is a value no run
-// of this product produced.
+// Inner walk cap for hostile step arrays/proxies.
 const MAX_RUN_STEPS = 4096;
 
-// The largest `runs` the published receipt schema accepts (spec, receipts:
-// "runs integer 1..10000"). It is the same number as MAX_SOURCE_RUNS today and
-// deliberately not the same constant: one is a budget for how much history we
-// are willing to read, the other is a limit on what the wire format will carry,
-// and the day either moves the other should not follow it silently. Stated here
-// so publishability is decided against the schema rather than inferred from
-// wherever the walk happened to stop.
+// Wire-schema cap; intentionally separate from the source-walk budget.
 const MAX_RECEIPT_RUNS = 10000;
 
-// The published receipt schema caps medianDurationMs at one hour. A workflow
-// of a dozen five-minute steps can genuinely exceed that, and quietly clamping
-// a 70 minute median to 60 would be the same lie durationCensored exists to
-// name, so the overflow is reported as a flag and the honest value is kept.
+// Overflows are flagged instead of clamped.
 const MAX_RECEIPT_DURATION_MS = 3600000;
 
-// A graph fingerprint is compared for identity and never parsed here. The
-// prefix ("husk-wfg-1:") belongs to the canonicalizer, and duplicating its
-// grammar in this module would give the next rule set two places to be
-// updated. All we require is that it is a plausible, bounded, printable token.
+// Compared for identity only; the canonicalizer owns the fingerprint grammar.
 const GRAPH_HASH_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 
-// The exact shape the wire format wants for a timestamp, which is also what
-// new Date().toISOString() produces. Anything a row carries is re-emitted
-// through this, so a 40 character string or a year 275760 date sitting in a
-// hand-edited history never reaches a published window.
+// Exact wire shape emitted by toISOString().
 const ISO_MS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-// What we are willing to read a timestamp out of. Date.parse is not usable
-// here: it is the one call in this module that would reach the host timezone
-// database, and a string with no offset is defined to mean local time, so one
-// history would publish a different window on every machine that opened it.
-// It also accepts whatever else the engine feels like ("Feb 6 2026", "2026"),
-// which turns a vague string into a precise instant without saying so. This
-// grammar is the calendar half of RFC 3339 and nothing more: a full date, a
-// time to at least the minute, an optional fraction, an optional offset.
+// Accepted timestamp input: RFC 3339-ish date-time only, parsed without the
+// host timezone database.
 const ISO_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(?:[Zz]|([+-])(\d{2}):?(\d{2}))?$/;
 
-// The earliest instant a stamp is allowed to land on, as an epoch offset. The
-// year written in the string is guarded separately and for a different reason
-// (Date.UTC folds 0..99 into the twentieth century, so the digits have to be
-// checked before they reach it); this is the guard on the instant that comes
-// out the other side. An offset of up to 23:59 moves a stamp most of a day, so
-// a year the written-year check refused can be reached from the year above it
-// by carrying an offset, and 1000-01-01T00:00:00+23:59 formats back as a
-// perfectly wire-shaped "0999-12-31T00:01:00.000Z". Both ends need saying, and
-// the upper end says itself: toISOString renders anything past year 9999 with
-// an expanded "+275760" style year, which ISO_MS_RE already refuses.
+// Re-check after offset application so year-1000 input cannot format as 0999.
 const MIN_STAMP_MS = Date.UTC(1000, 0, 1);
 
 // ─── small pure helpers ──────────────────────────────────────────────────────
@@ -151,20 +48,7 @@ function isObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-// A count we are willing to publish: finite, non-negative, and inside the
-// range where integer arithmetic is exact. Anything else (NaN, Infinity, -1,
-// 1e308, "12", null) is not a number we can defend, so callers treat its
-// presence as a reason to discard the whole record it came from rather than to
-// substitute a zero.
-//
-// Negative zero passes the range test (-0 < 0 is false) and survives both
-// Math.floor and Math.round, so it is flattened here rather than at each of
-// the half dozen figures it would otherwise reach. The canonicalisation rules
-// require it gone before serialisation, and while JSON.stringify happens to
-// erase it on the way out, a caller comparing the aggregate with Object.is
-// before it serialises would see a value the wire format says cannot exist.
-// This is the single gate every number in the module passes through, so it is
-// the one place the normalisation belongs.
+// Publishable finite non-negative integer; normalizes -0 at the shared gate.
 function safeCount(v) {
   if (typeof v !== 'number' || !Number.isFinite(v)) return null;
   if (v < 0 || v > Number.MAX_SAFE_INTEGER) return null;
@@ -183,12 +67,7 @@ function daysInMonth(year, month) {
   return 31;
 }
 
-// The median of a non-empty list of finite numbers. Even counts take the mean
-// of the two middle values, which is the textbook definition and the one that
-// does not bias the answer: taking the lower middle instead would pull every
-// even-sized sample down, and a duration figure that leans low is the exact
-// failure mode durationCensored exists to disclose. The caller rounds; this
-// returns the exact value so a rounding decision is made once, at the edge.
+// Exact median; callers round once at the edge.
 function median(values) {
   const sorted = values.slice().sort((a, b) => a - b);
   const n = sorted.length;
@@ -198,23 +77,8 @@ function median(values) {
   return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-// Normalize whatever a row carries as a timestamp into the exact ISO form the
-// receipt window publishes, or null. Returns the parsed epoch alongside it so
-// ordering is done on numbers: string comparison of timestamps happens to work
-// for this one format and stops working the moment a row carries an offset.
-//
-// The arithmetic is done here rather than handed to Date.parse so that one
-// history yields one window everywhere. A string with an explicit offset names
-// an instant and we honour it. A string without one names an instant only
-// relative to a clock we cannot see, and we read it as UTC: that is what every
-// row main.js writes actually is (main.js:5512 writes toISOString), and the
-// alternative is not "more correct", it is the reader's own timezone leaking
-// into a figure the author published. A string that does not name a time of
-// day at all is refused rather than assigned midnight, because a receipt
-// window is published to the millisecond and a bare date is not one.
-//
-// Date.UTC does the epoch conversion and toISOString does the formatting.
-// Neither reads the host zone, so this stays as pure as the rest of the file.
+// Normalize a row timestamp into published ISO form plus epoch ms, without
+// Date.parse or host-local timezone behavior.
 function isoStamp(value) {
   if (typeof value !== 'string' || !value || value.length > 64) return null;
   const m = ISO_DATETIME_RE.exec(value);
@@ -231,9 +95,7 @@ function isoStamp(value) {
   // window that overshoots is the one error a reader cannot detect.
   const millis = m[7] === undefined ? 0 : Number(`${m[7]}000`.slice(0, 3));
 
-  // Date.UTC maps years 0..99 onto 1900..1999, so "0026-..." would silently
-  // become 1926 and pass every check downstream. A row from the first
-  // millennium is a corrupted field, not a run, and is refused as one.
+  // Date.UTC maps 0..99 onto 1900..1999.
   if (year < 1000) return null;
   if (month < 1 || month > 12) return null;
   if (day < 1 || day > daysInMonth(year, month)) return null;
@@ -250,10 +112,7 @@ function isoStamp(value) {
 
   const ms = Date.UTC(year, month - 1, day, hour, minute, second, millis) - offsetMs;
   if (!Number.isFinite(ms) || Math.abs(ms) > 8.64e15) return null;
-  // The year check above ran on the digits as written, which is where it has to
-  // run, but the offset is applied after it. Re-refuse the first millennium on
-  // the instant so a corrupted field cannot walk through the guard by carrying
-  // an offset that pushes it back across the boundary.
+  // Re-refuse after offset application.
   if (ms < MIN_STAMP_MS) return null;
   let text;
   try {

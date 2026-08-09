@@ -10493,77 +10493,14 @@ kbd {
   background: color-mix(in srgb, var(--rose) 10%, transparent);
 }
 
-/* ═══ Portable workflows ══════════════════════════════════════════════════════
-   One dialog shell for install, publish and the consent gate, plus one figure
-   component and one trust chip that every surface reads from. The three
-   dialogs differ only in what fills the body; sharing the shell is what stops
-   the same datum rendering at four sizes in four places.
+/* ═══ Portable workflows ════════════════════════════════════════════════════ */
 
-   --warn is declared on body on this branch and resolves to amber folded 70%
-   toward --text, which is byte for byte what --as-mark already is. This block
-   reaches for --as-mark directly rather than through the alias: a second name
-   for one colour is one more hop to trace the next time somebody asks why a
-   caution is amber, and it invites the two to drift apart later.
-   ------------------------------------------------------------------------- */
-
-/* The card is a flex column with its own scroller. .modal is a fixed centred
-   scrim with no overflow of its own and .modal-card declares no max-height, so
-   a tall body pushes the head off the top and the foot off the bottom at once
-   and neither the close button nor the commit button can be reached. The
-   Autopilot diff card already solved this by hand; this generalises it.
-   Padding moves off the card and onto the three children, so the body scrolls
-   its content rather than scrolling its own padding away. */
+/* Shared shell for install, publish and consent; the body owns scrolling. */
 .modal-card.wfx-sheet {
-  /* One reading measure for the whole sheet, declared here so every prose role
-     inside it reads from the same number. Left to the roles themselves the
-     column runs from 44ch on the foot note to no cap at all on the lede, which
-     puts six ragged right edges in one scroll and leaves the widest of them on
-     the sentence the sheet exists to make somebody read. ch and not px, because
-     a caption at 11px and a lede at 13px want the same characters per line, not
-     the same width.
-
-     52 and not 64, because ch is the advance of the digit zero and Inter's
-     zero is about 1.35 times its average lowercase advance. 64ch buys 85
-     rendered characters on the closing note and 84 on the preflight notes,
-     measured by walking a Range over every glyph and bucketing by line box,
-     so at 64 the smallest type on the surface carries the longest measure. At
-     52ch the same walk returns the high sixties in both roles, which is the
-     band this cap exists to name.
-
-     The cost is a gutter, and it is deliberate rather than overlooked. On the
-     publish sheet's four consecutive .wfx-pf.is-plain rows every drawn box
-     runs to 719 and every line inside it stops at 477, so 241px of each row is
-     empty. The sheet cannot narrow to meet the prose: 720 is set by the
-     82-character fingerprint plus the card's insets, and prose width is set by
-     the eye, so the two constraints never meet at one number. Capping those
-     tables at the measure is worse, because the table then ends at 509 under
-     a figure grid ending at 719, which is the same right-edge notch the figure
-     grid refuses for itself two hundred lines below. A ragged gutter inside a
-     row is cheaper than a notch in the column.
-
-     The rose ink lives here for the same reason the measure does. Emerald and
-     amber are folded toward --text everywhere they are used as ink, and rose
-     raw measures 2.15 on the blocking preflight icon against its own tinted
-     row in nord and 1.91 on the refusal border, both under the 3:1 a non-text
-     indicator owes. The fold is oklch for the reason the
-     chips give: an sRGB blend collapses chroma into lightness and lands rose
-     on a dusty brown. The 7% tints below stay on raw --rose, because a wash is
-     not an indicator and folding it too would erase the hue entirely. */
+  /* Shared text measure, severity ink folds and chip reservation. */
   --wfx-measure: 52ch;
   --wfx-rose-ink: color-mix(in oklch, var(--rose) 70%, var(--text));
-  /* The same fold on the other severity, for the same reason and at the same
-     ratio. Emerald has two graphical uses, the passing preflight mark and the
-     computed chip, and the chip runs its own ink strength; naming the indicator
-     fold once here rather than writing the literal at each site keeps the two
-     from drifting apart, which is what a second name for one colour invites. */
   --wfx-emerald-ink: color-mix(in oklch, var(--emerald) 70%, var(--text));
-  /* The trust chip's own box, named here so the skeleton can reserve it without
-     restating a number somebody measured off a render once. .wfx-claim sets
-     --fs-nano inside var(--space-1) of block padding and takes the face's
-     normal leading, which Inter resolves near 1.3; --lh-snug is that step on
-     the scale and lands the box at 22.3 against the chip's measured 22. It
-     lives on the sheet because a custom property only travels down, and every
-     chip in the feature is inside one of these cards. */
   --wfx-chip-h: calc(var(--fs-nano) * var(--lh-snug) + 2 * var(--space-1));
   width: min(720px, 94vw);
   max-height: min(86vh, 900px);
@@ -10572,35 +10509,14 @@ kbd {
   padding: 0;
   text-align: left;
 }
-/* The head is a fixed band and the body slides under it, so it needs the same
-   edge the foot already declares. Without it a scrolled card slices flat
-   15px below the title: a rounded top corner cut to a straight one mid-row,
-   no rule, no shadow, no fade, which is the rendering-fault read this file
-   objects to elsewhere. .modal-foot carries border-top of its own; the two
-   bands are declared symmetrically. */
+/* Fixed header band; body scrolls beneath it. */
 .wfx-sheet > .modal-head {
   flex: 0 0 auto;
   padding: var(--space-5) var(--space-5) var(--space-3);
   margin: 0;
   border-bottom: 1px solid var(--line);
 }
-/* The block-start padding belongs to the rule above: with the head declaring
-   an edge, a body that opens at 0 puts its first card against that edge with
-   nothing between them. It scrolls away with the content, which
-   is what a top padding on a scroller does and what this one is for. */
-/* The ramps are the same alpha matte #agent-switch-list.is-scrollable uses, for
-   the same reason its comment gives: a list cut flat looks like it ends there.
-   This is the longest scroller in the app, and cut flat at both ends a
-   half-height row of letters sits under the head's hairline reading as a
-   rendering fault rather than as more content above.
-
-   Ungated, unlike that list, and the ramp length is why. There the matte runs
-   22px into a list with no block padding, so a short list would have its last
-   row dimmed and the class is what stops that. Here the ramp is exactly the
-   body's own block padding, so on a pane that does not scroll it fades 16px of
-   empty inset and nothing else; content only ever enters that band by
-   scrolling into it. A class nobody sets would be dead CSS, and a gate that
-   costs nothing to remove is one fewer thing for the builder to remember. */
+/* Scroller padding doubles as the top/bottom fade ramp. */
 .wfx-sheet > .modal-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -10610,195 +10526,46 @@ kbd {
   -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0) 0, rgb(0 0 0) var(--space-4), rgb(0 0 0) calc(100% - var(--space-4)), rgb(0 0 0 / 0) 100%);
   mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0) 0, rgb(0 0 0) var(--space-4), rgb(0 0 0) calc(100% - var(--space-4)), rgb(0 0 0 / 0) 100%);
 }
-/* space-5 at the block end, matching the head's block start. On the foot's own
-   inset the card is optically top-heavy by about two to one, 24 above the title
-   against 16 below the buttons, which only shows when both insets are visible
-   at once: the done state is short enough that the title floats while the
-   primary is crowded into the bottom edge. */
+/* Balance the footer inset against the header. */
 .wfx-sheet > .modal-foot {
   flex: 0 0 auto;
   margin-top: 0;
   padding: var(--space-3) var(--space-5) var(--space-5);
   gap: var(--space-2);
 }
-/* The sheet owns its vertical rhythm and the blocks it borrows do not know
-   that. .ra-hint, .ra-sources, .ra-pathrow and .ra-status are written for a
-   card with no gap and each carries its own bottom margin, which lands on top
-   of the gap rather than replacing it: the column measures 28, 28, 26, 16, 16,
-   16, 26, 16, 16, and neither 26 nor 28 is on the spacing scale at all.
-   Zeroing them hands every gap in the sheet back to var(--space-4). */
+/* Let the sheet gap, not borrowed margins, set vertical rhythm. */
 .wfx-sheet > .modal-body > *,
 .wfx-sheet .wfx-pane > * { margin-bottom: 0; }
 
-/* The borrowed lede opens all three surfaces and carries no measure cap of its
-   own and a raw 1.55 leading, so uncapped the operative sentence of the consent
-   gate runs about 100 characters a line while every purpose-built paragraph
-   beside it is disciplined. Bound here rather than in the .ra-* block, which
-   also serves the agent-install card at a width that needs neither. */
+/* Bound borrowed prose to the sheet's measure. */
 .wfx-sheet .ra-hint,
 .wfx-sheet .ra-status > span { max-width: var(--wfx-measure); line-height: var(--lh-base); }
-/* The source cards' description line is the first paragraph anybody reads on
-   the install sheet, and the borrowed --text-3 is tuned against --bg and drops
-   on the card's own ground: 3.70 in nord, 3.93 in dracula, 4.09 in sepia, 4.12
-   in light, 4.21 in dark. Bound in the sheet's scope for the same reason the
-   measure cap above is, since the agent-install card the .ra-* block also
-   serves needs neither.
-
-   The leading goes with it. The borrowed 12 over 16.8 is 1.400, and the scale
-   offers 1.15, 1.5 and 1.7 and nothing between; .ra-hint two rules up sits on
-   --lh-base for exactly this reason, and reaching into this block for colour
-   alone would leave one off-scale paragraph 40px above a column of 1.5 ones.
-
-   And the literal inside it drops a rank, which is the same ~0.9 optical
-   ratio the foot note argues for below: mono's set width at one size outruns
-   Inter's, so `*.husk.json` at 12-in-12 reads larger than the words around it
-   while `workflow.husk.json` in the lede above, at 12-in-13, reads level. It
-   does not take the lede's chip treatment: this one sits inside a pressable
-   card that already has a fill and a selected state, and a second box inside
-   that box is a border too many. No kerning pull either, since neither string
-   is followed by punctuation. */
+/* Source-card copy needs the same contrast and rhythm as sheet prose. */
 .wfx-sheet .ra-source-desc { color: var(--text-2); line-height: var(--lh-base); }
 .wfx-sheet .ra-source-desc code { font-size: var(--fs-nano); }
-/* The fingerprint block borrows .ra-status, which carries a raw 8px/10px
-   inset from a card with no other bordered neighbours. In this column that
-   puts the chip's left edge at 60 while every purpose-built card in the same
-   scroll starts at 62, so four bordered blocks 16px apart each begin somewhere
-   different. 10 is not on the spacing scale either.
-
-   The other borrowed blocks carry the same raw insets, so they take the same
-   rule: probed in the idle state, .ra-source-title starts at 64 and .ra-root
-   at 60 while every purpose-built card starts at 62, and the fetch row sits
-   directly above the fingerprint card, so the two adjacent blocks a reader
-   meets first are the two that would disagree. The 10px card gap is off the
-   scale in both directions. */
+/* Normalize borrowed block insets to the sheet grid. */
 .wfx-sheet .ra-status,
 .wfx-sheet .ra-root { padding: var(--space-2) var(--space-3); }
-/* The rule above reaches the inset and nothing else, because it is 0,2,0 and
-   the field it is aimed at is also claimed by
-   `.modal-card input[type="text"]` at 0,2,1. Left at that the two URL fields
-   keep 10px of block padding and, worse, --fs-small: the sheet renders the
-   repo URL and the file path at 13px in the machine face while .wfx-path
-   renders the bound directory at 12px in the same face, sixty pixels apart,
-   which is one datum at two sizes in one feature and the defect the whole
-   .wfx-fig component exists to prevent. A rule nobody looks for takes the
-   inset back.
-
-   The height goes with it. .wfx-path's comment reads "At 8px of block padding
-   it measures 36 against the Change button's 32 and every path row in the
-   feature reads as a dropped bottom edge"; these fields measure 37 against
-   Fetch's 32, top-aligned in a flex row, so the field hangs five pixels below
-   the button beside it. That renders the install sheet's two path rows at two
-   heights, and the one that disagrees is the first control pair anybody meets.
-
-   Stated at 0,2,1 with the element name, which is the lowest specificity that
-   reaches past the modal rule, and declared as one block so the size, the
-   inset and the height cannot be corrected apart. min-height rather than
-   height, because a field that holds a caret should not have its inner box
-   fought; --control-h is what Fetch, Choose file, Change directory and
-   .wfx-path all already resolve to, so the pair is bound to one token rather
-   than to one measurement. */
+/* Match borrowed path fields to the sheet's control size. */
 .wfx-sheet input.ra-root {
   font-size: var(--fs-micro);
   min-height: var(--control-h);
   padding: var(--space-1) var(--space-3);
 }
-/* The fingerprint card is a top-level plate in this column, and the ground it
-   borrows is --bg-2 while every neighbour takes the opaque recipe; see the note
-   on .wfx-pf for why that recipe and not the other way round. Scoped off the
-   error variant, whose rose wash is the whole of its treatment. */
+/* Keep fingerprint cards on the same opaque plate recipe as peers. */
 .wfx-sheet .ra-status:not(.ra-status-error) { background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg); }
-/* The last two axes that block borrows: the corner and the edge weight.
-
-   .ra-status is --radius-md, so on its own the fingerprint card renders the
-   only 6px corner in a column of 8px ones. The file makes this exact argument
-   twice elsewhere, once for .wfx-figs ("At --radius-xl this is the only 12px
-   corner in a column of 8px ones") and once for .wfx-refuse, and in both the
-   answer is --radius-lg. .wfx-path keeps its 6, and that is not an
-   inconsistency: it is a control-height box sitting beside a 32px button and
-   it takes the corner every other control in the app takes. This one is a
-   full-width plate holding a chip, a hash and a note.
-
-   The edge is the more interesting half, because it changes with the theme.
-   .ra-status-info lifts the base --line to --line-2, so in the dark four the
-   fingerprint card wears a 14% white hairline while the graph frame, the figure
-   grid, the preflight panel and the four step cards under it all wear an 8%
-   one: eight plates at one weight and a ninth, borrowed, at nearly twice it.
-   In light and sepia the mismatch vanishes, because the family block at the
-   end of this section promotes those five selectors to --line-2 and this one
-   is already there. So the stack is level in two themes and stepped in four,
-   which is the same "two peer blocks trade elevation when somebody changes
-   theme" the .wfx-pf comment refuses to accept about backgrounds. Held to the
-   column's own hairline here and left to the family block to raise, which is
-   what every other plate in the scroll already does.
-
-   The corner reaches all three .ra-status in the sheet and the hairline reaches
-   two. The clone banner and the install-failed banner sit outside the panes,
-   directly in the body, in the same column as the card they sit above, so a
-   corner rule stopping at the pane boundary would swap one odd plate out for
-   two. The error banner keeps its rose edge, because there
-   the border is the severity channel rather than the column's hairline. */
+/* Normalize borrowed status-card radius and neutral edge. */
 .wfx-sheet .ra-status { border-radius: var(--radius-lg); }
 .wfx-sheet .ra-status:not(.ra-status-error) { border-color: var(--line); }
 .wfx-sheet .ra-source { padding: var(--space-3); }
 .wfx-sheet .ra-sources { gap: var(--space-3); }
-/* The picker's icon, and the reason is the same one .wfx-step-n gives for
-   moving its ordinals off the accent axis: the one accented thing on a sheet
-   ought to be the thing that commits. .ra-source-icon paints --accent on every
-   card it is on, so unqualified both cards wear an 18px accent glyph and the
-   card actually selected wears the same one. Selection is then carried entirely
-   by the border and the 7% wash, and the largest, most saturated marks in the
-   idle state are the two that say nothing, sitting above an Install button that
-   is not on screen yet in that state at all.
-
-   Handing the accent to .selected makes the glyph a third channel for the one
-   fact it is next to, and takes the idle sheet's accent area down to one mark.
-   --text-2 for the other, not --text-3: this is a graphical object, it owes
-   3:1 rather than 4.5, and --text-2 clears that against the card's --bg-2 in
-   all six themes with room to spare, where --text-3 is tuned against --bg and
-   drops on this ground exactly as the source description above it does. */
+/* Only the selected source spends accent. */
 .wfx-sheet .ra-source .ra-source-icon { color: var(--text-2); }
 .wfx-sheet .ra-source.selected .ra-source-icon { color: var(--accent); }
-/* The fingerprint itself, which is the one string in the feature a person is
-   asked to compare character for character against a source repo. Unstated it
-   renders at 11px here and at 12px in the refusal's detail list, one datum at
-   two sizes in one feature, which is the defect the whole .wfx-fig component
-   exists to prevent. Scoped to the direct child, because the busy banner's
-   `github.com/...` is a literal inside a 12px sentence and belongs a rank
-   below its host for the reason the foot note gives; this one is a block on
-   its own line with nothing to be optically level with.
-
-   overflow-wrap comes with it. The string is `husk-wfg-1:sha256:` plus 64 hex,
-   and hex has no break opportunity at all, so below about a 640px card the
-   tail runs outside its box and clips: at a 489px card, 487px of content
-   in 413px of box. The refusal pane already solves this for the identical
-   string, and solves it in the same word. */
+/* Fingerprints are compared character-by-character and must wrap. */
 .wfx-sheet .ra-status > code { font-size: var(--fs-micro); overflow-wrap: anywhere; }
 
-/* The card's height thrashes across the state arc and .modal re-centres it
-   every time: 434 idle, 469 busy, 774 ready, 209 done at 1440x900. The drop
-   into done moves the card's top edge 282px and puts the Done button that
-   replaces Install 282px above the pointer that just clicked Install, on
-   the happy path, every time. Busy to ready is +305 in the other direction.
-
-   The busy half is held in the markup: the skeleton is the ready pane's own
-   blocks, so busy and ready both reach the cap and that step is zero. This
-   is the other half, and a floor on the short states is the whole of it a
-   stylesheet can do. Stamping the resolved height on commit is better and
-   belongs to the builder; this holds the box within about 300px across the arc
-   instead of 565 and moves the footer 153 instead of 283, at every window
-   height because it is proportional. vh rather than a token because the thing
-   being matched is the viewport-relative max-height two rules up, and the px
-   ceiling stops a tall monitor from opening a 900px dialog to hold two
-   sentences.
-
-   The done pane centres itself in the box that floor creates. Held at the top
-   of it the success state reads as a dialog that has failed to finish drawing,
-   with four hundred pixels of void under three lines of text; centred, the
-   same three lines read as the confirmation they are. safe center rather than
-   center, because a flex scroller that centres overflowing content puts the
-   overflow above the scroll origin where no scrollbar can reach it, and the
-   plain keyword is left in front of it for anything that does not know the
-   safe form. */
+/* Keep busy/done states from collapsing far below ready height. */
 .wfx-sheet[data-state="busy"],
 .wfx-sheet[data-state="done"] { min-height: min(52vh, 520px); }
 .wfx-sheet[data-state="done"] > .modal-body {

@@ -4131,6 +4131,15 @@ ipcMain.handle('autopilot:fileDiff', async (_e, payload = {}) => {
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- safeAbs bounded under safeWorkspace
     if (fs.existsSync(safeAbs)) {
+      // The string check above proves the name sits under the workspace, not
+      // that the file does. This side of the diff is read out of a worktree an
+      // agent wrote, so a link there would put a file from anywhere this
+      // process can reach in front of the operator as the "after" text they
+      // approve. Resolving it is what makes the preview describe the path it
+      // names.
+      if (!realPathInside(safeAbs, safeWorkspace)) {
+        return { ok: false, error: 'path escapes workspace' };
+      }
       exists = true;
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- safeAbs bounded
       const buf = fs.readFileSync(safeAbs);
@@ -10281,7 +10290,15 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
       fs.mkdirSync(destDir, { recursive: true });
       dest = resolvedDest;
     }
-    fs.copyFileSync(sourcePath, dest);
+    // The destination is a name Husk chose inside its own directory, but a file
+    // already sitting there is not necessarily a file: copyFileSync follows a
+    // link and writes wherever it points. Read the source through the caller's
+    // own path, write the destination through a descriptor that will not follow
+    // one.
+    const buf = fs.readFileSync(sourcePath);
+    const fd = fs.openSync(dest, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+      | (fs.constants.O_NOFOLLOW || 0), 0o644);
+    try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }
     return { ok: true, dest };
   } catch (err) { return { ok: false, error: err.message }; }
 });

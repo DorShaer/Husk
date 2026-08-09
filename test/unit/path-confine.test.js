@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { resolveInside, isInside, realParentInside } = require('../../src/lib/path-confine');
+const { resolveInside, isInside, realParentInside, realPathInside } = require('../../src/lib/path-confine');
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-pc-'));
 
@@ -159,5 +159,74 @@ test('realParentInside: non-string input is refused', () => {
   for (const bad of [null, undefined, 42, '', {}]) {
     assert.equal(realParentInside(bad, '/tmp'), false);
     assert.equal(realParentInside('/tmp/x', bad), false);
+  }
+});
+
+// ─── realPathInside ────────────────────────────────────────────────────────
+
+// The read-side counterpart. Confining a read matters as much as confining a
+// write: a tree a caller may read from can hold a link pointing anywhere the
+// process can reach, and reading through it returns bytes the caller was never
+// given while every string check agrees the name was inside root.
+
+test('realPathInside: an ordinary file under root is inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'sub', 'f.txt'), 'x');
+    assert.equal(realPathInside(path.join(root, 'sub', 'f.txt'), root), true);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a link pointing out of root is not inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(root); fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'x');
+    fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(root, 'link.txt'));
+    assert.equal(realPathInside(path.join(root, 'link.txt'), root), false,
+      'a link out of root was accepted as inside it');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a file under a linked directory is not inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(root); fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'x');
+    fs.symlinkSync(outside, path.join(root, 'linkdir'));
+    assert.equal(realPathInside(path.join(root, 'linkdir', 'secret.txt'), root), false);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a link that stays inside root is inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, 'real.txt'), 'x');
+    fs.symlinkSync(path.join(root, 'real.txt'), path.join(root, 'alias.txt'));
+    assert.equal(realPathInside(path.join(root, 'alias.txt'), root), true,
+      'a link that never leaves root was refused');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a path that does not exist is refused, not assumed', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    fs.mkdirSync(path.join(base, 'root'));
+    assert.equal(realPathInside(path.join(base, 'root', 'missing.txt'), path.join(base, 'root')), false);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: non-string input is refused', () => {
+  for (const bad of [null, undefined, 42, '', {}]) {
+    assert.equal(realPathInside(bad, '/tmp'), false);
+    assert.equal(realPathInside('/tmp/x', bad), false);
   }
 });

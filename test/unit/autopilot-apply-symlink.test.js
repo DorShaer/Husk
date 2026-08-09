@@ -142,3 +142,65 @@ test('one refused path does not stop the others, and the refusal is named', () =
   assert.equal(r.applied.length, 1);
   assert.equal(r.failed.length, 1);
 });
+
+// ─── the source side ───────────────────────────────────────────────────────
+
+// The destination checks above stop an apply writing outside the workspace.
+// They say nothing about where the bytes came from. A run's worktree is written
+// by an agent with every approval gate disabled, so a link inside it is an
+// ordinary thing for that agent to create, and the diff walker records a
+// changed link as an added or modified path like any other. Reading through one
+// copies a file from anywhere this process can reach into the workspace, as a
+// regular file, under a name the operator approved.
+
+test('a source that is a link out of the worktree is refused, and nothing is copied', () => {
+  const target = plantTarget('outside-file.txt', 'ORIGINAL');
+  fs.symlinkSync(target, path.join(wt, 'leak.txt'));
+
+  const r = applyWorktreeChanges(wt, ws, [{ path: 'leak.txt', status: 'added' }]);
+
+  assert.equal(fs.existsSync(path.join(ws, 'leak.txt')), false,
+    'a file from outside the worktree was copied into the workspace');
+  assert.equal(r.ok, false, 'a refused copy was reported as a clean apply');
+  assert.equal(r.applied.length, 0);
+  assert.match(r.failed[0].reason, /source resolves outside worktree root/,
+    `unexpected reason: ${r.failed[0].reason}`);
+});
+
+test('a source under a linked directory in the worktree is refused', () => {
+  plantTarget('secret.txt', 'ORIGINAL');
+  fs.symlinkSync(outside, path.join(wt, 'linkdir'));
+
+  const r = applyWorktreeChanges(wt, ws, [{ path: 'linkdir/secret.txt', status: 'added' }]);
+
+  assert.equal(fs.existsSync(path.join(ws, 'linkdir', 'secret.txt')), false,
+    'a file was copied through a linked directory in the worktree');
+  assert.equal(r.ok, false);
+  assert.match(r.failed[0].reason, /source resolves outside worktree root/,
+    `unexpected reason: ${r.failed[0].reason}`);
+});
+
+test('a refused source does not stop the ordinary files beside it', () => {
+  const target = plantTarget('outside-file.txt', 'ORIGINAL');
+  fs.symlinkSync(target, path.join(wt, 'leak.txt'));
+  fs.writeFileSync(path.join(wt, 'ok.txt'), 'legit');
+
+  const r = applyWorktreeChanges(wt, ws, [
+    { path: 'leak.txt', status: 'added' },
+    { path: 'ok.txt', status: 'added' },
+  ]);
+
+  assert.equal(fs.readFileSync(target, 'utf8'), 'ORIGINAL');
+  assert.equal(fs.existsSync(path.join(ws, 'leak.txt')), false);
+  assert.equal(fs.readFileSync(path.join(ws, 'ok.txt'), 'utf8'), 'legit',
+    'a refusal on one path blocked an unrelated one');
+  assert.equal(r.applied.length, 1);
+  assert.equal(r.failed.length, 1);
+});
+
+test('a source that is a directory or a socket is not copied as a file', () => {
+  fs.mkdirSync(path.join(wt, 'adir'));
+  const r = applyWorktreeChanges(wt, ws, [{ path: 'adir', status: 'added' }]);
+  assert.equal(r.ok, false);
+  assert.equal(fs.existsSync(path.join(ws, 'adir')), false);
+});

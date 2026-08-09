@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { STATUS_FILE } = require('./autopilot-status');
-const { realParentInside } = require('./path-confine');
+const { realParentInside, realPathInside } = require('./path-confine');
 
 // A change entry is { path: <relative>, status: 'added'|'modified'|'deleted' },
 // exactly the shape diffWorkspace/diffWorkspaceAsync already emit.
@@ -60,6 +60,23 @@ function copyInto(worktreePath, workspaceRoot, rel) {
     return { path: rel, ok: false, reason: 'source escapes worktree root' };
   }
   try {
+    // The source is confined the same way, and for the same reason. A run's
+    // worktree is written by an agent with every approval gate disabled, so a
+    // link inside it is an ordinary thing for that agent to create, and reading
+    // through one copies a file from anywhere this process can reach into the
+    // workspace as a regular file. Resolving the whole source path covers a
+    // link as the file itself and a link as any directory above it.
+    let srcReal;
+    try { srcReal = fs.realpathSync(src); } catch (_) {
+      return { path: rel, ok: false, reason: 'source could not be resolved' };
+    }
+    if (!realPathInside(src, worktreePath)) {
+      return { path: rel, ok: false, reason: 'source resolves outside worktree root' };
+    }
+    if (!fs.lstatSync(srcReal).isFile()) {
+      return { path: rel, ok: false, reason: 'source is not a regular file' };
+    }
+
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst re-confined under workspaceRoot above
     fs.mkdirSync(path.dirname(dst), { recursive: true });
 
@@ -81,7 +98,7 @@ function copyInto(worktreePath, workspaceRoot, rel) {
     // Written through a descriptor opened with O_NOFOLLOW, so the path cannot
     // be swapped for a link between the check above and the write. O_NOFOLLOW
     // is POSIX; where it is absent the checks above remain the guard.
-    const buf = fs.readFileSync(src);
+    const buf = fs.readFileSync(srcReal);
     const fd = fs.openSync(dst, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
       | (fs.constants.O_NOFOLLOW || 0), 0o644);
     try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }

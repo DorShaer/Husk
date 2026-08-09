@@ -1,73 +1,18 @@
 'use strict';
 
-// The install sheet's driver: everything that happens between "somebody wants
-// to run a stranger's workflow" and "a workflow record exists on this disk".
+// Install-sheet driver for importing portable workflows.
 //
-// The shell for all of it already ships in index.html, every pane of every
-// state, so this file never creates a dialog. What it does is decide which
-// pane is showing, fill the three panes whose content depends on the file that
-// was read, and own the two irreversible moments: the fetch that pulls a
-// stranger's repository onto this disk, and the install that writes a workflow
-// record. Both are IPC calls that resolve rather than reject, so every call
-// site here branches on .ok and none of them is wrapped in a try/catch that
-// would turn a structured refusal into an unstyled crash.
-//
-// Three rules this file exists to hold, in the order they bite.
-//
-// A refusal has no Install control. Not a disabled one: absent. The shipped
-// CSS hides the footer primary while data-state is "refused", so reaching that
-// state is the whole implementation of the rule, and the code below therefore
-// never re-shows #wfx-in-go without also leaving that state. A greyed commit
-// button on a file that cannot be trusted reads as a lock to pick, and the
-// next thing a reader does is go hunting for the override.
-//
-// An install that failed has to be visible from the footer. The body of this
-// sheet is a scroller taller than the viewport and Install lives in the pinned
-// footer, so a banner written at the top of the body is feedback the person
-// who pressed the button is not looking at. Every failure path here writes the
-// reason onto #wfx-in-foot as well and scrolls the banner into view, which is
-// the pair the markup's own comment asks for.
-//
-// Every string that came out of the manifest reaches the DOM through el() from
-// wfx-dom.js. That is not a style preference: this window runs with
-// sandbox:false and its preload exposes workflows.create and workflows.run, so
-// one interpolated manifest string in an innerHTML assignment is a workflow of
-// the file author's choosing being written and started here. There is no
-// innerHTML in
-// this file at all, not even for the static glyphs: those are built through
-// createElementNS from a frozen table of path data, because an exception for
-// "just the icons" is an exception somebody later widens.
-//
-// The dialog is shared and this module does not always have it. app.js shows
-// the same card over the same ready pane to display the record behind a
-// workflow's receipts chip, and it does that by unhiding the modal rather than
-// by calling anything here. So every control that stages an install hangs off
-// S.owned rather than off the markup: the source picker and both path rows sit
-// above the panes, where no data-state reaches them, and a Fetch button under a
-// dialog titled Receipts is an affordance for a flow nobody started.
-//
-// One more invariant, stated because a later convenience patch is what would
-// violate it: nothing derived from a manifest may reach the MCP add channels.
-// The preflight's server rows describe what is here and what the author
-// declared, and their only affordance opens the empty MCP form through a hook
-// this file is given. Those channel names appear nowhere in this file, and a
-// unit test greps for them.
+// Invariants: refused artifacts have no Install control; install failures are
+// visible from the pinned footer; manifest strings render only through WfxDom;
+// manifest data never reaches MCP add channels.
 
 (function () {
   // ── The shell ──────────────────────────────────────────────────────────────
-  // Looked up per call rather than cached at load. This file is a classic
-  // script and its position relative to the markup is index.html's business,
-  // not ours; a cached null taken at parse time would be a sheet that silently
-  // never opens if somebody moves the tag.
+  // Look up per call so script/markup ordering changes fail loudly, not stale.
   const $ = (sel) => document.querySelector(sel);
   const byId = (id) => document.getElementById(id);
 
-  // el() is resolved through window each time for the same reason, and the
-  // failure is loud: a missing builder is a load-order bug in index.html, and
-  // rendering a manifest without it is exactly the thing this feature exists
-  // to prevent. Falling back to textContent here would be the quiet version of
-  // the same mistake, because the fallback would then be the code path nobody
-  // reviews.
+  // A missing builder is a load-order bug; never render a manifest without it.
   function kit() {
     const dom = window.WfxDom;
     if (!dom || typeof dom.el !== 'function') {
@@ -77,41 +22,12 @@
   }
   const el = (tag, attrs, ...children) => kit().el(tag, attrs, ...children);
 
-  // A name set on one line, whatever the file put in it.
-  //
-  // el() replaces the invisible characters and deliberately leaves the three
-  // whitespace controls alone, because a prompt is rendered in a <pre> where
-  // its own newlines and tabs are the shape of the text. A step name is not:
-  // it is set in a <span>, where a newline collapses to a space, and it is
-  // executable text on the other side of that span. wfRouteInstruction joins
-  // sibling step names into the routing line the runner appends to the agent's
-  // system prompt, so a name carrying a newline shows the reader one line and
-  // hands the model two, the second of which the reader never saw. Replacing
-  // the control character with U+FFFD is the same report el() makes about the
-  // invisibles: the bytes and the pixels disagree, and the surface says so
-  // rather than quietly picking one.
-  //
-  // The durable fix is a charset rule on `name` in the import validator, which
-  // would make this dead code and is worth keeping anyway: a renderer that
-  // depends on a validator for what it puts on screen is a renderer with a
-  // second copy of that validator's bugs. wfx-artifact-ui.js carries the same
-  // two lines for the same reason; these two files share no scope.
+  // Step names are one visible line even if a manifest includes controls.
   const NAME_CONTROL_RE = /[\u0000-\u001F\u007F]/g;
   const oneLine = (value) => String(value == null ? '' : value).replace(NAME_CONTROL_RE, '\uFFFD');
 
   // ── Static glyphs ──────────────────────────────────────────────────────────
-  // SVG is not in el()'s tag allowlist, deliberately: it is a namespace with
-  // its own script-bearing elements and none of these surfaces needs a caller
-  // to be able to ask for one. The four marks below are ours, fixed, and carry
-  // no data at all, so they are built element by element from this table.
-  // Nothing here is parsed, which is the property that matters; a path string
-  // set through setAttribute is inert whatever it contains.
-  //
-  // One stroke weight and one idiom across the three severities, matching the
-  // shipped markup exactly: an enclosed circle for ok and for block, a
-  // triangle for caution, all at stroke-width 2. A naked checkmark beside two
-  // enclosed shapes is not a set, and the sheet's own CSS comments spend a
-  // paragraph on that.
+  // Fixed SVG glyphs; manifest data never reaches these path strings.
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const GLYPHS = Object.freeze({
     ok: [
@@ -151,15 +67,7 @@
   }
 
   // ── Refusal copy ───────────────────────────────────────────────────────────
-  // Keyed by stage first, because 'too-large' means two different things: the
-  // source stage refuses a file whose size was checked before it was opened,
-  // and the validate stage refuses one whose parsed contents exceed a budget.
-  // A flat table collapses them silently.
-  //
-  // Every entry names what was not done as well as what went wrong. A refusal
-  // that only says "failed" leaves the reader wondering whether a clone is
-  // still sitting somewhere or a half-written workflow is in their list, and
-  // the answer on every path here is that nothing was kept.
+  // Stage-scoped keys keep similarly named refusals distinct.
   const REFUSAL_COPY = Object.freeze({
     source: {
       'no-url': {
@@ -170,12 +78,7 @@
         title: 'Nothing to read yet',
         message: 'Choose a .husk.json on this disk, or type its absolute path, then press Fetch.',
       },
-      // Not a git failure, and it must not be reported as one. A path handed to
-      // git as a remote comes back through friendlyCloneError as "could not
-      // reach that host, check your network connection", which sends somebody
-      // whose file is sitting on their own disk off to look at their wifi. The
-      // shape of the value is knowable here, before anything is spawned, so it
-      // is answered here.
+      // Detect local paths before git can misreport them as network failures.
       'local-path': {
         title: 'That is a path on this disk, not a repository URL',
         message: 'The repository field takes an https URL and Husk would have handed this to git as a remote. Husk moved it into the file field and switched the source to From a file, so pressing Fetch now reads it off this disk. Nothing was cloned and nothing was written.',
@@ -206,10 +109,7 @@
       },
     },
 
-    // The validator's own closed enum, passed through by the main process
-    // verbatim. Each of these means the bytes are not a workflow this machine
-    // will run, so all of them land on the refused pane where there is no
-    // Install control to press.
+    // Closed validator enum; all entries land on the no-Install refused pane.
     validate: {
       'too-large': {
         title: 'That file is too large to be a workflow',
