@@ -3433,8 +3433,16 @@ function wfMiniGraph(graph, lastRun, surface, width, marks) {
 }
 
 // The last few outcomes, oldest to newest. The CI trick: reliability in one row.
+// The outcome strip, drawn beside the sentence that names the last outcome.
+//
+// Two runs is the floor. With none there is nothing to draw and the sentence
+// beside it already reads "Never run". With exactly one, the single dot repeats
+// the sentence's own status dot in the same colour a few characters away, so
+// the card shows two marks that look alike and mean different things: one is
+// the last outcome, the other is the whole history. A strip earns its place
+// when it shows a trend, which starts at the second run.
 function wfHistoryDots(runs) {
-  if (!runs.length) return '<span class="wf-dots-none">not run yet</span>';
+  if (runs.length < 2) return '';
   const recent = runs.slice(0, 8).reverse();
   return `<span class="wf-dots">${recent.map((r) =>
     `<i class="wf-dot is-${escapeAttr(r.status)}" title="${escapeAttr(`${r.status} · ${wfRelTime(r.finishedAt)}`)}"></i>`
@@ -3450,11 +3458,17 @@ function wfAgentsUsed(graph) {
   return [...set];
 }
 
+// Status and when, on every outcome. The duration is deliberately not here: the
+// receipts strip directly above carries it as a figure with the basis it was
+// measured on, and a card that prints the same number twice spends its widest
+// row saying one thing. Keeping all three outcomes to the same two facts is
+// also what stops this row wrapping on a narrow card, which pushed Run out of
+// line with its neighbours in the row.
 function wfLastRunPill(runs) {
   if (!runs.length) return '';
   const r = runs[0];
   if (r.status === 'done') {
-    return `<span class="wf-lr is-done"><i></i>Passed<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfDur(r.ms))}<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfRelTime(r.finishedAt))}</span>`;
+    return `<span class="wf-lr is-done"><i></i>Passed<span class="wf-lr-sep">&middot;</span>${escapeHtml(wfRelTime(r.finishedAt))}</span>`;
   }
   if (r.status === 'failed') {
     const where = r.failedStep ? ` at "${r.failedStep}"` : '';
@@ -3773,13 +3787,12 @@ function paintWorkflowList() {
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
           </button>
         </div>
-        ${w.description ? `<div class="wf-card-desc">${escapeHtml(w.description)}</div>` : ''}
+        <div class="wf-card-desc">${escapeHtml(w.description || '')}</div>
         <div class="wf-card-graph"${runs.length ? ` data-open-run="${escapeAttr(w.id)}" title="Open the last run"` : ''}></div>
-        <div class="wf-card-status">${runs.length
-          ? `<button class="wf-lr-btn" data-open-run="${escapeAttr(w.id)}" title="Open the last run">${wfLastRunPill(runs)}</button>`
-          : '<span class="wf-lr is-never"><i></i>Never run</span>'}</div>
-        <div class="wf-card-foot">
-          ${wfHistoryDots(runs)}
+        <div class="wf-card-status">
+          <span class="wf-card-when">${runs.length
+            ? `<button class="wf-lr-btn" data-open-run="${escapeAttr(w.id)}" title="Open the last run">${wfLastRunPill(runs)}</button>`
+            : '<span class="wf-lr is-never"><i></i>Never run</span>'}${wfHistoryDots(runs)}</span>
           <div class="wf-card-tags">
             ${agents.map((a) => `<span class="wf-tag">${escapeHtml(a)}</span>`).join('')}
             <span class="wf-tag is-quiet">${n} step${n !== 1 ? 's' : ''}</span>
@@ -3835,6 +3848,13 @@ function paintWorkflowList() {
       const sidecar = wfSidecarFor(w.id);
       const status = card.querySelector('.wf-card-status');
       if (!status) return;
+      // A workflow with no runs at all gets no strip. Its empty state and the
+      // status line beside it carry one fact between them, and the status line
+      // says it in the vocabulary the rest of the app uses. The strip still
+      // appears the moment a run exists, including the case where runs exist
+      // but none of them earned a receipt, which is a different fact and worth
+      // its own row.
+      if (!wfRunsFor(w.id).length) return;
       card.insertBefore(strip({
         workflowId: w.id,
         workflowName: w.name,

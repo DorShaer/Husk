@@ -12466,9 +12466,11 @@ body[data-mode="light"] .wfx-sheet:not([data-state="working"]) > .modal-foot .gh
 .wf-card-menu svg { width: 15px; height: 15px; }
 .wf-card-desc {
   font-size: var(--fs-micro); color: var(--text-3); line-height: 1.45;
-  /* The clamp reserves both lines whether or not the second one is used, so a
-     one-line description does not shift the graph, status and footer of its
-     card up relative to its neighbour in the same row. */
+  /* Two lines are reserved whether the text uses them or not, and the element
+     is written even when there is no description at all. Both halves of that
+     matter: a card that omits the element entirely starts its graph a line and
+     a half above its neighbours, which is the misalignment this reservation
+     exists to prevent. */
   min-height: calc(2 * 1.45em);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
@@ -12502,9 +12504,20 @@ body[data-mode="light"] .wfx-sheet:not([data-state="working"]) > .modal-foot .gh
 .wf-mini-node.is-skipped { fill: transparent; stroke: var(--line-2); stroke-dasharray: 2 2; }
 .wf-mini-node.is-cancelled { fill: color-mix(in srgb, var(--amber) 26%, transparent); stroke: var(--amber); }
 
-/* Did it work last time. The auto margin bottom-anchors everything from here
-   down, so status, footer and Run land on the same line across a whole row. */
-.wf-card-status { min-height: 18px; margin-top: auto; }
+/* Did it work last time, and what is it made of. The auto margin bottom-anchors
+   everything from here down, so this row and Run land on the same line across a
+   whole row of cards.
+
+   One row rather than two. The outcome, the strip of recent outcomes and the
+   tags are all answers to "what is this card", and stacking them spent two of
+   the card's six rows on a line whose left half was often a single dot. Reading
+   order still runs outcome first, identity second, which is why the tags sit at
+   the far end rather than beside the sentence. */
+.wf-card-status {
+  min-height: 22px; margin-top: auto;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+}
+.wf-card-when { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .wf-lr { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-micro); color: var(--text-2); }
 .wf-lr i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-3); flex: 0 0 auto; }
 .wf-lr.is-done i { background: var(--emerald); }
@@ -12514,14 +12527,12 @@ body[data-mode="light"] .wfx-sheet:not([data-state="working"]) > .modal-foot .gh
 .wf-lr.is-never { color: var(--text-3); }
 .wf-lr-sep { color: var(--line-3); margin: 0 1px; }
 
-.wf-card-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 /* Reliability, the CI way: one row of outcomes. */
 .wf-dots { display: inline-flex; gap: 3px; align-items: center; }
 .wf-dot { width: 5px; height: 5px; border-radius: var(--radius-sm); background: var(--line-3); display: block; }
 .wf-dot.is-done { background: var(--emerald); }
 .wf-dot.is-failed { background: var(--rose); }
 .wf-dot.is-stopped { background: var(--amber); }
-.wf-dots-none { font-size: var(--fs-nano); color: var(--text-3); }
 .wf-card-tags { display: flex; gap: var(--space-1); align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .wf-tag {
   font-size: var(--fs-pico); font-weight: 600; color: var(--text-2);

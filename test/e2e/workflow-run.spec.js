@@ -206,7 +206,11 @@ test('a finished run is remembered, and the card reads it back', async () => {
       };
     });
     expect(card.pill).toMatch(/Passed/);
-    expect(card.dots).toBe(1);
+    // No outcome strip at one run. The pill beside it already carries a status
+    // dot in the same colour, so a single history dot repeats it a few
+    // characters away and reads as two marks that mean different things. The
+    // strip starts at the second run, where it shows a trend.
+    expect(card.dots).toBe(0);
     expect(card.miniNodes).toBe(2);        // the flow's shape, drawn on the card
     expect(card.runs).toBe('1');           // the hero counts it too
     expect(card.pass).toBe('100%');
