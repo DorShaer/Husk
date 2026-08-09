@@ -169,3 +169,66 @@ test('plugins editor IPC refuses symlinks via O_NOFOLLOW and gates exec behind t
   assert.ok(readBlock.includes('resolveInside'), 'readFile must confine the path');
   assert.ok(writeBlock.includes('resolveInside'), 'writeFile must confine the path');
 });
+
+// ─── the editor's confinement, end to end ──────────────────────────────────
+
+// A plugin is third-party content installed from a marketplace, so the files
+// under its install directory are chosen by whoever wrote it. resolveInside
+// proves the requested name resolves under that directory as a string, and
+// O_NOFOLLOW refuses a link as the final component. Neither sees a link that is
+// a DIRECTORY above the file, which is a shape a plugin can ship.
+test('a plugin cannot reach outside its install directory through a linked directory', () => {
+  const fsx = require('node:fs');
+  const osx = require('node:os');
+  const px = require('node:path');
+  const { resolveInside, realPathInside } = require('../../src/lib/path-confine');
+
+  const base = fsx.mkdtempSync(px.join(osx.tmpdir(), 'husk-plugconf-'));
+  try {
+    const installPath = px.join(base, 'plugins', 'p');
+    const outside = px.join(base, 'outside');
+    fsx.mkdirSync(installPath, { recursive: true });
+    fsx.mkdirSync(outside, { recursive: true });
+    fsx.writeFileSync(px.join(outside, 'secret.md'), 'OUTSIDE');
+    fsx.writeFileSync(px.join(installPath, 'own.md'), 'OWN');
+    fsx.symlinkSync(outside, px.join(installPath, 'linkdir'));
+
+    // The handler's own chain: resolveInside, then the resolved-path check.
+    const reach = (rel) => {
+      let abs;
+      try { abs = resolveInside(installPath, rel); } catch (_) { return 'refused'; }
+      return realPathInside(abs, installPath) ? 'reached' : 'refused';
+    };
+
+    assert.equal(reach('linkdir/secret.md'), 'refused',
+      'a linked directory let the editor reach outside the plugin');
+    assert.equal(reach('../../outside/secret.md'), 'refused');
+    assert.equal(reach('own.md'), 'reached', 'the plugin cannot read its own file');
+  } finally { fsx.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('both plugin file channels check the resolved path, not just the name', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  for (const ch of ['plugins:readFile', 'plugins:writeFile']) {
+    const h = MAIN.match(new RegExp("ipcMain\\.handle\\('" + ch + "'[\\s\\S]*?\\n\\}\\);"));
+    assert.ok(h, `${ch} handler was not found`);
+    assert.match(h[0], /realPathInside\(abs, installPath\)/,
+      `${ch} confines only the name, so a linked directory reaches past it`);
+  }
+});
+
+// Every path this channel is called with is built by the main process under one
+// root. Without naming that root the channel reads any file the app can reach.
+test('the session read channel names the root it is confined to', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const h = MAIN.match(/ipcMain\.handle\('sessions:read'[\s\S]*?\n\}\);/);
+  assert.ok(h, 'the sessions:read handler was not found');
+  const guardAt = h[0].search(/isInside\(workDir|realPathInside\(prdPath/);
+  const readAt = h[0].indexOf('readFileSync');
+  assert.ok(guardAt > -1, 'sessions:read reads a renderer path with no confinement at all');
+  assert.ok(guardAt < readAt, 'the confinement runs after the file has been read');
+});

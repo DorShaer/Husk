@@ -11,7 +11,7 @@ const { spawn, execFile } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
-const { resolveInside, isInside, realParentInside } = require('./lib/path-confine');
+const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
@@ -8896,6 +8896,11 @@ ipcMain.handle('plugins:readFile', (_e, payload = {}) => {
   // Open with O_NOFOLLOW so a symlink (a marketplace plugin could ship one
   // pointing outside its own dir) is refused, and stat + read through the one
   // descriptor so the regular-file check and the read see the same inode.
+  // O_NOFOLLOW refuses a link as the FINAL component and says nothing about the
+  // directories above it. A plugin is third-party content and can ship a linked
+  // directory, so the resolved path is checked against the plugin's own install
+  // dir as well.
+  if (!realPathInside(abs, installPath)) return { ok: false, error: 'file not found' };
   let fd;
   try { fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
   catch (_) { return { ok: false, error: 'file not found' }; }
@@ -8920,6 +8925,9 @@ ipcMain.handle('plugins:writeFile', (_e, payload = {}) => {
   try { abs = resolveInside(installPath, String(payload.relPath || '')); }
   catch (_) { return { ok: false, error: 'invalid file path' }; }
   if (!Plugins.isEditableName(abs)) return { ok: false, error: 'file type is not editable' };
+  // Same reason as the read: the link that matters may be a directory above the
+  // file rather than the file itself.
+  if (!realPathInside(abs, installPath)) return { ok: false, error: 'file not found' };
   // Open the existing file with O_NOFOLLOW (no create, no symlink follow) and
   // write through that descriptor, so the regular-file guarantee and the write
   // target are the same inode even if the path is swapped after validation.
@@ -10123,7 +10131,17 @@ ipcMain.handle('sessions:rename', (_e, payload = {}) => {
   return { ok: true, name };
 });
 
+// Confined to the one root these files live under, the same way skills:read is
+// confined to its two. Every path this is called with is built by the main
+// process as <MEMORY/WORK>/<slug>/PRD.md, so naming that root costs the feature
+// nothing and stops the channel being a way to read any file the app can reach.
+// The resolved check is what covers a link somewhere under that root.
 ipcMain.handle('sessions:read', (_e, prdPath) => {
+  if (typeof prdPath !== 'string' || !prdPath) return { ok: false, error: 'Missing path' };
+  const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
+  if (!isInside(workDir, prdPath) || !realPathInside(prdPath, workDir)) {
+    return { ok: false, error: 'Refusing to read outside the work directory' };
+  }
   try { return { ok: true, content: fs.readFileSync(prdPath, 'utf8') }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
