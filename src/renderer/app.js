@@ -7285,16 +7285,32 @@ $('#repo-agents-modal') && $('#repo-agents-modal').addEventListener('click', (e)
 // Install / Back / Done so the user always knows what to press next.
 let rmScan = null;
 let rmPicked = null;
+// Two ways in, and neither is chosen for the reader: the modal opens with both
+// offered and no row revealed, so the first thing it asks is which kind of
+// repository this is rather than assuming one and hiding the other.
+function setMcpRepoSource(src) {
+  const gh = $('#rm-src-github');
+  const lo = $('#rm-src-local');
+  if (gh) gh.classList.toggle('selected', src === 'github');
+  if (lo) lo.classList.toggle('selected', src === 'local');
+  const ghRow = $('#rm-row-github');
+  const loRow = $('#rm-row-local');
+  if (ghRow) ghRow.hidden = src !== 'github';
+  if (loRow) loRow.hidden = src !== 'local';
+}
 function openRepoMcpModal() {
   const m = $('#repo-mcp-modal');
   if (!m) return;
   rmScan = null;
   rmPicked = null;
   if ($('#rm-root')) $('#rm-root').value = '';
+  if ($('#rm-url')) $('#rm-url').value = '';
+  setMcpRepoSource(null);
+  const list = $('#rm-list');
+  if (list) list.replaceChildren();
   rmSetView('list');
   rmStatus('');
   m.hidden = false;
-  setTimeout(() => { try { $('#rm-root').focus(); } catch (_) {} }, 0);
 }
 function closeRepoMcpModal() { const m = $('#repo-mcp-modal'); if (m) m.hidden = true; }
 function rmStatus(text, kind) {
@@ -7326,9 +7342,14 @@ async function rmBrowse() {
 }
 async function rmScanRoot(root) {
   const list = $('#rm-list'); if (!list) return;
-  rmStatus('Scanning…');
+  // A URL is fetched before it can be read, and that is the slow half. Saying
+  // "scanning" through a clone describes the wrong wait.
+  const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(String(root || ''));
+  rmStatus(isUrl ? 'Cloning the repository…' : 'Scanning…');
   // eslint-disable-next-line no-unsanitized/property -- static loading copy
-  list.innerHTML = '<div class="ai-empty">Looking for mcp-servers/*…</div>';
+  list.innerHTML = isUrl
+    ? '<div class="ai-empty">Fetching the repository, then looking for mcp-servers/*…</div>'
+    : '<div class="ai-empty">Looking for mcp-servers/*…</div>';
   const res = await window.husk.repoMcp.scan(root);
   if (!res || !res.ok) {
     rmStatus((res && res.error) || 'Scan failed', 'error');
@@ -7495,6 +7516,34 @@ function rmRenderResults(res) {
 $('#btn-mcp-install-from-repo') && $('#btn-mcp-install-from-repo').addEventListener('click', openRepoMcpModal);
 $('#rm-close') && $('#rm-close').addEventListener('click', closeRepoMcpModal);
 $('#rm-browse') && $('#rm-browse').addEventListener('click', rmBrowse);
+$('#rm-src-github') && $('#rm-src-github').addEventListener('click', () => {
+  setMcpRepoSource('github');
+  setTimeout(() => { try { $('#rm-url').focus(); } catch (_) {} }, 0);
+});
+$('#rm-src-local') && $('#rm-src-local').addEventListener('click', () => {
+  setMcpRepoSource('local');
+  rmBrowse();
+});
+// A pasted "github.com/dev/repo" is plainly a URL, so the scheme is filled in
+// rather than refused. Anything else is handed over as typed and the main
+// process decides, which keeps one validator rather than two that can disagree.
+const rmScanUrlInput = () => {
+  let v = (($('#rm-url') || {}).value || '').trim();
+  if (!v) { rmStatus('Enter a repository URL first.', 'error'); return; }
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) v = 'https://' + v;
+  rmScanRoot(v);
+};
+$('#rm-fetch') && $('#rm-fetch').addEventListener('click', rmScanUrlInput);
+$('#rm-url') && $('#rm-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); rmScanUrlInput(); }
+});
+$('#rm-root') && $('#rm-root').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const v = (($('#rm-root') || {}).value || '').trim();
+    if (v) rmScanRoot(v);
+  }
+});
 $('#rm-root') && $('#rm-root').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); const v = ($('#rm-root').value || '').trim(); if (v) rmScanRoot(v); }
 });

@@ -6259,7 +6259,7 @@ function wfxReadArtifactAt(absPath) {
 
 // payload: { source: 'repo' | 'file', url?, path? }
 //
-// The repo path reuses cloneAgentRepo, which is the app's one network
+// The repo path reuses cloneRepo, which is the app's one network
 // primitive for this: git clone and nothing else, so there is no raw-URL fetch
 // to point at an internal host. What it does not do is anything about
 // symlinks, which is why every read below goes through wfxResolveConfined.
@@ -6285,7 +6285,7 @@ ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
 
   const url = typeof p.url === 'string' ? p.url.trim() : '';
   if (!url) return wfxRefuse('no-url', 'paste the https URL of a repository', null);
-  const cloned = await cloneAgentRepo(url);
+  const cloned = await cloneRepo(url, 'agent-repos');
   if (!cloned.ok) return wfxRefuse('clone-failed', cloned.error || 'that repository could not be cloned', url);
 
   const candidates = wfxFindArtifacts(cloned.root);
@@ -7821,11 +7821,15 @@ function repoFetchedAt(dest) {
 // beats no checkout for a reader with no network, but it is returned labelled
 // and the surface says so.
 const RepoAgents = require('./lib/repo-agents');
-function cloneAgentRepo(url) {
+// bucket names the folder under userData that holds these checkouts. Agent
+// packs and MCP server repositories are kept apart because they are answers to
+// different questions, and one URL appearing in both should not make the two
+// features share a working copy that either can delete.
+function cloneRepo(url, bucket) {
   return new Promise((resolve) => {
     const v = RepoAgents.validateRepoUrl(url);
     if (!v.ok) return resolve(v);
-    const clonesRoot = path.join(app.getPath('userData'), 'agent-repos');
+    const clonesRoot = path.join(app.getPath('userData'), bucket || 'agent-repos');
     const dest = path.join(clonesRoot, v.dirName);
     const { execFile } = require('child_process');
     const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
@@ -7880,7 +7884,7 @@ ipcMain.handle('repoAgents:pickDir', async () => {
 ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
   let root = String((payload && payload.root) || '').trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(root)) {
-    const cloned = await cloneAgentRepo(root);
+    const cloned = await cloneRepo(root, 'agent-repos');
     if (!cloned.ok) return cloned;
     root = cloned.root;
   } else {
@@ -8072,10 +8076,23 @@ ipcMain.handle('repoMcp:pickDir', async () => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
-ipcMain.handle('repoMcp:scan', (_e, payload = {}) => {
-  const root = String((payload && payload.root) || '').trim();
-  if (!root || !path.isAbsolute(root)) {
-    return { ok: false, error: 'absolute path required' };
+// A repository, named either way a person has one: a URL Husk clones, or a
+// folder already on disk. The agent-pack flow accepts both and this reads the
+// same kind of repository for a different directory inside it, so accepting
+// only a local path made "from repo" mean "from a repo you cloned yourself".
+//
+// The clone lands in its own bucket under userData and the scan then runs
+// against the checkout, so everything below this line sees one shape.
+ipcMain.handle('repoMcp:scan', async (_e, payload = {}) => {
+  let root = String((payload && payload.root) || '').trim();
+  if (!root) return { ok: false, error: 'a repository URL or a folder path is required' };
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(root)) {
+    const cloned = await cloneRepo(root, 'mcp-repos');
+    if (!cloned.ok) return cloned;
+    root = cloned.root;
+  } else if (!path.isAbsolute(root)) {
+    return { ok: false, error: 'a repository URL or an absolute folder path is required' };
   }
   return RepoMcp.scanRepoForMcpServers(root);
 });

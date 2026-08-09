@@ -1380,8 +1380,28 @@
               <button class="modal-close" id="rm-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">Point Husk at a cloned repo that ships an <code>mcp-servers/</code> directory. Each subfolder with a <code>package.json</code> is offered as a separate server. Husk will build it when needed and write the right entry into the active CLI's MCP config. Claude and Copilot get a real config write; Codex and Aider get a snippet you can paste.</p>
-              <div class="ra-pathrow">
+              <p class="ra-hint">Point Husk at a repo that ships an <code>mcp-servers/</code> directory. Each subfolder with a <code>package.json</code> is offered as a separate server. Husk will build it when needed and write the right entry into the active CLI's MCP config. Claude and Copilot get a real config write; Codex and Aider get a snippet you can paste.</p>
+              <!-- The same two doors as the agent-pack import, because it is the
+                   same kind of repository read for a different directory inside
+                   it. A URL is cloned into Husk's own data folder; a path is
+                   read where it already sits. -->
+              <div class="ra-sources">
+                <button type="button" class="ra-source" id="rm-src-github">
+                  <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+                  <span class="ra-source-title">Import from GitHub</span>
+                  <span class="ra-source-desc">Paste a repository URL, Husk clones it for you</span>
+                </button>
+                <button type="button" class="ra-source" id="rm-src-local">
+                  <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
+                  <span class="ra-source-title">Import locally</span>
+                  <span class="ra-source-desc">Pick a cloned repository folder on disk</span>
+                </button>
+              </div>
+              <div class="ra-pathrow" id="rm-row-github" hidden>
+                <input type="text" id="rm-url" class="ra-root" placeholder="https://github.com/dev/mcp-servers-repo" autocomplete="off" spellcheck="false" />
+                <button class="ghost-btn" id="rm-fetch">Fetch</button>
+              </div>
+              <div class="ra-pathrow" id="rm-row-local" hidden>
                 <input type="text" id="rm-root" class="ra-root" placeholder="/path/to/repo-with-mcp-servers" autocomplete="off" spellcheck="false" />
                 <button class="ghost-btn" id="rm-browse">Browse&hellip;</button>
               </div>
