@@ -8,47 +8,27 @@
 // exists, and the file is untracked where it lands. Sharing it is a separate
 // act the done pane hands you a git line for.
 //
-// The premise of this surface is that exporting is a byproduct of finishing
-// rather than a form to fill in. Everything the file needs is already on this
-// machine: the graph is what you drew, the agents and model pins are what the
-// steps say, the run history is what happened. So the sheet asks for exactly
-// two decisions, a destination and whether the run log travels, and spends the
-// rest of its space telling you what the bytes will say about you. Nothing
-// here has a required field, and a reader who presses Export without reading
-// anything still ships a file that is honest about what it does and does not
-// prove.
+// Everything the file needs is already on this machine: the graph is what you
+// drew, the agents and model pins are what the steps say, the run history is
+// what happened. So the sheet asks for two decisions, a destination and whether
+// the run log travels, and spends the rest of its space saying what the bytes
+// will contain. Nothing here has a required field.
 //
-// Four things this file is careful about.
+// The attach-the-log toggle defaults off, so a run log travels only when it is
+// asked for. The static markup states what a row contains in the label's own
+// words, and this file changes only the state of the box under it.
 //
-// The attach-the-log toggle defaults OFF, and that default is the whole
-// argument. An audit row carries the goal text the author typed and the
-// absolute path of the workspace the run happened in, which is a home
-// directory layout and often a client's name. A reader has to opt into
-// shipping those two things, not opt out of shipping them, because the cost of
-// the wrong default is asymmetric: a log that did not travel costs a stranger
-// one tier of confidence, and a log that travelled by accident cannot be
-// recalled from a repo somebody has already cloned. The static markup states
-// what a row contains in the label's own words, and this file never changes
-// that sentence, only the state of the box under it.
-//
-// The byte disclosure lives in the done pane, and the reason is a seam in the
-// IPC contract rather than a preference. workflows:export has no dry run: it
-// builds the artifact and writes it in one call, and the artifact it returns
-// is the only object in this process that is the file. Rendering a preview
-// before the write would mean reconstructing canonicalProjection, the graph
-// hash and the requires block in the renderer, which is a second
-// implementation of the canonicalizer that can disagree with the one that
-// wrote the file, and a byte pane that disagrees with the bytes is worse than
-// no byte pane at all. So Export writes an untracked file onto your own disk,
-// the done pane shows the exact bytes it wrote, and the git line that would
-// make those bytes public sits directly under them. Nothing has been shared at
-// the moment the disclosure is read, which is the property the disclosure
-// exists to protect.
+// The byte disclosure lives in the done pane, because workflows:export has no
+// dry run: it builds the artifact and writes it in one call, and the artifact
+// it returns is the only object in this process that is the file. Rendering a
+// preview before the write would mean a second implementation of the
+// canonicalizer in the renderer, which can disagree with the one that wrote the
+// file. So Export writes an untracked file onto your own disk, the done pane
+// shows the exact bytes it wrote, and the git line that would make those bytes
+// public sits directly under them.
 //
 // The ready pane states what the file will contain and folds the argument for
-// each claim behind one disclosure. The claims are the sheet's thesis and stay
-// on the surface; the reasoning behind them is a thing to read once, not a
-// thing to read before every export.
+// each claim behind one disclosure.
 //
 // A condition that stops the write is a gate at the top of the ready pane, not
 // a sentence in the footer, and it carries the control that clears it. The one
@@ -57,29 +37,21 @@
 // this sheet: exporting is reached from the workflow card's own menu.
 //
 // Every string that came out of a file reaches the DOM through el() from
-// wfx-dom.js, with no exception left in this file. That matters here even
-// though most of what this sheet renders is the user's own workflow, because
-// re-exporting an imported workflow is a first-class path: the name, the
-// description, the step names and the declared requirements in that case were
-// written by whoever published the file this machine installed. The graph
-// thumbnail goes through the same route; see paintGraph for why it carries its
-// step names rather than a projection with the names stripped out.
+// wfx-dom.js. That matters here even though most of what this sheet renders is
+// the user's own workflow, because re-exporting an imported workflow is a
+// first-class path: the name, the description, the step names and the declared
+// requirements are then whoever published the file this machine installed. The
+// graph thumbnail goes through the same route; see paintGraph.
 //
-// The git line is shell text a person pastes into a shell, so the workflow
-// name inside it is quoted rather than interpolated. Same argument as above:
-// on a republish that name is a stranger's string, and double quotes leave a
-// shell free to expand what sits inside them, so the quoting is what keeps the
-// pasted line a commit message and nothing more.
+// The git line is shell text a person pastes into a shell, so the workflow name
+// inside it is quoted rather than interpolated. See shellQuote.
 
 (function () {
   // ─── shell hooks ──────────────────────────────────────────────────────────
   // Resolved once per open rather than at load time, and by structure rather
   // than by id where index.html gives no id. That is a real dependency on
   // markup this file does not own, so a missing hook is reported by name and
-  // the sheet refuses to open, instead of painting half a screen and leaving
-  // the reader to guess which half is real. The static markup ships a worked
-  // example in every data slot, so a slot this file failed to find would show
-  // somebody else's workflow under this workflow's title.
+  // the sheet refuses to open rather than painting half a screen.
 
   const REQUIRED = [
     'modal', 'card', 'body', 'ready', 'done', 'say', 'foot', 'go', 'goNoLog', 'doneBtn',
@@ -100,8 +72,7 @@
     const destChange = document.getElementById('wfx-pub-dest-change');
     const copy = document.getElementById('wfx-pub-copy');
     // By id, both of them. Two details.wfx-step live in this modal, one per
-    // pane, and a structural query would hand every write to whichever the
-    // markup happens to declare first.
+    // pane, so a structural query would address only the first.
     const raw = document.getElementById('wfx-pub-raw');
     const what = document.getElementById('wfx-pub-what');
     const refs = {
@@ -250,13 +221,9 @@
   }
 
   // ─── the shell command ────────────────────────────────────────────────────
-  // Single quotes rather than double, always, and not as a style choice. Inside
-  // double quotes a shell still expands $(...), `...` and $VAR, and both of the
-  // strings that go into this line can be somebody else's: the workflow name on
-  // a republish came from a file this machine installed, and the destination
-  // path can be anywhere the save dialog was pointed. Single quotes expand
-  // nothing at all, and the one character they cannot carry is escaped by
-  // closing the quote, backslash-escaping the apostrophe and reopening.
+  // Single quotes rather than double, always. Single quotes expand nothing at
+  // all, and the one character they cannot carry is written by closing the
+  // quote, backslash-escaping the apostrophe and reopening.
 
   const SHELL_BARE_RE = /^[A-Za-z0-9._/@%+=:,-]+$/;
 
@@ -289,11 +256,8 @@
       .trim()
       .slice(0, 64) || 'workflow';
     const message = `workflow: ${title} (revision ${revision})`;
-    // The double dash is not decoration. A file name beginning with a dash is
-    // an option to git no matter how it is quoted, and the save dialog will
-    // accept one, so the separator is what keeps the pasted line a file
-    // operation rather than a parse error or, worse, a flag that means
-    // something.
+    // The double dash separates options from paths, so a file name beginning
+    // with a dash stays a file name.
     return `git add -- ${shellArg(rel || abs)} &&\ngit commit -m ${shellQuote(message)}`;
   }
 
@@ -301,9 +265,7 @@
   // The same two-space form with a trailing newline that main.js writes, so the
   // text in the disclosure pane is the text on disk rather than a rendering of
   // it. byteLength is measured separately and compared against the byte count
-  // the writer reported: if they disagree, something between the writer and
-  // this pane changed the object, and the pane says so rather than presenting
-  // itself as the file.
+  // the writer reported; a disagreement is reported as a warning row.
 
   function serializeArtifact(artifact) {
     return `${JSON.stringify(artifact, null, 2)}\n`;
@@ -313,14 +275,11 @@
     try { return new TextEncoder().encode(text).length; } catch (_) { return NaN; }
   }
 
-  // Run history rows carry `entries`, up to twelve thousand characters of raw
-  // agent stdout per step, and the whole point of the receipt format is that
-  // none of it travels. The export path strips it, and this is the check that
-  // the claim held for the file that was actually written, run against the
-  // serialized bytes rather than against the object so that a field nested
-  // anywhere at any depth is caught. The key can only appear at the start of a
-  // line: a prompt containing the word survives JSON.stringify with its quotes
-  // escaped and its newlines written as \n, so it can never open one.
+  // Run history rows carry `entries`, raw agent stdout, and none of it travels
+  // in a receipt. The export path strips it and this is the check that it did,
+  // run against the serialized bytes rather than the object so a field at any
+  // depth is caught. The key is anchored to the start of a line, which is where
+  // JSON.stringify puts a real key at this indent.
   const ENTRIES_KEY_RE = /^\s*"entries"\s*:/m;
 
   // ─── el() components ──────────────────────────────────────────────────────
@@ -331,11 +290,9 @@
     said: 'author states',
   };
 
-  // The chip is a sibling of the figure's value, never a class on it, so there
-  // is no arrangement of this code that renders a number without rendering
-  // where the number came from. The three words are the only three; "verified"
-  // does not appear in this feature and there is no branch here that could
-  // produce it.
+  // The chip is a sibling of the figure's value, never a class on it, so a
+  // number always renders with where it came from. The three words are the only
+  // three; "verified" does not appear in this feature.
   function claimChip(tier) {
     return el('span', { class: ['wfx-claim', `is-${tier}`] },
       el('i', { class: 'wfx-claim-m', aria: { hidden: true } }),
@@ -365,10 +322,8 @@
   // Three blocks in this sheet have no host in index.html and are inserted
   // beside one: the outlook that stands in for the figures, the warnings after
   // a write, and the figures themselves once receipts travel. They are marked
-  // in the DOM rather than remembered in a variable, because the variable dies
-  // with the record it lives on and the element does not: closing and
-  // reopening the sheet would otherwise stack a second copy of each on top of
-  // the first, and the reader would be looking at last time's warnings.
+  // in the DOM rather than remembered in a variable, so reopening the sheet
+  // clears the ones already there instead of stacking a second copy.
   const INJECTED = 'data-wfx-pub';
 
   function injected(node) {
@@ -444,41 +399,32 @@
 
   // The graph goes in whole, names and all. A publisher is being shown what a
   // reader of this file will see, and what a reader needs to see is which steps
-  // are in it. A projection with every name stripped out of it, synthetic ids
-  // and coordinates only, draws four unlabelled lozenges, and those are
-  // indistinguishable from a preview that failed to load; on the install sheet
-  // the same drawing is the picture somebody decides on.
+  // are in it. A projection with the names stripped out draws unlabelled
+  // lozenges, which read as a preview that failed to load.
   //
-  // Carrying the names costs nothing here, because there is no string sink to
-  // defend: wfMiniGraph returns elements rather than markup, and every step
-  // name in it reaches the DOM through the same WfxDom.text() the prompt list
-  // uses.
+  // wfMiniGraph returns elements rather than markup, and every step name in it
+  // reaches the DOM through the same WfxDom.text() the prompt list uses.
   function paintGraph(host, graph) {
     if (typeof wfMiniGraph !== 'function') {
       host.replaceChildren(el('span', { class: 'wfx-empty-m' }, 'no preview available'));
       return;
     }
     try {
-      // Null for the run, because this sheet has no business colouring the
-      // drawing by an outcome. The width is the host's own, measured rather
-      // than assumed: the host is already in the document, the sheet's column
-      // is a good deal wider than the floor the builder falls back to, and
-      // every pixel of that difference is a pixel a step name can use. The
-      // measurement is why setState runs before this does; a host inside a
-      // pane the card is not currently showing measures zero.
+      // Null for the run, because this sheet does not colour the drawing by an
+      // outcome. The width is the host's own, measured rather than assumed,
+      // which is why setState runs first: a host inside a pane the card is not
+      // showing measures zero.
       //
       // The marks are the steps the gate is about, so the picture and the gate
-      // name one set between them and a reader can find in one what they read
-      // in the other.
+      // name one set between them.
       host.replaceChildren(wfMiniGraph(
         { nodes: graph.nodes, edges: graph.edges }, null, 'panel', host.clientWidth,
         new Set(graph.unbound.map((step) => step.id)),
       ));
     } catch (err) {
       // A preview that cannot be drawn costs this sheet a picture and nothing
-      // else. Everything under it, which is the part that says what the file
-      // will contain, is still true and still exportable, so the failure is
-      // reported where a developer will see it and named where the reader will.
+      // else, so the failure is logged for a developer and named for the
+      // reader while the rest of the pane stands.
       console.error('wfx-publish: the thumbnail could not be drawn', err);
       host.replaceChildren(el('span', { class: 'wfx-empty-m' }, 'no preview available'));
     }
@@ -509,10 +455,7 @@
     ];
   }
 
-  // Each row states one thing the bytes will do. The argument for why the
-  // format works that way is not here: it is a thing to understand once, and
-  // repeating it above the Export button on every export is what makes this
-  // pane an essay.
+  // Each row states one thing the bytes will do, in one line.
   function paintRecord(host, graph, history) {
     const rows = [
       pfRow(
@@ -613,15 +556,12 @@
     );
   }
 
-  // Which workflow this sheet is about. The title names the operation, so
-  // without this the only thing on screen identifying the subject is a drawing.
+  // Which workflow this sheet is about, since the title names the operation.
   //
   // The name is the only part of this line the user wrote, and it goes in
-  // isolated rather than concatenated. A name whose first strong character is
-  // right-to-left otherwise sets the direction of the whole line, which moves
-  // the step count to the front and the name to the end: the row then reads as
-  // a different sentence than the one this builds. The element itself stays
-  // left-to-right because the separators and the counts are the app's.
+  // isolated rather than concatenated: a name whose first strong character is
+  // right-to-left would otherwise set the direction of the whole line. The
+  // element stays left-to-right because the separators and counts are the app's.
   function paintSubject() {
     const meta = [plural(current.graph.nodes.length, 'step')];
     const revision = current.prior && Number.isSafeInteger(current.prior.revision)
@@ -629,8 +569,7 @@
       : null;
     if (revision) meta.push(`revision ${revision}`);
     // Set here rather than read off the markup, because the direction is part
-    // of what this function composes: the line is the app's, the name inside it
-    // is not, and losing that distinction changes what the row says.
+    // of what this function composes.
     refs.subject.setAttribute('dir', 'ltr');
     refs.subject.replaceChildren(
       el('span', { dir: 'auto' }, String(current.workflow.name || 'Untitled workflow')),
@@ -655,8 +594,7 @@
   function renderReady() {
     // First, before any paint. paintGraph measures its host to decide how much
     // room a step name has, and a host inside a pane the card is not showing
-    // measures zero: reopening the sheet after a write would otherwise draw the
-    // thumbnail at the builder's fallback width and drop the labels.
+    // measures zero.
     setState('ready');
     clearInjected();
     refs.body.scrollTop = 0;
@@ -669,9 +607,8 @@
     paintWhat(graph, current.history);
     paintDestination();
 
-    // A graph with no steps has nothing to describe, and the folded block would
-    // otherwise report zero of everything under a heading promising contents.
-    // The gate says the one true thing about that workflow.
+    // A graph with no steps has nothing to describe, so the folded block is
+    // hidden and the gate carries the one sentence about that workflow.
     refs.what.hidden = !graph.nodes.length;
     refs.what.open = false;
 
@@ -690,13 +627,11 @@
   // ─── the gate ─────────────────────────────────────────────────────────────
 
   // Two conditions this sheet can see for itself, both of which the builder
-  // would refuse anyway. Predicting them is worth the duplication because the
-  // press that would discover them is the press this sheet exists to make
-  // work, and because one of the two is repairable right here.
+  // refuses as well. They are predicted here so the press lands on a gate that
+  // explains itself, and because one of the two is repairable right here.
   //
-  // The roster names four steps and then counts the rest. A list that grows
-  // with the graph turns the one block a reader has to act on into the tallest
-  // thing on the surface, and past four names the count is the information.
+  // The roster names four steps and then counts the rest, so the block a reader
+  // has to act on does not grow with the graph.
   const ROSTER_SHOWN = 4;
 
   function rosterOf(unbound, total) {
@@ -751,10 +686,8 @@
     return {
       title: count === 1 ? 'One step does not name an agent' : `${count} steps do not name an agent`,
       message: 'An exported step names its agent, so a reader runs the same program you did. Set one on each and Export unlocks.',
-      // The footer states the consequence rather than restating the title. Two
-      // copies of one sentence at the top and bottom of a single screen read as
-      // a rendering fault, and the footer's job is to say what the button is
-      // doing, which is standing down.
+      // The footer states the consequence rather than restating the title,
+      // because its job is to say what the button is doing.
       footer: 'Export stays withheld until every step names an agent.',
       repairable: true,
       count,
@@ -786,17 +719,14 @@
   }
 
   // The choices in the repair control, which never include an empty one: a
-  // control whose job is to name an agent must not offer the value that leaves
-  // it unnamed. Only what this machine reports as installed is offered, because
-  // the repair writes a claim about what a reader will run and a name nothing
-  // here can execute is a claim nobody checked.
+  // control whose job is to name an agent does not offer the value that leaves
+  // it unnamed. Only what this machine reports as installed is offered.
   //
-  // detect() answers with a record carrying an agents array. The bare array is
-  // the older shape and is read too, which is the same pair app.js accepts.
+  // detect() answers with a record carrying an agents array, and the bare array
+  // shape is read too, which is the same pair app.js accepts.
   //
-  // option is outside the kit's tag allowlist on purpose, so these two are
-  // built directly. Nothing here is parsed: a text node and a value attribute
-  // are inert whatever they contain.
+  // option sits outside the kit's tag allowlist, so these two are built
+  // directly: a text node and a value attribute, neither of them parsed.
   let agentChoices = null;
   let agentChoicesPainted = false;
 
@@ -818,10 +748,8 @@
     return agentChoices;
   }
 
-  // The button is withheld until the control under it has something to say. The
-  // list arrives over IPC and the gate paints synchronously, so a press in that
-  // window would read an empty select and write nothing, which is exactly the
-  // silence this whole surface exists to remove.
+  // The button is withheld until the control under it has something to say: the
+  // list arrives over IPC and the gate paints synchronously.
   async function fillAgentChoices() {
     if (agentChoicesPainted) return;
     const choices = await loadAgentChoices();
@@ -851,10 +779,8 @@
   // and trigger are untouched and exactly one field moves on exactly the steps
   // that had none.
   //
-  // Nothing is written anywhere until this runs. A workflow already on disk
-  // with unbound steps stays that way until somebody presses this button,
-  // because rebinding one on load would change what it runs at a moment with
-  // no surface to say so.
+  // Nothing is written until this runs: a workflow on disk with unbound steps
+  // stays that way until somebody presses this button.
   async function repairUnbound(command) {
     if (busy || !current || !command) return;
     const unbound = new Set(current.graph.unbound.map((step) => step.id));
@@ -900,9 +826,7 @@
     const fresh = await loadWorkflow(current.workflow.id);
     if (!fresh) {
       // The write reported success and the record cannot be read back, so this
-      // sheet has no basis for saying what is on disk. Repainting the old
-      // blocker here would report the repair as having failed, which is a
-      // different claim and not one anything here can support.
+      // sheet has no basis for saying what is on disk and says exactly that.
       shout('That workflow could not be read back', 'error');
       say('The change was saved, but this workflow could not be read back');
       return;
@@ -990,16 +914,13 @@
   }
 
   // Warnings are the difference between what the author asked for and what the
-  // file says, and there is exactly one moment where that difference is
-  // actionable: after the write and before the commit. A regex condition that
-  // crossed as a substring match, a connection that was left out, a run log
-  // that could not be attached. None of them stops the file being useful and
-  // all of them change what it claims, so they are rendered as rows rather than
-  // rolled into a toast that disappears.
-  // The row's name slot is a heading in the sheet's own voice. A warning code
-  // is a key the main process routes on, and printing it here puts a machine
-  // identifier in the one line of the row a person reads first. The message
-  // beside it is already prose and carries the specifics.
+  // file says, and they are actionable in one moment: after the write and
+  // before the commit. None of them stops the file being useful and all of them
+  // change what it claims, so they render as rows rather than a toast.
+  //
+  // The row's name slot is a heading in the sheet's own voice. A warning code is
+  // a key the main process routes on, so the prose message beside it carries the
+  // specifics instead.
   const WARNING_TITLES = {
     'no-receipts': 'No run was attachable',
     'edges-dropped': 'A connection was left out',
@@ -1008,9 +929,8 @@
     'evidence-unavailable': 'A run log could not be read',
   };
 
-  // Capped, because one row per unreadable run log is a list bounded by the run
-  // history and every one of them renders above the git command this pane
-  // exists to hand over.
+  // Capped, so the list cannot push the git command this pane hands over off
+  // the bottom of the screen.
   const WARNINGS_SHOWN = 4;
 
   function buildWarnings(res, text) {
@@ -1048,11 +968,9 @@
     current.target = res.path;
     current.prior = artifact;
 
-    // The one check that cannot be delegated. The whole receipt format exists
-    // so that raw agent output does not travel, and this is the assertion that
-    // it did not for the file that was actually written. It runs after the
-    // write because that is when the bytes exist; a file that fails it is on
-    // disk and untracked, which is exactly the state a person can still fix.
+    // The receipt format carries no raw agent output, and this asserts it for
+    // the file that was actually written. It runs after the write because that
+    // is when the bytes exist; a file that fails it is on disk and untracked.
     if (ENTRIES_KEY_RE.test(text)) {
       renderRefused({
         stage: 'export',
@@ -1084,10 +1002,9 @@
 
     paintPath(refs.donePath, res.path);
 
-    // The disclosure is declared in this pane, directly above the line that
-    // would make these bytes public, and it opens folded every time: a reader
-    // who wants the file asks for it, and a pane that unfolds four kilobytes of
-    // JSON on arrival buries the one command it exists to hand over.
+    // The disclosure sits directly above the line that would make these bytes
+    // public, and it opens folded every time, so the command this pane hands
+    // over stays in view.
     setText(refs.rawName, 'The exact bytes that were written');
     setText(refs.rawMeta, `${fmtBytes(res.bytes)} · ${receiptPhrase(artifact)} ·`);
     setText(refs.rawPc, attached ? 'run log attached' : 'no log attached');
@@ -1108,9 +1025,9 @@
       ? 'Not shared until you run this.'
       : 'Not shared. The file is on your disk.');
     setState('done');
-    // Focus lands on the one control this pane still offers, because the button
-    // that was focused a moment ago is hidden by the state it just entered and
-    // a hidden focus owner drops the caret to the document.
+    // Focus lands on the one control this pane still offers, because the state
+    // change hides the button that held it and a hidden focus owner drops the
+    // caret to the document.
     try { refs.doneBtn.focus({ preventScroll: true }); } catch (_) { /* the pane went away */ }
     say(`Written to ${res.path}`);
   }
@@ -1129,9 +1046,8 @@
     'not-found': 'That workflow is not in your list any more',
     'run-output-in-file': 'The file that was written carries raw agent output',
     'no-answer': 'Husk did not answer',
-    // The rest of what the export path can return. A code with no entry here
-    // falls through to a heading that names no fact, which is the least useful
-    // thing this pane can say at the moment it has the reader's attention.
+    // The rest of what the export path can return, so every code has a heading
+    // that names a fact.
     'evidence-unavailable': 'The run log could not be read',
     'chain-invalid': 'The run log does not verify against itself',
     'receipt-invalid': 'A receipt did not survive its own check',
@@ -1143,16 +1059,14 @@
     'cancelled': 'Nothing was written',
   };
 
-  // Two refusals are about the run log, and for those the forward move is to
-  // export without it: the footer declares that primary and the stylesheet
-  // swaps it in on the refused state. Every other refusal here is about the
-  // workflow itself, where there is no safe forward move and a button offering
-  // one would be a lock to pick.
+  // Refusals about the run log have a forward move: export without it. The
+  // footer declares that primary and the stylesheet swaps it in on the refused
+  // state. Every other refusal here is about the workflow itself, where the
+  // move is to go back and change it.
   //
-  // Back is the move that always exists. The destination the reader chose and
-  // the toggle they set live in the ready pane, which this state hides, so
-  // without it the only exit from a refusal is Cancel and Cancel throws both
-  // decisions away.
+  // Back always exists. The destination the reader chose and the toggle they
+  // set live in the ready pane, which this state hides, so Back is what keeps
+  // both decisions.
   const LOG_REFUSALS = new Set([
     'evidence-too-large', 'chain-invalid', 'evidence-unavailable', 'receipt-invalid',
   ]);
@@ -1168,9 +1082,8 @@
     ];
     if (res.detail) { rows.push(el('dt', {}, 'detail'), el('dd', {}, String(res.detail))); }
     if (Array.isArray(res.steps) && res.steps.length) {
-      // Chips through nameList rather than a joined string, for the reason the
-      // roster uses them: a run of right-to-left names joined by commas reads
-      // back to front, and the list is the part a reader acts on.
+      // Chips through nameList rather than a joined string, as the roster does:
+      // a run of right-to-left names joined by commas reads back to front.
       rows.push(el('dt', {}, 'steps'),
         el('dd', {}, ...nameList(res.steps.map((s) => nameChip(String((s && s.name) || ''))))));
     } else if (res.step && res.step.name) {
@@ -1193,9 +1106,8 @@
       setText(refs.foot, 'Nothing was written.');
     }
     setState('refused');
-    // Before the caret can be orphaned: the state change hides whichever footer
-    // primary had focus, and a hidden focus owner sends Tab back to the page
-    // behind the sheet.
+    // The state change hides whichever footer primary had focus, so the caret
+    // is moved to the control this state offers.
     const landing = logIsTheProblem ? refs.goNoLog : refs.back;
     try { landing.focus({ preventScroll: true }); } catch (_) { /* the footer went away */ }
     say(refs.refTitle.textContent);
@@ -1231,9 +1143,8 @@
       for (const row of rows) {
         if (!row || row.workflowId !== workflowId) continue;
         total += 1;
-        // The field slice 7 adds. Counted rather than assumed absent, so this
-        // surface starts telling the truth about attachable runs on the day the
-        // runner starts recording it, with no edit here.
+        // Counted rather than assumed absent, so the attachable-run figure
+        // follows whatever the runner records.
         if (typeof row.graphHash === 'string' && row.graphHash) fingerprinted += 1;
       }
       return { total, fingerprinted, unread: false };
@@ -1243,11 +1154,9 @@
   }
 
   // The destination's own bytes are the authority on what revision exists
-  // there, so a republish reads the file it is about to replace. The read is
-  // only trusted as this workflow's prior when the artifact id matches the one
-  // we wrote, because a person can point two workflows at one path and
-  // inheriting a stranger's identity is how a file quietly becomes a revision
-  // of something it is not.
+  // there, so a republish reads the file it is about to replace. The read
+  // counts as this workflow's prior only when the artifact id matches the one
+  // we wrote, so a path holding a different workflow is not inherited from.
   async function loadPrior(workflow, sidecar, target, remembered) {
     if (target && remembered && remembered.artifact) {
       try {
@@ -1263,10 +1172,9 @@
   }
 
   // The second export of a session writes immediately and confirms with an
-  // Undo, because by then every question this sheet asks has been answered once
-  // and asking again turns a byproduct back into a form. The Undo is what makes
-  // an unconfirmed write to a tracked file safe: it rewrites the destination at
-  // the revision that was there before.
+  // Undo, because by then every question this sheet asks has been answered
+  // once. The Undo rewrites the destination at the revision that was there
+  // before.
   async function republish(workflow, remembered, prior) {
     let res = null;
     try {
@@ -1282,12 +1190,9 @@
     lastPublish.set(workflow.id, { path: res.path, artifact: res.artifact || {} });
     const revision = (res.artifact && res.artifact.revision) || 1;
     const message = `Exported revision ${revision}, ${receiptPhrase(res.artifact)} attached`;
-    // Undo is offered only when there is a revision to go back to. Rewriting
-    // the destination without one would not restore anything: it would write a
-    // second new revision over the first, which is the opposite of the promise
-    // the word makes. The restored file is the previous revision rebuilt, not
-    // the previous bytes replayed, so its publishedAt is the moment of the
-    // restore; there is no channel here that writes bytes it did not build.
+    // Undo is offered only when there is a revision to go back to. The restored
+    // file is the previous revision rebuilt rather than the previous bytes
+    // replayed, so its publishedAt is the moment of the restore.
     const restorable = !!(prior && Number.isSafeInteger(prior.revision) && prior.revision >= 1);
     const undo = () => {
       window.husk.workflows.export({
@@ -1323,11 +1228,8 @@
     refs.go.addEventListener('click', () => {
       if (!current) return;
       if (refs.go.getAttribute('aria-disabled') === 'true') {
-        // A press that cannot write still has to answer. Re-announcing the
-        // reason and putting the reader in front of the control that clears it
-        // is the difference between a button that is withheld and a button
-        // that is broken, which is the whole of the complaint this state
-        // exists to answer.
+        // A press that cannot write still answers: it re-announces the reason
+        // and puts the reader in front of the control that clears it.
         say(refs.foot.textContent);
         if (!refs.gate.hidden) {
           try { refs.gate.scrollIntoView({ block: 'nearest' }); } catch (_) { /* no layout here */ }
@@ -1389,9 +1291,8 @@
     registerCloser();
   }
 
-  // Tab stays inside the card. Without this the sheet is a dialog only to a
-  // reader who can see it: aria-modal keeps it out of the accessibility tree
-  // below, and nothing keeps the caret out of the page behind it.
+  // Tab stays inside the card, which is what aria-modal alone does not do for
+  // a reader using the keyboard.
   //
   // Candidates are filtered by offsetParent, which is null for anything inside
   // a pane the current state hides and for the footer primaries the stylesheet
@@ -1418,11 +1319,10 @@
     });
   }
 
-  // Escape has to reach this sheet through the same table every other dialog
-  // uses, or it hides the card while a write is in flight and leaves the state
-  // machine pointing at a screen nobody can see. MODAL_CLOSERS is a top-level
-  // const in app.js, so it is reachable by name and only by name, and reading a
-  // binding that may not have been evaluated yet is what the try is for.
+  // Escape reaches this sheet through the same table every other dialog uses,
+  // so it runs close() rather than hiding the card on its own. MODAL_CLOSERS is
+  // a top-level const in app.js, reachable by name, and the try covers reading
+  // a binding that may not have been evaluated yet.
   function registerCloser() {
     try {
       if (typeof MODAL_CLOSERS === 'object' && MODAL_CLOSERS && !MODAL_CLOSERS['wfx-publish-modal']) {
@@ -1465,18 +1365,17 @@
       requires: (prior && prior.requires) || null,
       command: null,
       blocked: false,
-      // Off at the start of every sitting, and remembered across a refusal from
-      // there. The default is the argument this sheet makes about the run log.
+      // Off at the start of every sitting, and remembered across a refusal
+      // from there.
       attachLog: false,
       // How a workflow this sheet edits reaches the rest of the page.
       onChanged: typeof options.onChanged === 'function' ? options.onChanged : null,
     };
 
     // The caller's own trigger, when it passed one. The menu item that opens
-    // this sheet closes its menu first, so by the time this runs the button
-    // that was pressed is out of the document and document.activeElement is the
-    // body. Guarded on isOpen so a re-entrant open cannot record this card as
-    // the place focus came from.
+    // this sheet closes its menu first, so by then document.activeElement is
+    // the body. Guarded on isOpen so a re-entrant open records the place focus
+    // came from once.
     if (!isOpen()) {
       restoreFocusTo = (options.returnFocusTo && typeof options.returnFocusTo.focus === 'function')
         ? options.returnFocusTo
@@ -1491,7 +1390,7 @@
     } catch (err) {
       // wfx-dom throws on a structural mistake, which is ours and not the
       // file's. Landing in the refusal pane keeps the sheet in a state it can
-      // describe instead of leaving half a screen on top of a live app.
+      // describe.
       console.error('wfx-publish: the sheet could not be built', err);
       renderRefused({
         stage: 'export',
@@ -1503,23 +1402,20 @@
 
     // Focus lands on the card rather than on a control, so a keyboard reader
     // starts at the top of what the sheet says and tabs forward into the two
-    // decisions, instead of starting on a button whose label is the last thing
-    // they should read. A refusal moves it again; that is renderRefused's call.
+    // decisions. A refusal moves it again; that is renderRefused's call.
     refs.card.setAttribute('tabindex', '-1');
     if (!options.refusal) {
       try { refs.card.focus({ preventScroll: true }); } catch (_) { refs.card.focus(); }
     }
-    // The live region already carries whatever the render decided, and a title
-    // announced over it would replace the one sentence that says why the sheet
-    // cannot export with a sentence naming the sheet.
+    // The live region already carries whatever the render decided, so the
+    // title is announced only when there is nothing more specific to say.
     if (!options.refusal && !current.blocked) say('Export this workflow');
     return undefined;
   }
 
   function close() {
     // A write is one file and is not abortable, so the sheet stays put until it
-    // reaches done or a refusal on its own. Closing over a request in flight
-    // would leave a person with no screen that says what happened to it.
+    // reaches done or a refusal on its own and can say what happened.
     if (busy) return;
     if (!refs) return;
     refs.modal.hidden = true;
@@ -1535,8 +1431,7 @@
     return !!(refs && !refs.modal.hidden && openFor);
   }
 
-  // One object rather than four globals, because app.js is a 15000 line classic
-  // script sharing one namespace and a name like `open` in it is a collision
-  // waiting for a reviewer to miss it.
+  // One namespaced object rather than loose globals, because app.js is a
+  // classic script sharing one namespace with names like `open` in it.
   window.WfxPublish = { open, close, isOpen };
 }());

@@ -2,17 +2,13 @@
 
 // Apply or discard the changes an Autopilot run made inside its isolated
 // worktree. A run executes in <userData>/autopilot-worktrees/<runId>, a full
-// git worktree of the project at run start. Its edits live there and NOWHERE
-// else until the operator explicitly applies them, so this module is what
-// turns a reviewed run into real changes in the workspace.
+// git worktree of the project at run start. Its edits stay there until the
+// operator applies them, so this module is what turns a reviewed run into
+// real changes in the workspace.
 //
-// Design rules:
-//   - Never copy outside the destination workspace root (path confinement).
-//   - Report per-file results honestly: a partial apply must be visible, not
-//     hidden behind a single "success". This mirrors the snapshot/revert
-//     contract elsewhere in the codebase.
-//   - Deterministic and side-effect-scoped: only the paths named in `changes`
-//     are touched.
+// Copies are confined to the destination workspace root, only the paths
+// named in `changes` are touched, and every file reports its own result so
+// a partial apply stays visible instead of folding into one "success".
 
 const fs = require('fs');
 const path = require('path');

@@ -2,12 +2,9 @@
 
 // Adversarial probes against the artifact core and the import validator.
 //
-// These are written from the position the module claims for itself in its own
-// header: that the boundary is the byte, that the fingerprint is what binds a
-// receipt to a program, and that no exported function ever hands back something
-// it did not itself validate. Each test below is a place where one of those
-// three claims does not hold, expressed as the assertion that would pass if it
-// did.
+// Each test states one of the module's three claims as an assertion: the
+// boundary is the byte, the fingerprint binds a receipt to a program, and every
+// exported function returns only what it validated itself.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -62,14 +59,10 @@ function fanInGraph() {
   };
 }
 
-// ─── the fingerprint does not cover what the run engine reads ────────────
+// ─── the fingerprint covers what the run engine reads ────────────────────
 
-// wfIsAiRouted counts outgoing edges rather than inspecting them
-// (workflow-graph.js:164-168), and wfRunStep appends the ROUTE instruction to
-// the system prompt whenever an ai-mode step has two or more targets
-// (main.js:5699-5700). A second identical wire from one step to the same step
-// therefore changes the text handed to the agent, and canonicalProjection
-// drops it before hashing, so the fingerprint stays put.
+// An ai-mode step with two or more targets gets the ROUTE instruction appended
+// to its system prompt, so a second wire changes the text handed to the agent.
 test('appending a duplicate connection changes what the agent is told but not the fingerprint', () => {
   const plain = twoStepGraph();
   const doubled = twoStepGraph();
@@ -84,9 +77,7 @@ test('appending a duplicate connection changes what the agent is told but not th
   assert.equal(wfIsAiRouted(sanitizeGraph(doubled), 'a'), true);
 });
 
-// The same hole, reached through the reader rather than the hasher: both files
-// validate, both carry the same graphHash, so a receipt earned on the first
-// vouches for the second.
+// The same property, reached through the reader rather than the hasher.
 test('two files that run different programs cannot both pass with one fingerprint', () => {
   const g = twoStepGraph();
   const doubled = twoStepGraph();
@@ -112,9 +103,7 @@ test('two files that run different programs cannot both pass with one fingerprin
 });
 
 // contextFor builds the downstream prompt by walking the incoming edges in
-// declaration order and joining each predecessor's output (main.js:5831-5841),
-// so reversing the edges array reverses the order two predecessors appear in
-// the next step's prompt. canonicalProjection sorts the edges before hashing.
+// declaration order, so edge order sets the order two predecessors appear in.
 test('reversing the connection array reorders the prompt a fan-in step receives', () => {
   const forward = fanInGraph();
   const backward = fanInGraph();
@@ -130,10 +119,8 @@ test('reversing the connection array reorders the prompt a fan-in step receives'
   );
 });
 
-// graphToOrderedSteps seeds its breadth-first walk from the roots in node
-// array order (workflow-graph.js:116-117), and that order is what main.js:5525
-// lists and what the consent gate is specified to render prompts in. The
-// importer keeps the file's node order verbatim.
+// graphToOrderedSteps seeds its breadth-first walk from the roots in node array
+// order, and that order is what the consent gate renders prompts in.
 test('reversing the node array reorders the steps a reader is shown', () => {
   const forward = fanInGraph();
   const backward = fanInGraph();
@@ -150,11 +137,8 @@ test('reversing the node array reorders the steps a reader is shown', () => {
 
 // ─── validated once, read again ──────────────────────────────────────────
 
-// Every field is read twice: once by the check and once by the allowlist
-// projection at the end of validateArtifactInner. The projection's value is the
-// one that is returned and stored, and nothing ties it to the value that
-// passed. An object whose accessor answers differently on the second read walks
-// straight through the F1 defense the module header is written around.
+// The allowlist projection at the end of validateArtifactInner produces the
+// value that is returned and stored, and it is the value the checks saw.
 test('the artifact that comes back is the one that was validated', () => {
   const obj = workedExample();
   const node = obj.graph.nodes[0];
@@ -200,11 +184,10 @@ test('a prompt that passed validation is the prompt that is carried forward', ()
   }
 });
 
-// ─── export refuses its own truncation ───────────────────────────────────
+// ─── export clamps astral text and still publishes ───────────────────────
 
-// clampText slices at a fixed number of UTF-16 code units and the self-check
-// then rejects the half surrogate that slice produced. The refusal blames the
-// author for text they did not write.
+// clampText slices at a fixed number of UTF-16 code units, and the export
+// self-check accepts what the slice leaves behind.
 test('a workflow title of astral characters can still be published', () => {
   const title = 'a' + '\u{1F600}'.repeat(50);
   const r = buildArtifact({ id: 'wf-1', name: title, graph: twoStepGraph() }, buildOpts());
@@ -218,8 +201,7 @@ test('a workflow description of astral characters can still be published', () =>
   assert.equal(r.ok, true, `${r.code}: ${r.message}`);
 });
 
-// sanitizeNode caps prompt at 8192 code units (workflow-graph.js:46) and the
-// export-side lone surrogate check then fires on the half that cap left behind.
+// sanitizeNode caps prompt at 8192 code units, and export accepts the result.
 test('a long prompt containing emoji can still be published', () => {
   const g = twoStepGraph();
   g.nodes[0].prompt = 'a' + '\u{1F600}'.repeat(4200);
@@ -234,12 +216,10 @@ test('a long step name containing emoji can still be published', () => {
   assert.equal(r.ok, true, `${r.code}: ${r.message}`);
 });
 
-// ─── requirements the caller supplies are not normalised the way the rest is ──
+// ─── requirements the caller supplies ────────────────────────────────────
 
-// normalizeNamedRequirements reduces mcpServers and skills to what the format
-// can hold, but workspace and huskMin are copied through and only then measured
-// by the self-check, so an over-long declared command turns a working export
-// into a reader-side refusal code the export surface has no story for.
+// normalizeNamedRequirements reduces every declared requirement to what the
+// format can hold, so an over-long declared command clamps instead of refusing.
 test('an over-long declared workspace command does not sink the export', () => {
   const r = buildArtifact({ id: 'wf-1', name: 'Base', graph: twoStepGraph() }, buildOpts({
     requires: { workspace: { vcs: 'git', markerFiles: [], commands: ['bun test ' + 'x'.repeat(200)] } },
@@ -247,13 +227,10 @@ test('an over-long declared workspace command does not sink the export', () => {
   assert.equal(r.ok, true, `${r.code}: ${r.message}`);
 });
 
-// ─── the routing collision export refuses, import accepts ────────────────
+// ─── ambiguous routing targets ───────────────────────────────────────────
 
-// buildArtifact refuses to publish two sibling targets whose names contain one
-// another, because wfResolveNext falls back to substring containment
-// (workflow-graph.js:189-198) and mis-routes silently. Nothing on the reading
-// side repeats that check, so the shape export will not write is the shape a
-// stranger's file is free to carry.
+// wfResolveNext falls back to substring containment, so both sides refuse two
+// sibling targets whose names contain one another.
 test('a file whose AI router cannot tell its two targets apart is refused on the way in', () => {
   const g = {
     nodes: [
@@ -297,12 +274,10 @@ test('a file whose AI router cannot tell its two targets apart is refused on the
   assert.equal(read.ok, false, 'import accepted a graph export refuses to write');
 });
 
-// ─── marker files are a path probe surface ───────────────────────────────
+// ─── marker files ────────────────────────────────────────────────────────
 
-// The validator refuses "..", and its comment says why, but the charset it
-// enforces also admits a leading slash. requires.workspace.markerFiles is
-// specified as author-declared and checked against the bound directory, so an
-// absolute entry is an existence oracle for a path outside that directory.
+// requires.workspace.markerFiles is checked against the bound directory, so the
+// validator confines every entry to a relative path inside it.
 test('a marker file cannot name an absolute path outside the bound directory', () => {
   const obj = workedExample();
   obj.requires.workspace.markerFiles = ['/root/.ssh/id_rsa'];

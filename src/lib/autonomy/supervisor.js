@@ -13,12 +13,10 @@
 //   6. on halt: write a halt event into the audit log, compute the
 //      end-of-run diff against the snapshot, and surface it
 //
-// The supervisor itself is fs + state + callbacks; it does NOT
-// spawn child processes or read PTY streams. Those concerns belong
-// to main.js where node-pty and Electron live. The supervisor
-// receives parsed "events" through the recordEvent method and
-// returns wall-clock ticks through tickClock. This separation
-// keeps the orchestrator unit-testable without spawning anything.
+// The supervisor is fs + state + callbacks; spawning child processes and
+// reading PTY streams belong to main.js, where node-pty and Electron live.
+// It receives parsed "events" through recordEvent and wall-clock ticks
+// through tickClock.
 
 const path = require('path');
 const crypto = require('crypto');
@@ -26,16 +24,13 @@ const Snapshot = require('./snapshot');
 const Audit = require('./audit');
 const Budget = require('./budget');
 const Progress = require('./progress');
-// The canonical serializer lives in its own file because both loop
-// detection here and the workflow artifact fingerprint require it: a
-// second copy would let loop detection and graph hashing drift apart
-// without either side changing.
+// Shared canonical serializer: loop detection here and the workflow
+// artifact fingerprint both hash with it.
 const { stableJson } = require('../stable-json');
 
-// A stable action signature for loop detection. Returns a string only
-// when the event carries an identifiable action (a command, tool, or
-// file the agent is acting on); returns null otherwise so loop
-// detection never trips on generic chatter that merely shares a kind.
+// A stable action signature for loop detection. Returns a string only when
+// the event carries an identifiable action (a command, tool, or file the
+// agent is acting on), and null otherwise.
 function actionSignature(event) {
   if (!event || typeof event !== 'object') return null;
   const p = event.payload;
@@ -65,10 +60,8 @@ function startRun(opts = {}) {
   const encrypt = typeof opts.encrypt === 'function' ? opts.encrypt : null;
   const now = typeof opts.now === 'function' ? opts.now : () => Date.now();
 
-  // 1. capture pre-run snapshot. Caller may set opts.skipSnapshot when
-  // it has already produced the snapshot off the main thread (Electron
-  // main.js uses Snapshot.captureSnapshotAsync to keep the UI from
-  // freezing while a large workspace is walked).
+  // 1. capture pre-run snapshot. opts.skipSnapshot marks a snapshot the
+  // caller already produced off the main thread with captureSnapshotAsync.
   let snap;
   if (opts.skipSnapshot === true) {
     snap = { ok: true, manifest: opts.snapshotManifest || null };
@@ -97,10 +90,8 @@ function startRun(opts = {}) {
     rates: opts.rates,
   });
 
-  // 3b. progress governor (opt-in). Detects idle / loop / no-progress
-  // stalls so a run that is burning wall-clock and tokens without doing
-  // useful work is halted early. Off unless the caller opts in, so a
-  // caller that does not want the governor gets budget-only halting.
+  // 3b. progress governor (opt-in). Halts a run on idle, loop, and
+  // no-progress signals. Without it, halting is budget-only.
   const governor = opts.governor
     ? Progress.createProgressMeter({
         startedAt: now(),
@@ -158,12 +149,11 @@ function startRun(opts = {}) {
       ts: event.ts,
       payload: event.payload,
     });
-    // Feed the progress governor: agent output keeps the run "alive"
-    // (resets idle) and an identifiable action feeds loop detection.
+    // Feed the progress governor: agent output resets the idle clock and an
+    // identifiable action feeds loop detection.
     if (governor) {
-      // Output can arrive as event.tokens.chars (token-bearing events) or
-      // event.payload.chars (the agent_output flush row). Either counts as
-      // the run being alive and resets the idle clock.
+      // Output arrives as event.tokens.chars on token-bearing events or
+      // event.payload.chars on the agent_output flush row.
       const chars = (event.tokens && Number.isFinite(event.tokens.chars)) ? event.tokens.chars
         : (event.payload && Number.isFinite(event.payload.chars)) ? event.payload.chars
         : undefined;
@@ -175,11 +165,9 @@ function startRun(opts = {}) {
         totalTokens: budget.state(now()).totalTokens,
       });
     }
-    // Check caps after every event. The supervisor's pattern is
-    // "record then halt", so the triggering event stays in the
-    // log; the halt_budget event appears AFTER it. Budget (hard spend)
-    // is checked before the governor (waste) so a run that hit both
-    // reports the budget cap it truly crossed.
+    // Check caps after every event: record then halt, so the triggering
+    // event sits in the log ahead of the halt row. Budget is checked before
+    // the governor, so a run that hits both reports the budget cap.
     const meterState = budget.state(now());
     if (meterState.hitCap) {
       halt('budget', { cap: meterState.hitCap, meter: meterState });
@@ -198,9 +186,9 @@ function startRun(opts = {}) {
       halt('budget', { cap: s.hitCap, meter: s });
       return s;
     }
-    // Feed the clock + current token total so the governor can measure
-    // token burn against a frozen diff (the "spinning" waste signal). The
-    // diff signature itself arrives out-of-band via reportDiff().
+    // Feed the clock and the current token total so the governor can measure
+    // token burn against a frozen diff. The diff signature itself arrives
+    // out of band via reportProgress().
     if (governor) {
       governor.tick({ now: now(), totalTokens: s.totalTokens });
       const g = governor.state(now());
@@ -209,10 +197,9 @@ function startRun(opts = {}) {
     return s;
   }
 
-  // Feed the governor a workspace-diff signature. The supervisor never
-  // walks the fs itself (that belongs to main.js, which computes the diff
-  // off-thread and calls this periodically); a change in the signature is
-  // the forward-progress signal that resets the governor's waste timers.
+  // Feed the governor a workspace-diff signature. main.js computes the diff
+  // off-thread and calls this periodically; a change in the signature is the
+  // forward-progress signal that resets the governor's waste timers.
   function reportProgress(diffSignature) {
     if (!governor || state.status !== 'running') return null;
     if (typeof diffSignature !== 'string') return governor.state(now());
@@ -271,9 +258,9 @@ function startRun(opts = {}) {
     });
   }
 
-  // Async twin of endRun. Same audit ordering, but the end-of-run diff
-  // is computed with the async walker so the Electron main thread is
-  // never frozen hashing a large workspace at run end.
+  // Async twin of endRun. Same audit ordering, with the end-of-run diff
+  // computed by the async walker so the Electron main thread keeps running
+  // while a large workspace is hashed.
   async function endRunAsync(detail) {
     if (state.status === 'running') {
       state.status = 'ended';
@@ -321,17 +308,15 @@ function startRun(opts = {}) {
       getState,
       snapshotManifest: snapshotOnly,
       budgetState: () => budget.state(now()),
-      // Live governor state (idle / loop / no-progress ratios and the
-      // tripped signal, if any) so the fleet strip can render a run as
-      // "healthy" vs "stalling" without re-deriving it. Null when the
-      // governor is not enabled for this run.
+      // Live governor state: idle, loop, and no-progress ratios plus the
+      // tripped signal, for the fleet strip. Null when the governor is off.
       governorState: () => (governor ? governor.state(now()) : null),
       // Feed a workspace-diff signature to the governor (forward-progress
       // signal). main.js computes the diff off-thread and calls this.
       reportProgress: (diffSignature) => reportProgress(diffSignature),
       // Feed the current action signature to the governor (loop detection).
-      // main.js calls this from the transcript tool-use parser. Kept off the
-      // audit path so it stays lightweight per tool call.
+      // main.js calls this from the transcript tool-use parser, off the
+      // audit path.
       reportAction: (signature) => {
         if (!governor || state.status !== 'running') return null;
         if (typeof signature !== 'string' || !signature) return governor.state(now());
@@ -340,21 +325,17 @@ function startRun(opts = {}) {
         if (g.stalled) halt('stall', { signal: g.stalled, progress: g, meter: budget.state(now()) });
         return g;
       },
-      // Exposed so the supervisor can feed the agent's own reported
-      // token count (parsed from its status line by the renderer)
-      // into the meter and override the chars/4 estimate.
+      // Feed the agent's own reported token count, parsed from its status
+      // line by the renderer, so the meter uses it over the chars/4 estimate.
       setReportedTokens: (n) => budget.setReportedTokens(n),
-      // Re-pin the billing rate to the model the transcript reports actually
-      // ran this turn, so dollars use the real model's price, not the guess
-      // made at start.
+      // Re-pin the billing rate to the model the transcript reports for
+      // this turn.
       setModel: (id) => { try { budget.setModel(id); } catch (_) {} },
-      // Exact per-turn deltas from a structured transcript (real new
-      // input + generated output, cache reads excluded). The truthful
-      // signal: sums to what the run actually consumed.
+      // Exact per-turn deltas from a structured transcript: new input and
+      // generated output, cache reads excluded.
       addTokens: (inp, out) => budget.tick({ inputTokens: inp, outputTokens: out }),
       // Exact per-turn usage from a structured transcript: fresh input,
-      // output, cache writes, and cache reads billed at their real rates.
-      // The precise dollar path; supersedes the status-line estimate.
+      // output, cache writes, and cache reads billed at their own rates.
       addUsage: (u = {}) => budget.tick({
         inputTokens: u.input,
         outputTokens: u.output,
@@ -427,11 +408,9 @@ async function summarizeRunAsync(opts = {}) {
 
 // Shared shaping for both summarize variants.
 function buildSummary(audit, diff, chain, hasSnapshot) {
-  // Pull the most recent run_summary AND the first start_run row.
-  // run_summary carries the final meter / diff; start_run carries the
-  // goal + caps the user set at run start. Both are needed for Review +
-  // Rerun (review shows the goal; rerun pre-fills the modal with goal
-  // and caps).
+  // Pull the most recent run_summary and the first start_run row.
+  // run_summary carries the final meter and diff; start_run carries the goal
+  // and caps set at run start, which Review and Rerun both read.
   let summary = null;
   for (let i = audit.records.length - 1; i >= 0; i--) {
     if (audit.records[i].kind === 'run_summary') { summary = audit.records[i].payload; break; }

@@ -1,15 +1,12 @@
 'use strict';
 
-// Safe DOM builder for workflow surfaces that render untrusted .husk.json data.
+// DOM builder for workflow surfaces that render untrusted .husk.json data.
 // It never parses markup: elements come from createElement, attributes are
-// allowlisted, and strings become scrubbed text nodes.
-//
-// Security rules: no href/src/style, no event-handler attrs, no innerHTML
-// escape hatch, and id/name/reference attributes stay within the builder
-// namespace or explicit shell ids. Programmer-shape errors throw; manifest
-// content is rendered, truncated, dropped, or refused with a code.
+// allowlisted, and strings become scrubbed text nodes. Programmer-shape errors
+// throw; manifest content is rendered, truncated, dropped, or refused with a
+// code.
 
-// Allowlisted inert tags only; URL/SVG/script-capable tags stay out.
+// Allowlisted inert tags only.
 const ALLOWED_TAGS = Object.freeze([
   'div', 'span', 'p', 'pre', 'code', 'strong', 'em', 'b', 'i', 'small',
   'ul', 'ol', 'li', 'dl', 'dt', 'dd',
@@ -22,7 +19,7 @@ const ALLOWED_TAGS = Object.freeze([
 ]);
 const TAGS = new Set(ALLOWED_TAGS);
 
-// Inert/well-understood attrs only; resource, target and script attrs stay out.
+// Inert attributes only.
 const ALLOWED_ATTRS = Object.freeze([
   'id', 'class', 'title', 'role', 'lang', 'dir',
   'hidden', 'disabled', 'open', 'checked', 'readonly', 'multiple',
@@ -39,7 +36,7 @@ const BOOLEAN_ATTRS = new Set([
   'required', 'selected',
 ]);
 
-// Pin type values per tag; exclude file/image inputs and their side effects.
+// Allowed type values, per tag.
 const INPUT_TYPES = new Set(['checkbox', 'radio', 'text', 'search', 'number', 'hidden']);
 const BUTTON_TYPES = new Set(['button', 'submit', 'reset']);
 
@@ -48,7 +45,7 @@ const ATTR_NAME_RE = /^[a-z][a-z0-9-]*$/;
 const DATA_SUFFIX_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const ARIA_SUFFIX_RE = /^[a-z]+$/;
 const DATASET_KEY_RE = /^[a-z][A-Za-z0-9]*$/;
-// Token-shape guard for class values that may later be used in selectors.
+// Token shape for class values.
 const CLASS_TOKEN_RE = /^[A-Za-z0-9_-]+$/;
 
 // Builder-owned namespace for ids and id references.
@@ -84,62 +81,26 @@ class WfxDomError extends Error {
   }
 }
 
-// Characters that take up no visual space, or that reorder the ones
-// after them. U+202E turns the rest of a line around, so the command a
-// user approves on the consent gate and the command the agent receives
-// are different strings; a zero-width space splits a word a reader
-// would otherwise recognise; a NUL prints as nothing at all. Tab,
-// newline and carriage return are the three controls a prompt
-// legitimately carries and are the only ones kept.
-//
-// The class is written as Unicode properties rather than as a list of
-// ranges, and the reason is the tag block. U+E0000 to U+E007F is a
-// complete, entirely invisible copy of ASCII, one well formed surrogate
-// pair per character, which makes it the channel that matters rather
-// than a curiosity: the import validator refuses a manifest carrying an
-// unpaired surrogate and nothing else about unicode, so a hidden second
-// command reaches this module well formed and is scrubbed here or
-// nowhere. A hand-written range list misses it, and misses
-// U+206A-206F sitting between two ranges such a list does name, the
-// variation selectors, the interlinear annotation marks, and the Hangul
-// fillers, which render as blanks without being format characters at
-// all. Any list maintained by hand is a list of the invisibles somebody
-// has heard of, so the tables decide instead: \p{Cf} is every format
-// character, including the tag block and any the tables assign later;
-// \p{Default_Ignorable_Code_Point} adds the ones that are not
-// format characters; and \p{Zl} with \p{Zp} adds U+2028 and U+2029,
-// which are not invisible but are line breaks, and a line break inside
-// the <pre> the prompt list uses can push the real command out of the
-// visible box. The C0 and C1 controls stay spelled out because they are
-// the only part of the class with an exception carved into it.
+// Characters that take up no visual space, that reorder the ones after
+// them, or that break a line. Tab, newline and carriage return are the
+// three controls a prompt legitimately carries and are the only ones
+// kept. The class is written as Unicode properties rather than as a
+// hand-maintained range list, so the tables decide what counts:
+// \p{Cf} is every format character, \p{Default_Ignorable_Code_Point}
+// adds the ones that are not format characters, and \p{Zl} with \p{Zp}
+// adds U+2028 and U+2029. The C0 and C1 controls stay spelled out
+// because they are the only part of the class with an exception carved
+// into it.
 const INVISIBLE_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\p{Cf}\p{Default_Ignorable_Code_Point}\p{Zl}\p{Zp}]/gu;
 
-// A surrogate without its partner is not a character at all. The import
-// validator refuses a manifest carrying one, and the attribute cap
-// below can manufacture one by cutting a pair in half, so the condition
-// is closed here rather than assumed to be gone.
+// Matches a surrogate that has no partner, including one the attribute
+// cap below creates by cutting a pair in half.
 const UNPAIRED_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-// U+FFFD is what a decoder writes when a character could not be
-// represented, which is exactly the fact being reported, and it is one
-// code unit wide so a capped value stays capped. Deleting the character
-// is the more dangerous choice: it would let a destructive command with
-// a zero-width space inside a path render as the harmless one it is
-// pretending to be, which is the reordering problem again with the
-// evidence removed.
-//
-// The tag block makes that argument sharper rather than weaker, which
-// is worth stating because the instinct on reading about hidden text is
-// to strip it. 'git status' followed by twenty-one tag characters
-// spelling a second chained command renders, if the tag characters are
-// deleted, as the two words 'git status': exactly the string the file's
-// author wants the consent gate to show, and the user then
-// approves a command whose other half is still in the file the runner
-// reads. Replaced, the same prompt renders as 'git status' followed by
-// twenty-one replacement glyphs, which is unmistakably not a command
-// and is the only signal this surface can give that the bytes and the
-// pixels disagree. The scrub does not sanitise the prompt (nothing
-// downstream reads what this module wrote); it reports on it.
+// Scrubbed characters are replaced rather than deleted, so the text on
+// screen shows where they were. U+FFFD is one code unit wide, so a
+// capped value stays capped. The scrub reports on the string; nothing
+// downstream reads what this module wrote.
 const REPLACEMENT = '\uFFFD';
 
 function scrub(value) {
@@ -148,25 +109,19 @@ function scrub(value) {
     .replace(UNPAIRED_SURROGATE_RE, REPLACEMENT);
 }
 
-// A manifest field that survived validation is short; anything past the
-// cap is either a bug or a file trying to put a megabyte into the DOM.
-// The cut happens first and the scrub second, so a pair the cut split
-// is repaired by the same pass that removes the invisibles, and the
-// result is both exactly MAX_ATTR_VALUE code units and well formed.
+// Cuts to the cap first and scrubs second, so a pair the cut split is
+// repaired by the same pass, and the result is at most MAX_ATTR_VALUE
+// code units and well formed.
 function capAttrValue(value) {
   const cut = value.length > MAX_ATTR_VALUE ? value.slice(0, MAX_ATTR_VALUE) : value;
   return scrub(cut);
 }
 
-// Asking a value what it is can fail. Array.isArray runs the IsArray
-// internal method and Object.keys runs OwnPropertyKeys, and a Proxy
-// whose handler has been revoked answers both with a TypeError that is
-// nothing to do with this module's taxonomy. Every place that needs the
-// answer goes through these two, which return null for "it refused to
-// say" so the caller can decide whether that is a refusal to render
-// (structure) or a value to drop (content). The alternative, a bare
-// TypeError leaving from the middle of a tree walk, is the half-built
-// sheet the module header promises cannot happen.
+// Asking a value what it is can fail: Array.isArray and Object.keys
+// both answer a revoked Proxy with a TypeError outside this module's
+// taxonomy. Every place that needs the answer goes through these two,
+// which return null for "it refused to say" so the caller can decide
+// whether that is a refusal to render or a value to drop.
 function safeIsArray(value) {
   try {
     return Array.isArray(value);
@@ -183,17 +138,11 @@ function safeOwnKeys(value) {
   }
 }
 
-// Renders any value for an error message without becoming a second bug.
-// A template literal throws on a symbol and runs a toString the value's
-// own author wrote, and Object.prototype.toString is no better because
-// it reads Symbol.toStringTag, which can be a throwing getter. Since
-// describe() runs inside the construction of every WfxDomError, a throw
-// here would replace a coded refusal with a bare Error carrying a
-// message written outside this file, so nothing below reads a property
-// of the value at all: typeof and safeIsArray are the whole vocabulary.
-// The try is here even though safeIsArray owns the proxy case, because
-// this function runs while an error is being reported and an error
-// raised there is the one failure with nothing left to catch it.
+// Renders any value for an error message. It reads no property of the
+// value at all: typeof and safeIsArray are the whole vocabulary, so
+// nothing here runs code written outside this file. describe() runs
+// inside the construction of every WfxDomError, which is why the try is
+// here as well.
 function describe(value) {
   let s;
   try {
@@ -201,8 +150,8 @@ function describe(value) {
       case 'object': {
         if (value === null) { s = 'null'; break; }
         const arrayness = safeIsArray(value);
-        // A value that will not answer what it is gets described as
-        // little as it told us, which is nothing.
+        // A value that will not say what it is gets described as
+        // little as it told us.
         s = arrayness === null ? 'a value' : (arrayness ? 'an array' : 'an object');
         break;
       }
@@ -210,7 +159,7 @@ function describe(value) {
       case 'symbol': s = 'a symbol'; break;
       case 'string': s = value; break;
       // number, bigint, boolean and undefined are primitives, so String()
-      // runs nothing that anyone outside this file wrote.
+      // runs nothing written outside this file.
       default: s = String(value); break;
     }
   } catch (_) {
@@ -226,9 +175,8 @@ function isAllowedTag(tag) {
 // True for the fixed allowlist plus well-formed data-* and aria-*.
 function isAllowedAttrName(name) {
   if (typeof name !== 'string' || name.length === 0 || name.length > MAX_ATTR_NAME) return false;
-  // The handler test is first, ahead of the charset and ahead of the
-  // allowlist lookup, so that no later edit to either one can open a
-  // handler slot behind it.
+  // The handler test runs first, ahead of the charset and the
+  // allowlist lookup.
   if (name.startsWith('on')) return false;
   if (!ATTR_NAME_RE.test(name)) return false;
   if (name.startsWith('data-')) return DATA_SUFFIX_RE.test(name.slice(5));
@@ -267,11 +215,8 @@ function resolveValue(name, value) {
     }
     return String(value);
   }
-  // A bigint is the one value type whose decimal expansion has no upper
-  // bound at all, so it is the last type that should be allowed to skip
-  // the ceiling. It goes through capAttrValue rather than String() on
-  // its own so that the cap and the scrub stay one chokepoint every
-  // value passes, instead of a rule with one type standing outside it.
+  // A bigint goes through capAttrValue rather than String() on its own,
+  // so the cap and the scrub stay one chokepoint every value passes.
   if (typeof value === 'bigint') return capAttrValue(String(value));
 
   if (typeof value !== 'string') {
@@ -281,19 +226,16 @@ function resolveValue(name, value) {
   return capAttrValue(value);
 }
 
-// An id this builder is willing to write into a reference: one it
-// minted itself, or one of the handful the shell owns. `id` itself is
-// deliberately not run through here, because minting a shell id is the
-// shadowing itself rather than a reference to it.
+// An id this builder will write into a reference: one it minted
+// itself, or one of the handful the shell owns. `id` itself is held to
+// the builder namespace alone, in shapeReference.
 function isReferableId(token) {
   return ID_REF_RE.test(token) || SHELL_REF_IDS.has(token);
 }
 
-// The last gate before setAttribute, for every attribute whose value
-// names an element rather than describing one. A value outside the
-// namespace is content that cannot be a valid token, so it is dropped
-// and the element is written without it, which is what the rest of the
-// tree does with a bad class token.
+// Runs before setAttribute for every attribute whose value names an
+// element rather than describing one. A value outside the namespace is
+// dropped and the element is written without it.
 function shapeReference(name, value) {
   if (name === 'id') return ID_REF_RE.test(value) ? value : null;
   if (SINGLE_REF_ATTRS.has(name)) return isReferableId(value) ? value : null;
@@ -340,27 +282,19 @@ function applyOne(node, tag, name, value) {
   node.setAttribute(name, shaped);
 }
 
-// Class tokens are content: a bad one is dropped, and this is the one
-// attribute that never throws at all, because it is assembled from many
-// independent pieces and losing the whole element over one of them is
-// exactly the blank pane the content rule exists to prevent. Accepts a
-// string, a number, or arbitrarily nested arrays of them, so the common
-// ['wfx-fig', isInline && 'is-inline'] form works.
+// Class tokens are content: a bad one is dropped and this attribute
+// never throws. Accepts a string, a number, or arbitrarily nested
+// arrays of them, so the common ['wfx-fig', isInline && 'is-inline']
+// form works.
 function collectClass(value, out, depth) {
   if (value === null || value === undefined || typeof value === 'boolean') return;
-  // safeIsArray returns null for a value that refuses to answer, and a
-  // value that will not say what it is holds no class tokens, so it
+  // A value that will not say what it is holds no class tokens, so it
   // falls through the string test below and is dropped like any other
   // shape that is not one.
   if (safeIsArray(value) === true) {
-    // A list that contains itself stops here rather than raising, and
-    // so does a merely deep one: the depth cap is what makes the
-    // recursion safe, and by this point every token a real caller wrote
-    // has already been collected. The child path raises on a cycle
-    // where this one does not, and the difference is what the two slots
-    // are worth: an unrenderable child list is the element, while a
-    // class list is one of many independent pieces and dropping the
-    // element over it is the blank pane again.
+    // A list that contains itself stops at the depth cap rather than
+    // raising, and so does a merely deep one. By this point every token
+    // a real caller wrote has already been collected.
     if (depth >= MAX_CHILD_DEPTH) return;
     for (const item of value) collectClass(item, out, depth + 1);
     return;
@@ -386,11 +320,8 @@ function applyClass(node, value) {
   for (const token of tokens) {
     if (seen.has(token)) continue;
     // The joined value obeys the same ceiling every other attribute
-    // obeys. Without this a field carrying many short distinct tokens
-    // is a multi-megabyte attribute on one element, since the per-token
-    // cap never fires and the dedupe never collapses anything. Stopping
-    // at the token that would cross the line, rather than slicing the
-    // joined string, keeps every token that is written a whole one.
+    // obeys. Stopping at the token that would cross the line, rather
+    // than slicing the joined string, keeps every token written whole.
     const next = width === 0 ? token.length : width + 1 + token.length;
     if (next > MAX_ATTR_VALUE) break;
     seen.add(token);
@@ -406,8 +337,7 @@ function applyDataset(node, value) {
     ? safeOwnKeys(value)
     : null;
   // One refusal for both failures: a dataset that is not an object and
-  // a dataset that will not be enumerated are equally unusable, and the
-  // slot's type came from our source either way.
+  // a dataset that will not be enumerated are equally unusable.
   if (keys === null) {
     throw new WfxDomError('bad-attr-value', `el(): dataset takes an object, got ${describe(value)}`);
   }
@@ -439,11 +369,9 @@ function applyAria(node, value) {
 
 function applyAttrs(node, tag, attrs) {
   if (attrs === null || attrs === undefined) return;
-  // Object.keys skips symbols and the prototype chain, so a
-  // JSON.parse'd '{"__proto__": ...}' arrives as an ordinary own key and
-  // is refused by the name charset like anything else. It is called
-  // through safeOwnKeys because enumeration is a trappable operation and
-  // this is the outermost call of the three that make it.
+  // Object.keys reads own string keys only, and every one of them goes
+  // through the name charset below. It is called through safeOwnKeys
+  // because enumeration is a trappable operation.
   const keys = (typeof attrs === 'object' && safeIsArray(attrs) === false)
     ? safeOwnKeys(attrs)
     : null;
@@ -460,12 +388,9 @@ function applyAttrs(node, tag, attrs) {
 }
 
 // Every node this module hands back is remembered here, which is how a
-// child is verified as a node instead of believed when it says it is
-// one. Duck-typing on nodeType alone is not a check at all: JSON.parse
-// hands back {"nodeType": 1} for free, appendChild answers a non-Node
-// with a TypeError, and that TypeError is outside this module's
-// taxonomy and aborts the render half way down the tree. A WeakSet
-// keeps nothing alive, so a torn-down sheet costs nothing.
+// child is confirmed to be a node rather than believed when it says it
+// is one. A WeakSet keeps nothing alive, so a torn-down sheet costs
+// nothing.
 const BUILT = new WeakSet();
 
 function remember(node) {
@@ -477,8 +402,7 @@ function remember(node) {
 // constructor is the authority, which is what lets a caller pass an
 // element it built with document.createElement itself. Under the fake
 // document the unit tests use there is no constructor to ask, and the
-// WeakSet is the only answer, which is the strict behaviour: an object
-// this module did not create is not a node.
+// WeakSet is the only answer.
 function nodeConstructorFor(doc) {
   try {
     const view = doc.defaultView;
@@ -495,12 +419,10 @@ function isRealNode(doc, value) {
   const Ctor = nodeConstructorFor(doc);
   if (!Ctor) return false;
   try {
-    // instanceof walks the value's prototype chain and consults
-    // Symbol.hasInstance on the constructor, never on the value, so the
-    // value itself gets no say in the answer. It does read the chain
-    // through GetPrototypeOf, though, which is the one thing a revoked
-    // proxy will not do, and a value that cannot be asked whether it is
-    // a node is not one.
+    // instanceof consults Symbol.hasInstance on the constructor, never
+    // on the value. It reads the prototype chain through
+    // GetPrototypeOf, which a revoked proxy will not do, and a value
+    // that cannot be asked whether it is a node is not one.
     return value instanceof Ctor;
   } catch (_) {
     return false;
@@ -508,14 +430,12 @@ function isRealNode(doc, value) {
 }
 
 // Separates a plain manifest field, which is dropped, from an object
-// that is claiming to be something it is not, which is refused out
-// loud. A nodeType is the claim itself; own symbol keys and an own
-// toString are the slots that exist to change what a value pretends to
-// be when something coerces it. None of the three is read in a way that
-// runs code: getOwnPropertySymbols and hasOwnProperty do not invoke
-// getters, and the one read that can (nodeType) is guarded, with a
-// throwing getter counting as a claim, since nothing honest defines
-// one.
+// presenting itself as a node, which is refused out loud. A nodeType is
+// the claim itself; own symbol keys and an own toString or valueOf
+// change what a value answers when something coerces it. None of the
+// three is read in a way that runs code: getOwnPropertySymbols and
+// hasOwnProperty do not invoke getters, and the nodeType read is
+// guarded, with a throwing getter counting as a claim.
 function claimsToBeMoreThanData(value) {
   try {
     if (value.nodeType !== undefined) return true;
@@ -533,10 +453,9 @@ function claimsToBeMoreThanData(value) {
 }
 
 // appendChild is the one call in here that can fail for a reason this
-// module did not choose. A foreign error escaping from it is what
-// leaves a half-built sheet on screen, so it is converted to a coded
-// refusal like everything else. The message carries nothing from the
-// error, because the error's own fields are not ours to trust.
+// module did not choose, so a foreign error from it is converted to a
+// coded refusal like everything else. The message carries nothing from
+// the error.
 function attach(parent, node) {
   try {
     parent.appendChild(node);
@@ -554,15 +473,11 @@ function textNode(doc, data) {
 
 // `open` holds the arrays on the path from the top of this walk down to
 // here, which is what separates a cycle from a merely deep list; a
-// depth counter alone cannot tell them apart. See the comment on the
-// array branch below.
+// depth counter alone cannot tell them apart.
 function appendAll(doc, parent, children, depth, open) {
   // Past the cap the walk stops and the surrounding tree renders,
-  // exactly as collectClass stops a nested class list. Twenty nested
-  // arrays are one line of JSON, so a manifest can produce this shape
-  // for free, and content is dropped rather than thrown on: a file this
-  // machine did not write has to produce a rendered refusal, not a
-  // blank pane.
+  // exactly as collectClass stops a nested class list. Content is
+  // dropped rather than thrown on, so the sheet still renders.
   if (depth > MAX_CHILD_DEPTH) return;
   for (const child of children) {
     // false and null are how a caller writes a conditional child, so
@@ -586,8 +501,8 @@ function appendAll(doc, parent, children, depth, open) {
     const arrayness = safeIsArray(child);
     if (arrayness === null) {
       // Nothing JSON.parse produces refuses to say whether it is an
-      // array; a revoked proxy does, and unhandled it is the shape that
-      // puts a bare TypeError from IsArray on the way out of here.
+      // array; a revoked proxy does, and it is refused by code here
+      // rather than left to raise a bare TypeError from IsArray.
       throw new WfxDomError('bad-child',
         'el(): a child refused to say what it is, which no value out of a manifest does');
     }
@@ -595,9 +510,8 @@ function appendAll(doc, parent, children, depth, open) {
       // The loud case is a cycle, not depth. An array that contains
       // itself has no rendering at all and cannot come from JSON, so it
       // is our bug and says so; a merely deep one is content and was
-      // handled by the cap at the top. Checking the path rather than
-      // inferring from a counter also means the same array used twice as
-      // a sibling is what it looks like, not a false cycle.
+      // handled by the cap at the top. Checking the path rather than a
+      // counter keeps the same array used twice as a sibling out of it.
       if (open.has(child)) {
         throw new WfxDomError('too-deep', 'el(): a child array contains itself');
       }
@@ -620,10 +534,10 @@ function appendAll(doc, parent, children, depth, open) {
       throw new WfxDomError('bad-child',
         `el(): child presents itself as a node and is not one, got ${describe(child)}`);
     }
-    // Everything left is an ordinary object out of a stranger's file
-    // landing in a slot the caller expected to be text. It is content
-    // of the wrong shape, so it is dropped and the tree renders on. It
-    // is deliberately not stringified: that would run its toString.
+    // Everything left is an ordinary object in a slot the caller
+    // expected to be text. It is content of the wrong shape, so it is
+    // dropped and the tree renders on, and it is not stringified,
+    // which would run its toString.
   }
 }
 
@@ -641,10 +555,8 @@ function build(doc, tag, attrs, children) {
 }
 
 // text() answers exactly what the same value would have rendered as a
-// bare child, because a caller who wraps a field in text() for clarity
-// must not get different output from one who does not. A value a child
-// slot skips (null, undefined, a boolean) is an empty text node here,
-// and a value a child slot drops (a plain object) is one too.
+// bare child. A value a child slot skips (null, undefined, a boolean)
+// is an empty text node here, and so is one a child slot drops.
 function buildText(doc, value) {
   if (value === null || value === undefined || typeof value === 'boolean') {
     return textNode(doc, '');

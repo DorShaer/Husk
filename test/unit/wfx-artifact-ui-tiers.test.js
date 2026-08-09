@@ -2,32 +2,17 @@
 
 // The trust tier table, read back off the rendered surface.
 //
-// husk-workflow-artifact-spec.md pins the provenance of this feature datum by
-// datum, and the argument it makes about that table is structural: "the tier
-// is a field on the validator's return value, not a class a renderer picks, so
-// a pane physically cannot draw a figure without drawing its provenance". A
-// claim of that shape is only worth what a test of it is worth, and until this
-// file the claim had none, because the renderer was outside node --test.
-//
-// So the assertions here are deliberately made against rendered output rather
-// than against the record objects. recordFromReceipt returning TIER.said is
-// not the property the spec states; what it states is that the reader sees the
-// words "author states" beside the number, and those are two different facts
-// with a component in between them. Every test below reads the DOM.
+// The tier is a field on the validator's return value rather than a class a
+// renderer picks, so every assertion here reads the DOM rather than the record
+// object: what the spec states is that the reader sees the words beside the
+// number.
 //
 // Three rules, in the order the spec argues them:
 //
-//   1. Every figure carries a tier. Not "should": there is no argument to
-//      renderFigures that suppresses the chip and no record shape that
-//      produces a .wfx-fig without one.
+//   1. Every figure carries a tier.
 //   2. A datum the table calls "computed here" renders as computed here, and
-//      one it does not, does not. The two that matter most are the local
-//      dollar estimate, which is computed here whatever the receipt says, and
-//      the median duration, which is only ever "matches the shipped log" under
-//      the full precondition and is "author states" otherwise.
-//   3. Refusal never degrades into "author states". A receipt contradicted by
-//      its own evidence is worse than no receipt, so the figures come out
-//      rather than getting annotated.
+//      one it does not, does not.
+//   3. Refusal takes the figures out rather than annotating them.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -55,15 +40,11 @@ function receipt(over) {
 }
 
 // The chain check a caller hands in after re-hashing the shipped rows. Passing
-// this is the only thing that moves a receipt off "author states", which is
-// the whole point of the middle tier: `evidence: "inline"` is a field in the
-// stranger's own file and is not evidence of anything.
+// it is the only thing that moves a receipt off "author states".
 const CHAIN_HOLDS = Object.freeze({ checked: true, valid: true, agrees: true });
 
-// The chip words under a subtree, in document order. Reading the word rather
-// than the class is on purpose: the class is how the ink is chosen and the
-// word is what the reader is told, and a test that only checked the class
-// would pass on a chip whose word and ink disagree.
+// The chip words under a subtree, in document order. The class picks the ink
+// and the word is what the reader is told, so the word is what is read.
 function chipWords(node) {
   return node.querySelectorAll('.wfx-claim').map((c) => c.textContent);
 }
@@ -110,9 +91,8 @@ test('every panel tile carries its own chip, whatever the record says', () => {
 });
 
 test('the card strip carries one chip for the group rather than none', () => {
-  // At 254px three chips beside three figures is three copies of one fact, so
-  // the tier is carried once for the tile group. That is a different shape
-  // from the panel and it is still not a figure without a provenance.
+  // In the card strip the tier is carried once for the tile group rather than
+  // once per figure.
   const record = ui.recordFromReceipt(receipt());
   const host = into(ui.renderFigures(record, { density: 'inline' }));
 
@@ -124,9 +104,8 @@ test('the card strip carries one chip for the group rather than none', () => {
 });
 
 test('a figure is never built by any path that omits the chip argument', () => {
-  // renderFigures is the only thing that can build the card shape, and the
-  // card is the only density that moves the chip out of the tile. Anything
-  // else that reaches a figure gets the panel form, chip included.
+  // The card is the only density that moves the chip out of the tile. Every
+  // other density draws the panel form, chip included.
   const record = ui.recordFromReceipt(receipt());
 
   for (const density of [undefined, null, 'panel', 'PANEL', 'wide', 42]) {
@@ -139,9 +118,8 @@ test('a figure is never built by any path that omits the chip argument', () => {
 // ─── Rule 2: what is computed here, and what is not ──────────────────────────
 
 test('the dollar estimate is computed here whatever the receipt claims, including when it cannot be priced', () => {
-  // This machine did the arithmetic, at its own rates, from token counts that
-  // are the only quantity that survives the trip from a stranger's disk. There
-  // is no receipt and no chain state that changes that.
+  // This machine did the arithmetic at its own rates, so no receipt and no
+  // chain state changes the tier.
   const cases = [
     [ui.recordFromReceipt(receipt()), { metered: true }],
     [ui.recordFromReceipt(receipt()), { metered: false }],
@@ -174,17 +152,14 @@ test('the graph fingerprint is computed here and says so in the same breath', ()
 
   const block = host.querySelector('.ra-status');
   assert.equal(block.querySelector('.wfx-claim').textContent, COMPUTED);
-  // The full 64 characters, in a mono block, because an eight character
-  // prefix match is not a verdict.
+  // The full 64 characters, in a mono block.
   assert.equal(block.querySelector('code').textContent, artifact.graphHash);
   assert.match(block.textContent, /Recomputed from the bytes of this file/);
 });
 
 test('the graph, the prompts and the preflight rows are unattributed, not attested', () => {
   // The spec's table calls every one of these computed here with the voice
-  // "plain, unattributed". A provenance chip beside a step name would be the
-  // opposite error from a figure without one: it would teach a reader that the
-  // chip is decoration that appears everywhere.
+  // "plain, unattributed", so they carry no chip at all.
   const graph = {
     nodes: [
       { id: 'a', name: 'Read the diff', prompt: 'summarise {{previousOutput}}', agentCommand: 'claude', passContext: 'full' },
@@ -203,8 +178,7 @@ test('the graph, the prompts and the preflight rows are unattributed, not attest
 
   assert.deepEqual(chipWords(steps), []);
   assert.deepEqual(chipWords(preflight), []);
-  // They are rendered, though, and in severity order: a blocker under a green
-  // tick is a blocker the reader has to scroll past a pass to find.
+  // They are rendered, in severity order.
   assert.match(steps.textContent, /Read the diff/);
   assert.deepEqual(
     preflight.querySelectorAll('.wfx-pf-n').map((n) => n.textContent),
@@ -213,8 +187,8 @@ test('the graph, the prompts and the preflight rows are unattributed, not attest
 });
 
 test('a receipt figure is author states until a caller re-hashes the chain and says it agrees', () => {
-  // evidence: "inline" is a field in the stranger's own file. Reading it and
-  // promoting on it would be the whole feature's failure mode in one line.
+  // evidence: "inline" is a field in the imported file, so on its own it
+  // leaves the record where it is.
   const said = [
     ui.recordFromReceipt(receipt(), null),
     ui.recordFromReceipt(receipt(), {}),
@@ -303,8 +277,7 @@ test('a chain that does not hold removes the figures rather than annotating them
   assert.equal(host.querySelectorAll('.wfx-fig').length, 0);
   assert.equal(host.querySelector('.wfx-refuse').textContent.includes(SAID), false);
   assert.match(host.querySelector('.wfx-refuse-t').textContent, /does not check out/);
-  // The graph itself is unaffected and remains installable, which is the other
-  // half of the refusal rule.
+  // The graph itself is unaffected and remains installable.
   assert.equal(host.querySelectorAll('.wfx-step').length, 1);
 });
 
@@ -312,8 +285,7 @@ test('a chain that hashes together under numbers it does not support is the hard
   const record = ui.recordFromReceipt(receipt(), { checked: true, valid: true, agrees: false, detail: 'median 288000 vs 41000' });
 
   assert.equal(record.refused.title, 'The log does not support the numbers beside it');
-  // It never reaches the middle tier on the way past, even though the chain
-  // itself held. That is the failure a valid chain hides.
+  // A chain that holds does not on its own move the record off the said tier.
   assert.equal(record.tier, ui.TIER.said);
   assert.notEqual(record.tier, ui.TIER.consistent);
 });
@@ -342,8 +314,7 @@ test('local history wins over a shipped receipt, except when the shipped one ref
   const local = ui.renderReceiptStrip({ artifact, aggregate, workflowId: 'wf-1' });
   assert.deepEqual(chipWords(local), [COMPUTED]);
 
-  // Showing their own clean numbers instead of the refusal would bury the more
-  // dangerous of the two failures under the more comforting one.
+  // The refusal is shown in place of the local numbers.
   const refused = ui.renderReceiptStrip({ artifact, aggregate, chainCheck: { checked: true, valid: false }, workflowId: 'wf-1' });
   assert.match(refused.textContent, /Receipts withheld/);
 });
@@ -365,9 +336,8 @@ test('the strip chip is a button only when pressing it opens a record, and it na
     'Receipts for Nightly triage: 31 runs, author states. Open the record.',
   );
 
-  // A workflow whose runs all happened here has no imported record behind the
-  // chip, so the word is a label rather than a control that promises a screen
-  // it cannot show.
+  // A workflow with no imported record behind the chip renders the word as a
+  // label rather than a button.
   const plain = ui.renderReceiptStrip({ artifact: null, aggregate: { runs: 3, medianDurationN: 3, medianDurationMs: 500, outcomes: { completed: 3 } } });
   const label = plain.querySelector('.wfx-claim');
   assert.equal(label.tagName, 'SPAN');
@@ -408,8 +378,7 @@ test('a card with nothing to show still draws the same block in the same place',
     assert.equal(strip.getAttribute('class'), 'wfx-rcp is-none');
     assert.match(strip.textContent, /No receipts yet/);
   }
-  // Including a hostile stored artifact: one card that cannot draw its strip
-  // must not take a grid of twelve with it.
+  // Including a stored artifact whose getter throws: the strip still draws.
   const hostile = ui.renderReceiptStrip({ artifact: { receipts: [receipt()] }, get aggregate() { throw new Error('boom'); } });
   assert.match(hostile.textContent, /No receipts yet/);
 });
@@ -424,9 +393,7 @@ test('the closing sentence names the tier it is closing over', () => {
     receipts: [receipt({ durationCensored: 2, runsWindowed: true })],
   };
 
-  // The closing note is the last .wfx-note on the pane, always. Counting from
-  // the front would depend on whether the file carried a description, which
-  // is a different fact about a different block.
+  // The closing note is the last .wfx-note on the pane.
   const closingNote = (host) => {
     const notes = host.querySelectorAll('.wfx-note');
     return notes[notes.length - 1].querySelector('.wfx-note-m').textContent;

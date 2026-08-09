@@ -33,16 +33,10 @@ function validateRepoUrl(input) {
   if (!segments.length) {
     return { ok: false, error: `That URL points to a site, not a repository. Expected something like ${URL_EXAMPLE}.` };
   }
-  // The readable part of the folder name flattens the URL, and flattening is
-  // lossy: host/husk-pack and host/husk/pack both read as localhost-husk-pack,
-  // and so do the same path on two different ports. The clone directory is
-  // keyed on this name, so two repositories sharing one meant the second URL
-  // silently served the first one's checkout. The suffix is what makes the
-  // name identify the URL rather than merely describe it.
-  //
-  // It is taken over a normalized URL rather than over u.href so the two
-  // spellings of one repository still share a clone: a trailing .git and a
-  // trailing slash are not different repositories.
+  // The folder name is a readable flattening of the URL plus a digest that
+  // identifies the URL it came from. The digest is taken over a normalized
+  // URL rather than u.href, so the two spellings of one repository share a
+  // clone: a trailing .git and a trailing slash are the same repository.
   const normalized = `${u.protocol}//${u.host}/${segments.join('/')}`;
   const digest = crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 10);
   const readable = [u.hostname, ...segments].join('-').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 180);
@@ -104,8 +98,7 @@ function friendlyCloneError(err) {
   if (/not a git repository|does not appear to be a git repository/i.test(text)) {
     return 'That URL is not a git repository.';
   }
-  // Surface git's own "fatal:" line when there is one; it is the only line
-  // that describes the failure without echoing the command or local paths.
+  // Surface git's own "fatal:" line when there is one.
   const fatal = text.split('\n').map((l) => l.trim()).find((l) => /^fatal:/i.test(l));
   if (fatal) return `Clone failed. ${fatal.replace(/^fatal:\s*/i, '')}`.slice(0, 200);
   return 'Clone failed. Check the URL and your connection, then try again.';

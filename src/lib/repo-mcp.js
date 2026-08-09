@@ -21,9 +21,8 @@ const path = require('path');
 const SERVERS_SUBDIR = 'mcp-servers';
 const ENV_EXAMPLE = '.env.example';
 
-// Cap the number of servers we surface so an oversized monorepo cannot
-// blow up the modal. The first N alphabetically; the rest are silently
-// ignored. Surfaced in the scan result so the renderer can show a hint.
+// Cap on the servers surfaced: the first N alphabetically. The scan result
+// reports the total so the renderer can show a hint.
 const MAX_SERVERS_SHOWN = 50;
 
 function safeRead(filePath, encoding = 'utf8') {
@@ -145,11 +144,9 @@ function describeServer(serversDir, name) {
   };
 }
 
-// buildServerSpec turns a scanned server + user-provided env values into
-// the canonical transport spec that every adapter consumes. Splitting of
-// command and args happens here, so callers downstream cannot accidentally
-// glue them back into one string. Returns either { ok: true, spec } or
-// { ok: false, error }.
+// buildServerSpec turns a scanned server plus user-provided env values into
+// the canonical transport spec every adapter consumes, with command and args
+// kept as separate fields. Returns { ok: true, spec } or { ok: false, error }.
 function buildServerSpec(server, envValues) {
   if (!server || typeof server !== 'object') {
     return { ok: false, error: 'server summary required' };
@@ -209,12 +206,9 @@ function buildServerSpec(server, envValues) {
   return { ok: true, spec };
 }
 
-// renderCodexSnippet produces a TOML [[mcp_servers]] block the user can
-// drop into ~/.codex/config.toml. Codex's MCP support is newer and the
-// schema can shift; this snippet matches the published examples as of
-// the time of writing. We do NOT auto-write the file (yet) because
-// Codex's config is shared with non-MCP fields and we do not own a
-// safe TOML merge path.
+// renderCodexSnippet produces a TOML [[mcp_servers]] block the user can drop
+// into ~/.codex/config.toml, matching Codex's published examples. Husk does
+// not write that file; the config holds non-MCP fields Husk does not merge.
 function renderCodexSnippet(serverId, spec) {
   if (!serverId || !spec) return '';
   const lines = [];
@@ -231,11 +225,9 @@ function renderCodexSnippet(serverId, spec) {
   return lines.join('\n') + '\n';
 }
 
-// renderAiderSnippet produces a JSON object that fits aider's --mcp
-// command-line flag (which accepts inline JSON). aider's stable
-// programmatic config does not currently sit in a well-known file;
-// the snippet is therefore a CLI flag preview, not a config-file
-// fragment.
+// renderAiderSnippet produces the inline JSON aider's --mcp flag accepts.
+// aider has no well-known config file for this, so the snippet is a CLI flag
+// preview rather than a config-file fragment.
 function renderAiderSnippet(serverId, spec) {
   if (!serverId || !spec) return '';
   const obj = { [serverId]: { command: spec.command, args: spec.args || [] } };

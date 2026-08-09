@@ -40,7 +40,7 @@
     none: 'carries nothing forward',
   });
 
-  // Seam where one step's output becomes the next step's instructions.
+  // Token a prompt uses to interpolate the previous step's output.
   const PREVIOUS_OUTPUT_TOKEN = '{{previousOutput}}';
 
   // Price tokens locally; zero-rate CLIs render as unpriceable, not free.
@@ -109,26 +109,22 @@
   }
 
   // Take the shell's own controls out of a pane before it is emptied, so they
-  // can be put back into the rebuilt tree rather than recreated. See the module
-  // header: recreating them would mint ids el() refuses to write and would drop
-  // the listeners the install sheet bound at startup.
+  // can be put back into the rebuilt tree rather than recreated. That keeps
+  // their ids and the listeners the install sheet bound at startup.
   //
-  // `up` names the wrapper to lift instead of the control itself, and it is not
-  // a convenience. A control detached on its own has a null parentNode, so any
-  // later closest() call against it walks out of a tree that is no longer
-  // there: the consent gate's checkbox needs its own <label> to keep the `for`
-  // relationship alive and its .wfx-ack plate to keep looking like a decision,
-  // and both are ancestors. Lifting the wrapper keeps the subtree whole and
-  // detached together.
+  // `up` names a wrapper to lift instead of the control itself. A control
+  // detached on its own has a null parentNode, so a later closest() call walks
+  // out of a tree that has been taken apart: the consent gate's checkbox needs
+  // its own <label> for the `for` relationship and its .wfx-ack plate for the
+  // decision treatment, and both are ancestors.
   function harvest(host, specs) {
     const found = new Map();
     if (!host || !host.querySelector) return found;
     for (const spec of specs) {
       const id = typeof spec === 'string' ? spec : spec.id;
       const up = (typeof spec === 'object' && spec) ? spec.up : null;
-      // Scoped to the host rather than to the document. A stale copy of the
-      // same id elsewhere on the page is somebody else's bug and taking it here
-      // would move an element out of a surface that still owns it.
+      // Scoped to the host rather than to the document, so a copy of the same
+      // id elsewhere on the page stays with the surface that owns it.
       const node = host.querySelector(`[id="${id}"]`);
       if (!node) continue;
       const lift = (up && node.closest) ? (node.closest(up) || node) : node;
@@ -150,31 +146,16 @@
 
   // A name set on one line, whatever the file put in it.
   //
-  // el() replaces the invisible characters and deliberately leaves the three
-  // whitespace controls alone, because a prompt renders in a <pre> where its
-  // own newlines and tabs are the shape of the text. A step name is not: it is
-  // set in a <span>, where a newline collapses to a space, and it is executable
-  // text on the far side of that span. wfRouteInstruction joins sibling step
-  // names into the routing line the runner appends to the agent's system
-  // prompt, so a name carrying a newline shows the reader one line and hands
-  // the model two, and the consent gate then holds a signature for a sentence
-  // it never displayed. The design already accepts that a step's prompt is
-  // content the agent reads as a user turn; the routing line is a system turn,
-  // and a name that spans two lines moves text from the one into the other.
-  //
-  // Replacing the control character with U+FFFD is the report el() already
-  // makes about the invisibles rather than a new idea: the bytes and the pixels
-  // disagree, and the surface says so instead of quietly picking one. The
-  // durable fix is a charset rule on `name` in the import validator, and this
-  // stays afterwards, because a renderer that depends on a validator for what
-  // it puts on screen carries a second copy of that validator's bugs.
-  // wfx-install.js holds the same two lines; the two files share no scope.
+  // el() leaves the three whitespace controls alone, because a prompt renders
+  // in a <pre> where its own newlines and tabs are the shape of the text. A
+  // step name is set in a <span> instead, so the controls are replaced with
+  // U+FFFD here and the name stays one line. wfx-install.js holds the same two
+  // lines; the two files share no scope.
   const NAME_CONTROL_RE = /[\u0000-\u001F\u007F]/g;
   const oneLine = (value) => (typeof value === 'string' ? value.replace(NAME_CONTROL_RE, '\uFFFD') : '');
 
   // A sentence in a title or a note, with one identifier lifted into a code
-  // chip. Every piece is a text node; the split is by indexOf on a literal, so
-  // there is no pattern for a name to be interesting inside.
+  // chip. Every piece is a text node and the split is indexOf on a literal.
   function sentenceWithCode(sentence, name) {
     const s = typeof sentence === 'string' ? sentence : '';
     if (!s) return frag();
@@ -192,17 +173,12 @@
 
   // A mirror of graphToOrderedSteps in src/lib/workflow-graph.js, which the
   // renderer cannot require: main is CommonJS behind contextIsolation and this
-  // is a classic script. It is a mirror rather than an approximation because
-  // the consent gate is contractually bound to this order. app.js already
-  // carries wfGraphOrder, which walks one outgoing edge per node and stops, so
-  // it lists four steps of a branching graph as two and would show a reader
-  // three prompts of the five that are about to run. That function is fine for
-  // the linear run view it was written for and is the wrong instrument here.
+  // is a classic script. The consent gate is bound to this order, so it is a
+  // full breadth-first walk rather than app.js's linear wfGraphOrder.
   //
-  // Roots are seeded in wiring order and only then in node order, for the
-  // reason the main-process copy gives: two files describing one workflow whose
-  // node arrays serialised differently would otherwise read in two orders under
-  // one fingerprint.
+  // Roots are seeded in wiring order and only then in node order, matching the
+  // main-process copy, so two files describing one workflow whose node arrays
+  // serialised differently still read in one order under one fingerprint.
   function orderedSteps(graph) {
     const g = (graph && typeof graph === 'object') ? graph : null;
     const nodes = (g && Array.isArray(g.nodes)) ? g.nodes.filter((n) => n && typeof n === 'object') : [];
@@ -228,9 +204,7 @@
     for (const e of edges) seedRoot(e.from);
     for (const n of nodes) seedRoot(n.id);
     // A graph that is one pure cycle has no root at all. Seeding the first node
-    // keeps the walk terminating while still emitting every step, which is the
-    // property the consent gate depends on: a prompt that does not render is a
-    // prompt nobody consented to.
+    // keeps the walk terminating while still emitting every step.
     if (!queue.length) queue.push(nodes[0].id);
 
     const order = [];
@@ -283,16 +257,12 @@
     return (typeof value === 'number' && Number.isFinite(value)) ? Math.trunc(value) : fallback;
   }
 
-  // A published receipt. The tier starts and, on this build, stays at "author
-  // states": see the module header for why `evidence: "inline"` is not evidence
-  // of anything until something re-hashes the chain and hands the result in.
+  // A published receipt. The tier starts at "author states" and stays there
+  // until something re-hashes the chain and hands the result in.
   //
   // chainCheck, when supplied, is { checked, valid, agrees, detail }. `agrees`
-  // is the caller's answer to the only question that makes the log worth
-  // anything: whether the figures recomputed from those rows equal the ones
-  // written beside them. A chain that hashes together under numbers it does not
-  // support is the more dangerous of the two failures, because it passes the
-  // check a reader has heard of.
+  // is the caller's answer to whether the figures recomputed from those rows
+  // equal the ones written beside them.
   function recordFromReceipt(receipt, chainCheck) {
     const r = (receipt && typeof receipt === 'object') ? receipt : null;
     if (!r) return null;
@@ -379,12 +349,10 @@
   // Which of the two records a surface shows when it holds both: a receipt that
   // travelled in a file, and an aggregate of runs that happened on this
   // machine. Local history wins, because it is the only thing here the reader
-  // measured themselves, and it carries the top tier for exactly that reason.
+  // measured themselves, and it carries the top tier for that reason.
   //
   // The one exception is a shipped receipt its own log contradicts. That is a
-  // fact about the file and the reader has to be told it; showing their own
-  // clean numbers instead would bury the more dangerous of the two failures
-  // under the more comforting one.
+  // fact about the file and the reader is told it.
   function pickRecord(receipt, chainCheck, aggregate) {
     const shipped = receipt ? recordFromReceipt(receipt, chainCheck) : null;
     if (shipped && shipped.refused) return shipped;
@@ -430,14 +398,12 @@
     return `${head}${unit}`;
   }
 
-  // The decimals fall with the sample, for the reason in the module header:
-  // this is the one extrapolated figure on the surface, and two cents of
-  // precision drawn from a single observation is a claim about a distribution
-  // from a sample that cannot describe one.
+  // The decimals fall with the sample. This is the one extrapolated figure on
+  // the surface, and two cents of precision drawn from a single observation is
+  // a claim about a distribution the sample cannot describe.
   //
   // Nothing ever renders as $0.00. A run that cost a third of a cent cost
-  // something, and a zero with two decimal places is the exact false statement
-  // the whole no-dollars-on-the-wire argument was made to prevent.
+  // something.
   function formatDollars(usd, sampleN) {
     if (!(typeof usd === 'number') || !Number.isFinite(usd) || usd < 0) return null;
     const n = intOr(sampleN, 0);
@@ -449,12 +415,9 @@
     return `$${usd.toFixed(1)}`;
   }
 
-  // The same resolution ladder budget.js uses, minus the fallback to a default
-  // rate. That fallback is right for a meter, whose job is to stop a runaway
-  // and which would rather over-price an unknown model than let it run
-  // unbounded, and wrong here: pricing an unrecognised model at sonnet's rates
-  // and putting the result on screen under "your estimate" is inventing a
-  // figure. An unknown model has no rate here and the tile says so.
+  // The same resolution ladder budget.js uses, minus its fallback to a default
+  // rate. A meter would rather over-price an unknown model than let it run
+  // unbounded; here an unknown model has no rate and the tile says so.
   function resolveRate(modelId) {
     const id = String(modelId || '').trim().toLowerCase();
     if (!id) return null;
@@ -479,10 +442,8 @@
   }
 
   // Returns { usd, sampleN } or { usd: null, why } where `why` is the sentence
-  // the null tile carries. Four different reasons a price cannot be given, and
-  // they are not interchangeable: "you are on a plan" and "nobody recorded any
-  // tokens" are different facts about different things, and collapsing them
-  // into one greyed tile teaches a reader that the tile is decorative.
+  // the null tile carries. Four reasons a price cannot be given, kept distinct
+  // because they are facts about different things.
   function estimateDollars(opts) {
     const o = opts || {};
     const billing = (o.billing && typeof o.billing === 'object') ? o.billing : null;
@@ -531,10 +492,8 @@
       tier.word);
   }
 
-  // Every chip on a sheet is wrapped, and the wrapper is not decoration.
-  // .wfx-claim is inline-flex and a flex item stretches on the cross axis
-  // whatever its own display is, so a bare chip in one of these columns becomes
-  // a full width band and stops reading as a chip at all.
+  // Every chip on a sheet is wrapped. .wfx-claim is inline-flex, and a bare
+  // flex item stretches on the cross axis into a full width band.
   function wrapClaim(node) {
     return el('span', null, node);
   }
@@ -543,9 +502,7 @@
 
   // One tile. `value` is an array of nodes and strings so a unit or a qualifier
   // can ride inside the value slot, which is where the grid reserves a line for
-  // them; putting a four-word qualifier in the label wraps one tile to two
-  // lines while its three siblings hold one, and the fragment reads as a second
-  // label.
+  // them.
   function figure(opts) {
     const o = opts || {};
     const classes = ['wfx-fig'];
@@ -559,13 +516,9 @@
     // room for the visible one. At panel density the caller puts the qualifier
     // in the value instead and this stays empty.
     if (o.srNote) children.push(el('span', { class: 'wfx-sr' }, o.srNote));
-    // At panel density the chip is the tile's last child and there is no branch
-    // that omits it. At card density it is not here at all, and it is not
-    // missing either: three chips beside three figures in a 254px strip is
-    // three copies of one fact, so the tier is carried once for the group by
-    // renderFigures, which is the only thing that can build this shape. Neither
-    // density has a code path that produces a number with no provenance beside
-    // it; see the module header.
+    // At panel density the chip is the tile's last child. At card density the
+    // tier is carried once for the whole group by renderFigures instead of
+    // once per tile, so neither density renders a number without provenance.
     if (o.chip !== false) children.push(wrapClaim(renderClaim({ tier: o.tier })));
     return el('span', { class: classes }, children);
   }
@@ -579,14 +532,10 @@
   }
 
   // The sample, named. "that one run" rather than "n=1", because the tile is
-  // being read by somebody deciding whether to run a stranger's code and not by
-  // somebody reading a table.
+  // read by somebody deciding whether to run a stranger's code.
   //
-  // The phrase and its preposition are separate because two callers need two
-  // prepositions. Folding "of" into the phrase produces "from of that one run"
-  // in the screen reader note, and hardcoding "runs" beside a count in the
-  // other note produces "from 1 runs". Neither fault reaches the screen, only
-  // the speech, so nothing anybody looks at catches them.
+  // The phrase and its preposition are separate because the two callers need
+  // two prepositions, and both notes are spoken rather than shown.
   function runsPhrase(runs) {
     return runs === 1 ? 'that one run' : `${runs} runs`;
   }
@@ -601,15 +550,11 @@
     return `from ${runsPhrase(runs)}, too few to rate`;
   }
 
-  // The duration tile, which is where the whole precision argument lands.
-  //
-  // Three runs and up is a median and is called one. Two runs is a range when
-  // the source can produce both ends, which only a local aggregate can, because
-  // the wire format ships no distribution at all. Two runs from a published
-  // receipt is a midpoint and is called that: the copy rule says a median of
-  // two is a range, and rendering one number under the word "range" to satisfy
-  // the letter of that rule would be the lie the rule exists to stop. One run
-  // is that run.
+  // The duration tile. Three runs and up is a median and is called one. Two
+  // runs is a range when the source can produce both ends, which only a local
+  // aggregate can, because the wire format ships no distribution. Two runs
+  // from a published receipt is a midpoint and is called that. One run is that
+  // run.
   function durationFigure(record, density) {
     const inline = density === 'inline';
     const chip = !inline;
@@ -657,10 +602,8 @@
   }
 
   // Counts and a denominator, never a percentage, and never the word "pass".
-  // A step's status is its process exit code and nothing else, so an agent that
-  // answers confidently wrong and exits zero is recorded as done. The tile is
-  // bound to say "zero exit" and the sentence under the panel says what that
-  // means.
+  // A step's status is its process exit code, so the tile says "zero exit" and
+  // the sentence under the panel says what that means.
   function outcomeFigure(record, density) {
     const inline = density === 'inline';
     const thin = record.runs > 0 && record.runs <= 2;
@@ -693,9 +636,8 @@
     if (shown === null) {
       return figure({ isNull: true, value: ['not priceable here'], label: 'your estimate', tier: TIER.computed });
     }
-    // "under $0.01" is already a sentence about imprecision and does not take
-    // the approximation mark as well; a figure reading "≈under $0.01" is two
-    // hedges on one number.
+    // "under $0.01" is already a sentence about imprecision, so it does not
+    // take the approximation mark as well.
     const display = shown.charAt(0) === '$' ? `≈${shown}` : shown;
     return figure({
       value: [display, ' ', qualifier('at your rates')],
@@ -708,9 +650,8 @@
   // 'inline' emits three and returns a fragment: the tiles group followed by
   // one chip for all of them, which is the shape .wfx-rcp expects and the shape
   // the card templates in index.html declare. The dollar tile is absent from
-  // the card on purpose, because at 13px in a 254px strip there is no room for
-  // the qualifier that has to travel with it, and a dollar figure without "at
-  // your rates" beside it is a figure this feature does not ship.
+  // the card, where there is no room for the "at your rates" qualifier that
+  // has to travel with it.
   function renderFigures(record, opts) {
     const o = opts || {};
     const panel = o.density !== 'inline';
@@ -732,9 +673,8 @@
     return frag(
       el('div', { class: ['wfx-figs', 'is-inline'] }, tiles),
       // A button only when pressing it opens something. A workflow whose runs
-      // all happened here has no imported record behind the chip, and a control
-      // whose accessible name promises a record it cannot show is worse than
-      // the same word rendered as the label it actually is.
+      // all happened here has no imported record behind the chip, so the tier
+      // word renders as a label instead of a control.
       renderClaim({
         tier: record.tier,
         as: o.chipAs === 'span' ? 'span' : 'button',
@@ -746,12 +686,7 @@
   // ─── Prompts ───────────────────────────────────────────────────────────────
 
   // Wrap every occurrence of the interpolation token in a <mark>, by surgery on
-  // the text node el() already wrote and scrubbed.
-  //
-  // The obvious implementation is a string replace into markup, and it is the
-  // bug: the prompt around the token is up to 8192 characters of a stranger's
-  // choosing, and any path that turns it back into markup parses those
-  // characters instead of writing them. Nothing new is created here at all. The
+  // the text node el() already wrote and scrubbed. No text is created here: the
   // existing node is split at the token's boundaries and the middle piece is
   // moved inside the mark, so the characters on screen are the exact characters
   // el() put there.
@@ -784,9 +719,8 @@
     const model = (typeof node.model === 'string' && node.model) ? node.model : null;
     const agent = (typeof node.agentCommand === 'string' && node.agentCommand) ? node.agentCommand : '';
     // The trailing separator belongs to the meta run rather than sitting
-    // between the two spans, because the passContext phrase is set in the body
-    // face and a middot in the mono face has a different advance either side of
-    // it.
+    // between the two spans, because a middot in the mono face has a different
+    // advance either side of it.
     const meta = model ? `${agent} · ${model} ·` : `${agent} ·`;
     const pass = PASS_CONTEXT_COPY[node.passContext] || PASS_CONTEXT_COPY.none;
     return el('summary', null,
@@ -800,15 +734,13 @@
       icon('chevron') || el('span', { class: 'wfx-step-c' }));
   }
 
-  // The actual risk surface of this whole feature: up to 8192 unreviewed
-  // characters per step, handed to an agent CLI with the previous step's output
-  // pasted into them.
+  // The prompt list, one disclosure per step.
   //
   // Native <details> rather than a hand-rolled disclosure, so Enter and Space
   // toggling and the correct announcement come for free on a page that
   // repaints aggressively. tabindex on the <pre> because a scrollable pre is
-  // not keyboard scrollable in Chromium without one, and without it the back
-  // half of a long prompt is mouse-only, on the one block that has to be read.
+  // not keyboard scrollable in Chromium without one, and a prompt is the one
+  // block on this surface that has to be read to the end.
   function renderSteps(graph, opts) {
     const o = opts || {};
     const steps = orderedSteps(graph);
@@ -835,17 +767,13 @@
       children.push(el('span', { class: 'wfx-pf-note' }, sentenceWithCode(check.note, check.name)));
     }
 
-    // The fingerprint mismatch is the one row that carries a machine's own
-    // output, and it is rendered whole. An eight character prefix match is not
-    // a verdict, and this is a row where a person is being asked to decide
-    // whether the thing wearing the author's name is the author's thing.
+    // The fingerprint pair, rendered whole rather than as a prefix, because
+    // this is the row where a person compares the two strings themselves.
     const detail = (check.detail && typeof check.detail === 'object') ? check.detail : null;
     if (detail && typeof detail.declared === 'string' && typeof detail.local === 'string') {
-      // .wfx-pf-note on the <details>, because the row is a two column grid and
-      // the disclosure is a grid item: without a class that puts it in column
-      // two it lands in the icon gutter. .wfx-pf-fix on the summary, which is
-      // not a grid item at all, so all it takes from that class is the control
-      // treatment the row's other action already has.
+      // .wfx-pf-note puts the disclosure in the row's second grid column rather
+      // than the icon gutter. .wfx-pf-fix on the summary, which is not a grid
+      // item, takes only the control treatment the row's other action has.
       children.push(el('details', { class: 'wfx-pf-note' },
         el('summary', { class: 'wfx-pf-fix' }, 'Show both fingerprints'),
         el('dl', { class: 'wfx-refuse-e' },
@@ -890,11 +818,10 @@
 
   // ─── Path row ──────────────────────────────────────────────────────────────
 
-  // Two spans, not one clever string. A single element with direction:rtl
-  // resolves LTR on any path beginning with a Latin character, so the ellipsis
-  // lands on the tail and eats the filename, which is the one part of the path
-  // the row exists to show. The directory truncates and the filename never
-  // does, which is why the split happens here rather than in CSS.
+  // Two spans, not one string. A single element with direction:rtl resolves
+  // LTR on any path beginning with a Latin character, so the ellipsis lands on
+  // the filename. The directory truncates and the filename never does, which
+  // is why the split happens here rather than in CSS.
   function renderPath(absolutePath) {
     const p = typeof absolutePath === 'string' ? absolutePath : '';
     const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
@@ -933,10 +860,9 @@
   // ─── Surface 4: the card receipts strip ────────────────────────────────────
 
   // The chip's accessible name, which is the whole of what a keyboard user gets
-  // from this control. Without one the name is the two words inside it, so
-  // tabbing a grid of twelve cards announces "author states, button" twelve
-  // times: no workflow name, no figures (they are sibling spans and not part of
-  // the button), and nothing saying a press opens anything.
+  // from this control: the workflow, the sample, the tier, and that a press
+  // opens something. The figures beside it are sibling spans and are not part
+  // of the button.
   function stripLabel(name, record, otherRecords) {
     const who = (typeof name === 'string' && name) ? name : 'this workflow';
     const runs = record.runs === 1 ? '1 run' : `${record.runs} runs`;
@@ -953,13 +879,11 @@
 
   // Returns a node for every input, including no input at all, so app.js can
   // append unconditionally and every card carries the same block in the same
-  // place. See the module header on why nothing is reserved and nothing drifts.
+  // place.
   //
   // `aggregate` is the shape src/lib/workflow-receipt.js returns, for a
   // workflow whose runs happened here. It arrives over workflows:receipts,
-  // aggregated in the main process, because recomputing medians in the renderer
-  // is the duplication the lifted modules exist to prevent and two
-  // implementations of a median is two answers.
+  // aggregated in the main process, so a median has one implementation.
   function renderReceiptStrip(opts) {
     try {
       const o = opts || {};
@@ -977,9 +901,8 @@
 
       const others = artifact && Array.isArray(artifact.receipts) ? Math.max(0, artifact.receipts.length - 1) : 0;
       // The caller withholds onOpen for a workflow with no record behind it,
-      // which is every workflow written here rather than imported. Its figures
-      // are just as real; there is simply nothing to open, so the chip is the
-      // tier word and not a control.
+      // which is every workflow written here rather than imported. There is
+      // nothing to open, so the chip is the tier word and not a control.
       const openable = typeof o.onOpen === 'function';
       const strip = el('div', { class: 'wfx-rcp' }, renderFigures(record, {
         density: 'inline',
@@ -999,9 +922,9 @@
       }
       return strip;
     } catch (_) {
-      // A card that cannot draw its strip still draws its card. This is the one
-      // surface rendered dozens of times on one paint, and one stored artifact
-      // this builder cannot draw must not take the grid with it.
+      // A card that cannot draw its strip still draws its card. This surface
+      // renders dozens of times on one paint, so one artifact this builder
+      // cannot draw leaves the rest of the grid standing.
       return emptyStrip();
     }
   }
@@ -1009,7 +932,7 @@
   // ─── Surface 1: the evidence inspector ─────────────────────────────────────
 
   // Shell controls that live inside the ready pane. They are preserved across a
-  // rebuild rather than recreated; see the module header.
+  // rebuild rather than recreated; see harvest().
   const INSTALL_HOST_CONTROLS = Object.freeze(['wfx-in-fp-copy', 'wfx-in-cwd-change']);
 
   function fingerprintBlock(artifact, copyButton) {
@@ -1067,11 +990,9 @@
 
   // Fills the install sheet's ready pane, in the order the static markup in
   // index.html lays out: fingerprint, identity, graph, figures, bound
-  // directory, preflight, prompts, and the closing sentence. That order is the
-  // argument. The fingerprint comes first because every number under it is
-  // worthless if it does not match; the prompts come last because they are the
-  // longest block and the reader who scrolls to them has already decided to
-  // take this file seriously.
+  // directory, preflight, prompts, and the closing sentence. The fingerprint
+  // leads because every number under it depends on it; the prompts come last
+  // because they are the longest block.
   //
   // opts:
   //   host        the pane element, required (#wfx-in-ready)
@@ -1085,8 +1006,8 @@
   //   onFix       (fix, check) => void
   //
   // Returns { ok: true, record } or { ok: false, code }. A failure has already
-  // rendered the refusal into the host: a file this code cannot finish drawing
-  // has to end in a finished refusal rather than a blank pane.
+  // rendered the refusal into the host, so the pane ends in a finished refusal
+  // rather than a blank.
   function renderInspector(opts) {
     const o = opts || {};
     const host = o.host;
@@ -1110,16 +1031,14 @@
       host.appendChild(identityBlock(artifact));
 
       // wfMiniGraph lives in app.js and reads a locally sourced lastRun. The
-      // install preview passes null for it, because a status derived from a
-      // stranger's receipt would reach a class attribute, and that function's
-      // allowlist holds class names to a fixed set for exactly that reason.
+      // install preview passes null for it, so the drawing takes no status
+      // from an imported receipt.
       if (o.miniGraph) host.appendChild(o.miniGraph);
 
       if (record && record.refused) {
-        // Refusal never degrades into the attested tier, so the figures are
-        // removed rather than annotated and the block that would have held them
-        // holds the reason instead. The graph above and the prompts below are
-        // untouched and the workflow stays installable without them.
+        // A refusal never degrades into a lower tier: the figures are removed
+        // and the block that would have held them holds the reason. The graph
+        // above and the prompts below are untouched.
         host.appendChild(renderRefusal(record.refused));
       } else if (record && record.runs > 0) {
         host.appendChild(renderFigures(record, { density: 'panel', billing: o.billing || null }));
@@ -1162,9 +1081,8 @@
   // ─── Surface 3: the first-run consent gate ─────────────────────────────────
 
   // The gate opens for a workflow that came out of a file and has never been
-  // agreed to. consentedAt is a non-empty ISO string or it is nothing, so a
-  // corrupted or half-written sidecar row fails closed and asks again, which is
-  // the direction this particular question should fail in.
+  // agreed to. consentedAt is a non-empty ISO string or it is nothing, so an
+  // incomplete sidecar row asks again.
   function needsConsent(sidecar) {
     if (!sidecar || typeof sidecar !== 'object') return false;
     if (sidecar.origin !== 'imported') return false;
@@ -1199,10 +1117,7 @@
 
   // What an imported workflow's runner does differently, named for the vendors
   // this graph actually uses. Both clauses describe guards that stay on rather
-  // than features that come off, which is the honest framing: aider's
-  // --yes-always and codex's --skip-git-repo-check are correct for the local
-  // headless case they were written for, and they are exactly the two an
-  // imported workflow needs kept.
+  // than features that come off.
   function untrustedClause(steps) {
     const agents = new Set(steps.map((n) => n.agentCommand).filter((a) => typeof a === 'string' && a));
     const clauses = [];
@@ -1220,8 +1135,7 @@
   // Fills the consent gate's body. Every prompt renders, all open, in
   // orderedSteps order: this is the screen a person reads before agreeing to
   // let a stranger's instructions run against a directory full of their own
-  // work, so a collapsed prompt is a prompt nobody read and a missing one is a
-  // prompt nobody was asked about.
+  // work.
   //
   // Returns the number of steps rendered, which the caller needs for the
   // checkbox label and the footer note.
@@ -1263,10 +1177,9 @@
     host.appendChild(renderSteps(graph, { open: true }));
 
     // The checkbox is the shell's, preserved rather than rebuilt: el() owns the
-    // "wfxd-" id namespace and cannot mint #wfx-cs-ack, and a label whose `for`
-    // pointed at nothing would be a control a keyboard user cannot reach from
-    // its own words. Its text is rewritten to the real step count, which is the
-    // only part of it that varies.
+    // "wfxd-" id namespace and cannot mint #wfx-cs-ack, and the label's `for`
+    // has to keep pointing at it. Its text is rewritten to the real step count,
+    // which is the only part of it that varies.
     const ack = harvestedControl(preserved, 'wfx-cs-ack');
     const ackPlate = harvested(preserved, 'wfx-cs-ack');
     if (ack && ackPlate) {
@@ -1274,8 +1187,7 @@
       if (label) {
         // The trailing text node is the label's words; the input and its
         // painted box are the two elements before it. Rewriting that node
-        // rather than the label's textContent is what keeps them, and the
-        // count is the only part of the sentence that varies.
+        // rather than the label's textContent keeps them both.
         const words = ` I have read ${steps.length === 1 ? 'the prompt' : `all ${steps.length} prompts`}`;
         let last = label.lastChild;
         while (last && last.nodeType !== 3) last = last.previousSibling;
@@ -1299,10 +1211,10 @@
 
   function setSheetDisabled(button, disabled) {
     if (!button) return;
-    // aria-disabled and not disabled, matching the decision the shipped footer
-    // markup spells out: `disabled` takes a button out of the tab order, so the
-    // sentence written to explain why the commit is withheld can never be
-    // reached by the control it describes. The listener is the guard.
+    // aria-disabled and not disabled, matching the shipped footer markup:
+    // `disabled` takes a button out of the tab order, so the sentence
+    // explaining why the commit is withheld would be unreachable from the
+    // control it describes. The click listener holds the state.
     button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
 
@@ -1321,8 +1233,8 @@
     const ready = d && d.getElementById('wfx-cs-ready');
     if (!modal || !ready) return Promise.resolve(false);
 
-    // A second gate over the first would leave two dialogs sharing one set of
-    // ids and one checkbox. The pending one is answered no and torn down first.
+    // One gate at a time: the pending one is answered no and torn down first,
+    // so two dialogs never share one set of ids and one checkbox.
     if (consentSession) closeConsentGate();
 
     const stepCount = renderConsent({
@@ -1389,9 +1301,8 @@
       }
       if (go) {
         go.addEventListener('click', () => {
-          // An aria-disabled button is still clickable, so this listener is the
-          // whole of the guard. Re-announcing the precondition is the useful
-          // thing to do with the press rather than swallowing it.
+          // The listener holds the state. Re-announcing the precondition is
+          // the useful thing to do with the press rather than swallowing it.
           if (go.getAttribute('aria-disabled') === 'true') {
             say('wfx-cs-say', lockedNote);
             return;
@@ -1404,19 +1315,16 @@
 
       modal.hidden = false;
       say('wfx-cs-say', `${stepCount === 1 ? 'One prompt' : `${stepCount} prompts`} to read before this workflow runs.`);
-      // Focus the first prompt's own summary rather than the primary. The
-      // primary is withheld until the box is ticked, so landing on a locked
-      // button teaches the reader the surface is broken before they have read a
-      // word of it, and the reading is the entire task this dialog exists for.
+      // Focus the first prompt's own summary rather than the primary, which is
+      // withheld until the box is ticked. Reading the prompts is the task this
+      // dialog exists for, so focus starts at the first one.
       const first = ready.querySelector ? ready.querySelector('.wfx-step > summary') : null;
       if (first && first.focus) { try { first.focus({ preventScroll: true }); } catch (_) { /* nothing focusable is not a failure */ } }
     });
   }
 
-  // Registered by app.js in MODAL_CLOSERS so the global Escape handler answers
-  // the gate rather than hiding a dialog whose promise is still pending. A
-  // dialog that vanishes without settling is a Run that never happens and never
-  // says why.
+  // Registered by app.js in MODAL_CLOSERS so the global Escape handler settles
+  // the gate's promise rather than hiding a dialog that is still pending.
   function closeConsentGate() {
     if (consentSession) consentSession.finish(false);
     const d = doc();
@@ -1424,13 +1332,10 @@
     if (modal) modal.hidden = true;
   }
 
-  // The one call app.js should use to start a workflow, and the reason this
-  // function exists rather than a boolean helper: the invariant is that an
-  // imported workflow cannot reach workflows:run before consentedAt is set, and
-  // an invariant enforced by every call site is an invariant one call site
-  // eventually forgets. The main process refuses independently with
-  // code 'consent-required', so this is the affordance and that is the
-  // boundary; neither is trusted to be the only one.
+  // The one call app.js uses to start a workflow: an imported workflow reaches
+  // workflows:run only once consentedAt is set. The main process holds the same
+  // rule independently and answers code 'consent-required', so this is the
+  // affordance and that is the boundary.
   async function runWorkflow(workflowId, opts) {
     const api = workflowsApi();
     if (!api || typeof api.run !== 'function') {
@@ -1438,8 +1343,7 @@
     }
     // Rebuilt rather than forwarded. workflows:run takes { cwd } and nothing
     // else, and this function also accepts a `workflow` record for the gate's
-    // copy; passing the caller's object straight through would put a whole
-    // workflow across the IPC boundary into a handler that never asked for one.
+    // copy, which stays on this side of the IPC boundary.
     const given = (opts && typeof opts === 'object') ? opts : {};
     const runOpts = {};
     if (typeof given.cwd === 'string' && given.cwd) runOpts.cwd = given.cwd;
@@ -1450,9 +1354,8 @@
       if (res && res.ok && res.sidecars) sidecar = res.sidecars[workflowId] || null;
     } catch (_) {
       // sidecars() answers ok:true with {} for an unreadable store, so a throw
-      // here is the channel itself failing. Falling through to run() would be
-      // failing open on the one question that must fail closed, so it is
-      // treated as a workflow with a row we could not read.
+      // here is the channel itself failing. It is treated as a workflow whose
+      // row could not be read, and the run stops.
       return {
         ok: false,
         error: 'Husk could not read this workflow\'s install record, so it will not start it',

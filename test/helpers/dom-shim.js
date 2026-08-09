@@ -3,62 +3,37 @@
 // A hand-written DOM, sized to exactly four files.
 //
 // src/renderer/wfx-dom.js, wfx-artifact-ui.js, wfx-install.js and
-// wfx-publish.js are about three thousand lines of the most security
-// sensitive rendering in the app, and until this file existed none of it
-// was reachable from node --test. They are classic scripts loaded by
-// index.html rather than modules, so there is nothing to require, and
-// the repo carries no jsdom and is not going to grow one for a test
-// helper. So the document is written here, by hand, and it implements
-// the subset those four files actually touch and nothing else.
+// wfx-publish.js are classic scripts loaded by index.html rather than
+// modules, so there is nothing to require, and the repo carries no
+// jsdom. The document is written here by hand, and it implements the
+// subset those four files touch and nothing else: every method below
+// exists because a grep over them found a call site for it.
 //
-// "Nothing else" is a design rule rather than an excuse. A shim that
-// guesses at the parts of the DOM the code under test does not use is a
-// second implementation of the platform that nobody reviews, and every
-// method in it that is subtly wrong is a test that passes for a reason
-// the browser does not share. Every method below exists because a grep
-// over those four files found a call site for it.
-//
-// Three fidelity decisions are worth stating up front, because a reader
-// who assumes browser behaviour here will be wrong in a way that
-// matters:
+// Three fidelity decisions are worth stating up front:
 //
 //   - Every node is a real instance of the Node class exported from
 //     this file, and document.defaultView.Node points at that class.
-//     This is not decoration. wfx-dom.js verifies a child is a node
-//     before appending it, and for anything it did not build itself the
-//     verification is `child instanceof doc.defaultView.Node`. The SVG
-//     glyphs in wfx-artifact-ui.js are built with createElementNS,
-//     outside the builder, and are then handed back to el() as children.
-//     Under a shim whose nodes are plain objects those glyphs carry a
-//     nodeType, fail the instanceof, and are refused as objects
-//     "presenting themselves as a node", so every preflight row and
-//     every step summary would throw. The class hierarchy is what makes
-//     the four files loadable at all.
-//   - setAttribute is stricter than the real one, on purpose. It refuses
-//     a name that could not be written in markup and refuses a
-//     non-string value, so an allowlist in wfx-dom.js that let something
-//     odd through fails loudly in a unit test instead of quietly
-//     becoming behaviour nobody sees until Chrome renders it.
+//     wfx-dom.js checks a child it did not build itself with
+//     `child instanceof doc.defaultView.Node`, and the SVG glyphs in
+//     wfx-artifact-ui.js are built with createElementNS outside the
+//     builder and handed back to el() as children, so the class
+//     hierarchy is what makes the four files loadable at all.
+//   - setAttribute is stricter than the real one, on purpose: it
+//     refuses a name that could not be written in markup and refuses a
+//     non-string value.
 //   - `value` and `checked` are plain properties, not attribute
 //     reflections, which is what the real DOM does once a control has
 //     been interacted with. The four files only ever read them back
-//     after writing them, so the dirty-value flag the platform keeps has
-//     no observable effect here and is not modelled.
+//     after writing them.
 //
-// The selector engine is the one place that is a real subset rather than
-// a complete small thing: it understands type, #id, .class, [attr] and
+// The selector engine understands type, #id, .class, [attr] and
 // [attr="value"] compounds joined by descendant and child combinators,
-// which covers every selector string in the four files, and its
-// descendant match is greedy rather than backtracking. Greedy is wrong
-// for `.a .b .c` shapes where the first matching ancestor is a dead end;
-// no selector here is more than two compounds long, so the case cannot
-// arise, and a selector that needs it should grow the engine rather than
-// be worked around at the call site.
+// which covers every selector string in the four files. Its descendant
+// match is greedy rather than backtracking, and no selector here is
+// more than two compounds long.
 
-// Names the HTML parser could actually produce. The real DOM answers a
-// name outside this charset with InvalidCharacterError, and so does
-// this, because an attribute name that only this shim would accept is a
-// name whose behaviour in Chrome nobody has checked.
+// Names the HTML parser can produce. A name outside this charset gets
+// InvalidCharacterError, as in the real DOM.
 const MARKUP_SAFE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;
 
 // One compound selector: an optional type, plus any number of #id,
@@ -107,12 +82,8 @@ class Node {
     return this.childNodes.filter((n) => n.nodeType === ELEMENT_NODE);
   }
 
-  // Fragments are spread rather than inserted, which is the behaviour
-  // half the render paths depend on: renderFigures and every helper
-  // built on frag() return a fragment that the caller appends into a
-  // host, and a shim that inserted the fragment itself as a child would
-  // put a node in the tree that no querySelector or textContent walk in
-  // a browser would ever see.
+  // Fragments are spread rather than inserted, matching the render paths
+  // that return a fragment for the caller to append into a host.
   appendChild(child) {
     return this.insertBefore(child, null);
   }
@@ -151,17 +122,13 @@ class Node {
   }
 
   // The renderer surfaces build a block and swap it in one call, and a string
-  // among the arguments is a text node, which is what makes it the one sink
-  // those files can use without reaching for innerHTML. Detaching first rather
-  // than iterating the live list, because insertBefore reparents and a loop
-  // over a list it is mutating drops every second child.
+  // among the arguments becomes a text node. Detaches first rather than
+  // iterating the live list, because insertBefore reparents.
   replaceChildren(...next) {
     for (const child of this.childNodes.splice(0)) child.parentNode = null;
     const doc = this.ownerDocument || this;
     for (const child of next) {
-      // (Node or DOMString), so a non-Node stringifies, null included. Skipping
-      // a hole would be kinder than the platform and would let a builder that
-      // yields one pass here and render the word "undefined" on screen.
+      // (Node or DOMString), so a non-Node stringifies, null included.
       this.appendChild(child instanceof Node ? child : doc.createTextNode(String(child)));
     }
   }
@@ -208,8 +175,7 @@ class Node {
 
   // Bubbling is modelled because the receipts strip depends on it: the
   // chip's click handler calls stopPropagation to keep the press off the
-  // card behind it, and a shim that only fired listeners on the target
-  // would report that guard as working no matter what the code did.
+  // card behind it.
   dispatchEvent(event) {
     const type = event && event.type;
     if (!type) return true;
@@ -268,10 +234,8 @@ class Text extends Node {
     return this.data;
   }
 
-  // The prompt renderer's {{previousOutput}} highlight is DOM surgery on
-  // a text node el() already wrote, rather than a string replace into
-  // markup, so splitText is load bearing for the one path in the feature
-  // that touches a stranger's prompt after it has been scrubbed.
+  // The prompt renderer's {{previousOutput}} highlight splits a text node
+  // el() already wrote, rather than replacing a string into markup.
   splitText(offset) {
     const tail = new Text(this.ownerDocument, this.data.slice(offset));
     this.data = this.data.slice(0, offset);
@@ -288,7 +252,7 @@ class Element extends Node {
     this.namespaceURI = namespaceURI || null;
     this.attributes = new Map();
     // Plain properties rather than attribute reflections; see the module
-    // header on the dirty-value flag.
+    // header.
     this.value = '';
     this.checked = false;
   }
@@ -328,9 +292,7 @@ class Element extends Node {
   }
 
   // hidden and disabled are presence attributes in markup and booleans as
-  // properties, and the reflection is the whole point: wfx-install.js sets
-  // node.hidden = true on thirty-one panes and a test asserting on the
-  // attribute has to see the same fact the browser would.
+  // properties, reflected both ways.
   get hidden() {
     return this.hasAttribute('hidden');
   }
@@ -349,9 +311,8 @@ class Element extends Node {
     else this.removeAttribute('disabled');
   }
 
-  // Read through to the class attribute on every call rather than cached,
-  // because el() writes the attribute directly and a cached token list
-  // would answer with whatever it held before that write.
+  // Reads through to the class attribute on every call rather than caching,
+  // because el() writes the attribute directly.
   get classList() {
     const owner = this;
     const read = () => (owner.getAttribute('class') || '').split(/\s+/).filter(Boolean);
@@ -379,8 +340,7 @@ class Element extends Node {
   }
 
   // DOMStringMap, in the direction el() writes it: a camelCase key is the
-  // dashed attribute and back again, so a test can read dataset.wfxReceipt
-  // and be reading the same string the builder put in data-wfx-receipt.
+  // dashed attribute and back again.
   get dataset() {
     const owner = this;
     const attrFor = (key) => `data-${String(key).replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
@@ -431,10 +391,8 @@ class Element extends Node {
     this.dispatchEvent({ type: 'click' });
   }
 
-  // A no-op with a signature, because the two call sites in
-  // wfx-install.js only ever ask a row to be visible and never read
-  // anything back. Implementing scroll geometry would be inventing
-  // layout this shim has none of.
+  // A no-op with a signature: the call sites only ask a row to be
+  // visible and never read anything back, and this shim has no layout.
   scrollIntoView() {}
 }
 
@@ -449,8 +407,7 @@ class Document extends Node {
     super(null, DOCUMENT_NODE);
     this.ownerDocument = this;
     // 'loading' by default so a file that wires itself on DOMContentLoaded
-    // defers, and a test decides when the page is considered ready rather
-    // than having the bootstrap run as a side effect of require().
+    // defers until a test says the page is ready.
     this.readyState = 'loading';
     this.defaultView = null;
     this.documentElement = new Element(this, 'html');
@@ -593,9 +550,7 @@ function createDocument() {
 }
 
 // Every text node under a subtree, in document order. Assertions about
-// what a builder wrote are almost always assertions about this list, and
-// spelling the walk out in each test file is how two tests end up
-// disagreeing about whether an attribute counts as text.
+// what a builder wrote are usually assertions about this list.
 function textNodes(root) {
   const out = [];
   const walk = (node) => {

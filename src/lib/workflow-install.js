@@ -1,39 +1,32 @@
 'use strict';
 
-// Installing a stranger's workflow: the parts that are arithmetic rather than
+// Installing an imported workflow: the parts that are arithmetic rather than
 // I/O.
 //
 // workflow-artifact.js decides whether a .husk.json is a Husk workflow at all.
-// This module answers the next two questions, both of which are about THIS
-// machine rather than about the file: will the thing in the file actually run
-// here, and is this particular run allowed to start. main.js owns every
-// syscall behind those answers (statting a marker file, asking git whether a
-// directory is a work tree, walking PATH) and hands the results in as plain
-// facts, which is the only reason any of this can be a unit test instead of an
-// afternoon with a scratch repo.
+// This module answers the next two questions, both about THIS machine rather
+// than about the file: will the thing in the file run here, and is this run
+// allowed to start. main.js owns every syscall behind those answers (statting a
+// marker file, asking git whether a directory is a work tree, walking PATH) and
+// hands the results in as plain facts, which is what makes this a unit test.
 //
 // Two rules run through the file.
 //
 // A check never degrades and never substitutes. If the manifest asks for codex
-// and codex is not here, the answer is "codex is not on your PATH", never
-// "claude will do". The three severities exist because two would be a lie:
-// "will not run here" and "will run differently than the receipt describes"
-// are different facts and only the first should stop anything. `block` is the
-// first, `caution` is the second, `ok` is neither.
+// and codex is not here, the answer is "codex is not on your PATH". The three
+// severities carry two different facts: `block` is "will not run here",
+// `caution` is "will run differently than the receipt describes", `ok` is
+// neither.
 //
-// Every check carries the tier it was earned at, because the surface is not
-// allowed to draw a verdict without drawing where the verdict came from.
-// `computed` means this machine measured it just now. `said` means the file's
-// author asserted it and nothing here can confirm it: no field in a node
-// declares which MCP server or skill a step uses, that fact lives in prose
-// inside the prompt, so requires.mcpServers and requires.skills are membership
-// claims we can only check the shape of. A row that mixes the two is a row
-// that launders an assertion into a measurement.
+// Every check carries the tier it was earned at, so a surface draws a verdict
+// together with where the verdict came from. `computed` means this machine
+// measured it just now. `said` means the file's author asserted it: no field in
+// a node declares which MCP server or skill a step uses, that fact lives in
+// prose inside the prompt, so requires.mcpServers and requires.skills are
+// membership claims whose shape is all that can be checked.
 //
 // Nothing here throws and nothing here reaches the filesystem, the clock or
-// Electron. The artifact arrives having already passed validateArtifact, but
-// it arrives across an IPC boundary from a renderer that also renders text
-// this machine did not write, so every read is still defensive.
+// Electron. Every read of the artifact is defensive.
 
 const crypto = require('crypto');
 const { stableJson } = require('./stable-json');
@@ -43,14 +36,12 @@ const { stableJson } = require('./stable-json');
 const SEVERITY_RANK = { block: 0, caution: 1, ok: 2 };
 
 // Why a run was refused. Closed, because the consent gate and the install
-// sheet both key their recovery copy off these strings, and a refusal a
-// surface cannot name is a refusal the user cannot act on.
+// sheet both key their recovery copy off these strings.
 const RUN_REFUSAL_CODES = [
-  // The record says it came from a file and the consent row is not there. It is
-  // its own code rather than another consent-required because the cure is
-  // different: consent-required is answered by reading the prompts in the gate,
-  // and this one cannot be, since the artifact those prompts would be read from
-  // is exactly what went missing.
+  // The record says it came from a file and the consent row is not there. Its
+  // own code rather than another consent-required, because the cure differs:
+  // consent-required is answered by reading the prompts in the gate, and this
+  // one is answered by reinstalling from the file.
   'sidecar-missing',
   'consent-required',
   'cwd-required',
@@ -68,24 +59,17 @@ const ORIGINS = ['imported', 'local'];
 
 // ─── fingerprints ────────────────────────────────────────────────────────
 
-// An MCP server's identity for comparison purposes, and deliberately not its
-// configuration. MCP identity in this app is the key in the shared server map
-// and nothing else, so the author's `postgres` is their scratch database and
-// mine is production. The fingerprint is what turns "you have one with that
-// name" into "you have one with that name and it is not this one".
+// An MCP server's identity for comparison purposes, over its command and args
+// only. MCP identity in this app is the key in the shared server map, so the
+// fingerprint is what turns "you have one with that name" into "you have one
+// with that name and it is not this one".
 //
-// env is excluded, and that exclusion is the whole reason this function exists
-// rather than a stableJson call at the call site. env is where the tokens are.
-// A fingerprint computed over it would leak nothing by itself, but it would
-// also make every legitimate installation mismatch, since two people never
-// share an API key, and a check that always fails teaches its reader to ignore
-// it.
+// env is excluded: two installations never share the same env, so including it
+// would make every legitimate installation mismatch.
 //
-// A remote server has no command to hash. It gets null rather than a hash of
-// its URL, because a URL is not an identity in the sense the comparison needs:
-// two people pointing at the same hosted endpoint with different credentials
-// are running different things, and the surface says "cannot compare" instead
-// of showing a tick it has not earned.
+// A remote server has no command to hash and gets null rather than a hash of
+// its URL, so the surface says "cannot compare" rather than showing a tick it
+// has not earned.
 function mcpFingerprint(server) {
   try {
     if (!server || typeof server !== 'object') return null;
@@ -141,9 +125,8 @@ function evaluatePreflight(artifact, facts) {
   try {
     return evaluatePreflightInner(artifact, facts || {});
   } catch (_) {
-    // The message is not quoted back. It came from the same input we are
-    // refusing, and it would be rendered by a surface that has no reason to
-    // trust it.
+    // The message is not quoted back: it came from the same input being
+    // refused, and a surface would render it.
     return { ok: false, error: 'preflight could not be computed: an input raised while it was being read' };
   }
 }
@@ -176,10 +159,9 @@ function evaluatePreflightInner(artifact, facts) {
     });
   }
 
-  // One row for the pins rather than one per pinned step. There is no failure
-  // mode to report per step: an imported workflow's agentCommand is concrete,
-  // so a pin always goes to the vendor it was written for, and a list of four
-  // identical green rows is four rows nobody reads.
+  // One row for the pins rather than one per pinned step. An imported
+  // workflow's agentCommand is concrete, so a pin always goes to the vendor it
+  // was written for and there is nothing to report per step.
   const models = arrayOf(requires.models);
   if (models.length) {
     const distinct = uniqueStrings(models.map((m) => (isObject(m) ? m.model : null)));
@@ -390,11 +372,9 @@ function namedCheck(req, keyField, kind, local, localKey, copy) {
   };
 }
 
-// huskMin is a caution rather than a blocker on purpose. The graph in the file
-// has already been validated field by field against this build's own reader,
-// so whatever the author needed a newer Husk for is not something this Husk is
-// about to misread. Refusing here would be refusing on a number rather than on
-// a capability, and it would strand a workflow that runs perfectly.
+// huskMin is a caution rather than a blocker. The graph has already been read
+// field by field by this build, so the row reports a version difference rather
+// than stranding a workflow that runs.
 function huskVersionCheck(huskMin, huskVersion) {
   const min = typeof huskMin === 'string' ? huskMin : '';
   const here = typeof huskVersion === 'string' ? huskVersion : '';
@@ -425,9 +405,7 @@ function huskVersionCheck(huskMin, huskVersion) {
 
 // Numeric dotted-prefix comparison. Returns a negative number, zero, a
 // positive number, or null when either side is not a version. Only the three
-// leading numeric components are compared: a prerelease suffix orders by rules
-// nobody agrees on, and getting that wrong on a caution row is worse than
-// treating 2.11.0-beta.3 as 2.11.0.
+// leading numeric components are compared, so 2.11.0-beta.3 orders as 2.11.0.
 function compareVersions(a, b) {
   const pa = versionParts(a);
   const pb = versionParts(b);
@@ -456,9 +434,8 @@ function versionParts(v) {
 //                  runs with the gate never touching it.
 //   cwd            the resolved absolute directory the run would use, or null.
 //   cwdIsDir / cwdIsHome / cwdInWorkTree   the same probes preflight used,
-//                  re-run at the moment of the press rather than trusted from
-//                  install time: the directory can be deleted, renamed or
-//                  replaced by a symlink between the two.
+//                  re-run at the moment of the press so the answer describes
+//                  the directory as it stands now.
 //
 // Returns { ok: true, cwd } where cwd is null for a locally authored workflow
 // (the caller keeps its existing fallback chain in that case), or
@@ -468,18 +445,11 @@ function runGateDecision(input) {
   const sidecar = isObject(opts.sidecar) ? opts.sidecar : null;
 
   // The record's own origin is consulted before the sidecar, because a missing
-  // row is not evidence of local authorship. Absence is the cheapest state to
-  // produce and so the least safe one to read a verdict out of, and there are
-  // at least three ways to reach it: duplicating an imported card copies every
-  // prompt and writes no row, an install whose row never reaches disk still
-  // reports success, and one unparseable byte in the store reads every
-  // imported workflow on the machine as local at once.
+  // row is not evidence of local authorship.
   //
-  // origin is stamped on the record at install and no manifest and no update
-  // can set it, so it survives a copy and damaging a file cannot clear it. When
-  // it says imported and the row is gone, that is not a local workflow. It is
-  // an imported one whose consent record is lost, and the honest answer is to
-  // refuse rather than to run a stranger's prompts ungated.
+  // origin is stamped on the record at install, and no manifest and no update
+  // can set it. When it says imported and the row is gone, that is an imported
+  // workflow whose consent record is lost, and the answer is to refuse.
   const recordOrigin = typeof opts.recordOrigin === 'string' ? opts.recordOrigin : null;
   if (recordOrigin === 'imported' && !sidecar) {
     return refusal('sidecar-missing',
@@ -489,9 +459,8 @@ function runGateDecision(input) {
       'reinstall it from the file to review its steps again');
   }
 
-  // Locally authored workflows are not gated. The whole risk this gate exists
-  // for is a stranger's 8192 characters reaching a CLI, and a workflow the
-  // user typed here is not that.
+  // Locally authored workflows are not gated. The gate covers prompts that
+  // arrived in a file, and a workflow the user typed here did not.
   if (!sidecar || sidecar.origin !== 'imported') return { ok: true, cwd: null };
 
   if (!sidecar.consentedAt) {
@@ -542,11 +511,9 @@ function refusal(code, message, detail) {
 // One row per workflow that came from a file, keyed by the local workflow id.
 //
 // The requires and receipts blocks live here rather than on the workflow
-// record on purpose. workflows:create and workflows:update each apply a field
-// whitelist, and widening either of them to carry a manifest's fields would
-// make every future write path a place a manifest value could enter the store.
-// Keeping the artifact in its own file keyed on the local id means the
-// whitelists never move.
+// record. workflows:create and workflows:update each apply a field whitelist,
+// and keeping the artifact in its own file keyed on the local id means those
+// whitelists stay as they are.
 function normalizeStore(raw) {
   const store = { version: SIDECAR_STORE_VERSION, rows: {} };
   if (!isObject(raw)) return store;
@@ -559,11 +526,8 @@ function normalizeStore(raw) {
   return store;
 }
 
-// A row read back off disk is not trusted either. The file sits in the user's
-// config directory next to workflows.json, so it is not a stranger's byte, but
-// a half-written row from an older build is exactly the kind of thing that
-// turns "does this workflow need consent" into undefined, and undefined is
-// falsy in the direction that runs the workflow.
+// Normalizes one row read back off disk into the exact field set the gate
+// reads, so a partial row from an older build resolves to known values.
 function normalizeRow(workflowId, raw) {
   if (typeof workflowId !== 'string' || !workflowId) return null;
   if (!isObject(raw)) return null;
@@ -574,9 +538,8 @@ function normalizeRow(workflowId, raw) {
     artifact: isObject(raw.artifact) ? raw.artifact : null,
     boundCwd: typeof raw.boundCwd === 'string' && raw.boundCwd ? raw.boundCwd : null,
     installedAt: typeof raw.installedAt === 'string' ? raw.installedAt : null,
-    // The one field whose absence has to mean "not consented" rather than
-    // "unknown". Anything that is not a non-empty string is null here, so a
-    // corrupted row fails closed and asks the user again.
+    // Absence means "not consented". Anything that is not a non-empty string
+    // is null here, so the gate asks the user again.
     consentedAt: typeof raw.consentedAt === 'string' && raw.consentedAt ? raw.consentedAt : null,
   };
 }
@@ -594,9 +557,7 @@ function sidecarRow(input) {
 
 // Deleting a workflow prunes its row, and a row whose workflow is gone for any
 // other reason goes with it. Duplicating a workflow mints a new local id and
-// never calls this, which is how a duplicate ends up with no sidecar and
-// therefore no imported origin: a copy of someone else's workflow that
-// silently inherited their consent would be the same gap with a new id.
+// never calls this, so a duplicate carries no sidecar row of its own.
 function pruneStore(store, liveIds) {
   const normalized = normalizeStore(store);
   const live = new Set(Array.isArray(liveIds) ? liveIds.filter((id) => typeof id === 'string') : []);
@@ -611,10 +572,8 @@ function pruneStore(store, liveIds) {
 
 // ─── export naming ───────────────────────────────────────────────────────
 
-// The filename a published workflow defaults to. Lowercase, dash-separated,
-// ASCII only, because the file is meant to be committed and a name that
-// round-trips through a Windows checkout, a tarball and a code review is worth
-// more than one that preserves the author's punctuation.
+// The filename a published workflow defaults to. Lowercase, dash-separated and
+// ASCII only, so it round-trips through a checkout, a tarball and a review.
 function slugForName(name) {
   const base = typeof name === 'string' ? name : '';
   const slug = base

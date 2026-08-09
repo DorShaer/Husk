@@ -122,10 +122,9 @@ function titleFromId(id) {
     .replace(/\bAi\b/g, 'AI');
 }
 
-// Every picker row reads "<Name> · <what it is for>". The long-context row
-// breaks that shape: it repeats its tier inside the name, in the picker's own
-// lowercase wording. Normalize the name half and keep the description after the
-// separator so the row sits in the dropdown looking like its siblings.
+// Every picker row reads "<Name> · <what it is for>". Normalize the name half
+// of a long-context row and keep the description after the separator so the
+// row matches its siblings in the dropdown.
 function longContextLabel(description, family) {
   const parts = String(description || '').split('·');
   const name = parts[0]
@@ -171,10 +170,9 @@ function labelBefore(text, index) {
   return prefix.replace(/^[\s>*›❯➜→•·●○◉◌◦✓✔☑\-\[\]()/]+/, '').trim();
 }
 
-// Vendor-word model ids, optionally carrying one "provider/" prefix. The
-// checker rejects quantifiers nested inside optional groups, so the prefix is
-// not part of the core regex: matches start at the vendor word and grow
-// leftward over a plain "token/" when one directly precedes them.
+// Vendor-word model ids, optionally carrying one "provider/" prefix. Matches
+// start at the vendor word and grow leftward over a plain "token/" when one
+// directly precedes them, which keeps the core regex flat.
 const MODEL_CORE_RE = /\b(?:gpt|claude|gemini|codex|o[1-9]|llama|mistral|mixtral|qwen|deepseek|grok|xai|openai|anthropic|google)[A-Za-z0-9._/:+-]*/ig;
 const MODEL_PREFIX_RE = /([A-Za-z0-9]+\/)$/;
 function directModelMatches(text) {
@@ -266,7 +264,7 @@ function modelCandidateFromLine(line, vendor) {
 
   if (vendor === 'claude') {
     // Numbered picker rows: "1. (selected) opus - description". Parsed
-    // stepwise so no quantifier ends up nested inside an optional group.
+    // stepwise, one flat match per part.
     const rowNum = l.match(/^\d+\./);
     if (rowNum) {
       let rest = l.slice(rowNum[0].length).trim();
@@ -277,10 +275,8 @@ function modelCandidateFromLine(line, vendor) {
         let value = fam[1].toLowerCase();
         rest = rest.slice(fam[0].length).trim();
         // The long-context row qualifies the family name rather than naming a
-        // separate one: "Opus (1M context)". The tier belongs to the id the CLI
-        // accepts, so it moves into the value. Left in the label it both reads
-        // as a description and collapses onto the base family, which drops one
-        // of the two rows on the way to the picker.
+        // separate one: "Opus (1M context)". The tier belongs to the id the
+        // CLI accepts, so it moves into the value.
         const tier = rest.match(/^\(1m context\)/i);
         if (tier) { value += '[1m]'; rest = rest.slice(tier[0].length).trim(); }
         let label = rest.replace(/^[-\u2014\u2013]/, '').trim().slice(0, 160);
@@ -292,10 +288,8 @@ function modelCandidateFromLine(line, vendor) {
 
   if (vendor === 'aider') {
     // aider --list-models prints one provider-route id per line
-    // (anthropic/claude-sonnet-4-5, openrouter/z-ai/glm-4.6). Accept a
-    // whole-line slash route regardless of the generic vendor-word regex.
-    // Whole line is a provider route when every /-separated segment is a
-    // plain token. Split-and-test keeps each check a flat regex.
+    // (anthropic/claude-sonnet-4-5, openrouter/z-ai/glm-4.6). A whole line is
+    // a provider route when every /-separated segment is a plain token.
     const segs = l.length <= 90 && l.includes('/') ? l.split('/') : null;
     const route = segs && segs.length >= 2 && segs.length <= 7
       && /^[A-Za-z0-9]/.test(l)
@@ -357,8 +351,7 @@ function isModelValueUsable(value, vendor) {
     || /^(opus|fable|sonnet|haiku|opusplan)(\[1m\])?$/i.test(normalized)
     || /^(kimi|mai)-/i.test(normalized)) return true;
   // aider routes to arbitrary providers (openrouter/x/y, bare aliases like
-  // flash or r1), so a saved aider value that passed the garbage checks
-  // above is trusted as-is.
+  // flash or r1), so a saved aider value keeps its own shape.
   return String(vendor || '').toLowerCase() === 'aider'
     && /^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(normalized);
 }
@@ -368,15 +361,15 @@ function looksLikeModelId(id, vendor) {
   const x = String(id || '').toLowerCase();
   if (!x || x === 'model' || x === 'models' || x === 'auto') return false;
   if (/^(gpt|claude|gemini|codex|llama|mistral|mixtral|qwen|deepseek|grok|xai|openai|anthropic|google)$/.test(x)) return false;
-  // Help text and config references leak vendor-prefixed tokens that are not
-  // models (claude/settings.json, claude-api). Reject file paths and doc-ish
-  // suffixes before the vendor-prefix acceptance below.
+  // Help text and config references carry vendor-prefixed tokens that are not
+  // models (claude/settings.json, claude-api). File paths and doc-ish
+  // suffixes drop out before the vendor-prefix acceptance below.
   if (/\.(json|jsonc|ya?ml|md|txt|log|lock|toml|ini|cfg|conf|sh|bash|zsh|mjs|cjs|js|ts|tsx|jsx|py|rb|go|rs|css|html)$/.test(x)) return false;
   if (/(^|[-./_])(api|sdk|cli|docs?|settings|config|readme|help)$/.test(x)) return false;
   if (v === 'claude') {
     // The claude CLI accepts tier aliases and claude-* ids only; anything
-    // else scraped from its TUI is narration, not a selectable model. Either
-    // form may carry the long-context suffix, as in opus[1m].
+    // else scraped from its TUI is narration. Either form may carry the
+    // long-context suffix, as in opus[1m].
     if (/^(haiku|sonnet|opus|fable|opusplan)(\[1m\])?$/.test(x)) return true;
     return /^claude-[a-z0-9][a-z0-9.-]*(\[1m\])?$/.test(x);
   }

@@ -34,7 +34,7 @@ function createRunWorktree(userData, runId, workspaceRoot) {
   const resolvedWs = path.resolve(workspaceRoot);
   const resolvedHome = path.resolve(HOME);
 
-  // Belt and suspenders: never let a worktree be created for HOME.
+  // A worktree is never created for the home directory.
   if (resolvedWs === resolvedHome) {
     return { ok: false, error: 'worktree refused for home directory' };
   }

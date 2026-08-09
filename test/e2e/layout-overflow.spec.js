@@ -4,9 +4,8 @@
 // The rail's middle section scrolls; the status body scales its content to fit,
 // so every section stays on screen and nothing is clipped.
 //
-// The second test guards the other half of that contract: the fit tracks window
-// height only. Zoom must still reach the status panel, so its painted content
-// grows with every zoom step instead of being scaled back to one fixed size.
+// The fit tracks window height only, so the status panel's painted content
+// grows with every zoom step.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -18,8 +17,8 @@ test('short window keeps the rail bottom and status footer visible', async () =>
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
-  // Without firstRunDone, boot() blocks on the welcome wizard (no agent CLI
-  // on CI runners), leaving the status panel empty and stealing clicks.
+  // firstRunDone carries boot() past the welcome wizard, which needs an agent
+  // CLI that CI runners do not have.
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
@@ -31,9 +30,8 @@ test('short window keeps the rail bottom and status footer visible', async () =>
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
 
-  // The status panel fills in over IPC after boot. Measuring on a fixed timer
-  // races that, and an empty panel trivially fits any window, so wait for the
-  // sections to exist before shrinking the window around them.
+  // The status panel fills in over IPC after boot, so wait for its sections to
+  // exist before shrinking the window around them.
   await win.waitForFunction(() => {
     const fit = document.getElementById('sp-fit');
     return !!fit && fit.children.length > 0 && fit.scrollHeight > 0;
@@ -80,8 +78,8 @@ test('short window keeps the rail bottom and status footer visible', async () =>
       toolBottom: bottom('#rail-agent-pill'),
       spFootBottom: bottom('.sp-foot'),
       railScrollable: scrollEl.scrollHeight > scrollEl.clientHeight,
-      // The status body clips its overflow by design and scales #sp-fit to fit,
-      // so the check is that the rendered content fits rather than that it scrolls.
+      // The status body clips its overflow and scales #sp-fit, so the check is
+      // that the rendered content fits.
       fitHeight: Math.round(fit.getBoundingClientRect().height),
       boxHeight: box.clientHeight,
       fitBottom: Math.round(fit.getBoundingClientRect().bottom),
@@ -125,9 +123,8 @@ test('zooming in enlarges the status panel content', async () => {
     return !!fit && fit.children.length > 0 && fit.scrollHeight > 0;
   }, null, { timeout: 15_000 });
 
-  // Zoom shrinks the CSS pixel, so a CSS-pixel height stays flat while the panel
-  // grows on screen. devicePixelRatio carries the zoom, so multiplying by it
-  // gives the size the user actually sees.
+  // devicePixelRatio carries the zoom, so multiplying the CSS height by it
+  // gives the size on screen.
   const paintedHeight = () => win.evaluate(() => {
     const fit = document.getElementById('sp-fit');
     return fit.getBoundingClientRect().height * window.devicePixelRatio;
@@ -141,8 +138,7 @@ test('zooming in enlarges the status panel content', async () => {
     painted.push(await paintedHeight());
   }
 
-  // Every step is strictly larger than the one before it. A fit that measured
-  // the zoomed CSS height instead would hold this flat and then reverse it.
+  // Every step paints strictly larger than the one before it.
   for (let i = 1; i < painted.length; i++) {
     expect(painted[i], `zoom step ${i} must paint larger than step ${i - 1}: ${JSON.stringify(painted)}`)
       .toBeGreaterThan(painted[i - 1]);
@@ -187,17 +183,14 @@ test('the status rows keep both edges at any fit scale', async () => {
     };
   });
 
-  // Two window heights, both inside the smallest screen this runs on. Which of
-  // them scales is up to the display, so neither is assumed: the property under
-  // test is that the rows reach the same two edges either way.
+  // Two window heights, both inside the smallest screen this runs on. The rows
+  // reach the same two edges at either height.
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 760); });
   await win.waitForTimeout(700);
   const tall = await gaps();
   expect(Math.abs(tall.left - tall.right), JSON.stringify(tall)).toBeLessThanOrEqual(1);
 
-  // Short enough that the fit has more work to do. How far it scales is the
-  // window manager's business, not this test's: what has to hold is that the
-  // rows reach the same two edges whatever scale comes out.
+  // Short enough that the fit has more work to do, at whatever scale comes out.
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 460); });
   await win.waitForTimeout(900);
   const short = await gaps();

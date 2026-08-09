@@ -8,11 +8,11 @@
 
 (function () {
   // ── The shell ──────────────────────────────────────────────────────────────
-  // Look up per call so script/markup ordering changes fail loudly, not stale.
+  // Looked up per call, so a markup change is reported rather than cached.
   const $ = (sel) => document.querySelector(sel);
   const byId = (id) => document.getElementById(id);
 
-  // A missing builder is a load-order bug; never render a manifest without it.
+  // The builder is required: a manifest renders through it or not at all.
   function kit() {
     const dom = window.WfxDom;
     if (!dom || typeof dom.el !== 'function') {
@@ -22,7 +22,7 @@
   }
   const el = (tag, attrs, ...children) => kit().el(tag, attrs, ...children);
 
-  // Step names are one visible line even if a manifest includes controls.
+  // Step names render as one visible line, whatever the file put in them.
   const NAME_CONTROL_RE = /[\u0000-\u001F\u007F]/g;
   const oneLine = (value) => String(value == null ? '' : value).replace(NAME_CONTROL_RE, '\uFFFD');
 
@@ -197,10 +197,9 @@
   // `owned` says whether this module is the thing currently using the dialog.
   // The sheet is shared: app.js opens the same card over the same ready pane to
   // show the record a card's receipts chip points at, and does it by showing
-  // the modal itself rather than through anything here. Everything that stages
-  // an install therefore has to be a property of this flag rather than of the
-  // markup, which is why the source picker and both path rows are hidden
-  // whenever it is false. See setSource.
+  // the modal itself. Everything that stages an install hangs off this flag, so
+  // the source picker and both path rows are hidden whenever it is false. See
+  // setSource.
   const S = {
     seq: 0,
     owned: false,
@@ -216,14 +215,11 @@
     adopted: null,     // the two shell controls we re-parent instead of rebuilding
   };
 
-  // Hooks the surrounding app fills in. Every one of them is optional and
-  // every default is inert, because this sheet has to be reviewable and
-  // testable without app.js having wired anything yet. They exist as hooks
-  // rather than as direct calls for one hard reason and one soft one: the hard
-  // one is that no value from a manifest may reach the MCP channels, so this
-  // file must not be able to name them; the soft one is that app.js owns the
-  // workflow grid and the consent gate, and reaching into either from here
-  // would be two files repainting one list.
+  // Hooks the surrounding app fills in. Every one of them is optional and every
+  // default is inert, so this sheet is reviewable and testable without app.js
+  // having wired anything yet. They are hooks rather than direct calls so this
+  // file never names the MCP channels, and so app.js keeps owning the workflow
+  // grid and the consent gate.
   const hooks = {
     onInstalled: null,     // (workflow, sidecar) => void, refresh the grid
     openConsent: null,     // (workflowId, workflow, cwd) => void, the first-run gate
@@ -235,12 +231,10 @@
 
   // The ready pane's contents belong to the artifact inspector in
   // wfx-artifact-ui.js: it owns the record, the tiers and the dollar estimate,
-  // and it is where the tier rules are enforced in one place rather than in
-  // each surface that draws a number. This file owns the flow around it, so
-  // when the inspector is present the whole pane is handed to it, and the
-  // builders further down are the fallback that keeps this sheet complete on
-  // its own. Two renderers for one pane would be two places for the tier rules
-  // to drift, which is why this is a handoff rather than a merge.
+  // so the tier rules live in one place rather than in each surface that draws
+  // a number. This file owns the flow around it, so when the inspector is
+  // present the whole pane is handed to it, and the builders further down are
+  // the fallback that keeps this sheet complete on its own.
   let inspector = null;
 
   function resolveInspector() {
@@ -302,12 +296,9 @@
     node.replaceChildren(children);
   }
 
-  // The error banner, and the other half of the rule it exists for. The
-  // markup's own comment is explicit: this block sits at the top of a scroller
-  // whose tail is where a reader stands when they press Install, so on its own
-  // it is feedback nobody sees. Writing the footer note and scrolling the
-  // banner into view is what makes the failure reachable from where the press
-  // happened.
+  // The error banner. It sits at the top of a scroller and the reader stands at
+  // the tail when they press Install, so it is scrolled into view and the
+  // footer note carries the same sentence.
   //
   // The static icon span is kept rather than rebuilt, so the one glyph idiom
   // this surface uses stays owned by the markup.
@@ -330,9 +321,7 @@
     }
   }
 
-  // Footer composition per state, in one place. A hidden-attribute assignment
-  // at each call site drifts into two primaries visible at once on the path
-  // nobody clicks twice.
+  // Footer composition per state, in one place, so exactly one primary shows.
   function paintFooter(state) {
     const go = byId('wfx-in-go');
     const done = byId('wfx-in-done');
@@ -383,24 +372,16 @@
   }
 
   // ── The graph preview ──────────────────────────────────────────────────────
-  // Delegated to wfMiniGraph in app.js, which is the only implementation.
+  // Delegated to wfMiniGraph in app.js, which is the only implementation. It
+  // builds elements rather than a string of markup, and it bounds both the node
+  // count and the way it measures its own extents.
   //
-  // The two properties this surface needs are the two that function has: it
-  // builds elements rather than returning a string of markup, which this
-  // surface may never accept because assigning it would put a stranger's graph
-  // through innerHTML, and it caps the node count at 512 and takes its bounds
-  // through a reduce rather than spreading coordinate arrays into Math.min,
-  // which throws outright on a large graph.
+  // A second local copy of the drawing would drift out of step with it, and the
+  // preview a person reads before running a stranger's workflow is the one that
+  // has to carry the step names.
   //
-  // A second local copy of the drawing buys nothing and costs the one thing
-  // that matters. The app-side drawing writes step names into its boxes, and a
-  // copy here drifts out of step with it, so the preview a person reads before
-  // running a stranger's workflow ends up the one still showing unlabelled
-  // pills. Two implementations of one drawing is exactly how that happens, and
-  // the second one is always the one that gets forgotten.
-  //
-  // The fallback exists because a window where app.js failed to evaluate should
-  // show a placeholder rather than throw inside a dialog.
+  // The fallback shows a placeholder in a window where app.js failed to
+  // evaluate, rather than throwing inside a dialog.
   function buildMiniGraph(graph) {
     if (typeof wfMiniGraph !== 'function') {
       return el('div', { class: ['wf-mini', 'is-empty'] }, el('span', {}, 'no preview available'));
@@ -412,9 +393,8 @@
   }
 
   // ── Figures ────────────────────────────────────────────────────────────────
-  // The chip is a sibling of the number inside the same tile, so there is no
-  // arrangement of this builder that emits a figure without emitting where it
-  // came from.
+  // The chip is a sibling of the number inside the same tile, so a figure
+  // always renders with where it came from.
   function claim(tier, label) {
     return el('span', {},
       el('span', { class: ['wfx-claim', tier] },
@@ -422,11 +402,10 @@
         label));
   }
 
-  // "author states" is the floor for everything a receipt asserts, and it is
-  // also the ceiling until this machine has recomputed the numbers from a
-  // shipped log. That recomputation is the main process's job and this read
-  // does not carry its verdict, so claiming anything stronger here would be
-  // the renderer inventing a tier. The word "verified" appears nowhere.
+  // "author states" is the floor for everything a receipt asserts, and also the
+  // ceiling until this machine has recomputed the numbers from a shipped log.
+  // That recomputation is the main process's job and this read does not carry
+  // its verdict. The word "verified" appears nowhere.
   const SAID = 'is-said';
   const COMPUTED = 'is-computed';
 
@@ -482,11 +461,9 @@
       : figure('no figure', null, 'zero exit', SAID, 'author states', true));
 
     // The fourth tile is what the file shipped to back the other three, and
-    // never a dollar figure. There are no dollars in the file at all, by
-    // design, because four of the five agents are priced at zero in the local
-    // rate table and a workflow costing real money would publish as free. A
-    // local estimate from local rates is a real figure and it belongs to the
-    // inspector, which owns the rate table and the tier that goes with it.
+    // never a dollar figure: a workflow file carries no dollars. A local
+    // estimate from local rates belongs to the inspector, which owns the rate
+    // table and the tier that goes with it.
     const inline = r.evidence === 'inline';
     tiles.push(figure(inline ? 'log attached' : 'no log', null, 'evidence', SAID, 'author states', !inline));
 
@@ -495,23 +472,19 @@
 
   // ── The ready pane, when nothing better is registered ──────────────────────
   // Everything from here to paintReady is the fallback renderer: what this
-  // sheet draws with no artifact inspector loaded. It is deliberately complete
-  // rather than a placeholder, because a surface whose degraded mode is a blank
-  // pane is a surface that ships blank the first time a load order changes.
+  // sheet draws with no artifact inspector loaded. It is complete rather than a
+  // placeholder, so a load-order change still gets a full pane.
   //
-  // It is built into a fragment and committed in one assignment. A builder that
-  // appends as it goes leaves a half-drawn sheet on screen when el() refuses
-  // something, and a half-drawn sheet is the state a reader is most likely to
-  // misread as the whole file.
+  // It is built into a fragment and committed in one assignment, so a refusal
+  // from el() leaves the previous pane rather than a half-drawn one.
   function buildEvidence(read) {
     const artifact = read.artifact;
     const out = [];
 
-    // The fingerprint, whole. This is where a reader is asked to compare
-    // against the repository they got the file from, and an eight character
-    // prefix match is not a verdict. The chip says the string was recomputed
-    // here rather than read out of the file, which is the only claim on this
-    // pane this machine is entitled to make on its own.
+    // The fingerprint, whole rather than as a prefix, because this is where a
+    // reader compares it against the repository they got the file from. The
+    // chip says the string was recomputed here rather than read out of the
+    // file.
     const copyBtn = adopt('wfx-in-fp-copy', () => el('button', { type: 'button', class: 'ghost-btn' }, 'Copy'));
     out.push(el('div', { class: ['ra-status', 'ra-status-info'] },
       el('div', { class: 'wfx-fp-h' },
@@ -591,11 +564,8 @@
 
   // A control that ships in index.html with an id this file is contracted to
   // wire keeps that identity by being moved into the rebuilt pane rather than
-  // recreated. el() refuses to mint an id outside its own namespace, which is
-  // the rule that stops a manifest naming the Install button, and adopting is
-  // how a shell control survives it. The fallback exists so a markup change
-  // downstream degrades to a working sheet with an anonymous button rather
-  // than to a pane with a hole in it.
+  // recreated: el() mints ids only inside its own namespace. The fallback keeps
+  // a markup change downstream to a working sheet with an anonymous button.
   function adopt(id, make) {
     if (!S.adopted) S.adopted = {};
     if (!S.adopted[id]) {
@@ -611,11 +581,8 @@
   const ROW_GLYPH = Object.freeze({ block: 'block', caution: 'caution', ok: 'ok' });
 
   // Rows arrive from the main process in reading order and are shown in
-  // severity order. A blocker under a green tick is a blocker the footer names
-  // and the reader then has to scroll past two passes to find, which is the
-  // situation the rose bar on the row exists to compensate for; putting the
-  // row first is the fix the bar stands in for. Sort is stable, so
-  // within a severity the reading order the main process chose survives.
+  // severity order, so the rows the footer names are the first ones on screen.
+  // The sort is stable, so within a severity the main process's order survives.
   function sortChecks(checks) {
     return checks
       .map((c, i) => ({ c, i }))
@@ -627,21 +594,17 @@
       .map((x) => x.c);
   }
 
-  // A row can carry two different affordances and they are not alternatives.
-  // fix is somewhere to go; detail is something to read. Folding the second
-  // into the first is how a button labelled "Add a server" ends up revealing
-  // two hashes, so each gets its own control and a row that has both shows
+  // A row can carry two affordances and they are not alternatives: fix is
+  // somewhere to go, detail is something to read, and a row with both shows
   // both.
+  //
   // The one place a preflight fix is acted on, shared by the rows this file
   // builds and by the inspector's onFix callback, so a fix behaves the same
   // whichever renderer drew the row.
   //
-  // Every destination is a hook rather than a call. The MCP row's affordance in
-  // particular opens the EMPTY server form and nothing else: no name, no
-  // command, no argv from the manifest reaches it, because a manifest value
-  // arriving at the add channels is a stranger's JSON becoming a persistent
-  // local process. Routing through a hook is what keeps those channel names out
-  // of this file entirely.
+  // Every destination is a hook rather than a call. The MCP row's affordance
+  // opens the EMPTY server form: no name, no command, no argv from the manifest
+  // reaches it, and the channel names stay out of this file entirely.
   function dispatchFix(fix) {
     if (!fix || typeof fix !== 'object') return;
     if (fix.kind === 'pick-cwd') { pickCwd(); return; }
@@ -652,9 +615,8 @@
       return;
     }
     // Nothing wired for this fix yet. Saying so in the live region is more
-    // useful than a control that swallows the press, and it keeps the row
-    // honest: Husk is not about to substitute anything on the reader's behalf,
-    // which is the whole point of naming the missing requirement.
+    // useful than a control that swallows the press, and the row above still
+    // names what is missing.
     say('Husk has nothing to open for that here. The row above names what is missing.');
   }
 
@@ -668,10 +630,9 @@
       out.push(btn);
     }
 
-    // The fingerprint pair, in full, on the one row where a reader is asked to
-    // decide whether the server or skill they have is the one the prompts were
-    // written against. 64 characters each, never a prefix: an eight character
-    // match is not a verdict, and this is the surface the rule was written for.
+    // The fingerprint pair, in full and never as a prefix, on the row where a
+    // reader decides whether the server or skill they have is the one the
+    // prompts were written against.
     const detail = check.detail;
     if (detail && typeof detail === 'object' && (detail.declared || detail.local)) {
       const dl = el('dl', { class: 'wfx-refuse-e', hidden: true },
@@ -728,13 +689,9 @@
     none: 'carries nothing forward',
   });
 
-  // The prompt is the actual risk surface: up to 8192 characters per step
-  // handed to an agent CLI. It renders as one text node inside a <pre>, with
-  // no token highlighting, because highlighting means splitting text nodes and
-  // el() owns the scrub that turns an invisible character into a visible
-  // replacement. A surface that split the string itself would be re-inserting
-  // the fragments outside that guarantee, which is precisely how a hidden
-  // second command gets back onto the screen it was supposed to be exposed on.
+  // Each prompt renders as one text node inside a <pre>, with no token
+  // highlighting: el() owns the scrub, and every character on screen is one it
+  // wrote.
   function buildSteps(graph) {
     const nodes = (graph && Array.isArray(graph.nodes)) ? graph.nodes : [];
     const items = nodes.map((n, i) => {
@@ -765,8 +722,7 @@
       // The inspector takes its two shell controls out of the host before it
       // empties it, and this sheet empties the host between opens, so they go
       // back in first. Handing them over rather than letting it recreate them
-      // is what keeps the Copy and Change listeners bound at startup working
-      // across every repaint.
+      // keeps the Copy and Change listeners bound at startup across repaints.
       host.replaceChildren(S.adopted['wfx-in-fp-copy'], S.adopted['wfx-in-cwd-change']);
       let res;
       try {
@@ -776,27 +732,20 @@
           preflight: S.preflight,
           cwd: S.cwd,
           billing: (typeof hooks.getBilling === 'function') ? hooks.getBilling() : null,
-          // The main process already re-derived the shipped log's figures and
-          // compared them to the declared ones during artifactRead, so that
-          // answer is handed on rather than dropped. Dropping it renders every
-          // figure as an author claim and makes the middle tier unreachable: a
-          // file could ship a log that checks out and still be read as hearsay,
-          // which is the one thing shipping a log is supposed to buy.
+          // The main process re-derives the shipped log's figures during
+          // artifactRead and compares them to the declared ones, so that answer
+          // is handed on. It is what makes the middle tier reachable.
           chainCheck: (S.read && S.read.chainCheck) || null,
-          // Framed, because the busy pane's skeleton reserves a framed graph
-          // and the whole point of that skeleton is that the real thing lands
-          // in the space it held. The inspector appends what it is given and
-          // does not know what surface it is on, so the frame belongs to the
-          // caller. The fallback builder below wraps it the same way.
-          // app.js owns the labelled preview, and this sheet is the one place a
-          // reader most needs the step names: they are deciding whether to run
-          // somebody else's instructions. Calling that builder rather than the
-          // local one is also what stops the two drawings drifting, since the
-          // record pane behind a card already uses it and the two views exist
-          // to be compared. Null for the run, exactly as the record pane passes,
-          // because a status here would be coloured from a stranger's receipt.
-          // buildMiniGraph stays as the fallback for a window where app.js has
-          // not finished evaluating.
+          // Framed, because the busy pane's skeleton reserves a framed graph and
+          // the real thing lands in the space it held. The inspector appends
+          // what it is given and does not know what surface it is on, so the
+          // frame belongs to the caller.
+          //
+          // app.js owns the labelled preview and the record pane behind a card
+          // already uses it, so calling it here keeps the two drawings in step
+          // and gives this sheet the step names. Null for the run, as the record
+          // pane passes. buildMiniGraph is the fallback for a window where
+          // app.js has not finished evaluating.
           miniGraph: el('div', { class: 'wf-card-graph' },
             typeof window.wfMiniGraph === 'function'
               ? window.wfMiniGraph(S.read.artifact.graph, null, 'panel')
@@ -907,9 +856,8 @@
       }
       detail.replaceChildren(...kids);
     }
-    // Everything staged is dropped. A refused file has no install, so keeping
-    // the artifact around would leave the Install path one state transition
-    // away from a file this sheet just said it would not run.
+    // Everything staged is dropped, so a refused file leaves nothing behind
+    // for the Install path to reach.
     S.read = null;
     S.artifact = null;
     S.preflight = null;
@@ -925,15 +873,11 @@
   // URL, clicks the file card to check something and clicks back has not asked
   // to lose what they typed.
   //
-  // The whole picker, both path rows and both buttons are also gated on S.owned,
-  // and that is the interesting half. These controls live in the sheet's body
-  // above the panes rather than inside one, so no data-state hides them: when
-  // app.js borrows this card to show the record behind a workflow's receipts
-  // chip, an ungated picker leaves a dialog titled Receipts carrying a
-  // repository field and a Fetch button. Pressing that Fetch drives this
-  // module's own state machine to a refusal under somebody else's title, over a
-  // workflow installed weeks ago. A control that belongs to a flow nobody
-  // started is not an affordance, so it is not on screen.
+  // The whole picker, both path rows and both buttons are gated on S.owned.
+  // These controls live in the sheet's body above the panes rather than inside
+  // one, so no data-state hides them, and app.js borrows this card to show the
+  // record behind a workflow's receipts chip. A control that belongs to a flow
+  // nobody started is not an affordance, so it is not on screen.
   function setSource(kind) {
     S.source = kind === 'file' ? 'file' : 'repo';
     const m = modal();
@@ -957,16 +901,13 @@
   }
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
-  // The file row's markup carries a picker and nothing else, so without this
-  // button the only way to re-read a path already in that field is to walk back
-  // through the native dialog and re-select the same file. That is a real cost
-  // on the one loop this sheet is used in while a workflow is being written:
-  // edit the file, read it here, look at the prompts, edit again. The sheet's
-  // own refusal copy promises the control ("type its absolute path, then press
-  // Fetch"), so the button is what that sentence describes. It is built here
-  // rather than in index.html because this module owns what Fetch does in
-  // either source; the repo row's button keeps its shipped id and this one is
-  // held by reference.
+  // The file row's markup carries a picker, and this button re-reads a path
+  // already in the field, which is the loop a workflow is written in: edit the
+  // file, read it here, look at the prompts, edit again. The sheet's refusal
+  // copy names the control ("type its absolute path, then press Fetch"). It is
+  // built here rather than in index.html because this module owns what Fetch
+  // does in either source; the repo row's button keeps its shipped id and this
+  // one is held by reference.
   let fileFetchBtn = null;
 
   function mountFileFetch() {
@@ -992,9 +933,7 @@
   }
 
   // The banner that says these bytes did not come off the network. Unlike the
-  // fetch-in-flight banner it survives into the ready pane, because the one
-  // impression it exists to correct is the one that pane gives: a fingerprint
-  // recomputed here, from a file whose age nobody stated, under a heading that
+  // fetch-in-flight banner it survives into the ready pane, which otherwise
   // reads as the current contents of the URL in the field.
   //
   // The reason comes from git by way of friendlyCloneError, so it goes through
@@ -1024,15 +963,11 @@
   // Which file in the repository these bytes are. A clone can hold several
   // .husk.json and the main process reads exactly one of them: shallowest
   // first, workflow.husk.json preferred, ties broken alphabetically so the
-  // choice is the same on every machine. Left unstated, that choice is
-  // invisible: a repository with a workflow file per environment installs one
-  // of them and the sheet reads as though it were the only workflow in there.
+  // choice is the same on every machine. The sentence states that choice, so a
+  // repository with a workflow file per environment does not read as one.
   //
-  // The others are named and are not offered as controls. Making them
-  // selectable means reading a second path out of a cloned tree, and the
-  // confinement and symlink checks that guard the first read live behind the
-  // repo source in the main process, not behind the file source a control here
-  // would have to use.
+  // The others are named and are not offered as controls: the repo source in
+  // the main process decides which path in a clone is read.
   function sourceNote(source) {
     if (!source || source.kind !== 'repo') return null;
     const rel = (typeof source.relPath === 'string' && source.relPath) ? source.relPath : null;
@@ -1065,21 +1000,16 @@
   }
 
   // A value the reader typed into the repository field that is plainly a path
-  // on this disk. git will take it, treat it as a remote, and fail; the error
-  // that comes back is a network error, and a sheet that repeats it sends
-  // somebody whose file is two directories away to go and look at their wifi.
-  // Everything this recognises is unambiguous: a leading separator, a home
-  // shorthand, an explicit relative prefix, a Windows drive or UNC path, or the
-  // file scheme. A bare "github.com/dev/flows" is none of those and still gets
-  // the https prefix it obviously meant.
+  // on this disk. git would treat it as a remote and answer with a network
+  // error, so it is answered here instead. Everything this recognises is
+  // unambiguous: a leading separator, a home shorthand, an explicit relative
+  // prefix, a Windows drive or UNC path, or the file scheme. A bare
+  // "github.com/dev/flows" is none of those and gets the https prefix.
   const LOCAL_PATH_RE = /^(?:~|\/|\.{1,2}[/\\]|[A-Za-z]:[/\\]|\\\\|file:\/\/)/;
 
   async function doFetch() {
-    // Nothing here runs while another surface has the card. The controls that
-    // reach this are hidden in that case, so this is the second lock rather
-    // than the first, and it is cheap enough to be worth having: a fetch
-    // started from a dialog titled Receipts would repaint somebody else's pane
-    // with somebody else's file.
+    // Nothing here runs while another surface has the card, so a fetch always
+    // repaints the pane the flow that started it owns.
     if (S.installing || !S.owned) return;
     const isRepo = S.source === 'repo';
     const field = byId(isRepo ? 'wfx-in-url' : 'wfx-in-path');
@@ -1128,8 +1058,7 @@
       isRepo ? { source: 'repo', url: value } : { source: 'file', path: value });
 
     // A result from a fetch the reader has already replaced or abandoned is
-    // discarded whole. Painting it would mean the sheet shows a file nobody
-    // asked for any more, with an Install button under it.
+    // discarded whole, so the pane describes the file that was last asked for.
     if (seq !== S.seq) return;
     fetchBusy(false);
 
@@ -1210,13 +1139,10 @@
       return;
     }
     S.preflight = res;
-    // res.cwd is deliberately not adopted as the binding. Preflight resolves a
-    // directory so its marker-file and work-tree rows have something to report
-    // on, and if the main process ever answers with a default, taking it here
-    // would bind an imported workflow to a directory nobody chose: the exact
-    // shape of the bug where a stranger's four-step agent workflow edits
-    // whichever repo you last had open. The binding is what the reader picked
-    // and nothing else, so an unpicked directory keeps the commit withheld.
+    // res.cwd is not adopted as the binding. Preflight resolves a directory so
+    // its marker-file and work-tree rows have something to report on. The
+    // binding is what the reader picked and nothing else, so an unpicked
+    // directory keeps the commit withheld.
     paintReady();
     applyGate();
     const blocking = Number(res.blocking) || 0;
@@ -1230,11 +1156,10 @@
     return checks.find((c) => c && c.status === 'block') || null;
   }
 
-  // The single place that decides whether the commit is offered, and the
-  // single place that writes the sentence saying why it is not. aria-disabled
-  // rather than disabled: `disabled` takes the button out of the tab order, so
-  // the one control a keyboard user would land on to find out what is blocking
-  // them is the one they can never reach.
+  // The single place that decides whether the commit is offered, and the single
+  // place that writes the sentence saying why it is not. aria-disabled rather
+  // than disabled, so the button keeps its place in the tab order and can carry
+  // that sentence to a keyboard user.
   function applyGate() {
     const go = byId('wfx-in-go');
     if (!go) return;
@@ -1255,8 +1180,8 @@
     // The collision rides on the footer as well as in the banner at the top of
     // the scroller, because the banner is not where the reader is standing when
     // they press Install. The name itself is not repeated here: this string is
-    // written straight to textContent and every string that came out of the
-    // file goes through el(), which the banner above does.
+    // written straight to textContent, and the banner above is the copy that
+    // carries the name, through el().
     setFoot(S.nameClash
       ? 'Installing writes a file. It does not run anything. A workflow of this name is already here, so this adds a second card.'
       : 'Installing writes a file. It does not run anything.', false);
@@ -1282,10 +1207,9 @@
   async function doInstall() {
     const go = byId('wfx-in-go');
     if (!go || S.installing) return;
-    // An aria-disabled button is still clickable; this listener is the entire
-    // guard. Re-announcing the blocker is the useful thing to do with a press
-    // that cannot be honoured, because the reader has just told us they are
-    // looking for the way forward.
+    // The listener holds the state. Re-announcing the blocker is the useful
+    // thing to do with a press that cannot be honoured, because the reader has
+    // just told us they are looking for the way forward.
     if (go.getAttribute('aria-disabled') === 'true') {
       const note = byId('wfx-in-foot');
       say(note ? note.textContent : 'Install is not available yet.');
@@ -1365,11 +1289,9 @@
     close();
     if (!id) return;
     if (typeof hooks.openConsent === 'function') { hooks.openConsent(id, workflow, cwd); return; }
-    // runWorkflow is the one call that starts a workflow, not a convenience
-    // wrapper: it reads the sidecar, opens the gate when the row says consent
-    // is owed, writes consentedAt only after the reader agrees, and only then
-    // starts the run. Calling workflows.run from here instead would be the
-    // path that skips the gate, which is the entire thing the gate exists for.
+    // runWorkflow is the one call that starts a workflow: it reads the sidecar,
+    // opens the gate when the row says consent is owed, writes consentedAt only
+    // after the reader agrees, and only then starts the run.
     const ui = window.WfxArtifactUi;
     if (ui && typeof ui.runWorkflow === 'function') { ui.runWorkflow(id, { cwd, workflow }); return; }
     if (typeof window.toast === 'function') {
@@ -1424,9 +1346,8 @@
 
   // The closer MODAL_CLOSERS points at, which is why it does more than hide a
   // card. Bumping the sequence is what makes Escape during a clone mean
-  // something: the clone in the main process runs to its own end, and its
-  // result lands on a sheet that has already discarded it rather than
-  // repainting a dialog the reader closed.
+  // something: the clone in the main process runs to its own end and its result
+  // lands on a sheet that has already discarded it.
   function close() {
     const m = modal();
     if (m) m.hidden = true;
@@ -1455,9 +1376,7 @@
 
     // Both adoptions happen here, before anything empties the ready pane. The
     // pane ships with a worked example in it and the first open replaces the
-    // lot, so a control claimed later would be claimed from a pane that no
-    // longer has it and the sheet would quietly grow a second, id-less Copy
-    // button that nothing is bound to.
+    // lot, so the two shell controls are claimed while they are still there.
     adopt('wfx-in-fp-copy', () => el('button', { type: 'button', class: 'ghost-btn' }, 'Copy'));
     adopt('wfx-in-cwd-change', () => el('button', { type: 'button', class: 'ghost-btn' }, 'Change directory'));
     // The file row's Fetch, added once, before anything can hide the row.
@@ -1534,11 +1453,10 @@
 
   // ── The one global ─────────────────────────────────────────────────────────
   // A single namespaced object rather than a handful of loose functions,
-  // because app.js needs exactly four things from this file: a way to open the
-  // sheet from the page head, a closer to register in MODAL_CLOSERS so global
-  // Escape drops a staged install rather than hiding a card over a running
-  // clone, the hooks that let it keep owning the grid and the MCP and skills
-  // surfaces, and an override for the ready pane's renderer.
+  // because app.js needs four things from this file: a way to open the sheet
+  // from the page head, a closer to register in MODAL_CLOSERS so global Escape
+  // drops a staged install, the hooks that let it keep owning the grid and the
+  // MCP and skills surfaces, and an override for the ready pane's renderer.
   //
   //   WfxInstall.open()
   //   WfxInstall.close()                     MODAL_CLOSERS['wfx-install-modal']

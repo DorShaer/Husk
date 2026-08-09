@@ -2,27 +2,17 @@
 
 // Content-addressed snapshot store for Husk Autonomy Mode.
 //
-// Captures a workspace tree into a per-session, content-addressed
-// blob store and restores from it. The trust mechanic for Autonomy
-// runs is "you can always undo": before the agent starts, we snap
-// the workspace; after, the user can revert any or all changes from
-// the snapshot.
+// Captures a workspace tree into a per-session, content-addressed blob
+// store and restores from it, so an Autonomy run can always be undone.
 //
 // Storage layout (everything under storageRoot/sessions/<sessionId>/):
 //   snapshot.json         the manifest: path -> { type, sha?, target?, mode? }
 //   blobs/<sha256>        content-addressed file body, optionally encrypted
 //
-// The module is pure / fs-only. Cross-platform (path.join everywhere,
-// no POSIX-only assumptions, no chmod for security). Encryption is
-// opt-in via a callback so the unit tests can run without Electron
-// and the production supervisor can wire electron safeStorage.
-//
-// Design rules enforced inside this module:
-//   - never writes outside storageRoot/sessions/<sessionId>/
-//   - never modifies files outside workspaceRoot during restore
-//   - encryption (when supplied) wraps every blob, not just "secrets"
-//   - symlinks are recorded structurally, never followed for content
-//   - rejects sessionId values that could escape the storage dir
+// The module is fs-only and cross-platform. Encryption is opt-in via a
+// callback, so the unit tests run without Electron and the production
+// supervisor wires electron safeStorage. Symlinks are recorded
+// structurally rather than followed for content.
 
 const fs = require('fs');
 const path = require('path');
@@ -32,17 +22,12 @@ const SESSION_DIR_RE = /^[A-Za-z0-9._-]+$/;
 const DEFAULT_IGNORE = [
   '.git', 'node_modules', 'dist', 'build', '.DS_Store', '.husk-tmp',
   '.husk-autopilot-status.json',
-  // Common heavy directories that explode snapshot time without
-  // contributing real "did the agent change my code" signal.
+  // Heavy build, cache, and tooling directories, skipped for walk speed.
   'libs', 'release', 'out', 'target', '.next', '.nuxt', '.cache',
   '.vscode', '.idea', '.parcel-cache', '.turbo', 'coverage',
   'test-results', 'playwright-report', '__pycache__', 'venv', '.venv',
 ];
-// Belt and suspenders: refuse to snapshot a workspace with more
-// than this many files. An unguarded walk of $HOME would hang the
-// app ("Husk is not responding"). A real project repo is well
-// under this limit; if a user hits it, they almost certainly
-// picked the wrong scope.
+// Upper bound on the number of files one snapshot walk captures.
 const DEFAULT_MAX_ENTRIES = 50000;
 
 function isSafeSessionId(id) {
@@ -61,8 +46,7 @@ function manifestPath(storageRoot, sessionId) {
   return path.join(sessionDir(storageRoot, sessionId), 'snapshot.json');
 }
 
-// Whether a run captured a pre-run snapshot. Runs started with the snapshot
-// toggle off write no manifest, so revert has nothing to restore.
+// Whether a run captured a pre-run snapshot.
 function hasSnapshot(storageRoot, sessionId) {
   if (!isSafeSessionId(sessionId)) return false;
   try {
@@ -71,21 +55,14 @@ function hasSnapshot(storageRoot, sessionId) {
   } catch (_) { return false; }
 }
 
-// sha256OfBuffer is a tiny helper kept separate so the test suite
-// can synthesize expected hashes without rebuilding the whole module.
 function sha256OfBuffer(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-// Write a content-addressed blob atomically. The `wx` flag is
-// O_CREAT|O_EXCL: it creates the file only if it does not already exist,
-// in a single syscall, so there is no check-then-write race. An EEXIST
-// just means the identical content is already stored (blobs are keyed by
-// their own sha256), so it is ignored.
-//
-// `seen` is an in-memory Set of shas already handled this run. It dedupes
-// the (potentially expensive) encrypt + write so identical content is
-// encrypted once per run, without an fs existence check.
+// Write a content-addressed blob atomically. The `wx` flag creates the
+// file in one syscall only when it is absent; EEXIST means the identical
+// content is already stored. `seen` holds the shas handled this run and
+// dedupes the encrypt plus write.
 function writeBlobAtomic(bdir, sha, content, encrypt, seen) {
   if (seen) {
     if (seen.has(sha)) return;
@@ -101,10 +78,8 @@ function writeBlobAtomic(bdir, sha, content, encrypt, seen) {
   }
 }
 
-// shouldIgnore returns true when the relative path (as walked) starts
-// with any of the ignore entries. Match is "starts with the entry as
-// a full path segment", so an ignore entry of 'dist' matches 'dist'
-// and 'dist/foo' but not 'distinct'.
+// shouldIgnore matches a relative path against the ignore entries by whole
+// path segment, so 'dist' matches 'dist' and 'dist/foo' but not 'distinct'.
 function shouldIgnore(relPath, ignores) {
   for (const ig of ignores) {
     if (relPath === ig) return true;
@@ -148,10 +123,8 @@ function captureSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   const entries = {};
   const warnings = [];
   const seen = new Set();
-  // Scoped capture: record only the named paths instead of walking the tree.
-  // This is what makes Apply reversible. Apply writes a known list of relative
-  // paths into the real project, so the undo only has to remember those, and
-  // the capture costs O(changed files) rather than a full project walk.
+  // Scoped capture records only the named paths instead of walking the tree,
+  // so it costs O(named paths) rather than a full project walk.
   const scoped = Array.isArray(opts.paths);
   if (scoped) {
     captureScoped(workspaceRoot, opts.paths, entries, warnings, opts, bdir, seen);
@@ -164,10 +137,8 @@ function captureSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
     sessionId,
     capturedAt: new Date().toISOString(),
     workspaceRoot,
-    // A scoped manifest describes a slice of the tree, not the whole tree, so
-    // restore must never run its delete-everything-else pass against it. The
-    // flag travels with the manifest so that guarantee survives a caller who
-    // forgets to pass preserveExtras.
+    // Marks a manifest that describes a slice of the tree rather than the
+    // whole tree. Restore takes its additive path for these.
     scoped,
     entries,
   };
@@ -197,8 +168,8 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
     const abs = path.join(here, ent.name);
     try {
       if (ent.isSymbolicLink()) {
-        // Record the symlink without following it. Storing the target
-        // verbatim is enough to restore the link byte-exact later.
+        // Record the symlink structurally; the stored target restores it
+        // byte-exact.
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
         const target = fs.readlinkSync(abs);
         entries[relChild] = { type: 'symlink', target };
@@ -219,20 +190,14 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
         entries[relChild] = { type: 'file', sha };
         captured++;
       } else {
-        // Sockets, devices, fifos. Ignore: not meaningful for the
-        // "did the agent change my files" question.
+        // Sockets, devices, and fifos are not captured.
         continue;
       }
     } catch (err) {
-      // A file vanished, became unreadable, or hit a transient FS
-      // error mid-walk. Record a warning and move on; do NOT abort
-      // the whole snapshot.
+      // An entry that vanished or could not be read warns and the walk
+      // continues. A file gets an entry with no sha, so the diff reads it
+      // as pre-existing and restore leaves its content alone.
       warnings.push({ path: relChild, reason: err.message });
-      // If it was a file we simply could not read (transient lock,
-      // permission blip), still record it as a pre-existing entry so the
-      // diff does not later call it "added" and a revert does not delete
-      // a file the agent never touched. We cannot hash it, so it carries
-      // no sha and restore leaves its content alone.
       try { if (ent.isFile()) { entries[relChild] = { type: 'unreadable' }; captured++; } } catch (_) {}
     }
   }
@@ -240,12 +205,8 @@ function walk(absRoot, rel, ignores, entries, warnings, opts, bdir, seen) {
 }
 
 // captureScoped records the current state of exactly the paths it is given,
-// including the ones that do not exist yet.
-//
-// The absent entry is the point of this function. Applying a run's changes
-// creates files that were never in the project, and an undo that only knows
-// how to restore content would leave those behind. Recording "this path did
-// not exist" lets restore delete it, so the undo is symmetric with the apply.
+// including the ones that do not exist yet. An 'absent' entry lets restore
+// remove that path again, so an undo is symmetric with the apply.
 function captureScoped(absRoot, paths, entries, warnings, opts, bdir, seen) {
   for (const rel of paths) {
     if (typeof rel !== 'string' || !rel) continue;
@@ -275,7 +236,7 @@ function captureScoped(absRoot, paths, entries, warnings, opts, bdir, seen) {
         writeBlobAtomic(bdir, sha, content, opts.encrypt, seen);
         entries[key] = { type: 'file', sha };
       } else {
-        // Socket, device, fifo. Not something Apply writes; leave it alone.
+        // Sockets, devices, and fifos are recorded without content.
         entries[key] = { type: 'unreadable' };
       }
     } catch (err) {
@@ -285,11 +246,8 @@ function captureScoped(absRoot, paths, entries, warnings, opts, bdir, seen) {
   }
 }
 
-// pruneEmptyParents removes directories that Apply created on the way to a
-// file which the undo has just deleted. Without it, reverting an apply that
-// added src/new/deep/thing.js leaves three empty directories behind and the
-// project is not actually back where it started. Stops at baseAbs and at the
-// first non-empty directory.
+// pruneEmptyParents removes the directories left empty above a file the
+// restore just deleted. Stops at baseAbs and at the first non-empty directory.
 function pruneEmptyParents(baseAbs, fileAbs) {
   const baseN = path.resolve(baseAbs);
   let cur = path.dirname(path.resolve(fileAbs));
@@ -331,13 +289,8 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   if (!manifest || !manifest.entries || typeof manifest.entries !== 'object') {
     return { ok: false, error: 'manifest malformed' };
   }
-  // Safety cross-check: the restore target must be the same directory the
-  // snapshot was captured from. The second pass deletes every workspace
-  // file not in the manifest, so restoring into the wrong root (e.g. a
-  // caller that fell back to HOME for an empty workspaceRoot) would wipe
-  // an unrelated directory. Refuse rather than trust the caller. A manifest
-  // with no recorded root is refused outright, so the check cannot be
-  // skipped by a manifest that simply omits the field.
+  // The restore target must be the same directory the snapshot was captured
+  // from. A manifest with no recorded root is refused.
   if (!manifest.workspaceRoot || path.resolve(manifest.workspaceRoot) !== path.resolve(workspaceRoot)) {
     return { ok: false, error: 'workspaceRoot does not match the snapshot manifest; refusing to restore' };
   }
@@ -346,22 +299,17 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   const restored = [];
   const warnings = [];
 
-  // First pass: ensure every snapshot entry exists at the right state.
-  // Ancestor-chain validation runs once per entry, before any fs
-  // mutation, so mkdirSync cannot resolve through a link that already
-  // sits on the path and points outside the tree.
+  // First pass: bring every snapshot entry to its recorded state.
+  // Ancestor-chain validation runs once per entry, before any fs mutation.
   for (const relPath of Object.keys(manifest.entries)) {
     const meta = manifest.entries[relPath];
-    // Pre-existing file we could not read at capture time: we never
-    // captured its content, so leave whatever is on disk untouched. It
-    // stays in the keep-set below, so the delete pass will not remove it.
+    // No content was captured for an unreadable entry, so whatever is on
+    // disk stays. It remains in the keep-set, so the delete pass skips it.
     if (meta && meta.type === 'unreadable') continue;
     const abs = joinSafely(workspaceRoot, relPath);
     if (!abs) { warnings.push({ path: relPath, reason: 'path escapes workspaceRoot' }); continue; }
     // The path did not exist when the snapshot was taken, so restoring it
-    // means removing whatever sits there now. This is how an apply that added
-    // files gets undone: a scoped manifest skips the delete-extras pass, so
-    // without this the added files would survive the revert.
+    // removes whatever sits there now.
     if (meta && meta.type === 'absent') {
       try {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to workspaceRoot
@@ -399,10 +347,8 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
         fs.symlinkSync(meta.target, abs);
       } else if (meta.type === 'file') {
-        // Reject blob names that are not lowercase-hex 64-char strings.
-        // meta.sha comes from the manifest on disk rather than from this
-        // run, so the shape check is what confines the read to a blob
-        // inside bdir.
+        // Blob names are 64-char lowercase hex, which confines the read to
+        // a blob inside bdir.
         if (typeof meta.sha !== 'string' || !/^[a-f0-9]{64}$/.test(meta.sha)) {
           warnings.push({ path: relPath, reason: 'manifest sha is not a 64-char hex string' });
           continue;
@@ -411,17 +357,12 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- blobAbs is path.join(bdir, validated sha)
         let buf = fs.readFileSync(blobAbs);
         if (typeof opts.decrypt === 'function') buf = opts.decrypt(buf);
-        // Re-hash the decrypted content and require it match the
-        // manifest, so a blob whose bytes do not match its digest, a
-        // decrypt with the wrong key, and any future cache skew all
-        // fail closed instead of landing in the workspace.
+        // Re-hash the decrypted content and require it to match the manifest.
         if (sha256OfBuffer(buf) !== meta.sha) {
           warnings.push({ path: relPath, reason: 'blob sha mismatch after decrypt' });
           continue;
         }
-        // Pre-unlink so writeFileSync cannot follow a link that already
-        // sits at abs and resolves elsewhere. Directories at this path
-        // are post-snapshot type conflicts and must be replaced.
+        // Pre-unlink so the write below lands on a fresh regular file.
         try {
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded
           fs.lstatSync(abs);
@@ -439,20 +380,13 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
     }
   }
 
-  // Second pass: remove files in workspace that are NOT in the
-  // manifest. This is what makes restore truly revert the run.
-  // Honors the same default ignore list so node_modules etc. that
-  // were never snapped are not torn out from under the user.
+  // Second pass: remove files in the workspace that are NOT in the manifest,
+  // so the tree matches the captured state. Honors the same default ignore
+  // list, so directories that were never snapped stay put.
   //
-  // opts.preserveExtras: true skips this destructive pass. The
-  // supervisor wires that flag for "additive restore" flows where
-  // the user wants the snapshotted files back without losing
-  // anything the agent added. Default stays strict-revert because
-  // that is the trust promise (a restore matches what was captured).
-  //
-  // A scoped manifest forces the additive path regardless of what the caller
-  // asked for. It only ever described a handful of paths, so the strict pass
-  // would read every other file in the project as an extra and delete it.
+  // opts.preserveExtras: true skips this pass and keeps whatever the agent
+  // added. A scoped manifest always takes that additive path, since it
+  // describes a slice of the tree rather than the whole of it.
   if (opts.preserveExtras !== true && manifest.scoped !== true) {
     const ignores = DEFAULT_IGNORE.slice();
     if (Array.isArray(opts.ignore)) for (const p of opts.ignore) if (typeof p === 'string' && p) ignores.push(p);
@@ -462,15 +396,10 @@ function restoreFromSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   return { ok: true, restored, warnings };
 }
 
-// validateAncestorChain returns true iff every path component
-// between baseAbs and the parent of fileAbs is either non-existent
-// (mkdirSync will create it freshly) OR a real directory. A symlink
-// anywhere on the chain is refused, so writeFileSync resolves the
-// path entirely inside the workspace instead of through a link that
-// lands outside it. The check and the write are separate syscalls,
-// which is fine for Phase 1: what it guards is a manifest or tree
-// whose bytes disagree with this machine, not a second writer
-// racing this one.
+// validateAncestorChain returns true when every path component between
+// baseAbs and the parent of fileAbs is either non-existent (mkdirSync
+// creates it freshly) or a real directory. A symlink on the chain
+// returns false.
 function validateAncestorChain(baseAbs, fileAbs) {
   const baseN = path.resolve(baseAbs);
   const parent = path.dirname(fileAbs);
@@ -525,10 +454,8 @@ function ensureRestoreParent(baseAbs, fileAbs) {
 }
 
 function joinSafely(base, rel) {
-  // Confines the path to the root: a manifest entry whose normalized
-  // form resolves outside workspaceRoot is rejected, never written.
-  // Normalize base via path.resolve so a caller-supplied trailing
-  // separator does not break the prefix check.
+  // Confines the path to the root. Returns null when the normalized entry
+  // resolves outside base. path.resolve normalizes any trailing separator.
   const baseN = path.resolve(base);
   const norm = path.normalize(rel);
   if (norm.startsWith('..') || path.isAbsolute(norm)) return null;
@@ -553,8 +480,8 @@ function removeExtras(absRoot, rel, keepSet, ignores, warnings) {
     const abs = path.join(here, ent.name);
     if (ent.isDirectory() && !ent.isSymbolicLink()) {
       removeExtras(absRoot, relChild, keepSet, ignores, warnings);
-      // Remove the directory if it ended up empty AND was not in the
-      // manifest (e.g., the agent created a new empty dir).
+      // Remove the directory when it ended up empty and is not in the
+      // manifest.
       try {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs bounded
         if (fs.readdirSync(abs).length === 0 && !anyKeptUnder(keepSet, relChild)) {
@@ -657,15 +584,13 @@ function walkForDiff(absRoot, rel, ignores, manifestEntries, seen, changes, warn
   }
 }
 
-// captureSnapshotAsync is the same as captureSnapshot but yields to
-// the event loop every YIELD_EVERY entries so the main process stays
-// responsive while large workspaces are walked. fs reads remain
-// synchronous; the only difference is we hand control back to the
-// event loop frequently enough that the renderer keeps painting.
+// captureSnapshotAsync matches captureSnapshot but yields to the event loop
+// every YIELD_EVERY entries, so the main process keeps painting while a
+// large workspace is walked. fs reads stay synchronous.
 const YIELD_EVERY = 50;
 async function captureSnapshotAsync(workspaceRoot, storageRoot, sessionId, opts = {}) {
-  // A scoped capture touches only the paths it is handed, so there is no long
-  // walk to yield out of. One implementation, no second copy to keep in sync.
+  // A scoped capture touches only the paths it is handed, so there is no
+  // long walk to yield out of.
   if (Array.isArray(opts.paths)) return captureSnapshot(workspaceRoot, storageRoot, sessionId, opts);
   if (!isSafeSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot)) {
@@ -756,18 +681,17 @@ async function walkAsync(absRoot, rel, ignores, entries, warnings, opts, bdir, s
       }
     } catch (err) {
       warnings.push({ path: relChild, reason: err.message });
-      // See walk(): a momentarily-unreadable pre-existing file is recorded
-      // so the diff does not call it "added" and a revert does not delete it.
+      // See walk(): an unreadable file still gets a content-less entry, so
+      // the diff reads it as pre-existing.
       try { if (ent.isFile()) { entries[relChild] = { type: 'unreadable' }; captured++; } } catch (_) {}
     }
   }
   return captured;
 }
 
-// diffWorkspaceAsync is the same as diffWorkspace but yields to the
-// event loop every YIELD_EVERY entries so polling the live diff from
-// the autonomy page does not freeze the main process while the agent
-// is mid-edit.
+// diffWorkspaceAsync matches diffWorkspace but yields to the event loop
+// every YIELD_EVERY entries, so polling the live diff from the autonomy
+// page keeps the main process responsive.
 async function diffWorkspaceAsync(workspaceRoot, storageRoot, sessionId, opts = {}) {
   if (!isSafeSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot)) {

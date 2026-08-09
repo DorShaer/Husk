@@ -10,30 +10,27 @@
 // writer of its own registry. This module only parses what is on disk
 // into plain serializable shapes for the renderer.
 //
-// Everything is defensive: a missing or malformed registry file means
-// "no plugins", never a throw. The renderer paints empty states.
+// A missing or malformed registry file reads as "no plugins" rather than
+// throwing, and the renderer paints empty states.
 
 const fs = require('fs');
 const path = require('path');
 const { isInside } = require('./path-confine');
 
-// Plugin identifiers look like "name" or "name@marketplace". Both parts
-// are slug-ish. The id is passed to the agent CLI as ONE argv element, so
-// it has to start with an alphanumeric (a leading dash would be read as
-// an option, not an id) and carry no control characters or whitespace.
-// The regex enforces both.
+// Plugin identifiers look like "name" or "name@marketplace". Each part is a
+// slug that starts with an alphanumeric and holds only word characters,
+// dots, dashes and underscores.
 const PLUGIN_PART_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const MAX_ID_LEN = 200;
 
-// Editor guard rails: only obviously-text files, capped in size, so the
-// inline editor never loads a binary blob or a giant artifact.
+// The inline editor opens obviously-text files, up to a size cap.
 const TEXT_EXTS = new Set([
   '.md', '.txt', '.json', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx',
   '.yaml', '.yml', '.toml', '.sh', '.py', '.css', '.html', '.xml',
   '.svg', '.env', '.gitignore', '.cfg', '.ini',
 ]);
 const MAX_FILE_BYTES = 512 * 1024;
-// File-tree walk caps so a pathological plugin dir cannot hang the IPC.
+// Caps on the file-tree walk.
 const MAX_TREE_FILES = 400;
 const MAX_TREE_DEPTH = 6;
 const COPILOT_DEFAULT_MARKETPLACES = [
@@ -48,11 +45,9 @@ function isSafePluginId(id) {
   return parts.every((p) => PLUGIN_PART_RE.test(p));
 }
 
-// All knowledge of the CLI's plugin command shape lives here, next to
-// the registry-file knowledge, so a future second plugin-capable agent
-// forks one module instead of chasing argv fragments through main.js.
-// Returns the argv array (to spawn WITHOUT a shell) or null when the
-// action or id is invalid.
+// The CLI's plugin command shape lives here, next to the registry-file
+// knowledge. Returns the argv array, or null when the action or id is
+// invalid.
 const PLUGIN_CLI_VERBS = {
   claude: new Set(['install', 'uninstall', 'enable', 'disable', 'update']),
   copilot: new Set(['install', 'uninstall', 'update']),
@@ -284,8 +279,8 @@ function readCatalog(agentDir, agent = 'claude', cacheDir = '') {
   return out;
 }
 
-// Name and size checks are separate so the write path (which sizes the
-// incoming content, not the file on disk) can use the name half alone.
+// Name and size checks are separate, so the write path can use the name
+// half alone against the incoming content.
 function isEditableName(relPath) {
   const ext = path.extname(relPath).toLowerCase();
   const base = path.basename(relPath);

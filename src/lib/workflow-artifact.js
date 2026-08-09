@@ -5,47 +5,36 @@
 //
 // A .husk.json file carries a workflow graph, a fingerprint of that graph, the
 // concrete things it needs in order to run, and receipts from runs on someone
-// else's machine. This module is the whole trust boundary for that file. The
-// boundary is the byte: everything inside the file, including its own
-// graphHash and its own receipts, comes from a machine this one does not
-// control and is treated that way.
+// else's machine. This module is the trust boundary for that file. The boundary
+// is the byte: everything inside the file, including its own graphHash and its
+// own receipts, comes from a machine this one does not control and is read that
+// way.
 //
-// sanitizeGraph in workflow-graph.js is NOT a trust boundary and is not used
-// as one here. It caps six strings, allowlists two enums and one basename, and
-// is blind to collection sizes, id types, executable paths and the fact that
-// the prompt text it preserves perfectly is the text that decides what the
-// agent is told to do. It runs in this file only as a belt over the braces,
-// after the real checks, to prove that nothing was lost between what we
-// validated and what the run engine will see.
+// sanitizeGraph in workflow-graph.js is not used as a trust boundary here. It
+// runs in this file after the real checks, to confirm that nothing was lost
+// between what was validated and what the run engine will see.
 //
-// Two invariants that a later convenience patch has to violate on purpose:
+// Two invariants this module holds:
 //
-//   1. NO VALUE FROM A MANIFEST MAY REACH mcp:add, mcp:addMany OR
-//      mcp:parseSnippet ON ANY CODE PATH. requires.mcpServers and
+//   1. No value from a manifest reaches mcp:add, mcp:addMany or
+//      mcp:parseSnippet on any code path. requires.mcpServers and
 //      requires.skills carry a charset-constrained name, an optional
 //      fingerprint and a boolean, and nothing else: no command, no args, no
-//      env, no url, no headers. A manifest that could describe an MCP server
-//      is a manifest that decides the argv of a local process, with that argv
-//      chosen by whoever wrote the file rather than by this machine. The
-//      installer's "add server" affordance opens the empty MCP form and never
-//      prefills it.
+//      env, no url, no headers. The installer's "add server" affordance opens
+//      the empty MCP form and never prefills it.
 //
 //   2. agentCommand is a bare basename from a five-entry allowlist, always.
-//      isAllowedAgentCommand checks only the basename, so a value carrying a
-//      directory part passes it while spawn resolves that value against the
-//      run's cwd, which leaves the file rather than the allowlist deciding
-//      which executable runs. Here the value must already equal its own
-//      normalised basename, so anything carrying a separator, an extension or
-//      a capital letter is refused outright rather than quietly rewritten.
+//      The value must already equal its own normalised basename, so anything
+//      carrying a separator, an extension or a capital letter is refused
+//      rather than rewritten.
 //
 // The module is pure: no fs, no clock (the caller injects opts.now the way the
-// autonomy supervisor does), no Electron, no spawn. That is what lets the
-// untrusted-input fixtures run as ordinary unit tests. Reading the file off
-// disk, with its size check and its symlink confinement, belongs to main.js.
+// autonomy supervisor does), no Electron, no spawn. That is what lets its
+// fixtures run as ordinary unit tests. Reading the file off disk, with its size
+// check and its path confinement, belongs to main.js.
 //
 // Every exported function is total. Any input, including an object whose
 // getters throw, yields either a validated result or a structured refusal.
-// A validator that throws is a validator that crashed the app.
 
 const crypto = require('crypto');
 const { stableJson } = require('./stable-json');
@@ -67,22 +56,16 @@ const {
 const ARTIFACT_KIND = 'husk.workflow';
 
 // Forward-only. A file declaring a version above this is refused whole, with
-// both numbers named, and never partially parsed. There is no structural
-// sniffing: migrateWorkflow guesses at shape, which is exactly how it would
-// read a future artifact as a v1 workflow, drop requires and receipts, and
-// report success.
+// both numbers named, and never partially parsed.
 const MAX_ARTIFACT_SCHEMA = 1;
 
 // The prefix is load-bearing and is part of the compared string. When the
-// canonicalisation rule changes, old files keep husk-wfg-1 and the reader can
-// say "canonicalised by an older rule set, receipts shown as author-stated"
-// instead of "fingerprint mismatch", which reads as a file somebody altered.
+// canonicalisation rule changes, old files keep husk-wfg-1 and the reader says
+// "canonicalised by an older rule set" rather than "fingerprint mismatch".
 const GRAPH_HASH_PREFIX = 'husk-wfg-1:sha256:';
 
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
-// Summed across every chain of every receipt, not applied per item. The
-// schema's own per-item maxima multiply out to two gigabytes of schema-legal
-// file, which passes every per-item check and exhausts the machine anyway.
+// Summed across every chain of every receipt, not applied per item.
 const MAX_CHAIN_BYTES = 512 * 1024;
 
 const MAX_NODES = 64;
@@ -92,33 +75,27 @@ const MAX_PROMPT = 8192;
 
 // How much log one receipt may carry. Four rows is the floor because a run
 // that happened at all leaves a start_run, a workflow_binding, at least one
-// step and a run_summary; anything shorter describes no run, and an empty file
-// is the specific input the raw chain verifier calls valid. The two ceilings
-// are the schema's, restated here so the reader of a chain and the validator
-// of one are bounded by the same numbers rather than by two sets of literals.
+// step and a run_summary. The two ceilings are the schema's, restated here so
+// the reader of a chain and the validator of one share the same numbers.
 const MIN_CHAIN_LINES = 4;
 const MAX_CHAIN_LINES = 4000;
 const MAX_CHAIN_SESSIONS = 32;
 
-// The genesis anchor, declared here rather than imported. audit.js:41 holds the
-// same constant and its header says why it is public: a verifier needs no
-// shared secret to walk the chain. Requiring that module would pull fs into a
-// file whose entire testability argument is that it has none, and one line
-// cannot drift unnoticed, because test/unit/workflow-artifact-chain.test.js
-// asserts the two values are equal.
+// The genesis anchor, declared here rather than imported: audit.js:41 holds the
+// same constant, and requiring that module would pull fs into a file whose
+// testability argument is that it has none.
+// test/unit/workflow-artifact-chain.test.js asserts the two values are equal.
 const GENESIS_HASH = '0'.repeat(64);
 
 // The audit row schema this Husk knows how to read (audit.js:39). A row from a
-// later version is refused rather than read hopefully: sid, seq, kind and prev
-// are exactly the fields a schema bump is free to redefine, and figures derived
-// through a misreading of them would arrive wearing the one tier that says this
-// machine checked something.
+// later version is refused rather than read hopefully, since sid, seq, kind and
+// prev are the fields a schema bump is free to redefine.
 const AUDIT_ROW_SCHEMA = 1;
 
 // The three rows that give a workflow run its shape, in the order they must
 // appear. start_run opens the session, workflow_binding names the graph the run
 // executed so the binding sits inside the chain rather than beside it, and
-// run_summary closes it, which is what makes a tail truncation visible.
+// run_summary closes it, so a session that stops early is visible.
 const ROW_START = 'start_run';
 const ROW_BINDING = 'workflow_binding';
 const ROW_SUMMARY = 'run_summary';
@@ -146,10 +123,9 @@ const CHAIN_PREDICATES = [
   'head',
 ];
 
-// Safety ceilings for canonicalProjection, which is also reachable from the
-// export side where the graph is local rather than a stranger's. They sit far
-// above the wire format's caps so they never fire on a real file; they exist so
-// a pathological local graph cannot hang the main process inside a sort.
+// Ceilings for canonicalProjection, which is also reachable from the export
+// side where the graph is local. They sit far above the wire format's caps, so
+// they never fire on a real file.
 const MAX_PROJECTION_NODES = 4096;
 const MAX_PROJECTION_EDGES = 16384;
 
@@ -163,9 +139,9 @@ const PUBLISHED_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 // Deliberately unanchored at the tail so 2.11.0-beta.3 is a legal huskVersion
 // while 2.11 and "latest" are not.
 const HUSK_VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+/;
-// A model id is handed to a third-party CLI's argument parser. Anything that
-// could start a flag, a path or a shell word is out. Local free-text model
-// pins are untouched by this; only the wire format is constrained.
+// A model id is handed to a third-party CLI's argument parser, so the wire
+// format holds it to plain identifier characters. Local free-text model pins
+// are untouched; only the wire format is constrained.
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REQUIRE_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const MARKER_FILE_RE = /^[A-Za-z0-9._/-]{1,64}$/;
@@ -175,10 +151,7 @@ const PUBLISHER_URL_RE = /^https:\/\//;
 
 const BRANCH_MODES = ['parallel', 'ai'];
 const PASS_CONTEXTS = ['full', 'last50', 'none'];
-// regex is absent on purpose. wfEdgeMatches compiles the value with new RegExp
-// in the main process and runs it against agent output, and the same file
-// supplies both the pattern and, through the preceding step's prompt, the
-// subject. 256 characters is far more than catastrophic backtracking needs.
+// regex is absent: a published workflow routes on plain conditions only.
 const CONDITION_TYPES = ['always', 'contains', 'otherwise'];
 const VCS_KINDS = ['git', 'none'];
 const EVIDENCE_KINDS = ['none', 'inline'];
@@ -186,9 +159,9 @@ const EVIDENCE_KINDS = ['none', 'inline'];
 // render it, so the sentence is always "26 of 31 runs finished with a zero
 // exit" and never a percentage under the word PASS.
 const OUTCOME_BASES = ['process-exit'];
-// A coarse bucket rather than a count, because a tracked-file count is a
-// fingerprint of the author's repository and is not comparable across two of
-// them anyway.
+// A coarse bucket rather than a count: an exact count says more about the
+// author's repository than it does about the workflow, and two repositories
+// are not comparable by it anyway.
 const TRACKED_FILES_BUCKETS = ['0', '1-100', '100-1k', '1k-10k', '10k-100k', '100k+'];
 
 const TOP_KEYS = ['kind', 'schemaVersion', 'artifactId', 'revision', 'name', 'description',
@@ -242,10 +215,9 @@ function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-// Own-property reads throughout. An object whose prototype supplies `kind`
-// would otherwise pass the first check while carrying none of the fields we
-// think we validated, and JSON.parse itself will happily give us an own
-// "__proto__" data property that the unknown-key check has to be able to see.
+// Own-property reads throughout: only the fields an object carries itself are
+// read, and an own "__proto__" data property stays visible to the unknown-key
+// check.
 function has(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
@@ -261,9 +233,8 @@ function unknownKey(obj, allowed) {
   return null;
 }
 
-// A short, bounded description of a rejected value, for the refusal's detail
-// slot. Never the value itself: the whole point of some of these refusals is
-// that the value is ten megabytes long, and the detail ends up in a DOM node.
+// A short, bounded description of a rejected value for the refusal's detail
+// slot, never the value itself.
 function preview(v) {
   try {
     if (v === null) return 'null';
@@ -286,12 +257,9 @@ function refuse(code, message, detail) {
   };
 }
 
-// JSON.stringify escapes lone surrogates as \udXXX under well-formed
-// stringify, so an unpaired half survives a round trip through the file and
-// arrives in a prompt that gets handed to a CLI and rendered in a pane. It is
-// not text, it is a decoder bug waiting for a consumer, and no honest workflow
-// contains one. Checked by code unit rather than by regex because the regex
-// form of this needs a lookbehind to be correct and reads like a puzzle.
+// True when the string carries an unpaired surrogate half, which is not text
+// and which no workflow contains. Checked by code unit rather than by regex,
+// because the regex form needs a lookbehind and reads like a puzzle.
 function hasLoneSurrogate(s) {
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
@@ -306,8 +274,7 @@ function hasLoneSurrogate(s) {
   return false;
 }
 
-// Length before charset, everywhere, without exception. A ten-megabyte string
-// must never reach a matcher, however cheap that matcher looks.
+// Length before charset, everywhere.
 function badString(v, path, min, max, code) {
   const c = code || 'not-artifact';
   if (typeof v !== 'string') return refuse(c, `${path} must be a string`, preview(v));
@@ -343,8 +310,8 @@ function sha256Hex(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
-// F1's normalisation, in one place so import and export cannot disagree about
-// what a basename is. Returns '' when there is nothing usable left.
+// Basename normalisation, in one place so import and export agree on what a
+// basename is. Returns '' when there is nothing usable left.
 function normalizeAgentCommand(value) {
   if (typeof value !== 'string') return '';
   const first = value.trim().split(/\s+/)[0];
@@ -363,13 +330,10 @@ function isLiteralPattern(value) {
 
 // ─── canonicalisation ────────────────────────────────────────────────────
 
-// canonicalProjection reduces a graph to the part of it that decides what runs.
-//
-// The fingerprint cannot be taken over sanitizeGraph's output as emitted:
-// that output carries layout coordinates and node-${Date.now()}-${rand} ids,
-// so hashing it directly means dragging a node across the canvas detaches
-// every receipt ever earned. What survives here is the six fields that
-// determine behaviour, plus the shape of the wiring.
+// canonicalProjection reduces a graph to the part of it that decides what runs:
+// the six fields that determine behaviour, plus the shape of the wiring. Layout
+// coordinates and locally minted ids stay out, so moving a node on the canvas
+// keeps the fingerprint and the receipts attached to it.
 //
 // Node order is by content hash, with position in graphToOrderedSteps as the
 // tie-break, so two authors who built the same workflow in a different order
@@ -377,11 +341,10 @@ function isLiteralPattern(value) {
 // look shuffled relative to reading order, and why every surface renders step
 // names rather than ids.
 //
-// Step names are inside the hash on purpose. wfResolveNext routes AI branches
-// by matching the model's ROUTE: line against node.name, so a step name is
-// executable text and renaming one is a behavioural change. Edge multiplicity
-// and edge order are inside it for the same reason, argued where they are
-// projected below.
+// Step names are inside the hash. wfResolveNext routes AI branches by matching
+// the model's ROUTE: line against node.name, so renaming a step is a
+// behavioural change. Edge multiplicity and edge order are inside it for the
+// same reason, described where they are projected below.
 //
 // Returns { ok: true, projection, nodes, idMap, hash } or { ok: false, error }.
 function canonicalProjection(rawGraph) {
@@ -397,9 +360,9 @@ function canonicalProjection(rawGraph) {
 
     // The tie-break index. graphToOrderedSteps is breadth-first from the roots
     // in edge-declaration order with disconnected components appended, so it is
-    // deterministic for a given graph. Duplicate ids collapse in this map; the
-    // first occurrence wins and anything unmapped sorts last, which keeps the
-    // comparator total even for a graph the id validator would have refused.
+    // deterministic for a given graph. Duplicate ids collapse in this map, the
+    // first occurrence wins, and anything unmapped sorts last, which keeps the
+    // comparator total.
     const tieById = new Map();
     const ordered = graphToOrderedSteps(g);
     for (let i = 0; i < ordered.length; i++) {
@@ -425,10 +388,9 @@ function canonicalProjection(rawGraph) {
       };
     });
 
-    // Position in the source array is the last tie-break. Two nodes identical
-    // in content and unreachable in the same way would otherwise depend on the
-    // engine's sort being stable, which is true in V8 and is not a contract
-    // this file should be resting on.
+    // Position in the source array is the last tie-break, so the order of two
+    // nodes identical in content does not rest on the engine's sort being
+    // stable.
     entries.sort((a, b) => {
       if (a.contentHash !== b.contentHash) return a.contentHash < b.contentHash ? -1 : 1;
       if (a.tie !== b.tie) return a.tie - b.tie;
@@ -439,38 +401,21 @@ function canonicalProjection(rawGraph) {
     for (let i = 0; i < entries.length; i++) idMap.set(entries[i].id, `n${i}`);
 
     // Edges keep their condition, their endpoints, their multiplicity and their
-    // position, and lose only their own ids.
-    //
-    // The format spec asks for the opposite here: collapse exact duplicates,
-    // then sort what survives, so that appending a duplicate wire or reversing
-    // the edge array leaves the fingerprint alone. Both of those transforms are
-    // behavioural, and the run engine is where that is settled rather than here.
-    // wfIsAiRouted decides that a step is an AI router by counting its outgoing
-    // edges (workflow-graph.js:164-168), and wfRunStep appends the entire ROUTE
-    // instruction, target names included, to the agent's system prompt as soon
-    // as an ai-mode step has two of them (main.js:5699-5700), so a second
-    // identical wire between one pair of steps rewrites the text handed to the
-    // CLI. contextFor concatenates each taken incoming edge's output in
-    // edge-declaration order (main.js:5831-5841), so reversing the array
-    // reverses the order two predecessors' work appears in the next step's
-    // prompt. Under the spec's rule those pairs share one fingerprint, which
-    // means a receipt earned by one vouches for the other and the whole
-    // "these receipts belong to this workflow" claim is not true.
-    //
-    // The cost of this direction is that a rewiring which changes nothing about
-    // what runs, say two unrelated edges swapping places in the array, does move
-    // the hash and does detach receipts that could have been kept. That is the
-    // safe way for this to be wrong: a fingerprint that moves too eagerly loses
-    // history, and a fingerprint that does not move signs off on a program
-    // nobody read.
+    // position, and lose only their own ids. All four are behavioural:
+    // wfIsAiRouted decides a step is an AI router by counting its outgoing
+    // edges (workflow-graph.js:164-168), wfRunStep appends the ROUTE
+    // instruction with its target names once an ai-mode step has two of them
+    // (main.js:5699-5700), and contextFor concatenates each taken incoming
+    // edge's output in edge-declaration order (main.js:5831-5841). A rewiring
+    // that changes none of that still moves the hash and detaches the receipts
+    // it could have kept.
     const projectedEdges = [];
     for (const e of g.edges) {
       const from = idMap.get(e.from);
       const to = idMap.get(e.to);
-      // Unreachable while sanitizeGraph, three lines up, is the only source of
-      // g: it drops every edge whose endpoints are not nodes, and every node id
-      // is a key of the map. It stays because the alternative to skipping an
-      // unmappable edge is writing undefined into the thing being hashed.
+      // sanitizeGraph, three lines up, already drops every edge whose endpoints
+      // are not nodes, so this skip does not fire through it. It stays so that
+      // an unmappable edge is skipped rather than hashed as undefined.
       if (from === undefined || to === undefined) continue;
       projectedEdges.push({
         condition: {
@@ -513,17 +458,15 @@ function graphHash(rawGraph) {
 
 // ─── reading a stranger's file ───────────────────────────────────────────
 
-// parseArtifact takes the file's bytes and nothing else. The statSync that
-// keeps a two gigabyte file from being read into memory in the first place
-// belongs to the caller, because this module has no fs; the length check here
-// is the second half of that pair and the only one the drag-drop path gets.
+// parseArtifact takes the file's bytes and nothing else. The size check on disk
+// belongs to the caller, since this module has no fs; the length check here
+// measures what arrived.
 function parseArtifact(bytes) {
   try {
     let text;
     if (typeof bytes === 'string') {
-      // Two checks, not one. A string of half a million astral characters is
-      // under the character cap and over the byte cap, and the byte cap is the
-      // one the file on disk will be measured against.
+      // Two checks: characters, then bytes. The byte length is the one the file
+      // on disk is measured against.
       if (bytes.length > MAX_ARTIFACT_BYTES) {
         return refuse('too-large', `this file is larger than the ${MAX_ARTIFACT_BYTES} byte limit`, `${bytes.length} characters`);
       }
@@ -556,18 +499,13 @@ function parseArtifact(bytes) {
 // validateArtifact is the order of operations, exactly. Counts before any map,
 // ids before sanitizeGraph, the fingerprint before any receipt is believed,
 // and an allowlist projection at the end so nothing unrecognised is ever
-// carried forward. It is total by construction and by this try/catch: the
-// input may be an object whose getters throw, and a refusal is
-// always a better outcome than a stack trace in the main process.
+// carried forward. It is total by construction and by this try/catch.
 //
 // Every scalar is read from the input exactly once, into a local, and every
 // later use, the check, the hash and the returned projection alike, is of that
-// local. The input is not always JSON.parse output: the exported signature
-// invites a caller to hand over an object it built, and an accessor that
-// answers "claude" the first time and a path the second would otherwise
-// put a value no check ever saw into the record that gets installed. A getter
-// that throws is caught below and refused loudly; a getter that merely lies has
-// to be structurally impossible, and reading once is what makes it so.
+// local. The input is not always JSON.parse output, since the exported
+// signature invites a caller to hand over an object it built, so reading once
+// is what makes the checked value and the stored value the same value.
 function validateArtifact(input) {
   try {
     return validateArtifactInner(input);
@@ -596,18 +534,14 @@ function validateArtifactInner(obj) {
       `file: ${schemaVersion}, supported: ${MAX_ARTIFACT_SCHEMA}`);
   }
 
-  // additionalProperties: false, enforced rather than assumed. The existing
-  // store carries unknown top-level keys through migrateWorkflow's ...rest and
-  // through the update handler's spread, so an unrecognised key that lands on
-  // disk once is permanent. A stranger's file is the worst possible place to
-  // be generous.
+  // additionalProperties: false, enforced rather than assumed. An unrecognised
+  // top-level key is refused here rather than carried into the store.
   const strayTop = unknownKey(obj, TOP_KEYS);
   if (strayTop !== null) {
     return refuse('not-artifact', 'this file carries a field this Husk does not recognise', `top level: ${JSON.stringify(strayTop).slice(0, 80)}`);
   }
 
-  // Counts, before anything is mapped over. A hundred thousand nodes must
-  // never reach a .map, a sort, or a hash.
+  // Counts, before anything is mapped, sorted or hashed.
   const graph = get(obj, 'graph');
   if (!isPlainObject(graph)) return refuse('not-artifact', 'graph must be an object', preview(graph));
   const strayGraph = unknownKey(graph, ['nodes', 'edges']);
@@ -665,8 +599,7 @@ function validateArtifactInner(obj) {
     publisherUrl = get(publisher, 'url');
     bad = badString(publisherUrl, 'publisher.url', 1, 256);
     if (bad) return bad;
-    // https only. The string is rendered and may be opened; a javascript: or
-    // file: publisher URL is a link nobody meant to click.
+    // https only. The string is rendered and may be opened.
     if (!PUBLISHER_URL_RE.test(publisherUrl)) return refuse('not-artifact', 'publisher.url must start with https://', preview(publisherUrl));
   }
   const huskVersion = get(obj, 'huskVersion');
@@ -679,9 +612,8 @@ function validateArtifactInner(obj) {
     if (bad) return bad;
   }
 
-  // Node ids, before any other node field and before sanitizeGraph. Validating
-  // them here is what lets us close the id hole without touching a function
-  // four other call sites depend on.
+  // Node ids, before any other node field and before sanitizeGraph, so ids are
+  // canonical before anything is derived from them.
   const nodeIds = new Set();
   const nodeIdAt = new Array(nodes.length);
   for (let i = 0; i < nodes.length; i++) {
@@ -728,9 +660,7 @@ function validateArtifactInner(obj) {
       }
     }
 
-    // Layout is quantised by the exporter, and a file whose coordinates are
-    // not on the grid was not written by that exporter. Refusing is cheap and
-    // keeps one fewer shape of number flowing into the canvas.
+    // Layout is quantised by the exporter, so coordinates sit on the grid.
     const x = get(n, 'x');
     const y = get(n, 'y');
     bad = badInt(x, `graph.nodes[${i}].x`, 0, 20000) || badInt(y, `graph.nodes[${i}].y`, 0, 20000);
@@ -739,11 +669,9 @@ function validateArtifactInner(obj) {
       return refuse('not-artifact', `graph.nodes[${i}] has a position off the 20 pixel grid`, `x ${x}, y ${y}`);
     }
 
-    // The agent basename. The value must already BE its own normalised form:
-    // "./claude" normalises to "claude" and is still refused, because a file
-    // that carries a path is a file written to steer a resolver, and quietly
-    // rewriting it would hide that from the person deciding whether to
-    // install it.
+    // The agent basename. The value must already be its own normalised form:
+    // "./claude" normalises to "claude" and is still refused, so the file is
+    // shown to its reader as written rather than quietly rewritten.
     const agentCommand = get(n, 'agentCommand');
     if (typeof agentCommand !== 'string') {
       return refuse('bad-agent', `step "${nodeName}" does not name an agent to run`, preview(agentCommand));
@@ -818,12 +746,10 @@ function validateArtifactInner(obj) {
     validEdges[i] = { id, from: ends.from, to: ends.to, condition: { type, value } };
   }
 
-  // Belt over braces. sanitizeGraph is what the run engine will see, so if it
-  // would drop anything we validated, the file describes a workflow that is
-  // not the workflow that would run. An edge pointing at a step that is not in
-  // the file is the concrete case. It runs over the validated copy rather than
-  // over the input, so the graph that gets fingerprinted is provably the graph
-  // that was checked.
+  // sanitizeGraph is what the run engine will see, so anything it drops means
+  // the file describes a workflow other than the one that would run. It runs
+  // over the validated copy rather than over the input, so the graph that gets
+  // fingerprinted is the graph that was checked.
   const sanitized = sanitizeGraph({ nodes: validNodes, edges: validEdges });
   if (sanitized.nodes.length !== nodes.length) {
     return refuse('not-artifact', 'this graph did not survive being read', `${nodes.length} steps in, ${sanitized.nodes.length} out`);
@@ -853,13 +779,10 @@ function validateArtifactInner(obj) {
   // The shape export will not write, refused on the way in as well.
   // wfResolveNext falls back to substring containment when the model's ROUTE:
   // line matches no step name exactly (workflow-graph.js:189-198), so an AI
-  // router wired to both "Patch" and "Patch tests" runs whichever of the two the
-  // loop reaches first and says nothing about having guessed. buildArtifact
-  // refuses to publish that; without the same test here, the one shape Husk will
-  // not write is a shape a stranger's file is free to carry and the author of
-  // that file simply picks the other side of the boundary. The format spec
-  // scopes this rule to export and its closed reader enum has no member for it,
-  // so the refusal travels as not-artifact with both names in the message.
+  // router wired to both "Patch" and "Patch tests" runs whichever of the two
+  // the loop reaches first. Export and import apply the same test. The reader's
+  // closed enum has no member for it, so the refusal travels as not-artifact
+  // with both names in the message.
   const collision = routingCollision(sanitized);
   if (collision) {
     return refuse('not-artifact',
@@ -868,16 +791,12 @@ function validateArtifactInner(obj) {
   }
 
   // The graph is stored in canonical order under canonical ids, not in the
-  // order the file happened to list them. Node ids are only pattern-checked, so
-  // a file can carry n0, n7, n2, n999 and can list its steps in any order at
-  // all while still matching its own fingerprint, and graphToOrderedSteps seeds
-  // its walk from the node array (workflow-graph.js:116-117), which is the
-  // order the workflow list, the run view and the imported-workflow consent
-  // gate all read. Two files with one fingerprint would then install as two
-  // records that read differently, which is precisely what a fingerprint is
-  // supposed to rule out. Reprojecting here costs nothing for a file this
-  // module wrote, since buildArtifact already emits canonical order, and makes
-  // "one fingerprint, one record" true rather than customary.
+  // order the file happened to list them. Node ids are only pattern-checked,
+  // and graphToOrderedSteps seeds its walk from the node array
+  // (workflow-graph.js:116-117), which is the order the workflow list, the run
+  // view and the imported-workflow consent gate all read. Reprojecting here
+  // costs nothing for a file this module wrote, since buildArtifact already
+  // emits canonical order, and makes one fingerprint mean one record.
   const idMap = projection.idMap;
   const canonicalNodes = projection.nodes.map((entry, i) => ({
     id: `n${i}`,
@@ -915,14 +834,12 @@ function validateArtifactInner(obj) {
 
   // The shipped logs, walked here rather than by whoever draws them. Structure
   // was checked above; this is the part that re-hashes the rows and recomputes
-  // the figures from them, and it happens on every read so no surface can
-  // render an inline receipt without the answer already in hand.
+  // the figures from them, and it happens on every read so no surface renders
+  // an inline receipt without the answer already in hand.
   //
   // A failure here does not refuse the file. The graph is unaffected by a log
-  // that does not hold up, and refusing the whole artifact would take a
-  // perfectly installable workflow down with its author's arithmetic. What
-  // collapses is the receipt block, which the checks below say in the only
-  // vocabulary a surface reads.
+  // that does not hold up, so what collapses is the receipt block, in the
+  // vocabulary the checks below use.
   const receiptChecks = projectedReceipts.map((r) => checkReceiptEvidence(r));
   const chainCheck = combineEvidenceChecks(receiptChecks);
 
@@ -938,9 +855,8 @@ function validateArtifactInner(obj) {
   }
 
   // The allowlist projection. Every value here is a local that passed a check
-  // above, never a second read of the input, so nothing unrecognised and
-  // nothing unvalidated can reach the sidecar store or the workflow record even
-  // if a check is later loosened by accident.
+  // above, never a second read of the input, so only recognised and validated
+  // values reach the sidecar store and the workflow record.
   const artifact = {
     kind: ARTIFACT_KIND,
     schemaVersion,
@@ -959,19 +875,14 @@ function validateArtifactInner(obj) {
   };
 
   // chainCheck travels beside the artifact rather than inside it, because it is
-  // this machine's finding about the file and not a field of the format. A
-  // renderer that read `evidence: "inline"` off the receipt itself and promoted
-  // on it would be trusting the author's word that the author's word was
-  // checked, which is the whole feature's failure mode in one line.
+  // this machine's finding about the file and not a field of the format.
   return { ok: true, artifact, warnings, chainCheck, receiptChecks };
 }
 
 // The one sibling-name ambiguity wfResolveNext cannot resolve, found on a
-// sanitized graph so export and import can share a single definition of it and
-// cannot drift into disagreeing about which files are publishable. A target
-// whose name trims to nothing is skipped, because the containment fallback
-// requires a non-empty name (workflow-graph.js:196) and refusing on one would
-// refuse a file the engine routes unambiguously.
+// sanitized graph so export and import share a single definition of it. A
+// target whose name trims to nothing is skipped, because the containment
+// fallback requires a non-empty name (workflow-graph.js:196).
 function routingCollision(graph) {
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   for (const n of graph.nodes) {
@@ -1015,10 +926,8 @@ function validateRequires(requires, nodes, idMap) {
     declaredAgents.add(a);
     validAgents[i] = a;
   }
-  // The declared requirement and the graph have to agree. A file that runs
-  // gemini while its requirements pane says claude is describing a workflow
-  // that is not the one it ships, and the requirements pane is the thing the
-  // installer reads before deciding.
+  // The declared requirement and the graph have to agree, because the
+  // requirements pane is what the installer reads before deciding.
   const graphAgents = new Set(nodes.map((n) => get(n, 'agentCommand')));
   for (const a of graphAgents) {
     if (!declaredAgents.has(a)) return refuse('bad-agent', `this workflow runs ${a} but does not list it in requires.agentCommands`, `missing: ${a}`);
@@ -1055,8 +964,8 @@ function validateRequires(requires, nodes, idMap) {
     if (pinned.get(node) !== model) {
       return refuse('bad-model', `requires.models says step ${node} runs a model the graph does not pin`, `requires.models[${i}]`);
     }
-    // The pin follows its step into the canonical id space. Anything else would
-    // leave requires.models pointing at ids the stored graph no longer uses.
+    // The pin follows its step into the canonical id space, so requires.models
+    // names the ids the stored graph uses.
     validModels[i] = { node: canonicalId(idMap, node), model };
   }
   for (const [nodeId] of pinned) {
@@ -1085,14 +994,9 @@ function validateRequires(requires, nodes, idMap) {
     const f = markerFiles[i];
     bad = badString(f, `requires.workspace.markerFiles[${i}]`, 1, 64);
     if (bad) return bad;
-    // These are checked against the bound working directory on this machine and
-    // the answer is rendered back, so a marker reports whether whatever path it
-    // names exists here. A relative climb out of the directory is one way to
-    // name a path outside it and an absolute path is the other, and the charset
-    // alone cannot tell the second apart from a build file, because '/' has to
-    // be legal for "src/index.js" to be. Whether such a name escapes the
-    // directory depends on whether the caller joins or resolves, which is not a
-    // decision this file gets to make, so both shapes are refused here.
+    // A marker is looked for inside the bound working directory on this
+    // machine, so it is a plain relative file name. '/' stays legal for
+    // "src/index.js"; a leading separator and a ".." segment are refused.
     if (!MARKER_FILE_RE.test(f) || f.indexOf('..') !== -1 || /^[\\/]/.test(f)) {
       return refuse('not-artifact', `requires.workspace.markerFiles[${i}] is not a plain relative file name`, preview(f));
     }
@@ -1131,18 +1035,17 @@ function validateRequires(requires, nodes, idMap) {
   };
 }
 
-// A file id in the canonical id space. Every id reaching this has been matched
-// against NODE_ID_RE and every node id in the graph is a key of the map, so the
-// fallback only ever fires for a pin naming a step that is not in the file,
-// which requires.models rejects on its own terms a few lines later.
+// A file id in the canonical id space. The fallback fires only for a pin naming
+// a step that is not in the file, which requires.models rejects on its own
+// terms a few lines later.
 function canonicalId(idMap, fileId) {
   const mapped = idMap.get(fileId);
   return mapped === undefined ? fileId : mapped;
 }
 
 // One shape for both mcpServers and skills. They differ only in the name of
-// their key field, and they carry a name, a fingerprint and a boolean because
-// anything richer is an instruction to install something.
+// their key field, and each entry carries a name, a fingerprint and a boolean,
+// which is the whole of what the format holds.
 function validateNamedRequirements(list, path, keyField) {
   if (!Array.isArray(list)) return refuse('not-artifact', `${path} must be an array`, preview(list));
   if (list.length > 16) return refuse('not-artifact', `${path} may carry at most 16 entries`, `length ${list.length}`);
@@ -1176,9 +1079,8 @@ function validateNamedRequirements(list, path, keyField) {
   return { ok: true, items };
 }
 
-// A receipt is a claim, and every cross-field rule here is a way a claim can
-// contradict itself. A receipt contradicted by its own contents is worse than
-// no receipt, so this refuses rather than downgrading the figures to
+// A receipt is a claim, and every cross-field rule here is a way one claim can
+// contradict itself. Such a receipt is refused rather than downgraded to
 // author-stated: the tier system has no floor below "refused".
 function validateReceipt(r, i, topHash, budget) {
   const at = `receipts[${i}]`;
@@ -1400,8 +1302,7 @@ function validateChain(chain, at, budget) {
   }
 
   // Four rows is the floor: a start_run, a workflow_binding, at least one step
-  // and a run_summary. An audit log with fewer than that describes no run, and
-  // an empty one passes the raw chain verifier by doing nothing at all.
+  // and a run_summary. An audit log with fewer than that describes no run.
   const lineCount = get(chain, 'lineCount');
   const badCount = badInt(lineCount, `${at}.chain.lineCount`, MIN_CHAIN_LINES, MAX_CHAIN_LINES, 'chain-invalid');
   if (badCount) return badCount;
@@ -1416,9 +1317,8 @@ function validateChain(chain, at, budget) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (typeof line !== 'string') return refuse('chain-invalid', `${at}.chain.lines[${i}] must be a string`, preview(line));
-    // Measured and added one row at a time so the budget cannot be blown
-    // before it is checked. A single row past the whole budget refuses here
-    // rather than after a megabyte of concatenation.
+    // Measured and added one row at a time, so the budget is checked before
+    // each row is counted against it.
     const size = Buffer.byteLength(line, 'utf8');
     if (budget.bytes + size > MAX_CHAIN_BYTES) {
       return refuse('chain-invalid',
@@ -1447,40 +1347,28 @@ function validateChain(chain, at, budget) {
 // answers one question: do these rows hold together as the record of the runs
 // they claim to be.
 //
-// It is not verifyAuditChain and it never calls it. That function tests a
-// single predicate, row.prev === sha256(previous line), and is unsound in two
-// measurable directions for this use. An empty audit.jsonl returns valid,
-// because the filter that drops empty lines leaves nothing for the loop to
-// walk (audit.js:306, :318), so a receipt could ship zero rows of evidence and
-// pass the check a reader has heard of. And genesis anchoring protects the head
-// only, so a log with its tail cut off stays valid all the way to wherever it
-// now stops: the first eleven rows of a fifteen row log pass that predicate as
-// readily as all fifteen, and the four runs the tail recorded are simply gone.
+// It is not verifyAuditChain and it never calls it. That function tests one
+// predicate, row.prev === sha256(previous line). Six are applied here:
 //
-// Six predicates close both holes and three more:
-//
-//   1. at least MIN_CHAIN_LINES rows, and an empty log is its own refusal
-//      rather than a length one, because the empty case is the specific hole
-//      above and a reader deserves to be told which of the two happened
+//   1. at least MIN_CHAIN_LINES rows, with an empty log as its own refusal
+//      rather than a length one, so a reader is told which of the two happened
 //   2. every row's sid equals the session declared for the position it sits in
 //   3. every row's seq equals its zero-based index inside its own session
 //   4. row 0 of a session is start_run, row 1 is workflow_binding, and neither
 //      kind appears anywhere else in it
-//   5. the last row of a session is run_summary, which is what a tail
-//      truncation cannot survive
+//   5. the last row of a session is run_summary, so a session that stops early
+//      is visible
 //   6. the binding row names a graph fingerprint, and when the caller states
 //      which one it expects, that exact one
 //
-// What a passing chain means is still only that this JSONL is internally well
-// formed and self-consistent. There is no signature anywhere in
-// src/lib/autonomy/ and the genesis anchor is a public constant, so a whole
-// passing chain is about fifteen lines of JavaScript to write by hand. That is
-// why the tier this earns is "matches the shipped log" and why the word
-// "verified" appears nowhere near it.
+// A passing chain means this JSONL is internally well formed and
+// self-consistent. That is the whole of the claim, which is why the tier it
+// earns is "matches the shipped log" and why the word "verified" appears
+// nowhere near it.
 //
 // Only inline payloads are read. A blob_ref row is an opaque hash here: spilled
 // blobs go through Electron safeStorage and are bound to the keychain of the
-// machine that wrote them, so a reader could not open one and should not try.
+// machine that wrote them.
 //
 // sessionIds may be a single id, which is the shape the format ships today, or
 // the ordered list of sessions the lines run through. Multiple sessions are
@@ -1490,14 +1378,14 @@ function validateChain(chain, at, budget) {
 // Returns { ok: true, valid: true, lineCount, head, sessionIds, sessions,
 // graphHash } where each session is { sessionId, rows }, or { ok: true, valid:
 // false, predicate, reason, atIndex } naming the predicate that failed and the
-// row it failed at. Total: any input at all, whatever its shape, yields one of
-// those two rather than a throw.
+// row it failed at. Total: any input at all yields one of those two rather than
+// a throw.
 function verifyArtifactChain(lines, sessionIds, opts) {
   try {
     return verifyArtifactChainInner(lines, sessionIds, isPlainObject(opts) ? opts : {});
   } catch (_) {
-    // The exception text came from the same input we are refusing and would be
-    // rendered by a surface with no reason to trust it, so it does not travel.
+    // The exception text came from the same input being refused, and a surface
+    // would render it, so it does not travel.
     return chainInvalid('lines-type', 'the shipped log raised while it was being read', -1);
   }
 }
@@ -1520,8 +1408,7 @@ function verifyArtifactChainInner(lines, sessionIds, opts) {
     if (typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
       return chainInvalid('session-ids', `session ${i} is not a plain session id`, -1);
     }
-    // A repeated id would let two segments of one session be presented as two
-    // runs, which doubles every count in the receipt without breaking a hash.
+    // Each declared session id appears once, so one session counts as one run.
     if (seenIds.has(sid)) return chainInvalid('session-ids', `session "${sid}" is named twice`, -1);
     seenIds.add(sid);
   }
@@ -1567,16 +1454,13 @@ function verifyArtifactChainInner(lines, sessionIds, opts) {
       return chainInvalid('row-shape', `row ${i} has no readable previous-row hash`, i);
     }
 
-    // A session boundary is where the sid stops being the one we are walking,
-    // and which session may sit here is decided by the declared list rather
-    // than by the rows. That is what makes a splice visible: a row lifted out
-    // of another session either names a session this log never declared, or
-    // opens one whose first row is not a start_run at seq 0.
+    // A session boundary is where the sid stops being the one being walked, and
+    // which session may sit here is decided by the declared list rather than by
+    // the rows.
     //
     // Whether the row belongs here is asked before the session it interrupts is
-    // closed, so a splice is reported as the splice it is rather than as the
-    // short session it leaves behind. Both are refusals; only one of them tells
-    // the reader what happened.
+    // closed, so the refusal names the row that arrived rather than the short
+    // session left behind.
     if (segment === null || sid !== segment.sessionId) {
       segmentIndex += 1;
       if (segmentIndex >= declared.length) {
@@ -1687,10 +1571,8 @@ function closeChainSegment(segment) {
 // three different states and a surface has to tell them apart. `checked` false
 // is a receipt that shipped no log, which is the common case and carries no
 // blame. `valid` false is a log that does not hold together. `agrees` false is
-// the harder failure: rows that hash together perfectly under numbers they do
-// not support, which passes the check a reader has heard of. Both failures
-// collapse the receipt block rather than dropping it a tier, because a receipt
-// contradicted by its own evidence is the one somebody believes.
+// a log that holds together under figures it does not support. Both failures
+// collapse the receipt block rather than dropping it a tier.
 function checkReceiptEvidence(receipt) {
   if (!receipt || receipt.evidence !== 'inline' || !receipt.chain) {
     return { checked: false, valid: null, agrees: null, detail: null };
@@ -1728,8 +1610,7 @@ function checkReceiptEvidence(receipt) {
 
 // One answer for the whole file, because a surface draws one record and asks
 // one question of it. Any receipt that failed decides the answer for all of
-// them: a file carrying one honest receipt and one contradicted by its own log
-// has not earned a tier on the strength of the honest half.
+// them.
 function combineEvidenceChecks(checks) {
   const inline = checks.filter((c) => c.checked);
   if (!inline.length) return { checked: false, valid: null, agrees: null, detail: null };
@@ -1755,10 +1636,8 @@ function deriveArtifactId(seed) {
 }
 
 // Layout survives export as reading order, not as canvas position. x and y are
-// raw Drawflow coordinates captured at the author's zoom, so shipping them
-// verbatim would ship noise, and shipping them unquantised would move the
-// fingerprint every time somebody nudged a node. Translate to the origin,
-// round to the nearest 20, clamp.
+// raw Drawflow coordinates captured at the author's zoom, so they are
+// translated to the origin, rounded to the nearest 20 and clamped.
 function quantiseCoordinate(v) {
   if (!Number.isFinite(v)) return 0;
   let q = Math.round(v / 20) * 20;
@@ -1827,9 +1706,9 @@ function buildArtifactInner(workflow, opts) {
   }
 
   // Every step must name the agent it was written for. A null resolves at run
-  // time to config.agentCommand || 'claude', so a file carrying one would not
-  // determine what runs: a claude-tuned workflow would execute on the
-  // importer's gemini and the receipt would describe a different program.
+  // time to the importer's own config.agentCommand, so a file carrying one
+  // would not determine what runs and its receipts would describe a different
+  // program.
   for (const n of g.nodes) {
     if (!n.agentCommand) {
       return refuse('bad-agent',
@@ -1857,9 +1736,7 @@ function buildArtifactInner(workflow, opts) {
       if (isLiteralPattern(e.condition.value)) {
         // A pattern with no metacharacters is a substring test that happens to
         // have been typed as a regex, so it crosses as one. contains matches
-        // case-insensitively where a regex did not, which widens the match
-        // rather than narrowing it: the alternative is refusing a workflow
-        // that behaves identically in every case its author has ever run.
+        // case-insensitively, which widens the match rather than narrowing it.
         e.condition.type = 'contains';
         warnings.push({
           code: 'regex-downgraded',
@@ -1878,11 +1755,9 @@ function buildArtifactInner(workflow, opts) {
 
   // wfResolveNext matches the model's ROUTE: line against node.name, exact
   // first and then by substring containment, so "Patch" and "Patch tests" as
-  // two branches of one router are mutually ambiguous by construction and
-  // mis-route silently. Better to refuse at publish than to ship a workflow
-  // that runs the wrong step on somebody else's machine. The reader applies the
-  // same test through the same function, so the two sides cannot drift into
-  // disagreeing about which files exist.
+  // two branches of one router are ambiguous and route by whichever the loop
+  // reaches first. Publishing refuses that shape, and the reader applies the
+  // same test through the same function, so the two sides stay in step.
   const collision = routingCollision(g);
   if (collision) {
     return refuse('name-collision',
@@ -1934,8 +1809,7 @@ function buildArtifactInner(workflow, opts) {
   // else derives from the local workflow id, so republishing without one still
   // keeps its identity across revisions. Falling back to the fingerprint is the
   // last resort for a workflow record with no id: the id is then stable for
-  // that graph and moves when the graph does, which is worse than the
-  // alternative and better than random.
+  // that graph and moves when the graph does.
   const given = get(opts, 'artifactId');
   const artifactId = (typeof given === 'string' && ARTIFACT_ID_RE.test(given))
     ? given
@@ -2008,19 +1882,17 @@ function buildArtifactInner(workflow, opts) {
     notes,
   };
 
-  // Read back what we just wrote. Export and import share one definition of a
-  // valid file, so a refusal here means this module would have published
-  // something it would itself refuse to install, which is a bug rather than a
-  // user error, and it should surface as one at the moment it is introduced.
+  // Read back what was just written. Export and import share one definition of
+  // a valid file, so a refusal here names a bug in this module rather than a
+  // user error, and it surfaces at the moment it is introduced.
   const check = validateArtifact(artifact);
   if (!check.ok) return check;
 
   // A log this machine attached is a log this machine must be able to walk. The
   // read-back above proves the file is legal; this proves the evidence in it
   // supports the figures printed next to it, which is the only reason to ship a
-  // log at all. Publishing a receipt our own reader would collapse is a bug in
-  // this module, and it surfaces here at the moment it is introduced rather
-  // than on a stranger's screen a week later.
+  // log at all. A receipt this module's own reader would collapse surfaces here
+  // rather than on a reader's screen a week later.
   if (check.chainCheck.checked) {
     if (check.chainCheck.valid !== true) {
       return refuse('chain-invalid', 'the log Husk attached to this file does not hold together', check.chainCheck.detail);
@@ -2046,13 +1918,9 @@ function firstString() {
   return '';
 }
 
-// Local records are not held to the file format's lengths, and refusing to
-// publish because a title is long would be a worse answer than shortening it
-// and saying so. The shortening goes through clipText rather than String.slice
-// because a cut that lands inside an astral character manufactures the very
-// unpaired surrogate the self-check below refuses, which turns a long emoji
-// title into a reader-side "not-artifact" out of a publish button and blames
-// the author for a half character this function created itself.
+// Local records are not held to the file format's lengths, so a long title is
+// shortened and the warning says so. The shortening goes through clipText
+// rather than String.slice, so a cut never lands inside an astral character.
 function clampText(value, fallback, max, warnings, field) {
   let v = typeof value === 'string' ? value : '';
   if (hasLoneSurrogate(v)) v = '';
@@ -2079,17 +1947,10 @@ function optionalText(value, max, warnings, field) {
 // The author's declared workspace, reduced to what the format can hold.
 //
 // These three requirements are clamped and warned about here rather than left
-// for the self-check at the bottom of buildArtifactInner to measure for the
-// first time. A build command longer than 128 characters, a marker file
-// written as a glob, or a huskMin with trailing junk (HUSK_VERSION_RE is
-// unanchored at the tail on purpose, so "1.0.0" plus sixty characters matches
-// it and then fails the length cap) would otherwise come back to the publisher
-// as the reader's "not-artifact" code, which is the code that means "this file
-// is not a Husk workflow" and has no export-side story at all. Clamping is the
-// same trade normalizeNamedRequirements makes for mcpServers and skills: what
-// the format can carry goes in the file, what it cannot is named in a warning,
-// and nothing about a declaration the author typed as documentation can sink
-// their export.
+// for the self-check at the bottom of buildArtifactInner. Clamping is the same
+// trade normalizeNamedRequirements makes for mcpServers and skills: what the
+// format can carry goes in the file, what it cannot is named in a warning, and
+// a declaration the author typed as documentation never sinks their export.
 function normalizeMarkerFiles(list, warnings) {
   if (!Array.isArray(list)) return [];
   const out = [];
@@ -2097,8 +1958,7 @@ function normalizeMarkerFiles(list, warnings) {
   for (const raw of list) {
     if (out.length >= 8) { dropped += 1; continue; }
     // The same rule the reader enforces, including the leading separator: a
-    // marker is resolved against somebody else's working directory, so an
-    // absolute path names something outside it rather than a build file.
+    // marker is a plain relative file name.
     if (typeof raw !== 'string' || raw.length < 1 || raw.length > 64
       || !MARKER_FILE_RE.test(raw) || raw.indexOf('..') !== -1 || /^[\\/]/.test(raw)) {
       dropped += 1;
@@ -2156,8 +2016,8 @@ function normalizeHuskMin(value, huskVersion, warnings) {
 
 // The author's declared MCP servers and skills, reduced to the only three
 // fields the format has. Anything else the caller passed is dropped here
-// rather than at validation, because the point of the invariant at the top of
-// this file is that a command or an env never exists in this object at all.
+// rather than at validation, so the invariant at the top of this file holds:
+// a command or an env never exists in this object at all.
 function normalizeNamedRequirements(list, keyField) {
   if (!Array.isArray(list)) return [];
   const out = [];

@@ -76,8 +76,7 @@ test('isInside: non-string root or target returns false', () => {
   assert.equal(isInside(ROOT, null), false);
 });
 
-// Symlink-escape guard: the composition the fs:readFile handler uses to refuse
-// a link inside root that points outside root (realpath, then isInside).
+// The composition the fs:readFile handler uses: realpath, then isInside.
 test('isInside rejects a symlink whose target escapes root (realpath re-check)', () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-sym-'));
   try {
@@ -99,11 +98,8 @@ test('isInside rejects a symlink whose target escapes root (realpath re-check)',
 
 // ─── realParentInside ──────────────────────────────────────────────────────
 
-// The string checks above cannot see a link. That is enough for a path that
-// exists, because the caller canonicalizes it and compares. It is not enough
-// for a path that does not exist yet: realpath throws, and a create that falls
-// back to the unresolved string writes through whatever the directories along
-// it happen to be.
+// realParentInside canonicalizes the parent directory, so a path that does not
+// exist yet is still confined to root.
 
 test('realParentInside: an ordinary new file under root is allowed', () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpi-'));
@@ -164,10 +160,8 @@ test('realParentInside: non-string input is refused', () => {
 
 // ─── realPathInside ────────────────────────────────────────────────────────
 
-// The read-side counterpart. Confining a read matters as much as confining a
-// write: a tree a caller may read from can hold a link pointing anywhere the
-// process can reach, and reading through it returns bytes the caller was never
-// given while every string check agrees the name was inside root.
+// The read-side counterpart: realPathInside canonicalizes the full path before
+// comparing it to root.
 
 test('realPathInside: an ordinary file under root is inside', () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));

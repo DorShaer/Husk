@@ -15,13 +15,8 @@ const ALLOWED_AGENT_COMMANDS = new Set([
   'gemini',
 ]);
 
-// Truncating a string by UTF-16 code unit can cut an astral character in half.
-// The high surrogate left behind is not text: it survives JSON as a \udXXX
-// escape, it reaches a CLI argument and a DOM node, and the artifact validator
-// refuses any string carrying one, so a step whose prompt merely ran long came
-// back as "this workflow contains an unpaired surrogate" and blamed the author
-// for a half character the cap had just manufactured. Dropping the orphan
-// costs one character of a string that was already over the limit.
+// Truncates to a maximum length by UTF-16 code unit, dropping a trailing high
+// surrogate so the result never ends in half an astral character.
 function clipText(value, max) {
   const s = String(value);
   if (s.length <= max) return s;
@@ -129,16 +124,9 @@ function graphToOrderedSteps(graph) {
   // pure-cycle graph has no root, so seed with the first node to stay
   // terminating while still emitting every node.
   //
-  // The roots are seeded in wiring order, not in node-array order. The
-  // adjacency above already takes branch order from how the user wired the
-  // graph, and taking the seed order from the same place is what makes this
-  // walk a function of the graph rather than of the array the graph happened
-  // to arrive in. Two files describing one workflow whose node arrays were
-  // serialised in a different order would otherwise list their steps in two
-  // different orders, and this order is what the workflow list, the run view
-  // and the imported-workflow consent gate all read: same fingerprint, two
-  // readings. Roots wired to nothing at all have no wiring order to take, so
-  // they follow in node order, after the wired ones.
+  // Roots are seeded in wiring order, so the walk is a function of the graph
+  // rather than of the order the node array happened to arrive in. Roots wired
+  // to nothing follow in node order, after the wired ones.
   const rooted = new Set();
   const queue = [];
   const seedRoot = (id) => {
@@ -173,9 +161,8 @@ function wfEdgeMatches(condition, output) {
   const text = String(output || '');
   if (c.type === 'contains') return text.toLowerCase().includes(String(c.value || '').toLowerCase());
   if (c.type === 'regex') {
-    // c.value is the user's own workflow routing pattern, capped at
-    // 256 chars by sanitizeEdge. Match runs against this node's output,
-    // not against any privileged input.
+    // c.value is the workflow's own routing pattern, capped at 256 characters
+    // by sanitizeEdge, and matches against this node's output.
     try {
       // eslint-disable-next-line security/detect-non-literal-regexp
       return new RegExp(c.value || '').test(text);

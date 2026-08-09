@@ -11,9 +11,8 @@ const HASH = 'husk-wfg-1:sha256:' + 'a'.repeat(64);
 const OTHER_HASH = 'husk-wfg-1:sha256:' + 'b'.repeat(64);
 const WF = 'wf-1762000000000';
 
-// One run row in the shape main.js records (main.js:5336-5347) plus the three
-// fields slice 7 adds: graphHash, timedOut and per-run tokens. Defaults are a
-// clean two minute claude run so each test only states what it is about.
+// One run row in the shape main.js records, plus graphHash, timedOut and
+// per-run tokens. Defaults are a clean two minute run.
 function row(over = {}) {
   const startedAt = over.startedAt !== undefined ? over.startedAt : '2026-02-06T10:00:00.000Z';
   return Object.assign({
@@ -363,10 +362,8 @@ test('an all-zero usage record is no report at all, so it does not manufacture a
 });
 
 test('four medians that all land on zero are no report either, and the count still says so', () => {
-  // Every one of these runs reported real usage, so medianTokensN is honest at
-  // 3; it is the four independent medians that collapse. Publishing them would
-  // claim the workflow moves no tokens, and a rate table applied to that row
-  // downstream renders a confident free rather than a suppressed figure.
+  // Every run here reported real usage, so medianTokensN stays at 3 while the
+  // four independent medians all land on zero.
   const a = ok([
     row({ id: '1', tokens: { input: 1, output: 0, cacheRead: 0, cacheCreate: 0 } }),
     row({ id: '2', tokens: { input: 0, output: 1, cacheRead: 0, cacheCreate: 0 } }),
@@ -566,8 +563,7 @@ test('a timestamp with no offset is read as UTC, so two machines publish one win
 });
 
 test('a string that names no instant is refused rather than assigned one', () => {
-  // Every one of these is a value Date.parse would have answered with a
-  // precise epoch, inventing the part of the timestamp that was not written.
+  // Each of these names a date or a wall clock rather than an instant.
   for (const bad of ['2026', '2026-02', '2026-02-06', 'Feb 6 2026', '6 Feb 2026 10:00 GMT', '2026-02-06 10:00:00']) {
     assert.equal(isoStamp(bad), null, `expected null for ${bad}`);
   }
@@ -585,7 +581,6 @@ test('a date that does not exist on the calendar is refused', () => {
 });
 
 test('a two-digit year is refused rather than quietly landing in the twentieth century', () => {
-  // Date.UTC(26, ...) is 1926, which would pass every check downstream.
   assert.equal(isoStamp('0026-02-06T10:00:00Z'), null);
   assert.equal(isoStamp('0999-02-06T10:00:00Z'), null);
 });
@@ -635,11 +630,7 @@ test('rows past the hard cap are counted as unread rather than vanishing', () =>
   assert.equal(a.runs + Object.values(a.excluded).reduce((x, y) => x + y, 0), a.sourceRuns);
 });
 
-// Array.isArray is satisfied by a proxy over an array, and `length` is a
-// writable property, so its get trap is bound by no invariant: it can raise, or
-// it can answer with something that is not a count at all. Everything the
-// aggregate says about how much history there was rests on that one reading, so
-// a list we cannot measure is read as empty rather than trusted or thrown over.
+// A list whose length is not a readable count is aggregated as empty.
 test('a source list whose length cannot be read aggregates to nothing', () => {
   const raises = new Proxy([row()], {
     get(target, key) {
@@ -663,9 +654,7 @@ test('a source list whose length cannot be read aggregates to nothing', () => {
   }
 });
 
-// The subscript is as capable of raising as any of the reads readRow performs,
-// and it sits inside the same guard, so the position is spent on the malformed
-// bucket and the rows on either side of it remain perfectly good evidence.
+// The subscript read sits inside the same per-row guard as every other read.
 test('an index that raises on being read costs one row and no more', () => {
   const hostile = new Proxy([row({ id: '1', ms: 1000 }), null, row({ id: '2', ms: 3000 })], {
     get(target, key) {

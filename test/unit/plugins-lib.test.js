@@ -152,7 +152,7 @@ test('isInsidePluginsRoot confines to the plugins dir', () => {
   assert.equal(P.isInsidePluginsRoot(claude, '/etc/passwd'), false);
 });
 
-// ─── main.js wiring assertions (same convention as the workflow spawn-gate test) ──
+// ─── main.js wiring assertions ──────────────────────────────────────────────
 
 test('plugins editor IPC refuses symlinks via O_NOFOLLOW and gates exec behind the allowlist', () => {
   const src = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
@@ -172,11 +172,8 @@ test('plugins editor IPC refuses symlinks via O_NOFOLLOW and gates exec behind t
 
 // ─── the editor's confinement, end to end ──────────────────────────────────
 
-// A plugin is third-party content installed from a marketplace, so the files
-// under its install directory are chosen by whoever wrote it. resolveInside
-// proves the requested name resolves under that directory as a string, and
-// O_NOFOLLOW refuses a link as the final component. Neither sees a link that is
-// a DIRECTORY above the file, which is a shape a plugin can ship.
+// The editor resolves a requested name under the plugin's install directory and
+// then confines the canonical path to that same directory.
 test('a plugin cannot reach outside its install directory through a linked directory', () => {
   const fsx = require('node:fs');
   const osx = require('node:os');
@@ -219,8 +216,7 @@ test('both plugin file channels check the resolved path, not just the name', () 
   }
 });
 
-// Every path this channel is called with is built by the main process under one
-// root. Without naming that root the channel reads any file the app can reach.
+// The sessions:read channel confines every path it reads to a single root.
 test('the session read channel names the root it is confined to', () => {
   const fsx = require('node:fs');
   const px = require('node:path');

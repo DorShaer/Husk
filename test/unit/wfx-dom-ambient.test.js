@@ -2,22 +2,12 @@
 
 // el() as the four renderer surfaces actually call it.
 //
-// wfx-dom.test.js and the two hostile files drive createBuilder(fakeDoc),
-// which is the right instrument for the allowlists and the scrub because it
-// needs no document at all. What it cannot reach is the form every caller in
-// src/renderer uses: the ambient el(), which resolves `document` per call, and
-// which is the only path that ever meets a node the builder did not build.
-// That gap is not academic. wfx-artifact-ui.js constructs its status glyphs
-// with createElementNS, outside the builder and outside the tag allowlist, and
-// hands them straight back to el() as children, so the node-verification
-// branch that decides whether they are adopted or refused had no test on
-// either side of it. This file is that path, against a document with a real
-// prototype chain and a real defaultView.
-//
-// The overlap with wfx-dom.test.js is deliberate in exactly one place: the
-// on-star refusal and the text coercion are re-asserted here because they are
-// the two properties the whole feature rests on, and a property that holds
-// under a fake document and not under a real one is a property nobody has.
+// The other wfx-dom files drive createBuilder(fakeDoc). This file drives the
+// ambient el(), which resolves `document` per call and is the form every
+// caller in src/renderer uses, against a document with a real prototype chain
+// and a real defaultView. wfx-artifact-ui.js builds its status glyphs with
+// createElementNS and hands them back to el() as children, which is the
+// node-verification branch this file covers on both sides.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,9 +22,7 @@ function surface() {
 }
 
 // Returns the WfxDomError code a call refused with, or null if it did not
-// refuse. Matching on the code rather than the message is what the class
-// carries one for: the message quotes the value being refused and is not a
-// string a test should be pinned to.
+// refuse. The code is the stable half of the class; the message is not.
 function codeOf(api, fn) {
   try {
     fn();
@@ -57,8 +45,7 @@ test('ambient el: builds against the live document rather than a captured one', 
 
   assert.equal(node.ownerDocument, document);
   assert.equal(node.tagName, 'DIV');
-  // Appending it makes it findable through the document, which is the whole
-  // reason the surfaces build into the live tree instead of a detached one.
+  // Appending it makes it findable through the document.
   document.body.appendChild(node);
   assert.equal(document.querySelector('.wfx-rcp'), node);
 });
@@ -69,8 +56,7 @@ test('ambient el: an on-star attribute is refused before the element carries any
   for (const name of ['onclick', 'onClick', 'ONCLICK', 'onerror', 'ontoggle', 'onbeforetoggle']) {
     assert.equal(codeOf(api, () => el('button', { type: 'button', [name]: 'alert(1)' })), 'event-attr', name);
   }
-  // A name that merely starts with the two letters is not a handler and is
-  // refused for the ordinary reason, which keeps the two refusals separable.
+  // A name that merely starts with those two letters takes the same refusal.
   assert.equal(codeOf(api, () => el('div', { once: 'x' })), 'event-attr');
 
   const clean = el('button', { type: 'button' }, 'Run');
@@ -87,8 +73,7 @@ test('ambient el: only allowlisted attributes are written and the URL sinks are 
   const node = el('div', { title: 'a title', role: 'group', lang: 'en', tabindex: 0 });
   assert.equal(node.getAttribute('title'), 'a title');
   assert.equal(node.getAttribute('role'), 'group');
-  // A number reaches setAttribute as its decimal string, which is what the
-  // real DOM does and what the shim's string-only setAttribute enforces.
+  // A number reaches setAttribute as its decimal string.
   assert.equal(node.getAttribute('tabindex'), '0');
 });
 
@@ -115,8 +100,7 @@ test('ambient el: numbers, bigints and conditional children coerce the way calle
   const node = el('span', null, 'runs: ', 31, ' ', 9007199254740993n, false && 'hidden', null, undefined);
 
   assert.equal(node.textContent, 'runs: 31 9007199254740993');
-  // A non-finite number in a text slot is arithmetic that went wrong upstream
-  // rather than a value to render, so it is loud.
+  // A non-finite number in a text slot refuses with a code.
   assert.equal(codeOf(api, () => el('span', null, NaN)), 'bad-child');
   assert.equal(codeOf(api, () => el('span', null, Infinity)), 'bad-child');
 });
@@ -135,9 +119,8 @@ test('ambient el: nesting composes and arrays flatten in the order they were wri
 
 test('ambient el: a class token that is not a token is dropped and the element survives', () => {
   const { el } = surface();
-  // The receipt-derived status is the case this guard was written for: a
-  // status of 'x" onload=alert(1)' has to become nothing at all rather than a
-  // token somebody later interpolates into a selector.
+  // A receipt-derived status that is not a token becomes nothing at all, and
+  // the tokens beside it are written.
   const node = el('div', { class: ['wfx-rcp', 'x" onload=alert(1)', 'is-none'] });
 
   assert.equal(node.getAttribute('class'), 'wfx-rcp is-none');
@@ -152,20 +135,17 @@ test('ambient el: data-star and aria-star are namespaces, not an escape from the
 
   assert.equal(node.getAttribute('data-wfx-receipt'), 'wf-7');
   assert.equal(node.getAttribute('aria-label'), 'Open the record');
-  // ARIA states take the word, not the presence convention, because an empty
-  // aria-hidden is invalid and reads as true to a screen reader.
+  // ARIA states take the word rather than the presence convention, because an
+  // empty aria-hidden reads as true to a screen reader.
   assert.equal(node.getAttribute('aria-hidden'), 'false');
 
-  // The prefix does not buy a free-form name. A dataset key is camelCase
-  // because DOMStringMap says so, and an ARIA suffix is one lowercase word
-  // because every attribute in the WAI-ARIA spec is.
+  // A dataset key is camelCase, as DOMStringMap says, and an ARIA suffix is
+  // one lowercase word, as the WAI-ARIA spec says.
   assert.equal(codeOf(api, () => el('div', { dataset: { 'wfx-receipt': 'x' } })), 'bad-attr-name');
   assert.equal(codeOf(api, () => el('div', { aria: { 'labelled-by': 'x' } })), 'bad-attr-name');
 
-  // data-onclick is written, and that is correct rather than a gap: the
-  // prefix is what makes it inert. The handler refusal is about the name the
-  // parser would bind, so the assertion worth making is that the attribute
-  // landed in the data namespace and no handler attribute exists beside it.
+  // data-onclick lands in the data namespace, with no handler attribute
+  // beside it.
   const dashed = el('div', { 'data-onclick': 'alert(1)' });
   assert.equal(dashed.getAttribute('data-onclick'), 'alert(1)');
   assert.equal(dashed.getAttribute('onclick'), null);
@@ -177,8 +157,7 @@ test('ambient el: the id namespace stops a built element answering a lookup for 
   shell.setAttribute('id', 'wfx-in-go');
   document.body.appendChild(shell);
 
-  // An id out of a manifest is dropped rather than written, so the built node
-  // cannot shadow the Install button in document order.
+  // An imported id is dropped rather than written.
   const imposter = el('div', { id: 'wfx-in-go' }, 'imported');
   document.body.appendChild(imposter);
   assert.equal(imposter.hasAttribute('id'), false);
@@ -189,8 +168,8 @@ test('ambient el: the id namespace stops a built element answering a lookup for 
   document.body.appendChild(mine);
   assert.equal(document.getElementById('wfxd-row-1'), mine);
 
-  // A reference follows the same rule token by token: the shell id that is
-  // listed by hand survives, the one that is not is dropped.
+  // A reference follows the same rule token by token: a listed shell id
+  // survives and the rest are dropped.
   const labelled = el('div', { aria: { labelledby: 'wfxd-row-1 wfx-in-title wfx-in-go' } });
   assert.equal(labelled.getAttribute('aria-labelledby'), 'wfxd-row-1 wfx-in-title');
 });
@@ -198,16 +177,15 @@ test('ambient el: the id namespace stops a built element answering a lookup for 
 test('ambient el: there is no SVG namespace in the builder, and a namespaced node is still adoptable', () => {
   const { el, api, document } = surface();
 
-  // Every tag that exists to fetch or execute something is off the list, svg
-  // and its children included, which is why the glyphs are built by hand.
+  // The tag allowlist carries no svg and no fetching or executing tag, so the
+  // glyphs are built by hand.
   for (const tag of ['svg', 'path', 'a', 'img', 'script', 'iframe', 'link', 'style', 'math', 'use']) {
     assert.equal(codeOf(api, () => el(tag, null)), 'bad-tag', tag);
   }
 
-  // The status glyph, built exactly as wfx-artifact-ui.js builds it: a
-  // namespaced element with camelCase attribute names, created outside the
-  // builder and handed back to it as a child. It is adopted because it is a
-  // real node, not because it says it is one.
+  // The status glyph, built as wfx-artifact-ui.js builds it: a namespaced
+  // element created outside the builder and handed back as a child, adopted
+  // because it is a real node.
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
@@ -224,14 +202,13 @@ test('ambient el: there is no SVG namespace in the builder, and a namespaced nod
 test('ambient el: an object that claims to be a node without being one is refused, not adopted', () => {
   const { el, api } = surface();
 
-  // The distinction this file is here to prove holds under a real prototype
-  // chain: a genuine namespaced element goes in, and a JSON object wearing a
-  // nodeType does not, even though both answer the same duck-type question.
+  // Under a real prototype chain a genuine namespaced element goes in and a
+  // JSON object carrying a nodeType does not.
   assert.equal(codeOf(api, () => el('span', null, { nodeType: 1, tagName: 'SCRIPT' })), 'bad-child');
   assert.equal(codeOf(api, () => el('span', null, JSON.parse('{"nodeType":3,"data":"x"}'))), 'bad-child');
 
-  // An ordinary field out of a manifest that landed in a text slot is content
-  // of the wrong shape: dropped, with the tree rendering on.
+  // An imported field in a text slot is content of the wrong shape: dropped,
+  // with the tree rendering on.
   const node = el('span', null, 'before', { name: 'step one' }, 'after');
   assert.equal(node.textContent, 'beforeafter');
 });

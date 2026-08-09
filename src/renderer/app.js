@@ -3,18 +3,16 @@
 // Includes: command palette, theme toggle, drag overlay, status panel.
 
 const $ = (s) => document.querySelector(s);
-// Optional root scopes the query (onboarding passes its overlay so its
-// selectors cannot leak matches from the rest of the document).
+// Optional root scopes the query (onboarding passes its own overlay).
 const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
 
 // ─── Notifications ─────────────────────────────────────────────────────────
 // A top-center stack of independent cards. Each slides in, auto-dismisses
 // (errors linger longer), pauses on hover, and can be dismissed by hand.
-// Newest sits on top; the stack is capped so a burst cannot bury the UI.
+// Newest sits on top and the stack is capped.
 const NOTIF_MAX = 4;
 const NOTIF_TTL = { error: 6500, warn: 5500, success: 4000, info: 4000, '': 4000 };
-// Icon path sets (stroke, 24x24 viewBox). Built with createElementNS so no
-// markup is injected as a string.
+// Icon path sets (stroke, 24x24 viewBox), built with createElementNS.
 const NOTIF_ICONS = {
   success: [['path', 'M20 6 9 17l-5-5']],
   error: [['circle', '12 12 9'], ['path', 'M12 8v4'], ['path', 'M12 16h.01']],
@@ -41,8 +39,7 @@ function notifSvg(name) {
   return svg;
 }
 // Live cards that own a `key`. A repeat notification under the same key edits
-// that card in place instead of stacking another one, so a value the user is
-// stepping through (zoom, volume) reads as one readout that keeps changing.
+// that card in place instead of stacking another one.
 const keyedNotifs = new Map();
 function dismissNotif(card) {
   if (!card || card._dismissing) return;
@@ -90,17 +87,13 @@ function notify(message, opts = {}) {
   card.appendChild(close);
   // Newest on top.
   stack.insertBefore(card, stack.firstChild);
-  // Remove the entrance class so the card transitions in. rAF gives clean
-  // first-paint timing on a real display; the setTimeout is a guarantee so
-  // the card never stays stuck hidden if rAF is starved (background window).
+  // Remove the entrance class so the card transitions in. The timeout backs
+  // up rAF, which does not run in a background window.
   const reveal = () => card.classList.remove('is-enter');
   requestAnimationFrame(() => requestAnimationFrame(reveal));
   setTimeout(reveal, 60);
-  // Cap the stack: drop the oldest beyond the limit. dismissNotif animates the
-  // card out and removes it asynchronously, so it does not shrink
-  // stack.children synchronously. Iterate a snapshot of live (not-already-
-  // dismissing) cards, oldest first, so each pass acts on a distinct card and
-  // the loop always terminates.
+  // Cap the stack: dismiss the oldest live cards beyond the limit. Cards
+  // animate out asynchronously, so iterate a snapshot of the live ones.
   const live = Array.from(stack.children).filter((c) => !c._dismissing);
   for (let i = NOTIF_MAX; i < live.length; i++) dismissNotif(live[i]);
   // Auto-dismiss with hover-to-pause. The ttl lives on the card so an in-place
@@ -114,9 +107,8 @@ function notify(message, opts = {}) {
   if (opts.key) { card._key = opts.key; keyedNotifs.set(opts.key, card); }
   return card;
 }
-// Re-use a keyed card: swap the text, the kind and the icon, restart the
-// countdown, and pulse once so a changed value is noticed without the card
-// moving or re-entering.
+// Re-use a keyed card: swap the text, kind and icon, restart the countdown,
+// and pulse once in place.
 function updateNotif(card, message, opts) {
   const msg = card.querySelector('.toast-msg');
   if (msg) msg.textContent = message;
@@ -149,10 +141,8 @@ function toastAction(msg, actionLabel, onAction, kind = 'error') {
   btn.addEventListener('click', () => { try { onAction(); } catch (_) {} dismissNotif(card); });
   body.appendChild(btn);
 }
-// Changes to skills, plugins and MCP only reach a session when it starts, and
-// the pages that make those changes have no terminal of their own. The notice
-// that asks for a restart carries the restart, so the instruction is something
-// the reader can act on where they are standing.
+// Skill, plugin and MCP changes reach a session only when it starts, so the
+// notice that asks for a restart carries the restart action itself.
 function toastRestart(message, kind = 'success') {
   toastAction(`${message} · restart the agent to apply`, 'Restart agent', async () => {
     setPage('chat');
@@ -167,10 +157,8 @@ function runEndBanner(msg, kind = '') {
 }
 
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
-// Reusable destructive-action confirmation: a modal that names what is about to
-// be deleted, so the decision is made against the thing itself and not against a
-// bare button. Returns a promise that resolves true on confirm, false on
-// cancel/escape/backdrop.
+// Reusable destructive-action confirmation modal that names what is about to
+// be deleted. Resolves true on confirm, false on cancel/escape/backdrop.
 function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabel = 'Delete', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
@@ -179,11 +167,9 @@ function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabe
     const okBtn = document.getElementById('confirm-ok');
     const cancelBtn = document.getElementById('confirm-cancel');
     if (!modal || !titleEl || !bodyEl || !okBtn || !cancelBtn) {
-      // Fallback when the modal elements are not in the DOM (early boot
-      // race). window.confirm displays plain text, so extract the text
-      // content of bodyHtml via DOMParser, which parses into a fresh
-      // inert document (no resource loads, no scripts). textContent on
-      // the parsed body collapses the markup to its text nodes.
+      // Fallback for when the modal elements are not in the DOM yet.
+      // window.confirm shows plain text, so reduce bodyHtml to its text
+      // nodes through an inert DOMParser document first.
       const parsed = new DOMParser().parseFromString(String(bodyHtml || ''), 'text/html');
       const plain = (parsed.body && parsed.body.textContent) || '';
       resolve(window.confirm(title + '\n\n' + plain));
@@ -194,12 +180,10 @@ function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabe
     bodyEl.innerHTML = bodyHtml;
     okBtn.textContent = confirmLabel;
     cancelBtn.textContent = cancelLabel;
-    // The caller's own focus is borrowed, not taken: whichever outcome the
-    // dialog resolves, the keyboard goes back where it was standing.
+    // Focus returns to the caller's element once the dialog resolves.
     const prev = document.activeElement;
     modal.hidden = false;
-    // Cancel takes the focus, so a stray Return resolves the safe outcome.
-    // Enter still confirms once the user tabs to the destructive button.
+    // Cancel starts focused; Enter confirms once the user tabs to it.
     setTimeout(() => { try { cancelBtn.focus(); } catch (_) {} }, 30);
 
     const cleanup = (result) => {
@@ -218,8 +202,7 @@ function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabe
     const onBackdrop = (e) => { if (e.target === modal) cleanup(false); };
     const onKey = (e) => {
       if (e.key === 'Escape') { cleanup(false); return; }
-      // Two buttons and a scrim: Tab cycles between them rather than walking
-      // behind the dialog into a page the reader cannot see.
+      // Tab cycles between the two buttons.
       if (e.key !== 'Tab') return;
       e.preventDefault();
       const stops = [cancelBtn, okBtn];
@@ -323,24 +306,19 @@ applyPageShell(currentPage);
 // ─── Tabs: one PTY-backed terminal per chat tab, all live in parallel ────────
 // Each tab owns its own xterm instance + FitAddon + DOM pane, keyed by the
 // sessionId shared with the main process. Only the active pane is shown; the
-// rest keep running and retain full scrollback. `term` / `fitAddon` are
-// re-pointed to the active tab so every terminal-bound handler below (input,
-// copy/paste, wheel, recap, speech, fit) keeps working unchanged.
+// rest keep running and retain full scrollback. `term` / `fitAddon` point at
+// the active tab, which is what the terminal-bound handlers below operate on.
 const TABS = new Map();
 let activeTabId = null;
 let tabSeq = 0;
 let term = null;
 let fitAddon = null;
 
-// Route every URL click through the OS browser via shell.openExternal,
-// gated by Husk's own confirm dialog so the user sees the destination
-// before leaving the app. Two paths need to be covered:
-//   - WebLinksAddon: regex-detected plain-text URLs in TUI output
-//   - term.options.linkHandler: OSC 8 hyperlinks emitted by the agent
-//     as terminal escape codes
-// Both handlers must return a truthy value so xterm's internal
-// `result || defaultConfirmAndOpen` fallback does not fire. The
-// confirm runs asynchronously; we return true immediately.
+// Route URL clicks through the OS browser via shell.openExternal, behind
+// Husk's confirm dialog so the user sees the destination first. Covers both
+// WebLinksAddon plain-text URLs and OSC 8 hyperlinks via linkHandler. Returns
+// truthy immediately so xterm's own fallback stays out of it; the confirm
+// resolves asynchronously.
 function openTerminalLink(_event, uri) {
   if (typeof uri === 'string' && /^https?:\/\//i.test(uri)) {
     openConfirmDialog({
@@ -447,10 +425,9 @@ function activateTab(id) {
   renderTabStrip();
   fitNow();
   try { term.focus(); } catch (_) {}
-  // Refresh the status panel for the newly focused tab. The main process must
-  // switch the active session FIRST so stats:get resolves THIS tab's
-  // transcript, then we fetch fresh stats (not the previous tab's cached
-  // numbers) and render.
+  // Refresh the status panel for the newly focused tab. Switch the main
+  // process's active session first so stats:get resolves this tab's
+  // transcript, then fetch and render fresh stats.
   Promise.resolve(window.husk.pty.setActive(id))
     .then(() => refreshStats())
     .then(() => refreshStatusline())
@@ -460,13 +437,11 @@ function activateTab(id) {
     .catch(() => {});
 }
 
-// Wheel forwarding for full-screen agents. A TUI like copilot runs in the
-// alternate screen (no terminal scrollback) and turns mouse reporting on so it
-// can scroll its OWN transcript. Husk strips that reporting upstream so
-// drag-to-select stays local, which also stops the agent from receiving the
-// wheel. So when the agent has reporting on, forward only the wheel to it as
-// scroll input; otherwise let xterm scroll its scrollback normally. Capture
-// phase + passive:false so we intercept before xterm and can preventDefault.
+// Wheel forwarding for full-screen agents. A TUI running in the alternate
+// screen keeps no terminal scrollback and turns mouse reporting on to scroll
+// its own transcript, so when reporting is on the wheel is forwarded to it and
+// otherwise xterm scrolls its own scrollback. Capture phase + passive:false to
+// run ahead of xterm and preventDefault.
 let agentMouseOn = false;
 window.husk.pty.onMouseMode((sessionId, on) => {
   const tab = TABS.get(sessionId);
@@ -490,17 +465,11 @@ $('#terminal').addEventListener('wheel', (e) => {
   e.stopPropagation();
 }, { capture: true, passive: false });
 
-// Auto-scroll while drag-selecting. xterm only scrolls the viewport once the
-// pointer leaves the screen element: anywhere inside it the scroll amount is
-// zero, so holding at the top of a terminal that fills its pane selects nothing
-// further. Treat a band at each edge as if the pointer were already outside by
-// re-sending the move with a clamped Y. xterm then runs its own drag-scroll,
-// which extends the selection as it scrolls; a plain scrollLines call moves
-// the viewport but leaves the selection behind.
-// Which scroller moves depends on the agent. A TUI that draws its own viewport
-// (it prints its own jump-to-bottom hint and turns mouse reporting on) keeps no
-// terminal scrollback, so xterm has nothing to scroll and only wheel input the
-// agent understands moves it. Everything else scrolls xterm's own scrollback.
+// Auto-scroll while drag-selecting. xterm scrolls the viewport only once the
+// pointer leaves the screen element, so a band at each edge re-sends the move
+// with a clamped Y and xterm runs its own drag-scroll, which extends the
+// selection as it goes. A TUI that draws its own viewport keeps no terminal
+// scrollback, so there the wheel is forwarded to the agent instead.
 const DRAG_EDGE_PX = 24;
 const DRAG_EDGE_MS = 60;
 let selDragging = false;
@@ -521,18 +490,15 @@ function selEdgeTick() {
   const screen = tab && tab.el.querySelector('.xterm-screen');
   if (!screen || !term) return;
   const r = screen.getBoundingClientRect();
-  // Prefer xterm's own scroller whenever it has somewhere to go: only xterm
-  // grows the selection as it scrolls. Forwarding to the agent instead makes it
-  // repaint the screen, which xterm never hears about, so the selection keeps
-  // its old anchor and the marked text scrolls out of the buffer entirely.
-  // The alternate screen a full-screen TUI runs in holds no scrollback, so
-  // there the agent is the only thing that can move.
+  // Prefer xterm's own scroller whenever it has somewhere to go, since only
+  // xterm grows the selection as it scrolls. The alternate screen holds no
+  // scrollback, so there the agent is the only thing that can move.
   const buf = term.buffer.active;
   const xtermCanScroll = buf.type === 'normal'
     && (selEdge.dir < 0 ? buf.viewportY > 0 : buf.viewportY < buf.baseY);
   if (!xtermCanScroll && agentMouseOn) {
-    // Agent owns the viewport: hand it wheel input, the same path the wheel
-    // listener above uses, so it redraws one step further back.
+    // Agent owns the viewport: hand it wheel input on the same path the
+    // wheel listener above uses.
     const cw = r.width / term.cols || 1;
     const ch = r.height / term.rows || 1;
     let col = Math.floor((selEdge.x - r.left) / cw) + 1;
@@ -542,13 +508,10 @@ function selEdgeTick() {
     window.husk.pty.wheel({ deltaY: selEdge.dir * 120, deltaMode: 0, col, row }, activeTabId);
     return;
   }
-  // Already past the edge: xterm scrolls on its own there, so leave it alone
-  // rather than driving it twice as fast.
+  // Already past the edge: xterm scrolls on its own there.
   if (selEdge.y < r.top || selEdge.y > r.bottom) return;
-  // xterm owns the scrollback: its drag-scroll amount is zero for any pointer
-  // inside the screen, so feed it one that reads as outside. Going through
-  // xterm keeps the selection growing as it scrolls; scrollLines would move the
-  // viewport and leave the selection behind.
+  // xterm's drag-scroll amount is zero for a pointer inside the screen, so
+  // feed it one that reads as outside and the selection keeps growing.
   const outsideY = selEdge.dir < 0
     ? r.top - 1 - (DRAG_EDGE_PX - (selEdge.y - r.top))
     : r.bottom + 1 + (DRAG_EDGE_PX - (r.bottom - selEdge.y));
@@ -560,8 +523,7 @@ function selEdgeTick() {
   } finally { selSynthetic = false; }
 }
 
-// Capture phase: the drag must be registered even if something downstream
-// stops the event from bubbling.
+// Capture phase, so the drag registers even if the event stops bubbling.
 $('#terminal').addEventListener('mousedown', (e) => { if (e.button === 0) selDragging = true; }, true);
 window.addEventListener('mouseup', () => { selDragging = false; selEdgeStop(); });
 document.addEventListener('mousemove', (e) => {
@@ -571,9 +533,8 @@ document.addEventListener('mousemove', (e) => {
   if (!screen) { selEdgeStop(); return; }
   const r = screen.getBoundingClientRect();
   const y = e.clientY;
-  // Open-ended on purpose: dragging "to the top" usually overshoots past the
-  // terminal into the tab strip above it. Anything at or beyond each edge keeps
-  // scrolling, which is what a text editor does.
+  // Open-ended bands: anything at or beyond each edge keeps scrolling, so a
+  // drag that overshoots the terminal still counts.
   let dir = 0;
   if (y < r.top + DRAG_EDGE_PX) dir = -1;
   else if (y > r.bottom - DRAG_EDGE_PX) dir = 1;
@@ -583,11 +544,9 @@ document.addEventListener('mousemove', (e) => {
 });
 
 function themeForXterm() {
-  // The terminal runs a TUI agent that themes its output through the 16 ANSI
-  // colors. The canvas background/foreground come from the active theme's
-  // --term-bg / --term-fg tokens (so any theme's terminal matches the chrome),
-  // and the ANSI set is the light or dark one depending on --term-light. Read
-  // after body[data-theme] is set.
+  // Canvas background/foreground come from the active theme's --term-bg /
+  // --term-fg tokens, and the ANSI set is the light or dark one depending on
+  // --term-light. Read after body[data-theme] is set.
   const cs = getComputedStyle(document.body);
   const accent = cs.getPropertyValue('--accent').trim() || '#ff7847';
   const isLight = cs.getPropertyValue('--term-light').trim() === '1';
@@ -595,8 +554,8 @@ function themeForXterm() {
   const fg = cs.getPropertyValue('--term-fg').trim() || (isLight ? '#1f2328' : '#e6e9ef');
   const ansi = isLight
     ? {
-        // Dark, saturated colors readable on a light background. The dim greys
-        // agents use for hints (brightBlack) become a mid grey, not near-white.
+        // Dark, saturated colors readable on a light background; brightBlack
+        // lands as a mid grey so agent hint text stays legible.
         selectionBackground: '#cfe3ff',
         black: '#1f2328', red: '#cf222e', green: '#116329', yellow: '#7d4e00',
         blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
@@ -615,14 +574,10 @@ function themeForXterm() {
   return { background: bg, foreground: fg, cursor: accent, cursorAccent: bg, ...ansi };
 }
 
-// An agent CLI has no way to learn the terminal went light, so it keeps
-// emitting colours chosen for a dark background: pale greys for diff context
-// and, for some tokens, outright white. Those turn invisible on a light
-// terminal. Remapping the sixteen ANSI slots cannot help, because the text
-// arrives as 256-colour and truecolour codes that name their colour outright.
-// xterm re-tones any foreground that falls under this ratio against the real
-// background, which reaches those codes too. Dark themes already contrast, so
-// they keep xterm's default of 1 (off) and render exactly as before.
+// Minimum contrast ratio for xterm. An agent CLI emits 256-colour and
+// truecolour codes chosen for a dark background, so on a light terminal xterm
+// re-tones any foreground below this ratio against the real background. Dark
+// themes keep xterm's default of 1, which leaves colours untouched.
 function contrastForXterm() {
   return getComputedStyle(document.body).getPropertyValue('--term-light').trim() === '1' ? 4.5 : 1;
 }
@@ -630,9 +585,8 @@ function contrastForXterm() {
 function fitNow() {
   if (currentPage !== 'chat') return;
   if (!fitAddon || !term) return;
-  // Skip while the terminal is not actually laid out (e.g. the chat page was
-  // just revealed and the container has not been sized yet). Fitting against a
-  // zero-size box yields a degenerate resize.
+  // Skip while the terminal is not laid out yet: fitting against a zero-size
+  // box yields a degenerate resize.
   const host = term.element;
   if (host && (host.clientWidth === 0 || host.clientHeight === 0)) return;
   try {
@@ -641,9 +595,7 @@ function fitNow() {
     if (!cols || !rows) return;
     const tab = TABS.get(activeTabId);
     // Only resize the PTY when the geometry actually changed. A redundant
-    // resize makes the agent's TUI redraw and drop any unsent text in its
-    // input line, which otherwise happens every time you leave the chat page
-    // and come back at the same window size.
+    // resize makes the agent's TUI redraw and drop unsent input-line text.
     if (tab && tab._cols === cols && tab._rows === rows) return;
     if (tab) { tab._cols = cols; tab._rows = rows; }
     window.husk.pty.resize({ cols, rows }, activeTabId);
@@ -653,9 +605,7 @@ function fitNow() {
 // from a window drag into one fit so the terminal reflow stays smooth.
 window.addEventListener('resize', debounce(fitNow, 80));
 // Refit whenever the terminal container changes size, not only on a window
-// 'resize'. The container can reach its final height after the first paint
-// (fonts/layout settling) and on sidebar/status-panel toggles, so observing it
-// keeps the terminal sized to its container, including the initial render.
+// 'resize', so sidebar toggles and post-paint layout settling stay covered.
 try {
   const _termFitObserver = new ResizeObserver(debounce(fitNow, 80));
   const _termEl = $('#terminal');
@@ -663,21 +613,18 @@ try {
 } catch (_) {}
 
 // Copy / paste affordances for the embedded terminal.
-//   - Right-click on the terminal opens a small Copy / Paste / Select all menu.
+//   - Right-click opens a small Copy / Paste / Select all menu.
 //   - Ctrl+Shift+C (macOS: Cmd+C) copies the selection.
-//   - Paste is handled natively: xterm already listens for the browser `paste`
-//     event on its hidden textarea and routes the clipboard through onData.
-//     We do NOT also call term.paste() from a custom key handler, because the
-//     browser fires the native paste event independently and that would double
-//     every paste. Ctrl+C is intentionally left as SIGINT.
+//   - Paste is native: xterm listens for the browser `paste` event on its
+//     hidden textarea and routes the clipboard through onData, so no custom
+//     key handler calls term.paste(). Ctrl+C stays SIGINT.
 const isMac = (navigator.userAgentData && navigator.userAgentData.platform === 'macOS') ||
               /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
 // Mark the platform so CSS can clear the macOS traffic-light controls, which
 // overlay the top-left of the window under the hiddenInset title bar.
 if (isMac) document.documentElement.setAttribute('data-platform', 'mac');
 
-// The command macOS users run to clear the quarantine flag on the unsigned app
-// so Gatekeeper will open it (we have no Apple Developer ID yet).
+// The command macOS users run to clear the quarantine flag on the app.
 const MAC_TRUST_CMD = 'xattr -dr com.apple.quarantine /Applications/Husk.app';
 
 // Manual update command per install type, shown when the in-app update cannot
@@ -811,9 +758,8 @@ const WHATS_NEW = {
   },
 };
 function whatsNewFor(version) {
-  // Exact match only. A packaged release reports its real version (e.g. 2.8.4)
-  // and matches; running from source reports Electron's version, which has no
-  // entry, so the page never shows in dev or e2e and cannot cover the UI.
+  // Exact match only. A packaged release reports its real version; running
+  // from source reports Electron's version, which has no entry here.
   return WHATS_NEW[version] || null;
 }
 // Highest version key in WHATS_NEW, for showing release notes on demand when
@@ -827,11 +773,8 @@ function latestWhatsNewVersion() {
   };
   return Object.keys(WHATS_NEW).sort(bySemver).pop() || '';
 }
-// Clone Kernel into an empty-state stage, posed peeking from the open pod with
-// an idle blink and a wiggle+spark that lands as the page's prop animation
-// loops, so he reads as "doing" the task rather than just sitting there. Ids are
-// re-prefixed per mount so clones never collide with the onboarding original or
-// each other. Returns an unmount fn that stops the timers.
+// Clone Kernel into an empty-state stage. Ids are re-prefixed per mount so
+// clones stay distinct from the onboarding original and from each other.
 let emptyKernelSeq = 0;
 function mountEmptyKernel(slot) {
   const src = $('#ob-kernel');
@@ -846,9 +789,8 @@ function mountEmptyKernel(slot) {
   const hk = slot.querySelector('svg');
   if (!hk) return null;
   hk.removeAttribute('style');
-  // Bare, static Kernel: just the seed character, no pod/husk shell and no idle
-  // motion (CSS `.is-bare` hides the shell and disables animation). The viewBox
-  // is retightened around the seed so the hidden shell leaves no gap below him.
+  // Bare, static Kernel: `.is-bare` hides the pod shell and stops the idle
+  // motion, and the viewBox tightens around the seed.
   hk.className.baseVal = 'hk is-bare';
   hk.setAttribute('viewBox', '40 -14 120 176');
   return null;
@@ -901,8 +843,7 @@ function showWhatsNew(version) {
       steps.forEach((sec, idx) => { sec.hidden = idx !== step; });
       dotEls.forEach((d, idx) => d.classList.toggle('active', idx === step));
       backBtn.hidden = step === 0;
-      // The last slide's own button finishes, so Skip would be a second way to
-      // do the same thing.
+      // The last slide's own button finishes, so Skip is hidden there.
       skipBtn.hidden = step === steps.length - 1;
       stage.scrollTop = 0;
     };
@@ -974,8 +915,7 @@ async function pasteIntoTerminal() {
     if (btn.dataset.action === 'copy') await copyTerminalSelection();
     else if (btn.dataset.action === 'paste') await pasteIntoTerminal();
     else if (btn.dataset.action === 'select-all') term.selectAll();
-    // Clicking a menu button pulled focus out of the terminal. Return it so
-    // the user can keep typing without clicking back into the chat.
+    // Return focus to the terminal after the menu action runs.
     try { term.focus(); } catch (_) {}
   });
   window.addEventListener('click', (e) => {
@@ -999,10 +939,8 @@ function debounce(fn, ms) {
 }
 
 // Coalesce rapid preference writes. Each window.husk.config.set is a
-// synchronous disk write in the main process; spamming it (e.g. clicking
-// the theme toggle or accent swatches fast) floods the main thread and
-// freezes the UI. Apply the change optimistically to the local cfg and the
-// DOM, then write once the clicks settle. The final merged patch wins.
+// synchronous disk write, so apply the change optimistically to the local cfg
+// and the DOM, then write the merged patch once the clicks settle.
 let _pendingCfgPatch = null;
 const _flushCfgPatch = debounce(async () => {
   const patch = _pendingCfgPatch; _pendingCfgPatch = null;
@@ -1031,10 +969,8 @@ function restoreAppearanceSnapshot(snap) {
   setTimeout(fitNow, 120);
 }
 // Appearance changes preview live and stay unsaved until the user commits.
-// Every theme/accent/rail change applies to the DOM immediately (so themes can
-// be browsed freely) and accumulates in pendingAppearance; Save persists the
-// merged patch, Revert (or navigating away from Preferences) restores the
-// saved appearance.
+// Each theme/accent/rail change applies to the DOM and accumulates in
+// pendingAppearance; Save persists the merged patch, Revert restores.
 let pendingAppearance = null;
 function syncAppearanceActionsBar() {
   const el = $('#pref-appearance-actions');
@@ -1068,10 +1004,8 @@ async function saveAppearancePreview() {
   pendingAppearance = null;
   try {
     cfg = await window.husk.config.set(patch);
-    // Refresh with the same semantics as the Ctrl+R shortcut
-    // (refreshFromShortcut): on the chat page restart the agent so the
-    // conversation keeps running; every other page gets the full renderer
-    // reload.
+    // Same refresh semantics as refreshFromShortcut: the chat page restarts
+    // the agent, every other page gets a full renderer reload.
     if (currentPage === 'chat') {
       bindPrefs();
       syncAppearanceActionsBar();
@@ -1089,22 +1023,18 @@ async function saveAppearancePreview() {
   syncAppearanceActionsBar();
 }
 
-// Coalesce a tab's PTY output into one xterm write per animation frame. A
-// chatty agent emits many chunks in quick succession, and each separate write
-// costs its own scroll callback and speech scan. Buffering to the next frame
-// collapses a burst into a single write, scroll, and speech scan. Each tab owns
-// its own buffer so a background agent's output never bleeds into another.
+// Coalesce a tab's PTY output into one xterm write per animation frame, so a
+// burst of chunks costs a single write, scroll and speech scan. Each tab owns
+// its own buffer.
 function _flushTabWrite(tab) {
   tab.flushScheduled = false;
   if (!tab.writeBuf) return;
   const data = tab.writeBuf;
   tab.writeBuf = '';
   const t = tab.term;
-  // Follow the tail only when the user is already pinned to the bottom. If they
-  // scrolled up to read while the agent is still streaming, leave the viewport
-  // where it is instead of yanking it back down on every chunk. (In the alt
-  // screen there is no scrollback, so viewportY/baseY are both 0 and this stays
-  // pinned -- copilot's own wheel-forwarded scrolling is unaffected.)
+  // Follow the tail only when the viewport is already pinned to the bottom,
+  // so reading further up survives a streaming agent. In the alt screen
+  // viewportY and baseY are both 0, which keeps it pinned.
   const buf = t.buffer.active;
   const wasAtBottom = buf.viewportY >= buf.baseY;
   t.write(data, () => { if (wasAtBottom) t.scrollToBottom(); });
@@ -1171,8 +1101,7 @@ window.husk.pty.onData((sessionId, d) => {
 });
 window.husk.pty.onExit((sessionId, code) => {
   const tab = TABS.get(sessionId);
-  // Suppress the exit notice when we're tearing this tab's PTY down on
-  // purpose, otherwise the line stitches into the new PTY's welcome banner.
+  // Skip the exit notice while this tab's PTY is being torn down on purpose.
   if (!tab || tab.restarting) return;
   if (code === 127) {
     // 127 = shell could not find the agent binary; route the user to setup.
@@ -1189,13 +1118,10 @@ function announceInTerminal(msg) {
   if (term) term.writeln(`\r\n\x1b[38;2;103;232;249m▸ ${msg}\x1b[0m`);
 }
 
-// After a renderer reload the main-process PTYs are still alive but the renderer
-// lost its tabs. Rebuild the open chats instead of orphaning them and minting a
-// fresh one. For an agent session we can resume (claude), we close the orphaned
-// PTY and reopen the SAME conversation with --resume, which re-renders the full
-// history cleanly (a scrolling TUI cannot have its scrollback restored by
-// keeping the process alive). For agents without a resume path we keep the live
-// process and reattach to it. Returns true if any chat was restored.
+// Rebuild the open chats after a renderer reload, where the main-process PTYs
+// are still alive. A resumable agent session is reopened with its resume form
+// in a fresh PTY, which re-renders the full history; everything else keeps its
+// live process and reattaches. Returns true if any chat was restored.
 async function reattachSessions() {
   let live;
   try { live = await window.husk.pty.list(); } catch (_) { live = null; }
@@ -1205,13 +1131,11 @@ async function reattachSessions() {
   let activeTab = null;
   for (const sess of live.sessions) {
     let tab = null;
-    // Only close-and-resume when the active agent actually has a resume
-    // form; otherwise the live PTY is kept and reattached below. Closing
-    // first and failing to resume would destroy a healthy session.
+    // Close-and-resume only when the active agent has a resume form;
+    // otherwise the live PTY is kept and reattached below.
     let resumeCmd = null;
-    // Only resume when the transcript still exists. Resuming a session that was
-    // never written (claude exited 0 without a conversation) surfaces the
-    // "No conversation found with session ID" error and a dead tab.
+    // Resume only when the transcript still exists, so a session that was
+    // never written stays where it is.
     if (sess.claudeSessionId && sess.resumable) {
       try {
         const r = await window.husk.sessions.resumeCommand({ agent, id: sess.claudeSessionId, cwd: sess.cwd || '' });
@@ -1334,19 +1258,13 @@ async function restartPty(opts = {}) {
   // First wipe so any earlier scrollback is gone before kill output starts.
   try { tab.term.reset(); } catch (_) { try { tab.term.clear(); } catch (_) {} }
   await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
-  // Let the dying PTY drain its tail notice into the (suppressed) handlers
-  // before we re-enable output. Claude's welcome banner takes >300ms to
-  // produce, so a 200ms quiet window does not cut into it.
+  // Quiet window that lets the closing PTY drain its tail notice into the
+  // suppressed handlers before output is re-enabled.
   await new Promise((r) => setTimeout(r, 200));
-  // Second wipe: clears anything that wrote to the buffer despite suppression
-  // (e.g. xterm internal sequences from the kill), so the new PTY's banner
-  // starts on a clean canvas.
+  // Second wipe, so the new PTY's banner starts on a clean canvas.
   try { tab.term.reset(); } catch (_) {}
   tab.restarting = false;
-  // Respect the "Don't show this on next launch" toggle on restart too;
-  // otherwise the welcome briefly flashes in (added here) and out again
-  // (stripped by the first pty.onData tick once the new agent banner
-  // arrives), which reads as a layout glitch.
+  // Respect the "Don't show this on next launch" toggle on restart too.
   if (!(cfg && cfg.skipWelcome)) $('#chat-empty').classList.add('show');
   tab.term.focus();
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
@@ -1380,10 +1298,8 @@ if (window.husk.shortcuts && window.husk.shortcuts.onRestartAgent) {
   window.husk.shortcuts.onRestartAgent(() => { restartPty(); });
 }
 
-// Close one chat tab and reap its agent. The window never ends up with no chat
-// in it: closing the last one opens a fresh chat behind it. That is a new
-// session with a new name, not the old one restarted in place, so the chat the
-// user just closed does not stay on screen under its old title.
+// Close one chat tab and reap its agent. Closing the last one opens a fresh
+// chat behind it, as a new session with a new name.
 async function closeTab(id) {
   const tab = TABS.get(id);
   if (!tab) return;
@@ -1430,9 +1346,8 @@ function showThinkingDots(el) {
   el.innerHTML = THINKING_DOTS_HTML;
 }
 
-// Type `full` into `el` character by character. The element must already hold
-// its final state elsewhere (data/attributes): if this animation is
-// interrupted by a repaint, the repaint simply shows the full text.
+// Type `full` into `el` character by character. A repaint during the
+// animation simply shows the full text.
 function typewriterTo(el, full, msPerChar = 30) {
   if (!el) return;
   if (el._twTimer) clearInterval(el._twTimer);
@@ -1544,14 +1459,9 @@ function renderTabStrip() {
 }
 
 // Link each tab to the agent session it spawned, so a saved custom name can be
-// restored and future renames persisted.
-//
-// A tab is probed while it has no session, and also while the session it landed
-// on is provisional. Some CLIs create a session directory at launch and only
-// write to it once the conversation starts, so the first match can be an empty
-// directory left behind by an abandoned chat. That session never earns a name,
-// so a binding frozen on it leaves the tab showing the pending dots forever.
-// Re-probing lets the tab move across to the real session once it appears.
+// restored and future renames persisted. A tab is probed while it has no
+// session and while the session it landed on is still provisional, so it can
+// move across to the real session once that appears.
 async function linkTabs() {
   const pending = [...TABS.values()].filter((t) => !t.agentId || t.agentIdProvisional);
   if (!pending.length) return;
@@ -1581,9 +1491,8 @@ async function linkTabs() {
 }
 setInterval(linkTabs, 3000);
 
-// Adopt a generated session name for a tab. State first, full repaint second
-// (so the name is already correct even if the animation is interrupted), then
-// the typewriter reveal plays over the freshly painted label.
+// Adopt a generated session name for a tab: state, then a full repaint, then
+// the typewriter reveal over the freshly painted label.
 function adoptTabTitle(tab, title) {
   const clean = String(title || '').trim();
   if (!clean) return;
@@ -1599,8 +1508,7 @@ function adoptTabTitle(tab, title) {
 }
 
 // Keep each tab's label in step with its session's title, so the tab matches
-// the Sessions and Recent lists once the conversation earns a name (e.g. the
-// agent summarizes it). A user rename (customTitle) always wins and opts the
+// the Sessions and Recent lists. A user rename (customTitle) wins and opts the
 // tab out. The first earned name types itself in; later refinements swap
 // silently through the repaint inside adoptTabTitle.
 async function syncTabTitles() {
@@ -1609,16 +1517,16 @@ async function syncTabTitles() {
     try {
       const res = await window.husk.sessions.resolveLiveTitle({ knownAgentId: tab.agentId });
       if (!res || !res.ok) continue;
-      // Track this every poll: once the bound session stops being provisional the
-      // tab stays put, and while it still is, linkTabs keeps looking for the real one.
+      // Tracked every poll: while the bound session is provisional, linkTabs
+      // keeps looking for the real one.
       tab.agentIdProvisional = !!res.provisional;
       if (!res.title) continue;
       if (res.custom) {
         tab.customTitle = res.title; tab.titleEarned = true; renderTabStrip();
         continue;
       }
-      // Only a name the CLI generated counts; the first user message echoed
-      // back as a title does not, so the dots keep breathing until then.
+      // Only a name the CLI generated counts, so the dots keep breathing
+      // until one arrives.
       if (!res.named || !sessionTitleUsable(res.title)) continue;
       const clean = String(res.title).trim();
       if (clean !== tab.title || !tab.titleEarned) adoptTabTitle(tab, clean);
@@ -1660,11 +1568,9 @@ function retintAllTabs() {
 }
 function applyTheme(theme) {
   document.body.dataset.theme = theme;
-  // Light/dark FAMILY flag, derived from the theme's --term-light token. The
-  // chrome glass treatment (frosted topbar/rail/status/modals) is gated on
-  // data-mode, not data-theme, so every dark-family theme (dark, midnight,
-  // nord, dracula) gets it and every light-family theme (light, sepia) gets
-  // the solid treatment. New themes are handled automatically by their token.
+  // Light/dark family flag, derived from the theme's --term-light token. The
+  // frosted chrome treatment is gated on data-mode, not data-theme, so a new
+  // theme picks its side automatically from that token.
   const isLight = getComputedStyle(document.body).getPropertyValue('--term-light').trim() === '1';
   document.body.dataset.mode = isLight ? 'light' : 'dark';
   retintAllTabs();
@@ -1678,10 +1584,9 @@ function applyAccent(accent) {
 }
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
-// Page visit history: every page change is a navigation entry, so the
-// mouse back/forward buttons and Alt+arrows walk pages exactly like a
-// browser walks documents. Programmatic back/forward passes _nav so it
-// does not re-record itself.
+// Page visit history: every page change is a navigation entry, so the mouse
+// back/forward buttons and Alt+arrows walk pages. Programmatic back/forward
+// passes _nav so it does not re-record itself.
 let pageHistory = [];
 let pageForwardStack = [];
 // The palette badge shows the chord this platform actually uses.
@@ -1732,9 +1637,8 @@ $('#rail-toggle')?.addEventListener('click', async () => {
   setTimeout(fitNow, 120);
 });
 
-// Untrusted-folder banner. Claude ignores a workspace's saved permissions until
-// the folder is trusted, warning on every launch. Show an explicit, one-click
-// "Trust this folder" action (Claude only); never set trust silently.
+// Untrusted-folder banner, shown for Claude while the workspace folder is not
+// trusted. Trust is set only by the explicit one-click action.
 async function maybeShowTrustBanner() {
   const banner = $('#trust-banner');
   if (!banner) return;
@@ -1755,9 +1659,8 @@ $('#btn-trust-folder')?.addEventListener('click', async () => {
   }
 });
 $('#btn-trust-dismiss')?.addEventListener('click', () => { const b = $('#trust-banner'); if (b) b.hidden = true; });
-// The collapsed rail draws its own styled tooltip (.rail-item::after, fed by
-// aria-label). Move each item's `title` to `aria-label` and drop the title so
-// the native OS tooltip does not render a second, duplicate label on hover.
+// The collapsed rail draws its own tooltip from aria-label, so move each
+// item's `title` across and drop it.
 $$('.rail-item').forEach((b) => {
   const t = b.getAttribute('title');
   if (t) { if (!b.getAttribute('aria-label')) b.setAttribute('aria-label', t); b.removeAttribute('title'); }
@@ -1798,10 +1701,8 @@ async function refreshStats() {
     // The Skills subtitle is owned by applyPromptsLabels so labels stay
     // agent-aware while the count remains current.
     applyPromptsLabels();
-    // Sessions subheader is refined by renderSessions once the active agent's
-    // sessions are read. This is a hint until that happens, and it stands down
-    // afterwards: stats refresh on their own schedule, and overwriting the
-    // detailed line drops the count of Autopilot sessions kept out of the list.
+    // Sessions subheader is a hint until renderSessions reads the active
+    // agent's sessions and takes ownership of the line.
     if (!sessionsSubOwned) {
       const agentNow = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0];
       $('#sessions-sub').textContent = `${agentNow} sessions · click to preview, Resume to continue`;
@@ -1891,15 +1792,10 @@ function ctxBucketColor(pos) {
   else { const t = p - 66; r = 251 + (239 - 251) * t / 34; g = 146 + (68 - 146) * t / 34; b = 60 + (68 - 60) * t / 34; }
   return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
 }
-// Build the discrete block meter. Filled cells take their gradient color from
-// their own position along the bar; trailing cells are the dim empty marker.
-// Friendly model name for the status readout. The banner the CLI prints
-// ("Opus 4.8") is its own text; here we derive the same shape from the model
-// id. Strip the tier suffix ("[1m]") and vendor prefix ("claude-"), then split
-// the rest into family + version. Bare aliases from settings.json ("opus",
-// before any transcript turn names the full "claude-opus-4-8[1m]") carry no
-// version, so they render capitalized ("Opus") and upgrade to "Opus 4.8" once
-// the session resolves the full id. Date stamps (6+ digits) are dropped.
+// Friendly model name for the status readout, derived from the model id.
+// Strips the tier suffix and vendor prefix, then splits the rest into family
+// and version. A bare alias renders capitalized and gains its version once the
+// session resolves the full id. Date stamps (6+ digits) are dropped.
 function prettyModelLabel(raw) {
   const id = String(raw || '').replace(/\[[^\]]*\]/g, '').replace(/^claude-/, '');
   if (!id) return '';
@@ -1917,6 +1813,8 @@ function prettyModelLabel(raw) {
   return [famDisp, ver.join('.'), tail.map(cap).join(' ')].filter(Boolean).join(' ');
 }
 
+// Build the discrete block meter. Filled cells take their gradient color from
+// their own position along the bar; trailing cells are the dim empty marker.
 function ctxBarHTML(pct, buckets = 26) {
   const p = Math.max(0, Math.min(100, Number(pct) || 0));
   const filled = Math.round(p / 100 * buckets);
@@ -1942,10 +1840,8 @@ async function refreshStatusline() {
   const s = lastStats;
   const here = (s.location && s.location.city) || '';
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  // Timezone is always available locally via Intl, no network. We fall back to
-  // it as the WHERE headline whenever IP geolocation didn't resolve to a city
-  // (common on Windows / corporate networks / VPNs / offline). Honest UX: show
-  // what we know, never blank a section.
+  // Timezone comes from Intl locally, and stands in as the headline whenever
+  // geolocation did not resolve to a city.
   let tz = '';
   try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
   // Pretty fallback: "Europe/London" -> "London", "America/New_York" -> "New York".
@@ -1956,29 +1852,19 @@ async function refreshStatusline() {
     : '';
   const u = s.usage || {};
   const L = s.learning || {};
-  // Stabilize the context reading. A poll taken while the agent is mid-turn can
-  // transiently return no session or ctxTokens===0 (the newest-by-mtime
-  // transcript momentarily being a sidechain/fresh file, or a tail read landing
-  // before the next usage record). Without this the whole Context Window block
-  // flickers out and back. Cache the last good reading and fall back to it; a
-  // real change overwrites it on the next good poll, and activateTab() clears it
-  // on a session switch so we never show a stale cross-session number.
+  // Stabilize the context reading: cache the last good one and fall back to it
+  // when a mid-turn poll returns no session or ctxTokens===0. The next good
+  // poll overwrites it, and activateTab() clears it on a session switch.
   if (u.session && u.session.ctxTokens > 0) lastGoodCtx = u.session;
   // Context window is a Claude-session figure; for any other agent, do not
   // fall back to a Claude session's cached ctx.
   const ctx = agentKindCache !== 'claude'
     ? null
     : ((u.session && u.session.ctxTokens > 0) ? u.session : lastGoodCtx);
-  // The active model. Trim the vendor prefix and the context-tier suffix so the
-  // readout stays compact and matches the banner (e.g. "fable-5", not
-  // "claude-fable-5[1m]"). Empty when no model is known, which hides the row.
-  // The model comes from the active agent's OWN session transcript
-  // (claude from ~/.claude, copilot from ~/.copilot), so it always names
-  // the agent's real model, never a different CLI's session. The ctx
-  // fallback is claude-only (context window is a claude-transcript figure).
-  // The CLI's own name for the model wins when the catalog has been read: an
-  // id-derived name can only print what the id spells out, so a bare alias
-  // renders without its version. Falls back to the derived name until then.
+  // The active model, read from the active agent's own session transcript and
+  // empty when no model is known, which hides the row. The CLI's own name for
+  // the model wins once the catalog has been read, with the id-derived name as
+  // the fallback until then.
   const modelId = (u.session && u.session.model)
     || (agentKindCache === 'claude' && ctx && ctx.model) || '';
   const modelLabel = (u.session && u.session.modelLabel)
@@ -2135,10 +2021,8 @@ async function refreshStatusline() {
   });
 }
 
-// Chromium's zoom level maps to a 1.2^level scale factor. Every measurement in
-// the renderer is in CSS pixels, which shrink as the user zooms in, so this
-// converts the panel's measured height back to what it spans at Husk's own base
-// zoom.
+// Chromium's zoom level maps to a 1.2^level scale factor, which converts a
+// CSS-pixel measurement back to what it spans at Husk's base zoom.
 const ZOOM_STEP_BASE = 1.2;
 function userZoomRatio() {
   const ui = window.husk && window.husk.ui;
@@ -2146,11 +2030,10 @@ function userZoomRatio() {
   try { return Math.pow(ZOOM_STEP_BASE, ui.zoomGet() - ui.zoomBase); } catch (_) { return 1; }
 }
 
-// Scale the status stack down when it is taller than the space between the head
-// and foot border lines, so every section stays visible at any window height.
-// The budget is the panel's height at base zoom, not its current CSS height:
-// those two differ by exactly the zoom factor, so fitting to the current height
-// would cancel the user's zoom and pin the panel to one physical size forever.
+// Scale the status stack down when it is taller than the space between the
+// head and foot border lines, so every section stays visible at any window
+// height. The budget is the panel's height at base zoom, which keeps the
+// user's zoom intact.
 function fitStatusContent() {
   const box = $('#sp-content');
   const fit = $('#sp-fit');
@@ -2165,14 +2048,12 @@ function fitStatusContent() {
   const budget = avail * userZoomRatio();
   if (need <= budget) return;
   const scale = budget / need;
-  // The shrink is only wanted vertically. Widening the wrapper by the same
-  // factor it is scaled by leaves the painted width at the panel's, so the rows
-  // keep both edges instead of pulling in toward the middle.
+  // Widening the wrapper by the same factor it is scaled by keeps the painted
+  // width at the panel's, so the shrink reads as vertical only.
   fit.style.width = `${100 / scale}%`;
   fit.style.transform = `scale(${scale})`;
-  // A transform leaves the layout box at full height. Pulling the freed space
-  // back keeps #sp-content's scroll height equal to what is actually painted,
-  // so the panel scrolls only when the scaled stack really does overflow.
+  // A transform leaves the layout box at full height, so pull the freed space
+  // back and #sp-content's scroll height matches what is painted.
   fit.style.marginBottom = `${-(need * (1 - scale))}px`;
 }
 
@@ -2185,10 +2066,8 @@ let projectsCache = [];
 let activeProjectId = null;
 
 // ─── Projects: board + per-project workspace ─────────────────────────────────
-// A project is a folder context. The board answers "which folder needs me",
-// the workspace answers "what is going on in this one". Clicking a row opens
-// the workspace; launching the agent is always the explicit button, never a
-// side effect of looking around.
+// A project is a folder context. Clicking a row opens its workspace; the
+// agent launches only from the explicit button.
 let projectStates = {};   // derived per-project signal, keyed by id
 let projectGroups = null; // { needsYou, active, quiet } id lists from main
 let wsOpenId = null;      // non-null while a workspace view is open
@@ -2266,8 +2145,7 @@ function wsActivityMs(p) {
 }
 
 // Board or workspace, one entry point so every caller repaints the right one.
-// The filter input scopes the board list, so it hides while a workspace is
-// open; Add project stays, it is global either way.
+// The filter input scopes the board list and hides inside a workspace.
 function wsSyncRailSuppression() {
   const rail = document.getElementById('rail-recent');
   if (rail) rail.classList.toggle('ws-suppressed', currentPage === 'projects' && !!wsOpenId);
@@ -2316,11 +2194,10 @@ function wsWorkChips(p) {
   return chips.join('');
 }
 
-// One table row. The full path lives in the tooltip; the cell shows the
-// home-relative form. Empty cells carry a dim placeholder so the columns keep
-// their rhythm; an ellipsis placeholder means derived state has not landed yet.
-// The action column always has exactly one occupant: "Open" launches into the
-// folder, "Current" states that the agent is already there.
+// One table row. The full path lives in the tooltip and the cell shows the
+// home-relative form; empty cells carry a dim placeholder. The action column
+// holds "Open" to launch into the folder, or "Current" when the agent is
+// already there.
 function wsRowHtml(p, attn) {
   const st = wsStateOf(p.id);
   const isActive = p.id === activeProjectId;
@@ -2363,12 +2240,10 @@ function paintBoard(filter) {
     return;
   }
   // One continuous table: a header row, then the groups as separator rows.
-  // Separators appear only when there is more than one non-empty group, so a
-  // short list stays a clean flat table.
+  // Separators appear only when more than one group is non-empty.
   const nonEmpty = [needs, act, quiet].filter((g) => g.length).length;
   const groupRow = (label, n) => (nonEmpty > 1 ? `<div class="ws-group"><span>${label}</span><span class="ws-sec-count">${n}</span></div>` : '');
-  // The failure note lives inside the paint so it survives every repaint and
-  // carries the actual error; a screenshot of it is a diagnosis.
+  // The failure note is painted with the table so it survives every repaint.
   const stateNote = wsStateError
     ? `<div class="ws-state-note">Live project state is unavailable, so branch and status are blank. Error: ${escapeHtml(wsStateError)}</div>`
     : '';
@@ -2581,9 +2456,8 @@ async function wsFillInspect(p) {
 
   const mcpEl = $('#ws-mcp');
   if (mcpEl) {
-    // The panel answers what the agent gets in this folder, so it lists the
-    // resolved set rather than one storage location. An empty result means the
-    // agent really has no servers here, not that a config key is missing.
+    // Lists the resolved set the agent gets in this folder rather than one
+    // storage location.
     const rows = (ins && ins.ok && ins.mcpRows) || [];
     const excluded = (ins && ins.ok && ins.mcpExcluded) || [];
     mcpEl.classList.toggle('is-empty', !rows.length);
@@ -2658,17 +2532,15 @@ async function openProject(id) {
   if (!res || !res.ok) return;
   activeProjectId = id;
   await refreshProjectsState();
-  // Pass the project's path explicitly to restartPty so the new PTY lands
-  // in the right cwd even if there is any lag between setActive persisting
-  // config and pty.restart reading it. Belt-and-suspenders.
+  // Pass the project's path explicitly to restartPty so the new PTY lands in
+  // the right cwd regardless of when setActive's config write settles.
   const project = (res.project && res.project.path) ? res.project : (projectsCache.find((p) => p.id === id) || {});
   await restartPty({ cwd: project.path || null });
   setPage('chat');
 }
 
 // Leave the active project: clear the selection so the agent runs in the
-// default (home / configured) cwd again. Restarts the PTY so the change
-// takes effect, mirroring how switching projects works.
+// default cwd again, and restart the PTY so the change takes effect.
 async function clearActiveProject() {
   if (!activeProjectId) return;
   const res = await window.husk.projects.clearActive();
@@ -2731,8 +2603,7 @@ async function deleteProject(id, name) {
 {
   const search = document.getElementById('projects-search');
   if (search) search.addEventListener('input', debounce(() => { if (!wsOpenId) paintBoard(search.value); }, 120));
-  // Derived state ages while the window is unfocused (commits from a terminal,
-  // runs finishing); refresh on focus so the board is honest when eyes return.
+  // Derived state ages while the window is unfocused, so refresh on focus.
   window.addEventListener('focus', () => { if (currentPage === 'projects') renderProjects(); });
 
   const newBtn = document.getElementById('btn-projects-new');
@@ -2742,10 +2613,8 @@ async function deleteProject(id, name) {
   const pickEl = document.getElementById('npj-pick');
   const cancelBtn = document.getElementById('npj-cancel');
   const createBtn = document.getElementById('npj-create');
-  // Named openProjectModal / closeProjectModal rather than open / close: in
-  // non-strict mode a function declaration in a block hoists to the script
-  // scope and shadows the global window.open / window.close that xterm's link
-  // click path calls.
+  // Named openProjectModal / closeProjectModal so the block-scoped function
+  // declarations stay clear of the global window.open / window.close.
   function openProjectModal() {
     if (!modal) return;
     if (nameEl) nameEl.value = '';
@@ -2837,9 +2706,8 @@ async function renderWorkflows() {
   } catch (_) { wfRunsCache = []; }
   await wfRefreshSidecars();
   await wfRefreshReceipts();
-  // A run in flight owns this page: opening Workflows while one is going (or
-  // after a reload) drops you back into watching it, rather than showing a list
-  // that pretends nothing is happening.
+  // A run in flight owns this page, so opening Workflows while one is going
+  // lands back in the run view.
   if (activeRunId) { wfShowView('run'); return; }
   const adopted = await wfReattachRun();
   if (adopted) return;
@@ -2852,17 +2720,9 @@ let wfRunsCache = [];
 
 // Where a workflow came from, keyed on its local id. One row per workflow that
 // arrived as a file: the artifact it was installed from, the directory it is
-// bound to, and whether its prompts have been read and agreed to.
-//
-// Fetched once per paint of the page rather than once per card, and read
-// synchronously while the grid is being built. That is not only about the IPC
-// hops: paintWorkflowList replaces the whole grid, so a per-card fetch would
-// land after the paint and repaint into a click, which is the hazard the rest
-// of this page is careful about. Every honest use of this cache is cosmetic.
-// The one question that decides whether a stranger's prompts reach a CLI is
-// asked again, against the store, inside WfxArtifactUi.runWorkflow, and once
-// more in the main process, so a stale row here can only mean a redundant
-// question, never a skipped one.
+// bound to, and whether its prompts have been read and agreed to. Fetched once
+// per paint of the page and read synchronously while the grid is built, so the
+// grid paints in one pass. Every use of this cache here is cosmetic.
 let wfSidecarsCache = {};
 
 async function wfRefreshSidecars() {
@@ -2879,16 +2739,10 @@ function wfSidecarFor(id) {
   return (row && typeof row === 'object') ? row : null;
 }
 
-// What this machine has actually measured about each workflow: runs, median
-// duration, outcomes, tokens, aggregated in the main process against the
-// fingerprint of the graph as it stands now. Keyed on workflow id, and fetched
-// once per paint alongside the sidecars for the same reason.
-//
-// The receipts strip on a card reads this. Without it the strip has only the
-// receipts inside an imported artifact to read, so a workflow that ran here ten
-// times reports "No receipts yet" forever and the only way to see local
-// evidence is to export the workflow and import the file back as a second
-// workflow.
+// What this machine has measured about each workflow: runs, median duration,
+// outcomes, tokens, aggregated in the main process against the fingerprint of
+// the graph as it stands now. Keyed on workflow id, fetched once per paint
+// alongside the sidecars, and read by the receipts strip on a card.
 let wfReceiptsCache = {};
 
 async function wfRefreshReceipts() {
@@ -2925,112 +2779,55 @@ function wfDur(ms) {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-// The flow's own shape, drawn small, with its steps named. A workflow is
-// recognised by its topology, which is why "2 steps" tells you nothing, and it
-// is chosen by what its steps say, which is why a row of unlabelled lozenges
-// tells you no more than the count does. The install sheet shows this drawing to
-// somebody deciding whether to let a stranger's commands run against a
-// directory on their disk, and "four boxes" is not something anyone can decide
-// on. Both halves have to be in the picture.
-//
-// Everything below is one argument about space. A card gives this 250 by 74
-// CSS pixels and never fewer, twelve steps across that leaves twenty pixels a
-// name, and twenty pixels is one letter and a full stop. So how many steps a
-// preview can name is not a matter of taste: it is division, and the answer on
-// a card is somewhere around nine. Rather than shrink the type until the
-// drawing is technically labelled and practically unreadable, this works out
-// the cell the graph in hand would get on the surface it is going to, fits the
-// names into it, and takes one of two shapes depending on how many of them
-// survived:
+// The flow's own shape, drawn small, with its steps named. The preview works
+// out the cell the graph in hand gets on the surface it is going to, fits the
+// names into it, and takes one of two shapes:
 //
 //   labelled  a grid of named pills, in columns by reading order. The viewBox
-//             is the surface's own pixel box, so every number in the labelled
-//             path is a real CSS pixel at the smallest size that surface can
-//             render at, and a taller window only ever magnifies it.
-//   compact   the normalised scatter this function draws at a fixed 250 by 74,
-//             for a graph whose cells cannot hold a word. The names are still
-//             on the element as its accessible name; what is dropped is the
-//             pretence that they are legible.
+//             is the surface's own pixel box, so a taller window magnifies it.
+//   compact   a normalised scatter at a fixed 250 by 74, for a graph whose
+//             cells cannot hold a word. The names stay on the element as its
+//             accessible name.
 //
-// Two rules govern what may be handed in, and both hold on either shape.
-//
-// lastRun must be locally sourced. A step's status decides a class name and
-// nothing escapes a class attribute, so mapping through WF_MINI_STATUS keeps it
-// to one of five literals whatever arrives. Both sheets pass null.
-//
-// Names are the opposite: they come out of a stranger's file as often as not,
-// because the steps of an installed workflow were named by whoever published
-// it. Every one of them reaches the DOM through WfxDom.text(), the same scrub
-// the consent gate runs its prompt list through, and a window where that module
-// failed to load draws the compact shape rather than growing a second escaping
-// rule here. There is no markup string left in this function and therefore no
-// sink: the SVG is built element by element, and the only attribute values
-// written are numbers computed in this file and class names spelled out in it.
-//
-// Node count is the last dimension that can come from a file. Spreading the
-// coordinate arrays into Math.min throws RangeError somewhere above a hundred
-// thousand arguments, which is a blank workflows page rather than a small
-// thumbnail, so the bounds are folded and a graph past the cap gets the same
+// Step statuses map through WF_MINI_STATUS to one of five literals, names reach
+// the DOM through WfxDom.text(), and a window without that module draws the
+// compact shape. Node count is capped, and a graph past the cap gets the same
 // placeholder an empty one gets.
 const WF_MINI_STATUS = ['done', 'failed', 'skipped', 'cancelled', 'running'];
 const WF_MINI_NODE_CAP = 512;
 const WF_MINI_NS = 'http://www.w3.org/2000/svg';
 const WF_MINI_ELLIPSIS = '…';
-// Past this a name is not being read, it is being scrolled, and the fitter
-// would be measuring prefixes of a megabyte. The store already clips a step
-// name to 64 characters; this is the guard for a graph that did not come
-// through it.
+// Longest step name the fitter measures.
 const WF_MINI_NAME_CAP = 96;
-// How many names go into the accessible name before it stops being a label and
-// starts being the file. A reader who wants all sixty-four opens the workflow.
+// How many names go into the accessible name before it stops reading as a
+// label.
 const WF_MINI_SPOKEN_NAMES = 12;
 
 // The pixel box each surface gives this drawing, written as the smallest box it
-// can ever be. #wf-grid's tracks start at 288px and grow with the window,
-// .wfx-pattern-grid's start at 300, and the sheets clamp their height between
-// 74 and 120. A caller holding the element the drawing is about to go into
-// passes its real width as well, and then these are only the fallback: the
-// width is the dimension that moves, and the difference between the floor and
-// the measurement is the difference between "Rew…" and "Rewrite".
-//
-// Nothing here reads a height from the DOM, and the reason is that .wf-mini has
-// no height until it is in the document, so measuring one would mean building
-// the drawing, inserting it, measuring, and building it again for a number that
-// changes when the window is resized anyway. The height is declared instead, and
-// being wrong low about it can only cost a label on a surface that had room for
-// one, never a layout on a surface that did not.
+// can ever be. A caller holding the host element passes its real width too, and
+// then these are the fallback. Heights are declared rather than measured, since
+// .wf-mini has no height until it is in the document.
 const WF_MINI_SURFACES = {
   card: { w: 250, h: 74 },
   pattern: { w: 264, h: 62 },
-  // The sheets are the width of the modal's column and the middle of the height
-  // clamp. Declaring the clamp's floor here would leave a third of the band
-  // empty at every ordinary window size; declaring its ceiling would promise
-  // legibility the app's 520px minimum height cannot keep. At 88 the drawing
-  // fills the band at 900px of window and shrinks by a twelfth at 600.
+  // The sheets take the modal column's width and the middle of the height
+  // clamp, so the drawing fills the band at ordinary window sizes.
   panel: { w: 560, h: 88 },
 };
 
-// The labelled layout, in the surface's pixels. maxNodeW and maxNodeH are what
-// stop a two-step flow from rendering as two slabs the size of the card: past
-// those the pills keep their size and the cells spread them out instead.
-// minLabelChars counts the ellipsis, so four characters of a name plus the mark
-// that says there was more is the least this will call a label.
+// The labelled layout, in the surface's pixels. maxNodeW and maxNodeH cap the
+// pill size, so a two-step flow spreads out instead of growing slabs.
+// minLabelChars counts the ellipsis.
 const WF_MINI_LABEL = {
-  // padY is thin on purpose. The drawing sits inside a bordered, padded frame
-  // already, so a margin inside the viewBox on top of that one is height taken
-  // from the only dimension a three-row graph has none of: two more pixels here
-  // is the difference between a fan-out that names its branches and one that
-  // does not.
+  // padY stays thin, since the drawing already sits inside a padded frame.
   padX: 8, padY: 4, gapX: 14, gapY: 4,
   maxNodeW: 132, maxNodeH: 30, textPad: 5,
   minTextW: 22, minNodeH: 14, minLabelChars: 5,
   fontMin: 9, fontMax: 13, fontOfHeight: 0.55,
 };
 
-// The compact layout keeps these numbers literally: the stylesheet's note on
-// .wfx-pane .wf-mini works out the sheet's scale from this viewBox, so a graph
-// that falls back to this shape falls back to the drawing that comment
-// describes.
+// The compact layout keeps these numbers literally: the stylesheet's rule on
+// .wfx-pane .wf-mini works out the sheet's scale from this viewBox.
 const WF_MINI_COMPACT = { w: 250, h: 74, pad: 12, nodeW: 26, nodeH: 13 };
 
 function wfMiniNum(value) {
@@ -3038,9 +2835,8 @@ function wfMiniNum(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// A tenth of a pixel is the finest thing worth writing into a coordinate here,
-// and rounding at the one place attributes are set keeps the path data from
-// carrying seventeen digits of float noise per point.
+// Rounds numeric attributes to a tenth of a pixel at the single place they are
+// set, so path data stays short.
 function wfMiniSvg(tag, attrs) {
   const node = document.createElementNS(WF_MINI_NS, tag);
   for (const name of Object.keys(attrs)) {
@@ -3054,10 +2850,7 @@ function wfMiniSvg(tag, attrs) {
 function wfMiniRound(value) { return Math.round(value * 10) / 10; }
 
 // The scrubbed form of a step name, or null when this window has no scrubber to
-// run it through. Null is the signal the caller uses to give up on labels
-// entirely: a bidi override inside a step name would otherwise reorder the
-// drawing a person is reading to decide whether to trust the file, and writing
-// a second version of that rule here is how the two versions start to disagree.
+// run it through. Null tells the caller to draw the unlabelled shape.
 function wfMiniName(node, index) {
   const kit = window.WfxDom;
   if (!kit || typeof kit.text !== 'function') return null;
@@ -3067,15 +2860,10 @@ function wfMiniName(node, index) {
   } catch (_) { return null; }
 }
 
-// Text truncation in SVG has no equivalent of text-overflow, so the label is
-// cut before it is drawn and the cut has to know the real width of the real
-// glyphs: an estimate of so many pixels per character is wrong by half on
-// Hebrew, and wrong by double on Chinese, and both of those are step names
-// somebody has. A 2d context measures the same font the drawing will use
-// without laying anything out. The ruler is set ten times the drawn size
-// because a 9px measurement rounds to whole pixels on some platforms, and a
-// label cut from a rounded width either overflows its pill or gives up a
-// character it had room for.
+// SVG has no text-overflow, so a label is cut before it is drawn and the cut
+// measures real glyph widths through a 2d context set to the same font. The
+// ruler runs at ten times the drawn size, which keeps sub-pixel precision on
+// platforms that round small measurements.
 let wfMiniRuler = null;
 const WF_MINI_RULER_ZOOM = 10;
 
@@ -3088,17 +2876,12 @@ function wfMiniMeasurer(fontPx) {
   try { family = getComputedStyle(document.body).fontFamily || family; } catch (_) { /* the body is always there in practice */ }
   const ctx = wfMiniRuler || null;
   // Read per call rather than cached, so the preview follows a font the user
-  // changed in preferences instead of measuring against the one that was set
-  // the first time a workflows page was painted.
+  // changes in preferences.
   if (ctx) ctx.font = `600 ${fontPx * WF_MINI_RULER_ZOOM}px ${family}`;
   return (value) => (ctx
     ? ctx.measureText(value).width / WF_MINI_RULER_ZOOM
-    // No canvas, which in this window means something is very wrong already.
-    // A full em per character is what an ideograph costs and roughly twice what
-    // a lowercase Latin letter does, so this cuts an English name early and
-    // still cannot be talked into letting a Chinese one run out of its pill.
-    // Erring the other way would put text over the drawing on the one path
-    // where nothing measured it.
+    // Without a canvas, estimate a full em per character, which is what an
+    // ideograph costs and roughly twice a lowercase Latin letter.
     : Array.from(value).length * fontPx);
 }
 
@@ -3118,17 +2901,11 @@ function wfMiniFit(name, maxWidth, measure) {
   return head ? `${head}${WF_MINI_ELLIPSIS}` : WF_MINI_ELLIPSIS;
 }
 
-// Columns by x, rows by y within a column. The alternative, scaling the
-// authored coordinates the way the compact shape does, cannot be used once the
-// pills are wide enough to hold a word: two steps a person dragged forty pixels
-// apart on a canvas that is three thousand wide are four pixels apart here, and
-// four pixels apart is one pill drawn on top of another. Snapping to columns
-// costs the exact arrangement and keeps the two things the arrangement was
-// saying, which are what runs before what and what fans out from where.
-//
-// The tolerance is a fraction of the graph's own width rather than a constant,
-// because a canvas has no fixed scale: the same shape drawn twice as large has
-// to cluster the same way.
+// Columns by x, rows by y within a column. Snapping to columns trades the exact
+// arrangement for pills wide enough to hold a word, and keeps what the
+// arrangement said: what runs before what, and what fans out from where. The
+// tolerance is a fraction of the graph's own width, so the same shape drawn at
+// any scale clusters the same way.
 function wfMiniColumns(nodes) {
   const xs = nodes.map((n) => wfMiniNum(n.x));
   const bounds = xs.reduce(
@@ -3140,9 +2917,8 @@ function wfMiniColumns(nodes) {
   const columns = [];
   let anchor = null;
   for (const i of order) {
-    // Measured from the column's first member rather than from the last one, so
-    // a long ramp of steps each a little right of the one before does not
-    // collapse into a single column one tolerance at a time.
+    // Measured from the column's first member, so a long ramp of steps does
+    // not collapse into one column a tolerance at a time.
     if (anchor === null || xs[i] - anchor > tolerance) { columns.push([]); anchor = xs[i]; }
     columns[columns.length - 1].push(i);
   }
@@ -3152,12 +2928,9 @@ function wfMiniColumns(nodes) {
   return columns;
 }
 
-// One edge, drawn between two pills of the same size. Forward edges leave the
-// right face and arrive at the left one, which is the reading direction and the
-// shape both previews have always drawn. Anything else leaves the bottom and
-// arrives at the top: a curve from the right face of a pill to the left face of
-// one beside or behind it is drawn straight through the pills in between, and
-// on a labelled preview that line lands across the names.
+// One edge, drawn between two pills of the same size. A forward edge leaves the
+// right face and arrives at the left one; anything else leaves the bottom and
+// arrives at the top, which keeps the curve clear of the pills between them.
 function wfMiniLink(from, to, width, height, taken) {
   const forward = to.x >= from.x + width;
   let d;
@@ -3184,10 +2957,8 @@ function wfMiniFrame(width, height) {
     class: 'wf-mini',
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: 'xMidYMid meet',
-    // The drawing says something, so it is not decoration. The names
-    // are inside it as text either way, but a screen reader's handling of text
-    // inside SVG is not something to bet a security surface on, and role plus
-    // the accessible name below is.
+    // The drawing carries meaning, so it takes an image role and the
+    // accessible name set below.
     role: 'img',
   });
 }
@@ -3200,19 +2971,9 @@ function wfMiniPill(x, y, width, height, status) {
 }
 
 // Returns the labelled drawing, or null when this graph cannot have one on this
-// surface. The gate lives here rather than at the call site because it is an
-// argument about geometry and it is made of the same numbers the geometry is.
-//
-// It is decided on the names in hand rather than on the cell alone, and that
-// distinction is the whole point of the rule. Six steps called Read, Draft and
-// Grade fit in cells that six steps called Regenerate every downstream fixture
-// do not, and a rule written only on the cell would either refuse the first
-// graph or accept the second and draw six pills each containing one letter and
-// a full stop. So the labels are fitted first and counted second: a label is
-// worth drawing when the whole name survived, or when four characters of it
-// did, and the drawing is worth labelling when most of them are. The minority
-// that is not still gets whatever fits, because a truncated name beside three
-// whole ones reads as a name, where six truncations in a row read as damage.
+// surface. Labels are fitted first and counted second: a label counts when the
+// whole name survived or when minLabelChars of it did, and the drawing is
+// labelled when most of them count.
 function wfMiniLabelled(nodes, edges, statuses, names, surface) {
   const g = WF_MINI_LABEL;
   const columns = wfMiniColumns(nodes);
@@ -3222,9 +2983,8 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
   const nodeW = Math.min(cellW - g.gapX, g.maxNodeW);
   const nodeH = Math.min(cellH - g.gapY, g.maxNodeH);
   const textW = nodeW - g.textPad * 2;
-  // The two floors no set of names can argue its way past: a pill this short
-  // cannot hold type at fontMin without the letters touching its edges, and one
-  // this narrow has no room for a word even when the word is "Run".
+  // Floors below which a pill cannot hold type at fontMin, or hold a word at
+  // all.
   if (textW < g.minTextW || nodeH < g.minNodeH) return null;
 
   const font = Math.min(g.fontMax, Math.max(g.fontMin, nodeH * g.fontOfHeight));
@@ -3238,9 +2998,8 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
   const place = [];
   columns.forEach((column, c) => {
     const x = g.padX + c * cellW + (cellW - nodeW) / 2;
-    // A column of one in a graph three rows deep sits level with the middle of
-    // the others rather than at the top of its own track, which is what makes a
-    // fan-out read as a fan rather than as a staircase.
+    // A short column centers against the tallest one, so a fan-out reads as a
+    // fan rather than a staircase.
     const offset = (rows - column.length) / 2;
     column.forEach((i, r) => {
       place[i] = { x, y: g.padY + (r + offset) * cellH + (cellH - nodeH) / 2 };
@@ -3261,11 +3020,9 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
       class: 'wf-mini-label',
       'text-anchor': 'middle',
       'dominant-baseline': 'central',
-      // Presentation attributes rather than a rule in the stylesheet, because
-      // the size is computed per graph and the fill has to be whatever the
-      // surface's own text colour is in the theme that is on. Both are the
-      // weakest kind of declaration there is, so a later rule on .wf-mini-label
-      // overrides either without touching this file.
+      // Presentation attributes: the size is computed per graph and the fill
+      // follows the surface's own text colour. A stylesheet rule on
+      // .wf-mini-label overrides either.
       'font-size': font,
       'font-weight': 600,
       fill: 'currentColor',
@@ -3277,11 +3034,8 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
   return svg;
 }
 
-// The drawing this function has always produced, rebuilt out of elements. The
-// coordinates are the authored ones normalised into the box, which is the right
-// answer when the pills are too small to say anything: at that size the only
-// thing left to recognise is the arrangement, so the arrangement is kept
-// exactly as it was drawn.
+// The unlabelled drawing, built out of elements. Coordinates are the authored
+// ones normalised into the box, so the arrangement is kept exactly as drawn.
 function wfMiniCompact(nodes, edges, statuses) {
   const g = WF_MINI_COMPACT;
   const bounds = nodes.reduce((acc, n) => {
@@ -3313,13 +3067,9 @@ function wfMiniCompact(nodes, edges, statuses) {
   return svg;
 }
 
-// An edge counts as taken when both ends ran. A skipped end means the branch
-// was not the one the run went down, and an end with no status at all is a step
-// the run never reached.
-// A taken edge is one both of whose steps ran, so the test is membership in the
-// run vocabulary rather than the presence of any mark at all. A step can carry
-// a mark that is not an outcome, and reading one as a completed run draws the
-// accent path of a workflow that has never executed.
+// An edge counts as taken when both ends ran, so the test is membership in the
+// run vocabulary rather than the presence of any mark. A skipped end means the
+// run went down another branch.
 function wfMiniTaken(statuses, edge) {
   const from = statuses[edge.from];
   const to = statuses[edge.to];
@@ -3336,9 +3086,8 @@ function wfMiniPlaceholder(message) {
   return box;
 }
 
-// The names again, this time for anyone not looking at the picture. It is the
-// only place the compact shape says what its lozenges are, and on the labelled
-// shape it is the unabridged version of what truncation left on screen.
+// The accessible name: the step names in full, for anyone not looking at the
+// picture.
 function wfMiniSpeak(svg, names, count) {
   const heading = `${count} step${count === 1 ? '' : 's'}`;
   const usable = names.filter((name) => typeof name === 'string' && name);
@@ -3349,13 +3098,10 @@ function wfMiniSpeak(svg, names, count) {
     `${heading}: ${spoken.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}`);
 }
 
-// surface names one of WF_MINI_SURFACES and is how a caller says how much room
-// it is giving this. An unknown one is treated as a card, which is the smallest
-// box any of them offers and therefore the safe thing to guess. width is the
-// real width of the host in CSS pixels, for a caller that has the host in the
-// document already and can afford to read it; it is only ever used to widen.
-// marks is an optional Set of node ids to draw as needing attention. A run
-// outcome takes precedence over a mark.
+// surface names one of WF_MINI_SURFACES and says how much room the caller is
+// giving this; an unknown one is treated as a card. width is the host's real
+// width in CSS pixels and only ever widens. marks is an optional Set of node
+// ids to draw as needing attention, and a run outcome wins over a mark.
 function wfMiniGraph(graph, lastRun, surface, width, marks) {
   const floor = WF_MINI_SURFACES[surface] || WF_MINI_SURFACES.card;
   const measured = Number(width);
@@ -3369,9 +3115,8 @@ function wfMiniGraph(graph, lastRun, surface, width, marks) {
   for (const node of declared) {
     if (!node || typeof node !== 'object') continue;
     const id = (typeof node.id === 'string' || typeof node.id === 'number') ? String(node.id) : null;
-    // A duplicate id is a graph that cannot be drawn honestly, since an edge
-    // naming it means two different things. The first one keeps the id and the
-    // second is left out rather than silently stealing the first one's edges.
+    // On a duplicate id the first node keeps it and the second is left out, so
+    // an edge naming that id resolves to one node.
     if (id === null || at.has(id)) continue;
     at.set(id, nodes.length);
     nodes.push(node);
@@ -3403,19 +3148,10 @@ function wfMiniGraph(graph, lastRun, surface, width, marks) {
   }
 
   const names = nodes.map(wfMiniName);
-  // Names are drawn on the sheets and nowhere else.
-  //
-  // The sheets are where somebody is deciding whether to run a stranger's
-  // workflow, so the steps have to be readable and the panel is wide enough for
-  // them to be. The card grid and the pattern thumbnails are neither: at that
-  // width a five-step graph truncates to "Rewr..." and "Tigh...", which is less
-  // information than the arrangement alone carried and a good deal more noise.
-  // A row of quiet pills reads as a shape you recognise; a row of clipped words
-  // reads as text that failed to load.
-  //
-  // The accessible name below is unconditional, so the step names are still
-  // announced on every surface. This is a decision about what is worth drawing
-  // at 250 pixels, not about what the graph is allowed to say.
+  // Names are drawn on the sheets and nowhere else: the panel is wide enough to
+  // read them, while a card or pattern thumbnail would clip every one. The
+  // accessible name below is unconditional, so the names are announced on every
+  // surface.
   const labelled = (surface === 'panel' && names.every((name) => name !== null))
     ? wfMiniLabelled(nodes, edges, statuses, names, box)
     : null;
@@ -3424,15 +3160,8 @@ function wfMiniGraph(graph, lastRun, surface, width, marks) {
   return svg;
 }
 
-// The last few outcomes, oldest to newest. The CI trick: reliability in one row.
-// The outcome strip, drawn beside the sentence that names the last outcome.
-//
-// Two runs is the floor. With none there is nothing to draw and the sentence
-// beside it already reads "Never run". With exactly one, the single dot repeats
-// the sentence's own status dot in the same colour a few characters away, so
-// the card shows two marks that look alike and mean different things: one is
-// the last outcome, the other is the whole history. A strip earns its place
-// when it shows a trend, which starts at the second run.
+// The last few outcomes, oldest to newest, drawn beside the sentence that names
+// the last one. The strip starts at two runs, where it begins to show a trend.
 function wfHistoryDots(runs) {
   if (runs.length < 2) return '';
   const recent = runs.slice(0, 8).reverse();
@@ -3450,12 +3179,9 @@ function wfAgentsUsed(graph) {
   return [...set];
 }
 
-// Status and when, on every outcome. The duration is deliberately not here: the
-// receipts strip directly above carries it as a figure with the basis it was
-// measured on, and a card that prints the same number twice spends its widest
-// row saying one thing. Keeping all three outcomes to the same two facts is
-// also what stops this row wrapping on a narrow card, which pushed Run out of
-// line with its neighbours in the row.
+// Status and when, on every outcome. Duration lives in the receipts strip
+// above, so all three outcomes carry the same two facts and the row keeps to
+// one line on a narrow card.
 function wfLastRunPill(runs) {
   if (!runs.length) return '';
   const r = runs[0];
@@ -3471,12 +3197,9 @@ function wfLastRunPill(runs) {
 
 // ─── Patterns ────────────────────────────────────────────────────────────────
 // Topologies worth copying, each one a real graph. Clicking a card saves the
-// flow and drops you into the builder with working nodes, edges and prompts,
-// so the first workflow anyone owns is a shape that already makes sense.
-//
-// Every pattern here is expressible on the run engine as it stands: fan-out,
-// join, agent-picked branches and conditional edges. Nothing loops, because a
-// node runs at most once per run.
+// flow and opens the builder with working nodes, edges and prompts. Every
+// pattern runs on the engine as it stands: fan-out, join, agent-picked branches
+// and conditional edges. Nothing loops, since a node runs once per run.
 
 function wfPatternGraph(spec) {
   const ids = {};
@@ -3675,16 +3398,9 @@ function wfPaintPatterns() {
         <span>${escapeHtml(p.trait)}</span>
         <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
       </div>`;
-    // The thumbnail is appended rather than interpolated: the builder returns
-    // elements, so that it can put a step name in as text rather than as
-    // markup. These particular names are constants in this file, but there is
-    // no second, string-shaped builder to keep them on and no reason to want
-    // one.
-    //
-    // The card goes into the grid first so the shape can be measured. These
-    // tracks start at 300px and run to over 400 at a normal window, and the
-    // gallery is the one surface where the topology is the headline rather than
-    // a footnote, so it is worth one layout to draw it for the width it has.
+    // The thumbnail is appended as elements, since the builder returns them and
+    // puts step names in as text. The card goes into the grid first so the
+    // shape can be drawn at the width the track actually gives it.
     card.addEventListener('click', () => wfCreateFromPattern(p));
     grid.appendChild(card);
     const shape = card.querySelector('.wfx-pattern-shape');
@@ -3754,9 +3470,8 @@ function paintWorkflowList() {
   const mine = $('#wfx-mine-section');
   const mineSub = $('#wfx-mine-sub');
   if (mine) mine.hidden = !workflowsCache.length;
-  // The full hero is the pitch for an empty workspace. Once flows exist the
-  // saved cards are the point, so the hero drops to a band and hands the fold
-  // back to them.
+  // The full hero is the pitch for an empty workspace; once flows exist it
+  // drops to a band and hands the fold back to the saved cards.
   const hero = document.querySelector('.wfx-hero');
   if (hero) hero.classList.toggle('is-compact', workflowsCache.length > 0);
   if (mineSub) {
@@ -3807,12 +3522,9 @@ function paintWorkflowList() {
         <small>start from a blank graph</small>
       </button>`;
 
-  // The graph previews, in the same synchronous pass that wrote the grid and
-  // for the same reason the receipts strip below is: the drawing carries the
-  // step names, and on a workflow that arrived as a file those names were
-  // written by whoever published it. Everything in this feature that came out
-  // of a file reaches the DOM as a text node, so the preview is appended as
-  // elements rather than interpolated as markup.
+  // The graph previews, in the same synchronous pass that wrote the grid. The
+  // drawing carries the step names, so it is appended as elements and every
+  // name reaches the DOM as a text node.
   grid.querySelectorAll('.wf-card[data-id]').forEach((card) => {
     const w = workflowsCache.find((x) => x.id === card.dataset.id);
     const host = card.querySelector('.wf-card-graph');
@@ -3821,17 +3533,10 @@ function paintWorkflowList() {
   });
 
   // The receipts strip, one per saved card, inserted in the same synchronous
-  // pass that wrote the grid. It goes above .wf-card-status, whose margin-top
-  // is auto: a strip that is taller on one card than another is absorbed there
-  // instead of pushing the status, footer and Run out of line across a row, so
-  // nothing needs a reserved height and nothing drifts.
-  //
-  // Appended rather than interpolated because the figures and the accessible
-  // name are built from an imported artifact, and everything in this feature
-  // that comes out of a file reaches the DOM as a text node. renderReceiptStrip
-  // returns an element for every input including none at all, so every card
-  // gets the same block in the same place and one unreadable stored artifact
-  // cannot take the grid with it.
+  // pass that wrote the grid. It goes above .wf-card-status, whose auto
+  // margin-top absorbs a taller strip so the row stays aligned. Appended as
+  // elements, and renderReceiptStrip returns one for every input, so each card
+  // gets the same block in the same place.
   const strip = window.WfxArtifactUi && window.WfxArtifactUi.renderReceiptStrip;
   if (typeof strip === 'function') {
     grid.querySelectorAll('.wf-card[data-id]').forEach((card) => {
@@ -3840,12 +3545,8 @@ function paintWorkflowList() {
       const sidecar = wfSidecarFor(w.id);
       const status = card.querySelector('.wf-card-status');
       if (!status) return;
-      // A workflow with no runs at all gets no strip. Its empty state and the
-      // status line beside it carry one fact between them, and the status line
-      // says it in the vocabulary the rest of the app uses. The strip still
-      // appears the moment a run exists, including the case where runs exist
-      // but none of them earned a receipt, which is a different fact and worth
-      // its own row.
+      // A workflow with no runs gets no strip, since the status line beside it
+      // already says so. The strip appears as soon as a run exists.
       if (!wfRunsFor(w.id).length) return;
       card.insertBefore(strip({
         workflowId: w.id,
@@ -3855,16 +3556,12 @@ function paintWorkflowList() {
         // authored workflow has nothing else, and for an imported one this is
         // the reader's own evidence rather than the author's claim.
         aggregate: wfAggregateFor(w.id),
-        // This machine's own finding about the log the author shipped. The main
-        // process recomputes it on every sidecar read, so it is passed straight
-        // through rather than recomputed here. Dropping it wastes the whole
-        // middle tier: the figures are already re-derived from the shipped log
-        // and found to agree, and the card would say "author states" regardless,
-        // which is the one claim the reader does not need from us.
+        // This machine's own finding about the log the author shipped. The
+        // main process recomputes it on every sidecar read, so it is passed
+        // straight through.
         chainCheck: (sidecar && sidecar.chainCheck) || null,
         // The record behind the chip is the imported file. A workflow written
-        // here has none, so no handler is passed and the strip draws the tier
-        // as a label rather than as a control that would toast an apology.
+        // here has none, so the strip draws the tier as a label.
         onOpen: (sidecar && sidecar.artifact) ? ((id) => wfOpenReceiptRecord(id)) : null,
       }), status);
     });
@@ -3890,8 +3587,7 @@ function paintWorkflowList() {
   }));
 }
 
-// Duplicate / export / delete, on the card rather than a permanent delete
-// button that invites the wrong click.
+// Duplicate / export / delete, in a popover on the card.
 function wfOpenCardMenu(anchor, id) {
   document.querySelectorAll('.wf-menu-pop').forEach((m) => m.remove());
   const w = workflowsCache.find((x) => x.id === id);
@@ -3910,12 +3606,8 @@ function wfOpenCardMenu(anchor, id) {
   const close = () => pop.remove();
   pop.querySelector('[data-act="duplicate"]').addEventListener('click', async () => {
     close();
-    // The main process copies the record, because it is also the only side that
-    // can copy the sidecar. Building the copy here and calling create writes no
-    // row, and a workflow with no row is one every check in this feature reads
-    // as locally authored: the copy of an imported workflow would run with no
-    // consent gate, no bound directory and the auto-approving agent flags
-    // restored.
+    // The main process copies the record, since it is the only side that can
+    // copy the sidecar along with it.
     const res = await window.husk.workflows.duplicate(w.id);
     if (!res || !res.ok) { toast((res && res.error) || 'Could not duplicate this workflow', 'error'); return; }
     await renderWorkflows();
@@ -3923,21 +3615,17 @@ function wfOpenCardMenu(anchor, id) {
       ? 'Workflow duplicated. The copy needs its own confirmation before it runs.'
       : 'Workflow duplicated', 'success');
   });
-  // Publishing is a sheet of its own: what gets written, where it lands, and
-  // whether the run log travels with it are all decisions, and a menu item
-  // that silently wrote a file would be making them on the reader's behalf.
-  // The direct call is the fallback for a window where that module did not
-  // load, and it is the same channel the sheet drives, so the file it writes
-  // is the same file with the log left off.
+  // Publishing opens its own sheet, where what gets written, where it lands and
+  // whether the run log travels with it are all chosen. The direct call is the
+  // fallback when that module did not load, on the same channel with the log
+  // left off.
   pop.querySelector('[data-act="export"]').addEventListener('click', async () => {
     // Read before close() removes the menu.
     const returnFocusTo = anchor;
     close();
     if (window.WfxPublish && typeof window.WfxPublish.open === 'function') {
-      // onChanged is how a workflow the sheet edited reaches the rest of the
-      // page. The builder opens from workflowsCache, so a repair that only
-      // reached disk would be overwritten the next time somebody opened that
-      // workflow and saved it.
+      // onChanged carries a workflow the sheet edited back into workflowsCache,
+      // which is what the builder opens from.
       window.WfxPublish.open(w, { returnFocusTo, onChanged: renderWorkflows });
       return;
     }
@@ -3989,10 +3677,8 @@ function buildAgentOptions(currentVal) {
   const chosen = currentVal || wfDefaultAgentCommand();
   const opts = [];
   // A step written against an agent this machine does not have keeps its own
-  // value, at the top and selected. Without it nothing in the list matches, the
-  // browser selects the first option, and the panel writes back on the next
-  // keystroke in any field: a step would silently change vendor because
-  // somebody edited its prompt on a different laptop.
+  // value, listed at the top and selected, so the stored command survives an
+  // edit made here.
   if (chosen && !installed.some((a) => a.command === chosen)) {
     opts.push(`<option value="${escapeHtml(chosen)}" selected>${escapeHtml(chosen)} · not installed here</option>`);
   }
@@ -4040,10 +3726,9 @@ function wfConnectionParts(svg) {
   };
 }
 
-// A connection Drawflow started but never finished keeps its <svg> in the DOM
-// with none of the endpoint classes on it, which draws as a line joined to
-// nothing and cannot be selected, configured or removed. Releasing a drag over
-// anything that is not a step leaves one behind, so sweep after every release.
+// An unfinished Drawflow connection keeps its <svg> in the DOM with no endpoint
+// classes, which draws as a line joined to nothing. Releasing a drag over
+// anything that is not a step leaves one, so sweep after every release.
 function wfSweepDanglingConnections() {
   const cont = $('#wf-canvas');
   if (!cont) return 0;
@@ -4082,8 +3767,7 @@ function wfEnsureEditor() {
   wfEditor = new Drawflow(container);
   wfEditor.reroute = true;
   // Dropping a connection anywhere on the target node's body connects it to
-  // that node's input, instead of forcing the user to land exactly on the
-  // small input dot. Each step has a single input, so first-input is the
+  // that node's input. Each step has a single input, so first-input is the
   // right target.
   wfEditor.force_first_input = true;
   wfEditor.start();
@@ -4092,14 +3776,12 @@ function wfEnsureEditor() {
   const cont = $('#wf-canvas');
   if (cont) cont.addEventListener('contextmenu', (e) => e.preventDefault());
   // Open the config modal only on a real click: mousedown then mouseup on the
-  // same node without dragging. Dragging a node to reposition it must NOT open
-  // the wizard. Drawflow keeps owning selection and drag; we just detect a click
-  // on mouseup, after Drawflow has already ended its own drag.
+  // same node without dragging, so repositioning a node leaves it closed.
+  // Drawflow keeps owning selection and drag.
   let wfDownNodeEl = null, wfDownX = 0, wfDownY = 0, wfNodeMoved = false;
   if (cont) {
-    // Touching the canvas hands the keyboard back to it. The builder focuses
-    // the name field on open, and a field that keeps focus swallows Delete,
-    // so selecting a connection and pressing Delete would silently do nothing.
+    // Touching the canvas hands the keyboard back to it, so Delete reaches the
+    // selected connection rather than the focused field.
     cont.addEventListener('mousedown', () => {
       const active = document.activeElement;
       if (!active || active === document.body) return;
@@ -4120,10 +3802,9 @@ function wfEnsureEditor() {
       if (el && !wfNodeMoved && el.id) showNodePanel(el.id.slice(5));
     });
   }
-  // Double-click a line to remove it. Drawflow's own dblclick would drop a
-  // reroute point on the path instead, so this runs in the capture phase and
-  // stops there. Double-clicking an existing reroute point still removes that
-  // point, which is Drawflow's own handler and stays reachable.
+  // Double-click a line to remove it, in the capture phase so Drawflow's own
+  // dblclick does not drop a reroute point instead. Double-clicking an existing
+  // reroute point still reaches Drawflow's handler and removes that point.
   if (cont) {
     cont.addEventListener('dblclick', (e) => {
       const target = e.target;
@@ -4396,8 +4077,8 @@ function wfSyncEdgePanel() {
 
 function wfSyncPanelToNode() {
   if (!wfEditor || wfSelectedNodeId == null) return;
-  // updateNodeDataFromId replaces the node's data wholesale, so carry the stable
-  // id through: dropping it would renumber the step and orphan its run history.
+  // updateNodeDataFromId replaces the node's data wholesale, so carry the
+  // stable id through and the step keeps its run history.
   let existing = {};
   try { existing = (wfEditor.getNodeFromId(wfSelectedNodeId) || {}).data || {}; } catch (_) {}
   const modelSel = ($('#wf-np-model') || {}).value || '';
@@ -4452,10 +4133,8 @@ function openWorkflowBuilder(editId) {
   wfRestoreLegend();
   hideNodePanel();
   hideEdgePanel();
-  // Drawflow needs the container visible and sized before start(). The view is
-  // on screen now, so force the layout and build it: deferring on a timer
-  // leaves the graph nonexistent for the first frames, and anything that reads
-  // it in that window (Run, Save) sees an empty canvas.
+  // Drawflow needs the container visible and sized before start(), so force the
+  // layout and build it now rather than deferring on a timer.
   const host = $('#wf-canvas');
   if (host) void host.offsetWidth;
   wfEnsureEditor();
@@ -4592,18 +4271,10 @@ function wfBuildRunCanvas(workflow) {
   wfRunGraph = graph;
 
   // The badge is the step's place in the run, so it comes from a walk of the
-  // graph and not from the position of the node in graph.nodes. A published
-  // artifact orders that array by the hash of each step's body (see
-  // canonicalProjection in src/lib/workflow-artifact.js), which is load-bearing
-  // for the fingerprint and says nothing about execution order, so an imported
-  // workflow numbered by array index contradicts the consent gate the reader
-  // has just agreed to: the gate says "01 Reproduce, 02 Patch" over the same
-  // graph this canvas would number the other way round.
-  //
-  // orderedSteps is the gate's own traversal, borrowed rather than
-  // reimplemented so the two surfaces cannot drift apart. wfAllNodes is the
-  // fallback for a window where that module did not load; it walks the same
-  // edges and differs only in how it seeds a multi-root graph.
+  // graph rather than the order of graph.nodes, which a published artifact
+  // sorts by step hash. orderedSteps is the same traversal the install sheet
+  // numbers with, borrowed so the two surfaces stay in step; wfAllNodes is the
+  // fallback when that module did not load.
   const walk = (window.WfxArtifactUi && typeof window.WfxArtifactUi.orderedSteps === 'function')
     ? window.WfxArtifactUi.orderedSteps(graph)
     : wfAllNodes(graph);
@@ -4625,12 +4296,8 @@ function wfBuildRunCanvas(workflow) {
           </span>
         </div>
       </div>`;
-    // Number.isFinite rather than `||`, because 0 is a coordinate. Publishing
-    // re-anchors the layout on the origin (buildArtifact in
-    // src/lib/workflow-artifact.js), so every imported graph has exactly one
-    // node at x=0 and one at y=0, and `0 || 60` shoved precisely those 60px
-    // right and down: the authored gap collapsed under the node width and the
-    // first card was drawn on top of the second.
+    // wfCoord treats 0 as a coordinate. Publishing re-anchors the layout on
+    // the origin, so an imported graph holds a node at x=0 and one at y=0.
     const dfId = wfRunEditor.addNode(
       'step', 1, 1, wfCoord(n.x), wfCoord(n.y), 'wf-rn-node', { huskId: n.id }, html,
     );
@@ -4677,8 +4344,7 @@ function wfFitEditor(editor, hostSel, graph) {
   const NODE_H = 64;
   const PAD = 28;
   // The same reading of a coordinate the canvases place nodes with, so the
-  // frame is drawn around where the nodes actually are. Falling back to 0 here
-  // and to 60 there put the box 60px off for any node with no stored position.
+  // frame is drawn around where the nodes actually are.
   const xs = nodes.map((n) => wfCoord(n.x));
   const ys = nodes.map((n) => wfCoord(n.y));
   const minX = Math.min(...xs);
@@ -4846,10 +4512,8 @@ async function wfOpenTerm(nodeId, opts = {}) {
     if (follow && follow.checked && nodeId !== wfRunCurrentNode) follow.checked = false;
   }
 
-  // Opening is async (the buffer comes from the main process) and can be
-  // superseded mid-flight, by follow mode moving to the next node or by another
-  // click. Without a token, the slower open finishes last and paints the wrong
-  // node's output into the terminal.
+  // Opening is async and can be superseded mid-flight, so a token keeps the
+  // newest open the one that paints.
   const token = ++wfTermOpenToken;
   wfTermNodeId = nodeId;
   wfTermLoading = true;
@@ -4937,11 +4601,8 @@ function wfResetRunUi(workflow) {
 }
 
 // The directory this run is bound to, named in the run header before the first
-// step spawns. A workflow that came from a file runs somewhere the reader
-// picked, and the whole point of picking it is defeated if the only place the
-// choice is visible is a dialog that has already closed. A workflow authored
-// here answers null and the line stays out of the way: it keeps the working
-// directory it always had.
+// step spawns. A workflow that came from a file runs where the reader picked;
+// one authored here answers null and the line stays hidden.
 function wfSetRunCwd(cwd) {
   const meta = document.querySelector('#wf-run-view .wf-run-meta');
   if (!meta) return;
@@ -4970,25 +4631,19 @@ async function runWorkflow(workflowId, opts) {
     if (live) { toast('A workflow is already running', 'info'); wfShowView('run'); return; }
     activeRunId = null;
   }
-  // WfxArtifactUi.runWorkflow is the only way this page starts a workflow, and
-  // it is a whole path rather than a wrapper: it reads the install record,
-  // opens the consent gate when the record says the prompts have never been
-  // read, writes consentedAt only after the reader agrees, and only then calls
-  // workflows:run. Calling workflows:run from here would be the path that
-  // skips the gate. The main process refuses independently with
-  // 'consent-required', so this is the affordance and that is the boundary.
+  // WfxArtifactUi.runWorkflow is how this page starts a workflow. It reads the
+  // install record, opens the consent gate when the record calls for one,
+  // writes consentedAt after the reader agrees, and then calls workflows:run.
+  // The main process applies the same rule on its own side.
   const ui = window.WfxArtifactUi;
   const sidecar = wfSidecarFor(workflowId);
   const gated = !!(ui && typeof ui.needsConsent === 'function' && ui.needsConsent(sidecar));
-  // The gate is a dialog with several hundred words of prompts in it, so the
-  // run view is not painted behind it. Painting first would put a graph on
-  // screen looking exactly like a run already in flight while the reader is
-  // still deciding, and a cancel would strand them there watching nothing.
+  // The run view waits behind the gate, so the reader is not looking at a graph
+  // that reads as a run in flight while they are still deciding.
   const bound = given.cwd || (sidecar && sidecar.boundCwd) || null;
-  // The binding is known from the install record before the call is made, so
-  // it is on screen while the run is starting rather than one round trip
-  // later. res.cwd is what the main process actually resolved, and it
-  // overwrites this the moment it lands.
+  // The binding is known from the install record before the call is made, so it
+  // is on screen while the run starts. res.cwd is what the main process
+  // resolved, and it overwrites this when it lands.
   if (!gated) { wfResetRunUi(workflow); wfSetRunCwd(bound); }
   const res = (ui && typeof ui.runWorkflow === 'function')
     ? await ui.runWorkflow(workflowId, { cwd: given.cwd || '', workflow })
@@ -5192,11 +4847,8 @@ window.husk.workflows.onRunDone((d) => {
     badge.className = `wf-run-status-badge ${cls}`;
   }
   if (wfTermNodeId) wfRenderTermStatus();
-  // The run just became history: pull it in so the card behind this view is
-  // already correct when the user goes back. The receipts strip is aggregated
-  // from that same history, so it is refreshed in the same breath; a run the
-  // user watched finish and a card that still says "no receipts yet" is the
-  // contradiction this whole strip exists to avoid.
+  // The run just became history, so pull it in and refresh the receipts
+  // aggregate with it; the card behind this view is correct on the way back.
   Promise.all([
     window.husk.workflows.runs().then((res) => {
       wfRunsCache = (res && res.ok && res.runs) || wfRunsCache;
@@ -5231,18 +4883,10 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
   $('#chat-empty').classList.remove('show');
   const tab = await openNewChatTab({ skipWelcome: true });
   const primer = `Here is the output of the workflow step "${node.name || 'Step'}":\n\n${body}`;
-  // Bracketed paste: the agent's TUI reads a bare newline as "send", so writing
-  // this raw would submit the text a line at a time. Wrapped, it lands in the
-  // prompt as one block the user can still edit.
-  //
-  // Both halves of that string are somebody else's: body is whatever the agent
-  // printed, and node.name comes from the workflow file, which on an imported
-  // workflow was written by its author. Escape is what makes the wrapper hold:
-  // a control sequence inside the text can close bracketed paste early, and
-  // the newline after it is then read as send, so a step that prints one
-  // submits a turn the user never typed. Stripping every control character
-  // except tab and newline leaves the block readable and leaves no byte that
-  // can start a sequence.
+  // Bracketed paste: the agent's TUI reads a bare newline as "send", so the
+  // text is wrapped and lands in the prompt as one editable block. Control
+  // characters other than tab and newline are stripped first, which keeps the
+  // block readable and inside its wrapper.
   const pasteSafe = (s) => window.husk.text.stripControls(s);
   const paste = `\x1b[200~${pasteSafe(primer)}\x1b[201~`;
   const deliver = (attempt = 0) => {
@@ -5270,19 +4914,13 @@ $('#wfx-cta-learn') && $('#wfx-cta-learn').addEventListener('click', () => wfxSc
 
 // ─── Portable workflows: the install sheet, the record, the publish sheet ────
 //
-// Three dialogs ship as modules of their own, each owning one surface and none
-// of them knowing anything about this page. Everything they need from it is
-// handed over here: how to navigate, what the billing mode is, when the grid
-// has to be repainted, and the one function that starts a workflow. Nothing
-// below reaches into those modules' state; they are given hooks and they call
-// back.
+// Three dialogs ship as modules of their own, each owning one surface. What
+// they need from this page is handed over here: how to navigate, what the
+// billing mode is, when the grid repaints, and the function that starts a
+// workflow. They are given hooks and they call back.
 
-// The Workflows page head is markup this file does not own on this branch, so
-// the control that opens the install sheet is minted here, beside New
-// Workflow. It is built node by node rather than assigned as a string: the
-// sheet behind this button exists because a stranger's file is about to be
-// read, and the door into it is the last place to make an exception for
-// markup assembly.
+// The control that opens the install sheet is minted here, beside New Workflow,
+// and built node by node.
 function wfxMountInstallControl() {
   const head = document.querySelector('.page-workflows .page-head-right');
   if (!head || document.getElementById('btn-wfx-install')) return;
@@ -5304,19 +4942,15 @@ function wfxMountInstallControl() {
   path.setAttribute('d', 'M12 3v12M7 10l5 5 5-5M5 19h14');
   svg.appendChild(path);
   btn.append(svg, document.createTextNode(' Install workflow'));
-  // Before New Workflow, not after: authoring is the primary action on this
-  // page and keeps the last slot, which is where the eye and the primary
-  // styling already agree the commit lives.
+  // Before New Workflow, so authoring keeps the last slot as the primary
+  // action on this page.
   head.insertBefore(btn, document.getElementById('btn-new-workflow'));
   btn.addEventListener('click', wfxOpenInstallSheet);
 }
 wfxMountInstallControl();
 
-// The install sheet and the receipts record share one dialog, so the title is
-// set on the way into each of them rather than restored on the way out. Cancel
-// and the close glyph are wired by the module that owns the sheet and this
-// file cannot hook them, so a restore-on-close would be a restore that runs
-// only when Escape was the exit.
+// The install sheet and the receipts record share one dialog, so each sets the
+// title on the way in rather than restoring it on the way out.
 function wfxOpenInstallSheet() {
   if (!window.WfxInstall || typeof window.WfxInstall.open !== 'function') {
     toast('The install sheet did not load in this window', 'error');
@@ -5329,17 +4963,8 @@ function wfxOpenInstallSheet() {
 
 // The receipts chip on a card opens the record those figures came from: the
 // same inspector the install sheet shows, over the artifact this workflow was
-// installed from, with nothing to commit. Borrowing that sheet rather than
-// minting a second one keeps a single place in the app where an imported file
-// is read in full, under a single set of rules about how its strings reach the
-// screen.
-//
-// Read-only is a property of what is on screen rather than a flag: the sheet's
-// footer only offers a primary while its own state machine has staged an
-// install, and nothing here touches that state machine. The two shell controls
-// the inspector re-parents belong to the install flow, so they are taken back
-// out; the module that owns them holds its own references and puts them back
-// on its next paint.
+// installed from, with nothing to commit. The two shell controls the inspector
+// re-parents belong to the install flow and are taken back out here.
 let wfxRecordSeq = 0;
 
 async function wfOpenReceiptRecord(workflowId) {
@@ -5370,22 +4995,15 @@ async function wfOpenReceiptRecord(workflowId) {
       preflight,
       cwd: sidecar.boundCwd || null,
       billing: autBilling,
-      // The same local history the card's strip is drawn from. Without it the
-      // panel behind the chip describes the author's runs while the chip in
-      // front of it describes the reader's, which is two answers to one
-      // question on two halves of one gesture.
+      // The same local history the card's strip is drawn from, so the panel and
+      // the chip say one thing.
       aggregate: wfAggregateFor(workflowId),
-      // The same finding the card's chip is drawn from, for the same reason the
-      // aggregate above is shared: the panel and the chip are two halves of one
-      // gesture and they must not answer the tier question differently.
+      // The same finding the card's chip is drawn from, so both report the
+      // tier the same way.
       chainCheck: (sidecar && sidecar.chainCheck) || null,
-      // The graph in hand came out of a file, which is why the builder matters
-      // here: it returns elements and puts every step name in as text, so this
-      // pane can carry a preview at all. The record shows the same drawing the
-      // install sheet showed before this file was ever installed, which is the
-      // comparison this view exists to let somebody make. Null for the run,
-      // because a status on this pane would be coloured from a stranger's
-      // receipt.
+      // The same drawing the install sheet showed for this file, which is the
+      // comparison this view exists for. The run is null, so no status colours
+      // the pane.
       miniGraph: wfMiniGraph(artifact.graph, null, 'panel'),
       onFix: null,
     });
@@ -5413,11 +5031,9 @@ async function wfOpenReceiptRecord(workflowId) {
   if (!painted) return;
   ui.say('wfx-in-say', 'The record this workflow was installed from, with nothing to install.');
 
-  // Preflight is about this machine today, not about the day of the install,
-  // so it is asked again and painted in when it lands. The sequence token is
-  // what makes closing the record mean something: an answer that arrives after
-  // the reader has moved on is dropped rather than painted into a dialog that
-  // is showing something else.
+  // Preflight describes this machine today, so it is asked again and painted in
+  // when it lands. The sequence token drops an answer that arrives after the
+  // reader has moved on.
   let pf = null;
   try { pf = await window.husk.workflows.preflight({ workflowId }); } catch (_) { pf = null; }
   if (seq !== wfxRecordSeq || modal.hidden) return;
@@ -5425,9 +5041,8 @@ async function wfOpenReceiptRecord(workflowId) {
 }
 
 // What the install sheet needs from this page. Every hook is a navigation or a
-// repaint; none of them carries a value out of the manifest, and openMcpForm
-// takes no argument at all, because a server name read out of a stranger's
-// file must not be what fills in an MCP form.
+// repaint, none of them carries a value out of the manifest, and openMcpForm
+// takes no argument.
 if (window.WfxInstall && typeof window.WfxInstall.configure === 'function') {
   window.WfxInstall.configure({
     onInstalled: () => { renderWorkflows(); },
@@ -5528,21 +5143,17 @@ window.addEventListener('keydown', (e) => {
 
 // ── Node config: drawflow release, mini-IDE gutter, AI generate with review ──
 const WF_PROMPT_MIN = 12;
-// Opening the modal on Drawflow's mousedown-select leaves the node mid-drag (its
-// mouseup lands on the modal overlay, not the canvas). Clear the drag flags so
-// the node stops following the cursor once the modal closes.
-// Closing the modal must also drop Drawflow's selection so the node is not left
-// highlighted (which otherwise needs an extra canvas click to clear).
+// Clears Drawflow's drag flags and selection when the modal closes, so the node
+// stops following the cursor and is not left highlighted.
 function wfDeselectNode() {
   if (!wfEditor) return;
   try { const el = wfEditor.node_selected; if (el && el.classList) el.classList.remove('selected'); wfEditor.node_selected = null; } catch (_) {}
   document.querySelectorAll('#wf-canvas .drawflow-node.selected').forEach((n) => n.classList.remove('selected'));
 }
 // ─── Prompt editor ──────────────────────────────────────────────────────────
-// A prompt is prose, so it wraps. That breaks a naive gutter, which counts
-// newlines and would number a five-row paragraph "1" while the rows below it
-// go unlabelled. The mirror measures each logical line at the editor's real
-// text width, and the gutter gives that line a block of exactly that height.
+// A prompt is prose, so it wraps. The mirror measures each logical line at the
+// editor's real text width, and the gutter gives that line a block of exactly
+// that height.
 
 function wfUpdateGutter() {
   const ta = $('#wf-np-prompt');
@@ -5750,14 +5361,10 @@ $('#wf-np-delete') && $('#wf-np-delete').addEventListener('click', () => {
   }
 });
 
-// Delete the selected connection. Drawflow binds its own key handler to the
-// canvas container, which never receives keys because a div is not focusable,
-// so the shortcut lives on the document and guards itself: only in the builder,
-// only with the config drawer closed, never while a text field has focus.
-//
-// Steps are deliberately not covered here. Clicking a step opens its drawer and
-// closing the drawer clears the selection, so "a selected step with no drawer
-// open" is not a state this canvas can be in. Steps are removed from the drawer.
+// Delete the selected connection. Drawflow binds its key handler to the canvas
+// container, which never receives keys, so the shortcut lives on the document
+// and runs only in the builder, with the config drawer closed and no text field
+// focused. Steps are removed from their drawer instead.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Delete' && e.key !== 'Backspace') return;
   if (!wfEditor) return;
@@ -5801,9 +5408,7 @@ const AG_FACET_LABEL = {
   all: 'All', custom: 'Custom', builtin: 'Built-in', repo: 'From repo',
   pinned: 'Pinned',
 };
-// A 24-unit glyph drawn at 14px puts a 1.5-unit stroke under one logical pixel,
-// which renders as a half-alpha smudge beside 13px text. Two units lands it
-// just over one.
+// Shared stroke attributes for the row glyphs.
 const AG_STROKE = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 const AG_EDIT_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`;
 const AG_VIEW_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
@@ -5819,9 +5424,8 @@ function agentsPageOpen() {
 
 async function renderAgents() {
   if (!$('#ag-list')) return;
-  // A skeleton that flashes for four milliseconds is worse than none, so the
-  // placeholder waits out a local read and only ever stands in for a cold
-  // list. A refresh keeps the rows it has.
+  // The placeholder waits out a fast local read and only stands in for a cold
+  // list; a refresh keeps the rows it has.
   const cold = !profilesCache.length;
   agLoad = 'loading'; agError = '';
   const refreshBtn = $('#btn-agents-refresh');
@@ -5863,9 +5467,8 @@ function agDesc(p) {
   return first ? first.slice(0, 180) : '';
 }
 
-// Behaviour only. Origin is already carried by the band the row sits under,
-// by the chip that filters on it and by the reader's own property cell, so a
-// row that repeated it would print the same word three times in one viewport.
+// Behaviour tags only. Origin is already carried by the band, the facet chip
+// and the detail pane's property cell.
 function agTags(p) {
   const t = [];
   if (p.autoSelect) t.push('auto');
@@ -5896,10 +5499,9 @@ function agRows(origin = agOrigin, state = agState) {
 
 function agFiltered() { return agOrigin !== 'all' || agState !== 'all' || !!agQuery.trim(); }
 
-// The sentence sits beside the name it qualifies. Sized off the longest name in
-// the whole roster, so a roster of short names carries no river and the column
-// holds still while the list filters. Capped so a single long name cannot push
-// every description off to the right.
+// Name column width, sized off the longest name in the whole roster so the
+// column holds still while the list filters, and capped so one long name
+// cannot push every description to the right.
 let agMeasureCtx = null;
 function agNameWidth(rows) {
   const AG_NAME_FONT = '500 13px Inter, sans-serif';
@@ -5929,9 +5531,8 @@ function agRowEl(id) {
 
 // ── Paint ───────────────────────────────────────────────────────────────────
 
-// A chip with nothing behind it stays on the band and stops answering, so the
-// band never gains or loses a control as a side effect of a keystroke that was
-// aimed at the list.
+// A chip with nothing behind it stays on the band and goes disabled, so the
+// band keeps its controls while the list filters.
 function agFacetHtml(axis, key, n, active) {
   const on = key === active;
   const off = !on && n === 0;
@@ -5951,11 +5552,9 @@ function agMetaHtml(label, value, cls) {
     + '</div>';
 }
 
-// The agent under the caret, read in full. It is the same record the editor
-// opens, so the list answers "what does this one actually say" without one.
-// The pane is mounted whenever the roster is, so neither a keystroke that
-// matches nothing nor the wait for the first read ever changes the column
-// count under the reader.
+// The agent under the caret, read in full: the same record the editor opens.
+// The pane is mounted whenever the roster is, so the column count holds still
+// while the list filters or loads.
 function agPaintDetail() {
   const el = $('#ag-detail');
   const split = $('#ag-split');
@@ -5995,9 +5594,8 @@ function agPaintDetail() {
   const meta = agMetaHtml('Origin', AG_ORIGIN_LABEL[agOriginOf(p)] || 'Custom')
     + agMetaHtml('Auto-select', p.autoSelect ? 'On' : 'Off')
     + (p.repoRoot ? agMetaHtml('Source', agShortPath(p.repoRoot), 'ag-dt-cell-wide') : '');
-  // The row prints the sentence in full whenever its column fits it, and the
-  // truncated ones are exactly the rows already carrying a title, so the pane
-  // repeats nothing the list can show.
+  // The pane carries the description only for a row whose column cut it off,
+  // which is exactly the rows that gained a title attribute.
   const row = agRowEl(p.id);
   const desc = row && row.querySelector('.ag-desc[title]') ? agDesc(p) : '';
   // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
@@ -6018,12 +5616,9 @@ function agPaintDetail() {
   }
 }
 
-// One toggle, not two: unpinned is the roster minus pinned, and every row
-// already prints its own pin state. The chip is mounted for as long as the
-// roster has anything pinned at all, so a query that happens to exclude every
-// pinned agent greys the chip instead of deleting it from the band. Updated in
-// place while it is on screen, so pinning from a row never destroys a chip the
-// keyboard might be standing on.
+// One toggle, since unpinned is the roster minus pinned. The chip stays mounted
+// while anything is pinned and greys out when the query excludes all of them,
+// and it updates in place so the keyboard keeps its stop.
 function agPaintStateFacet() {
   const el = $('#ag-state');
   const sep = $('#ag-bar-sep');
@@ -6211,10 +5806,9 @@ function paintAgents() {
 
   const keysEl = $('#ag-keys');
   if (keysEl) {
-    // Every binding that acts on a row, in one list of verbs. Spelled out
-    // rather than glyphed: the UI face has no return or delete symbol, so a
-    // symbol renders as a fallback box on this machine. With no row to act on,
-    // the legend names the two bindings that are the way back to one.
+    // Every binding that acts on a row, in one list of verbs, spelled out
+    // rather than glyphed. With no row to act on, the legend names the
+    // bindings that lead back to one.
     const onRows = [
       [['↑', '↓'], 'move'], [['Enter'], 'open'], [['Space'], 'pin'],
       [[AG_MOD, 'D'], 'duplicate'], [[AG_MOD, 'Backspace'], 'delete'], [['N'], 'new'],
@@ -6284,11 +5878,9 @@ function agSyncTruncationTitles(list) {
 
 // ── Pinning ─────────────────────────────────────────────────────────────────
 
-// Off-scope rule: inside the Pinned or Unpinned facet a toggled row stops
-// matching the filter, and it stays exactly where it is until the next
-// explicit repaint (a facet change, a search keystroke, refresh, page re-entry,
-// a create, a delete or a duplicate). Rows never move under the pointer or the
-// caret, which is what makes unpinning a whole filtered view possible at all.
+// Off-scope rule: inside the Pinned facet a toggled row stops matching the
+// filter and stays where it is until the next explicit repaint, so rows never
+// move under the pointer or the caret.
 async function agToggle(id, want) {
   const ids = getActiveProfileIds();
   const on = ids.includes(id);
@@ -6363,9 +5955,8 @@ function agSyncCursor({ scroll = false, focus = false } = {}) {
   const el = agRowEl(agCursor);
   if (el && scroll) el.scrollIntoView({ block: 'nearest' });
   if (el && focus) el.focus({ preventScroll: true });
-  // The arrows move the caret while the query field still holds focus, so the
-  // field names the record the caret is on and the move is announced even
-  // though nothing was focused.
+  // The arrows move the caret while the query field holds focus, so the field
+  // names the record the caret is on.
   const search = $('#agents-search');
   if (search) {
     if (el && !list.contains(document.activeElement)) search.setAttribute('aria-activedescendant', el.id);
@@ -6480,9 +6071,8 @@ async function deactivateAllProfiles() {
 }
 
 // The chat header names the tool, the folder and the pinned agents. A resumed
-// session names its own tool and folder, so it hands them over here and they
-// hold until preferences or the active project moves. One writer, so pinning
-// survives every other thing that touches the line.
+// session hands its own tool and folder over here, and they hold until
+// preferences or the active project moves. One writer owns the line.
 let chatSubBase = null;
 function setChatSubBase(base) {
   chatSubBase = base || null;
@@ -6503,9 +6093,8 @@ function updateActiveChatProfile() {
   let tag = '';
   if (active.length === 1) tag = active[0].name;
   else if (active.length === 2) tag = `${active[0].name}, ${active[1].name}`;
-  // Past two names the count stands in for them, so it has to say what the
-  // number counts: these are the agents in play, not the ones installed.
-  else if (active.length > 2) tag = `${active.length} active agents`;
+  // Past two names, the count stands in for them.
+  else if (active.length > 2) tag = `${active.length} agents pinned`;
   sub.textContent = tag ? `${toolName} · ${dir} · ${tag}` : `${toolName} · ${dir}`;
 }
 
@@ -6555,7 +6144,7 @@ async function deleteProfile(id) {
   }, '');
 }
 
-// The only route that has ever existed to change a built-in's prompt.
+// The route for changing a built-in's prompt: copy it, then edit the copy.
 async function agDuplicate(id) {
   const p = profilesCache.find((x) => x.id === id);
   if (!p) return;
@@ -6580,10 +6169,8 @@ async function agDuplicate(id) {
 
 const AG_CAPS = ['#agent-name', '#agent-description', '#agent-system-prompt'];
 
-// The limit lives on the field itself, so the counter cannot drift from what
-// the field will actually accept. A denominator only earns its place once the
-// value is close enough to it to matter; below that it is noise, and on a field
-// sized for a whole document it reads as a threat.
+// The limit lives on the field itself, so the counter matches what the field
+// accepts. The denominator appears only near the cap.
 function agSyncCounter(sel) {
   const el = $(sel);
   const cc = $(`${sel}-cc`);
@@ -6812,10 +6399,9 @@ function agKeydown(e) {
     return;
   }
 
-  // Arrows move the caret even while the search box has focus, so filtering
-  // and acting need no handoff between them. They only answer while focus is
-  // inside the page or nowhere in particular, so the rail and the shell keep
-  // their own arrow keys once something over there has taken focus.
+  // Arrows move the caret even while the search box has focus, but only while
+  // focus is inside the page or nowhere in particular, so the rail and the
+  // shell keep their own arrow keys.
   const idle = !document.activeElement || document.activeElement === document.body;
   const inPage = idle || !!(t && t.closest && t.closest('.page-agents'));
   if (inPage) {
@@ -7012,11 +6598,10 @@ $('#ai-confirm') && $('#ai-confirm').addEventListener('click', confirmAgentsImpo
 $('#agents-import-modal') && $('#agents-import-modal').addEventListener('click', (e) => { if (e.target === $('#agents-import-modal')) closeAgentsImportModal(); });
 
 // ─── Install agents from a repo (local folder or https URL) ─────────────────────
-// The repo is expected to ship agents/*.md with markdown frontmatter, and
-// optionally skills/*.md. Husk writes each picked agent into every installed
-// tool's own agents directory and stamps the resulting profile with repoRoot.
-// spawnPty consumes repoRoot as the cwd, so the agent's relative
-// skills/<test_id>.md reads resolve when the chat launches.
+// The repo ships agents/*.md with markdown frontmatter, and optionally
+// skills/*.md. Husk writes each picked agent into every installed tool's agents
+// directory and stamps the profile with repoRoot, which spawnPty uses as the
+// cwd so the agent's relative skills reads resolve.
 let lastRepoScan = null;
 // Two entry points share the scan/install flow below: a GitHub URL row and a
 // local folder row. Picking a source reveals its row; local also opens the
@@ -7181,9 +6766,8 @@ async function confirmRepoAgentsInstall() {
     if (installToAllAgents && res.distributedTo && res.distributedTo.length) parts.push('synced to every AI tool');
     if (activate) parts.push('pinned');
     toast(parts.join(' · '), 'success');
-    // A file left alone because the user already had one by that name. Said
-    // separately and as a caution, because the line above reads as "all of it
-    // landed" and for these names nothing did.
+    // Files left alone because the user already had one by that name, called
+    // out separately from the success line.
     const skipped = Array.isArray(res.skippedExisting) ? res.skippedExisting : [];
     if (skipped.length) {
       const shown = skipped.slice(0, 3).join(', ');
@@ -7240,9 +6824,8 @@ $('#repo-agents-modal') && $('#repo-agents-modal').addEventListener('click', (e)
 // Install / Back / Done so the user always knows what to press next.
 let rmScan = null;
 let rmPicked = null;
-// Two ways in, and neither is chosen for the reader: the modal opens with both
-// offered and no row revealed, so the first thing it asks is which kind of
-// repository this is rather than assuming one and hiding the other.
+// Two ways in. The modal opens with both offered and no row revealed, so it
+// asks which kind of repository this is first.
 function setMcpRepoSource(src) {
   const gh = $('#rm-src-github');
   const lo = $('#rm-src-local');
@@ -7479,9 +7062,8 @@ $('#rm-src-local') && $('#rm-src-local').addEventListener('click', () => {
   setMcpRepoSource('local');
   rmBrowse();
 });
-// A pasted "github.com/dev/repo" is plainly a URL, so the scheme is filled in
-// rather than refused. Anything else is handed over as typed and the main
-// process decides, which keeps one validator rather than two that can disagree.
+// A pasted "github.com/dev/repo" gets the scheme filled in. Anything else is
+// handed over as typed, so the main process stays the single validator.
 const rmScanUrlInput = () => {
   let v = (($('#rm-url') || {}).value || '').trim();
   if (!v) { rmStatus('Enter a repository URL first.', 'error'); return; }
@@ -7584,13 +7166,9 @@ function promptSlug(text) {
     .replace(/-+$/, '');
 }
 
-// Line numbers for the prompt editor.
-//
-// The body wraps, so a logical line can occupy several visual rows and a
-// gutter that prints one number per newline drifts out of alignment the
-// moment anything wraps. Instead each number is given the height its own
-// line actually renders at, measured in a mirror element that copies the
-// textarea's width, font and padding. Wrapped continuation rows get blank
+// Line numbers for the prompt editor. The body wraps, so each number is given
+// the height its own line renders at, measured in a mirror element that copies
+// the textarea's width, font and padding. Wrapped continuation rows get blank
 // space, exactly as an editor shows them.
 let prMirror = null;
 function syncPromptGutter() {
@@ -7599,8 +7177,7 @@ function syncPromptGutter() {
   if (!ta || !gutter) return;
   const cs = getComputedStyle(ta);
   if (!prMirror) {
-    // A textarea, not a div: the two do not break lines identically, and a div
-    // mirror measured the text one row short overall.
+    // A textarea, not a div, since the two do not break lines identically.
     prMirror = document.createElement('textarea');
     prMirror.readOnly = true;
     prMirror.tabIndex = -1;
@@ -7628,10 +7205,8 @@ function syncPromptGutter() {
     // An empty line still occupies one row, and a lone newline measures zero
     // without a placeholder, so the gutter would collapse against the text.
     prMirror.value = rows[n].length ? rows[n] : ' ';
-    // scrollHeight is an integer, so a 19.5px line measures 19 and every line
-    // loses half a pixel. Summed over a page that drifts the gutter a whole row
-    // out of step. Count the rows instead and lay them out at the exact
-    // fractional line height the text itself uses.
+    // scrollHeight is an integer, so count rows instead and lay them out at
+    // the exact fractional line height the text uses.
     const rowCount = Math.max(1, Math.round(prMirror.scrollHeight / lineH));
     const cell = document.createElement('div');
     cell.className = 'pr-gutter-n';
@@ -7669,8 +7244,7 @@ function openPromptComposer(seedName) {
 }
 
 // The prompt being edited in the detail pane, or null when it is being read.
-// Editing happens where the prompt is already shown: the pane is the size of
-// the thing, and a dialog would hand back less room than the reader it covers.
+// Editing happens in place, where the prompt is already shown.
 let editingPromptPath = null;
 
 // Enter edit mode on the open prompt. The body has to be on hand before the
@@ -8230,10 +7804,8 @@ $('#skills-list').addEventListener('click', async (e) => {
     row.classList.toggle('disabled');
     const result = await window.husk.skills.toggle({ id, source, dirName: id });
     if (result.ok) {
-      // Reload rather than patch. Toggling renames the entry on disk, so its
-      // path changes along with its state and whether it still passes the
-      // filter; re-reading is the only version of that update which cannot go
-      // stale.
+      // Reload rather than patch: toggling renames the entry on disk, so its
+      // path and its place in the filter both move.
       toastRestart(`${row.dataset.name} ${result.disabled ? 'disabled' : 'enabled'}`);
       await renderSkills();
       refreshStats();
@@ -8494,11 +8066,10 @@ function fmtSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// Which listed sessions are actually agents a chat started, keyed by session id,
-// plus the parent each one belongs to. The list of sessions on disk cannot tell
-// them apart: an agent is a fork of its chat, so it inherits that chat's title
-// and looks like a peer conversation. The tool's own agent listing is
-// authoritative, so ask it rather than inferring from transcripts.
+// Which listed sessions are agents a chat started, keyed by session id, plus
+// the parent each one belongs to. An agent is a fork of its chat and inherits
+// its title, so this comes from the tool's own agent listing rather than from
+// the transcripts.
 let sessionAgents = { bySession: new Map(), byParent: new Map() };
 let sessionAgentsExpanded = new Set();
 
@@ -8557,10 +8128,8 @@ function paintSessions(list, query) {
   const matched = q ? list.filter((s) =>
     (s.title + ' ' + s.id + ' ' + s.projectPath + ' ' + (s.prdPhase || '')).toLowerCase().includes(q)
   ) : list;
-  // An agent is a fork of its chat, so it carries that chat's title and sits in
-  // the list as a peer conversation with the same name. Show it under the chat
-  // that started it instead. Only when that chat is actually in view: reparenting
-  // a row onto something not on screen would remove it with nowhere to go.
+  // An agent carries its chat's title, so it is shown under the chat that
+  // started it, and only while that chat is itself in view.
   const present = new Set(matched.map((s) => s.id));
   const filtered = matched.filter((s) => {
     const a = sessionAgents.bySession.get(s.id);
@@ -8612,9 +8181,8 @@ function paintSessions(list, query) {
         ${progressHTML || `<span class="session-progress">${escapeHtml(fmtSize(s.sizeBytes))}</span>`}
         ${phaseHTML}
       </button>`;
-    // A chat and its agents are one card: the chat keeps the card's surface and
-    // the agents hang off it, so containment survives both theme families where
-    // a fill of their own would invert between them.
+    // A chat and its agents are one card: the chat keeps the card's surface
+    // and the agents hang off it.
     if (!(sessionAgents.byParent.get(s.id) || []).length) return rowHTML;
     return `<div class="session-block">${rowHTML}${agentChipHTML(s.id)}${agentChildRowsHTML(s.id)}</div>`;
   }).join('');
@@ -8762,15 +8330,9 @@ async function openSessionDetail(d) {
   });
 }
 
-// Build the active agent's "resume session" command. claude takes a positional
-// id (claude --resume <id>); copilot takes an attached value (copilot
-// --resume=<id>). Anything else falls back to the claude form.
-// Build the resume command for the agent that OWNS the session. Returns
-// null when that agent has no session-resume form; callers must handle
-// null rather than run some other agent's binary against a foreign id.
-// A short, display-only rendering of the resume command. The command that is
-// actually run comes from main, because gemini resumes by position in its own
-// session list and only main can resolve that against what is on disk now.
+// A short, display-only rendering of the resume command for the agent that owns
+// the session, or null when that agent has no resume form. The command that is
+// actually run comes from main, which resolves it against what is on disk.
 function resumeCommandLabel(agent, id) {
   if (agent === 'claude') return `claude --resume ${id}`;
   if (agent === 'copilot') return `copilot --resume=${id}`;
@@ -8852,10 +8414,9 @@ const fx = {
 };
 const FX_MAX_ROWS = 400;
 
-// Files follows the workspace. Whatever folder the agent is working in is the
-// folder this page shows, so opening Files never means re-finding the project
-// that is already open in the chat. Open-folder is a detour from that, held
-// for the session only: pinning a different project ends it.
+// Files follows the workspace: the folder the agent is working in is the folder
+// this page shows. Open-folder is a detour held for the session only, and
+// pinning a different project ends it.
 let fxRootOverride = null;
 function fxDefaultRoot() {
   const active = projectsCache.find((p) => p && p.id === activeProjectId);
@@ -8864,9 +8425,8 @@ function fxDefaultRoot() {
 }
 function fxCurrentRoot() { return fxRootOverride || fxDefaultRoot(); }
 
-// Called when the pinned project changes: drop the detour and repaint if the
-// page is on screen. Files that were listed under the old project would other-
-// wise stay up while the chat has already moved.
+// Called when the pinned project changes: drop the detour and repaint while
+// the page is on screen, so Files follows the chat.
 function fxSyncToWorkspace() {
   fxRootOverride = null;
   if (currentPage !== 'files') return;
@@ -8901,9 +8461,8 @@ async function fxLoad(root) {
   } catch (_) {}
   const cc = $('#fx-changed-count');
   if (cc) { cc.textContent = String(fx.changed.length); cc.hidden = fx.changed.length === 0; }
-  // File index. Distinguish "genuinely empty" from "the index call failed"
-  // (e.g. the main process is older than this renderer and lacks the handler,
-  // which happens after a renderer-only reload) so the empty state is honest.
+  // File index. A genuinely empty folder and a failed index call get different
+  // empty states.
   fx.indexError = null;
   if (!window.husk.fs.indexFiles) {
     fx.index = []; fx.truncated = false;
@@ -9137,14 +8696,11 @@ function fxRenderList(rows) {
   }
 }
 
-// Keyboard navigation over whatever the list is currently showing.
-//
-// The list has two render modes: a nested tree while browsing, and a flat list
-// once you search or switch to Changed. Navigation walks the rendered rows
-// rather than fx.results, which tree mode leaves empty, and it listens at the
-// page level rather than only on the search input, so the arrows the footer
-// advertises work wherever focus sits. Both paths navigate the same rows.
-// Which region the keys drive: the file list, or one of the two overview
+// Keyboard navigation over whatever the list is showing. The list renders as a
+// nested tree while browsing and as a flat list once you search or switch to
+// Changed, so navigation walks the rendered rows rather than fx.results, and it
+// listens at the page level so the arrows work wherever focus sits. fxPane says
+// which region the keys drive: the file list, or one of the two overview
 // columns. Left and Right move between them, Up and Down move inside one.
 let fxPane = 'list';
 
@@ -9171,9 +8727,8 @@ function fxNavRows(pane) {
   return [...host.querySelectorAll(sel)].filter((el) => el.offsetParent !== null);
 }
 
-// One cursor for the whole page. Clearing every pane first is what stops a
-// mouse click and the keyboard each leaving a highlight behind, which read as
-// two files being selected at once.
+// One cursor for the whole page: every pane is cleared first, so the pointer
+// and the keyboard cannot leave two highlights behind.
 function fxClearCursor() {
   ['list', 'ov0', 'ov1'].forEach((p) => {
     const host = fxPaneEl(p);
@@ -9181,14 +8736,9 @@ function fxClearCursor() {
   });
 }
 
-// The cursor IS the focus. Overview rows are buttons and take a native focus
-// ring on Tab, while list rows are divs driven by a class, so keeping the two
-// separate leaves Tab and the arrows each with their own highlight and the page
-// showing two selected rows. Moving focus with the cursor collapses them into
-// one thing that both inputs drive.
-//
-// Roving tabindex: the cursor row is the single tab stop for its pane, so
-// tabbing in lands on the cursor rather than walking every row.
+// The cursor is the focus: moving the cursor moves focus, so Tab and the arrows
+// drive one highlight. Roving tabindex, so the cursor row is the single tab stop
+// for its pane and tabbing in lands on it.
 function fxSetCursor(row, pane) {
   if (!row) return;
   fxClearCursor();
@@ -9205,11 +8755,9 @@ function fxSetCursor(row, pane) {
   try { row.focus({ preventScroll: true }); } catch (_) { }
 }
 
-// Tab moves focus without going through fxSetCursor, so mirror it back onto
-// the cursor. Setting the class only, never focus, so this cannot recurse.
-// When Tab carries focus out of all three panes the cursor is dropped too,
-// otherwise a stale highlight sits in the list while the real focus ring is on
-// some other control, which reads as two selected things again.
+// Tab moves focus without going through fxSetCursor, so mirror it back onto the
+// cursor by class alone, which cannot recurse. Focus leaving all three panes
+// drops the cursor with it.
 document.addEventListener('focusin', (e) => {
   if (document.body.dataset.page !== 'files') return;
   const panes = [['#fx-list', 'list'], ['#fx-ov-changed', 'ov0'], ['#fx-ov-key', 'ov1']];
@@ -9245,9 +8793,8 @@ function fxMove(delta) {
 function fxMovePane(delta) {
   const chain = fxOverviewOpen() ? ['list', 'ov0', 'ov1'] : ['list'];
   let at = Math.max(0, chain.indexOf(fxPane));
-  // Step over panes that render nothing. A clean working tree leaves the first
-  // overview column empty, and stopping there would strand the cursor on a
-  // column with no rows and no way forward.
+  // Step over panes that render nothing, such as the changed column on a clean
+  // working tree.
   for (let i = at + delta; i >= 0 && i < chain.length; i += delta) {
     const rows = fxNavRows(chain[i]);
     if (rows.length) {
@@ -9258,8 +8805,7 @@ function fxMovePane(delta) {
   }
 }
 
-// Enter opens a file and expands or collapses a folder, matching what a click
-// on the same row does.
+// Escape drops the cursor first; a second press closes the open file.
 function fxEscape() {
   const hadCursor = !!document.querySelector('#fx-list .is-active-key, #fx-ov-changed .is-active-key, #fx-ov-key .is-active-key');
   if (hadCursor) {
@@ -9310,11 +8856,9 @@ function fxShowEmptyPreview(msg) {
 }
 
 // ── Workspace overview ─────────────────────────────────────────────────────
-// With no file selected the preview pane shows an overview of the folder
-// instead of a placeholder: what git says changed, the files a person opens
-// first in an unfamiliar repo, and the type mix. Every row opens a file and
-// every type chip applies the extension filter, so the pane is a starting
-// point rather than a sign that says "start somewhere else".
+// With no file selected the preview pane shows an overview of the folder: what
+// git says changed, the usual entry-point files, and the type mix. Every row
+// opens a file and every type chip applies the extension filter.
 const FX_ENTRY_FILES = [
   'readme.md', 'claude.md', 'agents.md', 'contributing.md', 'security.md', 'license',
   'package.json', 'pyproject.toml', 'cargo.toml', 'go.mod', 'makefile',
@@ -9378,8 +8922,7 @@ function fxOvRow(path, status) {
 }
 
 // The conventional entry points, shallowest first. A folder with none of them
-// falls back to its shallowest files, which is what a person opens first when
-// the folder is not a repo they recognize.
+// falls back to its shallowest files.
 function fxEntryPoints() {
   if (!fx.index.length) return [];
   const rank = new Map(FX_ENTRY_FILES.map((n, i) => [n, i]));
@@ -9602,9 +9145,8 @@ function fxMarkDirty() {
   const revert = $('#fx-act-revert');
   if (revert) revert.hidden = !fx.dirty;
 }
-// Live re-highlighting re-tokenizes the whole file per keystroke, which lags on
-// very large files. Past this size the backdrop stays plain-escaped (still
-// aligned, just uncolored) so typing never stutters.
+// Live re-highlighting re-tokenizes the whole file per keystroke. Past this
+// size the backdrop stays plain-escaped: aligned, just uncolored.
 const FX_LIVE_HL_MAX = 200000;
 // Rebuild the highlighted backdrop + gutter from the textarea's current value.
 function fxUpdateEditHighlight() {
@@ -9695,10 +9237,7 @@ async function fxRefreshGitStatus() {
 
 function joinRoot(rel) { return fx.root.endsWith('/') ? fx.root + rel : fx.root + '/' + rel; }
 
-// Render highlighted code with a line-number gutter. highlightLines returns one
-// self-contained, span-balanced HTML string per source line: every character of
-// the file is entity-escaped first, so the only markup left in the result is the
-// highlighter's own span tags, spelled out in this app.
+// Toggle the git diff for the open file over the editor.
 async function fxToggleDiff() {
   if (!fx.selected) return;
   const diffBtn = $('#fx-act-diff');
@@ -9758,11 +9297,8 @@ function initFilesCommandCenter() {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target;
     const isText = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-    // Only defer to a field the user can actually see. xterm parks focus in a
-    // hidden helper textarea belonging to the chat page, and nothing blurs it
-    // when you navigate away, so after Ctrl+K or Alt+N the active element is a
-    // textarea on a page that is no longer showing. Treating that as "typing"
-    // swallowed every arrow key on this page.
+    // Only defer to a field the user can see. xterm parks focus in a hidden
+    // helper textarea on the chat page, which can still hold it from here.
     const onScreen = isText && t.closest
       && t.closest('.page:not([hidden]), .modal:not([hidden]), #palette:not([hidden]), #topbar');
     if (onScreen) return;
@@ -10054,13 +9590,11 @@ async function speak(text) {
 //   🗣️ <Name>: <one-line summary>     (PAI NATIVE/MINIMAL trailing line)
 //   * recap: <one-line summary>        (Claude Code recap)
 //
-// The text is read from xterm's RENDERED GRID, not the raw byte stream. A
-// full-screen agent (e.g. copilot in the alternate screen) streams its reply
-// while redrawing the screen with cursor positioning, which interleaves UI
-// chrome (status bar, spinner, prompt) into the byte stream; only the final
-// grid has each line cleanly on its own row. So we wait for output to settle
-// (the reply has stopped streaming), then scan the grid for the recap row.
-// Spoken at most once per user turn, and each unique line at most once.
+// The text is read from xterm's rendered grid rather than the raw byte stream,
+// since a full-screen agent interleaves its UI chrome into the stream and only
+// the final grid has each line on its own row. Output has to settle first, then
+// the grid is scanned for the recap row. Spoken at most once per user turn, and
+// each unique line at most once.
 const SPOKEN_HISTORY_MAX = 32;
 const RECAP_SCAN_ROWS = 80;
 const spokenSet = new Set();
@@ -10217,8 +9751,8 @@ function isUsableModelValue(value) {
   if (!raw || raw.length > 90) return false;
   if (/\s/.test(raw)) return false;
   if (/not logged in|use \/login|authenticate|plan:|session:|aic used|context\b/i.test(raw)) return false;
-  // Reject config-path and doc tokens (claude/settings.json, claude-api)
-  // so garbage saved by older parses cannot re-enter the dropdown or save.
+  // Reject config-path and doc tokens (claude/settings.json, claude-api),
+  // which are not model ids.
   if (/\.(json|jsonc|ya?ml|md|txt|log|lock|toml|ini|cfg|conf|sh|mjs|cjs|js|ts)$/i.test(raw)) return false;
   if (/(^|[-./_])(api|sdk|cli|docs?|settings|config|readme|help)$/i.test(raw)) return false;
   return /^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(raw);
@@ -10281,9 +9815,8 @@ function fillOrchSelect(sel, customInput, vendor, current) {
     for (const m of models) {
       const o = document.createElement('option');
       o.value = m.value;
-      // The label already names the model. Appending the raw id repeated it in
-      // a second vocabulary and pushed the useful half of longer rows out of
-      // the control's width, so the id moves to the tooltip.
+      // The label names the model and the raw id lives in the tooltip, so a
+      // long row stays inside the control's width.
       o.textContent = m.label || m.value;
       if (m.label !== m.value) o.title = m.value;
       group.appendChild(o);
@@ -10513,10 +10046,8 @@ function openUpdatePop() {
   const body = $('#up-body');
   const cta = $('#up-cta');
   const notesBtn = $('#up-notes');
-  // Every render starts from a clean, enabled CTA. The download click
-  // disables it while downloading; when the status then flips to ready
-  // this re-render must re-enable it, or the "Restart and install"
-  // button stays greyed out and the update cannot be applied.
+  // Every render starts from a clean, enabled CTA, so a status change
+  // re-enables the button the download click disabled.
   cta.disabled = false;
   notesBtn.hidden = !s.url;
   notesBtn.onclick = () => { window.husk.updates.openRelease(s.url); pop.hidden = true; };
@@ -10532,10 +10063,8 @@ function openUpdatePop() {
   if (s.status === 'available') {
     title.textContent = `Husk ${next} is available`;
     if (isMac) {
-      // macOS can't auto-install: the app is unsigned (no Apple Developer ID),
-      // so Squirrel.Mac would download the dmg and then quitAndInstall would
-      // fail silently. Send the user to the dmg download and show the command
-      // that lets Gatekeeper open the unsigned build.
+      // macOS updates by hand: send the user to the dmg download and show the
+      // quarantine command that lets Gatekeeper open the new build.
       // eslint-disable-next-line no-unsanitized/property -- Dynamic values are escaped, the command is a static constant.
       body.innerHTML = `You're on <strong>${escapeHtml(cur)}</strong>. Husk for macOS isn't code-signed yet, so update manually: download the new build, replace the app, then run this once so macOS will open it:`
         + `<div class="up-cmd"><code>${escapeHtml(MAC_TRUST_CMD)}</code><button class="ghost-btn up-copy" id="up-trust-copy" type="button">Copy</button></div>`;
@@ -10658,15 +10187,10 @@ window.husk.updates.onStatus((s) => {
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
 $('#btn-restart').addEventListener('click', restartPty);
 // Theme selection lives only in Preferences (full picker).
-// Attaching a file puts its path in the agent's input and stops there. A real
-// PTY cannot draw an attachment chip inside the agent's own prompt, so the path
-// is the attachment; the sentence around it belongs to the user. The path is
-// absolute (every CLI can open it as written) and quoted when it holds
-// whitespace. Nothing is submitted: the user types their question and presses
-// Enter, exactly as they would after attaching a file anywhere else.
-// A path on its way into a live agent prompt. The rule lives in
-// src/lib/terminal-safe.js, where it is shared with the main process and
-// testable on its own; a name carrying a control character comes back empty.
+// Attaching a file puts its absolute path in the agent's input and stops there,
+// quoted when it holds whitespace. Nothing is submitted, so the user types their
+// question and presses Enter. The rule for what may reach a live prompt lives in
+// src/lib/terminal-safe.js, shared with the main process.
 const CONTROL_CHARS_RE = /[\x00-\x1F\x7F-\x9F]/;
 
 function chatFileRef(filePath) {
@@ -10682,9 +10206,8 @@ async function attachFileToChat(filePath) {
     }
     return;
   }
-  // The welcome screen can still be up over a chat that is already running,
-  // and launching a second agent there would spawn a PTY the path never
-  // reaches. A live tab means write to it and clear the overlay instead.
+  // The welcome screen can still be up over a running chat, so a live tab
+  // means write to it and clear the overlay.
   if (!TABS.size && $('#chat-empty')?.classList.contains('show')) {
     await launchAgent({ initialPrompt: ref });
     return;
@@ -10698,11 +10221,9 @@ async function attachFileToChat(filePath) {
 }
 
 // ─── Rail "In context" list ─────────────────────────────────────────────────────
-// Tracks files the user shared with the agent during THIS Husk session only.
-// We deliberately do NOT enumerate ~/.claude/MEMORY/CONTEXT/ from disk, because
-// that directory may contain files left over from other sessions or other
-// projects. The sidebar should reflect "what I shared with this agent right
-// now", not "everything that has ever been written to the context dir".
+// Tracks files the user shared with the agent during this Husk session only.
+// The context directory on disk is never enumerated, so the sidebar reflects
+// what was shared with this agent now rather than everything ever written.
 const sessionContext = [];
 function addToSessionContext({ name, path }) {
   if (!path) return;
@@ -10901,9 +10422,8 @@ async function renderChatsPanelSessions() {
 let mcpCatalog = [];
 let mcpInstalled = [];
 // Snapshot of which MCPs were enabled when the current PTY session started.
-// Anything in this set that is still enabled is "Loaded" (live in the agent
-// right now). Anything enabled but NOT in the snapshot is "Pending", the
-// user added or re-enabled it since launch and a restart is required.
+// Still-enabled members of this set are "Loaded"; anything enabled outside it
+// is "Pending" and applies on the next agent restart.
 const loadedMcpSnapshot = new Set();
 function snapshotLoadedMcps(servers) {
   loadedMcpSnapshot.clear();
@@ -10913,10 +10433,9 @@ function snapshotLoadedMcps(servers) {
   // visibly without needing to navigate away and back.
   if (currentPage === 'mcp') paintMcpSections();
 }
-// Live connection status from the active agent's CLI. id -> 'connected'
-// | 'failed' | 'auth' | 'disabled'. Some agents (copilot today) do not
-// expose a programmatic health command; the renderer falls back to a
-// neutral "configured" pill on those rows.
+// Live connection status from the active agent's CLI, as id -> 'connected' |
+// 'failed' | 'auth' | 'disabled'. An agent with no health command gets a
+// neutral "configured" pill on those rows instead.
 let mcpHealth = {};
 let mcpHealthLoading = false;
 let mcpSupportsLiveStatus = true;
@@ -11026,9 +10545,8 @@ function healthBadgeHTML(id, enabled) {
   const h = mcpHealth[id];
   if (!h) {
     if (mcpHealthLoading) return '<span class="mcp-health mcp-health-loading" title="Checking connection…">checking…</span>';
-    // Some agents (copilot today) do not expose a programmatic health
-    // probe. Don't claim the row's state is unknown, it's just that we
-    // cannot probe it from outside the REPL. Show a neutral pill.
+    // An agent with no health probe gets a neutral pill rather than a claim
+    // about the row's state.
     if (!mcpSupportsLiveStatus) {
       return '<span class="mcp-health mcp-health-configured" title="Configured in this agent. Husk cannot fetch live status for this CLI.">configured</span>';
     }
@@ -11046,10 +10564,9 @@ function mcpRowHTML(s) {
   const detail = (s.transport === 'http' || s.transport === 'sse')
     ? `${s.transport.toUpperCase()} · ${s.url || ''}`
     : `${s.command || ''} ${(s.args || []).join(' ')}`.trim();
-  // In project scope the row answers "does this folder run it", so the global
-  // on/off toggle gives way to a three-way that can also defer to the global
-  // list. Edit and Remove are hidden there: they change the server everywhere,
-  // which is not what a folder-scoped row implies.
+  // In project scope the row answers whether this folder runs the server, so
+  // the on/off toggle becomes a three-way that can defer to the global list.
+  // Edit and Remove are global actions and stay out of that scope.
   if (mcpScope === 'project' && mcpProject) {
     const rows = (mcpProjectState && mcpProjectState.rows) || [];
     const row = rows.find((r) => r.id === s.id) || { on: s.enabled !== false, state: 'inherit', globallyOn: s.enabled !== false };
@@ -11088,11 +10605,8 @@ function mcpRowHTML(s) {
       </div>
     </div>`;
 }
-// Apply pending MCP changes by silently respawning the agent. The agent re-reads
-// ~/.claude.json on startup, so this is the cheapest path to "loaded". We do
-// this behind the scenes after install / toggle / remove, then the snapshot
-// repaints the MCP page so the user sees Pending → Loaded without lifting a
-// finger. Skipped if no PTY has ever started (welcome screen still up).
+// Settle an MCP change after install / toggle / remove: refresh the inventory
+// and repaint the page so the row shows Loaded or Pending.
 async function applyMcpChange(label) {
   const inv = await reloadMcpInventory();
   if (!TABS.size) {
@@ -11102,10 +10616,9 @@ async function applyMcpChange(label) {
     if (currentPage === 'mcp') paintMcpSections();
     return;
   }
-  // PTY is live. Do NOT restart automatically: a restart kills any unsent draft
-  // in the chat input. Leave the running agent untouched so the draft survives;
-  // the change shows as Pending (snapshot is unchanged) and applies on the next
-  // agent restart (Restart button), which is when the snapshot is recaptured.
+  // With a PTY live the running agent is left untouched, so an unsent draft in
+  // the chat input survives. The change shows as Pending and applies on the
+  // next agent restart, which is when the snapshot is recaptured.
   if (currentPage === 'mcp') paintMcpSections();
   toastRestart(`${label || 'MCP change'} saved`);
 }
@@ -11225,11 +10738,9 @@ function paintMcpCatalog() {
   });
 }
 
-// State for the custom MCP modal. Lives across renders of the modal
-// body so the foot button can stay contextually wired without a re-
-// lookup. mode is 'add' | 'edit'; activeTab is 'stdio' | 'http';
-// view is 'paste' | 'form'; parsedItems holds the last successful
-// parse result while paste is open (drives the foot button label).
+// State for the custom MCP modal, held across renders of the modal body.
+// mode is 'add' | 'edit', activeTab is 'stdio' | 'http', view is 'paste' |
+// 'form', and parsedItems holds the last parse result while paste is open.
 let mcpModalState = {
   mode: 'add',
   editingId: null,
@@ -11245,14 +10756,11 @@ function openMcpEditModal(server) {
   renderMcpModal({ mode: 'edit', server });
 }
 
-// renderMcpModal builds the body content for both Add and Edit flows.
-// Add: starts in form view, server-name input editable, paste view
-//      reachable via a small toggle button. Foot primary button shows
-//      `Install N server(s)` while paste view holds a valid JSON, or
-//      `Install` while form view is active.
-// Edit: starts in form view, pre-filled, no paste view. The server-name
-//      input is editable; changing it renames the entry (the adapter
-//      rewrites the JSON key). Foot primary button is `Save changes`.
+// Builds the modal body for both flows.
+// Add:  form view with a toggle into paste view; the primary button reads
+//       "Install N servers" once paste holds valid JSON, else "Install".
+// Edit: pre-filled form view, no paste view. Changing the name renames the
+//       entry, and the primary button reads "Save changes".
 function renderMcpModal({ mode, server }) {
   mcpModalState = {
     mode,
@@ -11645,9 +11153,7 @@ $('#btn-mcp-add-custom').addEventListener('click', openMcpCustomModal);
 let pluginsInstalledCache = [];
 let pluginsCatalogCache = [];
 let pluginsCapabilities = { canEnableDisable: true, canEdit: true, canBrowse: true };
-// Every catalog card already carries a category badge, and the chips make it
-// navigable: 272 plugins in one flat alphabetical grid leave no way to narrow
-// them except free text.
+// Category chips narrow the catalog grid, alongside the free-text filter.
 let pluginsCategories = new Set();
 
 // Cut on a word boundary and strip the punctuation the cut leaves behind, so a
@@ -11728,9 +11234,8 @@ function paintPlugins(query) {
   const canToggle = pluginsCapabilities.canEnableDisable !== false;
   const canEdit = pluginsCapabilities.canEdit !== false;
 
-  // Nothing installed and no marketplace to install from: the two sections
-  // would each render their own icon and their own message, and the second
-  // would contradict the first. One full-height state with one action instead.
+  // Nothing installed and no marketplace to install from collapses both
+  // sections into one full-height state with one action.
   const nothingAnywhere = !pluginsInstalledCache.length && !pluginsCatalogCache.length;
   const zeroEl = $('#plugins-zero');
   const installedSection = $('#plugins-section-installed');
@@ -11838,10 +11343,7 @@ function paintPlugins(query) {
     // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
     catalogEl.innerHTML = `<div class="empty-state"><div class="es-icon">${ICONS.plugins}</div><div class="es-msg">${msg}</div></div>`;
   } else {
-    // The grid draws every match rather than capping at 120. Measured on a
-    // 272-plugin catalog, building and laying out all of them costs 44ms
-    // against 20ms for 120, and 600 costs 48ms: a cap buys 24ms of one-time
-    // paint and hides 152 plugins behind advice the category chips make moot.
+    // The grid draws every match; the category chips do the narrowing.
     const overflow = '';
     // eslint-disable-next-line no-unsanitized/property -- Catalog fields are escaped via escapeHtml/escapeAttr.
     catalogEl.innerHTML = found.map((c) => `
@@ -11859,10 +11361,8 @@ function paintPlugins(query) {
   }
 }
 
-// One CLI mutation with busy handling. Afterwards only the installed
-// list is re-fetched: enable/disable/uninstall/update cannot change the
-// marketplace catalogs, so the cached catalog repaints as-is (no
-// redundant IPC, no loading flash).
+// One CLI mutation with busy handling. Only the installed list is re-fetched
+// afterwards, since these actions cannot change the marketplace catalogs.
 async function runPluginAction(action, id, btn) {
   if (pluginsBusy.has(id)) return;
   const before = pluginsInstalledCache.find((p) => p.id === id) || null;
@@ -12091,9 +11591,8 @@ function paintAgentMenu() {
   if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefsModal(); });
 }
 function openAgentMenu() {
-  // Paint instantly from cache, then re-detect so an agent installed after
-  // Husk launched (e.g. a fresh `npm i -g @google/gemini-cli`) shows as
-  // available without a restart. refreshAgentMenu repaints when it resolves.
+  // Paint instantly from cache, then re-detect so an agent installed since
+  // launch shows as available. refreshAgentMenu repaints when it resolves.
   paintAgentMenu();
   $('#rail-agent-menu').hidden = false;
   agentMenuOpen = true;
@@ -12216,17 +11715,13 @@ const ICONS = {
   prompts:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M16 4v3h3"/><path d="M8 12h8M8 16h8M8 8h4"/></svg>',
 };
 
-// Order mirrors the rail so muscle memory carries over. Shortcut hints show
-// the real bindings, which are Alt+digit (see the digit map in the global
-// keydown handler): Alt+1 chat, Alt+2 skills, Alt+3 sessions, Alt+4 files,
-// Alt+5 mcp, Alt+6 preferences. The Alt modifier is shown explicitly so a
-// user does not press a bare digit on the chat page, where it falls through
-// to the focused terminal as literal input instead of switching pages.
+// Order mirrors the rail. Shortcut hints show the real Alt+digit bindings from
+// the digit map in the global keydown handler, with the Alt modifier spelled
+// out, since a bare digit on the chat page goes to the terminal.
 const PALETTE_ACTIONS = [
   { icon: ICONS.chat,        label: 'Switch to Chat',                 run: () => setPage('chat'),        shortcut: 'Alt 1' },
   // An agent is a saved configuration; a session is a running chat. The two
-  // nouns stay apart here, so the palette's first match is the one the words
-  // asked for. The rail order below is untouched.
+  // nouns stay apart here so each query matches the right entry.
   { icon: ICONS.agents,      label: 'Find a running session',         run: () => openAgentSwitch(), shortcut: 'Alt+A' },
   { icon: ICONS.agents,      label: 'Switch to Agents',               run: () => setPage('agents'), shortcut: 'Alt 7' },
   { icon: ICONS.plus,        label: 'New agent',                      run: () => { setPage('agents'); openAgentModal(null); } },
@@ -12255,11 +11750,9 @@ const PALETTE_ACTIONS = [
 
 let paletteSel = 0;
 // ─── Agent switcher ──────────────────────────────────────────────────────────
-// A chat can start agents that keep working after it moves on. They are their
-// own sessions, so the only way to reach one has been to leave Husk and drive
-// the CLI's picker by hand. This is that picker, owned by Husk.
-// `view` is the list actually on screen. Every index handed back by a click, an
-// arrow or a digit means a position in that, never in the unfiltered set.
+// A chat can start agents that keep working after it moves on, each in its own
+// session. This is the picker for them. `view` is the list actually on screen,
+// and every index from a click, an arrow or a digit is a position in that.
 let agentSwitch = { rows: [], view: [], sel: 0, loading: false, error: '', supported: true };
 let agentSwitchLoad = 0;
 let agentOpening = false;
@@ -12294,9 +11787,8 @@ function agentSubtitle(a) {
   return a.running ? 'starting up' : 'no activity recorded';
 }
 
-// The title is what a person recognises, so it leads. It cannot stand alone:
-// every agent a chat starts inherits that chat's title, so the id rides the
-// second line as the field that is guaranteed to differ between siblings.
+// The title leads, and the id rides the second line, since every agent a chat
+// starts inherits that chat's title and only the id differs between siblings.
 function agentHeadline(a) { return a.name || a.id || ''; }
 function agentShortId(a) { return String(a.id || a.sessionId || '').slice(0, 8); }
 
@@ -12346,10 +11838,9 @@ function closeAgentSwitch() {
   if (term) term.focus();
 }
 
-// The switcher is behind a chord nobody discovers on their own, so the topbar
-// carries a standing count. It stands down only when this project has no agents
-// at all: hiding it once the last one finishes takes the only way in with it,
-// at exactly the moment there is a finished agent worth reading.
+// The topbar carries a standing count as the visible way into the switcher. It
+// stands down only when this project has no agents at all, so a finished agent
+// still keeps the entry point on screen.
 function paintTopbarAgents(res) {
   const el = $('#topbar-agents');
   if (!el) return;
@@ -12406,9 +11897,8 @@ function renderAgentSwitch(query) {
   let html = '';
   let count = 0;
   if (agentSwitch.loading) {
-    // Shape-preserving placeholders: the list has known geometry, so a spinner
-    // would say less than the rows it is about to be replaced by. A label
-    // placeholder rides along because the loaded list is banded.
+    // Shape-preserving placeholders in the geometry of the loaded list, with a
+    // label placeholder because that list is banded.
     html = '<li class="as-skel-group" role="presentation"><i></i></li>'
       + '<li class="as-skel" role="presentation"><i class="sk-dot"></i><i class="sk-name"></i><i class="sk-sub"></i><i class="sk-meta"></i></li>'.repeat(4);
   } else if (!agentSwitch.supported) {
@@ -12486,15 +11976,10 @@ async function openAgentFromSwitch(idx) {
   await openBgAgent(a);
 }
 
-// A running agent belongs to its worker and cannot be resumed like a chat; the
-// tool refuses and says so. Its own agent view is the supported way in, and it
-// opens straight onto this agent when told which one. A finished agent has no
-// worker left, so it resumes normally.
-// Opening an agent lands on the tool's own agent list with that agent selected,
-// not inside its conversation: the environment variable chooses the row, and a
-// return key opens it. Waiting for the list to paint before sending it, because
-// a key sent into a half-drawn picker is dropped. Bounded, and sent once: if the
-// list never appears the user is simply left on whatever did.
+// A running agent belongs to its worker, so it is reached through the tool's own
+// agent view; a finished one resumes normally. Opening lands on that agent list
+// with the row selected by an environment variable, and a return key opens it,
+// sent once the list has painted and only within a bounded wait.
 const AGENT_PICKER_READY = /awaiting input|to collapse|for shortcut/i;
 
 function agentBootShow(name) {
@@ -12540,9 +12025,8 @@ function confirmAgentSelection(tab) {
   setTimeout(tick, 40);
 }
 
-// Uncover only once the picker is off screen, so the cover never lifts onto a
-// half-drawn list. Failing open on the deadline: a stuck cover would hide a
-// working conversation, which is worse than a brief glimpse of the picker.
+// Uncover once the picker is off screen, and uncover anyway on the deadline so
+// the cover never outlives the conversation behind it.
 function waitForAgentConversation(tab, deadline) {
   const tick = () => {
     if (!tab || !tab.term || !TABS.has(tab.id)) { agentBootHide(); return; }
@@ -12560,7 +12044,7 @@ async function openBgAgent(a) {
     let res = null;
     try {
       res = await window.husk.bgAgents.openCommand({
-        id: a.id, sessionId: a.sessionId, running: !!a.running, cwd: a.cwd || '',
+        id: a.id, sessionId: a.sessionId, attach: !!a.attachable, cwd: a.cwd || '',
       });
     } catch (err) { res = { ok: false, error: (err && err.message) || 'could not open that agent' }; }
     if (!res || !res.ok) {
@@ -12673,14 +12157,262 @@ $('#agent-switch-list').addEventListener('mousemove', (e) => {
   paintAgentSwitchSel(false);
 });
 $('#agent-switch').addEventListener('click', (e) => { if (e.target.id === 'agent-switch') closeAgentSwitch(); });
+// ─── Agent map ──────────────────────────────────────────────────────────────
+// A live picture of every agent on this machine. Projects are hubs and their
+// agents orbit them, so the shape of the work is visible before any label is
+// read. Polls while open.
+
+const agentMap = { rows: [], selected: null, timer: null, loading: false };
+
+const AM_POLL_MS = 4000;
+
+function amStateOf(a) {
+  if (!a || !a.running) return 'done';
+  return a.state === 'blocked' ? 'blocked' : 'running';
+}
+
+function amElapsed(ms) {
+  const s = Math.max(0, Math.round((Date.now() - (Number(ms) || Date.now())) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+function amProjectName(cwd) {
+  const p = String(cwd || '').replace(/[\\/]+$/, '');
+  return p.split(/[\\/]/).pop() || 'elsewhere';
+}
+
+// Hubs spread across the stage, their agents on a ring around each. Sized from
+// the stage so the drawing fills it. Deterministic: the same set of agents
+// always draws the same picture.
+function amLayout(rows, w, h) {
+  const byProject = new Map();
+  for (const a of rows) {
+    const key = a.cwd || '';
+    if (!byProject.has(key)) byProject.set(key, []);
+    byProject.get(key).push(a);
+  }
+  const hubs = [...byProject.entries()]
+    .sort((x, y) => (y[1].length - x[1].length) || x[0].localeCompare(y[0]));
+
+  const pad = 78;
+  const iw = Math.max(220, w - pad * 2);
+  const ih = Math.max(200, h - pad * 2);
+  const cx = w / 2;
+  const cy = h / 2;
+  const n = hubs.length;
+  // One hub centres. Two sit on the long axis. More take an ellipse sized to
+  // the stage, so a wide window spreads sideways instead of leaving margins.
+  const spread = (i) => {
+    if (n === 1) return [cx, cy];
+    if (n === 2) return iw > ih ? [cx + (i ? 1 : -1) * iw * 0.27, cy] : [cx, cy + (i ? 1 : -1) * ih * 0.27];
+    const t = (i / n) * Math.PI * 2 - Math.PI / 2;
+    return [cx + Math.cos(t) * iw * 0.38, cy + Math.sin(t) * ih * 0.4];
+  };
+
+  const nodes = [];
+  const links = [];
+  hubs.forEach(([cwd, agents], i) => {
+    const [hx, hy] = spread(i);
+    nodes.push({ kind: 'hub', id: 'hub:' + cwd, x: hx, y: hy, label: amProjectName(cwd), count: agents.length, cwd });
+    // The ring grows with the crowd so labels do not collide, and is capped so
+    // one busy project cannot cover its neighbours.
+    const base = Math.min(iw, ih) * (n > 2 ? 0.2 : 0.3);
+    const ring = Math.min(base + Math.max(0, agents.length - 3) * 12, Math.min(iw, ih) * 0.4);
+    agents.forEach((a, j) => {
+      const at = (j / Math.max(1, agents.length)) * Math.PI * 2 - Math.PI / 2;
+      const x = hx + Math.cos(at) * ring;
+      const y = hy + Math.sin(at) * ring;
+      const state = amStateOf(a);
+      nodes.push({ kind: 'agent', id: a.id, x, y, agent: a, state, ux: Math.cos(at), uy: Math.sin(at) });
+      links.push({ x1: hx, y1: hy, x2: x, y2: y, state });
+    });
+  });
+  return { nodes, links };
+}
+
+function amClip(text, max) {
+  const t = String(text || '');
+  return t.length > max ? t.slice(0, max - 1) + '\u2026' : t;
+}
+
+function amSvgEl(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k of Object.keys(attrs || {})) el.setAttribute(k, String(attrs[k]));
+  return el;
+}
+
+function amPaint() {
+  const svg = $('#am-svg');
+  const stage = $('#am-stage');
+  const empty = $('#am-empty');
+  if (!svg || !stage) return;
+  const w = stage.clientWidth || 720;
+  const h = stage.clientHeight || 460;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.replaceChildren();
+
+  const rows = agentMap.rows;
+  if (empty) empty.hidden = rows.length > 0;
+  if (!rows.length) return;
+
+  // A soft bloom under the live discs, declared once and referenced by class.
+  const defs = amSvgEl('defs', {});
+  const f = amSvgEl('filter', { id: 'am-glow', x: '-80%', y: '-80%', width: '260%', height: '260%' });
+  f.appendChild(amSvgEl('feGaussianBlur', { stdDeviation: '5', result: 'b' }));
+  const m = amSvgEl('feMerge', {});
+  m.appendChild(amSvgEl('feMergeNode', { in: 'b' }));
+  m.appendChild(amSvgEl('feMergeNode', { in: 'SourceGraphic' }));
+  f.appendChild(m);
+  defs.appendChild(f);
+  svg.appendChild(defs);
+
+  const { nodes, links } = amLayout(rows, w, h);
+
+  // Curved rather than straight: a bundle of spokes at one hub reads as a fan
+  // instead of a star burst.
+  for (const l of links) {
+    const mx = (l.x1 + l.x2) / 2;
+    const my = (l.y1 + l.y2) / 2;
+    const dx = l.x2 - l.x1;
+    const dy = l.y2 - l.y1;
+    const bow = 0.16;
+    svg.appendChild(amSvgEl('path', {
+      d: `M${l.x1} ${l.y1} Q${mx - dy * bow} ${my + dx * bow} ${l.x2} ${l.y2}`,
+      class: `am-link is-${l.state}`,
+    }));
+  }
+
+  for (const n of nodes) {
+    if (n.kind === 'hub') {
+      const g = amSvgEl('g', { class: 'am-hub' });
+      g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 34, class: 'am-hub-ring' }));
+      g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 27, class: 'am-hub-disc' }));
+      const t = amSvgEl('text', { x: n.x, y: n.y + 1, class: 'am-hub-label', 'text-anchor': 'middle' });
+      t.appendChild(document.createTextNode(amClip(n.label, 13)));
+      g.appendChild(t);
+      const c = amSvgEl('text', { x: n.x, y: n.y + 13, class: 'am-hub-count', 'text-anchor': 'middle' });
+      c.appendChild(document.createTextNode(String(n.count)));
+      g.appendChild(c);
+      svg.appendChild(g);
+      continue;
+    }
+    const sel = agentMap.selected === n.agent.id;
+    const g = amSvgEl('g', {
+      class: `am-node is-${n.state}${sel ? ' is-selected' : ''}`,
+      tabindex: '0', role: 'button',
+    });
+    const title = amSvgEl('title', {});
+    title.appendChild(document.createTextNode(`${n.agent.name || n.agent.id} (${n.state})`));
+    g.appendChild(title);
+    if (n.state !== 'done') g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 22, class: 'am-pulse' }));
+    g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 15, class: 'am-node-disc' }));
+    g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 5, class: 'am-node-core' }));
+    // Labels sit on the far side of the disc from their hub, so a spoke never
+    // runs through its own text and two neighbours cannot stack.
+    const ux = n.ux === undefined ? 0 : n.ux;
+    const uy = n.uy === undefined ? 1 : n.uy;
+    const lx = n.x + ux * 21;
+    const ly = n.y + uy * 21;
+    const side = Math.abs(ux) > 0.45 ? (ux > 0 ? 'start' : 'end') : 'middle';
+    const dy = side === 'middle' ? (uy >= 0 ? 13 : -8) : 4;
+    const label = amSvgEl('text', { x: lx, y: ly + dy, class: 'am-node-label', 'text-anchor': side });
+    label.appendChild(document.createTextNode(amClip(n.agent.name || n.agent.id || 'agent', 22)));
+    g.appendChild(label);
+    const meta = amSvgEl('text', { x: lx, y: ly + dy + 12, class: 'am-node-meta', 'text-anchor': side });
+    meta.appendChild(document.createTextNode(amElapsed(n.agent.startedAt)));
+    g.appendChild(meta);
+    const pick = () => { agentMap.selected = n.agent.id; amPaint(); amPaintDetail(); };
+    g.addEventListener('click', pick);
+    g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+    svg.appendChild(g);
+  }
+}
+
+function amPaintDetail() {
+  const a = agentMap.rows.find((x) => x.id === agentMap.selected) || null;
+  const detail = $('#am-detail');
+  const none = $('#am-side-empty');
+  if (!detail || !none) return;
+  detail.hidden = !a;
+  none.hidden = !!a;
+  if (!a) return;
+  const state = amStateOf(a);
+  const stateEl = $('#am-d-state');
+  stateEl.className = `am-state is-${state}`;
+  stateEl.textContent = state === 'blocked' ? 'Needs you' : (state === 'running' ? 'Running' : 'Finished');
+  $('#am-d-name').textContent = a.name || a.id || 'agent';
+  $('#am-d-intent').textContent = a.detail || a.intent || (state === 'done' ? 'No activity recorded.' : 'Starting up.');
+  const facts = [
+    ['project', amProjectName(a.cwd)],
+    ['running for', amElapsed(a.startedAt)],
+    a.needs ? ['waiting on', a.needs] : null,
+    a.tokens ? ['tokens', String(a.tokens)] : null,
+    ['id', a.id || ''],
+  ].filter(Boolean);
+  $('#am-d-facts').replaceChildren(...facts.flatMap(([k, v]) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    return [dt, dd];
+  }));
+  $('#am-d-open').onclick = () => { closeAgentMap(); openBgAgent(a); };
+}
+
+async function amRefresh() {
+  if (agentMap.loading) return;
+  agentMap.loading = true;
+  let res = null;
+  try { res = await window.husk.bgAgents.list({ all: true }); } catch (_) { res = null; }
+  agentMap.loading = false;
+  const supported = !(res && res.supported === false);
+  const rows = (res && res.ok !== false && Array.isArray(res.agents)) ? res.agents : [];
+  agentMap.rows = rows.slice().sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0));
+  if (agentMap.selected && !agentMap.rows.some((a) => a.id === agentMap.selected)) agentMap.selected = null;
+  const live = agentMap.rows.filter((a) => a.running).length;
+  const blocked = agentMap.rows.filter((a) => a.running && a.state === 'blocked').length;
+  const sub = $('#am-sub');
+  if (sub) {
+    sub.textContent = !supported
+      ? 'This agent CLI does not report background agents.'
+      : `${live} running · ${blocked} waiting on you · ${agentMap.rows.length} total`;
+  }
+  const foot = $('#am-foot');
+  if (foot) foot.textContent = agentMap.rows.length ? `Updated ${new Date().toLocaleTimeString()}` : '';
+  amPaint();
+  amPaintDetail();
+}
+
+function openAgentMap() {
+  const el = $('#agent-map');
+  if (!el) return;
+  el.hidden = false;
+  amRefresh();
+  if (agentMap.timer) clearInterval(agentMap.timer);
+  agentMap.timer = setInterval(amRefresh, AM_POLL_MS);
+}
+
+function closeAgentMap() {
+  const el = $('#agent-map');
+  if (!el) return;
+  el.hidden = true;
+  if (agentMap.timer) { clearInterval(agentMap.timer); agentMap.timer = null; }
+}
+
+// The pill opens the map, which is the picture of the same set the switcher
+// lists. Alt+A still opens the switcher for keyboard use.
 $('#topbar-agents').addEventListener('click', () => {
-  if ($('#agent-switch').hidden) openAgentSwitch(); else closeAgentSwitch();
+  if ($('#agent-map').hidden) openAgentMap(); else closeAgentMap();
+});
+$('#am-close') && $('#am-close').addEventListener('click', closeAgentMap);
+$('#am-refresh') && $('#am-refresh').addEventListener('click', amRefresh);
+$('#agent-map') && $('#agent-map').addEventListener('click', (e) => {
+  if (e.target.id === 'agent-map') closeAgentMap();
 });
 $('#btn-palette').addEventListener('click', openPalette);
-// On the chat page, if focus is on the page body (nothing focused) and a
-// printable/edit key is pressed, focus the active terminal first so the
-// keystroke goes to it. Capture phase runs before the character is committed,
-// so the keystroke reaches the terminal.
+// On the chat page, a printable or edit key pressed with nothing focused hands
+// focus to the active terminal first, in the capture phase so the keystroke
+// still lands there.
 document.addEventListener('keydown', (e) => {
   if (currentPage !== 'chat' || !term) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -12757,10 +12489,9 @@ window.addEventListener('keydown', (e) => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
 
-// Minimal markdown -> HTML. Escapes ALL html first, then layers formatting on
-// the escaped string, so every tag in the result is one this function wrote.
-// The input is workflow step output, which is whatever the agent printed rather
-// than markup authored here. Order matters: escape before any tag insertion.
+// Minimal markdown to HTML, over workflow step output. The source is escaped
+// first and formatting is layered onto the escaped string, so every tag in the
+// result is one this function wrote.
 function renderMarkdown(src) {
   let s = escapeHtml(String(src ?? ''));
   const codeBlocks = [];
@@ -12805,8 +12536,7 @@ function inlineMd(s) {
 }
 
 // Drop framework persona ceremony that leaks into workflow step output. Both
-// banner vocabularies are matched: an install carried over from the older
-// layout still emits the old one.
+// banner vocabularies are matched, since an install may emit either.
 function stripPaiNoise(text) {
   return String(text || '')
     .split('\n')
@@ -12818,13 +12548,11 @@ function stripPaiNoise(text) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ─── First-run onboarding + boot ──────────────────────────────────────────────────────
-// First-launch onboarding: a three-step full-window flow (welcome → pick CLI →
-// preferences). Step 2 detects installed CLI agents on PATH (claude, copilot,
-// codex, aider, gemini), lets the user pick one and install missing ones inline
-// via npm / pipx. Step 3 sets theme / accent / rail. Finishing persists
-// agentCommand, agentName, theme, accent, railExpanded, and firstRunDone.
-// Re-openable from Preferences with { replay: true } (does not touch
-// firstRunDone). Resolves when the flow is dismissed.
+// First-launch onboarding: a three-step full-window flow of welcome, pick CLI
+// and preferences. Step 2 detects installed CLI agents on PATH and installs
+// missing ones inline; step 3 sets theme, accent and rail. Finishing persists
+// those choices plus firstRunDone. Preferences reopens it with { replay: true },
+// which leaves firstRunDone alone. Resolves when the flow is dismissed.
 async function runOnboarding({ replay = false } = {}) {
   const overlay = $('#onboarding');
   const backBtn = $('#ob-back');
@@ -12964,9 +12692,8 @@ async function runOnboarding({ replay = false } = {}) {
     ac.abort();
   }
 
-  // Skip must not silently commit an agent command that does not exist on
-  // this machine: the user's first chat would be a dead terminal. Warn when
-  // nothing is installed and nothing was picked.
+  // Skip warns first when nothing is installed and nothing was picked, so it
+  // never commits an agent command this machine does not have.
   async function skipWithGuard() {
     const anyInstalled = !!(detection && Array.isArray(detection.agents) && detection.agents.some((a) => a && a.available));
     if (!selectedCmd && !anyInstalled) {
@@ -13208,15 +12935,12 @@ async function boot() {
   }, 20000);
 
   // With skipWelcome on, boot goes straight to a chat, so the welcome screen
-  // must never paint. Adding it unconditionally here made it flash for the
-  // duration of the reattachSessions() IPC roundtrip before being removed.
+  // stays out of the paint entirely.
   const autoChat = cfg.skipWelcome && !(reloadState && reloadState.suppressAutoChat);
   if (!autoChat) $('#chat-empty').classList.add('show');
 
-  // A renderer reload keeps the main-process PTYs alive; reattach to any open
-  // chats so a refresh does not wipe them. Only when there are none do we fall
-  // through to the cold-boot behavior (welcome state, or an immediate fresh
-  // chat if the user opted to skip the welcome).
+  // A renderer reload keeps the main-process PTYs alive, so reattach to any
+  // open chats first and fall through to cold boot only when there are none.
   const reattached = await reattachSessions();
   if (!reattached && autoChat) {
     await startPty();
@@ -13254,19 +12978,16 @@ async function launchAgent({ initialPrompt = null } = {}) {
 
 // ─── Autopilot Mode ────────────────────────────────────────────────────────────
 //
-// The chat header has an Autopilot button that opens a start-dialog. The
-// renderer collects goal + caps, asks the supervisor (via IPC) to start a
-// run, then shows a live banner above the chat with a Cancel button. When
-// the run ends (naturally, by cap, or by user), the supervisor sends an
-// autopilot:ended event with the summary; the renderer opens a review
-// modal with the diff and a one-click Revert.
+// The chat header's Autopilot button opens a start dialog. The renderer
+// collects goal and caps, asks the supervisor over IPC to start a run, then
+// shows a live banner with a Cancel button. On autopilot:ended it opens a
+// review modal with the diff and a one-click Revert.
 let autopilotActive = false;
 let autopilotLastSession = null;
-// True while a run is being started (snapshot capture + spawn). During this
-// window the wizard must not be dismissable: a stray backdrop click or Esc
-// must not hide it mid-capture.
+// True while a run is being started, which is when the wizard stops responding
+// to a backdrop click or Esc.
 let autopilotStarting = false;
-// Swarm: all currently active runs. N=1 → the plain single-run UX (ISC-33).
+// All currently active runs. One run is the plain single-run UX.
 const activeRuns = new Map(); // runId → { runId, sessionId, workspaceRoot, goal, startedAt, caps, budget }
 let focusedRunId = null;      // which run the detail pane displays
 const autopilotModelDecisions = new Map(); // runId/role → { model, tier, reason }
@@ -13292,10 +13013,9 @@ function closeAutopilotStart() {
   if (autopilotStarting) return;
   $('#autopilot-start-modal').hidden = true;
 }
-// Read one cap field. Empty -> default. A typed 0 is kept as 0, which
-// the budget meter treats as "no cap for this metric". Negative or
-// non-numeric is invalid: fall back to the default and flag it so the UI
-// and the engine never disagree silently.
+// Read one cap field. Empty falls back to the default, a typed 0 stays 0 and
+// the budget meter reads it as no cap, and anything negative or non-numeric
+// returns the default with an invalid flag.
 function readCapField(id, def) {
   const el = $(id);
   const raw = el ? String(el.value || '').trim() : '';
@@ -13324,10 +13044,9 @@ async function startAutopilot() {
   // git can skip it; revert/diff are then unavailable for the run.
   const snapEl = $('#aut-snapshot-toggle');
   const snapshot = snapEl ? !!snapEl.checked : true;
-  // Cost guard: caps are PER AGENT, so a team multiplies them; and an
-  // uncapped run can burn tokens fast. Confirm before launching without a
-  // dollar limit; for a capped team, state the fleet ceiling so "$5" never
-  // surprises as $20.
+  // Cost guard: caps are per agent, so a team multiplies them. Confirm before
+  // launching without a dollar limit, and state the fleet ceiling for a
+  // capped team.
   const isTeam = autopilotStartMode === 'collab';
   if (caps.dollars <= 0) {
     const ok = await openConfirmDialog({
@@ -13446,11 +13165,9 @@ async function startAutopilot() {
 }
 async function cancelAutopilot() {
   if (!autopilotActive) return;
-  // Stopping a run is destructive to in-flight work, so confirm first.
-  // This is the explicit Stop action; the chat autopilot button opens the
-  // run view instead, so a stray click cannot end a run by accident.
-  // A collab run stops the whole team (main process ends every run in the
-  // group); say so in the dialog. Chat sessions are never touched.
+  // The explicit Stop action, confirmed first since it ends in-flight work.
+  // A collab run stops the whole team, which the dialog says; chat sessions
+  // are left alone.
   const focused = activeRuns.get(focusedRunId);
   const gid = focused && focused.groupId;
   const teamSize = gid ? [...activeRuns.values()].filter((r) => r.groupId === gid && !r.ended).length : 1;
@@ -13617,10 +13334,9 @@ function loadPresetIntoStartModal(p) {
   }, 30);
 }
 
-// Open the Start-run modal prefilled with a past run's goal + caps.
-// Used by the small Rerun button on Recent Runs rows and by the
-// Rerun button in review-mode footer. Falls back to defaults if the
-// past row lacks caps (older audit logs).
+// Open the Start-run modal prefilled with a past run's goal and caps, for the
+// Rerun buttons on Recent Runs rows and in the review footer. A row without
+// caps falls back to the defaults.
 function rerunFromPastRun(run) {
   if (!run || !run.goal) { toast('That run has no goal text to rerun', 'error'); return; }
   if (autopilotActive) { toast('A run is already active', 'info'); return; }
@@ -13825,10 +13541,9 @@ async function discardRaceRun(run) {
 }
 
 // ── Race Card: a self-contained shareable PNG drawn on a canvas ──
-// The card is drawn with the Canvas 2D API (no external lib, no network, CSP-
-// safe) using a fixed dark palette so it looks identical wherever it is shared,
-// independent of the app theme. It shows the agents, their headline metrics,
-// and the winner; it never includes the repo path or file names.
+// The card is drawn with the Canvas 2D API on a fixed dark palette, so it looks
+// the same wherever it is shared. It shows the agents, their headline metrics
+// and the winner, and carries no repo path or file names.
 const RC_PALETTE = {
   bg0: '#0b0d13', bg1: '#12151f', card: '#171b26', cardWin: '#12241a',
   line: 'rgba(255,255,255,0.10)', lineWin: '#34d399',
@@ -14034,10 +13749,8 @@ async function refreshAutopilotHistory() {
       else for (const sid of rowSessionIds) selectedRunSessions.delete(sid);
       updateBulkDeleteUi();
     });
-    // Generous hit zone: a full-height label strip on the row's left
-    // edge. The row itself opens the run on click, so selection needs a
-    // forgiving target; the label toggles the checkbox natively anywhere
-    // in the strip.
+    // A full-height label strip on the row's left edge, so selection has a
+    // forgiving target separate from the row's own open-on-click.
     const checkZone = document.createElement('label');
     checkZone.className = 'aut-recent-checkzone';
     checkZone.title = 'Select for bulk delete';
@@ -14166,11 +13879,9 @@ $('#aut-recent-bulkdel') && $('#aut-recent-bulkdel').addEventListener('click', a
   refreshAutopilotHistory();
 });
 
-// Load a past run into the live layout in REVIEW mode. Same panes
-// (goal, rings, files, activity) but values are frozen and the
-// footer shows Revert / Start-new instead of Stop. Activity feed
-// for past runs is summarized (line text is not retained in the
-// audit log, only event kinds + char counts).
+// Load a past run into the live layout in review mode: the same panes with
+// frozen values, and a footer of Revert / Start-new instead of Stop. The
+// activity feed is summarized from the audit log's event kinds and counts.
 async function openAutopilotRunReview(sessionId, workspaceRoot) {
   try { setPage('autopilot'); } catch (_) {}
   try {
@@ -14233,12 +13944,10 @@ async function openAutopilotHistoryRun(run) {
   }
 }
 
-// Autopilot live state. Driven by autopilot:started / autopilot:budget /
-// autopilot:activity IPC events plus a 4s poll of autopilot:liveDiff. The
-// activity stream is produced in the main process from each run's OWN
-// transcript (or its PTY as a fallback), so the feed is always the selected
-// run's data, never the focused chat terminal's. Idle detection, nudges, and
-// auto-end also live in main next to the run PTYs.
+// Autopilot live state, driven by the autopilot:started / budget / activity IPC
+// events plus a poll of autopilot:liveDiff. The activity stream comes from each
+// run's own transcript in the main process, so the feed is the selected run's
+// data. Idle detection, nudges and auto-end live in main beside the run PTYs.
 const AP_RING_C = 2 * Math.PI * 42; // r=42 on the big page rings
 const AP_FEED_MAX_ROWS = 300;
 const AP_DIFF_POLL_MS = 4000;
@@ -14255,17 +13964,15 @@ let autopilotState = {
   tickerId: null,
   diffPollId: null,
 };
-// Swarm bar: shown when N > 1 concurrent runs active. Each card lets the user
-// switch the detail pane focus, monitor per-run spend, and cancel individually (ISC-23, 25, 32).
-// Agents card: one row per agent (live, ended, orchestrator-planned) in
-// the cockpit's left rail. Row: color dot, role, state; below it the
-// current action and elapsed/$/files. Click focuses/maximizes the lane.
+// Agents card: one row per agent, live, ended or orchestrator-planned, in the
+// cockpit's left rail. A row carries a color dot, role and state, with the
+// current action and elapsed/$/files below it, and clicking one focuses and
+// maximizes that lane.
 function renderRunCards() {
   const list = document.getElementById('aut-fleet-list');
   if (!list) return;
-  // Rebuild the DOM only when the set of agents changes; budget ticks
-  // patch the existing nodes in place (updateRunCardsLive) so clicks
-  // never land on a node destroyed mid-frame.
+  // Rebuild the DOM only when the set of agents changes; budget ticks patch
+  // the existing nodes in place through updateRunCardsLive.
   const sig = [...activeRuns.keys()].join(',') + '|' + plannedAgents.map((p) => p.role).join(',')
     + '|done:' + (activeRuns.size ? '' : finishedFleet.map((f) => f.role).join(','));
   if (list.dataset.sig === sig) { updateRunCardsLive(); return; }
@@ -14345,9 +14052,8 @@ function renderRunCards() {
     action.className = 'aut-chip-action';
     action.textContent = String(p.subgoal || 'waiting for a free slot');
     action.title = p.subgoal || 'waiting for a free slot';
-    // The transcript is on disk beside the audit log. Offering it here is the
-    // whole point of writing it: without this button a cancelled run leaves
-    // only its tally and everything the agent actually said stays unreachable.
+    // The transcript sits on disk beside the audit log, and this button is how
+    // a finished run's own output is read back.
     if (f.sessionId) {
       const logBtn = document.createElement('button');
       logBtn.type = 'button';
@@ -14369,12 +14075,8 @@ function renderRunCards() {
   }
   updateRunCardsLive();
 }
-// Read-only card for a finished agent (persisted post-run record).
-// Show what an agent actually said, read back from the transcript on disk.
-// Rendered as text rather than a live lane: the run is over, so this is a
-// record to read, not a stream to follow.
-// Close on the button, on the backdrop, and on Escape: three ways out, so the
-// viewer never becomes a trap.
+// The run-log viewer renders a finished agent's transcript as text. It closes
+// on its button, on the backdrop and on Escape.
 $('#aut-transcript-close')?.addEventListener('click', () => { const d = $('#aut-transcript'); if (d) d.hidden = true; });
 $('#aut-transcript')?.addEventListener('click', (e) => { if (e.target && e.target.id === 'aut-transcript') e.target.hidden = true; });
 document.addEventListener('keydown', (e) => {
@@ -14411,6 +14113,7 @@ async function openRunTranscript(f) {
   body.scrollTop = body.scrollHeight;
 }
 
+// Read-only card for a finished agent, built from its persisted record.
 function buildFinishedAgentCard(f) {
   const row = document.createElement('div');
   row.className = 'aut-agent-row is-done' + (f.endedOk ? '' : ' is-halted');
@@ -14542,9 +14245,8 @@ function paintAutopilotBanner() {
   if (status) status.hidden = !showLive;
   if (pageEl) pageEl.classList.toggle('is-live', !!showLive);
   if (pageEl) pageEl.classList.toggle('is-review-mode', !!autopilotReview);
-  // While a run is active OR a review is open, the header Start
-  // button is replaced by the status pill; showing both is
-  // contradictory.
+  // While a run is active or a review is open, the status pill replaces the
+  // header Start button.
   if (startBtn) startBtn.hidden = showLive;
   if (stopBtnTop) stopBtnTop.hidden = !autopilotActive;
   // Revert needs a pre-run snapshot. Runs started with the snapshot toggle
@@ -14552,10 +14254,9 @@ function paintAutopilotBanner() {
   // in review (older runs without the field are treated as snapshotted).
   const reviewHasSnapshot = !(autopilotReviewData && autopilotReviewData.summary
     && autopilotReviewData.summary.hasSnapshot === false);
-  // A retained run has a live worktree awaiting Apply/Discard. Its changes are
-  // NOT in the workspace yet, so the snapshot-flow buttons (Revert/Rerun/New)
-  // are hidden in favor of Apply/Discard. Reviews of a run whose worktree is
-  // already gone keep the snapshot-flow buttons.
+  // A retained run has a live worktree awaiting Apply/Discard and its changes
+  // are not in the workspace yet, so those two replace the snapshot-flow
+  // buttons. A run whose worktree is gone keeps the snapshot flow.
   const isRetained = !!(autopilotReview && autopilotReviewData && autopilotReviewData.retained);
   const reviewDiff = autopilotReviewData && autopilotReviewData.summary
     ? ((Array.isArray(autopilotReviewData.summary.diff) && autopilotReviewData.summary.diff.length)
@@ -14649,10 +14350,9 @@ function autopilotPageVisible() {
 function paletteOpen() {
   return !!document.querySelector('.palette:not([hidden])');
 }
-// Close the topmost open modal the way the modal itself would: its own
-// close button when it has one (state cleanup runs), else the backdrop
-// click contract every modal follows. The confirm dialog manages its own
-// promise lifecycle and Esc handling, so it is left alone.
+// Close the topmost open modal the way the modal itself would: its own close
+// button when it has one, else the backdrop-click contract. The confirm dialog
+// owns its promise and Esc handling, so it is left alone.
 function closeTopModal() {
   const open = [...document.querySelectorAll('.modal:not([hidden])')].filter((m) => m.id !== 'confirm-modal');
   if (!open.length) return false;
@@ -14705,9 +14405,8 @@ window.addEventListener('keydown', (e) => {
   const t = e.target;
   const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
   if (e.key === 'Escape') {
-    // Open modals are closed by the document-level Esc closer (it runs
-    // first in the capture chain); acting here too would close two
-    // stacked layers on one keypress.
+    // Open modals are closed by the document-level Esc closer, which runs
+    // first in the capture chain.
     if (paletteOpen() || anyModalOpen()) return;
     if (typing) return;
     if (autopilotPageVisible() && autopilotReview) { exitReviewMode(); e.preventDefault(); }
@@ -14738,9 +14437,8 @@ function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, 
   }
   resetAutopilotPanel();
   const s = summary && summary.summary;
-  // Goal lives in the start_run row (summary.goal). The run_summary
-  // payload (s) carries final meter/diff but not the goal. Use the
-  // start_run goal as truth; fall back ONLY if even that is missing.
+  // The goal lives in the start_run row; the run_summary payload carries the
+  // final meter and diff but no goal.
   const realGoal = missionGoalFromSummary(summary) || null;
   setAutopilotGoal(realGoal || '(no goal recorded for this run)');
   // Caps: start_run row first, then meter.caps, then current defaults.
@@ -14777,10 +14475,9 @@ function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, 
   renderTimeline();
   paintAutopilotBanner();
 }
-// Conclusion card appended to the feed when a run is reviewed: why it
-// ended, the final numbers, and the agent's last narration as its report.
-// Older summaries loaded from History lack finalMessage; the card then
-// shows outcome and metrics only.
+// Conclusion card appended to the feed when a run is reviewed: why it ended,
+// the final numbers, and the agent's last narration as its report. A summary
+// with no finalMessage shows outcome and metrics only.
 function renderRunConclusion(sum) {
   if (!sum) return;
   const laneKey = (sum.runId && activeRuns.has(sum.runId)) ? sum.runId : '_review';
@@ -14830,11 +14527,10 @@ function renderRunConclusion(sum) {
   feed.appendChild(card);
   feed.scrollTop = feed.scrollHeight;
 }
-// Fleet Receipt: one shareable card summarizing the whole fleet -- total
+// Fleet Receipt: one shareable card summarizing the whole fleet, with total
 // spend, what landed, and the waste the governor caught. Built from the
-// autopilot:receipt IPC and rendered in the review lane. Reuses the
-// conclusion card's classes so it inherits the theme; adds a Copy button
-// so the headline is one click from a tweet.
+// autopilot:receipt IPC, rendered in the review lane on the conclusion card's
+// classes, and copyable in one click.
 async function showFleetReceipt(members) {
   try {
     const runs = (Array.isArray(members) ? members : []).filter((m) => m && m.sessionId);
@@ -14842,9 +14538,8 @@ async function showFleetReceipt(members) {
     const res = await window.husk.autopilot.receipt({ runs });
     if (!res || !res.ok || !res.receipt) return;
     renderFleetReceipt(res.receipt);
-    // For a real fleet, the MISSION panel must show the FLEET total, not the
-    // single reviewed agent -- otherwise the panel (one agent) and the
-    // receipt (all agents) disagree and the user cannot tell which is real.
+    // For a real fleet the Mission panel shows the fleet total, so it and the
+    // receipt report the same number.
     if (res.receipt.runCount > 1) {
       try {
         updateAutopilotBudget({
@@ -15007,9 +14702,8 @@ function prettyModel(id) {
   return bare.split(/[-_]/).map((p) => /^\d/.test(p) ? p : cap(p)).join(' ');
 }
 function formatDollars(usd) {
-  // Always render as $X.YY so the unit is unambiguous. Under a cent
-  // we still show two decimal places ($0.00) rather than a different
-  // glyph (the cents sign rendered as a fallback square in some fonts).
+  // Always $X.YY, including under a cent, so the unit reads the same
+  // everywhere.
   if (!Number.isFinite(usd)) return '$0.00';
   if (usd >= 100) return `$${usd.toFixed(0)}`;
   return `$${usd.toFixed(2)}`;
@@ -15035,10 +14729,8 @@ function updateAutopilotBudget(b) {
   const partial = !!b.tokensPartial;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    // The headline is the quantity the cap ring measures, so the two agree.
-    // Cache reads sit outside it: they are the cached prefix re-sent on every
-    // request, so across 160 requests they reach millions while the context
-    // window never grows, and folding them in would read as work that happened.
+    // The headline is the quantity the cap ring measures. Cache reads sit
+    // outside it and are reported separately below.
     tv2.textContent = (approx && tk > 0 ? '~' : '') + formatTokens(tk);
     tv2.title = partial
       ? 'Partial token accounting: this agent did not expose full input/context totals'
@@ -15115,10 +14807,8 @@ function renderUsageStripLive() {
   if (tv) tv.textContent = elapsedMin < 1 ? `${Math.floor(elapsedMin * 60)}s` : `${elapsedMin.toFixed(1)}m`;
   const tv2 = $('#aut-page-val-tokens');
   if (tv2) {
-    // The headline is the quantity the cap ring measures, so the two agree.
-    // Cache reads sit outside it: they are the cached prefix re-sent on every
-    // request, so across a fleet they reach millions while the context window
-    // never grows, and folding them in would read as work that happened.
+    // The headline is the quantity the cap ring measures. Cache reads sit
+    // outside it and are reported separately below.
     tv2.textContent = (anyApprox && tokens > 0 ? '~' : '') + formatTokens(tokens);
     tv2.title = brk.partial
       ? 'Partial token accounting: at least one agent did not expose full input/context totals'
@@ -15131,11 +14821,10 @@ function renderUsageStripLive() {
   if (meters[1]) meters[1].classList.toggle('is-warn', warnTokens);
   if (meters[2]) meters[2].classList.toggle('is-warn', warnDollars);
 }
-// Cache-aware token split under the headline count. Cache reads dominate the
-// raw token number but bill at a tenth, so showing the split is how the user
-// sees the dollar figure is real, not a flat per-token guess. 'exact' means
-// the numbers came from the agent's structured transcript (input/output/cache
-// deltas), 'approx' means a status-line cumulative or a chars/4 estimate.
+// Cache-aware token split under the headline count, since cache reads dominate
+// the raw number but bill at a tenth. 'exact' means the numbers came from the
+// agent's structured transcript; 'approx' means a status-line cumulative or a
+// chars/4 estimate.
 function renderTokenBreakdown(brk) {
   const box = document.getElementById('aut-token-breakdown');
   if (!box) return;
@@ -15143,23 +14832,16 @@ function renderTokenBreakdown(brk) {
   if (!total) { box.hidden = true; return; }
   box.hidden = false;
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = formatTokens(v); };
-  // The headline counts every tier, so a cancelled 27s run can read half a
-  // million tokens while the model generated almost nothing. Cache writes are
-  // the context each agent loads before doing any work, and across a fleet they
-  // are the bulk of the number. Splitting them out under the count is what
-  // stops it being read as work that happened.
+  // The headline counts every tier, and cache writes are the context each
+  // agent loads before doing any work, so the split names each quantity.
   const split = document.getElementById('aut-page-split-tokens');
   if (split) {
     const generated = brk.input + brk.output;
     const context = brk.cw + brk.cr;
     if (context > generated) {
       split.hidden = false;
-      // Say what each quantity IS, because the totals invite the wrong reading.
-      // Context is loaded once per agent and is small. Cache reads are that same
-      // prefix re-sent on every request, so they climb into the millions across a
-      // few hundred requests while the context window never grows. Saying "6.1M
-      // context" would imply 6.1M is loaded, contradicting the per-agent figure
-      // printed beside it.
+      // Each quantity is named: context is loaded once per agent, and cache
+      // reads are that same prefix re-sent on every request.
       const perAgent = brk.agents > 0 ? Math.round(brk.baseline / brk.agents) : 0;
       const parts = [`${formatTokens(generated)} generated`];
       if (perAgent > 0) {
@@ -15211,10 +14893,9 @@ function classifyActivityLine(line) {
   if (/(done|success|complet|ok|wrote)/i.test(t)) return 'ap-row-result';
   return '';
 }
-// Spinner dedupe: claude cycles glyphs ("* Foo...", "+ Foo...",
-// "· Foo...") to indicate liveness. Treat lines with the same
-// semantic content (after stripping leading non-word chars) as one
-// row that flashes on each tick instead of appending duplicates.
+// Spinner dedupe: an agent cycles glyphs ("* Foo...", "+ Foo...") to show
+// liveness, so lines that match after their leading non-word chars are
+// stripped become one row that flashes per tick.
 function normalizeForSpinnerDedupe(s) {
   return String(s).replace(/^[^A-Za-z0-9]+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
@@ -15244,8 +14925,7 @@ function resetAutopilotRunScope() {
 }
 
 // Snapshot every active run's final state before activeRuns is cleared, so the
-// SPAWNED AGENTS panel keeps showing what each agent did (model, tokens, cost,
-// cache split, files, how it ended) after the run instead of going blank.
+// agents panel keeps showing what each agent did after the run ends.
 function snapshotFinishedFleet() {
   finishedFleet = [...activeRuns.values()].map((run) => {
     const b = run.budget || {};
@@ -15400,9 +15080,8 @@ function renderTimeline() {
   const sig = String(autopilotTimeline.length);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
-  // The count belongs to this card, so it reports what this card renders. The
-  // run-log feed counts a different stream, and sourcing the number from there
-  // puts a non-zero count above an empty timeline on a reviewed run.
+  // The count belongs to this card, so it reports what this card renders
+  // rather than the run-log feed's separate stream.
   const ec = $('#aut-page-event-count');
   if (ec) {
     const n = autopilotTimeline.length;
@@ -15809,9 +15488,8 @@ async function openFileDiffModal(relPath, status, ctx) {
     sessionId = autopilotReviewData.sessionId;
     workspaceRoot = autopilotReviewData.workspaceRoot;
   }
-  // The rail passes the owning run's session explicitly: in a team every
-  // agent has its own worktree, so the focused session is the wrong one
-  // for every lane but the focused agent's.
+  // The rail passes the owning run's session explicitly, since every agent in
+  // a team has its own worktree.
   if (ctx && ctx.sessionId && ctx.workspaceRoot) {
     sessionId = ctx.sessionId;
     workspaceRoot = ctx.workspaceRoot;
@@ -16007,9 +15685,8 @@ async function revertAutopilot() {
   closeAutopilotEndModal();
 }
 $('#btn-autopilot') && $('#btn-autopilot').addEventListener('click', () => {
-  // While a run is active this button takes the user to the run view, it
-  // does NOT stop the run. Stopping is the explicit Stop button on the
-  // autopilot page (which confirms).
+  // While a run is active this button opens the run view. Stopping is the
+  // explicit Stop button on the autopilot page.
   if (autopilotActive) { try { setPage('autopilot'); } catch (_) {} return; }
   openAutopilotStart();
 });
@@ -16054,9 +15731,7 @@ try {
       const incomingDecision = runId ? autopilotModelDecisions.get(runId) : null;
       // Fresh dashboard when nothing is live: drop ended lanes and the
       // previous run's timeline before this one paints. A collab integrator
-      // starts after all workers ended, so liveRunCount() is briefly zero;
-      // keep those ended workers or fleet tokens/files collapse to "integrator
-      // only" mid-run.
+      // starts within its own group, so its ended workers are kept.
       if (shouldResetAutopilotForStarted(info)) {
         activeRuns.clear();
         autopilotTimeline = [];
@@ -16183,9 +15858,8 @@ try {
       let why, level;
       if (info && info.cap) { why = `${info.cap} cap reached`; level = 'error'; }
       else if (info && info.reason === 'agent-exited') {
-        // Name the exit code so an unexpected death (vs a clean quit) is
-        // legible: a run that vanishes the instant a chat agent launches
-        // reads as "agent exited (code N)", not a silent disappearance.
+        // Name the exit code, so a clean quit and an unexpected exit read
+        // differently.
         const code = (typeof info.exitCode === 'number') ? info.exitCode : null;
         why = code == null ? 'agent exited' : `agent exited (code ${code})`;
         level = (code && code !== 0) ? 'error' : 'info';
@@ -16395,10 +16069,8 @@ $('#aut-review-discard') && $('#aut-review-discard').addEventListener('click', a
 });
 $('#aut-review-rerun') && $('#aut-review-rerun').addEventListener('click', () => {
   if (!autopilotReviewData) return;
-  // Pull the real goal + caps from the start_run row (surfaced
-  // at top level on the summary payload). Do NOT fall back to
-  // autopilotState.goal: that holds the display string which may be
-  // the placeholder "(no goal recorded)" for runs missing data.
+  // The real goal and caps come from the start_run row on the summary
+  // payload, not from the display string in autopilotState.goal.
   const summary = autopilotReviewData.summary;
   const sumPayload = summary && summary.summary;
   const goal = (summary && typeof summary.goal === 'string' && summary.goal) || null;
@@ -16431,28 +16103,11 @@ $('#aut-review-revert') && $('#aut-review-revert').addEventListener('click', asy
   }
 });
 
-// Global ESC handler: closes any visible `.modal` element. This is the
-// universal "ESC dismisses the wizard" contract, applied across every
-// modal Husk has today (create agent, create MCP, edit MCP, install
-// from repo, import agents, create project, create prompt, create
-// skill, confirm prompts, first-run wizard) and every modal we ship
-// in the future without per-dialog wiring. Per-modal ESC handlers
-// (palette, sessions detail-panel, skill modal close) run first
-// because they were registered earlier; if they have already hidden
-// their target, this handler finds nothing to do.
-//
-// We skip on composition events so an IME's ESC-to-dismiss-popup
-// keeps working without closing the surrounding modal.
-//
-// The three workflow-artifact dialogs are closed through their own modules,
-// looked up at press time rather than captured here. Each of them holds state
-// no hidden attribute can tear down: a clone still running in the main
-// process, a write that has to reach done or refused on its own, and a consent
-// gate whose promise a Run is sitting on. That last one is why this cannot be
-// left to the generic hidden = true below: a gate that vanishes without
-// settling is a run that never starts and never says why. If a module failed
-// to load its dialog cannot be open, so a missing closer falls through to the
-// generic path.
+// Global Esc handler: closes any visible `.modal` element, so every dialog gets
+// the same dismissal without per-dialog wiring. Per-modal handlers run first,
+// and composition events are skipped so an IME's own Esc keeps working. The
+// workflow-artifact dialogs close through their own modules, looked up at press
+// time; a missing closer falls through to the generic path.
 const wfxCloser = (modalId, namespace, fn) => () => {
   const mod = window[namespace];
   if (mod && typeof mod[fn] === 'function') { mod[fn](); return; }
@@ -16460,6 +16115,7 @@ const wfxCloser = (modalId, namespace, fn) => () => {
   if (m) m.hidden = true;
 };
 const MODAL_CLOSERS = {
+  'agent-map': closeAgentMap,
   'agent-modal': closeAgentModal,
   'agents-import-modal': closeAgentsImportModal,
   'repo-agents-modal': closeRepoAgentsModal,
@@ -16474,10 +16130,9 @@ document.addEventListener('keydown', (e) => {
   // tear it down mid-capture.
   if (autopilotStarting) open = open.filter((m) => m.id !== 'autopilot-start-modal');
   if (!open.length) return;
-  // DOM order is install-order for these dialogs; the LAST visible
-  // one is the most recently opened (e.g. a confirm-modal layered on
-  // top of a create-modal). Close just that one so a confirm dismisses
-  // before its parent.
+  // DOM order is install order, so the last visible dialog is the most
+  // recently opened. Closing just that one dismisses a confirm before its
+  // parent.
   const top = open[open.length - 1];
   // A dialog that holds state of its own closes through its own closer, so a
   // pending draft, a status line and a cancel token are all torn down.

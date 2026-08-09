@@ -2,17 +2,10 @@
 
 // The artifact core and the import validator.
 //
-// Two things are being proven here. The first is that the fingerprint is
-// stable under everything that does not change what a workflow does and moves
-// under everything that does, because a fingerprint that drifts detaches every
-// receipt and a fingerprint that does not move is not a fingerprint.
-//
-// The second is that the validator is total. Every hostile fixture in
-// test/fixtures/artifacts asserts two separate things: that the refusal code
-// is the right one, and that getting there did not throw. Those are not the
-// same assertion. A validator that throws on a malformed file has handed the
-// attacker an unhandled rejection in the main process, and the code being
-// right afterwards is no consolation.
+// The fingerprint stays put under everything that does not change what a
+// workflow does, and moves under everything that does. The validator is total:
+// every fixture in test/fixtures/artifacts asserts both the refusal code and
+// that reaching it did not throw.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,9 +38,8 @@ function fixtureJson(name) {
   return JSON.parse(fixtureBytes(name).toString('utf8'));
 }
 
-// A workflow in the shape the local store holds, which is the shape the
-// exporter is handed: author-assigned ids, raw canvas coordinates, no
-// requirements block.
+// A workflow in the shape the local store holds and the exporter is handed:
+// author-assigned ids, raw canvas coordinates, no requirements block.
 function baseGraph() {
   return {
     nodes: [
@@ -118,11 +110,8 @@ test('the fingerprint survives reversing the node array', () => {
   assert.equal(hashOf(reversed), hashOf(g));
 });
 
-// The format spec asks for edge-array order to be invariant too, and it cannot
-// be. contextFor joins each taken incoming edge's output in edge-declaration
-// order (main.js:5831-5841), so reversing the array reverses the order two
-// predecessors' work appears in the next step's prompt. That is a different
-// program, and a fingerprint two different programs share is not a fingerprint.
+// contextFor joins each taken incoming edge's output in edge-declaration order,
+// so connection order is part of what a fan-in step's prompt says.
 test('the fingerprint moves when the connection order changes', () => {
   const g = baseGraph();
   const fanIn = baseGraph();
@@ -147,11 +136,8 @@ test('the fingerprint survives renaming every node id and edge id', () => {
   assert.equal(hashOf(renamed), hashOf(g));
 });
 
-// The other place the format spec asks for an invariance the run engine will
-// not honour. wfIsAiRouted decides a step is an AI router by counting its
-// outgoing edges (workflow-graph.js:164-168) and wfRunStep appends the ROUTE
-// instruction as soon as an ai-mode step has two (main.js:5699-5700), so the
-// second identical wire changes the text handed to the CLI.
+// A second wire out of an ai-mode step makes it an AI router, which changes the
+// text handed to the CLI.
 test('the fingerprint moves when a duplicate connection is appended', () => {
   const g = baseGraph();
   const doubled = baseGraph();
@@ -159,9 +145,8 @@ test('the fingerprint moves when a duplicate connection is appended', () => {
   assert.notEqual(hashOf(doubled), hashOf(g));
 });
 
-// Step names are executable text: wfResolveNext routes AI branches by matching
-// the model's ROUTE: line against node.name, so renaming a step is a
-// behavioural change and has to move the fingerprint.
+// wfResolveNext routes AI branches by matching the model's ROUTE line against
+// node.name, so a step name is executable text.
 test('the fingerprint moves when a step is renamed', () => {
   const g = baseGraph();
   const renamed = baseGraph();
@@ -240,8 +225,7 @@ test('buildArtifact assigns the same artifactId to two revisions of one workflow
   assert.notEqual(second.artifact.graphHash, first.artifact.graphHash);
   assert.match(first.artifact.artifactId, /^wfa_[0-9a-z]{26}$/);
 
-  // Republishing hands the existing id back, and a caller who hands back
-  // nonsense gets the derived id rather than the nonsense.
+  // Republishing keeps a well-formed id and derives one otherwise.
   const kept = 'wfa_' + 'q'.repeat(26);
   const republished = buildArtifact({ id: 'wf-42', name: 'Base', graph: baseGraph() }, buildOpts({ artifactId: kept }));
   assert.equal(republished.artifact.artifactId, kept);
@@ -366,9 +350,7 @@ test('buildArtifact drops author-declared requirements down to a name, a fingerp
 });
 
 // The declared workspace is documentation the author typed, so anything the
-// format cannot hold is clamped and named in a warning. Refusing here would
-// surface the reader's "this is not a Husk workflow" code out of a publish
-// button for a build command that ran long.
+// format cannot hold is clamped and named in a warning.
 test('buildArtifact clamps a declared workspace rather than refusing to publish', () => {
   const r = buildArtifact({ id: 'wf-1', name: 'Base', graph: baseGraph() }, buildOpts({
     requires: {
@@ -432,11 +414,8 @@ test('the projection carries nothing the format does not name', () => {
   }
 });
 
-// Node ids are only pattern-checked, and the node array order is what
-// graphToOrderedSteps walks from, so two files can share one fingerprint while
-// listing their steps in two different orders under two different sets of ids.
-// The reader stores the canonical order under canonical ids, which is what
-// makes one fingerprint mean one record rather than one family of records.
+// The reader stores steps in canonical order under canonical ids, so one
+// fingerprint reads back as one record.
 test('two files with one fingerprint read back as one record', () => {
   const straight = fixtureJson('valid-worked-example.json');
   const shuffled = fixtureJson('valid-worked-example.json');
@@ -503,9 +482,7 @@ test('validateArtifact refuses every kind of junk without throwing', () => {
   ];
   for (let i = 0; i < hostile.length; i++) {
     const r = noThrow(() => validateArtifact(hostile[i]));
-    // The label is the index, not the value. A null-prototype object has no
-    // toString, so describing the input in the failure message is itself a way
-    // to throw inside the test that proves nothing throws.
+    // The label is the index: a null-prototype input has no toString.
     assert.equal(r.ok, false, `expected a refusal for hostile input ${i}`);
     assert.ok(REFUSAL_CODES.includes(r.code), `unknown code ${r.code}`);
   }
@@ -567,8 +544,7 @@ test('only a pattern with no metacharacters counts as a literal', () => {
 // ─── the hostile fixtures ────────────────────────────────────────────────
 
 // Every file in test/fixtures/artifacts is listed here, and the test below
-// fails if a fixture appears in the directory without an expectation. A
-// hostile input nobody asserted on is a hostile input nobody checked.
+// fails if a fixture appears in the directory without an expectation.
 const FIXTURE_EXPECTATIONS = {
   'valid-worked-example.json': 'ok',
   'valid-with-receipt.json': 'ok',
@@ -623,14 +599,10 @@ for (const name of Object.keys(FIXTURE_EXPECTATIONS)) {
   });
 }
 
-// The four size bombs are declared in oversized-cases.json rather than
-// committed: their literal bytes run from two megabytes to fifteen, and
-// putting twenty-odd megabytes into every clone of this repository to test
-// four refusals is a worse trade than building them here. Two of them are fed
-// through parseArtifact because the byte cap is the thing under test; the
-// other two go straight to validateArtifact because serialising ten megabytes
-// of node id would only ever prove that the byte cap works, which the first
-// two already prove.
+// The four size cases are declared in oversized-cases.json and built here
+// rather than committed, since their literal bytes run to tens of megabytes.
+// Two go through parseArtifact to exercise the byte cap; the other two go
+// straight to validateArtifact.
 const OVERSIZED = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'oversized-cases.json'), 'utf8'));
 
 function buildOversized(spec) {

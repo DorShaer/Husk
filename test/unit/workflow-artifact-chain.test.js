@@ -2,22 +2,13 @@
 
 // The shipped log: writing one, walking one, and refusing one.
 //
-// This is the file that decides whether "matches the shipped log" means
-// anything. Everything else in the feature can be read off the artifact; this
-// tier is the only one that requires the reading machine to do arithmetic and
-// then disagree out loud, so the tests here are mostly about the disagreeing.
+// The reading machine recomputes the figures and disagrees out loud, so these
+// tests are mostly about the disagreeing. Every hostile case runs through
+// rechain() below so it starts from a chain that walks cleanly and fails for
+// the reason it is named after.
 //
-// The forgeries are built the way a forger would build them. There is no
-// signature anywhere in src/lib/autonomy, so an attacker who rewrites a row
-// simply recomputes every prev after it, and a test that mutates a row without
-// re-chaining is testing the hash walk rather than the five predicates layered
-// on top of it. rechain() below is those fifteen lines of JavaScript, written
-// once, so every hostile case starts from a chain that hashes together
-// perfectly and fails for the reason it is named after.
-//
-// The logs themselves come out of the real audit module, not out of a fixture.
-// A hand-written row that drifted from what audit.js actually appends would
-// leave this suite passing over a format nothing writes.
+// The logs come out of the real audit module rather than a fixture, so the rows
+// under test are the rows audit.js appends.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -69,8 +60,7 @@ function sha256Hex(text) {
 }
 
 // One run's log, written through the module main.js writes through, with the
-// rows main.js writes. `over` moves the handful of values a test cares about
-// so each case states only what it is about.
+// rows main.js writes. `over` moves the values a test cares about.
 function writeRunLog(root, sessionId, over) {
   const o = Object.assign({
     graphHash: HASH,
@@ -107,9 +97,8 @@ function parseRows(lines) {
   return lines.map((l) => JSON.parse(l));
 }
 
-// The forger's tool: take rows, put the prev pointers back the way a walk
-// expects them, and serialize. Every hostile fixture below goes through this,
-// so none of them is failing on a broken hash it did not mean to break.
+// Rebuilds every prev pointer over a row list and serializes, so a case fails
+// on the predicate it names rather than on a hash it did not mean to break.
 function rechain(rows, opts) {
   const o = opts || {};
   let prev = o.genesis || GENESIS_HASH;
@@ -123,8 +112,8 @@ function rechain(rows, opts) {
 // ─── the constant this module copies ─────────────────────────────────────────
 
 test('the genesis anchor matches the one audit.js writes', () => {
-  // workflow-artifact.js declares this rather than requiring audit.js, so that
-  // it stays a module with no fs in it. This is what keeps the copy honest.
+  // workflow-artifact.js declares this rather than requiring audit.js, so it
+  // stays a module with no fs in it.
   assert.equal(GENESIS_HASH, Audit.GENESIS_HASH);
 });
 
@@ -171,9 +160,7 @@ test('two sessions concatenated in order walk as one chain', () => {
 // ─── the five refusals ───────────────────────────────────────────────────────
 
 test('an empty log is refused, and refused as empty', () => {
-  // The specific hole in verifyAuditChain: it filters out empty lines, finds
-  // nothing to walk, and reports a valid chain of zero rows. A receipt built on
-  // that would carry evidence:"inline" over no evidence at all.
+  // verifyArtifactChain requires rows of its own, on top of the raw walk.
   const raw = Audit.verifyAuditChain(emptyLogRoot(), 'run-1000000000004');
   assert.equal(raw.valid, true);
   assert.equal(raw.lineCount, 0);
@@ -195,8 +182,7 @@ test('a truncated tail is refused, because the run never closed', () => {
   const root = tempRoot();
   const lines = writeRunLog(root, 'run-1000000000005');
 
-  // Genesis anchoring protects the head only, so the prefix still hashes
-  // together perfectly. Nothing but the terminal-row predicate sees this.
+  // The terminal-row predicate is what refuses a log with its tail cut off.
   const cut = lines.slice(0, lines.length - 1);
   const raw = rawWalkStaysValid(cut);
   assert.equal(raw, true);
@@ -207,8 +193,7 @@ test('a truncated tail is refused, because the run never closed', () => {
   assert.match(walk.reason, /run_summary/);
 });
 
-// The predicate verifyAuditChain tests, applied to an array of lines, so a
-// fixture can assert that the raw check would have passed what we refuse.
+// The predicate verifyAuditChain tests, applied to an array of lines.
 function rawWalkStaysValid(lines) {
   let prev = GENESIS_HASH;
   for (const line of lines) {
@@ -230,11 +215,8 @@ test('a reordered sequence is refused even when the hashes are rebuilt', () => {
   const root = tempRoot();
   const rows = parseRows(writeRunLog(root, 'run-1000000000007'));
 
-  // Swap the two step_end rows and rebuild every prev after them. The chain is
-  // now internally perfect and the run it describes has its second step
-  // finishing before its first. seq is what notices: the rows carry the
-  // sequence numbers they were written with, and they no longer match where
-  // they sit.
+  // Swap the two step_end rows and rebuild every prev after them. seq is what
+  // notices: the rows carry the sequence numbers they were written with.
   const shuffled = rows.slice();
   const a = shuffled[3];
   shuffled[3] = shuffled[5];
@@ -255,8 +237,8 @@ test('a spliced session id is refused', () => {
     steps: [{ nodeId: 'n0', name: 'Reproduce', status: 'done', ms: 10, timedOut: false, usage: null }],
   }));
 
-  // sid and seq are written by audit.js and never read back by it, so a row
-  // from another session splices in cleanly the moment prev is recomputed.
+  // Splice a row from another session in and recompute prev. sid is what
+  // notices: every row in one chain names one session.
   const spliced = mine.slice();
   spliced.splice(3, 0, theirs[3]);
   const lines = rechain(spliced);
@@ -288,17 +270,14 @@ test('a binding row naming a different fingerprint is refused', () => {
   const root = tempRoot();
   const lines = writeRunLog(root, 'run-1000000000012', { graphHash: OTHER_HASH });
 
-  // The log is perfectly well formed. It is simply the record of a different
-  // program, which is the whole reason the binding sits inside the chain: a log
-  // lifted onto somebody else's receipt cannot be moved without a rehash, and
-  // it still names the graph it actually ran.
+  // A well-formed log of a different program. The binding row sits inside the
+  // chain and names the graph the run actually executed.
   const walk = verifyArtifactChain(lines, 'run-1000000000012', { graphHash: HASH });
   assert.equal(walk.valid, false);
   assert.equal(walk.predicate, 'binding');
   assert.equal(walk.atIndex, 1);
 
-  // Against its own fingerprint it is a fine log, which is what makes the
-  // refusal above a statement about the pairing rather than about the rows.
+  // Against its own fingerprint the same log walks clean.
   assert.equal(verifyArtifactChain(lines, 'run-1000000000012', { graphHash: OTHER_HASH }).valid, true);
 });
 
@@ -362,9 +341,7 @@ test('figures recomputed from a log describe the runs in it', () => {
   const f = derived.figures;
   assert.equal(f.runs, 2);
   assert.equal(f.graphHash, HASH);
-  // A killed step makes the run timedOut rather than failed: the kill is what
-  // produced the non-zero exit, and it is the fact that qualifies the median
-  // sitting next to it.
+  // A killed step makes the run timedOut rather than failed.
   assert.deepEqual(f.outcomes, { completed: 1, failed: 0, stopped: 0, timedOut: 1 });
   assert.equal(f.durationCensored, 1);
   assert.equal(f.medianDurationMs, 150000);
@@ -403,9 +380,7 @@ test('compareFigures names the field that moved', () => {
   assert.equal(out.differences.length, 1);
   assert.equal(out.differences[0].field, 'medianDurationMs');
 
-  // The window is not compared. It is wall-clock time, which the tier table
-  // keeps permanently author-stated: checking an author's timestamps against
-  // the same author's timestamps would dress a tautology as a finding.
+  // The window is not compared: the tier table keeps wall-clock time author-stated.
   const moved = Object.assign({}, derived.figures, { window: { firstRunAt: 'x', lastRunAt: 'y' } });
   assert.equal(WorkflowReceipt.compareFigures(moved, derived.figures).agrees, true);
 });
@@ -490,14 +465,13 @@ test('figures the shipped log does not support collapse the receipt, not the fil
   const honest = publish(receiptFrom(lines, 'run-1000000000022'));
   assert.equal(honest.ok, true, honest.message);
 
-  // Doubling the median after the file was built is the whole attack: the rows
-  // still hash together, so a reader checking only the chain sees a pass.
+  // Double the declared median after the file was built, leaving the rows alone.
   const tampered = JSON.parse(JSON.stringify(honest.artifact));
   tampered.receipts[0].medianDurationMs = honest.artifact.receipts[0].medianDurationMs * 2;
 
   const read = parseArtifact(Buffer.from(JSON.stringify(tampered), 'utf8'));
-  // The graph is untouched by an argument about its author's arithmetic, so the
-  // file still installs. What collapses is the receipt block.
+  // The graph is untouched, so the file still installs and the receipt block
+  // collapses on its own.
   assert.equal(read.ok, true, read.message);
   assert.equal(read.chainCheck.checked, true);
   assert.equal(read.chainCheck.valid, true);
@@ -515,8 +489,7 @@ test('a tampered log row collapses the receipt with the chain named', () => {
   const tampered = JSON.parse(JSON.stringify(honest.artifact));
   const rows = parseRows(tampered.receipts[0].chain.lines);
   rows[3].payload.ms = 1;
-  // Rehashed but not re-headed: the file still states the head it was built
-  // with, which is the row the forger forgot.
+  // Rehashed but not re-headed: the file still states the head it was built with.
   tampered.receipts[0].chain.lines = rechain(rows);
 
   const read = parseArtifact(Buffer.from(JSON.stringify(tampered), 'utf8'));
@@ -534,8 +507,7 @@ test('a log rehashed and re-headed still cannot outrun the figures it changed', 
 
   const tampered = JSON.parse(JSON.stringify(honest.artifact));
   const rows = parseRows(tampered.receipts[0].chain.lines);
-  // Halve every step, which halves the run the reader recomputes while the
-  // declared median stays where it was.
+  // Shrink the summarised run while the declared median stays where it is.
   for (const row of rows) {
     if (row.kind === ROW_SUMMARY) row.payload.ms = 1000;
   }
@@ -555,8 +527,7 @@ test('a receipt whose log belongs to another workflow is refused as a chain', ()
   const built = publish(receiptFrom(mine, 'run-1000000000025'));
   const tampered = JSON.parse(JSON.stringify(built.artifact));
 
-  // Swap in a log from a run of a different graph, rehashed so the chain walk
-  // itself is clean. The binding row is what refuses it.
+  // Swap in a log from a run of a different graph. The binding row refuses it.
   const other = writeRunLog(root, 'run-1000000000026', { graphHash: OTHER_HASH });
   tampered.receipts[0].chain = {
     sessionIds: ['run-1000000000026'],
@@ -575,8 +546,8 @@ test('buildArtifact refuses to publish figures its own log does not support', ()
   const root = tempRoot();
   const lines = writeRunLog(root, 'run-1000000000027');
   const wrong = receiptFrom(lines, 'run-1000000000027', { runs: 9 });
-  // runs and the outcome sum have to agree before anything else looks at the
-  // log, so the sum moves with it and the refusal below is about the evidence.
+  // runs and the outcome sum are checked first, so the sum moves with runs and
+  // the refusal below is about the evidence.
   wrong.outcomes = { completed: 9, failed: 0, stopped: 0, timedOut: 0 };
   const built = publish(wrong);
   assert.equal(built.ok, false);

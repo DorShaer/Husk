@@ -22,9 +22,8 @@ const HASH = `husk-wfg-1:sha256:${'a'.repeat(64)}`;
 const PRINT_A = `sha256:${'1'.repeat(64)}`;
 const PRINT_B = `sha256:${'2'.repeat(64)}`;
 
-// A validated artifact carries exactly the fields the reader projected, so the
-// fixture states the requires block and nothing else: preflight never reads
-// the graph, only what the graph declared it needs.
+// A validated artifact carries exactly the fields the reader projected. The
+// fixture states the requires block, which is all preflight reads.
 function artifact(requires = {}) {
   return {
     kind: 'husk.workflow',
@@ -297,8 +296,7 @@ test('the counts add up to the number of checks', () => {
   );
   assert.equal(r.ok, true);
   assert.equal(r.blocking + r.cautions + r.oks, r.checks.length);
-  // Every row is individually addressable, which is what lets a surface
-  // repaint one probe without rebuilding the list.
+  // Every row is individually addressable, so a surface can repaint one probe.
   assert.equal(new Set(r.checks.map((c) => c.id)).size, r.checks.length);
 });
 
@@ -321,8 +319,7 @@ test('evaluatePreflight refuses rather than throws on junk', () => {
   const hostile = { get requires() { throw new Error('boom'); } };
   const r = evaluatePreflight(hostile, facts());
   assert.equal(r.ok, false);
-  // The refusal does not quote the exception: that text came from the same
-  // input we are refusing and it would be rendered by a surface downstream.
+  // The refusal carries its own wording rather than the exception text.
   assert.doesNotMatch(r.error, /boom/);
 });
 
@@ -507,18 +504,11 @@ test('a very long name is clipped without leaving a trailing dash', () => {
   assert.doesNotMatch(slug, /-$/);
 });
 
-// ─── the invariant that has no code to enforce it ────────────────────────────
+// ─── installing never installs an MCP server ─────────────────────────────────
 //
-// Installing a workflow must never install an MCP server. A manifest names the
-// servers it wants, the install surface reports which are missing, and the
-// operator adds them themselves through the MCP page. The gap between "we know
-// the name and the command" and "we could just add it for you" is one small
-// convenience patch wide, and on the other side of it a shared file gets to
-// register a stdio server that runs an arbitrary binary on the importer's
-// machine, before anybody has read a single step.
-//
-// There is no runtime check for this, because the defense is the absence of a
-// call. This test is the enforcement: it fails the moment one appears.
+// A manifest names the servers it wants, the install surface reports which are
+// missing, and the operator adds them through the MCP page. The invariant is
+// the absence of a call, so this test is what enforces it.
 test('the install path never reaches an MCP mutation channel', () => {
   const fs = require('fs');
   const path = require('path');
@@ -544,21 +534,16 @@ test('the install path never reaches an MCP mutation channel', () => {
 
 // ─── a copy is still a stranger's work ───────────────────────────────────────
 //
-// Every check in this feature reads "did somebody else write this" as the
-// PRESENCE of a sidecar row, so anything that produces a workflow without one
-// produces a workflow that is trusted by default. Duplicating used to do
-// exactly that: the copy carried the stranger's prompts and pinned agents, and
-// carried no row, so the consent gate never opened, the run fell back to
-// whichever directory was open rather than a bound one, and the auto-approving
-// agent flags came back. The gate below is the shape of that hole.
+// The sidecar row is what marks a workflow as somebody else's, so a copy of an
+// imported workflow carries a row of its own and gates the same way.
 test('a run gate treats a missing sidecar as locally authored, so copies must keep theirs', () => {
   const { runGateDecision } = require('../../src/lib/workflow-install');
 
-  // The property that makes the hole possible, stated so it cannot drift.
+  // Locally authored workflows run ungated.
   assert.equal(runGateDecision({ sidecar: null, cwd: null }).ok, true);
   assert.equal(runGateDecision({ sidecar: { origin: 'local' }, cwd: null }).ok, true);
 
-  // And the property that closes it: a copy that keeps origin still gates.
+  // A copy that keeps its imported origin still gates on consent.
   const copied = runGateDecision({
     sidecar: { origin: 'imported', consentedAt: null, boundCwd: '/home/user/proj' },
     cwd: '/home/user/proj',
@@ -566,7 +551,7 @@ test('a run gate treats a missing sidecar as locally authored, so copies must ke
   assert.equal(copied.ok, false);
   assert.equal(copied.code, 'consent-required');
 
-  // Carrying the consent across would be the same hole with a new id.
+  // Consent alone is not enough: the bound directory is still required.
   const consented = runGateDecision({
     sidecar: { origin: 'imported', consentedAt: '2026-01-01T00:00:00.000Z', boundCwd: '/home/user/proj' },
     cwd: null,
@@ -577,12 +562,8 @@ test('a run gate treats a missing sidecar as locally authored, so copies must ke
 
 // ─── origin is a fact, not an inference ──────────────────────────────────────
 //
-// The gate used to answer "is this a stranger's workflow" by looking for a
-// sidecar row, so absence read as trust. Absence is the one answer an attacker
-// can arrange, and it was reachable three ways: duplicating an imported card
-// copied every prompt and wrote no row, an install whose row never reached disk
-// still reported success, and one unparseable byte in the store read every
-// imported workflow on the machine as locally authored at once.
+// The record states its own origin, so the gate answers "is this a stranger's
+// workflow" from that alongside the sidecar row rather than from the row alone.
 
 test('a record that calls itself imported is refused when its row is gone', () => {
   const gate = I.runGateDecision({

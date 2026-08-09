@@ -1,9 +1,7 @@
 'use strict';
 
-// Tests for src/lib/autonomy/snapshot.js. Every test mints its own
-// tmp workspace + storage root via mkdtempSync; no test ever touches
-// the real home directory or any shared state. Same convention as
-// pai-state.test.js and repo-mcp.test.js.
+// Tests for src/lib/autonomy/snapshot.js. Every test mints its own tmp
+// workspace and storage root via mkdtempSync.
 
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -114,25 +112,16 @@ test('ISC-8: symlinks are recorded as { type: symlink, target }', () => {
 });
 
 test('ISC-9: a file disappearing mid-walk yields a warning, not a throw', () => {
-  // Simulate by making a file unreadable via a sentinel pattern: we
-  // create the file, walk, and force the reader to fail by deleting
-  // the file between readdir and readFile. The exact race is hard to
-  // hit deterministically, so instead we cover the explicit
-  // try/catch shape by feeding a malformed binary file that the OS
-  // returns EACCES on. Simpler: write a real file, then chmod to 0
-  // on POSIX; on Windows skip with a doesNotThrow guarantee.
+  // On POSIX, chmod 0 makes the read fail and capture records a warning.
+  // Windows has no equivalent, so it just confirms capture completes.
   writeFile('a.txt', 'a');
-  // Skip the chmod-0 trick on Windows; just confirm the code shape
-  // handles read failures via warnings rather than throws.
   if (process.platform !== 'win32') {
     const abs = path.join(work, 'a.txt');
     fs.chmodSync(abs, 0o000);
     try {
       const res = captureSnapshot(work, store, SID);
       assert.equal(res.ok, true);
-      // Either the file was captured (root ran the test) or there
-      // was a warning. Both shapes are acceptable; the contract is
-      // "do not throw".
+      // Running as root still captures the file; otherwise a warning lands.
       if (!res.manifest.entries['a.txt']) {
         assert.ok(res.warnings.length >= 1);
       }
@@ -323,12 +312,11 @@ test('argument validation: workspaceRoot must exist and be absolute', () => {
   assert.equal(r2.ok, false);
 });
 
-// ─── Path safety under a hostile working tree ────────────────────────────
+// ─── Path safety ─────────────────────────────────────────────────────────
 
 test('SECURITY: writeFileSync does NOT follow a symlink-replaced file', () => {
-  // Capture a regular file. Then between capture and restore, an
-  // attacker (or buggy agent) replaces the file with a symlink to
-  // a sensitive path. The restore must not write through the link.
+  // A file swapped for a symlink between capture and restore is rewritten
+  // in place rather than written through.
   writeFile('target.txt', 'original\n');
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-snap-outside-'));
   const outsideTarget = path.join(outsideDir, 'pwned.txt');
@@ -340,8 +328,7 @@ test('SECURITY: writeFileSync does NOT follow a symlink-replaced file', () => {
     fs.symlinkSync(outsideTarget, path.join(work, 'target.txt'));
     const res = restoreFromSnapshot(work, store, SID);
     assert.equal(res.ok, true);
-    // The outside file MUST be unchanged. The restore must have
-    // unlinked the symlink and written a fresh file in the workspace.
+    // Restore unlinks the symlink and writes a fresh file in the workspace.
     assert.equal(fs.readFileSync(outsideTarget, 'utf8'), 'untouched\n');
     assert.equal(fs.lstatSync(path.join(work, 'target.txt')).isSymbolicLink(), false);
     assert.equal(fs.readFileSync(path.join(work, 'target.txt'), 'utf8'), 'original\n');
@@ -351,9 +338,8 @@ test('SECURITY: writeFileSync does NOT follow a symlink-replaced file', () => {
 });
 
 test('SECURITY: writeFileSync does NOT follow an ancestor symlink', () => {
-  // workspace/sub becomes a symlink to outside; manifest tries to write
-  // sub/inner.txt. The write would land outside workspace without
-  // the ancestor-chain validator.
+  // workspace/sub becomes a symlink to outside; restore writes nothing
+  // through it and warns for sub/inner.txt.
   writeFile('sub/inner.txt', 'inner original\n');
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-snap-outside-'));
   try {
@@ -384,10 +370,7 @@ test('SECURITY: a tampered blob (sha mismatch after decrypt) is refused', () => 
   fs.unlinkSync(path.join(work, 'a.txt'));
   const res = restoreFromSnapshot(work, store, SID);
   assert.equal(res.ok, true);
-  // a.txt must NOT have been restored with tampered content.
-  // Because preserveExtras default is false, the destructive pass
-  // does not re-create a.txt either (file was not in manifest after
-  // tamper). Just confirm the warning shape:
+  // a.txt stays absent and the mismatch surfaces as a warning.
   assert.ok(res.warnings.find((w) => /sha mismatch/.test(w.reason)));
   assert.equal(fs.existsSync(path.join(work, 'a.txt')), false);
 });
@@ -395,8 +378,7 @@ test('SECURITY: a tampered blob (sha mismatch after decrypt) is refused', () => 
 test('SECURITY: manifest entries with non-hex sha values are refused', () => {
   writeFile('a.txt', 'A');
   captureSnapshot(work, store, SID);
-  // Tamper the manifest to point a.txt at a non-hex sha (and
-  // therefore an arbitrary filename under blobs/).
+  // Point a.txt at a non-hex sha in the manifest.
   const mp = path.join(store, 'sessions', SID, 'snapshot.json');
   const m = JSON.parse(fs.readFileSync(mp, 'utf8'));
   m.entries['a.txt'] = { type: 'file', sha: '../../../etc/passwd' };
@@ -449,8 +431,7 @@ test('captureSnapshotAsync matches captureSnapshot output and reports fileCount'
 });
 
 test('captureSnapshotAsync invokes onProgress at least once on a multi-file workspace', async () => {
-  // Drop enough files past the YIELD_EVERY threshold (50) so progress
-  // fires. Keep the count modest to keep the test fast.
+  // Enough files to pass the YIELD_EVERY threshold (50) so progress fires.
   for (let i = 0; i < 110; i++) writeFile(`f${i}.txt`, `payload ${i}`);
   const events = [];
   const res = await captureSnapshotAsync(work, store, SID, {
@@ -502,7 +483,7 @@ test('restore refuses when the target dir differs from the captured manifest roo
   writeFile('keep.txt', 'original');
   const cap = captureSnapshot(work, store, SID);
   assert.equal(cap.ok, true);
-  // A second, unrelated directory that happens to hold the user's files.
+  // A second, unrelated directory holding its own file.
   const other = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-snap-other-'));
   try {
     fs.writeFileSync(path.join(other, 'precious.txt'), 'do not delete me');

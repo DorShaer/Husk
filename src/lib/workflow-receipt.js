@@ -5,7 +5,7 @@
 // no Date.parse/local timezone behavior.
 //
 // Invariants: figures carry sample sizes; unknown quantities are null, not
-// zero; hostile rows are skipped without quoting their errors; dollars are
+// zero; unreadable rows are skipped without quoting their errors; dollars are
 // omitted because readers price token counts locally.
 
 // v1 can only claim process exits, not semantic correctness.
@@ -17,10 +17,10 @@ const DEFAULT_HISTORY_MAX = 200;
 // A timed-out step truncates the duration distribution at this value.
 const DEFAULT_STEP_TIMEOUT_MS = 300000;
 
-// Walk with our own counter; do not trust input-owned slice/iterators.
+// How many source rows one walk reads, counted here rather than by the list.
 const MAX_SOURCE_RUNS = 10000;
 
-// Inner walk cap for hostile step arrays/proxies.
+// How many step positions one run's walk reads.
 const MAX_RUN_STEPS = 4096;
 
 // Wire-schema cap; intentionally separate from the source-walk budget.
@@ -90,9 +90,8 @@ function isoStamp(value) {
   const hour = Number(m[4]);
   const minute = Number(m[5]);
   const second = m[6] === undefined ? 0 : Number(m[6]);
-  // Fractions are truncated to milliseconds rather than rounded: rounding
-  // ".9996" up would move the stamp past the instant the row recorded, and a
-  // window that overshoots is the one error a reader cannot detect.
+  // Fractions are truncated to milliseconds rather than rounded, so a stamp
+  // never moves past the instant the row recorded.
   const millis = m[7] === undefined ? 0 : Number(`${m[7]}000`.slice(0, 3));
 
   // Date.UTC maps 0..99 onto 1900..1999.
@@ -143,40 +142,27 @@ function runDurationMs(row) {
 }
 
 // Read one usage record into the four fields the receipt publishes. Both key
-// spellings are accepted: main.js normalizes claude's stream-json usage to
-// camelCase on the autopilot path (main.js:2195-2199) and that is the contract
-// for a run row, but the underlying event carries snake_case and a row written
-// straight from one would otherwise read as "reported nothing".
+// spellings are accepted: main.js normalizes the stream-json usage to camelCase
+// on the autopilot path (main.js:2195-2199) and that is the contract for a run
+// row, while the underlying event carries snake_case.
 //
 // A record with a field present but unusable is rejected whole rather than
-// partially trusted. Half a usage record is not a smaller usage record, it is
-// evidence that something wrote this file badly, and the honest response to
-// that is to drop the run from the token sample.
+// partially trusted, so the run drops out of the token sample.
 function readUsage(u) {
   if (!isObject(u)) return null;
   // A JSON null is an absence, the same as a missing key, so it falls through
-  // to the other spelling instead of standing in front of it. A row that
-  // carries a normalized `input: null` next to the raw `input_tokens: 500` is
-  // exactly what a writer that always emits the camelCase shape and copies the
-  // event across produces, and reading the null there would drop the number
-  // sitting beside it while every other tier in the same record read fine. That
-  // is a quietly under-reported total, which is the one outcome this function's
-  // reject-the-record-whole rule exists to avoid.
+  // to the other spelling rather than standing in front of it: a writer that
+  // always emits the camelCase shape and copies the event across produces
+  // `input: null` beside a real `input_tokens: 500`.
   //
-  // Each spelling is read once into a local. Reading u[a] twice would let a row
-  // with an accessor answer the test with one value and the assignment with
-  // another, and this is the gate every token figure in the module comes
-  // through.
+  // Zero falls through too, and only to a sibling that carries a real count. A
+  // zeroed camelCase accumulator persisted beside the raw event is the shape
+  // `ms` already has here (main.js:5343 writes `st.ms || 0`), and totalOrNull
+  // reads four zeros as no report at all. A zero with no counted sibling still
+  // reads as the zero it is.
   //
-  // Zero falls through too, and only to a sibling that carries a real count.
-  // A writer that initialises a zeroed camelCase accumulator and persists it
-  // beside the raw event is the shape `ms` already has in this codebase
-  // (main.js:5343 writes `st.ms || 0`), so a strict null-only test reads that
-  // row as four zeros. Forty lines below, totalOrNull calls four zeros no
-  // report at all, so the 5200 tokens sitting in the snake_case fields next to
-  // them are never looked at and the run publishes as having reported nothing.
-  // That is the exact outcome reading both spellings exists to prevent. A zero
-  // with no counted sibling still reads as the zero it is.
+  // Each spelling is read once into a local, so the value tested is the value
+  // assigned.
   const pick = (a, b) => {
     const first = u[a];
     if (first === undefined || first === null) return u[b];
@@ -208,30 +194,21 @@ function readUsage(u) {
 
 // The run's token usage, or null when the run did not report any.
 //
-// Null is the answer for every vendor except claude, because claude is the
-// only one Husk runs with --output-format stream-json and therefore the only
-// one whose usage it can read (main.js:5696). Reporting zeros for the other
-// four would publish "this workflow used no tokens", which is a measurement
-// nobody took. That is why a record whose four fields are all zero is treated
-// as no report at all: a run that genuinely moved zero tokens did not happen.
+// Null is the answer for every vendor Husk does not run with
+// --output-format stream-json, since that is the output it can read usage from
+// (main.js:5696). Reporting zeros for the others would publish a measurement
+// nobody took, which is why a record whose four fields are all zero counts as
+// no report at all.
 function runTokens(row) {
-  // The run-level total wins only when it actually says something. Branching on
-  // whether readUsage produced a record rather than on whether that record
-  // reported anything makes four zeros beat the steps, and four zeros are the
-  // one case the rule above calls no report at all: the fallback exists for
-  // precisely this row. It is reachable from plain JSON with no exotic objects,
-  // because a writer that initialises a zero accumulator and always persists it
-  // is the shape `ms` already has (main.js:5343 writes `st.ms || 0` and falls
-  // back to 0), so keying on presence would turn every claude run's
-  // medianTokens into null while the steps underneath carry the real numbers.
-  // A tokens field that is present and unreadable is not the same fact as no
-  // tokens field, and only the second one may fall through to the steps.
-  // readUsage's own contract is that it rejects a record whole rather than
-  // trusting half of it, because half a usage record is evidence the file was
-  // written badly. Treating its null as absence quietly undoes that: a row whose
-  // run total claims 5000 input tokens in a shape we refused would be
-  // republished at whatever its steps happened to add up to, with nothing
-  // anywhere recording that the authoritative figure was thrown out.
+  // The run-level total wins only when it says something. Four zeros are no
+  // report at all, so a zeroed accumulator persisted alongside real per-step
+  // usage falls through to the steps rather than beating them.
+  //
+  // A tokens field that is present and unreadable is a different fact from no
+  // tokens field, and only the second falls through. readUsage rejects a record
+  // whole rather than trusting half of it, so a run total in a refused shape
+  // takes the whole run out of the token sample rather than being replaced by
+  // whatever its steps add up to.
   const hasDirect = isObject(row.tokens);
   const direct = hasDirect ? readUsage(row.tokens) : null;
   if (hasDirect && !direct) return null;
@@ -242,9 +219,7 @@ function runTokens(row) {
   const n = stepCount(steps);
   const sum = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
   let sawAny = false;
-  // Indexed over a count read once, matching isCensored and the outer walk. A
-  // bound in only one of the two inner walks does not remove the hazard, it
-  // just moves a row that grows as it is read to the other one.
+  // Indexed over a count read once, matching isCensored and the outer walk.
   for (let i = 0; i < n; i += 1) {
     const step = steps[i];
     if (!isObject(step)) continue;
@@ -271,10 +246,8 @@ function totalOrNull(u) {
 function isCensored(row, stepTimeoutMs) {
   if (row.timedOut === true) return true;
   const steps = Array.isArray(row.steps) ? row.steps : [];
-  // Indexed, over a count read once, for the reason MAX_RUN_STEPS states. The
-  // count is re-read here rather than passed in because a list that grows under
-  // the first walk would otherwise hand the second one a stale bound, and a
-  // bound the input can influence is not a bound.
+  // Indexed, over a count read once, for the reason MAX_RUN_STEPS states. Each
+  // walk takes its own count so both are bounded by what they measured.
   const n = stepCount(steps);
   for (let i = 0; i < n; i += 1) {
     const step = steps[i];
@@ -287,9 +260,8 @@ function isCensored(row, stepTimeoutMs) {
 }
 
 // How many step positions a walk may read, or null when the list declares more
-// than the budget allows. Null is a refusal for the whole row rather than a
-// clamp, because a token total taken over the first N of an unknown number of
-// steps is a smaller number wearing the presentation of a complete one.
+// than the budget allows. Null refuses the whole row rather than clamping, so a
+// total is never taken over a prefix and published as complete.
 function stepCount(steps) {
   let n;
   try {
@@ -305,11 +277,10 @@ function stepCount(steps) {
 // run is not finished and has no place in a receipt at all.
 //
 // Precedence is stopped, then timedOut, then failed. A run the user cancelled
-// is described by that fact first: the workflow was not given the chance to
-// fail. A run with a killed step is reported as timedOut rather than failed
-// because the kill is what produced the non-zero exit, and calling it a plain
-// failure hides the one thing a reader needs to know about the duration figure
-// sitting next to it.
+// is described by that fact first, since the workflow was never given the
+// chance to fail. A run with a killed step reads as timedOut rather than
+// failed, because the kill is what produced the non-zero exit and it is what
+// the duration figure beside it needs to be read against.
 function outcomeBucket(status, censored) {
   const s = typeof status === 'string' ? status : '';
   if (s === 'stopped' || s === 'cancelled') return 'stopped';
@@ -335,35 +306,22 @@ function precisionFor(n) {
 // A caller-supplied limit, or the documented default when the caller did not
 // state one, or null when they stated something we cannot use.
 //
-// Folding both limits through `safeCount(x) || DEFAULT` is wrong twice over. It
-// discards a typo in silence, so a caller who writes "60000" as a string gets
-// the 300 second default and no hint that its argument was discarded, while
-// every other input in this file refuses by name. And it discards zero, which
-// is the one value with a real meaning here: a stepTimeoutMs of 0 says "treat
-// any failed step as censored", and a historyMax of 0 says "assume this list
-// was already trimmed".
+// An unusable value is refused by name rather than defaulted, and zero is a
+// value rather than an absence: a stepTimeoutMs of 0 says "treat any failed
+// step as censored", and a historyMax of 0 says "this list was already
+// trimmed".
 function readLimit(value, fallback) {
   if (value === undefined || value === null) return fallback;
   return safeCount(value);
 }
 
 // How many rows the source list declares it has, measured once, before a single
-// row has been read out of it.
-//
-// Array.isArray is satisfied by a Proxy whose target is an array, and `length`
-// is a writable property, so its get trap is under no invariant and may return
-// a string, a NaN, a different number each time, or throw. safeCount answers
-// the first three and the try answers the last; a list we cannot measure is
-// read as empty, which produces an honest aggregate of nothing rather than a
-// refusal the caller has no way to act on.
+// row has been read out of it. A length that is not a usable count reads as
+// empty, which produces an honest aggregate of nothing.
 //
 // Taking the measurement once is the point. Everything downstream is stated
 // against this single number: the walk's stopping point, the unread bucket, and
-// the sourceRuns the caller is invited to reconcile against them. Re-reading
-// length as the walk goes lets a row that appends to the list while it is being
-// read walk forever, since the array iterator consults length on every step,
-// and it lets a list that shrinks under the walk leave the ledger holding an
-// unnamed remainder.
+// the sourceRuns the caller reconciles them against.
 function sourceLength(runs) {
   try {
     const n = safeCount(runs.length);
@@ -376,17 +334,14 @@ function sourceLength(runs) {
 // Read one row down to the handful of values the tally needs, or name the
 // bucket that excludes it.
 //
-// Every property access a row could raise on lives in this one function, so the
-// loop below can wrap a single call and know that a row which raises has cost
-// itself its place and nothing else. It also commits nothing:
-// the counters are touched only after this has returned, so a row that throws
-// halfway through cannot leave `runs` and the outcome tally disagreeing, and
-// the wire format requires those two to agree exactly.
+// Every property access on a row lives in this one function, so the loop below
+// wraps a single call. It commits nothing: the counters are touched only after
+// this has returned, so `runs` and the outcome tally always agree exactly, as
+// the wire format requires.
 function readRow(row, workflowId, graphHash, stepTimeoutMs) {
   if (!isObject(row)) return { excluded: 'malformed' };
-  // A row carrying no id at all is a truncated or corrupt record. Counting it
-  // as another workflow's history would have the surface tell the reader a
-  // story about workflows they may not even have.
+  // A row carrying no id at all is a truncated record, and it belongs to no
+  // workflow's history.
   if (typeof row.workflowId !== 'string' || !row.workflowId) return { excluded: 'malformed' };
   if (row.workflowId !== workflowId) return { excluded: 'otherWorkflow' };
   // A row with no fingerprint at all is history recorded without one, which is
@@ -396,10 +351,9 @@ function readRow(row, workflowId, graphHash, stepTimeoutMs) {
   if (typeof row.graphHash !== 'string' || !row.graphHash) return { excluded: 'unhashed' };
   if (row.graphHash !== graphHash) return { excluded: 'otherGraph' };
 
-  // A row whose step list is longer than any walk will read cannot contribute a
-  // duration or a token figure, because both would be taken over a prefix and
-  // published as totals. The gate sits here, before either walk, so a list that
-  // only claims to be enormous costs one length read rather than a pinned core.
+  // A row whose step list is longer than any walk will read contributes no
+  // duration and no token figure, since both would be taken over a prefix and
+  // published as totals. The gate sits here, before either walk.
   if (Array.isArray(row.steps) && stepCount(row.steps) === null) return { excluded: 'malformed' };
 
   const censored = isCensored(row, stepTimeoutMs);
@@ -439,20 +393,17 @@ function readRow(row, workflowId, graphHash, stepTimeoutMs) {
 // is a successful aggregation of nothing, not an error: "no receipts yet" is a
 // state the card renders.
 //
-// Whether the result can go on the wire at all is answered by `publishable`
-// and, when it cannot, by the field names in `publishBlockers`. The caller is
-// not asked to re-derive that from three nullable fields and a count: runs of
-// 0, runs past the schema's ceiling, a window nothing datable was found for, a
-// duration nothing timed, and a median longer than the schema's hour are five
-// different reasons and each one says its own name.
+// Whether the result can go on the wire is answered by `publishable` and, when
+// it cannot, by the field names in `publishBlockers`. Runs of 0, runs past the
+// schema's ceiling, a window nothing datable was found for, a duration nothing
+// timed, and a median longer than the schema's hour are five reasons and each
+// one says its own name.
 function aggregateRuns(runs, opts) {
-  // The whole computation sits under one guard because the alternative is a
-  // library that throws, and a validator that throws is a validator that took
-  // the app down with it. The per-row reads are contained individually below;
-  // this catches what is left, which is mostly opts itself fighting back
-  // before there is any aggregate to speak of. The exception is not quoted
-  // back: its message came from the same input we are refusing, and it would
-  // be rendered by a surface that has no reason to trust it.
+  // The whole computation sits under one guard, so this function returns a
+  // refusal rather than throwing. The per-row reads are contained individually
+  // below; this catches what is left, which is mostly opts itself. The
+  // exception is not quoted back: its message came from the same input being
+  // refused, and a surface would render it.
   try {
     return computeAggregate(runs, opts);
   } catch (_) {
@@ -486,26 +437,20 @@ function computeAggregate(runs, opts) {
   const sourceTruncated = opts.sourceTruncated === true;
 
   // The list arrives newest first, so an over-long history is cut from the
-  // tail: we keep the runs closest to the graph as it stands today. The cut is
-  // made by where this loop stops counting, not by asking the list for a
-  // shorter copy of itself, so the bound holds for a container that defines its
-  // own slice and for one that grows while it is being read.
+  // tail and the runs closest to the graph as it stands today are kept. The cut
+  // is made by where this loop stops counting rather than by asking the list
+  // for a shorter copy of itself.
   const sourceRuns = sourceLength(runs);
   const walked = sourceRuns > MAX_SOURCE_RUNS ? MAX_SOURCE_RUNS : sourceRuns;
 
   const outcomes = { completed: 0, failed: 0, stopped: 0, timedOut: 0 };
   // `unread` holds the rows past the hard cap, which were never looked at.
-  // sourceRuns and excluded are published side by side as "what we looked at
-  // and what we set aside", which invites a surface to subtract one from the
-  // other, and without this bucket that subtraction leaves a remainder with no
-  // name on it whenever the cap fires.
+  // sourceRuns and excluded are published side by side as "what was looked at
+  // and what was set aside", so this bucket is what keeps that subtraction
+  // closing when the cap fires.
   //
-  // Both ends of that subtraction come from the one length reading, so the
-  // bucket is a difference between a number and a clamp of itself and cannot
-  // come out negative. Taking it instead as sourceRuns minus the length of
-  // whatever the container's own slice hands back makes it a relationship the
-  // input gets to choose: a slice that returns a longer list than it was given
-  // publishes an excluded count of -10001, and no receipts strip can draw that.
+  // Both ends of it come from the one length reading, so the bucket is a
+  // difference between a number and a clamp of itself and is never negative.
   const excluded = {
     otherWorkflow: 0,
     otherGraph: 0,
@@ -521,28 +466,21 @@ function computeAggregate(runs, opts) {
   let first = null;
   let last = null;
 
-  // Indexed rather than for-of, and over a count fixed before the first read.
-  // The array iterator asks the list how long it is at every step, which makes
-  // a row whose own accessor appends to the list an unbounded loop that no
-  // try/catch can interrupt: nothing throws, it simply never returns, and the
-  // thread it never returns to is the Electron main one. Every position we do
-  // read is accounted for below whether or not anything was there, so a list
-  // that shrinks under the walk fills the vacated slots with `malformed` and
-  // the ledger still closes.
+  // Indexed rather than for-of, and over a count fixed before the first read,
+  // so the walk visits exactly the positions that were measured. Every position
+  // read is accounted for below whether or not anything was there, so the
+  // ledger closes either way.
   //
-  // The subscript itself is inside the guard along with the read. On a proxied
-  // list an index get is as capable of raising as any of the property reads
-  // readRow performs, and a row that fights back is meant to cost itself its
-  // place in the tally and nothing else.
+  // The subscript itself sits inside the guard along with the read, so a row
+  // that raises costs itself its place in the tally and nothing else.
   for (let i = 0; i < walked; i += 1) {
     let read;
     try {
       read = readRow(runs[i], workflowId, graphHash, stepTimeoutMs);
     } catch (_) {
       // A row that raises on being read is malformed in the only sense this
-      // module cares about: we could not learn anything from it. It is counted
-      // with the nulls and the strings rather than aborting the other 30 runs,
-      // which are perfectly good evidence about the same workflow.
+      // module cares about: nothing could be learned from it. It is counted
+      // with the nulls and the strings, and the other rows still aggregate.
       read = { excluded: 'malformed' };
     }
     if (read.excluded) { excluded[read.excluded] += 1; continue; }
@@ -551,10 +489,9 @@ function computeAggregate(runs, opts) {
     outcomes[read.bucket] += 1;
     if (read.censored) durationCensored += 1;
 
-    // Censored and cancelled runs stay in the duration sample. Dropping them
-    // would silently change the denominator behind the median while `runs`
-    // kept reporting the full count, and the disclosure fields exist so the
-    // reader can discount the figure themselves.
+    // Censored and cancelled runs stay in the duration sample, so the
+    // denominator behind the median stays the count `runs` reports. The
+    // disclosure fields let a reader discount the figure themselves.
     if (read.ms !== null) durations.push(read.ms);
     if (read.tokens) tokenRows.push(read.tokens);
     if (read.started) {
@@ -572,13 +509,11 @@ function computeAggregate(runs, opts) {
   // estimate computed from them downstream.
   //
   // The four medians go through the same all-zero test a single run's usage
-  // does, because independent medians can each land on zero over runs that
-  // every one of them reported real usage for: three runs reporting one
-  // nonzero tier each produce four zero medians. Published as zeros that reads
-  // as "this workflow moves no tokens", and downstream it is worse than null,
-  // since a rate table multiplied by zeros renders a confident free rather
-  // than a suppressed figure. medianTokensN keeps the honest count either way,
-  // so null with a count above zero is distinguishable from nobody reporting.
+  // does, because independent medians can each land on zero over runs that all
+  // reported real usage: three runs reporting one nonzero tier each produce
+  // four zero medians, and published as zeros they read as "this workflow moves
+  // no tokens". medianTokensN keeps the honest count either way, so null with a
+  // count above zero is distinguishable from nobody reporting.
   const medianTokens = tokenRows.length ? totalOrNull({
     input: Math.round(median(tokenRows.map((t) => t.input))),
     output: Math.round(median(tokenRows.map((t) => t.output))),
@@ -597,11 +532,9 @@ function computeAggregate(runs, opts) {
   // the field that blocks it, so a caller can both refuse and say why.
   const publishBlockers = [];
   if (matched < 1) publishBlockers.push('runs');
-  // The schema's range on `runs` has two ends and this checks both. The walk's
-  // own bound makes the upper one unreachable today, which is the point: the
-  // wire limit is asserted where publishability is decided instead of being an
-  // emergent property of how far a loop somewhere above happened to get. When
-  // the two constants stop being the same number, this is what notices.
+  // The schema's range on `runs` has two ends and this checks both, so the wire
+  // limit is asserted where publishability is decided rather than inherited
+  // from how far the walk above happened to get.
   if (matched > MAX_RECEIPT_RUNS) publishBlockers.push('runsExceedsMax');
   if (runWindow === null) publishBlockers.push('window');
   if (medianDurationMs === null) publishBlockers.push('medianDurationMs');
@@ -611,11 +544,10 @@ function computeAggregate(runs, opts) {
     workflowId,
     graphHash,
     runs: matched,
-    // True when the history we read from had already been trimmed, so the
-    // window below describes what survived rather than everything that ran.
-    // At exactly historyMax the two cases are indistinguishable and we take
-    // the conservative one: claiming a complete record we cannot prove is the
-    // worse error.
+    // True when the history read from had already been trimmed, so the window
+    // below describes what survived rather than everything that ran. At exactly
+    // historyMax the two cases are indistinguishable and this takes the
+    // conservative one.
     runsWindowed: sourceTruncated
       || sourceRuns >= historyMax
       || sourceRuns > MAX_SOURCE_RUNS,
@@ -631,11 +563,9 @@ function computeAggregate(runs, opts) {
     // schema failure or, worse, clamping it.
     medianDurationExceedsMax,
     // Not published, and not a distribution: two runs are a range by the copy
-    // rule, and a range needs its two ends. Kept off the wire because a spread
-    // that degrades honestly at n=2 has not been designed yet.
-    // Reduced rather than spread into Math.min/Math.max: a spread over a long
-    // history is the RangeError that already lurks in wfMiniGraph, and this
-    // list is caller-supplied.
+    // rule, and a range needs its two ends. Reduced rather than spread into
+    // Math.min/Math.max, so the length of the list does not decide whether the
+    // call is legal.
     durationRangeMs: durations.length
       ? {
         min: durations.reduce((a, b) => (b < a ? b : a), durations[0]),
@@ -651,10 +581,8 @@ function computeAggregate(runs, opts) {
     // is true never hands the schema a null it does not accept.
     publishable: publishBlockers.length === 0,
     publishBlockers,
-    // What we looked at and what we set aside, so a surface can explain a thin
-    // receipt instead of leaving the reader to assume the workflow was barely
-    // used. runs plus the excluded buckets equals sourceRuns exactly, so the
-    // subtraction this pairing invites always comes out at zero.
+    // What was looked at and what was set aside, so a surface can explain a
+    // thin receipt. runs plus the excluded buckets equals sourceRuns exactly.
     sourceRuns,
     excluded,
   };
@@ -665,33 +593,30 @@ function computeAggregate(runs, opts) {
 
 // The workflow id the reconstructed rows are keyed on.
 //
-// A published log carries no workflow id and must not: the author's local
-// `wf-1762...` says nothing to a reader and the binding row already names the
-// only identity that matters, which is the fingerprint of the graph that ran.
-// aggregateRuns filters on both, so the reconstruction gives every row the same
-// literal and hands the same one back in. The filter still runs; it just cannot
-// exclude anything, which is correct, because a log's rows are the rows.
+// A published log carries no workflow id: the author's local `wf-1762...` says
+// nothing to a reader, and the binding row already names the identity that
+// matters, the fingerprint of the graph that ran. aggregateRuns filters on
+// both, so the reconstruction gives every row this same literal and hands the
+// same one back in.
 const CHAIN_WORKFLOW_ID = 'husk.chain';
 
 // figuresFromChain(sessions) recomputes a receipt's figures from the audit rows
 // shipped inside the file.
 //
 // `sessions` is verifyArtifactChain's output: one entry per session, each with
-// the parsed rows of one run in order. This is the half of the feature that
-// makes "matches the shipped log" mean anything. The publisher builds the
-// declared figures with this function and the reader recomputes them with the
-// same one, so a disagreement can only ever be a file that was edited between
-// the two, never two implementations of a median drifting apart. That is also
-// why the reconstruction goes back through aggregateRuns rather than adding up
-// rows directly: there is exactly one definition of a censored run, of an
-// outcome bucket and of a token total in this codebase, and it is above.
+// the parsed rows of one run in order. The publisher builds the declared
+// figures with this function and the reader recomputes them with the same one,
+// so a disagreement means the file and its log disagree rather than two
+// implementations of a median drifting apart. That is also why the
+// reconstruction goes back through aggregateRuns rather than adding up rows
+// directly: there is one definition of a censored run, an outcome bucket and a
+// token total in this codebase, and it is above.
 //
-// Three figures are deliberately not derived here. `runsWindowed` is a fact
-// about the author's run history, which a log cannot see. `environment` is what
-// their machine was, which no row can prove. The run window is derived, because
-// the rows carry the timestamps, but it stays in the author-states tier
-// wherever it is rendered: a clock is as author-controlled as the rest of the
-// file, and checking it against itself would dress a tautology as a finding.
+// Three figures are not derived here. `runsWindowed` is a fact about the
+// author's run history, which a log cannot see. `environment` is what their
+// machine was, which no row carries. The run window is derived, since the rows
+// carry the timestamps, but it stays in the author-states tier wherever it is
+// rendered, because a clock is as author-stated as the rest of the file.
 //
 // Returns { ok: true, figures, aggregate } or { ok: false, error }.
 function figuresFromChain(sessions) {
@@ -712,8 +637,8 @@ function chainFigures(sessions) {
     const built = runFromSession(sessions[i]);
     if (!built.ok) return built;
     // Every session was already checked against the others by the chain walk;
-    // this is the same rule stated where the arithmetic happens, so calling
-    // this function directly cannot aggregate two programs into one figure.
+    // this is the same rule stated where the arithmetic happens, so one figure
+    // always describes one program.
     if (graphHash !== null && built.row.graphHash !== graphHash) {
       return { ok: false, error: 'the sessions in this log were run against different workflows' };
     }
@@ -724,10 +649,8 @@ function chainFigures(sessions) {
   const agg = aggregateRuns(rows, {
     workflowId: CHAIN_WORKFLOW_ID,
     graphHash,
-    // The rows are the rows: a log is not a window onto a longer history, it is
-    // the whole of what was shipped. Stating the cap above the count keeps
-    // runsWindowed false rather than letting the default make a claim about a
-    // history this side of the wire has never seen.
+    // A log is the whole of what was shipped rather than a window onto a longer
+    // history, so stating the cap above the count keeps runsWindowed false.
     historyMax: rows.length + 1,
     stepTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   });
@@ -754,12 +677,10 @@ function chainFigures(sessions) {
 
 // One session's rows back into the run-history shape aggregateRuns reads.
 //
-// The rows were parsed by the chain walk, which means they are plain JSON and
-// not live objects with accessors, so this reads them directly. What it does
-// not do is trust their contents: a payload field that is missing or the wrong
-// type simply does not contribute, and the aggregation upstream already treats
-// an unreadable duration as a run that does not vote on the median rather than
-// as a run that took zero milliseconds.
+// The rows were parsed by the chain walk, so they are plain JSON and are read
+// directly. A payload field that is missing or the wrong type contributes
+// nothing, and the aggregation upstream treats an unreadable duration as a run
+// that does not vote on the median rather than as a run that took no time.
 function runFromSession(session) {
   if (!isObject(session)) return { ok: false, error: 'a session in this log is not readable' };
   const rows = Array.isArray(session.rows) ? session.rows : null;
@@ -808,19 +729,15 @@ function payloadOf(row) {
 
 // The fields whose recomputation decides whether a receipt keeps its figures.
 //
-// These five and no others. The window and `runsWindowed` are excluded because
-// they are permanently author-stated: comparing an author's timestamps against
-// the same author's timestamps would produce a finding out of a tautology, and
-// a mismatch there would collapse a receipt over a fact the tier table says
-// nobody ever claimed to have checked. `environment` is excluded for the
-// stronger version of the same reason, since no row can carry proof of the
-// machine it was written on.
+// These five and no others. The window and `runsWindowed` stay out because they
+// are permanently author-stated, and comparing an author's timestamps against
+// the same author's timestamps states a tautology. `environment` stays out for
+// the same reason: no row carries the machine it was written on.
 const COMPARED_FIELDS = ['runs', 'outcomes', 'medianDurationMs', 'durationCensored', 'medianTokens'];
 
 // compareFigures(receipt, figures) answers whether a receipt says what its own
-// log says. Disagreement is not a caveat to render beside the numbers: the
-// caller collapses the whole receipt block, because a figure contradicted by
-// the evidence attached to it is worse than a figure with no evidence at all.
+// log says. Disagreement is not a caveat rendered beside the numbers: the
+// caller collapses the whole receipt block.
 function compareFigures(receipt, figures) {
   const differences = [];
   if (!isObject(receipt) || !isObject(figures)) {
@@ -838,8 +755,7 @@ function compareFigures(receipt, figures) {
 
 // Equality for the shapes a compared field can take: a whole number, a null, or
 // a flat record of whole numbers. Written out rather than done by serializing
-// both sides, because key order would decide the answer and a receipt that
-// arrived through JSON.parse carries the author's key order, not ours.
+// both sides, so key order does not decide the answer.
 function sameFigure(a, b) {
   if (a === null || b === null) return a === b;
   if (typeof a === 'number' || typeof b === 'number') return a === b;

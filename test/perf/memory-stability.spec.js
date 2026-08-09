@@ -187,15 +187,11 @@ test('memory and stability profile', async () => {
   // ── Hard assertions: crash-level regressions only ────────────────────────
   const base = samples[0];
   const last = samples[samples.length - 1];
-  // Renderer DOM must return near baseline once churn ends: node leaks from
-  // repaint loops show up here as monotonic growth.
+  // Renderer DOM returns near baseline once the churn ends.
   expect(last.renderer.domNodes).toBeLessThanOrEqual(base.renderer.domNodes * 1.5 + 500);
-  // Renderer JS heap must not balloon: allow generous slack for caches, fonts
-  // and xterm pools, but a leak across ~200 churn operations lands well above
-  // 3x baseline + 60MB.
+  // Renderer JS heap stays bounded, with slack for caches, fonts and xterm pools.
   expect(last.renderer.jsHeapUsedMB).toBeLessThanOrEqual(base.renderer.jsHeapUsedMB * 3 + 60);
-  // Whole-app working set must stay bounded (leaked PTY/util processes would
-  // add tens of MB each).
+  // Whole-app working set stays bounded across every process.
   expect(last.totalWssMB).toBeLessThanOrEqual(base.totalWssMB * 2 + 300);
   // The window must still be responsive.
   const alive = await win.evaluate(() => document.body.dataset.page || 'ok');
