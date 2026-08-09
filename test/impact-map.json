@@ -142,6 +142,7 @@
     "mcp": {
       "specs": [
         "mcp-shared.spec.js",
+        "mcp-collision.spec.js",
         "project-mcp.spec.js"
       ],
       "tokens": [
