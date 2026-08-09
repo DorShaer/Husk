@@ -1,13 +1,6 @@
 'use strict';
 
-// Which statusline script Husk is willing to execute.
-//
-// Husk runs this script with bash every thirty seconds, so the file it picks is
-// a decision rather than a detail. Husk also launches agent CLIs that write
-// files as they work, under directions that come from whatever repository they
-// were pointed at, so a script arriving under ~/.claude without the user having
-// put it there is a state the app has to have an answer for. Each test below is
-// one of those states, or an ordinary case that must keep working.
+// Which statusline script the app may run, pinned by path and content.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

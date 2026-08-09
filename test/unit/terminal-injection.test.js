@@ -1,19 +1,6 @@
 'use strict';
 
-// Text that reaches a live agent's terminal, and the two places its content
-// comes from outside Husk.
-//
-// The far end is not a shell, it is an agent CLI's TUI. There a carriage return
-// reads as Enter and an escape opens a control sequence, so a control byte in
-// anything Husk writes to the PTY is the ability to submit a turn the user
-// never typed, to an agent already bound to their working directory.
-//
-// Two inputs, neither of them written here:
-//   - a workflow step's output, pasted into a new chat. A step prompt can ask
-//     the model to print any literal bytes, and on an imported workflow the
-//     step's name came from the file's author.
-//   - a file name, dragged in or picked. POSIX permits every byte except "/"
-//     and NUL, so a repository or an archive can carry one.
+// Guards for text and file names written into an agent's PTY.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -51,8 +38,7 @@ test('ordinary text passes through the paste guard untouched', () => {
 });
 
 test('carriage return is removed from pasted output', () => {
-  // CR is the byte a TUI reads as Enter, so it must not reach the prompt even
-  // though it is whitespace.
+  // CR is removed even though it is whitespace.
   assert.equal(stripControls(`a${CR}b`), 'ab');
 });
 
@@ -105,10 +91,10 @@ test('the drop handler refuses a control character before the file is copied', (
   assert.ok(handler, 'the fs:dropFile handler was not found');
 
   const guardAt = handler[0].search(/x00-\\?x1F/);
-  const copyAt = handler[0].indexOf('copyFileSync');
+  const writeAt = handler[0].search(/readFileSync|openSync|copyFileSync/);
   assert.ok(guardAt > -1, 'fs:dropFile accepts a basename containing control characters');
-  assert.ok(copyAt > -1, 'the copy was not found');
-  assert.ok(guardAt < copyAt, 'the control-character check runs after the file is already copied');
+  assert.ok(writeAt > -1, 'the file write was not found');
+  assert.ok(guardAt < writeAt, 'the check runs after the file is already stored');
 });
 
 // The renderer must reach the shared rule rather than keeping a second copy,

@@ -1,14 +1,6 @@
 'use strict';
 
-// Applying an Autopilot run must write the path the operator reviewed, and not
-// wherever a link at that path happens to point.
-//
-// A workspace can contain links that Husk did not create. Git stores symlinks,
-// so a checked-out repository may carry one at an ordinary-looking path, and
-// the run's own agent can create more. The review an operator sees names a
-// relative path and shows its text; it says nothing about what that path
-// resolves to in the destination. These tests pin that distinction from both
-// directions: what an apply must refuse, and what it must still do.
+// Applying a run must write and read only inside the two roots it is given.
 
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -145,13 +137,7 @@ test('one refused path does not stop the others, and the refusal is named', () =
 
 // ─── the source side ───────────────────────────────────────────────────────
 
-// The destination checks above stop an apply writing outside the workspace.
-// They say nothing about where the bytes came from. A run's worktree is written
-// by an agent with every approval gate disabled, so a link inside it is an
-// ordinary thing for that agent to create, and the diff walker records a
-// changed link as an added or modified path like any other. Reading through one
-// copies a file from anywhere this process can reach into the workspace, as a
-// regular file, under a name the operator approved.
+// The source must resolve to a regular file under the worktree.
 
 test('a source that is a link out of the worktree is refused, and nothing is copied', () => {
   const target = plantTarget('outside-file.txt', 'ORIGINAL');

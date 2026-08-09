@@ -383,25 +383,8 @@ let config = loadConfig();
 // refreshAnthropicUsageCache below.
 let statuslineTimer = null;
 
-// This tick executes a shell script off the user's disk every 30 seconds, so
-// which bytes it is willing to run is a security decision and not a detail.
-//
-// Husk launches agent CLIs that write files as they work, following directions
-// that come from whatever repository they were pointed at, so a script arriving
-// under ~/.claude that the user did not put there is a state this has to answer
-// for. Unchecked, that file runs within thirty seconds, with the user's whole
-// environment, and again every thirty seconds after, with nothing on screen to
-// say so.
-//
-// So the script is pinned on first sight and checked by content afterwards.
-// A machine that already has one keeps working: the first tick records what is
-// there and runs it, which is the state every existing install is in. What is
-// refused is a script that APPEARS where the pin says there was none, or whose
-// bytes stop matching the pin. Neither is something a legitimate upgrade does
-// silently: reinstalling the framework changes the file, Husk stops running it,
-// and the user re-approves by clearing the pin. Trust on first use is weaker
-// than a signature and is what is available without asking every user to hold
-// a key.
+// Runs the framework's statusline script, pinned by path and content so a
+// changed or newly appearing script is not run until it is approved again.
 const STATUSLINE_CANDIDATES = () => [
   path.join(CLAUDE_DIR, 'LIFEOS', 'LIFEOS_StatusLine.sh'),
   path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
@@ -410,19 +393,15 @@ const STATUSLINE_CANDIDATES = () => [
 
 let statuslineRefusedOnce = false;
 
+// sha256 of a regular file, or null.
 function statuslineDigest(file) {
-  // lstat, so a path swapped for a symlink is refused rather than followed to
-  // whatever it points at. The digest is then read through a descriptor opened
-  // on that same checked path.
   const st = fs.lstatSync(file);
   if (!st.isFile()) return null;
   if (st.size > 4 * 1024 * 1024) return null;
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
-// Returns the script to run, or null when nothing may be run. The rule itself
-// lives in src/lib/statusline-trust.js, where it is testable without spawning
-// anything; this is the part that touches disk and config.
+// Returns the script to run, or null. The rule lives in lib/statusline-trust.
 function statuslineScriptToRun() {
   const pin = (config.statuslineTrust && typeof config.statuslineTrust === 'object')
     ? config.statuslineTrust
@@ -431,8 +410,7 @@ function statuslineScriptToRun() {
 
   if (verdict.pin) { config.statuslineTrust = verdict.pin; saveConfig(config); }
 
-  // Said once per run rather than on every tick, because the tick is every
-  // thirty seconds and a line repeated that often is a line nobody reads.
+  // Logged once per run rather than every tick.
   if (verdict.reason && !statuslineRefusedOnce) {
     statuslineRefusedOnce = true;
     const why = {
@@ -4131,12 +4109,6 @@ ipcMain.handle('autopilot:fileDiff', async (_e, payload = {}) => {
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- safeAbs bounded under safeWorkspace
     if (fs.existsSync(safeAbs)) {
-      // The string check above proves the name sits under the workspace, not
-      // that the file does. This side of the diff is read out of a worktree an
-      // agent wrote, so a link there would put a file from anywhere this
-      // process can reach in front of the operator as the "after" text they
-      // approve. Resolving it is what makes the preview describe the path it
-      // names.
       if (!realPathInside(safeAbs, safeWorkspace)) {
         return { ok: false, error: 'path escapes workspace' };
       }
@@ -4566,11 +4538,7 @@ ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ re
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('config:get', () => ({ ...config }));
-// Keys the settings screen may not write. These are decisions the main process
-// made about what it is willing to execute, and the config file is where they
-// are kept only because that is where durable state lives. A renderer able to
-// rewrite them could point a trust pin at anything, which would leave the pin
-// describing a check rather than performing one.
+// Config keys the renderer may not write.
 const CONFIG_KEYS_MAIN_OWNS = new Set(['statuslineTrust']);
 
 ipcMain.handle('config:set', (_e, partial) => {
@@ -4658,8 +4626,7 @@ function extraAgentBinDirs() {
   return [path.join(HOME, '.local', 'bin'), path.join(HOME, '.bun', 'bin')];
 }
 
-// Where a bare command name actually lives, searching PATH and nothing else.
-// Returns an absolute path, or null when the name is not installed.
+// Absolute path of a command on PATH, or null.
 function resolveOnPath(binName) {
   const isWin = process.platform === 'win32';
   // Union of: the inherited PATH, the login-shell PATH (nvm/pyenv/etc), and the
@@ -4691,21 +4658,8 @@ function isOnPath(binName) {
   return resolveOnPath(binName) !== null;
 }
 
-// The command to hand spawn() when the working directory belongs to somebody
-// else, which is the ordinary case here: a cloned repository, a bound workflow
-// checkout, an MCP server directory.
-//
-// On Windows a bare name is not resolved against PATH alone. libuv searches the
-// child's working directory first, so a repository that ships npm.cmd, git.exe
-// or claude.cmd beside its own files has that file executed in place of the
-// real tool. Every allowlist upstream still passes, because the name really is
-// the allowlisted one; what changed is which file the name refers to. Passing
-// an absolute path resolved from PATH removes the ambiguity.
-//
-// POSIX has no such rule: execvp searches PATH and never the working directory,
-// so the name is returned unchanged and the behaviour is untouched. Where a
-// command cannot be found the name is returned as-is, so the spawn fails the
-// way it always did rather than failing differently here.
+// On Windows, resolves a bare command name to its absolute path on PATH.
+// Returns the name unchanged on POSIX, or when it is not found.
 function spawnName(binName) {
   if (process.platform !== 'win32') return binName;
   return resolveOnPath(binName) || binName;
@@ -7830,10 +7784,7 @@ function repoFetchedAt(dest) {
 // beats no checkout for a reader with no network, but it is returned labelled
 // and the surface says so.
 const RepoAgents = require('./lib/repo-agents');
-// bucket names the folder under userData that holds these checkouts. Agent
-// packs and MCP server repositories are kept apart because they are answers to
-// different questions, and one URL appearing in both should not make the two
-// features share a working copy that either can delete.
+// Clones url into userData/<bucket>, reusing the checkout when it matches.
 function cloneRepo(url, bucket) {
   return new Promise((resolve) => {
     const v = RepoAgents.validateRepoUrl(url);
@@ -7930,13 +7881,7 @@ ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
               name,
               description: (parsed.description || '').slice(0, AGENT_DESC_MAX),
               bodyLength: (parsed.body || '').length,
-              // Checked against the file this WILL write, which syncAgentFiles
-              // derives from the agent's declared name and not from the name it
-              // has in the repository. Those two are independent: a pack can
-              // ship helper.agent.md whose frontmatter says "Code Reviewer",
-              // and it is code-reviewer.md that gets replaced. Testing the
-              // repository's filename answered a question nobody asked and left
-              // the row showing no collision at all.
+              // Keyed on the file syncAgentFiles will write.
               alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', agentFileName(name))),
               alreadyImported: existingProfileNames.has(name.toLowerCase()),
             });
@@ -7994,12 +7939,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       const name = (parsed.name || stripAgentExt(basename)).slice(0, 64);
       if (installToAllAgents) {
         const dest = path.join(claudeAgentsDir, basename);
-        // COPYFILE_EXCL, so an agent the user already has is never replaced by
-        // one out of a repository. The basename comes from that repository, and
-        // common ones collide by coincidence often enough on their own. An
-        // agent definition is the system prompt that steers a coding agent, so
-        // replacing one silently would change how that agent behaves with
-        // nothing said. A collision is reported rather than swallowed.
+        // Never replaces an agent the user already has; collisions are reported.
         try {
           fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
           copiedToClaude.push(dest);
@@ -8085,13 +8025,7 @@ ipcMain.handle('repoMcp:pickDir', async () => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
-// A repository, named either way a person has one: a URL Husk clones, or a
-// folder already on disk. The agent-pack flow accepts both and this reads the
-// same kind of repository for a different directory inside it, so accepting
-// only a local path made "from repo" mean "from a repo you cloned yourself".
-//
-// The clone lands in its own bucket under userData and the scan then runs
-// against the checkout, so everything below this line sees one shape.
+// Scans a repository for mcp-servers/, cloning it first when given a URL.
 ipcMain.handle('repoMcp:scan', async (_e, payload = {}) => {
   let root = String((payload && payload.root) || '').trim();
   if (!root) return { ok: false, error: 'a repository URL or a folder path is required' };
@@ -8453,13 +8387,7 @@ ipcMain.handle('projects:state', () => {
     // each one is an open loop for the workspace it came from.
     st.retainedCount = retainedRuns.filter((r) => r && r.workspaceRoot === p.path).length;
     st.lastSessionMs = lastSessionMsForCwd(p.path);
-    // A project is any directory the user pinned, and plenty of useful ones sit
-    // inside a repository rather than at its root: a package in a monorepo, a
-    // service folder, a docs tree. Those are working directories git answers
-    // for, so asking git is what decides this. A .git entry beside the folder,
-    // which is a directory at a repository root and a file in a worktree or
-    // submodule, is kept only as the fallback answer for the case where git
-    // cannot be reached at all.
+    // git decides; the .git entry is the fallback when git cannot be reached.
     let hasGitEntry = false;
     try { hasGitEntry = fs.existsSync(path.join(p.path, '.git')); } catch (_) {}
     try {
@@ -8469,9 +8397,6 @@ ipcMain.handle('projects:state', () => {
       st.isGit = true;
       Object.assign(st, parseGitStatus(txt));
     } catch (_) {
-      // A folder that is not in a repository, a repo mid-rebase, or a machine
-      // without git. The first is a plain folder and the other two still are
-      // repositories, which is what the .git entry answers for.
       st.isGit = hasGitEntry;
     }
   }
@@ -8677,8 +8602,7 @@ ipcMain.handle('skills:list', () => {
 });
 
 ipcMain.handle('skills:read', (_e, mdPath) => {
-  // Confine reads to the two roots skills/prompts actually live under, so an
-  // mdPath from the renderer cannot return a file from anywhere else on disk.
+  // Confined to the skills and prompts roots.
   if (typeof mdPath !== 'string' || !mdPath) return { ok: false, error: 'Missing path' };
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   if (!isInside(skillsDir, mdPath) && !isInside(HUSK_PROMPTS_DIR, mdPath)) {
@@ -8893,13 +8817,7 @@ ipcMain.handle('plugins:readFile', (_e, payload = {}) => {
   let abs;
   try { abs = resolveInside(installPath, String(payload.relPath || '')); }
   catch (_) { return { ok: false, error: 'invalid file path' }; }
-  // Open with O_NOFOLLOW so a symlink (a marketplace plugin could ship one
-  // pointing outside its own dir) is refused, and stat + read through the one
-  // descriptor so the regular-file check and the read see the same inode.
-  // O_NOFOLLOW refuses a link as the FINAL component and says nothing about the
-  // directories above it. A plugin is third-party content and can ship a linked
-  // directory, so the resolved path is checked against the plugin's own install
-  // dir as well.
+  // Confine to the plugin dir, then read through one descriptor.
   if (!realPathInside(abs, installPath)) return { ok: false, error: 'file not found' };
   let fd;
   try { fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
@@ -8925,12 +8843,7 @@ ipcMain.handle('plugins:writeFile', (_e, payload = {}) => {
   try { abs = resolveInside(installPath, String(payload.relPath || '')); }
   catch (_) { return { ok: false, error: 'invalid file path' }; }
   if (!Plugins.isEditableName(abs)) return { ok: false, error: 'file type is not editable' };
-  // Same reason as the read: the link that matters may be a directory above the
-  // file rather than the file itself.
   if (!realPathInside(abs, installPath)) return { ok: false, error: 'file not found' };
-  // Open the existing file with O_NOFOLLOW (no create, no symlink follow) and
-  // write through that descriptor, so the regular-file guarantee and the write
-  // target are the same inode even if the path is swapped after validation.
   let fd;
   try { fd = fs.openSync(abs, fs.constants.O_WRONLY | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0)); }
   catch (_) { return { ok: false, error: 'file not found' }; }
@@ -10131,11 +10044,7 @@ ipcMain.handle('sessions:rename', (_e, payload = {}) => {
   return { ok: true, name };
 });
 
-// Confined to the one root these files live under, the same way skills:read is
-// confined to its two. Every path this is called with is built by the main
-// process as <MEMORY/WORK>/<slug>/PRD.md, so naming that root costs the feature
-// nothing and stops the channel being a way to read any file the app can reach.
-// The resolved check is what covers a link somewhere under that root.
+// Reads a PRD, confined to the work directory.
 ipcMain.handle('sessions:read', (_e, prdPath) => {
   if (typeof prdPath !== 'string' || !prdPath) return { ok: false, error: 'Missing path' };
   const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
@@ -10284,11 +10193,6 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
     if (!baseName || baseName.startsWith('..') || /[\/\\]/.test(baseName)) {
       return { ok: false, error: 'Invalid file name' };
     }
-    // A control character in a name is legal on POSIX and is refused here
-    // rather than carried, because the path this returns is written into a live
-    // agent prompt, where a carriage return reads as Enter and an escape opens
-    // a control sequence. Refusing at the point the file enters Husk keeps the
-    // name out of every later surface too, not just that one.
     if (/[\x00-\x1F\x7F-\x9F]/.test(baseName)) {
       return { ok: false, error: 'That file name contains control characters' };
     }
@@ -10308,11 +10212,6 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
       fs.mkdirSync(destDir, { recursive: true });
       dest = resolvedDest;
     }
-    // The destination is a name Husk chose inside its own directory, but a file
-    // already sitting there is not necessarily a file: copyFileSync follows a
-    // link and writes wherever it points. Read the source through the caller's
-    // own path, write the destination through a descriptor that will not follow
-    // one.
     const buf = fs.readFileSync(sourcePath);
     const fd = fs.openSync(dest, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
       | (fs.constants.O_NOFOLLOW || 0), 0o644);
@@ -10460,29 +10359,19 @@ ipcMain.handle('fs:writeFile', async (_e, { root, rel, content, expectMtimeMs, f
     if (!isInside(path.resolve(root), real)) return { ok: false, error: 'path outside root' };
     abs = real;
   } catch (_) {
-    // Nothing at that path yet, so there is no realpath to compare and the
-    // string check above is all that has run. A string cannot see a link: if
-    // any directory along the way points elsewhere, this name resolves under
-    // root while the write lands outside it. The parent is asked of the
-    // filesystem instead, and a create only proceeds when the directory that
-    // will hold the file is itself inside root.
+    // New file: confine its parent instead.
     if (!realParentInside(abs, root)) return { ok: false, error: 'path outside root' };
   }
   try {
     let current = null;
     try { current = fs.lstatSync(abs); } catch (_) { current = null; }
     if (current) {
-      // lstat rather than stat, so a link is seen as a link. Writing through
-      // one puts the bytes wherever it points, which is a path the caller
-      // never named and the checks above never saw.
       if (current.isSymbolicLink()) return { ok: false, error: 'path is a symbolic link' };
       if (!current.isFile()) return { ok: false, error: 'not a file' };
       if (!force && typeof expectMtimeMs === 'number' && Math.abs(current.mtimeMs - expectMtimeMs) > 1) {
         return { ok: false, error: 'conflict', reason: 'This file changed on disk since you opened it (the agent may have edited it). Reload to see the new version, or save anyway to overwrite it.' };
       }
     }
-    // O_NOFOLLOW closes the window between the checks above and the write, so
-    // the path cannot be swapped for a link in between.
     const fd = fs.openSync(abs, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
       | (fs.constants.O_NOFOLLOW || 0), 0o644);
     try { fs.writeFileSync(fd, content, 'utf8'); } finally { fs.closeSync(fd); }
@@ -10582,13 +10471,7 @@ const VOICES_DIR = path.join(PIPER_DIR, 'voices');
 const PIPER_RELEASE = IS_WIN
   ? 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip'
   : 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
-// The bytes those two URLs serve, which Husk marks executable and then runs.
-// Both point at a fixed release tag rather than a moving one, so the content is
-// immutable and a mismatch means the bytes that arrived are not the bytes this
-// release was built against, whatever the reason: a changed upstream asset, a
-// proxy that rewrites responses, or a certificate the machine was made to
-// trust. Checked before extraction, because after extraction the decision has
-// been made.
+// Expected sha256 of the release assets above.
 const PIPER_SHA256 = IS_WIN
   ? 'f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea'
   : 'a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992';
@@ -10653,19 +10536,14 @@ ipcMain.handle('voice:install', async (_e, { voice = 'en_US-amy-medium' } = {}) 
     if (!fs.existsSync(PIPER_BIN)) {
       // Windows ships a .zip (piper.exe + DLLs + espeak-ng-data); Linux a
       // .tar.gz. `tar -xf` auto-detects both on Win10+ (bsdtar) and Linux.
-      // A private directory per install rather than a fixed name in the shared
-      // temp dir. A name that does not vary can be pre-created by any other
-      // local account on a multi-user machine, as a file or as a symlink, and
-      // curl -o writes through a link to wherever it points.
+      // Private staging directory per install.
       const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-piper-'));
       const archivePath = path.join(stageDir, IS_WIN ? 'piper.zip' : 'piper.tar.gz');
       const cleanup = () => { try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch (_) {} };
       try {
         await runStep('curl', ['-fsSL', '-o', archivePath, PIPER_RELEASE], 'Downloading Piper binary');
 
-        // Verified before anything is unpacked, so bytes that do not match the
-        // release this build was written against never become files on disk,
-        // let alone an executable one.
+        // Checked before extraction.
         const got = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
         if (got !== PIPER_SHA256) {
           return { ok: false, error: 'The downloaded voice engine did not match its expected checksum, so it was discarded. Nothing was installed.' };
@@ -10883,12 +10761,7 @@ function setupAutoUpdater() {
   updaterInstance = autoUpdater;
   autoUpdater.autoDownload = false;       // we choose when to download
   autoUpdater.autoInstallOnAppQuit = false;
-  // Husk does not ship a web installer, so the update feed has no business
-  // naming one. Left at its default, a "packages" entry in the feed may carry
-  // an absolute URL on any host, which is fetched and executed as the update:
-  // it turns one writable field in a manifest into a download from somewhere
-  // the release never came from. Refusing it costs nothing here and removes
-  // that field's meaning entirely.
+  // No web installer is shipped, so the feed may not name one.
   autoUpdater.disableWebInstaller = true;
 
   // Route the updater's log to a file. It defaults to `console`, whose output is

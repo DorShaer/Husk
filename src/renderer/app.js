@@ -3269,9 +3269,6 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
       'font-size': font,
       'font-weight': 600,
       fill: 'currentColor',
-      // A step name is a run of somebody's own language sitting inside a
-      // drawing whose direction is the app's. Isolating it keeps a
-      // right-to-left name from reordering against the pill it labels.
       'unicode-bidi': 'isolate',
     });
     label.appendChild(kit.text(text));
@@ -3357,10 +3354,8 @@ function wfMiniSpeak(svg, names, count) {
 // box any of them offers and therefore the safe thing to guess. width is the
 // real width of the host in CSS pixels, for a caller that has the host in the
 // document already and can afford to read it; it is only ever used to widen.
-// marks is an optional Set of node ids to draw as needing attention. It is kept
-// out of WF_MINI_STATUS so it can never collide with a run outcome: a step can
-// be both finished and unbound, and the two are read off different runs of this
-// function on different surfaces.
+// marks is an optional Set of node ids to draw as needing attention. A run
+// outcome takes precedence over a mark.
 function wfMiniGraph(graph, lastRun, surface, width, marks) {
   const floor = WF_MINI_SURFACES[surface] || WF_MINI_SURFACES.card;
   const measured = Number(width);
@@ -3401,9 +3396,6 @@ function wfMiniGraph(graph, lastRun, surface, width, marks) {
     }
   }
 
-  // A run outcome outranks the mark. A drawing that reported "unbound" over a
-  // step this graph is known to have failed would be answering a question
-  // nobody asked with the one channel the failure needed.
   if (marks instanceof Set && marks.size) {
     nodes.forEach((node, i) => {
       if (!statuses[i] && marks.has(String(node.id))) statuses[i] = 'unbound';
@@ -3938,9 +3930,7 @@ function wfOpenCardMenu(anchor, id) {
   // load, and it is the same channel the sheet drives, so the file it writes
   // is the same file with the log left off.
   pop.querySelector('[data-act="export"]').addEventListener('click', async () => {
-    // The anchor is read before close() removes the menu around it, because it
-    // is where focus belongs when the sheet closes and by then the button that
-    // opened it is gone from the document.
+    // Read before close() removes the menu.
     const returnFocusTo = anchor;
     close();
     if (window.WfxPublish && typeof window.WfxPublish.open === 'function') {
@@ -3991,16 +3981,8 @@ function wfPaintLiveBand(run) {
 
 // ─── Canvas builder (Drawflow) ──────────────────────────────────────────────
 
-// Every option carries a real command. There is no "use whatever the settings
-// say" entry, because that value is one the rest of the app cannot use: a
-// published step names its agent, and a step that does not resolves on the
-// reader's machine to their config rather than to this one. Naming the
-// resolved command costs the reader nothing and is the only form the file can
-// carry.
-//
-// So a step with no agent yet lands on the resolved default preselected, and
-// the empty value survives on one kind of machine only, one with no agent CLI
-// installed, where the option is disabled and says why.
+// Options for a step's agent picker. Every option is a real command; a step
+// with none yet preselects the resolved default.
 function buildAgentOptions(currentVal) {
   const installed = (agentsCache || []).filter((a) => a.available);
   if (!installed.length) return `<option value="" disabled selected>No agent CLI installed</option>`;
@@ -4307,32 +4289,8 @@ function wfAgentCommandForPanel() {
   return (chosen || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
 }
 
-// The agent a step is born with, and the reason it is born with one at all.
-//
-// A published step names its agent, because a step that does not resolves on
-// the reader's machine to whatever their own config says: the same file would
-// then run a different program for them than it ran here, and the receipt
-// beside it would describe neither. So the artifact builder refuses a step
-// with no agent, and it is right to.
-//
-// Which makes an empty agentCommand a value nothing downstream can use. The
-// run engine papers over it with the same fallback this function performs, so
-// a step carrying one runs correctly and reads as finished, and the refusal
-// arrives only at publish time, on a surface far from the canvas that minted
-// it. Writing the resolved command onto the step at the moment it is created
-// is what keeps the canvas from producing a shape the rest of the app rejects.
-//
-// No agent name is written here. The order is the configured agent first, then
-// whatever is installed; on a machine with no agent CLI at all this returns the
-// empty string and the publish sheet says so in words.
-//
-// Only a command this machine actually reports as installed is ever returned,
-// and every one of those is a bare basename. The configured value is not a
-// substitute: config accepts a path, the graph sanitizer accepts a path because
-// it checks the basename, and the artifact builder refuses anything that is not
-// already equal to its own basename. Minting one here would produce a step the
-// publish gate reads as bound and the write refuses, which is the same defect
-// this function exists to remove, arriving one screen later.
+// The agent a new step is given: the configured one when installed, else the
+// first installed one, else the empty string. Always a bare basename.
 function wfDefaultAgentCommand() {
   const installed = (agentsCache || []).filter((a) => a && a.available && a.command);
   if (!installed.length) return '';
@@ -4448,8 +4406,7 @@ function wfSyncPanelToNode() {
     : (modelSel === 'Loading...' ? '' : modelSel);
   const data = {
     huskId: existing.huskId || wfNewNodeId(),
-    // Cut by character rather than by code unit, so a name ending on an astral
-    // character keeps the whole character instead of the half of it that fits.
+    // Cut by character, not code unit.
     name: Array.from($('#wf-np-name').value || 'Step').slice(0, 64).join(''),
     agentCommand: $('#wf-np-agent').value || '',
     model: model || '',
@@ -4466,9 +4423,7 @@ function wfSyncPanelToNode() {
   if (metaEl) metaEl.textContent = wfNodeAgentLabel(data);
 }
 
-// A step with an empty agentCommand is not configured to use a default, it is
-// a step nothing has named yet, and the publish path refuses it. The label says
-// which of those two it is.
+// The label under a step: its agent and model, or "no agent".
 function wfNodeAgentLabel(d) {
   const agent = (d.agentCommand || 'no agent');
   return d.model ? `${agent} \u00b7 ${d.model}` : agent;

@@ -49,22 +49,8 @@ function setEnabled(adapter, id, enabled) {
   return adapter.toggle(id);
 }
 
-// oldId is what separates an edit from an install, and the distinction is a
-// security boundary rather than bookkeeping.
-//
-// An MCP server is a command Husk causes to run, and its id is the only thing
-// a person recognises it by. Snippets are pasted from READMEs, docs pages and
-// chat messages, and reusing a well-known id like "filesystem" or "github"
-// costs an author nothing. Treating an install that collides with an existing
-// id as an update means such a snippet silently replaces a server the user
-// already trusts, keeps its familiar name, and reports "Installed": the
-// argument list narrowed to one safe folder, or the environment holding a
-// token, is gone with nothing on screen having said so.
-//
-// Each adapter already refuses a duplicate in its own add(). Routing a
-// collision to update() went around that decision rather than acting on it.
-// An install that collides now fails and names the collision, and the caller
-// decides; an edit still carries oldId and is unaffected.
+// Writes one server. oldId marks an edit; without it, an id that already
+// exists is a collision and is refused rather than replaced.
 function addOrUpdate(adapter, oldId, payload, enabled) {
   const id = payload && payload.id;
   if (!id) return { ok: false, error: 'missing id' };
@@ -173,10 +159,6 @@ function add(payload = {}) {
     }
   }
   if (!failures) return { ok: true, id, results };
-  // A name collision is a different thing from a write that failed, and it is
-  // the one the reader can act on. Counting targets tells them how widely it
-  // did not happen; it does not tell them that a server they already have is
-  // the reason, which is the whole point of refusing.
   const error = collided
     ? `MCP server "${id || ''}" already exists. Rename it, or edit the existing one.`
     : `MCP server "${id || ''}" could not be installed for ${failures} target${failures === 1 ? '' : 's'}`;

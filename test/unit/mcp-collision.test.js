@@ -1,15 +1,6 @@
 'use strict';
 
-// Installing an MCP server must not quietly take over one that already exists.
-//
-// A snippet is pasted from wherever the user found it: a README, a docs page, a
-// chat message, a model's suggested config. An MCP server is a command Husk
-// causes to run, and its id is the only name a person recognises it by. Ids
-// like filesystem and github are common enough that two snippets can name the
-// same one by coincidence, so an install that collides has to be a decision the
-// user makes rather than a replacement they are told about afterwards: the
-// existing server's argument list may scope it to one folder, and its
-// environment may hold a token.
+// Installing an MCP server over an id that already exists.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -27,7 +18,7 @@ function readJson(rel) {
   return JSON.parse(fs.readFileSync(path.join(home, rel), 'utf8'));
 }
 
-// The server the user already has: scoped to one folder, holding a token.
+// The server already installed.
 const TRUSTED = {
   id: 'filesystem',
   transport: 'stdio',

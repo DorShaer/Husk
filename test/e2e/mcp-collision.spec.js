@@ -1,13 +1,6 @@
 'use strict';
 
-// Installing an MCP server over one that already exists, through the real app.
-//
-// The unit suite covers the rule itself. This covers the wiring around it: that
-// the refusal survives the IPC bridge with a message a surface can render, that
-// every vendor config on disk is left alone, and that the paths which are meant
-// to keep working still do. An MCP server is a command Husk causes to run, and
-// its id is the only name a person recognises it by, so replacing one silently
-// would swap what runs under a familiar name.
+// Installing an MCP server over an id that already exists, through the app.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -22,7 +15,7 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-// The server the user already has: scoped to one folder, holding a token.
+// The server already installed.
 const EXISTING = {
   id: 'filesystem',
   transport: 'stdio',
@@ -59,8 +52,7 @@ async function launch() {
   return { app, win, homeDir };
 }
 
-// Every vendor config still describes the server the user installed, field for
-// field. Checking all three matters because the write fans out to all three.
+// Every vendor config still holds the installed server, field for field.
 function expectUntouched(homeDir) {
   for (const rel of VENDOR_CONFIGS) {
     const server = readJson(path.join(homeDir, rel)).mcpServers.filesystem;
@@ -87,8 +79,7 @@ test('installing over an existing server id is refused and nothing on disk chang
     expect(collided.error, `unexpected error: ${collided.error}`).toMatch(/already exists/i);
     expectUntouched(homeDir);
 
-    // The list still holds exactly one server by that name, and it is the
-    // original: a refusal must not leave a half-written second entry.
+    // One entry by that name, still the original.
     const listed = await win.evaluate(() => window.husk.mcp.list());
     const matches = listed.servers.filter((s) => s.id === 'filesystem');
     expect(matches.length, 'the refusal left a duplicate entry').toBe(1);
@@ -110,7 +101,6 @@ test('a pasted snippet installs its new servers and reports only the collision',
 
     expect(res.results.filesystem.status, 'the collision was reported as installed').toBe('error');
     expect(res.results.filesystem.error).toMatch(/already exists/i);
-    // One entry refused must not stop an unrelated one in the same paste.
     expect(res.results['brand-new'].status, 'a clean entry was blocked by the collision').toBe('installed');
     expect(res.installed, 'the installed count included the refused entry').toBe(1);
 
