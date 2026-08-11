@@ -37,6 +37,7 @@ const ISO_MS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // Accepted timestamp input: RFC 3339-ish date-time only, parsed without the
 // host timezone database.
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored, every quantifier bounded, and isoStamp caps input at 64 chars before exec; safe-regex flags any nested group
 const ISO_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(?:[Zz]|([+-])(\d{2}):?(\d{2}))?$/;
 
 // Re-check after offset application so year-1000 input cannot format as 0999.

@@ -31,7 +31,9 @@ function realParentInside(target, root) {
   if (typeof target !== 'string' || typeof root !== 'string' || !target || !root) return false;
   const fs = require('fs');
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving root is this confinement check's own mechanism; no data is read
     const rootReal = fs.realpathSync(path.resolve(root));
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving the candidate parent is the check itself; no data is read
     const parentReal = fs.realpathSync(path.dirname(path.resolve(target)));
     return parentReal === rootReal || parentReal.startsWith(rootReal + path.sep);
   } catch (_) {
@@ -45,7 +47,9 @@ function realPathInside(target, root) {
   if (typeof target !== 'string' || typeof root !== 'string' || !target || !root) return false;
   const fs = require('fs');
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving root is this confinement check's own mechanism; no data is read
     const rootReal = fs.realpathSync(path.resolve(root));
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving the candidate is the check itself; no data is read
     const targetReal = fs.realpathSync(path.resolve(target));
     return targetReal === rootReal || targetReal.startsWith(rootReal + path.sep);
   } catch (_) {
