@@ -12803,7 +12803,7 @@ function amPaintList() {
         agentMap.q = '';
         agentMap.filter = 'all';
         amPaint();
-        amAutoSelect();
+        amAutoSelect({ prune: true });
         amRefit();
       };
     }
@@ -12861,7 +12861,7 @@ function amPaintList() {
       agentMap.q = '';
       agentMap.filter = 'all';
       amPaint();
-      amAutoSelect();
+      amAutoSelect({ prune: true });
       amRefit();
     };
   }
@@ -13708,12 +13708,14 @@ function amSelect(id, { scroll = false } = {}) {
 }
 
 // Selection follows what matters: the first agent waiting on a human, else the
-// first one running. Only when nothing valid is selected: a poll never steals
-// the user's own pick, but a filter that hides it moves it to what is visible.
-function amAutoSelect() {
+// first one running. A poll never steals the user's own pick, even one the
+// current filter hides: acting on a picked agent must act on that agent. Only
+// a deliberate narrowing (filter, search, view) prunes a hidden selection back
+// to something visible.
+function amAutoSelect({ prune = false } = {}) {
   const visible = agentMap.view;
   if (agentMap.selected && agentMap.rows.some((a) => a.id === agentMap.selected)
-      && (!visible.length || visible.includes(agentMap.selected))) return;
+      && (!prune || !visible.length || visible.includes(agentMap.selected))) return;
   agentMap.selected = null;
   const pick = agentMap.rows.filter(amMatches)
     .sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0))
@@ -13749,6 +13751,9 @@ async function amRefresh() {
   amPaint();
   amAutoSelect();
   amPaintDetail();
+  // The pill is a window onto the same fleet; painting it from this answer
+  // keeps the corner number and the open center from ever disagreeing.
+  paintTopbarAgents(res);
   const sel = agentMap.rows.find((x) => x.id === agentMap.selected);
   if (sel) amFetchFeed(sel);
 }
@@ -13813,14 +13818,14 @@ $('#am-filters') && $('#am-filters').addEventListener('click', (e) => {
   if (!chip) return;
   agentMap.filter = chip.dataset.amFilter || 'all';
   amPaint();
-  amAutoSelect();
+  amAutoSelect({ prune: true });
   amRefit();
 });
 
 $('#am-search-input') && $('#am-search-input').addEventListener('input', (e) => {
   agentMap.q = String(e.target.value || '').toLowerCase().trim();
   amPaint();
-  amAutoSelect();
+  amAutoSelect({ prune: true });
   amRefit();
 });
 
@@ -14452,6 +14457,10 @@ async function boot() {
   applyPromptsLabels();
   updateAgentPill();
   refreshAgentMenu();
+  // The agents pill answers before the stats do: it only needs the fleet
+  // list, and parking it behind the stats probe leaves the corner blank for
+  // however long that spawn takes.
+  refreshTopbarAgents();
   await refreshStats();
   refreshStatusline();
   refreshVoiceStatus();
@@ -14474,7 +14483,6 @@ async function boot() {
     if (document.hidden) return;
     refreshRecentList();
   }, 30000);
-  refreshTopbarAgents();
   setInterval(() => {
     if (document.hidden) return;
     refreshTopbarAgents();

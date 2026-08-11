@@ -248,7 +248,9 @@ test('the pill, the center and the switcher agree about the fleet', async () => 
     const win = await app.firstWindow({ timeout: 30_000 });
     await win.waitForLoadState('domcontentloaded');
     await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
-    await win.waitForTimeout(2500);
+    // The pill paints as soon as the fleet answers; boot cost varies with the
+    // machine, so the read waits for the paint instead of a fixed pause.
+    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 20_000 });
 
     // Two of the three fixture agents are live, and that is what the pill counts.
     const chip = await chipCount(win);
@@ -287,7 +289,8 @@ test('with nothing live the pill reports the same total the center does', async 
     const win = await app.firstWindow({ timeout: 30_000 });
     await win.waitForLoadState('domcontentloaded');
     await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
-    await win.waitForTimeout(2500);
+    // Finished agents still show a total; wait for that paint the same way.
+    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 20_000 });
 
     const chip = await chipCount(win);
     await win.evaluate(() => openAgentMap());             // eslint-disable-line no-undef

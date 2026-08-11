@@ -177,15 +177,19 @@ test('a person can reach install, consent and the receipts strip by clicking', a
     { timeout: 10000 },
   );
 
-  // Every card carries the strip, including one that has never run and has no
-  // artifact, because a block that appears only sometimes moves the grid.
+  // A card that has never run says so in its status line and carries no
+  // receipts strip: evidence appears with the first run (the loop test above
+  // covers that path end to end), and the status row's auto margin keeps the
+  // grid aligned either way.
   await win.waitForSelector('#wf-grid .wf-card', { timeout: 10000 });
   const strips = await win.evaluate(() => ({
     cards: document.querySelectorAll('#wf-grid .wf-card[data-id]').length,
     strips: document.querySelectorAll('#wf-grid .wf-card[data-id] .wfx-rcp').length,
+    neverRun: document.querySelectorAll('#wf-grid .wf-card[data-id] .wf-lr.is-never').length,
   }));
   expect(strips.cards).toBeGreaterThan(0);
-  expect(strips.strips, 'a workflow card renders no receipts strip, so the evidence never reaches the page').toBeGreaterThan(0);
+  expect(strips.neverRun, 'a card with no runs does not say so').toBeGreaterThan(0);
+  expect(strips.strips, 'a card with no runs still renders a receipts strip').toBe(0);
 
   await app.close();
 });
