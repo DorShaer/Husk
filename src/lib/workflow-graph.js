@@ -13,6 +13,7 @@ const ALLOWED_AGENT_COMMANDS = new Set([
   'codex',
   'aider',
   'gemini',
+  'kiro-cli',
 ]);
 
 // Truncates to a maximum length by UTF-16 code unit, dropping a trailing high
@@ -156,6 +157,101 @@ function graphToOrderedSteps(graph) {
   return order;
 }
 
+// layoutGraph(graph, opts) computes tidy coordinates for every node: steps in
+// columns by how deep they sit in the graph, parallel branches stacked in
+// their column, each column centred on the shared middle. Pure: returns
+// { nodes, edges } with only x and y rewritten; everything else, edge order
+// included, travels through untouched.
+//
+// Columns come from a longest-path layering over a Kahn walk, so a step lands
+// one column right of the deepest step that feeds it. A node on a cycle never
+// leaves Kahn's queue; those keep node order and land one column right of
+// their deepest already-ranked predecessor, which terminates and puts a loop's
+// re-entry beside the step it loops back over rather than at the origin.
+//
+// Row order inside a column is the barycentre of each node's predecessors in
+// the previous column, walked left to right, so branches that fan out of one
+// step sit together instead of crossing. Ties keep node order.
+function layoutGraph(graph, opts) {
+  const g = sanitizeGraph(graph);
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  const nodeW = Number.isFinite(o.nodeW) ? o.nodeW : 216;
+  const nodeH = Number.isFinite(o.nodeH) ? o.nodeH : 64;
+  const gapX = Number.isFinite(o.gapX) ? o.gapX : 72;
+  const gapY = Number.isFinite(o.gapY) ? o.gapY : 40;
+  if (!g.nodes.length) return g;
+
+  const indexOf = new Map(g.nodes.map((n, i) => [n.id, i]));
+  const preds = new Map(g.nodes.map((n) => [n.id, []]));
+  const succs = new Map(g.nodes.map((n) => [n.id, []]));
+  const indegree = new Map(g.nodes.map((n) => [n.id, 0]));
+  for (const e of g.edges) {
+    // Self-loops contribute nothing to depth and would wedge Kahn's queue.
+    if (e.from === e.to) continue;
+    preds.get(e.to).push(e.from);
+    succs.get(e.from).push(e.to);
+    indegree.set(e.to, indegree.get(e.to) + 1);
+  }
+
+  // Longest-path ranks over a Kahn walk, in node order for determinism.
+  const rank = new Map();
+  const queue = g.nodes.filter((n) => indegree.get(n.id) === 0).map((n) => n.id);
+  for (const id of queue) rank.set(id, 0);
+  while (queue.length) {
+    const id = queue.shift();
+    for (const to of succs.get(id)) {
+      const r = Math.max(rank.get(to) ?? 0, rank.get(id) + 1);
+      rank.set(to, r);
+      indegree.set(to, indegree.get(to) - 1);
+      if (indegree.get(to) === 0) queue.push(to);
+    }
+  }
+  // Cycle members: one column right of the deepest ranked predecessor.
+  for (const n of g.nodes) {
+    if (rank.has(n.id)) continue;
+    const ranked = preds.get(n.id).filter((p) => rank.has(p));
+    rank.set(n.id, ranked.length ? Math.max(...ranked.map((p) => rank.get(p))) + 1 : 0);
+  }
+
+  const columns = [];
+  for (const n of g.nodes) {
+    const r = rank.get(n.id);
+    if (!columns[r]) columns[r] = [];
+    columns[r].push(n.id);
+  }
+
+  // Order each column by predecessor barycentre in the column to its left.
+  const rowOf = new Map();
+  (columns[0] || []).forEach((id, i) => rowOf.set(id, i));
+  for (let c = 1; c < columns.length; c += 1) {
+    const col = columns[c] || [];
+    const keyed = col.map((id) => {
+      const rows = preds.get(id).map((p) => rowOf.get(p)).filter((v) => v !== undefined);
+      const bary = rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : Infinity;
+      return { id, bary };
+    });
+    keyed.sort((a, b) => a.bary - b.bary || indexOf.get(a.id) - indexOf.get(b.id));
+    keyed.forEach((k, i) => rowOf.set(k.id, i));
+    columns[c] = keyed.map((k) => k.id);
+  }
+
+  const tallest = Math.max(...columns.map((col) => (col || []).length));
+  const xy = new Map();
+  columns.forEach((col, c) => {
+    const list = col || [];
+    // Centre the column on the tallest one's middle.
+    const offset = ((tallest - list.length) * (nodeH + gapY)) / 2;
+    list.forEach((id, i) => {
+      xy.set(id, { x: c * (nodeW + gapX), y: offset + i * (nodeH + gapY) });
+    });
+  });
+
+  return {
+    nodes: g.nodes.map((n) => ({ ...n, ...xy.get(n.id) })),
+    edges: g.edges,
+  };
+}
+
 function wfEdgeMatches(condition, output) {
   const c = condition || { type: 'always' };
   const text = String(output || '');
@@ -231,6 +327,7 @@ module.exports = {
   sanitizeGraph,
   migrateWorkflow,
   graphToOrderedSteps,
+  layoutGraph,
   wfEdgeMatches,
   wfPickNextEdge,
   wfIsAiRouted,

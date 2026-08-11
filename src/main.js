@@ -106,6 +106,7 @@ const {
   sanitizeGraph,
   migrateWorkflow,
   graphToOrderedSteps,
+  layoutGraph,
   wfRouteInstruction,
   wfResolveNext,
   wfEdgeMatches,
@@ -5502,6 +5503,18 @@ ipcMain.handle('workflows:delete', (_e, id) => {
   // it describes and cannot be inherited by a later id.
   pruneSidecarStore();
   return { ok: true };
+});
+
+// Tidy coordinates for a graph, computed from its shape alone: columns by
+// depth, branches stacked, columns centred. Pure and read-only — the caller
+// decides whether the result is ever saved.
+ipcMain.handle('workflows:layout', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  try {
+    return { ok: true, graph: layoutGraph(p.graph) };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'layout failed' };
+  }
 });
 
 // opts is the second argument and carries the run's working directory. An

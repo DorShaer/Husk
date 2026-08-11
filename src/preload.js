@@ -169,6 +169,9 @@ contextBridge.exposeInMainWorld('husk', {
     duplicate: (workflowId) => ipcRenderer.invoke('workflows:duplicate', { workflowId }),
     update: (payload) => ipcRenderer.invoke('workflows:update', payload),
     delete: (id) => ipcRenderer.invoke('workflows:delete', id),
+    // Tidy coordinates for a graph, computed from its own shape. Read-only:
+    // nothing is saved until the user saves the workflow that asked.
+    layout: (graph) => ipcRenderer.invoke('workflows:layout', { graph }),
     // opts.cwd binds this run to a directory. An imported workflow is refused
     // without one; a workflow authored here ignores it and keeps the fallback
     // chain it always had, so the existing single-argument call sites are
