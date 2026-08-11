@@ -125,7 +125,7 @@ async function openCenter(app, { width = 1512, height = 950 } = {}) {
     BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, ...size });
   }, { width, height });
   await win.waitForLoadState('domcontentloaded');
-  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 45_000 });
+  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
   await win.evaluate(() => openAgentMap());               // eslint-disable-line no-undef
   return win;
 }
@@ -145,11 +145,11 @@ test('the center lists the fleet grouped by state, detail pane live', async () =
   const app = await launch(env);
   const win = await openCenter(app);
 
-  await win.waitForSelector('.am-node', { timeout: 45_000 });
+  await win.waitForSelector('.am-node', { timeout: 15_000 });
   await useList(win);
   // The center opens on live work; the grouping below is about the whole fleet.
   await win.click('[data-am-filter="all"]');
-  await win.waitForSelector('.am-row', { timeout: 45_000 });
+  await win.waitForSelector('.am-row', { timeout: 15_000 });
 
   // Grouped: the human-blocking band leads, then running, then finished.
   const sections = await win.$$eval('.am-sect', (els) => els.map((e) => e.textContent.trim().replace(/\s+/g, ' ')));
@@ -166,7 +166,7 @@ test('the center lists the fleet grouped by state, detail pane live', async () =
   // The blocked agent is auto-selected and its feed reads off the transcript.
   await expect(win.locator('.am-row.is-selected .am-row-name')).toHaveText('Review security workflow hardening');
   await expect(win.locator('#am-d-state')).toHaveText('Needs you');
-  await win.waitForSelector('#am-d-feed li.k-tool', { timeout: 45_000 });
+  await win.waitForSelector('#am-d-feed li.k-tool', { timeout: 10_000 });
   const feedTools = await win.$$eval('#am-d-feed li.k-tool .fk', (els) => els.map((e) => e.textContent.trim()));
   expect(feedTools).toContain('Edit');
   await expect(win.locator('#am-d-facts')).toContainText('claude-opus-5');
@@ -209,7 +209,7 @@ test('an empty machine says so instead of showing a void', async () => {
   const env = makeHome({ empty: true });
   const app = await launch(env);
   const win = await openCenter(app);
-  await win.waitForSelector('#am-blank:not([hidden])', { timeout: 45_000 });
+  await win.waitForSelector('#am-blank:not([hidden])', { timeout: 15_000 });
   await expect(win.locator('#am-blank-t')).toHaveText('No agents yet');
 
   // The illustration carries this state, so it has to actually arrive: a bad
@@ -235,10 +235,10 @@ test('the center holds in the light theme', async () => {
   const env = makeHome();
   const app = await launch(env);
   const win = await openCenter(app);
-  await win.waitForSelector('.am-node', { timeout: 45_000 });
+  await win.waitForSelector('.am-node', { timeout: 15_000 });
   await useList(win);
   await win.click('[data-am-filter="all"]');
-  await win.waitForSelector('.am-row', { timeout: 45_000 });
+  await win.waitForSelector('.am-row', { timeout: 15_000 });
   // Boot repaints the saved theme when its config load lands, which can revert
   // an early switch. Keep applying until the switch survives a full second.
   await win.waitForFunction(() => {
@@ -249,8 +249,8 @@ test('the center holds in the light theme', async () => {
     }
     window.__lightSince = window.__lightSince || Date.now();
     return Date.now() - window.__lightSince > 1000;
-  }, null, { timeout: 45_000, polling: 200 });
-  await win.waitForSelector('#am-d-feed li', { timeout: 45_000 });
+  }, null, { timeout: 20_000, polling: 200 });
+  await win.waitForSelector('#am-d-feed li', { timeout: 10_000 });
   await win.waitForTimeout(350);
   await shoot(win, 'center-light.png');
   await app.close();
