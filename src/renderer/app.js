@@ -685,6 +685,46 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.11.0': {
+    items: [
+      {
+        title: 'A workflow travels as one file',
+        body: 'Export writes the graph, what it needs, and its run history into a single file you can hand to anyone. Facts the file cannot prove are labelled as the author\u2019s claims, never dressed up as more.',
+        media: 'assets/wn-2110-export.png',
+        mediaAlt: 'The Export sheet over the workflows grid, showing the step graph and what travels in the file',
+      },
+      {
+        title: 'Install a workflow you were handed',
+        body: 'Open the file or fetch it from a repository URL. Husk recomputes the fingerprint, lists what the workflow expects to find, and a stranger\u2019s workflow stops at "Read this before it runs": nothing runs until you have read it.',
+        media: 'assets/wn-2110-install.png',
+        mediaAlt: 'The Install sheet reading a fetched workflow file: recomputed fingerprint, step graph and receipts',
+      },
+      {
+        title: 'Receipts instead of promises',
+        body: 'A shared workflow carries its record: how many runs, and whether the numbers match the log it shipped with. A receipt that contradicts itself is refused, not annotated.',
+        media: 'assets/wn-2110-receipts.png',
+        mediaAlt: 'The receipts record for an installed workflow: 31 runs, median duration, and the checks against this machine',
+      },
+      {
+        title: 'Background agents on one board',
+        body: 'Every agent across every project, filtered by Live, Running, Needs you and Finished, drawn as a spawn graph. Open one mid-run, stop it without losing its conversation, or delete a finished one with its worktree.',
+        media: 'assets/wn-2110-agents.png',
+        mediaAlt: 'The Agents board drawing a spawn graph, with one agent waiting on a human and its activity feed open',
+      },
+      {
+        title: 'MCP servers install from a URL',
+        body: 'Paste a repository URL and fetch, instead of cloning first. Per-project server choices now survive a restart, and Husk is stricter about what anything may execute, write or replace on your machine.',
+        media: 'assets/wn-2110-mcp.png',
+        mediaAlt: 'Install MCP servers from repo: a GitHub URL fetched and three servers found and listed',
+      },
+      {
+        title: 'Kiro CLI is now supported in Husk',
+        body: 'Kiro now appears beside Claude, Copilot, Codex, Aider and Gemini. Start a Kiro chat from the agent switcher, use Kiro in workflow steps and Autopilot runs, and pass model pins through Kiro\u2019s --model flag.',
+        media: 'assets/wn-2110-kiro.png',
+        mediaAlt: 'The Husk Chat page with Kiro CLI selected in the agent switcher',
+      },
+    ],
+  },
   '2.10.2': {
     items: [
       {
