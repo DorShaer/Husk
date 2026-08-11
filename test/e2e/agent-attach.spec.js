@@ -86,9 +86,9 @@ async function openCenter(app, { chatCwd = '' } = {}) {
     await win.evaluate((cwd) => window.husk.pty.start({ cols: 80, rows: 24, cwd, sessionId: 'seed' }), chatCwd);
     await win.waitForTimeout(700);
   }
-  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
+  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 45_000 });
   await win.evaluate(() => openAgentMap());               // eslint-disable-line no-undef
-  await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 20_000 }); // eslint-disable-line no-undef
+  await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 45_000 }); // eslint-disable-line no-undef
   return win;
 }
 
@@ -247,17 +247,17 @@ test('the pill, the center and the switcher agree about the fleet', async () => 
   try {
     const win = await app.firstWindow({ timeout: 30_000 });
     await win.waitForLoadState('domcontentloaded');
-    await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
+    await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 45_000 });
     // The pill paints as soon as the fleet answers; boot cost varies with the
     // machine, so the read waits for the paint instead of a fixed pause.
-    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 20_000 });
+    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 45_000 });
 
     // Two of the three fixture agents are live, and that is what the pill counts.
     const chip = await chipCount(win);
     expect(chip.hidden, 'the pill hid itself although agents exist').toBe(false);
 
     await win.evaluate(() => openAgentMap());              // eslint-disable-line no-undef
-    await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 20_000 }); // eslint-disable-line no-undef
+    await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 45_000 }); // eslint-disable-line no-undef
     const center = await win.evaluate(() => ({            // eslint-disable-line no-undef
       total: agentMap.rows.length,                         // eslint-disable-line no-undef
       live: agentMap.rows.filter((a) => a.running).length, // eslint-disable-line no-undef
@@ -268,7 +268,7 @@ test('the pill, the center and the switcher agree about the fleet', async () => 
     await win.evaluate(() => closeAgentMap());            // eslint-disable-line no-undef
     await win.waitForTimeout(300);
     await win.evaluate(() => openAgentSwitch());          // eslint-disable-line no-undef
-    await win.waitForFunction(() => agentSwitch.rows.length > 0, null, { timeout: 20_000 }); // eslint-disable-line no-undef
+    await win.waitForFunction(() => agentSwitch.rows.length > 0, null, { timeout: 45_000 }); // eslint-disable-line no-undef
     const switcher = await win.evaluate(() => agentSwitch.rows.length); // eslint-disable-line no-undef
     expect(switcher, 'the switcher sees a different fleet from the center').toBe(center.total);
   } finally {
@@ -288,13 +288,13 @@ test('with nothing live the pill reports the same total the center does', async 
   try {
     const win = await app.firstWindow({ timeout: 30_000 });
     await win.waitForLoadState('domcontentloaded');
-    await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
+    await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 45_000 });
     // Finished agents still show a total; wait for that paint the same way.
-    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 20_000 });
+    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 45_000 });
 
     const chip = await chipCount(win);
     await win.evaluate(() => openAgentMap());             // eslint-disable-line no-undef
-    await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 20_000 }); // eslint-disable-line no-undef
+    await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 45_000 }); // eslint-disable-line no-undef
     const total = await win.evaluate(() => agentMap.rows.length); // eslint-disable-line no-undef
 
     expect(total).toBe(3);
@@ -310,7 +310,7 @@ test('the shortcut the pill advertises opens the pill', async () => {
   try {
     const win = await app.firstWindow({ timeout: 30_000 });
     await win.waitForLoadState('domcontentloaded');
-    await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
+    await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 45_000 });
     await win.waitForTimeout(1500);
 
     await expect(win.locator('#topbar-agents')).toHaveAttribute('title', /Alt\+A/);

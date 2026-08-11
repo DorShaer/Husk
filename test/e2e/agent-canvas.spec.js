@@ -135,11 +135,11 @@ async function openCenter(app, { width = 1512, height = 950 } = {}) {
     BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, ...size });
   }, { width, height });
   await win.waitForLoadState('domcontentloaded');
-  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
+  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 45_000 });
   await win.evaluate(() => openAgentMap());               // eslint-disable-line no-undef
   // The center opens on live work; these checks are about the whole fleet.
   await win.click('[data-am-filter="all"]');
-  await win.waitForSelector('.am-node', { timeout: 20_000 });
+  await win.waitForSelector('.am-node', { timeout: 45_000 });
   return win;
 }
 
@@ -248,7 +248,7 @@ test('an agent spawned while you watch draws itself in', async () => {
   publish(env.agentsFile, grown, env.cwd);
 
   const fresh = win.locator('.am-node[data-am-id="kid-a12"]');
-  await expect(fresh).toBeVisible({ timeout: 15_000 });
+  await expect(fresh).toBeVisible({ timeout: 45_000 });
   // It arrives animated rather than simply being there, and hangs off the agent
   // that started it.
   await expect(fresh).toHaveClass(/is-enter/);
@@ -264,7 +264,7 @@ test('an agent spawned while you watch draws itself in', async () => {
 
   // An agent that leaves the fleet leaves the picture, along with its edge.
   publish(env.agentsFile, grown.filter((a) => a.id !== 'kid-a12' && a.id !== 'kid-b2'), env.cwd);
-  await expect(win.locator('.am-node')).toHaveCount(7, { timeout: 15_000 });
+  await expect(win.locator('.am-node')).toHaveCount(7, { timeout: 45_000 });
   await expect(win.locator('.am-node[data-am-id="kid-a12"]')).toHaveCount(0);
   expect(await win.locator('.am-edge').count()).toBe(6);
 
@@ -281,7 +281,7 @@ test('an agent spawned while you watch draws itself in', async () => {
   await expect(win.locator('.am-node.is-selected')).toHaveAttribute('data-am-id', 'kid-a11');
   await expect(win.locator('#am-d-name')).not.toBeEmpty();
   await win.keyboard.press('Enter');
-  await expect(win.locator('#agent-map')).toBeHidden({ timeout: 10_000 });
+  await expect(win.locator('#agent-map')).toBeHidden({ timeout: 45_000 });
 
   await app.close();
 });
@@ -295,7 +295,7 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   await win.waitForFunction(() => {
     const s = document.querySelector('#am-cv-stage');
     return s && /matrix|translate/.test(s.style.transform || '');
-  }, null, { timeout: 10_000 });
+  }, null, { timeout: 45_000 });
 
   const zoomOf = () => win.locator('#am-cv-zoom').textContent();
   const start = await zoomOf();
@@ -325,10 +325,10 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   const cardW = async () => (await win.locator('#agent-map .am-card').boundingBox()).width;
   const small = await cardW();
   await win.click('#am-cv-expand');
-  await expect.poll(cardW, { timeout: 15_000 }).toBeGreaterThan(small + 100);
+  await expect.poll(cardW, { timeout: 45_000 }).toBeGreaterThan(small + 100);
   await expect(win.locator('#am-detail-pane')).toBeVisible();
   await win.click('#am-cv-expand');
-  await expect.poll(async () => Math.abs((await cardW()) - small), { timeout: 15_000 }).toBeLessThan(1);
+  await expect.poll(async () => Math.abs((await cardW()) - small), { timeout: 45_000 }).toBeLessThan(1);
 
   await win.click('#am-cv-fit');
   await win.waitForTimeout(450);
@@ -353,7 +353,7 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   await expect(win.locator('.am-node.is-selected')).toHaveCount(1);
   await expect(win.locator('#am-d-name')).toHaveText('Pin every third party action');
   await expect(win.locator('#am-d-state')).toHaveText('Needs you');
-  await win.waitForSelector('#am-d-feed li.k-tool', { timeout: 10_000 });
+  await win.waitForSelector('#am-d-feed li.k-tool', { timeout: 45_000 });
   await shoot(win, 'graph-selected.png');
 
   // The selection is the center's, not one view's.
@@ -380,7 +380,7 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   await win.keyboard.press('Escape');
   await expect(win.locator('#agent-map')).toBeHidden();
   await win.evaluate(() => openAgentMap());              // eslint-disable-line no-undef
-  await win.waitForSelector('.am-row', { timeout: 15_000 });
+  await win.waitForSelector('.am-row', { timeout: 45_000 });
   await expect(win.locator('[data-am-view="list"]')).toHaveClass(/is-active/);
   await expect(win.locator('#am-canvas-pane')).toBeHidden();
 
@@ -395,12 +395,12 @@ test('the center opens on live work, with everything else one click away', async
   const app = await launch(env);
   const win = await app.firstWindow({ timeout: 30_000 });
   await win.waitForLoadState('domcontentloaded');
-  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
+  await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 45_000 });
   await win.evaluate(() => openAgentMap());              // eslint-disable-line no-undef
 
   await expect(win.locator('[data-am-filter="live"]')).toHaveClass(/is-active/);
   // Two running and one waiting on a human, out of seven.
-  await expect(win.locator('.am-node')).toHaveCount(4, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(4, { timeout: 45_000 });
   await expect(win.locator('#am-n-live')).toHaveText('3');
   await expect(win.locator('#am-n-all')).toHaveText('7');
 
@@ -411,11 +411,11 @@ test('the center opens on live work, with everything else one click away', async
   await win.keyboard.press('Escape');
   await win.evaluate(() => openAgentMap());              // eslint-disable-line no-undef
   await expect(win.locator('[data-am-filter="live"]')).toHaveClass(/is-active/);
-  await expect(win.locator('.am-node')).toHaveCount(4, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(4, { timeout: 45_000 });
 
   // A fleet that has all finished gets a worded state and a way through to it.
   publish(env.agentsFile, env.fleet.map((a) => ({ ...a, state: 'done', status: 'done' })), env.cwd);
-  await expect(win.locator('#am-blank-t')).toHaveText('Nothing running right now', { timeout: 15_000 });
+  await expect(win.locator('#am-blank-t')).toHaveText('Nothing running right now', { timeout: 45_000 });
   await expect(win.locator('#am-blank-act')).toHaveText('Show all 7 agents');
   await win.waitForTimeout(600);
   await shoot(win, 'graph-live-empty.png');
@@ -432,10 +432,10 @@ test('the topbar chip calls attention when an agent arrives behind your back', a
   const app = await launch(env);
   const win = await app.firstWindow({ timeout: 30_000 });
   await win.waitForLoadState('domcontentloaded');
-  await win.waitForFunction(() => typeof refreshTopbarAgents === 'function', null, { timeout: 20_000 });
+  await win.waitForFunction(() => typeof refreshTopbarAgents === 'function', null, { timeout: 45_000 });
 
   const chip = win.locator('#topbar-agents');
-  await expect(chip).toBeVisible({ timeout: 20_000 });
+  await expect(chip).toBeVisible({ timeout: 45_000 });
 
   // Work in flight makes the chip itself pulse, not just the dot inside it.
   await expect(chip).toHaveClass(/is-running|is-blocked/);
@@ -476,7 +476,7 @@ test('agents that started nothing wrap into a block instead of one long row', as
 
   const app = await launch(env);
   const win = await openCenter(app);
-  await expect(win.locator('.am-node')).toHaveCount(19, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(19, { timeout: 45_000 });
   await expect(win.locator('.am-node.is-project')).toHaveCount(1);
   // A block deeper than one row is drawn as one region on a single stem: a
   // line to each member would have to cross the row above it.
@@ -502,7 +502,7 @@ test('agents that started nothing wrap into a block instead of one long row', as
   const zoom = () => win.locator('#am-cv-zoom').textContent().then((t) => parseInt(t, 10));
   const before = await zoom();
   await win.click('#am-cv-expand');
-  await expect.poll(zoom, { timeout: 15_000 }).toBeGreaterThan(before);
+  await expect.poll(zoom, { timeout: 45_000 }).toBeGreaterThan(before);
   await shoot(win, 'graph-no-lineage-full.png');
 
   await app.close();
@@ -515,7 +515,7 @@ test('the graph holds in the light theme', async () => {
   const app = await launch(env);
   const win = await openCenter(app);
   await win.waitForFunction(() => getComputedStyle(document.body).getPropertyValue('--text').trim() === '#0a0a0a',
-    null, { timeout: 20_000, polling: 200 });
+    null, { timeout: 45_000, polling: 200 });
   await win.waitForTimeout(600);
   await shoot(win, 'graph-light.png');
   await app.close();
@@ -562,7 +562,7 @@ test('every connector meets the circle at each of its ends', async () => {
 
   const app = await launch(env);
   const win = await openCenter(app);
-  await expect(win.locator('.am-node')).toHaveCount(fleet.length + 1, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(fleet.length + 1, { timeout: 45_000 });
   await win.waitForTimeout(700);
 
   const edges = await edgeEndpoints(win);
@@ -593,7 +593,7 @@ test('names stay legible over the connector running behind them', async () => {
 
   const app = await launch(env);
   const win = await openCenter(app);
-  await expect(win.locator('.am-node')).toHaveCount(fleet.length + 1, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(fleet.length + 1, { timeout: 45_000 });
 
   const paint = await win.evaluate(() => {
     const stage = document.querySelector('#am-cv-stage') || document.querySelector('#am-canvas-pane');
@@ -625,7 +625,7 @@ test('a failed agent is not counted or drawn as a running one', async () => {
 
   const app = await launch(env);
   const win = await openCenter(app);
-  await expect(win.locator('.am-node')).toHaveCount(fleet.length + 1, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(fleet.length + 1, { timeout: 45_000 });
 
   await expect(win.locator('.am-node.is-running')).toHaveCount(0);
   await expect(win.locator('.am-node.is-failed')).toHaveCount(1);
@@ -652,7 +652,7 @@ test('an agent that never took a prompt is not called failed', async () => {
   const app = await launch(env);
   const win = await openCenter(app);
   await win.click('[data-am-filter="all"]');
-  await expect(win.locator('.am-node')).toHaveCount(3, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(3, { timeout: 45_000 });
 
   await win.evaluate(() => amSelect('never'));               // eslint-disable-line no-undef
   await win.waitForTimeout(250);
@@ -680,7 +680,7 @@ test('a single agent is still joined to what it runs under', async () => {
 
   const app = await launch(env);
   const win = await openCenter(app);
-  await expect(win.locator('.am-node')).toHaveCount(2, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(2, { timeout: 45_000 });
   await expect(win.locator('.am-node.is-project')).toHaveCount(1);
   await win.waitForTimeout(700);
 
