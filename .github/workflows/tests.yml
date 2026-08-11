@@ -26,7 +26,10 @@ jobs:
   e2e-smoke:
     name: e2e smoke (electron)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The suite runs one worker and grew past ten minutes when the workflow
+    # ecosystem and agent center landed; twenty keeps headroom without letting
+    # a real hang run all day.
+    timeout-minutes: 20
     needs: unit
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
