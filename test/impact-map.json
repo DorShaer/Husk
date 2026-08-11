@@ -42,7 +42,10 @@
       "specs": [
         "agents-page.spec.js",
         "agent-files.spec.js",
-        "agent-inject-clis.spec.js"
+        "agent-inject-clis.spec.js",
+        "agent-center.spec.js",
+        "agent-canvas.spec.js",
+        "agent-attach.spec.js"
       ],
       "tokens": [
         "ag",
@@ -54,7 +57,9 @@
         "page:agents",
         "ipc:profiles",
         "ipc:repoagents",
-        "ipc:repomcp"
+        "ipc:repomcp",
+        "am",
+        "ipc:bgagents"
       ],
       "paths": [
         "src/lib/agent-file.js",
