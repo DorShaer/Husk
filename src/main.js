@@ -980,6 +980,10 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // first token counts so a flag's bare value is not mistaken for one.
   const isSubcommand = agentArgs.length > 0 && !String(agentArgs[0]).startsWith('-');
 
+  if (agentBaseName(agentExe) === 'kiro-cli' && (!agentArgs.length || String(agentArgs[0]).startsWith('-'))) {
+    agentArgs = ['chat', ...agentArgs];
+  }
+
   // Resolve a bare program name to an absolute path up front (which/where via a
   // login shell if needed) so the spawn does not depend on the child PATH being
   // correct. No-op when already a path or already on env.PATH.
@@ -3006,7 +3010,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
   }
   const agentName = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
     .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
-  const vendorBilled = ['copilot', 'codex', 'aider', 'gemini'].includes(agentName);
+  const vendorBilled = ['copilot', 'codex', 'aider', 'gemini', 'kiro-cli'].includes(agentName);
   const originalGoal = (payload && typeof payload.originalGoal === 'string' && payload.originalGoal.trim())
     ? payload.originalGoal.trim().slice(0, 4096)
     : null;
@@ -4055,7 +4059,7 @@ function safeAgentCommandHead(agentCommand) {
   const exe = tokens[0] || 'claude';
   const base = agentBaseName(exe);
   if (!modelFlagFor(base)) return null;
-  return { exe, base };
+  return { exe, base, args: tokens.slice(1) };
 }
 
 function savedRoutingModels(vendor) {
@@ -4174,6 +4178,48 @@ function runAiderModelProbe(agentCommand) {
   });
 }
 
+function runKiroModelProbe(agentCommand) {
+  return new Promise((resolve) => {
+    const head = safeAgentCommandHead(agentCommand);
+    if (!head) return resolve({ ok: false, output: '', error: 'active agent is not supported for model discovery' });
+    const env = Object.assign(buildAgentEnv(), { NO_COLOR: '1', HUSK_MODEL_PROBE: '1' });
+    const exe = resolveAgentExe(head.exe, env.PATH);
+    const args = [...(head.args || [])];
+    if (!args.length || String(args[0]).startsWith('-')) args.unshift('chat');
+    args.push('--list-models', '--format', 'json');
+    let child;
+    try {
+      child = spawn(exe, args, {
+        cwd: modelProbeCwd(),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    } catch (err) {
+      return resolve({ ok: false, output: '', error: (err && err.message) || String(err) });
+    }
+    let output = '';
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill('SIGKILL'); } catch (_) {}
+      resolve(result);
+    };
+    const collect = (d) => {
+      if (output.length < MODEL_PROBE_OUTPUT_CAP) output += String(d);
+    };
+    const timer = setTimeout(() => {
+      done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list timed out' });
+    }, Math.min(MODEL_PROBE_TIMEOUT_MS, 8000));
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    child.on('error', (err) => done({ ok: false, output, error: (err && err.message) || String(err) }));
+    child.on('close', () => done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list exited with no output' }));
+  });
+}
+
 // What the CLI itself calls a model, taken from the catalog its own /model
 // picker produced. The catalog carries the provider's own wording, so a model
 // Husk has never heard of arrives correctly named the day it ships, where an
@@ -4261,9 +4307,10 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
 
   const probe = vendor === 'aider'
     ? await runAiderModelProbe(rawCommand)
-    : await runSlashModelProbe(rawCommand, vendor);
+    : (vendor === 'kiro-cli' ? await runKiroModelProbe(rawCommand) : await runSlashModelProbe(rawCommand, vendor));
   const probeOutput = probe.output || '';
-  const authBlocked = vendor === 'copilot' && /not logged in to select a model|use \/login to authenticate/i.test(probeOutput);
+  const authBlocked = (vendor === 'copilot' && /not logged in to select a model|use \/login to authenticate/i.test(probeOutput))
+    || (vendor === 'kiro-cli' && /not logged in|opening browser|kiro-cli login/i.test(probeOutput));
   const partialCopilotCatalog = vendor === 'copilot' && !/Model\b[\s\S]{0,80}\bReasoning/i.test(probeOutput);
   const liveModels = (authBlocked || partialCopilotCatalog) ? [] : parseModelCatalog(probeOutput, vendor);
   const savedModels = savedRoutingModels(vendor);
@@ -4271,12 +4318,12 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
   const models = uniqueModels([...liveModels, ...fallbackModels, ...savedModels]);
   const value = Object.assign(base, {
     models,
-    source: liveModels.length ? (vendor === 'aider' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
+    source: liveModels.length ? (vendor === 'aider' || vendor === 'kiro-cli' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
     sourceLabel: liveModels.length
-      ? (vendor === 'aider' ? 'Read from aider --list-models' : 'Read from /model')
+      ? (vendor === 'aider' ? 'Read from aider --list-models' : (vendor === 'kiro-cli' ? 'Read from kiro-cli chat --list-models' : 'Read from /model'))
       : (fallbackModels.length ? 'Known provider catalog' : (savedModels.length ? 'Saved selections' : 'No models discovered')),
     error: (liveModels.length || fallbackModels.length) ? '' : (authBlocked
-      ? 'Copilot requires login before it will list models.'
+      ? (vendor === 'kiro-cli' ? 'Kiro requires login before it will list models.' : 'Copilot requires login before it will list models.')
       : (partialCopilotCatalog ? 'Copilot model picker did not finish loading. Refresh models to retry.' : ((probe && probe.error) || 'No models were found in the provider output.'))),
   });
   modelCatalogCache.set(cacheKey, { cachedAt: Date.now(), value });
@@ -4341,6 +4388,10 @@ const KNOWN_AGENTS = [
     id: 'gemini', label: 'Gemini CLI', command: 'gemini',
     install: { tool: 'npm', args: ['install', '-g', '@google/gemini-cli'] },
     docs: 'https://github.com/google-gemini/gemini-cli',
+  },
+  {
+    id: 'kiro-cli', label: 'Kiro CLI', command: 'kiro-cli',
+    docs: 'https://kiro.dev',
   },
 ];
 
@@ -5132,7 +5183,7 @@ function recordWorkflowRun(run, workflow) {
         // than inferred later from a duration near the timeout.
         timedOut: st.timedOut === true,
         // The vendor's own token report for this step, kept verbatim. Only
-        // claude is run with stream-json, so this is absent for the other four
+        // claude is run with stream-json, so this is absent for other agents
         // and the receipt says so.
         usage: st.usage || null,
         entries,
@@ -5325,7 +5376,7 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
     let settled = false;
     const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
 
-    const child = require('child_process').spawn(cmd, ['-p', prompt], {
+    const child = require('child_process').spawn(cmd, AgentOneShot.oneShotArgs(cmd, prompt), {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: buildAgentEnv(),
     });
@@ -6773,14 +6824,13 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   }
 
   let args;
+  const modelFlag = step.model ? modelFlagFor(cmd) : null;
+  const modelArgs = (modelFlag && step.model) ? [modelFlag, String(step.model)] : [];
   if (cmd === 'claude') {
     args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
+    if (modelArgs.length) args = [...args, ...modelArgs];
   } else {
-    args = AgentOneShot.oneShotArgs(cmd, `${wfSystem}\n\n${prompt}`, { untrusted: run.untrusted === true });
-  }
-  if (step.model) {
-    const flag = modelFlagFor(cmd);
-    if (flag) args = [...args, flag, String(step.model)];
+    args = AgentOneShot.oneShotArgs(cmd, `${wfSystem}\n\n${prompt}`, { untrusted: run.untrusted === true, modelArgs });
   }
 
   let resultText = '';
@@ -7658,11 +7708,12 @@ ipcMain.handle('repoMcp:build', async (_e, payload = {}) => {
 //   copilot  → adapter.add() writes ~/.copilot/mcp-config.json
 //   codex    → snippet only (TOML), no write yet
 //   aider    → snippet only (CLI --mcp flag), no write yet
+//   kiro-cli → snippet only (kiro-cli mcp add), no write yet
 //
 // Per-target results are independent. A failure in one does not block
 // the others. The renderer paints a per-target status pill from the
 // returned `results` map.
-const SNIPPET_TARGETS = new Set(['codex', 'aider']);
+const SNIPPET_TARGETS = new Set(['codex', 'aider', 'kiro-cli']);
 const WRITE_TARGETS = new Set(['claude', 'copilot', 'gemini']);
 const KNOWN_TARGETS = new Set([...SNIPPET_TARGETS, ...WRITE_TARGETS]);
 
@@ -7690,7 +7741,7 @@ ipcMain.handle('repoMcp:install', (_e, payload = {}) => {
     if (SNIPPET_TARGETS.has(target)) {
       const snippet = target === 'codex'
         ? RepoMcp.renderCodexSnippet(serverId, spec)
-        : RepoMcp.renderAiderSnippet(serverId, spec);
+        : (target === 'kiro-cli' ? RepoMcp.renderKiroSnippet(serverId, spec) : RepoMcp.renderAiderSnippet(serverId, spec));
       results[target] = { status: 'snippet', snippet };
       continue;
     }

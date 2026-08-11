@@ -631,7 +631,7 @@ test('the step agent picker never offers a value that means no agent', () => {
 
 test('the agent resolver hardcodes no vendor name', () => {
   const body = functionBody(APP_SOURCE, 'wfDefaultAgentCommand');
-  for (const vendor of ['claude', 'copilot', 'codex', 'aider', 'gemini']) {
+  for (const vendor of ['claude', 'copilot', 'codex', 'aider', 'gemini', 'kiro-cli']) {
     assert.ok(!body.includes(`'${vendor}'`), `wfDefaultAgentCommand names ${vendor} directly`);
   }
 });

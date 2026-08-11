@@ -6,6 +6,7 @@ const MODEL_FLAGS = Object.freeze({
   codex: '--model',
   aider: '--model',
   gemini: '-m',
+  'kiro-cli': '--model',
 });
 
 const PROVIDER_LABELS = Object.freeze({
@@ -14,6 +15,7 @@ const PROVIDER_LABELS = Object.freeze({
   codex: 'OpenAI Codex',
   aider: 'Aider',
   gemini: 'Gemini',
+  'kiro-cli': 'Kiro CLI',
 });
 
 const FALLBACK_MODEL_CATALOGS = Object.freeze({
@@ -70,6 +72,7 @@ const FALLBACK_MODEL_CATALOGS = Object.freeze({
     ['r1', 'DeepSeek R1 (aider alias)'],
     ['deepseek', 'DeepSeek Chat (aider alias)'],
   ],
+  'kiro-cli': [],
 });
 
 function modelFlagFor(vendor) {

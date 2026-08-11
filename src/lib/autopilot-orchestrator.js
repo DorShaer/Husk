@@ -6,7 +6,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { oneShotArgs } = require('./agent-oneshot');
+const { agentBaseName, oneShotArgs } = require('./agent-oneshot');
 const { classifyTier, normalizeTier } = require('./model-routing');
 
 const PLAN_TIMEOUT_MS = 120000;
@@ -60,7 +60,13 @@ const TOKEN_STOPWORDS = new Set([
 // Per-CLI one-shot forms live in agent-oneshot.js so the planner and the
 // workflow runner can never drift apart.
 function plannerArgs(baseCmd, prompt, prefixArgs = []) {
-  return [...prefixArgs, ...oneShotArgs(baseCmd, prompt)];
+  const shot = oneShotArgs(baseCmd, prompt);
+  if (agentBaseName(baseCmd) === 'kiro-cli'
+      && prefixArgs[0] === 'chat'
+      && shot[0] === 'chat') {
+    return [...prefixArgs, ...shot.slice(1)];
+  }
+  return [...prefixArgs, ...shot];
 }
 
 function buildPlanPrompt(goal, maxAgents, repoSnapshot = '', planningHint = '') {

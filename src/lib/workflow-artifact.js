@@ -23,7 +23,8 @@
 //      env, no url, no headers. The installer's "add server" affordance opens
 //      the empty MCP form and never prefills it.
 //
-//   2. agentCommand is a bare basename from a five-entry allowlist, always.
+//   2. agentCommand is a bare basename from the supported-agent allowlist,
+//      always.
 //      The value must already equal its own normalised basename, so anything
 //      carrying a separator, an extension or a capital letter is refused
 //      rather than rewritten.
@@ -912,8 +913,8 @@ function validateRequires(requires, nodes, idMap) {
 
   const agentCommands = get(requires, 'agentCommands');
   if (!Array.isArray(agentCommands)) return refuse('not-artifact', 'requires.agentCommands must be an array', preview(agentCommands));
-  if (agentCommands.length < 1 || agentCommands.length > 5) {
-    return refuse('bad-agent', 'requires.agentCommands must name between one and five agents', `length ${agentCommands.length}`);
+  if (agentCommands.length < 1 || agentCommands.length > ALLOWED_AGENT_COMMANDS.size) {
+    return refuse('bad-agent', `requires.agentCommands must name between one and ${ALLOWED_AGENT_COMMANDS.size} agents`, `length ${agentCommands.length}`);
   }
   const declaredAgents = new Set();
   const validAgents = new Array(agentCommands.length);

@@ -27,6 +27,10 @@ test('aider takes --message and never blocks on confirmations', () => {
   assert.deepEqual(oneShotArgs('aider', 'plan'), ['--message', 'plan', '--yes-always']);
 });
 
+test('kiro takes chat --no-interactive with the prompt as positional input', () => {
+  assert.deepEqual(oneShotArgs('kiro-cli', 'plan'), ['chat', '--no-interactive', 'plan']);
+});
+
 test('unknown CLIs fall back to -p', () => {
   assert.deepEqual(oneShotArgs('somefuturecli', 'x'), ['-p', 'x']);
 });
@@ -47,6 +51,10 @@ test('model args are preserved before each CLI prompt form', () => {
   assert.deepEqual(
     oneShotArgs('aider', 'x', { modelArgs: ['--model', 'opus'] }),
     ['--model', 'opus', '--message', 'x', '--yes-always'],
+  );
+  assert.deepEqual(
+    oneShotArgs('kiro-cli', 'x', { modelArgs: ['--model', 'claude-sonnet-4.6'] }),
+    ['chat', '--model', 'claude-sonnet-4.6', '--no-interactive', 'x'],
   );
 });
 

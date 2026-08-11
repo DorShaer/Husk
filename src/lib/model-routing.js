@@ -18,6 +18,7 @@ const DEFAULT_VENDOR_MODELS = Object.freeze({
   gemini:  { flag: '-m', cheap: null, smart: null },
   codex:   { flag: '--model', cheap: null, smart: null },
   aider:   { flag: '--model', cheap: null, smart: null },
+  'kiro-cli': { flag: '--model', cheap: null, smart: null },
 });
 
 // Return the argv fragment that selects `tier`'s model for this CLI, or []

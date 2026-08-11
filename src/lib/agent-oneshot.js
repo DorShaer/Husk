@@ -8,6 +8,7 @@
 //   codex    exec --skip-git-repo-check <prompt>
 //   aider    --message <prompt> --yes-always   (one message, no confirms)
 //   gemini   -p <prompt>
+//   kiro-cli chat --no-interactive <prompt>
 // Unknown CLIs get -p, the most common convention among agent CLIs.
 
 function agentBaseName(agentCommand) {
@@ -35,6 +36,9 @@ function oneShotArgs(agentCommand, prompt, opts = {}) {
     return untrusted
       ? [...model, '--message', prompt]
       : [...model, '--message', prompt, '--yes-always'];
+  }
+  if (base === 'kiro-cli') {
+    return ['chat', ...model, '--no-interactive', prompt];
   }
   return [...model, '-p', prompt];
 }

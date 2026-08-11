@@ -235,6 +235,17 @@ function renderAiderSnippet(serverId, spec) {
   return `--mcp '${JSON.stringify(obj)}'`;
 }
 
+// renderKiroSnippet produces the authenticated Kiro CLI command that adds a
+// stdio MCP server. Husk does not write Kiro's config directly because Kiro's
+// CLI owns the per-account/global/workspace scopes and login-gated storage.
+function renderKiroSnippet(serverId, spec) {
+  if (!serverId || !spec) return '';
+  const parts = ['kiro-cli', 'mcp', 'add', '--scope', 'global', '--name', serverId, '--command', spec.command];
+  for (const arg of spec.args || []) parts.push('--args', arg);
+  for (const [key, value] of Object.entries(spec.env || {})) parts.push('--env', `${key}=${value}`);
+  return parts.map(shellQuote).join(' ');
+}
+
 function tomlString(s) {
   const v = String(s == null ? '' : s);
   // Escape backslashes and double quotes, escape control chars by
@@ -258,6 +269,12 @@ function tomlBareKey(k) {
   return tomlString(k);
 }
 
+function shellQuote(value) {
+  const s = String(value == null ? '' : value);
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 module.exports = {
   SERVERS_SUBDIR,
   MAX_SERVERS_SHOWN,
@@ -267,4 +284,5 @@ module.exports = {
   buildServerSpec,
   renderCodexSnippet,
   renderAiderSnippet,
+  renderKiroSnippet,
 };

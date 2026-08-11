@@ -66,7 +66,7 @@ test('agentKey: returns claude as default', () => {
 });
 
 test('agentKey: each known agent', () => {
-  for (const name of ['claude', 'copilot', 'codex', 'aider', 'gemini']) {
+  for (const name of ['claude', 'copilot', 'codex', 'aider', 'gemini', 'kiro-cli']) {
     assert.equal(agentKey(name), name);
   }
 });

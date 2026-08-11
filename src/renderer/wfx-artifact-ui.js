@@ -57,6 +57,7 @@
     codex: Object.freeze({ in: 0, out: 0 }),
     aider: Object.freeze({ in: 0, out: 0 }),
     gemini: Object.freeze({ in: 0, out: 0 }),
+    'kiro-cli': Object.freeze({ in: 0, out: 0 }),
   });
 
   // Keep token-cache pricing aligned with autonomy/budget.js.

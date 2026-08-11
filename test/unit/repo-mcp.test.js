@@ -17,6 +17,7 @@ const {
   buildServerSpec,
   renderCodexSnippet,
   renderAiderSnippet,
+  renderKiroSnippet,
 } = require('../../src/lib/repo-mcp');
 
 let tmp;
@@ -328,6 +329,18 @@ test('renderAiderSnippet: includes env object when env is non-empty', () => {
   const m = out.match(/'(\{.*\})'$/);
   const obj = JSON.parse(m[1]);
   assert.equal(obj.s.env.TOKEN, 'abc');
+});
+
+test('renderKiroSnippet: emits a kiro-cli mcp add command with repeated args and env', () => {
+  const out = renderKiroSnippet('my-server', {
+    command: 'node',
+    args: ['/abs/path.js', '--flag with space'],
+    env: { TOKEN: 'abc' },
+  });
+  assert.match(out, /^kiro-cli mcp add --scope global --name my-server --command node/);
+  assert.match(out, /--args \/abs\/path\.js/);
+  assert.match(out, /--args '--flag with space'/);
+  assert.match(out, /--env TOKEN=abc/);
 });
 
 // ─── Anti-criteria sanity checks ───────────────────────────────────────────

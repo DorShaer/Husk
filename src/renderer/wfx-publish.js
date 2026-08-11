@@ -351,7 +351,7 @@
 
   // ─── reading the workflow ─────────────────────────────────────────────────
 
-  const AGENT_NAMES = ['claude', 'copilot', 'codex', 'aider', 'gemini'];
+  const AGENT_NAMES = ['claude', 'copilot', 'codex', 'aider', 'gemini', 'kiro-cli'];
 
   // The same reduction the import validator and the artifact builder apply, for
   // display only. A step whose command is a path is not something this sheet
