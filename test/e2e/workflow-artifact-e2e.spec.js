@@ -58,8 +58,12 @@ function boot() {
   return { homeDir, binDir, cfgDir, proj };
 }
 
+// A test that fails mid-flight must not leave its app running: on a starved
+// CI runner one leaked window's animations and polls slow every later test
+// into their own timeouts. Every launch is recorded and swept after each test.
+const launched = [];
 function launch(env) {
-  return electron.launch({
+  const app = electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
     env: {
@@ -70,7 +74,16 @@ function launch(env) {
     },
     timeout: 30_000,
   });
+  launched.push(app);
+  return app;
 }
+test.afterEach(async () => {
+  for (const p of launched.splice(0)) {
+    const app = await Promise.resolve(p).catch(() => null);
+    if (app) await app.close().catch(() => {});
+  }
+});
+
 
 test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence', async () => {
   test.setTimeout(180000);

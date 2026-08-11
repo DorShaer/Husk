@@ -95,12 +95,16 @@ function makeHome({ theme = 'midnight' } = {}) {
   return { homeDir, agentsFile, cwd, fleet };
 }
 
+// A test that fails mid-flight must not leave its app running: on a starved
+// CI runner one leaked window's animations and polls slow every later test
+// into their own timeouts. Every launch is recorded and swept after each test.
+const launched = [];
 function launch(env) {
   const fixtureBin = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-fake-bin-'));
   const shim = path.join(fixtureBin, 'claude');
   fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.join(__dirname, 'fixtures', 'fake-claude-agents.js')}" "$@"\n`);
   fs.chmodSync(shim, 0o755);
-  return electron.launch({
+  const app = electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
     env: {
@@ -114,7 +118,16 @@ function launch(env) {
     },
     timeout: 30_000,
   });
+  launched.push(app);
+  return app;
 }
+
+test.afterEach(async () => {
+  for (const p of launched.splice(0)) {
+    const app = await Promise.resolve(p).catch(() => null);
+    if (app) await app.close().catch(() => {});
+  }
+});
 
 async function openCenter(app, { width = 1512, height = 950 } = {}) {
   const win = await app.firstWindow({ timeout: 30_000 });
@@ -307,16 +320,15 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   expect(parseInt(await zoomOf(), 10)).toBeLessThan(parseInt(zoomedIn, 10));
 
   // Full screen grows the card toward the window and keeps the detail pane.
+  // Polled rather than paused: the width rides a CSS transition, and a starved
+  // renderer can hold a frame past any fixed wait.
   const cardW = async () => (await win.locator('#agent-map .am-card').boundingBox()).width;
   const small = await cardW();
   await win.click('#am-cv-expand');
-  await win.waitForTimeout(700);
-  const full = await cardW();
-  expect(full).toBeGreaterThan(small + 100);
+  await expect.poll(cardW, { timeout: 15_000 }).toBeGreaterThan(small + 100);
   await expect(win.locator('#am-detail-pane')).toBeVisible();
   await win.click('#am-cv-expand');
-  await win.waitForTimeout(700);
-  expect(await cardW()).toBeCloseTo(small, 0);
+  await expect.poll(async () => Math.abs((await cardW()) - small), { timeout: 15_000 }).toBeLessThan(1);
 
   await win.click('#am-cv-fit');
   await win.waitForTimeout(450);
@@ -485,12 +497,12 @@ test('agents that started nothing wrap into a block instead of one long row', as
   await shoot(win, 'graph-no-lineage.png');
 
   // Full screen spends the extra room on the graph itself rather than on empty
-  // margin, so the framing gets bigger and not merely wider.
+  // margin, so the framing gets bigger and not merely wider. Polled: the refit
+  // waits for the card's own resize to finish, however long the machine takes.
   const zoom = () => win.locator('#am-cv-zoom').textContent().then((t) => parseInt(t, 10));
   const before = await zoom();
   await win.click('#am-cv-expand');
-  await win.waitForTimeout(1000);
-  expect(await zoom()).toBeGreaterThan(before);
+  await expect.poll(zoom, { timeout: 15_000 }).toBeGreaterThan(before);
   await shoot(win, 'graph-no-lineage-full.png');
 
   await app.close();

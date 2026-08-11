@@ -85,12 +85,16 @@ function makeHome({ empty = false } = {}) {
   return { homeDir, agentsFile, husk, dist };
 }
 
+// A test that fails mid-flight must not leave its app running: on a starved
+// CI runner one leaked window's animations and polls slow every later test
+// into their own timeouts. Every launch is recorded and swept after each test.
+const launched = [];
 function launch(env) {
   const fixtureBin = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-fake-bin-'));
   const shim = path.join(fixtureBin, 'claude');
   fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.join(__dirname, 'fixtures', 'fake-claude-agents.js')}" "$@"\n`);
   fs.chmodSync(shim, 0o755);
-  return electron.launch({
+  const app = electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
     env: {
@@ -104,7 +108,16 @@ function launch(env) {
     },
     timeout: 30_000,
   });
+  launched.push(app);
+  return app;
 }
+test.afterEach(async () => {
+  for (const p of launched.splice(0)) {
+    const app = await Promise.resolve(p).catch(() => null);
+    if (app) await app.close().catch(() => {});
+  }
+});
+
 
 async function openCenter(app, { width = 1512, height = 950 } = {}) {
   const win = await app.firstWindow({ timeout: 30_000 });

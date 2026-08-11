@@ -13905,9 +13905,22 @@ $('#am-cv-expand') && $('#am-cv-expand').addEventListener('click', () => {
   btn.classList.toggle('is-on', on);
   btn.title = on ? 'Back to the smaller card' : 'Fill the window';
   btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  // Waits out the card's own resize: the pane's layout size grows across the
-  // transition, and framing partway through frames the size it just left.
-  setTimeout(() => { amPaint(true); amFit(true); }, 300);
+  // Reframe when the card's resize has actually finished: a starved main
+  // thread can hold the width transition past any fixed delay, and a refit
+  // that fires mid-resize frames the size the card just left. transitionend
+  // reports the real moment; the timer only covers reduced-motion, where no
+  // transition ever fires.
+  let reframed = false;
+  const reframe = () => {
+    if (reframed) return;
+    reframed = true;
+    card.removeEventListener('transitionend', onEnd);
+    amPaint(true);
+    amFit(true);
+  };
+  const onEnd = (e) => { if (e.target === card && (e.propertyName === 'width' || e.propertyName === 'height')) reframe(); };
+  card.addEventListener('transitionend', onEnd);
+  setTimeout(reframe, 700);
 });
 
 $('#am-list') && $('#am-list').addEventListener('click', (e) => {
