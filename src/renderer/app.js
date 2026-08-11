@@ -409,8 +409,6 @@ function createTab(idOverride) {
 // Show one tab, hide the rest, and re-point the active-tab pointers so the
 // shared handlers operate on it.
 function activateTab(id) {
-  // One cover for the whole terminal area, so it must not outlive its tab.
-  agentBootHide();
   const tab = TABS.get(id);
   if (!tab) return;
   // Drop the cached context reading so the next poll shows the newly-focused
@@ -431,10 +429,44 @@ function activateTab(id) {
   Promise.resolve(window.husk.pty.setActive(id))
     .then(() => refreshStats())
     .then(() => refreshStatusline())
-    // The agent count is scoped to the active chat's directory, so it is only
-    // right once the main process knows which chat that is.
     .then(() => refreshTopbarAgents())
     .catch(() => {});
+}
+
+// The tab already showing a session, when there is one.
+//
+// A session is one conversation with one transcript, so opening it twice is not
+// two views of it: it is two readers, and the CLI refuses the second for the
+// same reason a background agent's session cannot be resumed. What the user
+// gets from a second press is either a refusal or a pair of tabs that disagree,
+// and what they wanted was the one they already have.
+//
+// A provisional id is the resolver's guess at which session a fresh chat turned
+// into, and it is revised. Matching on one would focus a tab that turns out to
+// be a different conversation, so only a settled id counts as identity.
+function tabForSession(sessionId) {
+  const id = String(sessionId || '');
+  if (!id) return null;
+  for (const t of TABS.values()) {
+    if (t.agentId === id && !t.agentIdProvisional) return t;
+  }
+  return null;
+}
+
+// Focus rather than open, when the session is already on screen. Returns
+// whether it handled the request, so a caller can go on to open it if not.
+//
+// A tab whose agent has exited still counts. It is the same conversation, it
+// still holds the scrollback the user is looking for, and it carries Restart;
+// opening a second one beside it would leave two tabs claiming one session.
+function focusOpenSession(sessionId) {
+  const tab = tabForSession(sessionId);
+  if (!tab) return false;
+  closeDetail();
+  setPage('chat');
+  activateTab(tab.id);
+  toast('That chat is already open', 'success');
+  return true;
 }
 
 // Wheel forwarding for full-screen agents. A TUI running in the alternate
@@ -1056,6 +1088,18 @@ function resumeRejectedOutput(text) {
     || /No conversation found/i.test(t);
 }
 
+// A different refusal with a different fix. The session exists and is healthy;
+// a background agent is holding it, so the CLI will not open a second reader on
+// the same transcript. The command that opens a session is chosen against the
+// live agent list before it is spawned, so reaching this means the agent
+// claimed the session in the moment between the two, and the answer is the
+// branch the CLI itself names rather than a closed tab.
+function resumeHeldByAgentOutput(text) {
+  const t = stripTerminalControls(text);
+  return /is currently running as a background agent/i.test(t)
+    || (/--fork-session/.test(t) && /background agent/i.test(t));
+}
+
 async function closeRejectedResumeTab(tab) {
   if (!tab || !tab.resumeAttempt || tab.resumeAttempt.failureHandled) return;
   tab.resumeAttempt.failureHandled = true;
@@ -1077,11 +1121,44 @@ async function closeRejectedResumeTab(tab) {
   }
 }
 
+// The session is alive and busy, so the tab closes and the two commands that do
+// work are offered by name. Nothing is retried automatically: attaching joins
+// running work and forking starts a copy, and which of those somebody wants is
+// not a thing to guess on their behalf.
+async function closeHeldResumeTab(tab) {
+  if (!tab || !tab.resumeAttempt || tab.resumeAttempt.failureHandled) return;
+  tab.resumeAttempt.failureHandled = true;
+  tab.restarting = true;
+  tab.writeBuf = '';
+  const d = { id: tab.resumeAttempt.id, project: tab.resumeAttempt.cwd || '', owner: tab.resumeAttempt.agent };
+  const header = tab.resumeAttempt.previousHeader || null;
+  if (header) {
+    if (Object.prototype.hasOwnProperty.call(header, 'chatSub') && $('#chat-sub')) $('#chat-sub').textContent = header.chatSub;
+    if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
+    if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
+  }
+  await closeTab(tab.id);
+  if (typeof toastAction === 'function') {
+    toastAction('An agent is running that session', 'Attach to it',
+      () => resumeSessionInChat(d), 'error');
+  } else {
+    toast('An agent is running that session', 'error');
+  }
+  try { await refreshRecentList(); } catch (err) { console.warn('recent refresh after held resume failed', err); }
+  if (currentPage === 'sessions') {
+    try { await renderSessions(); } catch (err) { console.warn('sessions refresh after held resume failed', err); }
+  }
+}
+
 function captureResumeFailure(tab, data) {
   if (!tab || !tab.resumeAttempt || tab.resumeAttempt.failureHandled) return false;
   const age = Date.now() - (tab.resumeAttempt.startedAt || 0);
   if (age > 20000) { tab.resumeAttempt = null; return false; }
   tab.resumeAttempt.tail = ((tab.resumeAttempt.tail || '') + String(data || '')).slice(-4096);
+  if (resumeHeldByAgentOutput(tab.resumeAttempt.tail)) {
+    closeHeldResumeTab(tab).catch((err) => console.warn('closing held resume tab failed', err));
+    return true;
+  }
   if (!resumeRejectedOutput(tab.resumeAttempt.tail)) return false;
   closeRejectedResumeTab(tab).catch((err) => console.warn('closing rejected resume tab failed', err));
   return true;
@@ -1213,6 +1290,9 @@ async function openNewChatTab(opts = {}) {
     tab.resumeAttempt = {
       agent: String(opts.resumeAttempt.agent || ''),
       id: String(opts.resumeAttempt.id || ''),
+      // Carried so a refusal can rebuild the request it came from and offer the
+      // command that would have worked, in the directory the session lives in.
+      cwd: String(opts.resumeAttempt.cwd || ''),
       previousHeader: opts.resumeAttempt.previousHeader || null,
       startedAt: Date.now(),
       tail: '',
@@ -1225,7 +1305,7 @@ async function openNewChatTab(opts = {}) {
   chatHasInput = false;
   resetSpeechState();
   clearSessionContext();
-  await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id, env: opts.env || null });
+  await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   tab.term.focus();
   maybeShowTrustBanner();
   // skipWelcome: the caller is about to write into this chat, so painting the
@@ -8316,6 +8396,18 @@ async function openSessionDetail(d) {
   if (d.progress) meta.push(['PRD progress', d.progress]);
   if (d.prdpath) meta.push(['PRD', d.prdpath]);
 
+  // A session an agent is holding cannot be resumed, so it is not offered. The
+  // two things that do work are named for what they are: joining the work that
+  // is running, and taking a copy that stops following it.
+  //
+  // held, not attachable. An agent that has finished its turn still owns the
+  // transcript until its process exits, and offering Resume there hands over a
+  // command the CLI refuses.
+  const holder = sessionAgents.bySession.get(d.id);
+  const busy = !!(holder && holder.held);
+  const owned = { ...d, owner: d.owner || sessionsAgent };
+  if (busy) meta.push(['Held by', `agent ${agentShortId(holder)} · ${agentStateWord(holder)}`]);
+
   showDetail({
     eyebrow: `${sessionsAgent} session`,
     title: d.title,
@@ -8323,7 +8415,10 @@ async function openSessionDetail(d) {
     meta,
     body,
     actions: [
-      { label: '↻ Resume this session', kind: 'primary', onClick: () => resumeSessionInChat({ ...d, owner: d.owner || sessionsAgent }) },
+      busy
+        ? { label: '⇥ Attach to the running agent', kind: 'primary', onClick: () => resumeSessionInChat(owned) }
+        : { label: '↻ Resume this session', kind: 'primary', onClick: () => resumeSessionInChat(owned) },
+      busy ? { label: 'Open a copy', kind: 'ghost', onClick: () => resumeSessionInChat(owned, { fork: true }) } : null,
       d.prdpath ? { label: 'Open PRD', kind: 'ghost', onClick: () => window.husk.fs.open(d.prdpath) } : null,
       { label: 'Open files', kind: 'ghost', onClick: () => window.husk.fs.open(d.path) },
     ].filter(Boolean),
@@ -8340,22 +8435,41 @@ function resumeCommandLabel(agent, id) {
   return null;
 }
 
-async function resumeSessionInChat(d) {
+async function resumeSessionInChat(d, opts) {
+  const options = opts || {};
+  // Already open means already answered, and it is answered before the planner
+  // is asked: the round trip that decides between attaching and resuming is
+  // work nobody needs when the conversation is one tab away.
+  //
+  // A copy is the exception. Somebody asking for one has looked at the open
+  // chat and wants a second, divergent line from it, so the tab they are
+  // looking at is not what they are asking for.
+  if (!options.fork && focusOpenSession(d.id)) return;
   // The session's OWNING agent decides the resume command. Every list
   // entry carries its owner; the active config is only a last resort
   // (an owner-less entry from an older render).
   const agent = (d.owner
     || (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude')).trim().split(/\s+/)[0].toLowerCase();
   let cmd = null;
+  let plan = null;
   try {
     const r = await window.husk.sessions.resumeCommand({ agent, id: d.id, cwd: d.project || '' });
-    if (r && r.ok && r.command) cmd = r.command;
+    if (r && r.ok && r.command) { cmd = r.command; plan = r; }
     else if (r && r.error) { toast(r.error, 'error'); return; }
   } catch (_) { /* fall through to the unsupported message */ }
   if (!cmd) {
     toast(`Resume is not supported for ${agent} sessions`, 'error');
     return;
   }
+  // A session something is still holding does not open by resuming, because the
+  // CLI will not hand one transcript to a second reader. A background agent is
+  // joined by attaching to it; a chat open in another window has no id to
+  // attach to, so a copy is the only way in. The fork is offered rather than
+  // taken where attaching is possible: a copy diverges from the moment it is
+  // made, which is a different thing from watching work that is running.
+  const attaching = plan && plan.mode === 'attach' && !options.fork;
+  const forking = !!(options.fork || (plan && plan.mode === 'fork'));
+  if (options.fork && plan && plan.forkCommand) cmd = plan.forkCommand;
   closeDetail();
   setPage('chat');
   const previousHeader = {
@@ -8363,23 +8477,59 @@ async function resumeSessionInChat(d) {
     spAgent: $('#sp-agent') ? $('#sp-agent').textContent : '',
     spSessionId: $('#sp-session-id') ? $('#sp-session-id').textContent : '',
   };
-  const cmdShort = resumeCommandLabel(agent, d.id.slice(0, 8)) || cmd;
-  const cwd = d.project || null;
-  toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
+  const cmdShort = attaching
+    ? `claude attach ${plan.agentId}`
+    : (forking ? `claude --resume ${d.id.slice(0, 8)} --fork-session`
+      : (resumeCommandLabel(agent, d.id.slice(0, 8)) || cmd));
+  // The attach runs where the agent is working, and so does a copy of it; only
+  // a plain resume is free to open in the directory the list row named.
+  const cwd = ((attaching || forking) && plan && plan.cwd) ? plan.cwd : (d.project || null);
+  if (attaching) {
+    toast(`Attaching to ${plan.agentId}, which is running this session`, 'success');
+  } else if (options.fork) {
+    // Asked for, next to an attach that was also on offer.
+    toast(`Opening a copy of ${d.id.slice(0, 8)}…`, 'success');
+  } else if (forking) {
+    // The only way in: a chat open in another window has no id to attach to.
+    toast(`That session is open elsewhere; opening a copy`, 'success');
+  } else {
+    toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
+  }
   setChatSubBase({ tool: cmdShort, dir: cwd || huskHome });
   if ($('#sp-agent')) $('#sp-agent').textContent = cmdShort;
   if ($('#sp-session-id')) $('#sp-session-id').textContent = `${d.id.slice(0, 8)} · ${cwd || huskHome}`;
   // Resume in a fresh tab so the current chat keeps running alongside it.
-  const tab = await openNewChatTab({ command: cmd, cwd, skipContext: true, resumeAttempt: { agent, id: d.id, previousHeader } });
+  const tab = await openNewChatTab({
+    command: cmd,
+    cwd,
+    skipContext: true,
+    // The failure watcher is for a resume. An attach fails its own way and has
+    // no transcript to be missing, so it is not watched for one.
+    resumeAttempt: (attaching || forking) ? null : { agent, id: d.id, cwd: d.project || '', previousHeader },
+  });
+  // The other real answer, offered rather than taken. Attaching shows the work
+  // as it happens; a fork is a copy that stops tracking it.
+  if (attaching && plan.forkCommand && typeof toastAction === 'function') {
+    toastAction('Attached to the running agent', 'Open a copy instead',
+      () => resumeSessionInChat(d, { fork: true }), 'success');
+  }
   // Link the tab to the resumed session so future renames persist, and restore
   // a custom name if this session was renamed before. The default label stays
   // "Chat N" otherwise; the header title stays "Chat".
+  //
+  // A copy is deliberately not linked. It is a new session that starts from
+  // this one's history and diverges immediately, so claiming the parent's id
+  // would name two conversations with one id: the next click on the original
+  // would focus the copy, and a rename of either would follow the other. The
+  // resolver assigns the copy its own id once the CLI has minted one.
   if (tab) {
-    tab.agentId = d.id;
-    try {
-      const res = await window.husk.sessions.resolveLiveTitle({ knownAgentId: d.id });
-      if (res && res.ok && res.custom && res.title) tab.customTitle = res.title;
-    } catch (_) {}
+    if (!forking) {
+      tab.agentId = d.id;
+      try {
+        const res = await window.husk.sessions.resolveLiveTitle({ knownAgentId: d.id });
+        if (res && res.ok && res.custom && res.title) tab.customTitle = res.title;
+      } catch (_) {}
+    }
     renderTabStrip();
   }
   if (term) term.scrollToBottom();
@@ -11768,15 +11918,14 @@ function agentAgeLabel(ms) {
 }
 
 function agentStateClass(a) {
-  if (!a || !a.running) return 'is-done';
-  return a.state === 'blocked' ? 'is-blocked' : 'is-running';
+  return `is-${a ? window.husk.agents.state(a.state, { started: !!a.hasTranscript }) : 'done'}`;
 }
 
 // Only the waiting state is worded urgently; the other two label themselves
 // quietly so one marker in the list carries the thing that needs a human.
 function agentStateWord(a) {
-  if (!a || !a.running) return 'done';
-  return a.state === 'blocked' ? 'needs you' : 'working';
+  const st = a ? window.husk.agents.state(a.state, { started: !!a.hasTranscript }) : 'done';
+  return { blocked: 'needs you', running: 'working', failed: 'failed' }[st] || 'done';
 }
 
 // What the agent is doing right now.
@@ -11818,9 +11967,9 @@ async function openAgentSwitch() {
   input.focus();
   const token = ++agentSwitchLoad;
   let res = null;
-  // No cwd: main scopes to the active chat's directory, which is the one whose
-  // agents the user is asking about.
-  try { res = await window.husk.bgAgents.list({}); } catch (err) { res = { ok: false, error: (err && err.message) || 'could not reach the agent list' }; }
+  // The whole fleet, not just this project's: an agent is reachable from
+  // wherever it was started.
+  try { res = await window.husk.bgAgents.list({ all: true, allProjects: true }); } catch (err) { res = { ok: false, error: (err && err.message) || 'could not reach the agent list' }; }
   // Closed, or reopened while this call was in flight: the later open owns the list.
   if (el.hidden || token !== agentSwitchLoad) return;
   agentSwitch.loading = false;
@@ -11839,16 +11988,44 @@ function closeAgentSwitch() {
 }
 
 // The topbar carries a standing count as the visible way into the switcher. It
-// stands down only when this project has no agents at all, so a finished agent
-// still keeps the entry point on screen.
+// stands down only when there are no agents at all, so a finished agent still
+// keeps the entry point on screen.
+// Ids the pill has already accounted for. A new one means an agent appeared
+// while the user was looking somewhere else, which is the moment worth pointing
+// at. Seeded on the first poll so opening the app is not an arrival.
+let topbarAgentIds = null;
+let topbarAgentFlash = null;
+
+function markTopbarAgentsSeen() {
+  const el = $('#topbar-agents');
+  if (!el) return;
+  el.classList.remove('is-new');
+  if (topbarAgentFlash) { clearTimeout(topbarAgentFlash); topbarAgentFlash = null; }
+}
+
 function paintTopbarAgents(res) {
   const el = $('#topbar-agents');
   if (!el) return;
   const agents = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
   const live = agents.filter((a) => a && a.running);
   const blocked = live.filter((a) => a.state === 'blocked').length;
+  const ids = new Set(agents.map((a) => a && a.id).filter(Boolean));
+  if (topbarAgentIds === null) topbarAgentIds = ids;
+  else {
+    const arrived = [...ids].filter((id) => !topbarAgentIds.has(id));
+    topbarAgentIds = ids;
+    // Only while the center is shut: if it is open the arrival is already on
+    // screen and the pill has nothing to announce.
+    if (arrived.length && $('#agent-map') && $('#agent-map').hidden) {
+      el.classList.add('is-new');
+      if (topbarAgentFlash) clearTimeout(topbarAgentFlash);
+      topbarAgentFlash = setTimeout(() => el.classList.remove('is-new'), 12000);
+    }
+  }
   if (!agents.length) { el.hidden = true; return; }
   el.hidden = false;
+  // Live agents when there are any, otherwise the size of the fleet. Both are
+  // numbers the center repeats, so the pill never advertises its own total.
   const n = live.length || agents.length;
   $('#topbar-agents-count').textContent = String(n);
   $('#topbar-agents-word').textContent = n === 1 ? 'agent' : 'agents';
@@ -11858,15 +12035,15 @@ function paintTopbarAgents(res) {
   el.classList.toggle('is-blocked', !!blocked);
   el.classList.toggle('is-running', !!live.length && !blocked);
   el.classList.toggle('is-idle', !live.length);
-  if (!live.length) el.title = `${n} finished agent${n === 1 ? '' : 's'} in this project (Alt+A)`;
+  if (!live.length) el.title = `${n} finished agent${n === 1 ? '' : 's'} (Alt+A)`;
   else if (blocked) el.title = `${blocked} of ${n} running agent${n === 1 ? '' : 's'} is waiting on you (Alt+A)`;
-  else el.title = `${n} agent${n === 1 ? '' : 's'} running in this project (Alt+A)`;
+  else el.title = `${n} agent${n === 1 ? '' : 's'} running (Alt+A)`;
 }
 
 async function refreshTopbarAgents() {
   if (!$('#topbar-agents')) return;
   let res = null;
-  try { res = await window.husk.bgAgents.list({}); } catch (_) { res = null; }
+  try { res = await window.husk.bgAgents.list({ all: true, allProjects: true }); } catch (_) { res = null; }
   paintTopbarAgents(res);
 }
 
@@ -11976,69 +12153,11 @@ async function openAgentFromSwitch(idx) {
   await openBgAgent(a);
 }
 
-// A running agent belongs to its worker, so it is reached through the tool's own
-// agent view; a finished one resumes normally. Opening lands on that agent list
-// with the row selected by an environment variable, and a return key opens it,
-// sent once the list has painted and only within a bounded wait.
-const AGENT_PICKER_READY = /awaiting input|to collapse|for shortcut/i;
-
-function agentBootShow(name) {
-  const el = $('#agent-boot');
-  if (!el) return;
-  $('#agent-boot-name').textContent = name || '';
-  el.classList.remove('is-leaving');
-  el.hidden = false;
-}
-function agentBootHide() {
-  const el = $('#agent-boot');
-  if (!el || el.hidden) return;
-  el.classList.add('is-leaving');
-  setTimeout(() => { el.hidden = true; el.classList.remove('is-leaving'); }, 140);
-}
-
-function agentTailText(tab) {
-  try {
-    const b = tab.term.buffer.active;
-    let text = '';
-    for (let i = Math.max(0, b.length - 60); i < b.length; i++) {
-      const line = b.getLine(i);
-      if (line) text += line.translateToString(true) + '\n';
-    }
-    return text;
-  } catch (_) { return ''; }
-}
-
-function confirmAgentSelection(tab) {
-  const deadline = Date.now() + 12000;
-  // Poll tightly. The picker is only up for a few frames before the key lands,
-  // and every extra millisecond here is machinery the user would otherwise see.
-  const tick = () => {
-    if (!tab || !tab.term || !TABS.has(tab.id)) { agentBootHide(); return; }
-    if (AGENT_PICKER_READY.test(agentTailText(tab))) {
-      try { window.husk.pty.write('\r', tab.id); } catch (_) {}
-      waitForAgentConversation(tab, deadline);
-      return;
-    }
-    if (Date.now() < deadline) setTimeout(tick, 40);
-    else agentBootHide();
-  };
-  setTimeout(tick, 40);
-}
-
-// Uncover once the picker is off screen, and uncover anyway on the deadline so
-// the cover never outlives the conversation behind it.
-function waitForAgentConversation(tab, deadline) {
-  const tick = () => {
-    if (!tab || !tab.term || !TABS.has(tab.id)) { agentBootHide(); return; }
-    if (!AGENT_PICKER_READY.test(agentTailText(tab))) { agentBootHide(); return; }
-    if (Date.now() < deadline) setTimeout(tick, 40);
-    else agentBootHide();
-  };
-  setTimeout(tick, 40);
-}
-
 async function openBgAgent(a) {
   if (agentOpening) return;                    // the tab takes a round trip to appear, so one press is one tab
+  // Same rule as the session lists: an agent already on screen is focused
+  // rather than opened beside itself.
+  if (focusOpenSession(a && a.sessionId)) return;
   agentOpening = true;
   try {
     let res = null;
@@ -12054,8 +12173,9 @@ async function openBgAgent(a) {
     setPage('chat');
     const tab = await openNewChatTab({
       command: res.command,
-      env: res.env || null,
-      cwd: a.cwd || null,
+      // The transcript's own directory, resolved by main: resuming anywhere
+      // else makes the CLI deny the session exists.
+      cwd: res.cwd || a.cwd || null,
       skipContext: true,
       skipWelcome: true,
     });
@@ -12063,7 +12183,6 @@ async function openBgAgent(a) {
       tab.customTitle = a.name || a.id;
       tab.agentId = a.sessionId || '';
       renderTabStrip();
-      if (res.mode === 'attach') { agentBootShow(a.name || a.id); confirmAgentSelection(tab); }
     }
     toast(`Opened ${a.name || a.id}`, 'success');
   } finally { agentOpening = false; }
@@ -12157,239 +12276,1194 @@ $('#agent-switch-list').addEventListener('mousemove', (e) => {
   paintAgentSwitchSel(false);
 });
 $('#agent-switch').addEventListener('click', (e) => { if (e.target.id === 'agent-switch') closeAgentSwitch(); });
-// ─── Agent map ──────────────────────────────────────────────────────────────
-// A live picture of every agent on this machine. Projects are hubs and their
-// agents orbit them, so the shape of the work is visible before any label is
-// read. Polls while open.
+// ─── Agent command center ───────────────────────────────────────────────────
+// Every background agent on this machine, grouped by what it needs: the ones
+// waiting on a human first, then the ones working, then the finished. A detail
+// pane streams what the selected agent is doing right now. Polls while open and
+// only repaints what changed, so the picture is live without flicker.
 
-const agentMap = { rows: [], selected: null, timer: null, loading: false };
+const agentMap = {
+  rows: [], selected: null, filter: 'live', q: '',
+  timer: null, ticker: null, loading: false, inflight: false,
+  sig: '', view: [], supported: true, error: '',
+  feed: { sessionId: '', entries: [], model: '', busy: false },
+  // Graph view: the camera, the ids already drawn (so only genuinely new agents
+  // animate in), and the live element maps a repaint reconciles against.
+  chats: [],
+  mode: 'canvas', cam: { x: 0, y: 0, k: 1 }, known: new Set(), fitted: false,
+  nodeEls: new Map(), edgeEls: new Map(), drag: null, layout: [],
+};
 
-const AM_POLL_MS = 4000;
+const AM_POLL_MS = 2000;
+const AM_VIEW_KEY = 'husk.agentView';
 
+// The four conditions a reader acts on. A state the CLI does not report as
+// live reads as finished, never as running.
 function amStateOf(a) {
-  if (!a || !a.running) return 'done';
-  return a.state === 'blocked' ? 'blocked' : 'running';
+  if (!a) return 'done';
+  return window.husk.agents.state(a.state, { started: !!a.hasTranscript });
 }
 
-function amElapsed(ms) {
+// Failed agents sit under the finished filter: both are over.
+function amFilterKeyOf(a) {
+  const st = amStateOf(a);
+  return st === 'failed' ? 'done' : st;
+}
+
+// Terse in the list ("46m"), exact in the detail pane ("46m 12s").
+function amElShort(ms) {
   const s = Math.max(0, Math.round((Date.now() - (Number(ms) || Date.now())) / 1000));
   if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+function amElLong(ms) {
+  const s = Math.max(0, Math.round((Date.now() - (Number(ms) || Date.now())) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
 function amProjectName(cwd) {
   const p = String(cwd || '').replace(/[\\/]+$/, '');
-  return p.split(/[\\/]/).pop() || 'elsewhere';
+  return p.split(/[\\/]/).pop() || '';
 }
 
-// Hubs spread across the stage, their agents on a ring around each. Sized from
-// the stage so the drawing fills it. Deterministic: the same set of agents
-// always draws the same picture.
-function amLayout(rows, w, h) {
-  const byProject = new Map();
-  for (const a of rows) {
-    const key = a.cwd || '';
-    if (!byProject.has(key)) byProject.set(key, []);
-    byProject.get(key).push(a);
-  }
-  const hubs = [...byProject.entries()]
-    .sort((x, y) => (y[1].length - x[1].length) || x[0].localeCompare(y[0]));
+function amFmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}k`;
+  return String(v);
+}
 
-  const pad = 78;
-  const iw = Math.max(220, w - pad * 2);
-  const ih = Math.max(200, h - pad * 2);
-  const cx = w / 2;
-  const cy = h / 2;
-  const n = hubs.length;
-  // One hub centres. Two sit on the long axis. More take an ellipse sized to
-  // the stage, so a wide window spreads sideways instead of leaving margins.
-  const spread = (i) => {
-    if (n === 1) return [cx, cy];
-    if (n === 2) return iw > ih ? [cx + (i ? 1 : -1) * iw * 0.27, cy] : [cx, cy + (i ? 1 : -1) * ih * 0.27];
-    const t = (i / n) * Math.PI * 2 - Math.PI / 2;
-    return [cx + Math.cos(t) * iw * 0.38, cy + Math.sin(t) * ih * 0.4];
+// What a row says under its name: the live one-liner if the agent reports one.
+function amRowSub(a) {
+  const st = amStateOf(a);
+  if (st === 'blocked') return a.needs || a.detail || 'Waiting on you';
+  if (st === 'running') return a.detail || a.intent || 'Starting up';
+  if (st === 'failed') return a.detail || a.intent || 'Failed';
+  const epilogue = (a.detail || a.intent || '').trim();
+  return epilogue.toLowerCase() === 'finished' ? '' : epilogue;
+}
+
+// Live is running plus waiting on a human: both are agents still in flight, and
+// that is the set worth opening on.
+function amInFilter(a) {
+  if (agentMap.filter === 'all') return true;
+  if (agentMap.filter === 'live') return window.husk.agents.isLive(a.state);
+  return amFilterKeyOf(a) === agentMap.filter;
+}
+
+function amMatches(a) {
+  if (!amInFilter(a)) return false;
+  const q = agentMap.q;
+  if (!q) return true;
+  return [a.name, a.id, a.detail, a.intent, a.needs, amProjectName(a.cwd)]
+    .some((v) => String(v || '').toLowerCase().includes(q));
+}
+
+const AM_SECTIONS = [
+  { key: 'blocked', label: 'Needs you' },
+  { key: 'running', label: 'Running' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'done', label: 'Finished' },
+];
+
+// Whether more than one project is on screen, which decides if rows carry a
+// project chip. The chip only appears on rows away from the dominant project,
+// so the common case never repeats itself down the list.
+function amMultiProject(rows) {
+  return new Set(rows.map((a) => a.cwd || '')).size > 1;
+}
+
+function amDominantProject(rows) {
+  const counts = new Map();
+  for (const a of rows) counts.set(a.cwd || '', (counts.get(a.cwd || '') || 0) + 1);
+  let best = '';
+  let n = -1;
+  for (const [cwd, c] of counts) if (c > n) { best = cwd; n = c; }
+  return best;
+}
+
+function amPaintCounts() {
+  const by = { all: agentMap.rows.length, blocked: 0, running: 0, failed: 0, done: 0 };
+  for (const a of agentMap.rows) by[amStateOf(a)]++;
+  by.live = by.blocked + by.running;
+  // The Finished chip counts what its filter shows, which includes failures.
+  by.done += by.failed;
+  for (const k of Object.keys(by)) {
+    const el = $(`#am-n-${k}`);
+    if (el) el.textContent = agentMap.rows.length ? String(by[k]) : '';
+  }
+  $$('#am-filters .am-chip').forEach((c) => {
+    const on = c.dataset.amFilter === agentMap.filter;
+    c.classList.toggle('is-active', on);
+    c.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  const sub = $('#am-sub');
+  if (sub) {
+    if (!agentMap.supported) sub.textContent = 'This agent CLI does not report background agents';
+    else if (agentMap.error) sub.textContent = 'Could not reach the agent list';
+    else if (!agentMap.rows.length) sub.textContent = 'Nothing running on this machine';
+    else {
+      const bits = [];
+      if (by.running) bits.push(`<span class="am-sub-live">${by.running} running</span>`);
+      if (by.blocked) bits.push(`<span class="am-sub-needs">${by.blocked} need${by.blocked === 1 ? 's' : ''} you</span>`);
+      if (by.failed) bits.push(`<span class="am-sub-failed">${by.failed} failed</span>`);
+      bits.push(`${by.all} total`);
+      // eslint-disable-next-line no-unsanitized/property -- Numbers and literals only.
+      sub.innerHTML = bits.join(' <span aria-hidden="true">·</span> ');
+    }
+  }
+}
+
+function amBlankState() {
+  if (!agentMap.supported) {
+    return { t: 'No background agents here', m: 'The active CLI does not run agents in the background. Switch to claude to use them.', art: true };
+  }
+  if (agentMap.error) return { t: 'Could not list agents', m: agentMap.error };
+  if (!agentMap.rows.length) return { t: 'No agents yet', m: 'Ask your chat to work on something in the background and it will show up here, live.', art: true };
+  if (agentMap.q) return { t: 'No matches', m: '', q: agentMap.q, act: 'Clear search', art: true };
+  if (agentMap.filter === 'live') {
+    return {
+      t: 'Nothing running right now',
+      m: 'Agents appear here the moment one starts, and the graph grows as they spawn their own.',
+      act: `Show all ${agentMap.rows.length} agents`,
+      art: true,
+    };
+  }
+  const label = { blocked: 'waiting on you', running: 'running', done: 'finished' }[agentMap.filter] || '';
+  return { t: `No agents ${label}`, m: 'They will appear here the moment one is.', act: 'Show all agents', art: true };
+}
+
+function amPaintList() {
+  const list = $('#am-list');
+  const blank = $('#am-blank');
+  const body = $('#agent-map .am-body');
+  if (!list || !blank) return;
+
+  if (agentMap.loading) {
+    blank.hidden = true;
+    if (body) body.classList.remove('is-empty');
+    // eslint-disable-next-line no-unsanitized/property -- Static skeleton markup.
+    list.innerHTML = '<li class="am-skel" role="presentation"><i class="sk-dot"></i><i class="sk-name"></i><i class="sk-sub"></i><i class="sk-meta"></i></li>'.repeat(3);
+    return;
+  }
+
+  const rows = agentMap.rows.filter(amMatches);
+  const showProj = amMultiProject(agentMap.rows);
+  const domProj = showProj ? amDominantProject(agentMap.rows) : '';
+  agentMap.view = [];
+
+  if (!rows.length) {
+    list.innerHTML = '';
+    const b = amBlankState();
+    // An illustration for having nothing; the plain glyph for having a problem.
+    const art = $('#am-blank-art');
+    const icon = $('#am-blank-icon');
+    if (art) art.hidden = !b.art;
+    if (icon) icon.hidden = !!b.art;
+    $('#am-blank-t').textContent = b.t;
+    const msg = $('#am-blank-m');
+    if (b.q) {
+      msg.replaceChildren(
+        document.createTextNode('Nothing matches '),
+        Object.assign(document.createElement('code'), { textContent: b.q }),
+        document.createTextNode('.'),
+      );
+    } else {
+      msg.textContent = b.m;
+    }
+    const act = $('#am-blank-act');
+    if (act) {
+      act.hidden = !b.act;
+      act.textContent = b.act || '';
+      act.onclick = () => {
+        const q = $('#am-search-input');
+        if (q) q.value = '';
+        agentMap.q = '';
+        agentMap.filter = 'all';
+        amPaint();
+        amAutoSelect();
+        amRefit();
+      };
+    }
+    blank.hidden = false;
+    // Nothing to list means nothing to detail: the message owns the full card
+    // instead of sitting beside a dead pane.
+    if (body) body.classList.add('is-empty');
+    amPaintDetail();
+    return;
+  }
+  blank.hidden = true;
+  if (body) body.classList.remove('is-empty');
+
+  const esc = escapeHtml;
+  let html = '';
+  for (const sec of AM_SECTIONS) {
+    const items = rows
+      .filter((a) => amStateOf(a) === sec.key)
+      .sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0));
+    if (!items.length) continue;
+    html += `<li class="am-sect is-${sec.key}" role="presentation">${sec.label} <span class="am-sect-n">${items.length}</span></li>`;
+    for (const a of items) {
+      const st = amStateOf(a);
+      const live = st === 'running' || st === 'blocked';
+      const sub = amRowSub(a);
+      agentMap.view.push(a.id);
+      const proj = showProj && (a.cwd || '') !== domProj && amProjectName(a.cwd)
+        ? `<span class="am-row-proj">${esc(amProjectName(a.cwd))}</span>` : '';
+      html += `
+    <li class="am-row is-${st}${sub ? '' : ' is-compact'}${agentMap.selected === a.id ? ' is-selected' : ''}" data-am-id="${esc(a.id)}" role="option" aria-selected="${agentMap.selected === a.id}">
+      <span class="am-dot" aria-hidden="true"></span>
+      <span class="am-row-name">${esc(a.name || a.id || 'agent')}</span>
+      <span class="am-row-sub">${esc(sub)}</span>
+      <span class="am-row-meta">
+        <span class="am-row-time" data-am-ts="${Number(a.startedAt) || 0}" data-am-live="${live ? 1 : 0}">${esc(amElShort(a.startedAt))}</span>
+        ${proj}
+      </span>
+    </li>`;
+    }
+  }
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolated value is escaped.
+  const keepScroll = list.scrollTop;
+  // A filter that hides rows says what it is hiding instead of leaving a void.
+  const hidden = agentMap.rows.length - rows.length;
+  if (hidden > 0 && (agentMap.filter !== 'all' || agentMap.q)) {
+    html += `<li class="am-hidden-note" role="presentation"><button type="button" id="am-show-all">${hidden} hidden by ${agentMap.q ? 'search' : 'filter'} · Show all</button></li>`;
+  }
+  list.innerHTML = html;
+  list.scrollTop = keepScroll;
+  const showAll = $('#am-show-all');
+  if (showAll) {
+    showAll.onclick = () => {
+      const q = $('#am-search-input');
+      if (q) q.value = '';
+      agentMap.q = '';
+      agentMap.filter = 'all';
+      amPaint();
+      amAutoSelect();
+      amRefit();
+    };
+  }
+}
+
+// ─── Spawn graph ────────────────────────────────────────────────────────────
+// The same fleet as the list, drawn along the axis a list cannot express: who
+// started whom. Lineage comes from `parentSessionId`, which the agent list
+// resolves from the daemon roster and the transcript head. Layout is a pure
+// function of the rows so a two-second repaint lands every node exactly where
+// it was, and a node only moves when the shape of the fleet actually changed.
+
+// A cell is one leaf's worth of horizontal room. The glyph is what the eye
+// tracks and the label hangs under it, so the card is small enough that a wide
+// generation still fits across the pane.
+const AM_CELL_W = 132;
+const AM_CELL_H = 146;
+// Where a card's ink ends: glyph, then label, then the line under it. Used as
+// the first guess before a painted card is measured.
+const AM_NODE_BOT = 102;
+const AM_NODE_BOT_LG = 124;
+const AM_NODE_W = AM_CELL_W;
+const AM_NODE_H = AM_NODE_BOT_LG;
+const AM_ROOT_GAP = 44;
+const AM_FIT_PAD = 44;
+const AM_ZOOM_MIN = 0.35;
+const AM_ZOOM_MAX = 1.8;
+// Framing may magnify a small fleet, which is what makes a bigger window worth
+// asking for, but only so far: past this a handful of agents reads as a poster.
+const AM_FIT_MAX = 1.12;
+const AM_FIT_MAX_TINY = 1.2;
+// Guards a parent chain that loops: layout walks depth-first, so a cycle would
+// recurse forever without a ceiling on top of the visited set.
+const AM_DEPTH_MAX = 24;
+
+function amSavedView() {
+  try {
+    const v = localStorage.getItem(AM_VIEW_KEY);
+    return v === 'list' ? 'list' : 'canvas';
+  } catch (_) { return 'canvas'; }
+}
+
+function amSaveView(mode) {
+  try { localStorage.setItem(AM_VIEW_KEY, mode); } catch (_) {}
+}
+
+// True when following an agent's parents leads back to itself. Such a node is
+// drawn as a root rather than dropped, so a bad lineage costs an edge and never
+// a whole agent.
+function amAncestorLoops(a, parentOf) {
+  const seen = new Set([a.id]);
+  let cur = parentOf(a);
+  let hops = 0;
+  while (cur && hops++ < 64) {
+    if (seen.has(cur.id)) return true;
+    seen.add(cur.id);
+    cur = parentOf(cur);
+  }
+  return false;
+}
+
+// Nothing runs on its own: an agent was started by a chat, and a sub-agent by
+// another agent. The forest is therefore rooted in chats, not in agents. Where
+// the chat that started an agent is gone, the project it ran in stands in, so
+// every agent still hangs off something rather than floating.
+function amChatNode(chat) {
+  return {
+    id: `chat:${chat.sessionId}`,
+    sessionId: chat.sessionId,
+    name: chat.name || 'Chat',
+    cwd: chat.cwd || '',
+    kind: 'chat',
+    running: chat.status !== 'done',
+    state: chat.status === 'busy' ? 'working' : '',
+    startedAt: chat.startedAt || 0,
+  };
+}
+
+function amProjectNode(cwd) {
+  return {
+    id: `proj:${cwd}`,
+    sessionId: '',
+    name: amProjectName(cwd) || 'Elsewhere',
+    cwd,
+    kind: 'project',
+    running: false,
+    state: 'done',
+    startedAt: 0,
+  };
+}
+
+function amBuildTree(rows, chats) {
+  const bySession = new Map();
+  for (const a of rows) if (a.sessionId) bySession.set(a.sessionId, a);
+  const chatBySession = new Map();
+  for (const c of (chats || [])) if (c && c.sessionId) chatBySession.set(c.sessionId, c);
+
+  const agentParent = (a) => {
+    const p = a && a.parentSessionId ? bySession.get(a.parentSessionId) : null;
+    return p && p.id !== a.id ? p : null;
+  };
+  const order = rows.slice().sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0)
+    || String(x.id).localeCompare(String(y.id)));
+
+  const kids = new Map();
+  const roots = [];
+  const holders = new Map();
+  const attach = (parentId, node) => {
+    if (!kids.has(parentId)) kids.set(parentId, []);
+    kids.get(parentId).push(node);
+  };
+  // A holder is created only when something needs it, so an idle chat or an
+  // untouched project never appears as an empty root.
+  const holderFor = (node) => {
+    if (holders.has(node.id)) return holders.get(node.id);
+    holders.set(node.id, node);
+    roots.push(node);
+    return node;
   };
 
-  const nodes = [];
-  const links = [];
-  hubs.forEach(([cwd, agents], i) => {
-    const [hx, hy] = spread(i);
-    nodes.push({ kind: 'hub', id: 'hub:' + cwd, x: hx, y: hy, label: amProjectName(cwd), count: agents.length, cwd });
-    // The ring grows with the crowd so labels do not collide, and is capped so
-    // one busy project cannot cover its neighbours.
-    const base = Math.min(iw, ih) * (n > 2 ? 0.2 : 0.3);
-    const ring = Math.min(base + Math.max(0, agents.length - 3) * 12, Math.min(iw, ih) * 0.4);
-    agents.forEach((a, j) => {
-      const at = (j / Math.max(1, agents.length)) * Math.PI * 2 - Math.PI / 2;
-      const x = hx + Math.cos(at) * ring;
-      const y = hy + Math.sin(at) * ring;
-      const state = amStateOf(a);
-      nodes.push({ kind: 'agent', id: a.id, x, y, agent: a, state, ux: Math.cos(at), uy: Math.sin(at) });
-      links.push({ x1: hx, y1: hy, x2: x, y2: y, state });
-    });
-  });
-  return { nodes, links };
+  for (const a of order) {
+    const parent = agentParent(a);
+    if (parent && !amAncestorLoops(a, agentParent)) { attach(parent.id, a); continue; }
+    const chat = a.parentSessionId ? chatBySession.get(a.parentSessionId) : null;
+    if (chat) { attach(holderFor(amChatNode(chat)).id, a); continue; }
+    attach(holderFor(amProjectNode(a.cwd || '')).id, a);
+  }
+  return { roots, kids };
 }
 
-function amClip(text, max) {
-  const t = String(text || '');
-  return t.length > max ? t.slice(0, max - 1) + '\u2026' : t;
+// Tidy tree, top down: depth sets y, a running cursor lays leaves out across the
+// x axis, and a parent centres over the span of its children. Generations read
+// as rows, which is how a spawn tree is understood.
+function amLayout(tree, aspect = 1.9) {
+  const out = [];
+  const placed = new Set();
+  let cursor = 0;
+  const walk = (a, depth, parent) => {
+    if (placed.has(a.id)) return null;
+    placed.add(a.id);
+    const children = depth >= AM_DEPTH_MAX ? [] : (tree.kids.get(a.id) || []);
+    const node = {
+      a, depth, parent, x: 0, y: depth * AM_CELL_H,
+      live: window.husk.agents.isLive(a.state), kids: 0,
+    };
+    // Pushed before its children, so the array is the tree in reading order:
+    // a parent, then everything it started, then the next parent.
+    out.push(node);
+    // Branches keep their own column so their subtree reads down the page.
+    // Leaves are just a set, and a chat that started twenty agents would draw a
+    // row two thousand pixels wide, so they wrap into a block under the parent.
+    const laid = [];
+    const hasKids = (c) => ((tree.kids.get(c.id) || []).length > 0);
+    for (const c of children.filter(hasKids)) {
+      const r = walk(c, depth + 1, node);
+      if (r) laid.push(r);
+    }
+    const leaves = children.filter((c) => !hasKids(c));
+    if (leaves.length) {
+      const perRow = Math.max(1, Math.round(Math.sqrt(leaves.length * aspect * (AM_CELL_H / AM_CELL_W))) || 1);
+      const startX = cursor;
+      const grid = [];
+      leaves.forEach((c, i) => {
+        const r = walk(c, depth + 1, node);
+        if (!r) return;
+        r.x = startX + (i % perRow) * AM_CELL_W;
+        r.y = (depth + 1 + Math.floor(i / perRow)) * AM_CELL_H;
+        grid.push(r);
+        laid.push(r);
+      });
+      cursor = startX + Math.min(leaves.length, perRow) * AM_CELL_W;
+      // A block deeper than one row has no lane a connector could take to its
+      // lower rows without running over the row above. The block is drawn as
+      // one region on a single stem instead, and its members carry no line.
+      if (grid.length && Math.ceil(grid.length / perRow) > 1) {
+        let x0 = Infinity;
+        let x1 = -Infinity;
+        let y0 = Infinity;
+        let y1 = -Infinity;
+        for (const r of grid) {
+          r.inBlock = true;
+          x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x);
+          y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y);
+        }
+        node.block = { x: x0, y: y0, w: (x1 - x0) + AM_CELL_W, h: (y1 - y0) + AM_NODE_BOT };
+      }
+    }
+    if (laid.length) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const c of laid) { lo = Math.min(lo, c.x); hi = Math.max(hi, c.x); }
+      node.x = (lo + hi) / 2;
+      node.kids = laid.reduce((n, c) => n + 1 + c.kids, 0);
+      // An edge earns its current from the work below it, not from its own node.
+      if (laid.some((c) => c.live)) node.live = true;
+    } else {
+      node.x = cursor;
+      cursor += AM_CELL_W;
+    }
+    return node;
+  };
+  // Every root is a chat or a project, and each holds its own block, so they sit
+  // side by side with a gap between them.
+  for (const r of tree.roots) {
+    walk(r, 0, null);
+    cursor += AM_ROOT_GAP;
+  }
+  return out;
 }
 
-function amSvgEl(tag, attrs) {
-  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  for (const k of Object.keys(attrs || {})) el.setAttribute(k, String(attrs[k]));
+// From the parent's rim to the top of the child's glyph. Sideways moves happen
+// only on the corridor between two generations, which holds no card.
+const AM_EDGE_R = 14;
+// Clear air between the last line of a card's text and the corridor below it.
+const AM_EDGE_GAP = 7;
+
+// Card height follows the type inside it, which moves with the font scale, so
+// it is measured from a painted card rather than assumed.
+function amCardMetrics() {
+  const m = { glyph: 44, glyphLg: 54, bottom: AM_NODE_BOT, bottomLg: AM_NODE_BOT_LG };
+  for (const [, el] of agentMap.nodeEls) {
+    const g = el.querySelector('.am-node-glyph');
+    const t = el.querySelector('.am-node-time');
+    const l = el.querySelector('.am-node-label');
+    if (!g) continue;
+    const last = t && t.offsetHeight ? t : l;
+    const bottom = last ? last.offsetTop + last.offsetHeight : g.offsetTop + g.offsetHeight;
+    if (el.classList.contains('is-holder')) {
+      m.glyphLg = Math.max(m.glyphLg, g.offsetTop + g.offsetHeight);
+      m.bottomLg = Math.max(m.bottomLg, bottom);
+    } else {
+      m.glyph = Math.max(m.glyph, g.offsetTop + g.offsetHeight);
+      m.bottom = Math.max(m.bottom, bottom);
+    }
+  }
+  return m;
+}
+// Breathing room between a block's region and the cards inside it.
+const AM_BLOCK_PAD = 14;
+
+function amEdgePath(p, c) {
+  const m = agentMap.card || amCardMetrics();
+  const holder = !!p.a.kind;
+  const x1 = p.x + AM_CELL_W / 2;
+  const x2 = c.x + AM_CELL_W / 2;
+  const y2 = c.y;
+  // The rim of the circle, so the line reads as leaving the node itself. It
+  // passes behind the card's name plate on its way down.
+  const y1 = p.y + (holder ? m.glyphLg : m.glyph);
+  // Below the parent's own text, where the row is empty all the way across, so
+  // every sideways move happens where no card can be.
+  const lane = p.y + (holder ? m.bottomLg : m.bottom) + AM_EDGE_GAP;
+  const corridor = Math.max(y1 + 2, Math.min(lane, y2 - 2));
+  if (Math.abs(x2 - x1) < 0.5) return `M${x1},${y1} L${x2},${y2}`;
+  const dir = x2 > x1 ? 1 : -1;
+  const r = Math.max(2, Math.min(AM_EDGE_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - corridor) / 2));
+  return `M${x1},${y1}`
+    + ` L${x1},${corridor - r}`
+    + ` Q${x1},${corridor} ${x1 + dir * r},${corridor}`
+    + ` L${x2 - dir * r},${corridor}`
+    + ` Q${x2},${corridor} ${x2},${corridor + r}`
+    + ` L${x2},${y2}`;
+}
+
+function amPolishSparseLayout(layout) {
+  if (layout.length > 3) return false;
+  const root = layout.find((n) => n.a.kind);
+  const child = layout.find((n) => !n.a.kind);
+  if (!root || !child) return true;
+  root.x -= 10;
+  child.x += 10;
+  child.y = 128;
+  return true;
+}
+
+function amApplyCam() {
+  const stage = $('#am-cv-stage');
+  const grid = $('#am-cv-grid');
+  const { x, y, k } = agentMap.cam;
+  if (stage) stage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+  // The grid is painted on the pane rather than the stage, so it scrolls with
+  // the camera instead of scaling its own dots into blobs.
+  if (grid) {
+    const s = 26 * k;
+    grid.style.backgroundSize = `${s}px ${s}px`;
+    grid.style.backgroundPosition = `${x}px ${y}px`;
+  }
+  const zl = $('#am-cv-zoom');
+  if (zl) zl.textContent = `${Math.round(k * 100)}%`;
+}
+
+function amZoomTo(k, cx, cy) {
+  const pane = $('#am-canvas-pane');
+  if (!pane) return;
+  const next = Math.min(AM_ZOOM_MAX, Math.max(AM_ZOOM_MIN, k));
+  const cam = agentMap.cam;
+  const r = pane.getBoundingClientRect();
+  const px = cx == null ? r.width / 2 : cx - r.left;
+  const py = cy == null ? r.height / 2 : cy - r.top;
+  // Hold the point under the cursor still while the scale changes.
+  cam.x = px - ((px - cam.x) / cam.k) * next;
+  cam.y = py - ((py - cam.y) / cam.k) * next;
+  cam.k = next;
+  amApplyCam();
+}
+
+function amFit(animate) {
+  const pane = $('#am-canvas-pane');
+  const nodes = agentMap.layout;
+  if (!pane || !nodes.length) return;
+  // Layout size, not painted size: the card scales as it arrives, and a rect
+  // read mid-entrance carries that scale into the framing.
+  const r = { width: pane.clientWidth, height: pane.clientHeight };
+  if (!r.width || !r.height) return;
+  let maxX = 0;
+  let maxY = 0;
+  const cardH = Math.max(AM_NODE_H, (agentMap.card || {}).bottom || 0, (agentMap.card || {}).bottomLg || 0);
+  for (const n of nodes) {
+    maxX = Math.max(maxX, n.x + AM_NODE_W);
+    maxY = Math.max(maxY, n.y + cardH);
+  }
+  const fitMax = nodes.length <= 2 ? AM_FIT_MAX_TINY : AM_FIT_MAX;
+  const k = Math.min(fitMax, (r.width - AM_FIT_PAD * 2) / maxX, (r.height - AM_FIT_PAD * 2) / maxY);
+  const cam = agentMap.cam;
+  cam.k = Math.max(AM_ZOOM_MIN, k);
+  cam.x = (r.width - maxX * cam.k) / 2;
+  const spareY = Math.max(0, r.height - maxY * cam.k);
+  cam.y = nodes.length <= 2
+    ? spareY / 2 - Math.min(16, spareY * 0.04)
+    : spareY / 2 - Math.min(30, spareY * 0.12);
+  const stage = $('#am-cv-stage');
+  if (stage) {
+    stage.classList.toggle('is-gliding', !!animate);
+    if (animate) setTimeout(() => stage.classList.remove('is-gliding'), 420);
+  }
+  amApplyCam();
+}
+
+// Pans just enough to bring a node inside the frame, so arrowing through the
+// tree never walks the selection off screen and never re-centres what is
+// already comfortably visible.
+function amRevealNode(id) {
+  const pane = $('#am-canvas-pane');
+  const n = agentMap.layout.find((m) => m.a.id === id);
+  if (!pane || !n) return;
+  // Camera maths runs in layout space, so the pane is measured there too.
+  const r = { width: pane.clientWidth, height: pane.clientHeight };
+  if (!r.width) return;
+  const cam = agentMap.cam;
+  const m = 28;
+  const left = cam.x + n.x * cam.k;
+  const top = cam.y + n.y * cam.k;
+  const right = left + AM_NODE_W * cam.k;
+  const bottom = top + AM_NODE_H * cam.k;
+  let dx = 0;
+  let dy = 0;
+  if (left < m) dx = m - left;
+  else if (right > r.width - m) dx = (r.width - m) - right;
+  if (top < m) dy = m - top;
+  else if (bottom > r.height - m) dy = (r.height - m) - bottom;
+  if (!dx && !dy) return;
+  cam.x += dx;
+  cam.y += dy;
+  const stage = $('#am-cv-stage');
+  if (stage) {
+    stage.classList.add('is-gliding');
+    setTimeout(() => stage.classList.remove('is-gliding'), 320);
+  }
+  amApplyCam();
+}
+
+function amNodeEl(a) {
+  const el = document.createElement('div');
+  el.className = 'am-node';
+  el.setAttribute('role', 'option');
+  el.dataset.amId = a.id;
+  // eslint-disable-next-line no-unsanitized/property -- Static shell; every value lands via textContent in amPaintNode.
+  el.innerHTML = '<span class="am-node-glyph">'
+    + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
+    + '<b class="am-node-kids"></b></span>'
+    + '<span class="am-node-plate">'
+    + '<span class="am-node-label"></span>'
+    + '<span class="am-node-time"></span></span>';
   return el;
 }
 
-function amPaint() {
-  const svg = $('#am-svg');
-  const stage = $('#am-stage');
-  const empty = $('#am-empty');
-  if (!svg || !stage) return;
-  const w = stage.clientWidth || 720;
-  const h = stage.clientHeight || 460;
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  svg.replaceChildren();
+// The glyph says state without a legend: a check for finished, an exclamation
+// for waiting on a human, a ring for work in flight.
+const AM_MARKS = {
+  done: 'M5.2 12.4l4.3 4.25L18.8 7.4',
+  blocked: 'M12 6.25v7.25M12 17.8h.01',
+  running: 'M12 5.75a6.25 6.25 0 1 1 0 12.5 6.25 6.25 0 0 1 0-12.5z',
+  failed: 'M8.5 8.5l7 7M15.5 8.5l-7 7',
+  chat: 'M4.75 6.75a2 2 0 0 1 2-2h10.5a2 2 0 0 1 2 2v6.65a2 2 0 0 1-2 2H10l-4.15 3.45v-3.45h-.1a2 2 0 0 1-1-2z',
+  project: 'M3.75 7.7a2 2 0 0 1 2-2h3.4l2 2h7.1a2 2 0 0 1 2 2v6.6a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2z',
+};
 
-  const rows = agentMap.rows;
-  if (empty) empty.hidden = rows.length > 0;
-  if (!rows.length) return;
-
-  // A soft bloom under the live discs, declared once and referenced by class.
-  const defs = amSvgEl('defs', {});
-  const f = amSvgEl('filter', { id: 'am-glow', x: '-80%', y: '-80%', width: '260%', height: '260%' });
-  f.appendChild(amSvgEl('feGaussianBlur', { stdDeviation: '5', result: 'b' }));
-  const m = amSvgEl('feMerge', {});
-  m.appendChild(amSvgEl('feMergeNode', { in: 'b' }));
-  m.appendChild(amSvgEl('feMergeNode', { in: 'SourceGraphic' }));
-  f.appendChild(m);
-  defs.appendChild(f);
-  svg.appendChild(defs);
-
-  const { nodes, links } = amLayout(rows, w, h);
-
-  // Curved rather than straight: a bundle of spokes at one hub reads as a fan
-  // instead of a star burst.
-  for (const l of links) {
-    const mx = (l.x1 + l.x2) / 2;
-    const my = (l.y1 + l.y2) / 2;
-    const dx = l.x2 - l.x1;
-    const dy = l.y2 - l.y1;
-    const bow = 0.16;
-    svg.appendChild(amSvgEl('path', {
-      d: `M${l.x1} ${l.y1} Q${mx - dy * bow} ${my + dx * bow} ${l.x2} ${l.y2}`,
-      class: `am-link is-${l.state}`,
-    }));
+function amCanvasLabel(s) {
+  const raw = String(s || 'agent').trim() || 'agent';
+  if (raw.length <= 30) return raw;
+  const words = raw.split(/\s+/);
+  let out = '';
+  for (const word of words) {
+    const next = out ? `${out} ${word}` : word;
+    if (next.length > 28) break;
+    out = next;
   }
+  return `${out || raw.slice(0, 27).trimEnd()}…`;
+}
 
-  for (const n of nodes) {
-    if (n.kind === 'hub') {
-      const g = amSvgEl('g', { class: 'am-hub' });
-      g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 34, class: 'am-hub-ring' }));
-      g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 27, class: 'am-hub-disc' }));
-      const t = amSvgEl('text', { x: n.x, y: n.y + 1, class: 'am-hub-label', 'text-anchor': 'middle' });
-      t.appendChild(document.createTextNode(amClip(n.label, 13)));
-      g.appendChild(t);
-      const c = amSvgEl('text', { x: n.x, y: n.y + 13, class: 'am-hub-count', 'text-anchor': 'middle' });
-      c.appendChild(document.createTextNode(String(n.count)));
-      g.appendChild(c);
-      svg.appendChild(g);
+function amPaintNode(el, n) {
+  const a = n.a;
+  const st = amStateOf(a);
+  el.classList.toggle('is-holder', !!a.kind);
+  el.classList.toggle('is-chat', a.kind === 'chat');
+  el.classList.toggle('is-project', a.kind === 'project');
+  el.classList.toggle('is-running', st === 'running');
+  el.classList.toggle('is-blocked', st === 'blocked');
+  el.classList.toggle('is-failed', st === 'failed');
+  el.classList.toggle('is-done', st === 'done');
+  el.classList.toggle('is-selected', agentMap.selected === a.id);
+  el.classList.toggle('is-root', n.depth === 0);
+  el.setAttribute('aria-selected', agentMap.selected === a.id ? 'true' : 'false');
+  el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0)`;
+  const mark = el.querySelector('.am-node-mark');
+  mark.replaceChildren();
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', a.kind ? AM_MARKS[a.kind] : AM_MARKS[st]);
+  mark.appendChild(p);
+  const rawName = a.name || a.id || 'agent';
+  el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? rawName : amCanvasLabel(rawName);
+  const time = el.querySelector('.am-node-time');
+  if (a.kind) {
+    time.textContent = n.kids === 1 ? '1 agent' : `${n.kids} agents`;
+    time.dataset.amLive = '0';
+    time.dataset.amTs = '0';
+  } else {
+    time.textContent = amElShort(a.startedAt);
+    time.dataset.amTs = String(Number(a.startedAt) || 0);
+    time.dataset.amLive = st === 'done' ? '0' : '1';
+  }
+  const kids = el.querySelector('.am-node-kids');
+  const badge = a.kind ? 0 : n.kids;
+  kids.textContent = badge ? String(badge) : '';
+  kids.hidden = !badge;
+  // The whole card is the tooltip: the name in full plus what it is doing.
+  el.title = `${a.name || a.id || 'agent'}\n${amRowSub(a)}`;
+}
+
+function amPaintCanvas() {
+  const pane = $('#am-canvas-pane');
+  const nodeLayer = $('#am-cv-nodes');
+  const svg = $('#am-cv-edges');
+  if (!pane || !nodeLayer || !svg) return;
+
+  const rows = agentMap.rows.filter(amMatches);
+  const box = pane.getBoundingClientRect();
+  const aspect = box.height > 0 ? Math.max(0.4, Math.min(6, box.width / box.height)) : 1.9;
+  const layout = amLayout(amBuildTree(rows, agentMap.chats), aspect);
+  const sparse = amPolishSparseLayout(layout);
+  agentMap.layout = layout;
+  pane.classList.toggle('is-sparse', sparse);
+  $('#am-cv-stage')?.classList.toggle('is-sparse', sparse);
+  // The arrows walk the tree the way it is read: a parent, then its descendants.
+  // Holders are scenery, not destinations, so they stay out of the walk.
+  agentMap.view = layout.filter((n) => !n.a.kind).map((n) => n.a.id);
+
+  let maxX = 0;
+  let maxY = 0;
+  const cardH = Math.max(AM_NODE_H, (agentMap.card || {}).bottom || 0, (agentMap.card || {}).bottomLg || 0);
+  for (const n of layout) {
+    maxX = Math.max(maxX, n.x + AM_NODE_W);
+    maxY = Math.max(maxY, n.y + cardH);
+  }
+  svg.setAttribute('width', String(maxX));
+  svg.setAttribute('height', String(maxY));
+  svg.setAttribute('viewBox', `0 0 ${maxX} ${maxY}`);
+
+  const seenNodes = new Set();
+  const fresh = [];
+  for (const n of layout) {
+    const id = n.a.id;
+    seenNodes.add(id);
+    let el = agentMap.nodeEls.get(id);
+    if (!el) {
+      el = amNodeEl(n.a);
+      // Placed before it joins the box tree, so the transform transition has
+      // nothing to glide from and the card appears where it belongs.
+      amPaintNode(el, n);
+      if (!agentMap.known.has(id)) { el.classList.add('is-enter'); fresh.push(el); }
+      agentMap.nodeEls.set(id, el);
+      nodeLayer.appendChild(el);
       continue;
     }
-    const sel = agentMap.selected === n.agent.id;
-    const g = amSvgEl('g', {
-      class: `am-node is-${n.state}${sel ? ' is-selected' : ''}`,
-      tabindex: '0', role: 'button',
-    });
-    const title = amSvgEl('title', {});
-    title.appendChild(document.createTextNode(`${n.agent.name || n.agent.id} (${n.state})`));
-    g.appendChild(title);
-    if (n.state !== 'done') g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 22, class: 'am-pulse' }));
-    g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 15, class: 'am-node-disc' }));
-    g.appendChild(amSvgEl('circle', { cx: n.x, cy: n.y, r: 5, class: 'am-node-core' }));
-    // Labels sit on the far side of the disc from their hub, so a spoke never
-    // runs through its own text and two neighbours cannot stack.
-    const ux = n.ux === undefined ? 0 : n.ux;
-    const uy = n.uy === undefined ? 1 : n.uy;
-    const lx = n.x + ux * 21;
-    const ly = n.y + uy * 21;
-    const side = Math.abs(ux) > 0.45 ? (ux > 0 ? 'start' : 'end') : 'middle';
-    const dy = side === 'middle' ? (uy >= 0 ? 13 : -8) : 4;
-    const label = amSvgEl('text', { x: lx, y: ly + dy, class: 'am-node-label', 'text-anchor': side });
-    label.appendChild(document.createTextNode(amClip(n.agent.name || n.agent.id || 'agent', 22)));
-    g.appendChild(label);
-    const meta = amSvgEl('text', { x: lx, y: ly + dy + 12, class: 'am-node-meta', 'text-anchor': side });
-    meta.appendChild(document.createTextNode(amElapsed(n.agent.startedAt)));
-    g.appendChild(meta);
-    const pick = () => { agentMap.selected = n.agent.id; amPaint(); amPaintDetail(); };
-    g.addEventListener('click', pick);
-    g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
-    svg.appendChild(g);
+    amPaintNode(el, n);
   }
+  for (const [id, el] of agentMap.nodeEls) {
+    if (seenNodes.has(id)) continue;
+    el.remove();
+    agentMap.nodeEls.delete(id);
+  }
+
+  // Block regions sit under everything else, so they read as ground the cards
+  // stand on rather than as boxes drawn over them.
+  let blockLayer = svg.querySelector('#am-cv-blocks');
+  if (!blockLayer) {
+    blockLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    blockLayer.setAttribute('id', 'am-cv-blocks');
+    svg.insertBefore(blockLayer, svg.firstChild);
+  }
+  const blocks = layout.filter((n) => n.block);
+  blockLayer.replaceChildren(...blocks.map((n) => {
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    r.setAttribute('class', `am-block${n.live ? ' is-live' : ''}`);
+    r.setAttribute('x', String(n.block.x - AM_BLOCK_PAD));
+    r.setAttribute('y', String(n.block.y - AM_BLOCK_PAD));
+    r.setAttribute('width', String(n.block.w + AM_BLOCK_PAD * 2));
+    r.setAttribute('height', String(n.block.h + AM_BLOCK_PAD * 2));
+    r.setAttribute('rx', '16');
+    return r;
+  }));
+
+  agentMap.card = amCardMetrics();
+
+  const seenEdges = new Set();
+  for (const n of layout) {
+    if (!n.parent || n.inBlock) continue;
+    const key = `${n.parent.a.id}>${n.a.id}`;
+    seenEdges.add(key);
+    let path = agentMap.edgeEls.get(key);
+    const brandNew = !path;
+    if (!path) {
+      path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('fill', 'none');
+      // Normalised length lets one dash pattern read the same on a short hop
+      // and a long reach across the tree.
+      path.setAttribute('pathLength', '1');
+      agentMap.edgeEls.set(key, path);
+    }
+    path.setAttribute('d', amEdgePath(n.parent, n));
+    path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}${brandNew && !agentMap.known.has(n.a.id) ? ' is-enter' : ''}`);
+    if (brandNew) svg.appendChild(path);
+  }
+  for (const n of blocks) {
+    const key = `${n.a.id}>block`;
+    seenEdges.add(key);
+    let path = agentMap.edgeEls.get(key);
+    const brandNew = !path;
+    if (!path) {
+      path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('fill', 'none');
+      path.setAttribute('pathLength', '1');
+      agentMap.edgeEls.set(key, path);
+    }
+    const target = { x: n.block.x + n.block.w / 2 - AM_CELL_W / 2, y: n.block.y - AM_BLOCK_PAD, a: {} };
+    path.setAttribute('d', amEdgePath(n, target));
+    path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}`);
+    if (brandNew) svg.appendChild(path);
+  }
+  for (const [key, path] of agentMap.edgeEls) {
+    if (seenEdges.has(key)) continue;
+    path.remove();
+    agentMap.edgeEls.delete(key);
+  }
+
+  for (const n of layout) agentMap.known.add(n.a.id);
+  // The class only exists to start the animation; dropping it afterwards keeps
+  // a later repaint from replaying an entrance the user already watched.
+  if (fresh.length) {
+    setTimeout(() => { for (const el of fresh) el.classList.remove('is-enter'); }, 700);
+  }
+  if (!agentMap.fitted && layout.length) {
+    agentMap.fitted = true;
+    requestAnimationFrame(() => amFit(false));
+  }
+}
+
+function amSetView(mode, { save = true } = {}) {
+  const next = mode === 'list' ? 'list' : 'canvas';
+  agentMap.mode = next;
+  if (save) amSaveView(next);
+  $$('#am-views .am-view').forEach((b) => {
+    const on = b.dataset.amView === next;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  amPaint(true);
+  const focus = next === 'canvas' ? $('#am-cv-nodes') : $('#am-list');
+  if (focus) focus.focus({ preventScroll: true });
+}
+
+// The list only rebuilds when what it would say changes, so pointer hover and
+// scroll survive the poll. Timestamps live outside the signature; a ticker
+// rewrites them in place.
+function amSignature() {
+  return JSON.stringify([
+    agentMap.filter, agentMap.q, agentMap.selected, agentMap.loading,
+    agentMap.supported, agentMap.error, agentMap.mode,
+    agentMap.rows.map((a) => [a.id, amStateOf(a), a.name, amRowSub(a), a.cwd, a.parentSessionId || '']),
+  ]);
+}
+
+// Nothing to draw means nothing to draw in either view, so the blank state is
+// written once and the list pane owns it whichever view is selected.
+function amHasRows() {
+  return !agentMap.loading && agentMap.rows.filter(amMatches).length > 0;
+}
+
+function amPaint(force) {
+  const sig = amSignature();
+  if (!force && sig === agentMap.sig) { amPaintCounts(); return; }
+  agentMap.sig = sig;
+  amPaintCounts();
+  const graph = agentMap.mode === 'canvas' && amHasRows();
+  const pane = $('#am-canvas-pane');
+  const listPane = $('#am-list-pane');
+  const body = $('#agent-map .am-body');
+  if (pane) pane.hidden = !graph;
+  if (listPane) listPane.hidden = graph;
+  // The detail pane belongs to whichever view is up, so the empty-card state is
+  // decided here rather than inside one painter.
+  if (body && graph) body.classList.remove('is-empty');
+  if (graph) amPaintCanvas(); else amPaintList();
+}
+
+// Seconds tick without repainting rows: only the time cells are rewritten.
+function amTick() {
+  $$('#agent-map [data-am-ts][data-am-live="1"]').forEach((el) => {
+    el.textContent = amElShort(Number(el.dataset.amTs) || 0);
+  });
+  const a = agentMap.rows.find((x) => x.id === agentMap.selected);
+  const el = $('#am-d-elapsed');
+  if (a && el) {
+    // The chip already names the state; this is only the clock.
+    const st = amStateOf(a);
+    if (st === 'done') el.textContent = `${agentAgeLabel(a.startedAt) === 'now' ? 'just now' : agentAgeLabel(a.startedAt) + ' ago'}`;
+    else if (st === 'blocked') el.textContent = `for ${amElShort(a.startedAt)}`;
+    else el.textContent = amElLong(a.startedAt);
+  }
+}
+
+function amFeedKindLabel(e) {
+  if (e.kind === 'user') return 'you';
+  if (e.kind === 'tool') return e.tool || 'tool';
+  return 'agent';
+}
+
+function amPaintFeed() {
+  const feed = $('#am-d-feed');
+  if (!feed) return;
+  const f = agentMap.feed;
+  if (!f.entries.length) {
+    // eslint-disable-next-line no-unsanitized/property -- Static markup.
+    feed.innerHTML = `<li class="am-d-feed-empty" role="presentation">${f.busy ? 'Reading the transcript\u2026' : 'No activity recorded yet.'}</li>`;
+    return;
+  }
+  const esc = escapeHtml;
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 24;
+  const prevLast = feed.dataset.last || '';
+  const keyOf = (e) => `${e.ts}|${e.kind}|${(e.text || '').slice(0, 40)}`;
+  const prevIdx = f.entries.findIndex((e) => keyOf(e) === prevLast);
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolated value is escaped.
+  feed.innerHTML = f.entries.map((e, i) => `
+    <li class="k-${esc(e.kind)}${prevLast && i > prevIdx && prevIdx !== -1 ? ' is-new' : ''}">
+      <span class="fk">${esc(amFeedKindLabel(e))}</span>
+      <span class="ft"><span class="ftxt">${esc(e.text || '')}</span></span>
+      ${e.ts ? `<time class="ftime" datetime="${new Date(e.ts).toISOString()}">${esc(agentAgeLabel(e.ts))}</time>` : ''}
+    </li>`).join('');
+  feed.dataset.last = keyOf(f.entries[f.entries.length - 1]);
+  if (atBottom || prevIdx === -1) {
+    const pin = () => {
+      feed.scrollTop = feed.scrollHeight;
+      feed.scrollTop = Math.max(0, feed.scrollTop - 30);
+    };
+    pin();
+    // Fonts or wrapping can settle a frame later; align again so the top fold
+    // never slices through a readable row while the newest lines remain visible.
+    requestAnimationFrame(pin);
+  }
+}
+
+async function amFetchFeed(a) {
+  if (!a || !a.sessionId) return;
+  const f = agentMap.feed;
+  if (f.busy) return;
+  f.busy = true;
+  if (f.sessionId !== a.sessionId) { f.sessionId = a.sessionId; f.entries = []; f.model = ''; const feed = $('#am-d-feed'); if (feed) feed.dataset.last = ''; amPaintFeed(); }
+  let res = null;
+  try { res = await window.husk.bgAgents.peek({ sessionId: a.sessionId, cwd: a.cwd || '' }); } catch (_) { res = null; }
+  f.busy = false;
+  if (!res || res.ok === false || f.sessionId !== a.sessionId) { amPaintFeed(); return; }
+  f.entries = Array.isArray(res.entries) ? res.entries : [];
+  if (res.model) f.model = res.model;
+  amPaintFeed();
+  amPaintFacts(a);
+}
+
+function amPaintFacts(a) {
+  const facts = [
+    amProjectName(a.cwd) ? ['project', amProjectName(a.cwd)] : null,
+    agentMap.feed.sessionId === a.sessionId && agentMap.feed.model ? ['model', agentMap.feed.model] : null,
+    a.tokens ? ['tokens', amFmtTokens(a.tokens)] : null,
+  ].filter(Boolean);
+  const nodes = facts.flatMap(([k, v]) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    if (k === 'model') dd.classList.add('is-mono');
+    dd.title = v;
+    return [dt, dd];
+  });
+  // The id is a control: one click copies the whole thing.
+  const full = String(a.sessionId || a.id || '');
+  if (full) {
+    const dt = document.createElement('dt'); dt.textContent = 'session';
+    const dd = document.createElement('dd');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'am-d-copyid';
+    btn.title = `Copy ${full}`;
+    btn.setAttribute('aria-label', 'Copy session id');
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    const r1 = document.createElementNS(ns, 'rect');
+    r1.setAttribute('x', '9'); r1.setAttribute('y', '9');
+    r1.setAttribute('width', '11'); r1.setAttribute('height', '11');
+    r1.setAttribute('rx', '2');
+    const p1 = document.createElementNS(ns, 'path');
+    p1.setAttribute('d', 'M5 15V6a2 2 0 0 1 2-2h9');
+    svg.append(r1, p1);
+    btn.append(document.createTextNode(full.slice(0, 8)), svg);
+    btn.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(full); toast('Session id copied', 'success'); }
+      catch (_) { toast('Could not copy', 'error'); }
+    });
+    dd.appendChild(btn);
+    nodes.push(dt, dd);
+  }
+  $('#am-d-facts').replaceChildren(...nodes);
 }
 
 function amPaintDetail() {
   const a = agentMap.rows.find((x) => x.id === agentMap.selected) || null;
   const detail = $('#am-detail');
-  const none = $('#am-side-empty');
+  const none = $('#am-detail-blank');
   if (!detail || !none) return;
   detail.hidden = !a;
   none.hidden = !!a;
   if (!a) return;
-  const state = amStateOf(a);
+  const st = amStateOf(a);
   const stateEl = $('#am-d-state');
-  stateEl.className = `am-state is-${state}`;
-  stateEl.textContent = state === 'blocked' ? 'Needs you' : (state === 'running' ? 'Running' : 'Finished');
+  stateEl.className = `am-state is-${st}`;
+  stateEl.textContent = { blocked: 'Needs you', running: 'Running', failed: 'Failed' }[st] || 'Finished';
   $('#am-d-name').textContent = a.name || a.id || 'agent';
-  $('#am-d-intent').textContent = a.detail || a.intent || (state === 'done' ? 'No activity recorded.' : 'Starting up.');
-  const facts = [
-    ['project', amProjectName(a.cwd)],
-    ['running for', amElapsed(a.startedAt)],
-    a.needs ? ['waiting on', a.needs] : null,
-    a.tokens ? ['tokens', String(a.tokens)] : null,
-    ['id', a.id || ''],
-  ].filter(Boolean);
-  $('#am-d-facts').replaceChildren(...facts.flatMap(([k, v]) => {
-    const dt = document.createElement('dt'); dt.textContent = k;
-    const dd = document.createElement('dd'); dd.textContent = v;
-    return [dt, dd];
-  }));
-  $('#am-d-open').onclick = () => { closeAgentMap(); openBgAgent(a); };
+  const intent = a.intent || a.detail || a.needs || '';
+  const intentEl = $('#am-d-intent');
+  intentEl.textContent = intent;
+  intentEl.hidden = !intent;
+  amPaintFacts(a);
+  amTick();
+  const open = $('#am-d-open');
+  const openable = a.attachable || a.hasTranscript;
+  open.disabled = !openable;
+  // The one urgent case borrows the amber and the verb changes with it: a
+  // blocked agent is answered, not merely opened.
+  open.classList.toggle('is-blocked', st === 'blocked');
+  open.textContent = st === 'blocked' ? 'Respond' : 'Open session';
+  open.title = openable
+    ? (a.attachable ? 'Attach to the live agent' : 'Resume this session in a chat tab')
+    : 'This agent left no transcript to open';
+  open.onclick = () => { if (openable) { closeAgentMap(); openBgAgent(a); } };
+
+  // A live agent is stopped; one that has already ended is removed.
+  const end = $('#am-d-end');
+  if (!end) return;
+  const live = st === 'running' || st === 'blocked';
+  end.textContent = live ? 'Stop' : 'Delete';
+  end.title = live
+    ? 'Stop this agent. Its conversation is kept.'
+    : 'Delete this agent and anything it was working in';
+  end.disabled = false;
+  end.onclick = () => endBgAgent(a, live ? 'stop' : 'remove');
+}
+
+// Stopping keeps the conversation, so it goes through without ceremony.
+// Removing throws the job away, so it is confirmed first.
+async function endBgAgent(a, action) {
+  const end = $('#am-d-end');
+  if (!a || !end || end.disabled) return;
+  const name = a.name || a.id || 'this agent';
+  if (action === 'remove') {
+    const ok = await openConfirmDialog({
+      title: 'Delete this agent?',
+      bodyHtml: `<p>${escapeHtml(name)} and anything it was working in go with it. Its conversation cannot be reopened afterwards.</p>`,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+  }
+  end.disabled = true;
+  const was = end.textContent;
+  end.textContent = action === 'stop' ? 'Stopping' : 'Deleting';
+  let res = null;
+  try {
+    res = action === 'stop' ? await window.husk.bgAgents.stop(a.id) : await window.husk.bgAgents.remove(a.id);
+  } catch (err) { res = { ok: false, error: (err && err.message) || 'that agent could not be ended' }; }
+  if (!res || !res.ok) {
+    end.disabled = false;
+    end.textContent = was;
+    toast((res && res.error) || 'that agent could not be ended', 'error');
+    return;
+  }
+  toast(action === 'stop' ? `Stopped ${name}` : `Deleted ${name}`, 'success');
+  if (action === 'remove') {
+    agentMap.rows = agentMap.rows.filter((r) => r.id !== a.id);
+    agentMap.selected = null;
+  }
+  await amRefresh();
+  refreshTopbarAgents();
+}
+
+function amSelect(id, { scroll = false } = {}) {
+  if (agentMap.selected === id) return;
+  agentMap.selected = id;
+  $$('#am-list .am-row').forEach((li) => {
+    const on = li.dataset.amId === id;
+    li.classList.toggle('is-selected', on);
+    li.setAttribute('aria-selected', on ? 'true' : 'false');
+    if (on && scroll) li.scrollIntoView({ block: 'nearest' });
+  });
+  for (const [nid, el] of agentMap.nodeEls) {
+    const on = nid === id;
+    el.classList.toggle('is-selected', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  if (scroll && agentMap.mode === 'canvas') amRevealNode(id);
+  amPaintDetail();
+  const a = agentMap.rows.find((x) => x.id === id);
+  if (a) amFetchFeed(a);
+}
+
+// Selection follows what matters: the first agent waiting on a human, else the
+// first one running. Only when nothing valid is selected: a poll never steals
+// the user's own pick, but a filter that hides it moves it to what is visible.
+function amAutoSelect() {
+  const visible = agentMap.view;
+  if (agentMap.selected && agentMap.rows.some((a) => a.id === agentMap.selected)
+      && (!visible.length || visible.includes(agentMap.selected))) return;
+  agentMap.selected = null;
+  const pick = agentMap.rows.filter(amMatches)
+    .sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0))
+    .sort((x, y) => {
+      const rank = { blocked: 0, running: 1, failed: 2, done: 3 };
+      return rank[amStateOf(x)] - rank[amStateOf(y)];
+    })[0];
+  if (pick) amSelect(pick.id);
+  else amPaintDetail();
 }
 
 async function amRefresh() {
-  if (agentMap.loading) return;
-  agentMap.loading = true;
+  if (agentMap.inflight) return;
+  agentMap.inflight = true;
   let res = null;
-  try { res = await window.husk.bgAgents.list({ all: true }); } catch (_) { res = null; }
+  try { res = await window.husk.bgAgents.list({ all: true, allProjects: true }); } catch (_) { res = null; }
+  agentMap.inflight = false;
+  if ($('#agent-map').hidden) return;
   agentMap.loading = false;
-  const supported = !(res && res.supported === false);
-  const rows = (res && res.ok !== false && Array.isArray(res.agents)) ? res.agents : [];
-  agentMap.rows = rows.slice().sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0));
-  if (agentMap.selected && !agentMap.rows.some((a) => a.id === agentMap.selected)) agentMap.selected = null;
-  const live = agentMap.rows.filter((a) => a.running).length;
-  const blocked = agentMap.rows.filter((a) => a.running && a.state === 'blocked').length;
-  const sub = $('#am-sub');
-  if (sub) {
-    sub.textContent = !supported
-      ? 'This agent CLI does not report background agents.'
-      : `${live} running · ${blocked} waiting on you · ${agentMap.rows.length} total`;
-  }
+  agentMap.supported = !(res && res.supported === false);
+  agentMap.error = res && res.ok === false ? (res.error || 'could not list agents') : '';
+  agentMap.rows = (res && res.ok !== false && Array.isArray(res.agents)) ? res.agents.slice() : [];
+  agentMap.chats = (res && res.ok !== false && Array.isArray(res.chats)) ? res.chats.slice() : [];
   const foot = $('#am-foot');
   if (foot) foot.textContent = agentMap.rows.length ? `Updated ${new Date().toLocaleTimeString()}` : '';
+  const sum = $('#am-foot-sum');
+  if (sum) {
+    const projects = new Set(agentMap.rows.map((a) => a.cwd || '')).size;
+    sum.textContent = agentMap.rows.length
+      ? `${agentMap.rows.length} agent${agentMap.rows.length === 1 ? '' : 's'} · ${projects} project${projects === 1 ? '' : 's'}`
+      : '';
+  }
   amPaint();
+  amAutoSelect();
   amPaintDetail();
+  const sel = agentMap.rows.find((x) => x.id === agentMap.selected);
+  if (sel) amFetchFeed(sel);
 }
 
 function openAgentMap() {
   const el = $('#agent-map');
   if (!el) return;
   el.hidden = false;
+  markTopbarAgentsSeen();
+  agentMap.loading = true;
+  agentMap.sig = '';
+  agentMap.q = '';
+  // Every opening starts on what is happening now, whatever was left selected
+  // last time.
+  agentMap.filter = 'live';
+  const q = $('#am-search-input');
+  if (q) q.value = '';
+  // A fresh opening draws itself: the fleet animates in and the camera frames
+  // it once the first list lands.
+  agentMap.known = new Set();
+  agentMap.fitted = false;
+  agentMap.layout = [];
+  for (const n of agentMap.nodeEls.values()) n.remove();
+  for (const p of agentMap.edgeEls.values()) p.remove();
+  agentMap.nodeEls.clear();
+  agentMap.edgeEls.clear();
+  amSetView(amSavedView(), { save: false });
   amRefresh();
   if (agentMap.timer) clearInterval(agentMap.timer);
   agentMap.timer = setInterval(amRefresh, AM_POLL_MS);
+  if (agentMap.ticker) clearInterval(agentMap.ticker);
+  agentMap.ticker = setInterval(amTick, 1000);
 }
 
 function closeAgentMap() {
@@ -12397,18 +13471,170 @@ function closeAgentMap() {
   if (!el) return;
   el.hidden = true;
   if (agentMap.timer) { clearInterval(agentMap.timer); agentMap.timer = null; }
+  if (agentMap.ticker) { clearInterval(agentMap.ticker); agentMap.ticker = null; }
+  if (term) term.focus();
 }
 
-// The pill opens the map, which is the picture of the same set the switcher
-// lists. Alt+A still opens the switcher for keyboard use.
+// The pill and Alt+A open the same center, over the same fleet the switcher
+// lists, so the three never disagree about how many agents there are.
 $('#topbar-agents').addEventListener('click', () => {
   if ($('#agent-map').hidden) openAgentMap(); else closeAgentMap();
 });
 $('#am-close') && $('#am-close').addEventListener('click', closeAgentMap);
-$('#am-refresh') && $('#am-refresh').addEventListener('click', amRefresh);
 $('#agent-map') && $('#agent-map').addEventListener('click', (e) => {
   if (e.target.id === 'agent-map') closeAgentMap();
 });
+
+// Narrowing or widening the set changes how much there is to look at, so the
+// camera reframes. A poll never does this; only a deliberate change does.
+function amRefit() {
+  if (agentMap.mode === 'canvas') requestAnimationFrame(() => amFit(true));
+}
+
+$('#am-filters') && $('#am-filters').addEventListener('click', (e) => {
+  const chip = e.target.closest('.am-chip');
+  if (!chip) return;
+  agentMap.filter = chip.dataset.amFilter || 'all';
+  amPaint();
+  amAutoSelect();
+  amRefit();
+});
+
+$('#am-search-input') && $('#am-search-input').addEventListener('input', (e) => {
+  agentMap.q = String(e.target.value || '').toLowerCase().trim();
+  amPaint();
+  amAutoSelect();
+  amRefit();
+});
+
+$('#am-views') && $('#am-views').addEventListener('click', (e) => {
+  const b = e.target.closest('.am-view');
+  if (b) amSetView(b.dataset.amView);
+});
+
+// Canvas pointer model: a press on a node selects it, a press on the ground
+// pans. The pan only begins after a few pixels of travel, so a click that
+// wobbles still counts as a click.
+$('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || e.target.closest('.am-cv-hud')) return;
+  const node = e.target.closest('.am-node');
+  if (node) { if (!node.classList.contains('is-holder')) amSelect(node.dataset.amId); return; }
+  const pane = e.currentTarget;
+  agentMap.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: agentMap.cam.x, oy: agentMap.cam.y, moved: false };
+  pane.setPointerCapture(e.pointerId);
+});
+
+$('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('pointermove', (e) => {
+  const d = agentMap.drag;
+  if (!d || d.id !== e.pointerId) return;
+  const dx = e.clientX - d.x;
+  const dy = e.clientY - d.y;
+  if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+  d.moved = true;
+  e.currentTarget.classList.add('is-panning');
+  agentMap.cam.x = d.ox + dx;
+  agentMap.cam.y = d.oy + dy;
+  amApplyCam();
+});
+
+const amEndPan = (e) => {
+  const d = agentMap.drag;
+  if (!d || d.id !== e.pointerId) return;
+  agentMap.drag = null;
+  e.currentTarget.classList.remove('is-panning');
+  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+};
+$('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('pointerup', amEndPan);
+$('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('pointercancel', amEndPan);
+
+$('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('dblclick', (e) => {
+  const node = e.target.closest('.am-node');
+  if (!node || node.classList.contains('is-holder')) { amFit(true); return; }
+  const a = agentMap.rows.find((x) => x.id === node.dataset.amId);
+  if (a && (a.attachable || a.hasTranscript)) { closeAgentMap(); openBgAgent(a); }
+});
+
+// The wheel zooms toward the pointer, which is what a graph is expected to do.
+// Shift holds it to panning for anyone who wants to slide the frame instead.
+$('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (e.shiftKey) {
+    agentMap.cam.x -= e.deltaX || e.deltaY;
+    agentMap.cam.y -= e.shiftKey && !e.deltaX ? 0 : e.deltaY;
+    amApplyCam();
+    return;
+  }
+  amZoomTo(agentMap.cam.k * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
+}, { passive: false });
+
+$('#am-cv-in') && $('#am-cv-in').addEventListener('click', () => amZoomTo(agentMap.cam.k * 1.25));
+$('#am-cv-out') && $('#am-cv-out').addEventListener('click', () => amZoomTo(agentMap.cam.k / 1.25));
+$('#am-cv-zoom') && $('#am-cv-zoom').addEventListener('click', () => amZoomTo(1));
+$('#am-cv-fit') && $('#am-cv-fit').addEventListener('click', () => amFit(true));
+
+// Full screen grows the card to the window rather than trimming what is in it,
+// then relays out and refits so the new room is actually used.
+$('#am-cv-expand') && $('#am-cv-expand').addEventListener('click', () => {
+  const card = $('#agent-map .am-card');
+  const btn = $('#am-cv-expand');
+  if (!card || !btn) return;
+  const on = btn.getAttribute('aria-pressed') !== 'true';
+  card.classList.toggle('is-full', on);
+  btn.classList.toggle('is-on', on);
+  btn.title = on ? 'Back to the smaller card' : 'Fill the window';
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  // Waits out the card's own resize: the pane's layout size grows across the
+  // transition, and framing partway through frames the size it just left.
+  setTimeout(() => { amPaint(true); amFit(true); }, 300);
+});
+
+$('#am-list') && $('#am-list').addEventListener('click', (e) => {
+  const li = e.target.closest('.am-row');
+  if (li) amSelect(li.dataset.amId);
+});
+$('#am-list') && $('#am-list').addEventListener('dblclick', (e) => {
+  const li = e.target.closest('.am-row');
+  if (!li) return;
+  const a = agentMap.rows.find((x) => x.id === li.dataset.amId);
+  if (a && (a.attachable || a.hasTranscript)) { closeAgentMap(); openBgAgent(a); }
+});
+
+// One key model for the whole card, in the capture phase so the terminal
+// underneath never sees a keystroke while the center is up: arrows move the
+// selection, Enter opens it, / reaches the search, and plain typing starts a
+// search from anywhere.
+document.addEventListener('keydown', (e) => {
+  const overlay = $('#agent-map');
+  if (!overlay || overlay.hidden) return;
+  if (e.key === 'Escape') return;              // the global Esc registry owns closing
+  const search = $('#am-search-input');
+  const inSearch = e.target === search;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopPropagation();
+    const v = agentMap.view;
+    if (!v.length) return;
+    const i = v.indexOf(agentMap.selected);
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    const next = i === -1 ? (step === 1 ? 0 : v.length - 1) : Math.min(v.length - 1, Math.max(0, i + step));
+    amSelect(v[next], { scroll: true });
+    return;
+  }
+  if (e.key === 'Enter' && !inSearch) {
+    const a = agentMap.rows.find((x) => x.id === agentMap.selected);
+    if (a && (a.attachable || a.hasTranscript)) { e.preventDefault(); e.stopPropagation(); closeAgentMap(); openBgAgent(a); }
+    return;
+  }
+  if (inSearch || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === '/') { e.preventDefault(); e.stopPropagation(); search.focus(); return; }
+  // Typing anywhere lands in the search box, first letter included.
+  if (e.key.length === 1) {
+    e.preventDefault(); e.stopPropagation();
+    search.focus();
+    search.value += e.key;
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}, true);
+
 $('#btn-palette').addEventListener('click', openPalette);
 // On the chat page, a printable or edit key pressed with nothing focused hands
 // focus to the active terminal first, in the capture phase so the keystroke
@@ -12417,6 +13643,8 @@ document.addEventListener('keydown', (e) => {
   if (currentPage !== 'chat' || !term) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.target !== document.body) return;
+  // The agent center owns the keys while it is up.
+  if ($('#agent-map') && !$('#agent-map').hidden) return;
   if (e.key.length === 1 || e.key === 'Enter' || e.key === 'Backspace') {
     try { term.focus(); } catch (_) {}
   }
@@ -12441,7 +13669,8 @@ window.addEventListener('keydown', (e) => {
     // Alt-keyed like the rest of the chrome so it never eats terminal input.
     if (String(e.key || '').toLowerCase() === 'a') {
       e.preventDefault();
-      if ($('#agent-switch') && $('#agent-switch').hidden) openAgentSwitch(); else closeAgentSwitch();
+      // The same surface the pill opens: one shortcut, one place agents live.
+      if ($('#agent-map') && $('#agent-map').hidden) openAgentMap(); else closeAgentMap();
     }
   }
   // Ctrl/Cmd +/-/0 for renderer zoom
