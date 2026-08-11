@@ -3883,6 +3883,8 @@ body[data-page="chat"] #chats-panel { display: flex; }
   position: absolute; left: 14px; bottom: 14px; z-index: 6;
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   max-width: min(340px, calc(100% - 28px));
+  /* The guide stays inside the canvas frame at any window height. */
+  max-height: calc(100% - 28px);
   /* Reference material never intercepts the canvas underneath it. Only the toggle
      takes clicks. */
   pointer-events: none;
@@ -3890,6 +3892,8 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .wf-legend-toggle { pointer-events: auto; }
 .wf-legend-body {
   display: flex; flex-direction: column; gap: 14px;
+  /* The body yields to the toggle and clips rather than growing past the frame. */
+  min-height: 0; overflow-y: auto;
   padding: 14px 16px;
   border-radius: var(--radius-xl);
   background-color: var(--bg);
