@@ -360,6 +360,7 @@ function createTab(idOverride) {
   t.loadAddon(fa);
   t.loadAddon(new WebLinksAddon.WebLinksAddon(openTerminalLink));
   t.options.linkHandler = { activate: openTerminalLink };
+  guardTermColors(t);
   t.open(el);
   const tab = {
     id, term: t, fitAddon: fa, el,
@@ -574,6 +575,20 @@ document.addEventListener('mousemove', (e) => {
   selEdge = { x: e.clientX, y, dir };
   if (!selEdgeTimer) selEdgeTimer = setInterval(selEdgeTick, DRAG_EDGE_MS);
 });
+
+// An agent that assumes it owns the window may set the terminal's default
+// colours at startup: copilot probes with OSC 10;? / 11;? and then *sets* its
+// own palette (e.g. OSC 11;#0D1117), which painted the canvas dark-on-light
+// until the next reload dropped the scrollback. The canvas colours belong to
+// the Husk theme, so colour sets are swallowed while pure `?` queries fall
+// through to xterm, whose answer carries the theme's real colours — that
+// answer is how the agent detects light or dark.
+function guardTermColors(t) {
+  const queryOnly = (data) => String(data).split(';').every((p) => p.trim() === '?');
+  for (const code of [10, 11, 12]) {
+    try { t.parser.registerOscHandler(code, (data) => !queryOnly(data)); } catch (_) {}
+  }
+}
 
 function themeForXterm() {
   // Canvas background/foreground come from the active theme's --term-bg /
@@ -3050,6 +3065,89 @@ function wfMiniPill(x, y, width, height, status) {
   });
 }
 
+function wfMiniStageStatus(column, statuses) {
+  const values = column.map((i) => statuses[i]).filter(Boolean);
+  if (values.includes('failed')) return 'failed';
+  if (values.includes('running')) return 'running';
+  if (values.includes('cancelled')) return 'cancelled';
+  if (values.length && values.every((s) => s === 'done' || s === 'skipped')) return 'done';
+  return '';
+}
+
+function wfMiniDenseCardNeeded(nodes, edges) {
+  if (nodes.length >= 16 || edges.length >= 24) return true;
+  const columns = wfMiniRanks(nodes, edges);
+  const widest = columns.reduce((most, col) => Math.max(most, col.length), 0);
+  return widest >= 6;
+}
+
+// A card is a summary surface, not a graph editor. Once a workflow is too big
+// for individual pills to read, show a workflow signature: the journey across
+// stages, one pronounced fan-out hub, and the few structural numbers that make
+// the shape scannable at card size.
+function wfMiniSignatureCard(nodes, edges, statuses) {
+  const columns = wfMiniRanks(nodes, edges);
+  const stages = columns.length || 1;
+  const widest = columns.reduce((most, col) => Math.max(most, col.length), 0);
+  const widestIndex = Math.max(0, columns.findIndex((col) => col.length === widest));
+  const box = document.createElement('div');
+  box.className = 'wf-signature';
+  box.setAttribute('role', 'img');
+
+  const hero = document.createElement('div');
+  hero.className = 'wf-signature-hero';
+  const total = document.createElement('strong');
+  total.textContent = String(nodes.length);
+  const totalLabel = document.createElement('span');
+  totalLabel.textContent = 'steps';
+  hero.append(total, totalLabel);
+  box.appendChild(hero);
+
+  const rail = document.createElement('div');
+  rail.className = 'wf-signature-route';
+  rail.style.setProperty('--stages', String(stages));
+  columns.forEach((column, i) => {
+    const stage = document.createElement('span');
+    const status = wfMiniStageStatus(column, statuses);
+    stage.className = [
+      'wf-signature-dot',
+      column.length > 1 ? 'is-fan' : '',
+      i === widestIndex && widest > 1 ? 'is-hub' : '',
+      status ? `is-${status}` : '',
+    ].filter(Boolean).join(' ');
+    stage.style.setProperty('--fan', String(column.length));
+    stage.title = `Stage ${i + 1}: ${column.length} step${column.length === 1 ? '' : 's'}`;
+    if (i === widestIndex && widest > 1) {
+      const count = document.createElement('b');
+      count.textContent = String(column.length);
+      stage.appendChild(count);
+    }
+    rail.appendChild(stage);
+  });
+  box.appendChild(rail);
+
+  const facts = document.createElement('div');
+  facts.className = 'wf-signature-facts';
+  const entries = [
+    [String(stages), 'stages'],
+    [`${widest}-way`, 'fan-out'],
+    [String(edges.length), 'links'],
+  ];
+  for (const [value, label] of entries) {
+    const item = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = value;
+    const small = document.createElement('small');
+    small.textContent = label;
+    item.append(strong, small);
+    facts.appendChild(item);
+  }
+  box.appendChild(facts);
+  box.setAttribute('aria-label',
+    `${nodes.length} steps across ${stages} stages; widest stage has ${widest} steps; ${edges.length} links`);
+  return box;
+}
+
 // Returns the labelled drawing, or null when this graph cannot have one on this
 // surface. Labels are fitted first and counted second: a label counts when the
 // whole name survived or when minLabelChars of it did, and the drawing is
@@ -3115,9 +3213,15 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
 }
 
 // The unlabelled drawing, built out of elements. Coordinates are the authored
-// ones normalised into the box, so the arrangement is kept exactly as drawn.
-function wfMiniCompact(nodes, edges, statuses) {
-  const g = WF_MINI_COMPACT;
+// ones normalised into the box, so the arrangement is kept exactly as drawn —
+// but only while it draws readably. When pills at those positions would sit on
+// top of one another (a big graph in a small frame) the drawing falls back to
+// the graph's own columns, the same layering Arrange writes, scaled to fit:
+// a clump of stacked bricks is drawn as the train it actually is.
+function wfMiniCompact(nodes, edges, statuses, boxOverride) {
+  const g = boxOverride
+    ? { ...WF_MINI_COMPACT, w: boxOverride.w, h: boxOverride.h }
+    : WF_MINI_COMPACT;
   const bounds = nodes.reduce((acc, n) => {
     const x = wfMiniNum(n && n.x); const y = wfMiniNum(n && n.y);
     return {
@@ -3136,6 +3240,10 @@ function wfMiniCompact(nodes, edges, statuses) {
       : g.pad + ((wfMiniNum(n.y) - bounds.minY) / spanY) * (g.h - g.pad * 2 - g.nodeH),
   }));
 
+  if (wfMiniOverlaps(place, g.nodeW, g.nodeH)) {
+    return wfMiniGrid(nodes, edges, statuses, g);
+  }
+
   const svg = wfMiniFrame(g.w, g.h);
   for (const edge of edges) {
     svg.appendChild(wfMiniLink(place[edge.from], place[edge.to], g.nodeW, g.nodeH,
@@ -3143,6 +3251,101 @@ function wfMiniCompact(nodes, edges, statuses) {
   }
   place.forEach((at, i) => {
     svg.appendChild(wfMiniPill(at.x, at.y, g.nodeW, g.nodeH, statuses[i]));
+  });
+  return svg;
+}
+
+// Whether any two pills of one size collide. A shared edge is not a collision:
+// the slack keeps pills that merely touch out of the count.
+function wfMiniOverlaps(place, width, height) {
+  const SLACK = 1;
+  for (let a = 0; a < place.length; a += 1) {
+    for (let b = a + 1; b < place.length; b += 1) {
+      if (Math.abs(place[a].x - place[b].x) < width - SLACK
+        && Math.abs(place[a].y - place[b].y) < height - SLACK) return true;
+    }
+  }
+  return false;
+}
+
+// Columns by graph depth, indices in and indices out. Mirrors the layering
+// half of the main process's layoutGraph so the thumbnail a dense workflow
+// falls back to shows the same columns Arrange would write on the canvas.
+function wfMiniRanks(nodes, edges) {
+  const n = nodes.length;
+  const preds = Array.from({ length: n }, () => []);
+  const succs = Array.from({ length: n }, () => []);
+  const indegree = new Array(n).fill(0);
+  for (const e of edges) {
+    if (e.from === e.to) continue;
+    preds[e.to].push(e.from);
+    succs[e.from].push(e.to);
+    indegree[e.to] += 1;
+  }
+  const rank = new Array(n).fill(-1);
+  const queue = [];
+  for (let i = 0; i < n; i += 1) { if (!indegree[i]) { rank[i] = 0; queue.push(i); } }
+  while (queue.length) {
+    const i = queue.shift();
+    for (const t of succs[i]) {
+      rank[t] = Math.max(rank[t], rank[i] + 1);
+      indegree[t] -= 1;
+      if (!indegree[t]) queue.push(t);
+    }
+  }
+  // Cycle members: one column right of their deepest ranked predecessor.
+  for (let i = 0; i < n; i += 1) {
+    if (rank[i] !== -1) continue;
+    const ranked = preds[i].filter((p) => rank[p] !== -1);
+    rank[i] = ranked.length ? Math.max(...ranked.map((p) => rank[p])) + 1 : 0;
+  }
+  const columns = [];
+  for (let i = 0; i < n; i += 1) {
+    if (!columns[rank[i]]) columns[rank[i]] = [];
+    columns[rank[i]].push(i);
+  }
+  // Order each column by predecessor barycentre so fans stay together.
+  const rowOf = new Map();
+  (columns[0] || []).forEach((i, r) => rowOf.set(i, r));
+  for (let c = 1; c < columns.length; c += 1) {
+    const keyed = (columns[c] || []).map((i) => {
+      const rows = preds[i].map((p) => rowOf.get(p)).filter((v) => v !== undefined);
+      return { i, bary: rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : Infinity };
+    });
+    keyed.sort((a, b) => a.bary - b.bary || a.i - b.i);
+    keyed.forEach((k, r) => rowOf.set(k.i, r));
+    columns[c] = keyed.map((k) => k.i);
+  }
+  return columns.filter((column) => column && column.length);
+}
+
+// The fallback drawing for a graph too dense for its authored placement:
+// pills on the rank grid, sized to what the frame can hold without overlap.
+function wfMiniGrid(nodes, edges, statuses, g) {
+  const columns = wfMiniRanks(nodes, edges);
+  if (!columns.length) return wfMiniFrame(g.w, g.h);
+  const rows = columns.reduce((most, column) => Math.max(most, column.length), 0);
+  const cellW = (g.w - g.pad * 2) / columns.length;
+  const cellH = (g.h - g.pad * 2) / rows;
+  const nodeW = Math.max(6, Math.min(g.nodeW, cellW - 3));
+  const nodeH = Math.max(3, Math.min(g.nodeH, cellH - 2));
+  const place = [];
+  columns.forEach((column, c) => {
+    const x = g.pad + c * cellW + (cellW - nodeW) / 2;
+    // A short column centers against the tallest one, so a fan reads as a fan.
+    const offset = (rows - column.length) / 2;
+    column.forEach((i, r) => {
+      place[i] = { x, y: g.pad + (r + offset) * cellH + (cellH - nodeH) / 2 };
+    });
+  });
+  const svg = wfMiniFrame(g.w, g.h);
+  svg.classList.add('is-dense');
+  for (const edge of edges) {
+    svg.appendChild(wfMiniLink(place[edge.from], place[edge.to], nodeW, nodeH,
+      wfMiniTaken(statuses, edge)));
+  }
+  place.forEach((at, i) => {
+    svg.appendChild(wfMiniPill(at.x, at.y, nodeW, nodeH, statuses[i]));
   });
   return svg;
 }
@@ -3228,6 +3431,11 @@ function wfMiniGraph(graph, lastRun, surface, width, marks) {
   }
 
   const names = nodes.map(wfMiniName);
+  if (surface === 'card' && wfMiniDenseCardNeeded(nodes, edges)) {
+    const card = wfMiniSignatureCard(nodes, edges, statuses);
+    wfMiniSpeak(card, names, nodes.length);
+    return card;
+  }
   // Names are drawn on the sheets and nowhere else: the panel is wide enough to
   // read them, while a card or pattern thumbnail would clip every one. The
   // accessible name below is unconditional, so the names are announced on every
@@ -3235,7 +3443,9 @@ function wfMiniGraph(graph, lastRun, surface, width, marks) {
   const labelled = (surface === 'panel' && names.every((name) => name !== null))
     ? wfMiniLabelled(nodes, edges, statuses, names, box)
     : null;
-  const svg = labelled || wfMiniCompact(nodes, edges, statuses);
+  // The sheet's fallback draws on the sheet's own box: a dense graph forced
+  // through the card's 250px viewBox would waste the band it actually has.
+  const svg = labelled || wfMiniCompact(nodes, edges, statuses, surface === 'panel' ? box : null);
   wfMiniSpeak(svg, names, nodes.length);
   return svg;
 }
@@ -3565,6 +3775,8 @@ function paintWorkflowList() {
   grid.innerHTML = workflowsCache.map((w) => {
     const runs = wfRunsFor(w.id);
     const n = ((w.graph && w.graph.nodes) || []).length;
+    const edgeCount = ((w.graph && w.graph.edges) || []).length;
+    const denseCard = n >= 16 || edgeCount >= 24;
     const agents = wfAgentsUsed(w.graph);
     return `
       <div class="wf-card" data-id="${escapeAttr(w.id)}">
@@ -3582,7 +3794,7 @@ function paintWorkflowList() {
             : '<span class="wf-lr is-never"><i></i>Never run</span>'}${wfHistoryDots(runs)}</span>
           <div class="wf-card-tags">
             ${agents.map((a) => `<span class="wf-tag">${escapeHtml(a)}</span>`).join('')}
-            <span class="wf-tag is-quiet">${n} step${n !== 1 ? 's' : ''}</span>
+            ${denseCard ? '' : `<span class="wf-tag is-quiet">${n} step${n !== 1 ? 's' : ''}</span>`}
             ${w.trigger === 'ai-suggested' ? '<span class="wf-tag is-ai">AI</span>' : ''}
           </div>
         </div>
@@ -3846,6 +4058,8 @@ function wfEnsureEditor() {
   if (!container || typeof Drawflow === 'undefined') return;
   wfEditor = new Drawflow(container);
   wfEditor.reroute = true;
+  // Ctrl+scroll re-tiers the cards as the zoom crosses the threshold.
+  wfEditor.on('zoom', (z) => wfApplyZoomTier(container, z));
   // Dropping a connection anywhere on the target node's body connects it to
   // that node's input. Each step has a single input, so first-input is the
   // right target.
@@ -4343,6 +4557,7 @@ function wfBuildRunCanvas(workflow) {
   else {
     wfRunEditor = new Drawflow(container);
     wfRunEditor.reroute = true;
+    wfRunEditor.on('zoom', (z) => wfApplyZoomTier(container, z));
     wfRunEditor.start();
     wfRunEditor.editor_mode = 'fixed';
   }
@@ -4444,6 +4659,65 @@ function wfFitEditor(editor, hostSel, graph) {
   editor.canvas_x = x;
   editor.canvas_y = y;
   pre.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
+  // The fit writes the zoom directly, past zoom_refresh, so the tier that
+  // depends on it is told by hand.
+  wfApplyZoomTier(host, zoom);
+}
+
+// Semantic zoom. Below the threshold a step card drops its agent line and
+// badge and shows one bold centred name — the same call the grid thumbnails
+// made at 250px: at this size the arrangement carries the information and
+// small text is noise. The tier rides on the canvas container so the run
+// canvas shares it.
+const WF_ZOOM_FAR = 0.72;
+function wfApplyZoomTier(host, zoom) {
+  if (!host) return;
+  const tier = zoom < WF_ZOOM_FAR ? 'far' : 'near';
+  if (host.dataset.zoomTier === tier) return;
+  host.dataset.zoomTier = tier;
+  // The cards change height across the tier, so every connection is redrawn
+  // against its endpoints' new geometry, on the frame after the style lands.
+  const editor = host.id === 'wf-run-canvas' ? wfRunEditor : wfEditor;
+  if (!editor) return;
+  requestAnimationFrame(() => {
+    try {
+      const data = editor.drawflow.drawflow.Home.data || {};
+      Object.keys(data).forEach((dfId) => editor.updateConnectionNodes(`node-${dfId}`));
+    } catch (_) { /* a cleared editor has no nodes to redraw */ }
+  });
+}
+
+// Rewrite every step's position from the graph's own shape: columns by depth,
+// parallel branches stacked, columns centred. The layout is computed in the
+// main process by the same module the run engine reads graphs with; only
+// x and y come back, and nothing is saved until the user saves.
+async function wfAutoArrange() {
+  if (!wfEditor) return;
+  const graph = wfExportGraph();
+  if (!graph.nodes.length) return;
+  let res = null;
+  try { res = await window.husk.workflows.layout(graph); } catch (_) {}
+  if (!res || !res.ok || !res.graph || !res.graph.nodes.length) {
+    toast('Could not arrange this graph', 'error');
+    return;
+  }
+  const data = wfEditor.drawflow.drawflow.Home.data;
+  const dfByHusk = {};
+  Object.keys(data).forEach((dfId) => {
+    dfByHusk[((data[dfId] || {}).data || {}).huskId] = dfId;
+  });
+  for (const n of res.graph.nodes) {
+    const dfId = dfByHusk[n.id];
+    if (dfId === undefined) continue;
+    data[dfId].pos_x = n.x;
+    data[dfId].pos_y = n.y;
+    const el = document.querySelector(`#wf-canvas [id="node-${dfId}"]`);
+    if (el) { el.style.left = `${n.x}px`; el.style.top = `${n.y}px`; }
+    // Connections follow their endpoints only when told.
+    try { wfEditor.updateConnectionNodes(`node-${dfId}`); } catch (_) {}
+  }
+  wfFitEditor(wfEditor, '#wf-canvas', res.graph);
+  toast(`Arranged ${res.graph.nodes.length} steps`, 'success');
 }
 
 // The one line a step shows on the canvas: the tool it is running, or its last
@@ -4526,6 +4800,7 @@ function wfEnsureTerm() {
     wfTermFit = new FitAddon.FitAddon();
     wfTerm.loadAddon(wfTermFit);
   } catch (_) { wfTermFit = null; }
+  guardTermColors(wfTerm);
   wfTerm.open(host);
   try { if (wfTermFit) wfTermFit.fit(); } catch (_) {}
   window.addEventListener('resize', () => { try { if (wfTermFit && !$('#wf-term').hidden) wfTermFit.fit(); } catch (_) {} });
@@ -5146,6 +5421,7 @@ $('#btn-run-from-builder') && $('#btn-run-from-builder').addEventListener('click
 });
 $('#wf-name-input') && $('#wf-name-input').addEventListener('input', wfSyncNameCount);
 $('#btn-add-wf-node') && $('#btn-add-wf-node').addEventListener('click', () => wfAddCanvasNode(null));
+$('#btn-wf-arrange') && $('#btn-wf-arrange').addEventListener('click', () => { wfAutoArrange(); });
 
 // The legend is open the first time and whenever it was left open. Once the
 // moves are learned it collapses to a pill and stays that way.
@@ -7033,6 +7309,7 @@ function rmAdvanceToDetail() {
     { id: 'gemini', label: 'Gemini CLI', sub: 'writes ~/.gemini/settings.json', write: true },
     { id: 'codex', label: 'Codex CLI', sub: 'shows TOML snippet to paste into ~/.codex/config.toml', write: false },
     { id: 'aider', label: 'Aider', sub: 'shows --mcp flag snippet to paste into your aider invocation', write: false },
+    { id: 'kiro-cli', label: 'Kiro CLI', sub: 'shows kiro-cli mcp add command to run after login', write: false },
   ];
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
   detail.innerHTML = `
@@ -9893,7 +10170,7 @@ function orchVendor() {
 }
 function orchModelFlagFor(vendor) {
   return vendor === 'gemini' ? '-m'
-    : ['claude', 'copilot', 'codex', 'aider'].includes(vendor) ? '--model'
+    : ['claude', 'copilot', 'codex', 'aider', 'kiro-cli'].includes(vendor) ? '--model'
     : '';
 }
 function isUsableModelValue(value) {
@@ -12527,13 +12804,13 @@ function amPaintList() {
     </li>`;
     }
   }
-  // eslint-disable-next-line no-unsanitized/property -- Every interpolated value is escaped.
   const keepScroll = list.scrollTop;
   // A filter that hides rows says what it is hiding instead of leaving a void.
   const hidden = agentMap.rows.length - rows.length;
   if (hidden > 0 && (agentMap.filter !== 'all' || agentMap.q)) {
     html += `<li class="am-hidden-note" role="presentation"><button type="button" id="am-show-all">${hidden} hidden by ${agentMap.q ? 'search' : 'filter'} · Show all</button></li>`;
   }
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolated value is escaped.
   list.innerHTML = html;
   list.scrollTop = keepScroll;
   const showAll = $('#am-show-all');
@@ -13928,7 +14205,7 @@ async function runOnboarding({ replay = false } = {}) {
     if (!selectedCmd && !anyInstalled) {
       const proceed = await openConfirmDialog({
         title: 'No agent CLI found',
-        bodyHtml: 'Husk drives a terminal AI agent (claude, copilot, codex, aider...), and none was detected on this system. You can skip now, but chat will not work until one is installed. You can reopen this setup anytime from Preferences.',
+        bodyHtml: 'Husk drives a terminal AI agent (claude, copilot, codex, aider, gemini, kiro-cli...), and none was detected on this system. You can skip now, but chat will not work until one is installed. You can reopen this setup anytime from Preferences.',
         confirmLabel: 'Skip anyway',
         cancelLabel: 'Back to setup',
       });

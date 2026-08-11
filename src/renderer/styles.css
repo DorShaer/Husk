@@ -3992,6 +3992,16 @@ body[data-page="chat"] #chats-panel { display: flex; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* Far zoom tier: below the threshold the agent line and the badge are noise,
+   so a step reads as one bold centred name — the pill language the grid
+   thumbnails already speak. data-zoom-tier is written by wfApplyZoomTier. */
+.wf-canvas[data-zoom-tier="far"] .wf-cv-node { padding: 16px 14px; }
+.wf-canvas[data-zoom-tier="far"] .wf-cv-node-badge,
+.wf-canvas[data-zoom-tier="far"] .wf-cv-node-meta { display: none; }
+.wf-canvas[data-zoom-tier="far"] .wf-cv-node-name {
+  font-size: 17px; font-weight: 650; letter-spacing: -0.01em; text-align: center;
+}
+
 /* Node config side panel */
 .wf-node-panel {
   width: 320px; flex: 0 0 auto;
@@ -9674,6 +9684,15 @@ kbd {
 .wf-rn-open svg { width: 100%; height: 100%; }
 .wf-run-canvas .drawflow-node.wf-rn-node:hover .wf-rn-open { opacity: 1; }
 
+/* Far zoom tier on the run canvas: the live line and the timer cannot be read
+   at this scale, so a step keeps its number, its name and its state colour.
+   The state still shows through the top bar and the card border. */
+.wf-run-canvas[data-zoom-tier="far"] .wf-rn { padding: 15px 13px 14px; }
+.wf-run-canvas[data-zoom-tier="far"] .wf-rn-foot,
+.wf-run-canvas[data-zoom-tier="far"] .wf-rn-timer { display: none; }
+.wf-run-canvas[data-zoom-tier="far"] .wf-rn-top { margin-bottom: 0; }
+.wf-run-canvas[data-zoom-tier="far"] .wf-rn-name { font-size: 16px; }
+
 /* Running: accent bar that travels, a glow, and a live dot. */
 .wf-rn-node.is-running {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2));
@@ -11648,12 +11667,182 @@ body[data-mode="light"] .wfx-sheet:not([data-state="working"]) > .modal-foot .gh
   box-shadow: 0 0 0 6px var(--bg);
 }
 .wf-mini-edge { fill: none; stroke: var(--line-3); stroke-width: 1.5; }
+/* A dense drawing carries dozens of edges through a 250px frame; thinned and
+   faded they read as wiring under the pills instead of scribble over them.
+   wfMiniGrid marks the frame when it takes over from authored placement. */
+.wf-mini.is-dense .wf-mini-edge { stroke-width: 1; opacity: 0.55; }
 .wf-mini-edge.is-taken { stroke: color-mix(in srgb, var(--accent) 70%, transparent); }
 .wf-mini-node { fill: var(--bg-4); stroke: var(--line-3); stroke-width: 1; }
 .wf-mini-node.is-done { fill: color-mix(in srgb, var(--emerald) 30%, transparent); stroke: var(--emerald); }
 .wf-mini-node.is-failed { fill: color-mix(in srgb, var(--rose) 30%, transparent); stroke: var(--rose); }
 .wf-mini-node.is-skipped { fill: transparent; stroke: var(--line-2); stroke-dasharray: 2 2; }
 .wf-mini-node.is-cancelled { fill: color-mix(in srgb, var(--amber) 26%, transparent); stroke: var(--amber); }
+
+/* Dense workflow cards get a signature, not a shrunk graph. The card answers:
+   how big is it, how many stages, and where is the major fan-out. */
+.wf-card-graph:has(.wf-signature) {
+  padding: 0;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background:
+    radial-gradient(120px 54px at 82% 16%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--accent) 5%, var(--bg-1)),
+      color-mix(in srgb, var(--bg) 92%, var(--accent) 8%));
+}
+.wf-signature {
+  position: relative;
+  height: 74px;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 18px;
+  column-gap: 10px;
+  padding: 9px 10px 7px;
+  box-sizing: border-box;
+}
+.wf-signature::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg-1) 70%, transparent) 48%, transparent 78%),
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--line-2) 60%, transparent) 1px, transparent 0) 0 0 / 14px 14px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+.wf-signature-hero,
+.wf-signature-route,
+.wf-signature-facts { position: relative; z-index: 1; }
+.wf-signature-hero {
+  align-self: center;
+  display: grid;
+  justify-items: start;
+  line-height: 1;
+}
+.wf-signature-hero strong {
+  font-size: 29px;
+  line-height: 0.9;
+  font-weight: 780;
+  letter-spacing: -0.06em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.wf-signature-hero span {
+  margin-top: 3px;
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 720;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 58%, var(--text-3));
+}
+.wf-signature-route {
+  align-self: center;
+  height: 34px;
+  display: grid;
+  grid-template-columns: repeat(var(--stages), minmax(7px, 1fr));
+  align-items: center;
+}
+.wf-signature-route::before {
+  content: '';
+  position: absolute;
+  left: 4px; right: 4px; top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--line-3) 58%, transparent),
+      color-mix(in srgb, var(--accent) 48%, var(--line-3)),
+      color-mix(in srgb, var(--line-3) 58%, transparent));
+}
+.wf-signature-dot {
+  position: relative;
+  justify-self: center;
+  z-index: 1;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--bg-1);
+  border: 1px solid color-mix(in srgb, var(--text-3) 36%, var(--line-2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bg-1) 78%, transparent);
+}
+.wf-signature-dot.is-fan:not(.is-hub) {
+  width: 9px;
+  height: 9px;
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line-2));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-1));
+}
+.wf-signature-dot.is-hub {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border-color: color-mix(in srgb, var(--accent) 74%, var(--line-3));
+  background:
+    radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--accent) 25%, var(--bg-1)), var(--bg-1) 70%);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--bg-1) 78%, transparent),
+    0 7px 18px -10px color-mix(in srgb, var(--accent) 70%, var(--shadow));
+}
+.wf-signature-dot.is-hub::before,
+.wf-signature-dot.is-hub::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 15px;
+  height: 5px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line-2));
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  transform: translateX(-50%);
+}
+.wf-signature-dot.is-hub::before { top: -7px; }
+.wf-signature-dot.is-hub::after { bottom: -7px; }
+.wf-signature-dot.is-hub b {
+  position: relative;
+  z-index: 1;
+  font: 800 12px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: color-mix(in srgb, var(--accent) 48%, var(--text));
+  font-variant-numeric: tabular-nums;
+}
+.wf-signature-dot.is-done { border-color: var(--emerald); background: color-mix(in srgb, var(--emerald) 16%, var(--bg-1)); }
+.wf-signature-dot.is-failed { border-color: var(--rose); background: color-mix(in srgb, var(--rose) 16%, var(--bg-1)); }
+.wf-signature-dot.is-running { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--bg-1)); }
+.wf-signature-dot.is-cancelled { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, var(--bg-1)); }
+.wf-signature-facts {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+.wf-signature-facts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-1) 74%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line-2) 64%, transparent);
+  font-size: 9px;
+  line-height: 14px;
+}
+.wf-signature-facts strong {
+  color: var(--text);
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+}
+.wf-signature-facts small {
+  color: var(--text-3);
+  font-size: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Did it work last time, and what is it made of. The auto margin bottom-anchors
    everything from here down, so this row and Run land on the same line across a

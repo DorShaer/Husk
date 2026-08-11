@@ -877,6 +877,10 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
                   Add node
                 </button>
+                <button class="ghost-btn" id="btn-wf-arrange" title="Lay the steps out in columns by graph depth">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="3" y="4" width="5" height="6" rx="1"/><rect x="10" y="9" width="5" height="6" rx="1"/><rect x="17" y="4" width="4" height="6" rx="1"/><rect x="17" y="14" width="4" height="6" rx="1"/></svg>
+                  Arrange
+                </button>
                 <button class="ghost-btn" id="btn-run-from-builder" title="Save this workflow and run it">
                   <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" width="13" height="13" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
                   Run
@@ -924,6 +928,7 @@
                       <div class="wf-legend-title">Canvas</div>
                       <div class="wf-legend-row"><span class="wf-legend-what">Pan</span><span class="wf-legend-how">drag the background</span></div>
                       <div class="wf-legend-row"><span class="wf-legend-what">Zoom</span><span class="wf-legend-how"><kbd>Ctrl</kbd> + scroll</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Tidy up</span><span class="wf-legend-how">the <b>Arrange</b> button, top right</span></div>
                     </div>
                     <p class="wf-legend-note">Deleting a step takes its lines with it, so a line is never left pointing at nothing.</p>
                   </div>
