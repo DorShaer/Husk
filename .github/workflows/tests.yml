@@ -27,9 +27,10 @@ jobs:
     name: e2e smoke (electron)
     runs-on: ubuntu-latest
     # The suite runs one worker and grew past ten minutes when the workflow
-    # ecosystem and agent center landed; twenty keeps headroom without letting
-    # a real hang run all day.
-    timeout-minutes: 20
+    # ecosystem and agent center landed. Thirty leaves room for a run that
+    # fails slowly to still finish and report, without letting a hang run all
+    # day: a job cancelled at the cap skips the steps that collect evidence.
+    timeout-minutes: 30
     needs: unit
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -44,6 +45,15 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: smoke test under xvfb
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:e2e
+      # What a failing run saw, so a red job is read rather than guessed at.
+      - name: upload e2e failure context
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-failure-context
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   perf:
     name: memory + stability profile (electron)
