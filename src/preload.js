@@ -5,6 +5,7 @@ const { fuzzyFilter } = require('./lib/fuzzy');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
+const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
 
 // Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
 // -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
@@ -106,7 +107,10 @@ contextBridge.exposeInMainWorld('husk', {
   // Agents page, which edits reusable agent definitions.
   bgAgents: {
     list: (payload) => ipcRenderer.invoke('bgAgents:list', payload || {}),
+    peek: (payload) => ipcRenderer.invoke('bgAgents:peek', payload || {}),
     openCommand: (payload) => ipcRenderer.invoke('bgAgents:openCommand', payload || {}),
+    stop: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'stop', id }),
+    remove: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'remove', id }),
   },
   prds: { list: () => ipcRenderer.invoke('prds:list') },
   plugins: {
@@ -150,6 +154,8 @@ contextBridge.exposeInMainWorld('husk', {
     remove: (filePath) => ipcRenderer.invoke('context:remove', filePath),
   },
   agents: {
+    state: (state, opts) => { try { return agentState(state, opts || {}); } catch (_) { return 'done'; } },
+    isLive: (state) => { try { return agentIsLive(state); } catch (_) { return false; } },
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),

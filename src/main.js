@@ -12,6 +12,8 @@ const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
+const { openCommand: bgOpenCommand, controlArgs: bgControlArgs } = require('./lib/bg-agent-open');
+const { isLive: agentIsLive } = require('./lib/agent-state');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
@@ -917,25 +919,7 @@ function rememberClaudeSession(encodedCwd, sessionId) {
   saveConfig(config);
 }
 
-// Environment variables the renderer may set on a spawned agent. Allowlisted
-// names only, with single-line, length-bounded values.
-const SPAWN_ENV_ALLOW = new Set(['CLAUDE_AGENTS_SELECT']);
-function sanitizeSpawnEnv(env) {
-  if (!env || typeof env !== 'object') return null;
-  const out = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (!SPAWN_ENV_ALLOW.has(k)) continue;
-    const value = String(v == null ? '' : v);
-    if (!value || value.length > 200 || /[\r\n\0]/.test(value)) continue;
-    out[k] = value;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-// extraEnv reaches the child process and nothing else. Attaching to a running
-// background agent is selected by an environment variable the CLI reads at
-// startup, so there is no command-line form to express it.
-function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null, resumeLast = false, extraEnv = null) {
+function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null, resumeLast = false) {
   // Target an existing session (Restart replaces just that tab's child) or
   // create a new one (New Chat passes a fresh id so the running agents keep
   // going). Falls back to the active session, then a generated id.
@@ -974,7 +958,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     // right panel already surfaces. PAI side checks $HUSK_HOST and
     // early-exits.
     HUSK_HOST: '1',
-  }, extraEnv && typeof extraEnv === 'object' ? extraEnv : {});
+  });
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
   // ~/.local/bin is where the native installers land, and a GUI/desktop launch
@@ -1551,7 +1535,7 @@ function readActiveSessionStats() {
 function targetSession(sessionId) {
   return (sessionId && sessions.get(sessionId)) || activeSession();
 }
-ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast, env } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast, sanitizeSpawnEnv(env)));
+ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast));
 // List the chat PTYs that are still alive, so a reloaded renderer can rebuild
 // its tabs and reattach instead of orphaning them and minting a fresh chat.
 ipcMain.handle('pty:list', () => {
@@ -9407,11 +9391,47 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
 // claude and copilot resume by id, so the string is fixed. gemini resumes by
 // position in its own list, so the index has to be resolved against the sessions
 // on disk right now rather than baked into a stale render.
-ipcMain.handle('sessions:resumeCommand', (_e, payload = {}) => {
+//
+// A session a background agent is still holding is the one case where the
+// resume form is not the answer. The CLI owns that transcript for as long as
+// the agent lives and refuses a second reader, so the command that opens it is
+// an attach, and the command that opens a copy of it forks. Both are named
+// here, where the state is, rather than guessed by a surface after the refusal
+// has already been printed into a terminal.
+ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
   const agent = String(payload.agent || activeAgentName()).trim().toLowerCase();
   const id = String(payload.id || '');
   if (!id) return { ok: false, error: 'no session id' };
-  if (agent === 'claude') return { ok: true, command: `claude --resume ${id}` };
+  if (agent === 'claude') {
+    const holder = await sessionHolder(id);
+    const fork = `claude --resume ${id} --fork-session`;
+    if (holder && holder.kind === 'background') {
+      return {
+        ok: true,
+        mode: 'attach',
+        command: `claude attach ${holder.id}`,
+        forkCommand: fork,
+        agentId: holder.id,
+        agentName: holder.name,
+        agentState: holder.state,
+        cwd: holder.cwd,
+      };
+    }
+    // A chat open in another window. There is no id to attach to, so the copy
+    // is the only way in, and it is named as a copy rather than offered as a
+    // resume that would be refused.
+    if (holder) {
+      return {
+        ok: true,
+        mode: 'fork',
+        command: fork,
+        forkCommand: fork,
+        agentName: holder.name,
+        cwd: holder.cwd,
+      };
+    }
+    return { ok: true, mode: 'resume', command: `claude --resume ${id}` };
+  }
   if (agent === 'copilot') {
     const hit = findCopilotSessionForResume(id, String(payload.cwd || ''));
     if (!hit) return { ok: false, error: 'that copilot session is no longer listed' };
@@ -9479,65 +9499,262 @@ function bgAgentJobState(shortId) {
   } catch (_) { return {}; }
 }
 
-ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
-  const agent = activeAgentName();
-  // A CLI with no agent concept reports that it has none.
-  if (agent !== 'claude') return { ok: true, supported: false, agents: [] };
-  const cwd = String((payload && payload.cwd) || activePtyCwd || '').trim();
+// Where a session's transcript actually lives. An agent can belong to any
+// project on the machine (the map lists them all), so the lookup starts at the
+// project dir its own cwd names and then scans the projects root once. Bounded:
+// one readdir over a directory with one entry per project.
+function bgFindTranscript(sessionId, cwdHint) {
+  const id = String(sessionId || '');
+  if (!/^[0-9a-fA-F-]{16,}$/.test(id)) return '';
+  const name = `${id}.jsonl`;
+  const projRoot = path.join(CLAUDE_DIR, 'projects');
+  if (cwdHint) {
+    const p = path.join(projRoot, String(cwdHint).replace(/[^a-zA-Z0-9]/g, '-'), name);
+    if (fs.existsSync(p)) return p;
+  }
+  try {
+    for (const dir of fs.readdirSync(projRoot)) {
+      const p = path.join(projRoot, dir, name);
+      if (fs.existsSync(p)) return p;
+    }
+  } catch (_) {}
+  return '';
+}
+
+// The working directory a transcript was recorded in, read off its head lines.
+// Resuming from anywhere else makes the CLI deny the session exists.
+function bgTranscriptCwd(transcript) {
+  try {
+    const head = readHead(transcript, 256 * 1024);
+    for (const line of head.split('\n')) {
+      const m = line.match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+      if (m) { try { return JSON.parse(`"${m[1]}"`); } catch (_) { return m[1]; } }
+    }
+  } catch (_) {}
+  return '';
+}
+
+// The CLI's own inventory of what it is running, parsed once. Both the fleet
+// list and the question "is this session busy" read the same answer, so the two
+// can never disagree about which agent is live.
+async function bgAgentRows({ cwd = '', all = false, allProjects = false, timeout = 8000 } = {}) {
   const args = ['agents', '--json'];
-  if (cwd) args.push('--cwd', cwd);
-  if (payload && payload.all) args.push('--all');
+  // Background agents belong to the machine, not to one project. The fleet
+  // surfaces ask for all of them; anything scoped passes its own directory.
+  if (cwd && !allProjects) args.push('--cwd', cwd);
+  if (all) args.push('--all');
   const env = buildAgentEnv();
   const exe = resolveAgentExe('claude', env.PATH);
   let raw = '';
   try {
     raw = await new Promise((resolve, reject) => {
-      execFile(exe, args, { env, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      execFile(exe, args, { env, timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
         if (err) reject(err); else resolve(String(stdout || ''));
       });
     });
   } catch (err) {
-    return { ok: false, supported: true, agents: [], error: (err && err.message) || 'could not list agents' };
+    return { ok: false, rows: [], error: (err && err.message) || 'could not list agents' };
   }
   let rows = [];
   try { rows = JSON.parse(raw); } catch (_) {
-    return { ok: false, supported: true, agents: [], error: 'agent list was not readable' };
+    return { ok: false, rows: [], error: 'agent list was not readable' };
   }
-  if (!Array.isArray(rows)) return { ok: true, supported: true, agents: [] };
-  const projDir = cwd ? path.join(CLAUDE_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-')) : '';
+  return { ok: true, rows: Array.isArray(rows) ? rows : [] };
+}
+
+// Whether a process is still there. Signal 0 delivers nothing and only asks;
+// EPERM is a process this user does not own, which is still a process.
+function pidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try { process.kill(n, 0); return true; } catch (err) { return err && err.code === 'EPERM'; }
+}
+
+// Who is holding a session right now, when anybody is. A held session cannot be
+// resumed: the CLI will not open a second reader on a transcript a live process
+// is writing, and says so instead of opening.
+//
+// The test is the process, not the reported state. A background agent that has
+// finished its turn reports state "done" and keeps its pid, because the agent
+// is idle rather than gone, and it holds the session for exactly as long as
+// that process lives. Reading the state word here would call that session free
+// and hand back a command the CLI refuses. An interactive row is a chat open
+// somewhere else, which is held the same way and has no agent id to attach to.
+//
+// The probe is short and every failure answers "nobody is holding it". A slow
+// or missing CLI must not turn opening a session into a stall, and the resume
+// that answer falls back to is what this path did before the question existed.
+async function sessionHolder(sessionId) {
+  const id = String(sessionId || '').trim();
+  if (!id) return null;
+  const res = await bgAgentRows({ all: true, allProjects: true, timeout: 3000 });
+  if (!res.ok) return null;
+  for (const r of res.rows) {
+    if (!r || String(r.sessionId || '') !== id) continue;
+    if (!pidAlive(r.pid)) continue;
+    const background = r.kind === 'background';
+    return {
+      kind: background ? 'background' : 'interactive',
+      // Only a background agent has an id the CLI will attach to.
+      id: background ? String(r.id || id.slice(0, 8)) : '',
+      sessionId: id,
+      name: String(r.name || '').slice(0, 120),
+      state: String(r.state || ''),
+      status: String(r.status || ''),
+      cwd: String(r.cwd || ''),
+    };
+  }
+  return null;
+}
+
+ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
+  const agent = activeAgentName();
+  // A CLI with no agent concept reports that it has none.
+  if (agent !== 'claude') return { ok: true, supported: false, agents: [] };
+  const cwd = String((payload && payload.cwd) || activePtyCwd || '').trim();
+  const listed = await bgAgentRows({
+    cwd,
+    all: !!(payload && payload.all),
+    allProjects: !!(payload && payload.allProjects),
+  });
+  if (!listed.ok) return { ok: false, supported: true, agents: [], error: listed.error };
+  const rows = listed.rows;
+  if (!rows.length) return { ok: true, supported: true, agents: [], chats: [] };
+  // The chats an agent can descend from. They are listed alongside agents but
+  // are not agents, so they travel separately and only the graph reads them.
+  const chats = rows
+    .filter((r) => r && r.kind === 'interactive' && r.sessionId)
+    .map((r) => ({
+      id: String(r.sessionId).slice(0, 8),
+      sessionId: String(r.sessionId),
+      name: String(r.name || '').slice(0, 120),
+      cwd: String(r.cwd || ''),
+      status: String(r.status || ''),
+      startedAt: Number(r.startedAt) || 0,
+    }));
   const agents = rows
     .filter((r) => r && r.kind === 'background' && r.sessionId)
     .map((r) => {
       const shortId = String(r.id || String(r.sessionId).slice(0, 8));
       const job = bgAgentJobState(shortId);
-      const transcript = projDir ? path.join(projDir, `${r.sessionId}.jsonl`) : '';
+      // Resolved against the agent's own project, not the asking chat's, so an
+      // agent from another project still finds its transcript.
+      const transcript = bgFindTranscript(String(r.sessionId), String(r.cwd || '') || cwd);
+      let lastActivityAt = 0;
+      if (transcript) { try { lastActivityAt = Math.round(fs.statSync(transcript).mtimeMs); } catch (_) {} }
       return {
         id: shortId,
         sessionId: String(r.sessionId),
         name: String(r.name || '').slice(0, 120),
         cwd: String(r.cwd || ''),
-        // Live until the CLI reports it done. A blocked agent is waiting on the
-        // user and is still live.
-        running: String(r.state || '') !== 'done',
-        // A pid means a live worker to attach to; without one the session
-        // resumes like any other chat.
-        attachable: r.pid != null,
+        // Live means working or waiting on the user. Every other reported
+        // state has stopped.
+        running: agentIsLive(r.state),
+        // A live agent is reached by attaching to it; a stopped one resumes
+        // from its transcript like any other chat.
+        attachable: agentIsLive(r.state),
+        // Whether the session is spoken for, which is a different question from
+        // whether the agent is mid-turn. An idle agent still owns its
+        // transcript for as long as its process lives, and the CLI refuses to
+        // resume a session anything is holding.
+        held: pidAlive(r.pid),
         status: String(r.status || ''),
-        state: String(r.state || job.state || ''),
+        state: String(r.state || ''),
         detail: job.detail || '',
         intent: job.intent || '',
         needs: job.needs || '',
         tokens: job.tokens || 0,
         startedAt: Number(r.startedAt) || 0,
-        updatedAt: job.updatedAt || 0,
-        parentSessionId: projDir ? bgAgentParent(String(r.sessionId), projDir) : '',
+        updatedAt: Math.max(job.updatedAt || 0, lastActivityAt),
+        parentSessionId: transcript ? bgAgentParent(String(r.sessionId), path.dirname(transcript)) : '',
         // An agent can be listed and running with nothing on disk yet, so the
         // caller must not treat a missing transcript as a missing agent.
-        hasTranscript: !!(transcript && fs.existsSync(transcript)),
+        hasTranscript: !!transcript,
         transcript,
       };
     });
-  return { ok: true, supported: true, agents };
+  return { ok: true, supported: true, agents, chats };
+});
+
+// The tail of one agent's conversation, compacted to what a human skims: what
+// it said last, which tools it reached for, what it was asked. Read fresh per
+// call off the transcript tail, so the detail pane can poll it while the agent
+// works and the feed moves in near real time.
+const BG_PEEK_TAIL_BYTES = 192 * 1024;
+ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
+  const sessionId = String((payload && payload.sessionId) || '').trim();
+  if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'no session' };
+  const transcript = bgFindTranscript(sessionId, String((payload && payload.cwd) || ''));
+  if (!transcript) return { ok: true, entries: [], model: '', empty: true };
+  let text = '';
+  let size = 0;
+  try {
+    size = fs.statSync(transcript).size;
+    const fd = fs.openSync(transcript, 'r');
+    const start = Math.max(0, size - BG_PEEK_TAIL_BYTES);
+    const buf = Buffer.alloc(Math.min(size, BG_PEEK_TAIL_BYTES));
+    const n = fs.readSync(fd, buf, 0, buf.length, start);
+    fs.closeSync(fd);
+    text = buf.toString('utf8', 0, n);
+    // A mid-file start lands inside a line; drop the partial one.
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  const entries = [];
+  let model = '';
+  const clip = (s, max) => {
+    const t = String(s || '').replace(/\s+/g, ' ').trim();
+    return t.length > max ? t.slice(0, max - 1) + '\u2026' : t;
+  };
+  // One-line summary of a tool call: the argument a human would use to name
+  // it. Paths keep their tail, the interesting part, rather than the noise
+  // of a temp prefix.
+  const toolArg = (input) => {
+    if (!input || typeof input !== 'object') return '';
+    for (const k of ['file_path', 'path']) {
+      if (typeof input[k] === 'string' && input[k]) {
+        const segs = input[k].split(/[\\/]/).filter(Boolean);
+        return clip(segs.slice(-2).join('/'), 72);
+      }
+    }
+    const keys = ['command', 'pattern', 'query', 'url', 'description', 'prompt'];
+    for (const k of keys) if (typeof input[k] === 'string' && input[k]) return clip(input[k], 80);
+    return '';
+  };
+  for (const line of text.split('\n')) {
+    if (!line || line.length > 2 * 1024 * 1024) continue;
+    let o = null;
+    try { o = JSON.parse(line); } catch (_) { continue; }
+    if (!o || typeof o !== 'object') continue;
+    const ts = o.timestamp ? Date.parse(o.timestamp) : 0;
+    if (o.type === 'user' && o.message) {
+      const c = o.message.content;
+      if (typeof c === 'string' && c.trim()) {
+        entries.push({ kind: 'user', text: clip(c, 200), ts });
+      } else if (Array.isArray(c)) {
+        for (const part of c) {
+          if (part && part.type === 'text' && String(part.text || '').trim()) {
+            entries.push({ kind: 'user', text: clip(part.text, 200), ts });
+            break;
+          }
+        }
+      }
+    } else if (o.type === 'assistant' && o.message) {
+      if (typeof o.message.model === 'string') model = o.message.model;
+      const c = o.message.content;
+      if (!Array.isArray(c)) continue;
+      for (const part of c) {
+        if (!part) continue;
+        if (part.type === 'text' && String(part.text || '').trim()) {
+          entries.push({ kind: 'assistant', text: clip(part.text, 240), ts });
+        } else if (part.type === 'tool_use') {
+          entries.push({ kind: 'tool', tool: clip(part.name, 40), text: toolArg(part.input), ts });
+        }
+      }
+    }
+  }
+  return { ok: true, entries: entries.slice(-24), model, empty: entries.length === 0 };
 });
 
 // How to reach one agent, validated before it is handed back the way copilot and
@@ -9547,21 +9764,40 @@ ipcMain.handle('bgAgents:openCommand', (_e, payload = {}) => {
   if (agent !== 'claude') return { ok: false, error: `background agents are not available for ${agent}` };
   const id = String((payload && payload.id) || '').trim();
   const sessionId = String((payload && payload.sessionId) || '').trim();
-  if (!id && !sessionId) return { ok: false, error: 'no agent selected' };
-  if (payload && payload.attach) {
-    // A running agent is owned by its worker; the CLI refuses --resume against
-    // one and says so. Its own fleet view is the supported way in, and it opens
-    // straight onto this agent when told which one.
-    if (!/^[A-Za-z0-9][A-Za-z0-9-]{2,}$/.test(id)) return { ok: false, error: 'that agent has no id to attach to' };
-    return { ok: true, mode: 'attach', command: 'claude agents', env: { CLAUDE_AGENTS_SELECT: id } };
+  // The transcript names the only directory the CLI will resume this session
+  // from. Found wherever it lives, so opening works from any project, and the
+  // tab is told to start there instead of in the asking chat's directory.
+  const hint = String((payload && payload.cwd) || activePtyCwd || '');
+  const transcript = sessionId ? bgFindTranscript(sessionId, hint) : '';
+  return bgOpenCommand({
+    id,
+    sessionId,
+    attach: !!(payload && payload.attach),
+    transcript,
+    cwd: (transcript && bgTranscriptCwd(transcript)) || String((payload && payload.cwd) || ''),
+  });
+});
+
+// End one agent. `stop` halts the worker and keeps the conversation; `remove`
+// discards the job and its worktree.
+ipcMain.handle('bgAgents:control', async (_e, payload = {}) => {
+  const agent = activeAgentName();
+  if (agent !== 'claude') return { ok: false, error: `background agents are not available for ${agent}` };
+  const plan = bgControlArgs(payload && payload.action, payload && payload.id);
+  if (!plan.ok) return plan;
+  const env = buildAgentEnv();
+  const exe = resolveAgentExe('claude', env.PATH);
+  try {
+    const out = await new Promise((resolve, reject) => {
+      execFile(exe, plan.args, { env, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        if (err) reject(new Error(String(stderr || err.message || '').trim() || 'the agent did not stop'));
+        else resolve(String(stdout || '').trim());
+      });
+    });
+    return { ok: true, action: plan.args[0], id: plan.args[1], message: out.slice(0, 200) };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'the agent did not stop' };
   }
-  if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'that agent has no session to resume' };
-  const cwd = String((payload && payload.cwd) || activePtyCwd || '');
-  const projDir = path.join(CLAUDE_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
-  if (!fs.existsSync(path.join(projDir, `${sessionId}.jsonl`))) {
-    return { ok: false, error: 'that agent finished without leaving a transcript' };
-  }
-  return { ok: true, mode: 'resume', command: `claude --resume ${sessionId}` };
 });
 
 ipcMain.handle('sessions:rename', (_e, payload = {}) => {
