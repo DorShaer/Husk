@@ -317,6 +317,9 @@
   --control-h: 32px;
   --control-h-sm: 26px;
   --control-h-lg: 38px;
+  /* Collections share two row heights: one line of body copy, and two. */
+  --row-h: 40px;
+  --row-h-lg: 52px;
   /* Shell chrome: the topbar row, the centred search field and the status line. */
   --topbar-h: 52px;
   --topbar-search-w: 440px;
@@ -637,6 +640,43 @@ button.chip:hover, a.chip:hover,
 }
 .chip[data-state="muted"] {
   background: var(--state-muted-bg); border-color: var(--state-muted-edge); color: var(--state-muted-ink);
+}
+
+/* Filter group. A small caps head names one axis and carries its count; the
+   controls it governs fold away behind the head's caret. */
+.filter-group {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  min-width: 0;
+}
+.filter-group[hidden] { display: none; }
+.filter-group-head {
+  display: flex; align-items: center; gap: var(--space-1);
+  flex: 0 0 auto;
+  margin: 0; padding: 0;
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-3);
+  font-family: inherit; text-align: left; cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+.filter-group-head:hover { color: var(--text-2); }
+.filter-group-head:hover .section-label,
+.filter-group-head:hover .section-label-count { color: inherit; }
+.filter-group-head:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: 2px; }
+.filter-group-caret {
+  width: 12px; height: 12px; flex: 0 0 auto;
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+.filter-group[data-open="false"] .filter-group-caret { transform: rotate(-90deg); }
+.filter-group[data-open="false"] .filter-group-body { display: none; }
+.filter-group-body {
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0;
+}
+/* An axis lying along a band keeps its head and its controls on one row. */
+.filter-group.is-inline { flex-direction: row; align-items: center; gap: var(--space-2); }
+.filter-group.is-inline .filter-group-body { flex-direction: row; align-items: center; gap: var(--space-1); }
+@media (prefers-reduced-motion: reduce) {
+  .filter-group-caret { transition: none; }
 }
 
 /* ─── Topbar ────────────────────────────────────────────────────────────── */
@@ -1462,6 +1502,37 @@ body[data-page="boot"] .page { display: none !important; }
   color: var(--text-2);
   letter-spacing: var(--tracking-normal);
   line-height: var(--lh-snug);
+}
+/* The collections share one head: the title at the page step over one muted
+   line, with the actions on the same band. The rail already says which page this
+   is, so the title reports rather than announces and the list gets the height. */
+.page-agents .page-head,
+.page-skills .page-head,
+.page-sessions .page-head,
+.page-prompts .page-head,
+.page-projects .page-head {
+  align-items: center;
+  min-height: 0;
+  margin-bottom: var(--space-4);
+}
+.page-agents .page-title,
+.page-skills .page-title,
+.page-sessions .page-title,
+.page-prompts .page-title,
+.page-projects .page-title {
+  font-family: var(--font-body);
+  font-size: var(--fs-page);
+  font-weight: var(--fw-page);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-2);
+}
+.page-agents .page-sub,
+.page-skills .page-sub,
+.page-sessions .page-sub,
+.page-prompts .page-sub,
+.page-projects .page-sub {
+  font-size: var(--fs-body);
+  color: var(--text-3);
 }
 .ghost-btn {
   background: transparent;
@@ -5016,10 +5087,10 @@ body[data-page="chat"] #chats-panel { display: flex; }
   background: var(--bg);
   /* One body size for the whole page, so a wrapper never carries a size no
      text on the page uses. */
-  font-size: var(--fs-small);
+  font-size: var(--fs-body);
   --ag-pad-x: var(--space-5);
   --ag-gutter: var(--space-2);
-  --ag-row-h: 40px;
+  --ag-row-h: var(--row-h);
   /* Set from the longest name in the roster, so the sentence sits next to the
      name it qualifies and the column holds still while the list filters. */
   --ag-name-w: 170px;
@@ -5085,7 +5156,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 /* The sentence, on the records whose row column was too narrow to print it. */
 .ag-dt-desc {
   margin: 0; flex: 0 0 auto;
-  font-size: var(--fs-small); font-weight: 400; line-height: 18px; color: var(--text-2);
+  font-size: var(--fs-body); font-weight: var(--fw-body); line-height: 18px; color: var(--text-2);
 }
 /* Two columns of property, so the pane says what the row cannot fit. */
 .ag-dt-meta {
@@ -5099,22 +5170,28 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .ag-dt-cell { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .ag-dt-cell-wide { grid-column: 1 / -1; }
 .ag-dt-cell dt {
-  font-size: var(--fs-nano); font-weight: 500; letter-spacing: 0.06em;
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
   text-transform: uppercase; color: var(--text-3);
 }
 .ag-dt-cell dd {
   margin: 0; min-width: 0;
-  font-size: var(--fs-small); font-weight: 400; line-height: 18px; color: var(--text-2);
+  font-size: var(--fs-body); font-weight: var(--fw-body); line-height: 18px; color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* A field with nothing behind it names what is missing and drops a tone, so the
+   pane keeps its shape and the reader can see which properties are unset. */
+.ag-dt-cell dd.is-empty, .ag-dt-desc.is-empty { color: var(--text-3); }
 /* A path is machine text, so it takes the mono face. It stays on the same grey
    the prompt beside it is set in, so the pane holds one monospace style. */
 .ag-dt-path {
   font-family: var(--font-mono);
+  font-size: var(--fs-mono);
 }
 .ag-dt-label {
   margin: 0; flex: 0 0 auto;
-  font-size: var(--fs-nano); font-weight: 500; letter-spacing: 0.06em;
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
   text-transform: uppercase; color: var(--text-3);
 }
 /* The payload of the pane, and a reading surface of its own. It is as tall as the
@@ -5183,25 +5260,37 @@ body[data-page="chat"] #chats-panel { display: flex; }
   min-height: 40px; flex: 0 0 auto;
   padding: 0 var(--ag-pad-x);
   border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+/* The axes scroll sideways when they outrun the band; the count and the field
+   sit outside that box, so neither ever scrolls out of reach. */
+.ag-bar-filters {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex: 0 1 auto; min-width: 0;
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none;
 }
-.ag-bar::-webkit-scrollbar { height: 0; }
+.ag-bar-filters::-webkit-scrollbar { height: 0; }
 /* The one field that narrows the list sits on the same band as the chips that
    narrow it, so every filter on the page is one row of chrome. */
-.ag-bar > .ag-search { margin-left: auto; padding-left: var(--space-3); flex: 0 1 260px; min-width: 0; }
+.ag-bar > .ag-search { margin-left: auto; padding-left: var(--space-2); flex: 0 1 200px; min-width: 96px; }
 .ag-bar > .ag-search .ghost-input { min-width: 0; width: 100%; }
 .ag-facets { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
-/* The first chip's label lands on the row-name rail, so the band and the rows
+/* Each axis stands under a named head that folds it away, so which chip belongs
+   to which axis is readable in words rather than off the rule between them. */
+.ag-bar-filters > .filter-group { flex: 0 0 auto; }
+/* The first head's caret lands on the row-name rail, so the band and the rows
    share a left edge instead of missing it by a few pixels. */
-.ag-bar > .ag-facets:first-of-type { margin-left: calc(var(--space-2) * -1); }
+.ag-bar-filters > .filter-group:first-of-type { margin-left: var(--space-1); }
+/* Chips inside a head's own group keep the tighter gap the band was built on. */
+.ag-bar .filter-group-body.ag-facets { gap: var(--space-1); }
 .ag-facet {
   display: inline-flex; align-items: center; gap: var(--space-2);
   flex: 0 0 auto;
   height: var(--control-h); padding: 0 var(--space-3);
   border: 0; border-radius: var(--radius-pill);
   background: none; color: var(--text-2);
-  font-family: inherit; font-size: var(--fs-small); font-weight: 400;
+  font-family: inherit; font-size: var(--fs-body); font-weight: var(--fw-body);
   letter-spacing: 0; line-height: 16px; white-space: nowrap; cursor: pointer;
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
 }
@@ -5223,17 +5312,19 @@ body[data-page="chat"] #chats-panel { display: flex; }
 /* A facet with nothing behind it stays on the band and stops answering, so the
    set of controls never changes shape as a query narrows the roster. */
 .ag-facet[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
-/* Every count on this page is set here: the smallest step, the lightest grey,
-   no weight and no tracking of its own, so a number never reads as a label. */
+/* Every count on this page is set here: the mono face, the lightest grey, no
+   weight and no tracking of its own, so a number reads as data rather than as a
+   label and never borrows the accent. */
 .ag-facet-n, .ag-group-n, .ag-count {
-  font-size: var(--fs-nano); font-weight: 400; letter-spacing: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono); font-weight: 400; letter-spacing: var(--tracking-normal);
   font-variant-numeric: tabular-nums; color: var(--text-3);
 }
-/* Two axes, two groups. The gap around the rule is twice the gap between two
-   chips, so which chip belongs to which axis is readable without a label. */
+/* Two axes, two groups. The heads name them, so the rule between them only has
+   to hold the two apart. */
 .ag-bar-sep {
   flex: 0 0 auto; width: 1px; height: 16px;
-  background: var(--line); margin: 0 var(--space-4);
+  background: var(--line); margin: 0 var(--space-3);
 }
 /* ── The legend ─────────────────────────────────────────────────────────── */
 /* Under the rows, not over them: the band holds the filters and this holds
@@ -5251,17 +5342,25 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .ag-count:empty { padding-left: 0; }
 .ag-keys {
-  display: flex; align-items: center; gap: var(--space-3);
+  display: flex; align-items: center; gap: var(--space-4);
   flex: 0 1 auto; min-width: 0; overflow: hidden;
 }
+/* A binding reads as prose: the key in the mono face, then the verb it runs.
+   Nothing here is enclosed, so the legend sits under the list as a hint rather
+   than as a row of hardware. */
 .ag-key {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  font-family: inherit; font-size: var(--fs-nano); font-weight: 400;
-  color: var(--text-3); white-space: nowrap;
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-family: inherit; font-size: var(--fs-label); font-weight: var(--fw-body);
+  color: var(--text-2); white-space: nowrap;
 }
-/* One cap per key, so a chord reads as two keys rather than as a box with a
-   sentence in it. */
-.ag-key-caps { display: inline-flex; align-items: center; gap: var(--space-1); }
+/* One key per glyph, so a chord reads as two keys rather than as one string. */
+.ag-key-caps { display: inline-flex; align-items: baseline; gap: 4px; color: var(--text-3); }
+.ag-keys .ag-kbd {
+  min-width: 0; height: auto; padding: 0;
+  background: none; border: 0; border-radius: 0;
+  font-family: var(--font-mono); font-size: var(--fs-mono);
+  color: inherit;
+}
 
 /* ── Pin toggle ─────────────────────────────────────────────────────────── */
 /* A pin, not a checkbox: this writes a preference, it does not select a row
@@ -5314,7 +5413,8 @@ body[data-page="chat"] #chats-panel { display: flex; }
   padding: var(--space-2) calc(var(--ag-pad-x) - var(--ag-gutter)) var(--space-2) var(--ag-name-x);
   border-top: 1px solid var(--line);
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
-  font-size: var(--fs-nano); font-weight: 500; letter-spacing: 0.06em;
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
   color: var(--text-3);
   line-height: 16px;
 }
@@ -5349,7 +5449,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
    line of text and the name wins on weight and ink alone. */
 .ag-name {
   grid-area: name;
-  font-size: var(--fs-small); font-weight: 500; letter-spacing: 0;
+  font-size: var(--fs-body); font-weight: var(--fw-label); letter-spacing: 0;
   line-height: 18px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -5357,7 +5457,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
    list carries the sentence in full. */
 .ag-desc {
   grid-area: desc; min-width: 0;
-  font-size: var(--fs-small); font-weight: 400; letter-spacing: 0;
+  font-size: var(--fs-body); font-weight: var(--fw-body); letter-spacing: 0;
   line-height: 18px; color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -5369,8 +5469,8 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .ag-tag {
   flex: 0 0 auto;
-  font-size: var(--fs-nano); font-weight: 500;
-  letter-spacing: 0.06em; text-transform: uppercase;
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section); text-transform: uppercase;
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -5545,10 +5645,10 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 .ag-foot-gap { flex: 1; }
 
 /* ── Narrow ─────────────────────────────────────────────────────────────── */
-/* The legend gives up the words before the caps rather than whole bindings, so
-   every shortcut the list answers is still named at every width it has. */
+/* The legend gives up whole bindings rather than the words that name them, so
+   every shortcut it still shows is still readable as a sentence. */
 @container (max-width: 1100px) {
-  .ag-key-word { display: none; }
+  .ag-key:nth-child(n+5) { display: none; }
 }
 /* Below this the reader would take the width the list needs, so it moves under
    the list and keeps the prompt one scroll away instead of one modal. */
@@ -5600,10 +5700,14 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
   display: flex; flex-direction: column;
   padding-right: 4px;
 }
+/* A mark on a project card reports a state, so it takes the shared tint and
+   leaves the accent to the page's one primary action. */
 .project-card-pill {
-  font-size: var(--fs-pico); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--accent); background: transparent;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line-2));
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section); text-transform: uppercase;
+  color: var(--state-running-ink);
+  background: var(--state-running-bg);
+  border: 1px solid var(--state-running-edge);
   border-radius: var(--radius-pill); padding: 2px 8px;
 }
 /* Topbar active-project chip */
@@ -5655,16 +5759,13 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
   box-shadow: var(--hl-top);
   overflow: hidden;
 }
+/* The list names itself with the shared section header, so its count reads as
+   data beside a label rather than as a second label. */
 .pr-list-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  justify-content: space-between;
+  min-height: var(--row-h);
+  padding: 0 var(--space-4);
   border-bottom: 1px solid var(--line);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-3);
 }
 .pr-items {
   flex: 1; min-height: 0; overflow-y: auto;
@@ -5674,7 +5775,8 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 .pr-item {
   position: relative;
   flex: 0 0 auto;
-  display: flex; flex-direction: column; gap: var(--space-1);
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  min-height: var(--row-h-lg);
   padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -5705,21 +5807,19 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 }
 .pr-item-name {
   flex: 1; min-width: 0;
-  font-size: var(--fs-body-lg);
-  font-weight: 500;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-label);
   color: var(--text-2);
-  letter-spacing: var(--tracking-tight);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pr-item.is-active .pr-item-name { color: var(--text); font-weight: 600; }
+/* One line, so every row in the library is the same shape and the pane beside
+   it carries the sentence in full. */
 .pr-item-desc {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-body);
   line-height: var(--lh-snug);
   color: var(--text-3);
-  display: -webkit-box;
-  -webkit-line-clamp: 2; line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Ghost row that closes the list and keeps the create action reachable from
    the bottom of a long library. */
@@ -5744,20 +5844,6 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 .pr-new:hover { color: var(--text); border-color: var(--line-3); background: var(--bg-2); }
 .pr-new:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-.pr-pill {
-  flex: 0 0 auto;
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  background: transparent;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
-  line-height: var(--lh-relaxed);
-}
-
 .pr-detail-head {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: var(--space-5);
@@ -5767,9 +5853,9 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 .pr-detail-heading { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .pr-eyebrow {
   display: flex; align-items: center; gap: var(--space-2);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: var(--fs-section);
+  font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
   text-transform: uppercase;
   color: var(--text-3);
 }
@@ -5783,14 +5869,14 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
   margin: 0;
 }
 .pr-detail-desc {
-  font-size: var(--fs-body-lg);
+  font-size: var(--fs-body);
   line-height: var(--lh-base);
   color: var(--text-2);
   max-width: 68ch;
 }
 .pr-detail-path {
   font-family: var(--font-mono);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-mono);
   color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -6037,96 +6123,103 @@ textarea.pr-body-edit:focus-visible {
   /* Width of the list's reserved scrollbar. Everything above the list pads by
      the same amount, so one right edge runs down the card. */
   --sk-gutter: 10px;
-  /* Chrome above the list: one tint, taken from the theme's own text colour so
+  /* Chrome around the list: one tint, taken from the theme's own text colour so
      it lifts on dark and settles on light. */
   --sk-chrome: color-mix(in srgb, var(--text) 3%, transparent);
+  /* Width of the filter column. Wide enough for the longest source name plus
+     its count, narrow enough to leave the descriptions the page. */
+  --sk-rail-w: 208px;
 }
 
 .sk {
   flex: 1; min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: var(--sk-rail-w) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   border: 1px solid var(--sk-line);
   border-radius: var(--radius-xl);
   background: var(--sk-surface);
   overflow: hidden;
 }
 
-/* ── Top: the filters ──────────────────────────────────────────────────── */
-/* Seven filters lie across one bar instead of standing in a column, so the
-   list keeps the full width of the card and the bar keeps a single row of it. */
+/* ── Left: the filters ─────────────────────────────────────────────────── */
+/* Filters stand in a column of named sections, so each axis carries a header a
+   reader can collapse and the list below keeps one uninterrupted band. */
 .sk-rail {
-  display: flex; align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) calc(var(--space-5) + var(--sk-gutter)) var(--space-2) var(--space-5);
-  border-bottom: 1px solid var(--sk-line);
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--sk-line);
   background: var(--sk-chrome);
-  overflow-x: auto; overflow-y: hidden;
+  overflow-y: auto; overflow-x: hidden;
   scrollbar-width: none;
 }
-.sk-rail::-webkit-scrollbar { height: 0; }
-.sk-rail-cap {
-  flex: 0 0 auto;
-  font-size: var(--fs-micro); font-weight: 700;
-  letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--sk-dim); opacity: 0.6;
-}
-/* The state group and its caption sit at the far end of the bar, opposite the
-   sources they narrow. */
-.sk-sources + .sk-rail-cap { margin-left: auto; padding-left: var(--space-2); }
-.sk-sources, .sk-state { display: flex; align-items: center; gap: var(--space-1); }
+.sk-rail::-webkit-scrollbar { width: 0; }
+/* The head runs the full width of the column, so the whole row answers a click
+   and the count sits on the column's right edge. */
+.sk-rail .filter-group { gap: var(--space-1); }
+.sk-rail .filter-group-head { width: 100%; padding: 0 var(--space-2) var(--space-1); }
+.sk-rail .filter-group-head .section-label { flex: 1 1 auto; min-width: 0; }
+.sk-sources, .sk-state { align-items: stretch; gap: 1px; }
 .sk-source, .sk-state-btn {
-  display: flex; align-items: center; gap: var(--space-2);
-  flex: 0 0 auto;
-  padding: var(--space-2) var(--space-3);
-  border: 0; border-radius: var(--radius-pill);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  flex: 0 0 auto; min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 0; border-radius: var(--radius-control);
   background: none; color: var(--sk-dim);
-  font-family: inherit; font-size: var(--fs-small); font-weight: 500;
+  font-family: inherit; font-size: var(--fs-body); font-weight: var(--fw-body);
   white-space: nowrap; text-align: left; cursor: pointer;
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
 }
-/* A step above the bar's own tint, so hover reads on light as well as dark. */
-.sk-source:hover, .sk-state-btn:hover { background: var(--bg-3); color: var(--text); }
+/* Hover moves one step above the rail's own tint, so the pointer reads on light
+   as well as dark and still sits below the chosen filter. */
+.sk-source:hover:not(.is-active), .sk-state-btn:hover:not(.is-active) { background: var(--bg-2); color: var(--text); }
 .sk-source:focus-visible, .sk-state-btn:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline: 2px solid var(--focus-ink);
   outline-offset: -2px;
 }
-/* Both lists are the same control, so both carry the same selected state. */
+/* Both lists are the same control, so both carry the same selected state, and it
+   is the one the agents band uses: two steps of surface plus weight. The accent
+   stays on the page's one primary action. */
 .sk-source.is-active, .sk-state-btn.is-active {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--text); font-weight: 600;
+  background: var(--bg-3);
+  color: var(--text); font-weight: var(--fw-label);
 }
+.sk-source.is-active:hover, .sk-state-btn.is-active:hover { background: var(--bg-4); }
 .sk-source-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sk-source-n {
-  font-size: var(--fs-micro); font-variant-numeric: tabular-nums;
-  color: var(--sk-dim); opacity: 0.75;
+  flex: 0 0 auto;
+  font-size: var(--fs-mono); font-variant-numeric: tabular-nums;
+  color: var(--text-3);
   font-family: var(--font-mono);
 }
-.sk-source.is-active .sk-source-n { color: var(--text); opacity: 0.65; }
 
-/* ── Below: the skills ─────────────────────────────────────────────────── */
+/* ── Right: the skills ─────────────────────────────────────────────────── */
 .sk-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .sk-main-head {
   display: flex; align-items: center; gap: var(--space-4);
-  padding: var(--space-3) calc(var(--space-5) + var(--sk-gutter)) var(--space-3) var(--space-5);
+  min-height: var(--row-h);
+  padding: 0 calc(var(--space-5) + var(--sk-gutter)) 0 var(--space-5);
   border-bottom: 1px solid var(--sk-line);
   background: var(--sk-chrome);
 }
-/* Title and count share one line, so the head costs one row of height and the
-   list gets the rest. */
+/* The list names itself the way the filter column names its sections, so both
+   halves of the card carry one header style. */
 .sk-main-id { display: flex; align-items: baseline; gap: var(--space-2); flex: 1; min-width: 0; }
 .sk-main-title {
-  margin: 0; font-size: var(--fs-h2); font-weight: 650;
-  letter-spacing: -0.012em; color: var(--text); white-space: nowrap;
+  margin: 0;
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section); text-transform: uppercase;
+  color: var(--text-3); white-space: nowrap;
 }
 .sk-main-sub {
-  margin: 0; font-size: var(--fs-micro); color: var(--sk-dim);
-  font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
+  margin: 0;
+  font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-3);
+  font-variant-numeric: tabular-nums;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.sk-main-sub::before { content: "·"; margin-right: var(--space-2); opacity: 0.55; }
 .sk-main-act { display: flex; align-items: center; gap: var(--space-3); flex: 0 0 auto; }
-.sk-bulk-label { font-size: var(--fs-micro); color: var(--sk-dim); white-space: nowrap; }
+.sk-bulk-label { font-size: var(--fs-label); color: var(--text-3); white-space: nowrap; }
 
 /* The scrollbar gutter is reserved whether or not the rows overflow, so the
    row switches stay in column with the switch in the head above them. */
@@ -6141,33 +6234,30 @@ textarea.pr-body-edit:focus-visible {
   display: grid;
   grid-template-columns: minmax(0, 180px) minmax(0, 1fr) auto;
   align-items: center; gap: var(--space-5);
+  min-height: var(--row-h-lg);
   padding: var(--space-2) var(--space-5);
   border-bottom: 1px solid color-mix(in srgb, var(--sk-line) 60%, transparent);
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease);
 }
 .sk-row:last-child { border-bottom: 0; }
-/* The same hover the workspace table uses, so a row feels like the rest of
-   the product under the pointer. */
-.sk-row:hover, .sk-row:focus-within {
-  background: var(--sk-raise);
-  box-shadow: inset 2.5px 0 0 -0.5px color-mix(in srgb, var(--accent) 65%, transparent);
-}
+/* The pointer moves the surface and nothing else, so a hovered row never
+   out-signals the filter the reader is actually in. */
+.sk-row:hover, .sk-row:focus-within { background: var(--sk-raise); }
 .sk-row-label {
-  font-size: var(--fs-small); font-weight: 550; color: var(--text);
-  letter-spacing: -0.005em;
+  font-size: var(--fs-body); font-weight: var(--fw-label); color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Two lines of description, because one sentence of what a skill does is the
    only thing on the row that decides anything. */
 .sk-row-desc {
-  font-size: var(--fs-micro); line-height: var(--lh-snug);
-  color: var(--sk-dim);
+  font-size: var(--fs-body); line-height: var(--lh-snug);
+  color: var(--text-2);
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
 /* Off is the exception, so it is the only thing that changes the row. */
-.sk-row.disabled .sk-row-label { color: var(--sk-dim); font-weight: 500; }
+.sk-row.disabled .sk-row-label { color: var(--text-2); font-weight: var(--fw-body); }
 .sk-row.disabled .sk-row-desc { opacity: 0.55; }
 
 .sk-empty {
@@ -6179,15 +6269,31 @@ textarea.pr-body-edit:focus-visible {
 }
 .sk-empty-msg { margin: 0; max-width: 46ch; line-height: var(--lh-base); }
 
-/* Narrow: the captions go, the description drops under the name rather than
-   leaving, and the filters keep scrolling sideways. */
+/* Narrower: the filter column gives up width before the descriptions do. */
+@container (max-width: 900px) {
+  .page-skills { --sk-rail-w: 172px; }
+}
+/* Narrow: the filters lie back down across the top, the section headers go, and
+   the description drops under the name rather than leaving. */
 @container (max-width: 720px) {
-  .sk-rail {
-    padding-left: var(--space-3);
-    padding-right: calc(var(--space-3) + var(--sk-gutter));
+  .sk {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
-  .sk-rail-cap { display: none; }
-  .sk-state { margin-left: auto; }
+  .sk-rail {
+    flex-direction: row; align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) calc(var(--space-3) + var(--sk-gutter)) var(--space-2) var(--space-3);
+    border-right: 0; border-bottom: 1px solid var(--sk-line);
+    overflow-x: auto; overflow-y: hidden;
+  }
+  .sk-rail .filter-group { flex-direction: row; align-items: center; gap: var(--space-2); }
+  .sk-rail .filter-group-head { display: none; }
+  /* With no head to reopen it, a section folded at a wider size comes back. */
+  .sk-rail .filter-group[data-open="false"] .filter-group-body { display: flex; }
+  .sk-rail .filter-group + .filter-group { margin-left: auto; }
+  .sk-sources, .sk-state { flex-direction: row; align-items: center; gap: var(--space-1); }
+  .sk-source, .sk-state-btn { justify-content: flex-start; padding: 0 var(--space-3); }
   .sk-main-head {
     padding-left: var(--space-3);
     padding-right: calc(var(--space-3) + var(--sk-gutter));
@@ -6295,7 +6401,8 @@ input[type="checkbox"]:disabled {
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
+  min-height: var(--row-h-lg);
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -6327,24 +6434,27 @@ input[type="checkbox"]:disabled {
   width: 16px; height: 16px;
   cursor: pointer;
 }
-.session-task { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.session-task { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .session-task strong {
-  font-weight: 600; font-size: var(--fs-body-lg);
+  font-weight: 600; font-size: var(--fs-body);
   color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.session-slug { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Path and id are machine text, so the sub-line takes the mono step. */
+.session-slug { font-size: var(--fs-mono); color: var(--text-3); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Phase is a state, so it takes the shared pill recipe: a tint of the hue over
+   the card, an edge one step up and ink at full chroma. */
 .session-phase {
-  font-size: var(--fs-nano); padding: 4px 10px; border-radius: var(--radius-pill);
-  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
-  background: var(--bg-3); color: var(--text-2); border: 1px solid var(--line);
+  font-size: var(--fs-section); padding: 3px 8px; border-radius: var(--radius-pill);
+  text-transform: uppercase; letter-spacing: var(--tracking-section); font-weight: var(--fw-section);
+  background: var(--state-muted-bg); color: var(--state-muted-ink); border: 1px solid var(--state-muted-edge);
 }
-.session-phase.complete { background: color-mix(in srgb, var(--emerald) 12%, transparent); color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 30%, transparent); }
-.session-phase.execute, .session-phase.build { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-.session-phase.observe, .session-phase.think, .session-phase.plan { background: color-mix(in srgb, var(--accent-2) 12%, transparent); color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 30%, transparent); }
-.session-progress { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); }
+.session-phase.complete { background: var(--state-success-bg); color: var(--state-success-ink); border-color: var(--state-success-edge); }
+.session-phase.execute, .session-phase.build { background: var(--state-running-bg); color: var(--state-running-ink); border-color: var(--state-running-edge); }
+.session-phase.observe, .session-phase.think, .session-phase.plan { background: var(--state-muted-bg); color: var(--state-muted-ink); border-color: var(--state-muted-edge); }
+.session-progress { font-size: var(--fs-mono); color: var(--text-3); font-family: var(--font-mono); }
 /* Same grammar as the agent ages nested under it: one time column, one casing. */
-.session-effort { font-size: var(--fs-nano); color: var(--text-3); font-weight: 500; }
+.session-effort { font-size: var(--fs-label); color: var(--text-3); font-weight: var(--fw-label); }
 
 /* Sub-line: the hint stays prose, the agent + directory ride in a mono chip
    that truncates instead of growing the head toward the control cluster. */
@@ -12503,7 +12613,13 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
    project is a row and quiet ones collapse to chips. Clicking a row opens the
    workspace view in place; launching stays an explicit button. */
 .ws-board { display: flex; flex-direction: column; }
-.ws-sec-count { color: var(--text-3); font-weight: 500; }
+/* A count beside a group name is data, so it drops the small caps and takes the
+   mono face at the muted foreground. */
+.ws-sec-count {
+  font-family: var(--font-mono); font-size: var(--fs-mono); font-weight: 400;
+  letter-spacing: var(--tracking-normal); text-transform: none;
+  font-variant-numeric: tabular-nums; color: var(--text-3);
+}
 
 /* The table owns the board: it grows to the bottom of the viewport so a short list
    reads as a full surface, and never shrinks, so a long list keeps its natural
@@ -12525,7 +12641,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
    text share a single left edge. Column text aligns because cells carry no boxes of
    their own. One row-height variable keeps the real rows and the ghost rows below
    them on the same rhythm. */
-.ws-table { --ws-pad-x: var(--space-5); --ws-row-h: 52px; }
+.ws-table { --ws-pad-x: var(--space-5); --ws-row-h: var(--row-h-lg); }
 .ws-thead, .ws-row {
   display: grid;
   /* Every text track flexes, so leftover width spreads across four columns
@@ -12539,17 +12655,19 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 }
 .ws-row { min-height: var(--ws-row-h); }
 .ws-thead {
-  min-height: 38px;
-  font-size: var(--fs-nano); font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  min-height: var(--row-h);
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section); text-transform: uppercase;
   color: var(--text-3);
 }
 .ws-th-right { text-align: right; }
 .ws-group {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 8px var(--ws-pad-x);
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: var(--space-2) var(--ws-pad-x);
   background: var(--bg-2);
   border-top: 1px solid var(--line);
-  font-size: var(--fs-nano); font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section); text-transform: uppercase;
   color: var(--text-3);
 }
 .ws-row {
@@ -12557,31 +12675,29 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease-out);
 }
-.ws-row:hover, .ws-row:focus-visible {
-  background: var(--bg-2); outline: none;
-  box-shadow: inset 2.5px 0 0 -0.5px color-mix(in srgb, var(--accent) 65%, transparent);
-}
-.ws-row.is-active { box-shadow: inset 2.5px 0 0 -0.5px color-mix(in srgb, var(--accent) 40%, transparent); }
-/* Two sizes carry the whole row: 13px for the name, 12px for everything else. Rank
-   comes from weight and ink, because a half-step size change is not a perceptible
-   rank. */
-.ws-cell-dim { color: var(--text-3); font-size: var(--fs-micro); }
+/* The pointer moves the surface only. The bar is the active project's mark, so
+   a hovered row can never read as the folder the agent is standing in. */
+.ws-row:hover, .ws-row:focus-visible { background: var(--bg-2); outline: none; }
+.ws-row.is-active { box-shadow: inset 2.5px 0 0 -0.5px var(--accent); }
+/* One size carries the row: rank comes from weight and ink, because a half-step
+   size change is not a perceptible rank. */
+.ws-cell-dim { color: var(--text-3); font-size: var(--fs-body); }
 .ws-col-name { grid-area: name; display: flex; align-items: center; gap: 9px; min-width: 0; }
 .ws-col-name .tv-dot { flex: 0 0 auto; }
 .ws-row-title {
-  font-weight: 600; font-size: var(--fs-small); color: var(--text);
+  font-weight: 600; font-size: var(--fs-body); color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ws-col-path {
   grid-area: path;
-  font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-3);
+  font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ws-col-git { grid-area: git; min-width: 0; overflow: hidden; }
 .ws-col-state { grid-area: state; display: flex; gap: 10px; min-width: 0; overflow: hidden; }
 .ws-row .ws-stat, .ws-thead .ws-stat {
   border: none; background: none; padding: 0; border-radius: 0;
-  font-size: var(--fs-micro); min-width: 0; max-width: 100%;
+  font-size: var(--fs-body); min-width: 0; max-width: 100%;
 }
 .ws-row .ws-stat .ws-stat-txt { max-width: none; }
 .ws-row .ws-stat svg { color: var(--text-3); }
@@ -12590,21 +12706,25 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
    colour keeps it gold on dark and readable on white with no per-theme override. */
 .ws-row .ws-stat.is-dirty { color: color-mix(in srgb, var(--amber) 72%, var(--text)); }
 .ws-row .ws-stat.is-warn { color: var(--warn); }
-.ws-row .ws-stat.is-attn { color: var(--accent); }
-.ws-col-time { grid-area: time; font-size: var(--fs-micro); color: var(--text-3); text-align: right; white-space: nowrap; }
+/* Work waiting on a reader is news, not a fault, so it takes the in-progress
+   hue rather than the accent or the warning ink. */
+.ws-row .ws-stat.is-attn { color: var(--state-running-ink); }
+.ws-col-time { grid-area: time; font-size: var(--fs-body); color: var(--text-3); text-align: right; white-space: nowrap; }
 .ws-col-actions { grid-area: act; position: relative; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 .ws-col-actions .ghost-btn {
-  padding: 4px 0; font-size: var(--fs-micro); width: 76px; text-align: center; justify-content: center;
+  padding: 4px 0; font-size: var(--fs-label); width: 76px; text-align: center; justify-content: center;
   display: inline-flex; flex: 0 0 auto;
 }
-/* The active project carries a chip the same width as the launch button, so
-   the action column has one occupant on every row. */
+/* The active project carries a chip the same width as the launch button, so the
+   action column has one occupant on every row. It reports a state, so it takes
+   the shared tint rather than the accent the row's own bar already spends. */
 .ws-current {
   display: inline-flex; align-items: center; justify-content: center;
   flex: 0 0 auto; width: 76px; height: var(--control-h);
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--state-running-bg);
+  border: 1px solid var(--state-running-edge);
   border-radius: var(--radius-md);
-  font-size: var(--fs-micro); font-weight: 500; color: var(--accent);
+  font-size: var(--fs-label); font-weight: var(--fw-label); color: var(--state-running-ink);
 }
 /* The delete icon sits out of flow at the head of the action cell, so a single
    right rail governs the table: every launch button and Current chip ends on the
@@ -12624,11 +12744,11 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
   min-height: var(--ws-row-h); padding: 0 var(--ws-pad-x);
   border: 0; border-top: 1px solid var(--line);
   background: transparent; color: var(--text-3);
-  font-family: inherit; font-size: var(--fs-small); font-weight: 500;
+  font-family: inherit; font-size: var(--fs-body); font-weight: var(--fw-label);
   text-align: left; cursor: pointer;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
-.ws-addrow svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.ws-addrow svg { width: var(--icon-sm); height: var(--icon-sm); flex: 0 0 auto; }
 .ws-addrow:hover, .ws-addrow:focus-visible { background: var(--bg-2); color: var(--text); outline: none; }
 .ws-fill {
   flex: 1 1 auto; min-height: 0;

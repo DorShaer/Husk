@@ -6175,13 +6175,21 @@ function agFacetHtml(axis, key, n, active) {
 const AG_ORIGIN_LABEL = { custom: 'Custom', builtin: 'Built-in', repo: 'From a repo' };
 
 // One property cell. The label carries the field, the value carries the state,
-// so the pane says what the row has no column for.
-function agMetaHtml(label, value, cls) {
-  // Only the path can outrun its cell, so only the path carries a tooltip.
-  const wide = cls === 'ag-dt-cell-wide';
+// so the pane says what the row has no column for. A field with nothing behind
+// it prints the sentence that names the absence, so the set of properties is
+// the same on every record.
+function agMetaHtml(label, value, cls, opts) {
+  const o = opts || {};
+  const empty = !value;
+  const text = empty ? String(o.none || 'None') : String(value);
+  const dd = [];
+  if (o.mono && !empty) dd.push('ag-dt-path');
+  if (empty) dd.push('is-empty');
+  // Only a path can outrun its cell, so only a path carries a tooltip.
+  const attr = (dd.length ? ` class="${dd.join(' ')}"` : '') + (o.mono && !empty ? ` title="${escapeAttr(text)}"` : '');
   return `<div class="ag-dt-cell${cls ? ` ${cls}` : ''}">`
     + `<dt>${escapeHtml(label)}</dt>`
-    + `<dd${wide ? ` class="ag-dt-path" title="${escapeAttr(value)}"` : ''}>${escapeHtml(value)}</dd>`
+    + `<dd${attr}>${escapeHtml(text)}</dd>`
     + '</div>';
 }
 
@@ -6226,14 +6234,17 @@ function agPaintDetail() {
     + (builtin ? '' : `<button type="button" class="ag-act-btn is-danger" data-ag-dt-act="del" aria-label="Delete ${escapeAttr(name)}" title="Delete · ${escapeAttr(AG_MOD)} Backspace">${AG_TRASH_SVG}</button>`);
   const meta = agMetaHtml('Origin', AG_ORIGIN_LABEL[agOriginOf(p)] || 'Custom')
     + agMetaHtml('Auto-select', p.autoSelect ? 'On' : 'Off')
-    + (p.repoRoot ? agMetaHtml('Source', agShortPath(p.repoRoot), 'ag-dt-cell-wide') : '');
+    + agMetaHtml('Source', p.repoRoot ? agShortPath(p.repoRoot) : '', 'ag-dt-cell-wide', { mono: true, none: 'Not from a repo' });
   // The pane carries the description only for a row whose column cut it off,
-  // which is exactly the rows that gained a title attribute.
+  // which is exactly the rows that gained a title attribute. A record with no
+  // sentence at all says so rather than leaving the slot out.
   const row = agRowEl(p.id);
-  const desc = row && row.querySelector('.ag-desc[title]') ? agDesc(p) : '';
+  const full = agDesc(p);
+  const desc = row && row.querySelector('.ag-desc[title]') ? full : '';
   // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
   el.innerHTML = `<div class="ag-dt-head"><h2 class="ag-dt-name" title="${escapeAttr(name)}">${escapeHtml(name)}</h2><span class="ag-dt-acts">${acts}</span></div>`
     + (desc ? `<p class="ag-dt-desc">${escapeHtml(desc)}</p>` : '')
+    + (full ? '' : '<p class="ag-dt-desc is-empty">No description</p>')
     + `<dl class="ag-dt-meta">${meta}</dl>`
     + '<p class="ag-dt-label">System prompt</p>'
     + (prompt
@@ -6273,6 +6284,9 @@ function agPaintStateFacet() {
     el.textContent = '';
   }
   if (sep) sep.hidden = !show;
+  // The head names an axis, so it stands only while the axis has chips under it.
+  const group = $('#ag-state-group');
+  if (group) group.hidden = !show;
   agSyncFacetTabs(el);
 }
 
@@ -6427,7 +6441,14 @@ function paintAgents() {
     const keys = present.length > 1 ? ['all', ...present] : [];
     // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
     originEl.innerHTML = keys.map((k) => agFacetHtml('origin', k, agRows(k, agState).length, agOrigin)).join('');
+    // The head counts the origins the roster actually holds, not the chips,
+    // since All is a view of the axis rather than a member of it.
+    const originN = $('#ag-origin-n');
+    if (originN) originN.textContent = String(present.length);
   }
+  // The head names an axis, so it stands only while the axis has chips under it.
+  const originGroup = $('#ag-origin-group');
+  if (originGroup && originEl) originGroup.hidden = !originEl.children.length;
   if (!loading) agPaintStateFacet();
   // An axis with nothing selected still owes the keyboard one way in.
   agSyncFacetTabs(originEl);
@@ -7959,7 +7980,7 @@ function paintPrompts(items, filter) {
     return `<div class="pr-item${isActive ? ' is-active' : ''}${p.disabled ? ' is-disabled' : ''}" data-md="${escapeAttr(p.mdPath)}" role="button" aria-current="${isActive}" tabindex="0">
       <div class="pr-item-top">
         <span class="pr-item-name">${escapeHtml(p.name)}</span>
-        ${p.disabled ? '<span class="pr-pill">off</span>' : ''}
+        ${p.disabled ? '<span class="pill" data-state="muted">off</span>' : ''}
       </div>
       ${p.description ? `<span class="pr-item-desc">${escapeHtml(p.description)}</span>` : ''}
     </div>`;
@@ -7968,7 +7989,7 @@ function paintPrompts(items, filter) {
   const count = q ? `${filtered.length} of ${items.length}` : `${items.length} prompt${items.length === 1 ? '' : 's'}`;
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml/escapeAttr above.
   pane.innerHTML = `<div class="pr-list">
-      <div class="pr-list-head"><span>Library</span><span>${escapeHtml(count)}</span></div>
+      <div class="pr-list-head section-label"><span>Library</span><span class="section-label-count">${escapeHtml(count)}</span></div>
       <div class="pr-items" aria-label="Prompts">
         ${rows}
         <button class="pr-new" type="button">${PR_PLUS_SVG}New prompt</button>
@@ -7977,7 +7998,7 @@ function paintPrompts(items, filter) {
     <div class="pr-detail${editing ? ' is-editing' : ''}">
       <div class="pr-detail-head">
         <div class="pr-detail-heading">
-          <div class="pr-eyebrow">${editing ? 'Editing' : 'Prompt'}${active.disabled ? '<span class="pr-pill">off</span>' : ''}</div>
+          <div class="pr-eyebrow">${editing ? 'Editing' : 'Prompt'}${active.disabled ? '<span class="pill" data-state="muted">off</span>' : ''}</div>
           ${editing ? `
             <input class="pr-edit-field pr-edit-name" id="pr-edit-name" type="text" value="${escapeAttr(active.name)}"
                    spellcheck="false" autocomplete="off" aria-label="Prompt name" />
@@ -8341,6 +8362,19 @@ function paintSkills(list, query) {
       <span class="sk-source-name">${escapeHtml(label)}</span>
       <span class="sk-source-n">${n}</span>
     </button>`).join('');
+  // The section header carries how many filters stand under it, the way the
+  // rows carry how many skills stand under them.
+  const sourcesN = $('#skills-sources-n');
+  if (sourcesN) sourcesN.textContent = String(entries.length);
+
+  // Each state names its own size, so choosing one costs no guess about what
+  // is behind it.
+  const stateTally = { all: list.length, on: 0, off: 0 };
+  for (const sk of list) stateTally[sk.disabled ? 'off' : 'on'] += 1;
+  for (const key of ['all', 'on', 'off']) {
+    const el = $(`#skills-state-n-${key}`);
+    if (el) el.textContent = String(stateTally[key]);
+  }
 
   // Newest first under Recent, where the order is the whole point; alphabetical
   // everywhere else.
@@ -8443,6 +8477,18 @@ $('#skills-sources').addEventListener('click', (e) => {
   if (!btn) return;
   skSource = btn.dataset.sourceKey;
   paintSkills(skillsCache, $('#skills-search').value);
+});
+// A filter section folds away when its axis is settled, so a long list of
+// filters never costs the reader the axis below it. Delegated from the document,
+// so every page that mounts a filter group gets the behaviour.
+document.addEventListener('click', (e) => {
+  const head = e.target.closest && e.target.closest('.filter-group-head');
+  if (!head) return;
+  const group = head.closest('.filter-group');
+  if (!group) return;
+  const open = group.dataset.open !== 'false';
+  group.dataset.open = open ? 'false' : 'true';
+  head.setAttribute('aria-expanded', open ? 'false' : 'true');
 });
 $('#skills-state').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-state]');
