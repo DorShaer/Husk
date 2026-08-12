@@ -67,6 +67,11 @@ test('a malformed row still projects to the table shape', () => {
   assert.equal(row.seq, null);
 });
 
+test('details are clipped so one row cannot flood the table', () => {
+  const row = projectAuditRow({ kind: 'start_run', payload: { goal: 'x'.repeat(2000) } });
+  assert.ok(row.details.length <= 600);
+});
+
 test('whitespace in a payload collapses so a cell stays one paragraph', () => {
   const row = projectAuditRow({ kind: 'start_run', payload: { goal: 'line one\n\n  line two' } });
   assert.equal(row.details, 'line one line two');

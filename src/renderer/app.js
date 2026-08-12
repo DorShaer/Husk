@@ -15547,6 +15547,172 @@ function rcSave() {
     toast('Saved husk-race-card.png', 'success');
   }, 'image/png');
 }
+// Line-art glyph for the run rows and the audit table.
+function autIcon(paths) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.75');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of paths) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    el.setAttribute('d', d);
+    svg.appendChild(el);
+  }
+  return svg;
+}
+const AUT_ICON_FILE = ['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v5h5'];
+const AUT_ICON_CHECK = ['M20 6 9 17l-5-5'];
+const AUT_ICON_ALERT = ['M12 8v5', 'M12 17h.01', 'M12 3 2 20h20z'];
+const AUT_ICON_STOP = ['M6 6h12v12H6z'];
+const AUT_ICON_HELP = ['M12 17h.01', 'M9.5 9a2.5 2.5 0 1 1 3.2 2.4c-.7.3-1.2 1-1.2 1.8v.3'];
+
+// How a finished run reads: the state the pill takes, the word beside it, and
+// the glyph that carries the same meaning without colour.
+function autRunOutcome(run) {
+  const key = String((run && (run.haltReason || run.status)) || 'ended');
+  if (key === 'natural' || key === 'ended') return { state: 'success', label: 'completed', icon: AUT_ICON_CHECK };
+  if (key === 'user' || key === 'cancelled') return { state: 'muted', label: 'stopped', icon: AUT_ICON_STOP };
+  if (key === 'unknown') return { state: 'muted', label: 'unknown', icon: AUT_ICON_HELP };
+  if (key === 'budget') return { state: 'warning', label: 'capped', icon: AUT_ICON_ALERT };
+  return { state: 'warning', label: key, icon: AUT_ICON_ALERT };
+}
+
+// Relative stamp for run rows and audit rows: seconds through years, with a
+// forward form for anything stamped ahead of now.
+function fmtRelWhen(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const t = (typeof value === 'number' || /^\d{10,}$/.test(raw)) ? Number(value) : Date.parse(raw);
+  if (!isFinite(t)) return '';
+  const delta = Date.now() - t;
+  const ahead = delta < 0;
+  const secs = Math.floor(Math.abs(delta) / 1000);
+  const say = (n, unit) => (ahead ? `in ${n}${unit}` : `${n}${unit} ago`);
+  if (secs < 10) return ahead ? 'in a moment' : 'just now';
+  if (secs < 60) return say(secs, 's');
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return say(mins, 'm');
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return say(hours, 'h');
+  const days = Math.floor(hours / 24);
+  if (days < 7) return say(days, 'd');
+  if (days < 35) return say(Math.floor(days / 7), 'w');
+  if (days < 365) return say(Math.floor(days / 30), 'mo');
+  return say(Math.floor(days / 365), 'y');
+}
+// The exact stamp behind a relative one, for the hover title.
+function fmtAbsWhen(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const t = (typeof value === 'number' || /^\d{10,}$/.test(raw)) ? Number(value) : Date.parse(raw);
+  if (!isFinite(t)) return '';
+  return new Date(t).toLocaleString();
+}
+
+// Proportional bar over the mix a run left behind: files added, modified and
+// removed, each segment weighted by its own count.
+function buildChangeBar(mix) {
+  const parts = [
+    ['added', Number(mix && mix.added) || 0],
+    ['modified', Number(mix && mix.modified) || 0],
+    ['deleted', Number(mix && mix.deleted) || 0],
+  ].filter(([, n]) => n > 0);
+  if (!parts.length) return null;
+  const bar = document.createElement('span');
+  bar.className = 'aut-changebar';
+  for (const [kind, n] of parts) {
+    const seg = document.createElement('span');
+    seg.className = 'aut-changebar-seg';
+    seg.dataset.kind = kind;
+    seg.style.flex = String(n);
+    bar.appendChild(seg);
+  }
+  bar.title = parts.map(([kind, n]) => `${n} ${kind}`).join(', ');
+  return bar;
+}
+
+// One run's metrics: how many files it touched, the mix, and the lines it added
+// and removed once those land.
+function buildRunMetrics(run, sessionIds) {
+  const wrap = document.createElement('div');
+  wrap.className = 'aut-recent-metrics';
+  const count = Number(run && run.fileCount) || 0;
+  const files = document.createElement('span');
+  files.className = 'aut-recent-files';
+  files.appendChild(autIcon(AUT_ICON_FILE));
+  const num = document.createElement('span');
+  num.textContent = count > 0 ? String(count) : 'none';
+  files.appendChild(num);
+  if (!count) files.classList.add('is-empty');
+  files.title = count === 1 ? '1 file touched' : `${count} files touched`;
+  wrap.appendChild(files);
+  const bar = buildChangeBar(run && run.changes);
+  if (bar) wrap.appendChild(bar);
+  const lines = document.createElement('span');
+  lines.className = 'aut-recent-lines';
+  lines.dataset.sessions = (sessionIds || []).join(' ');
+  wrap.appendChild(lines);
+  return wrap;
+}
+
+// Line counts come from the run's own snapshot against the workspace it ran in,
+// so they land after the list paints and only for runs that still have one.
+const autopilotRunStats = new Map();
+const AUT_STATS_BATCH = 12;
+async function fillRunLineStats(runs) {
+  const wanted = [];
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!(Number(run.fileCount) > 0)) continue;
+    const ids = Array.isArray(run.sessionIds) && run.sessionIds.length ? run.sessionIds : [run.sessionId];
+    for (const sid of ids) if (sid && !autopilotRunStats.has(sid)) wanted.push(sid);
+  }
+  for (let i = 0; i < wanted.length; i += AUT_STATS_BATCH) {
+    const batch = wanted.slice(i, i + AUT_STATS_BATCH);
+    try {
+      const res = await window.husk.autopilot.runStats({ sessionIds: batch });
+      if (res && res.ok && res.stats) {
+        for (const [sid, stat] of Object.entries(res.stats)) autopilotRunStats.set(sid, stat);
+      } else {
+        for (const sid of batch) autopilotRunStats.set(sid, null);
+      }
+    } catch (_) {
+      for (const sid of batch) autopilotRunStats.set(sid, null);
+    }
+    paintRunLineStats();
+  }
+  paintRunLineStats();
+}
+function paintRunLineStats() {
+  document.querySelectorAll('#aut-recent .aut-recent-lines').forEach((el) => {
+    const ids = String(el.dataset.sessions || '').split(' ').filter(Boolean);
+    let insertions = 0;
+    let deletions = 0;
+    let known = false;
+    for (const sid of ids) {
+      const stat = autopilotRunStats.get(sid);
+      if (!stat) continue;
+      known = true;
+      insertions += Number(stat.insertions) || 0;
+      deletions += Number(stat.deletions) || 0;
+    }
+    while (el.firstChild) el.removeChild(el.firstChild);
+    if (!known || (!insertions && !deletions)) { el.removeAttribute('title'); return; }
+    const ins = document.createElement('span');
+    ins.className = 'is-ins';
+    ins.textContent = `+${insertions}`;
+    const del = document.createElement('span');
+    del.className = 'is-del';
+    del.textContent = `−${deletions}`;
+    el.appendChild(ins);
+    el.appendChild(del);
+    el.title = `${insertions} lines added, ${deletions} lines removed`;
+  });
+}
+
 async function refreshAutopilotHistory() {
   const list = $('#aut-recent');
   const meta = $('#aut-recent-meta');
@@ -15625,16 +15791,19 @@ async function refreshAutopilotHistory() {
     m2.className = 'aut-recent-meta';
     const when = run.endedAt || run.capturedAt;
     const memberText = run.memberCount && run.memberCount > 1 ? `${run.memberCount} agents · ` : '';
-    m2.textContent = `${fmtRelTime(when)} · ${memberText}${run.sessionId.slice(5, 17)}`;
+    m2.textContent = `${fmtRelWhen(when) || 'no end time'} · ${memberText}${run.sessionId.slice(5, 17)}`;
+    m2.title = fmtAbsWhen(when);
     main.appendChild(goal);
     main.appendChild(m2);
-    const files = document.createElement('div');
-    files.className = 'aut-recent-files';
-    files.textContent = run.fileCount > 0 ? `${run.fileCount} files` : 'no changes';
+    const files = buildRunMetrics(run, rowSessionIds);
+    const outcome = autRunOutcome(run);
     const pill = document.createElement('div');
-    pill.className = 'aut-recent-pill';
-    pill.dataset.status = run.haltReason || run.status || 'ended';
-    pill.textContent = run.haltReason || run.status || 'ended';
+    pill.className = 'pill';
+    pill.dataset.state = outcome.state;
+    pill.appendChild(autIcon(outcome.icon));
+    const pillLabel = document.createElement('span');
+    pillLabel.textContent = outcome.label;
+    pill.appendChild(pillLabel);
     const rerun = document.createElement('button');
     rerun.type = 'button';
     rerun.className = 'aut-recent-rerun';
@@ -15691,6 +15860,7 @@ async function refreshAutopilotHistory() {
   if (heroFiles) heroFiles.textContent = String(totalFiles);
   if (heroSpend) heroSpend.textContent = formatDollars(totalSpend);
   updateBulkDeleteUi();
+  fillRunLineStats(runs);
 }
 // ── Bulk run management ─────────────────────────────────────────────────
 const selectedRunSessions = new Set();
@@ -16275,6 +16445,176 @@ window.addEventListener('keydown', (e) => {
     if (globalForward()) e.preventDefault();
   }
 });
+// ── Audit trail ─────────────────────────────────────────────────────────
+// Every row the run appended to its hash-chained log, filtered by event type
+// and paged newest first.
+const AUT_AUDIT_PAGE = 50;
+const AUT_AUDIT_MAX = 200;
+const autopilotAudit = { sessionId: null, kind: null, limit: AUT_AUDIT_PAGE };
+
+// The state an event type reads as, from what the name means rather than from a
+// fixed list, so a kind added later still lands somewhere sensible.
+function autAuditState(kind) {
+  const k = String(kind || '').toLowerCase();
+  if (k === 'halt_user' || k.startsWith('cancel')) return 'muted';
+  if (/error|fail|blocked|denied|broken/.test(k)) return 'error';
+  if (/^halt|warn|cap|stall|idle|nudge/.test(k)) return 'warning';
+  if (/summary|end_run|complete|done/.test(k)) return 'success';
+  if (/start|identity|status|output|tool|run_|agent_/.test(k)) return 'running';
+  return 'muted';
+}
+
+function renderAuditFilters(kinds) {
+  const wrap = $('#aut-audit-filters');
+  if (!wrap) return;
+  while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+  const total = (Array.isArray(kinds) ? kinds : []).reduce((sum, k) => sum + (Number(k.count) || 0), 0);
+  const make = (kind, label, count) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    if ((autopilotAudit.kind || null) === kind) chip.classList.add('is-active');
+    chip.setAttribute('aria-pressed', String((autopilotAudit.kind || null) === kind));
+    const text = document.createElement('span');
+    text.textContent = label;
+    chip.appendChild(text);
+    const n = document.createElement('span');
+    n.className = 'chip-count';
+    n.textContent = String(count);
+    chip.appendChild(n);
+    chip.addEventListener('click', () => {
+      autopilotAudit.kind = kind;
+      autopilotAudit.limit = AUT_AUDIT_PAGE;
+      loadAuditTrail(autopilotAudit.sessionId);
+    });
+    return chip;
+  };
+  wrap.appendChild(make(null, 'All', total));
+  for (const entry of Array.isArray(kinds) ? kinds : []) {
+    wrap.appendChild(make(entry.kind, entry.kind, entry.count));
+  }
+}
+
+function renderAuditRows(events) {
+  const rows = $('#aut-audit-rows');
+  if (!rows) return;
+  while (rows.firstChild) rows.removeChild(rows.firstChild);
+  if (!Array.isArray(events) || !events.length) {
+    const empty = document.createElement('div');
+    empty.className = 'aut-audit-empty';
+    empty.textContent = autopilotAudit.kind
+      ? `No ${autopilotAudit.kind} events in this run.`
+      : 'This run recorded no events.';
+    rows.appendChild(empty);
+    return;
+  }
+  for (const ev of events) {
+    const row = document.createElement('div');
+    row.className = 'aut-audit-row';
+    const pill = document.createElement('span');
+    pill.className = 'pill is-mono';
+    pill.dataset.state = autAuditState(ev.kind);
+    pill.textContent = ev.kind;
+    row.appendChild(pill);
+    const key = document.createElement('span');
+    key.className = 'aut-audit-key';
+    key.textContent = ev.key || 'no key';
+    if (!ev.key) key.classList.add('is-empty');
+    row.appendChild(key);
+    const details = document.createElement('span');
+    details.className = 'aut-audit-details';
+    details.textContent = ev.details
+      || (ev.spilled ? 'payload stored outside the log' : 'no details recorded');
+    if (!ev.details) details.classList.add('is-empty');
+    if (ev.details) details.title = ev.details;
+    row.appendChild(details);
+    const when = document.createElement('span');
+    when.className = 'aut-audit-when';
+    when.textContent = fmtRelWhen(ev.ts) || 'no stamp';
+    when.title = fmtAbsWhen(ev.ts);
+    row.appendChild(when);
+    rows.appendChild(row);
+  }
+}
+
+function renderAuditChain(chain) {
+  const el = $('#aut-audit-chain');
+  if (!el) return;
+  if (!chain) { el.hidden = true; return; }
+  el.hidden = false;
+  el.dataset.state = chain.valid ? 'success' : 'error';
+  while (el.firstChild) el.removeChild(el.firstChild);
+  el.appendChild(autIcon(chain.valid ? AUT_ICON_CHECK : AUT_ICON_ALERT));
+  const label = document.createElement('span');
+  label.textContent = chain.valid ? 'chain verified' : 'chain broken';
+  el.appendChild(label);
+  el.title = chain.valid
+    ? 'Every row hashes over the one before it, so the log is tamper evident.'
+    : `The hash chain breaks at row ${chain.brokenAtIndex}.`;
+}
+
+function renderAuditFoot(shown, filtered) {
+  const more = $('#aut-audit-more');
+  const showing = $('#aut-audit-showing');
+  if (showing) {
+    showing.textContent = filtered
+      ? `Showing ${shown} of ${filtered} ${filtered === 1 ? 'event' : 'events'}`
+      : 'No events to show';
+  }
+  if (more) more.hidden = shown >= filtered || shown >= AUT_AUDIT_MAX;
+}
+
+function hideAuditTrail() {
+  const section = $('#aut-audit');
+  if (section) section.hidden = true;
+  autopilotAudit.sessionId = null;
+  autopilotAudit.kind = null;
+  autopilotAudit.limit = AUT_AUDIT_PAGE;
+}
+
+async function loadAuditTrail(sessionId, opts = {}) {
+  const section = $('#aut-audit');
+  if (!section) return;
+  if (!sessionId) { hideAuditTrail(); return; }
+  if (opts.reset) {
+    autopilotAudit.kind = null;
+    autopilotAudit.limit = AUT_AUDIT_PAGE;
+  }
+  autopilotAudit.sessionId = sessionId;
+  section.hidden = false;
+  let res;
+  try {
+    res = await window.husk.autopilot.auditEvents({
+      sessionId,
+      kind: autopilotAudit.kind || undefined,
+      limit: autopilotAudit.limit,
+    });
+  } catch (_) { res = null; }
+  // A second run opened while this read was in flight owns the section now.
+  if (autopilotAudit.sessionId !== sessionId) return;
+  const totalEl = $('#aut-audit-total');
+  if (!res || !res.ok) {
+    renderAuditFilters([]);
+    renderAuditChain(null);
+    renderAuditRows([]);
+    renderAuditFoot(0, 0);
+    if (totalEl) totalEl.textContent = '';
+    const rows = $('#aut-audit-rows');
+    if (rows && rows.firstChild) rows.firstChild.textContent = 'Could not read this run\'s audit log.';
+    return;
+  }
+  if (totalEl) totalEl.textContent = String(res.total || 0);
+  renderAuditFilters(res.kinds);
+  renderAuditChain(res.chain);
+  renderAuditRows(res.events);
+  renderAuditFoot((res.events || []).length, Number(res.filtered) || 0);
+}
+
+$('#aut-audit-more') && $('#aut-audit-more').addEventListener('click', () => {
+  autopilotAudit.limit = Math.min(autopilotAudit.limit + AUT_AUDIT_PAGE, AUT_AUDIT_MAX);
+  loadAuditTrail(autopilotAudit.sessionId);
+});
+
 function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, runId = null, members = null }) {
   // Remember the hub scroll position so back returns to the same spot
   // in the runs list.
@@ -16333,6 +16673,7 @@ function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, 
   renderRunConclusion(summary);
   renderTimeline();
   paintAutopilotBanner();
+  loadAuditTrail(sessionId || (summary && summary.sessionId) || null, { reset: true });
 }
 // Conclusion card appended to the feed when a run is reviewed: why it ended,
 // the final numbers, and the agent's last narration as its report. A summary
@@ -17455,6 +17796,7 @@ function stopLiveDiffPoll() {
   if (autopilotState.diffPollId) { clearInterval(autopilotState.diffPollId); autopilotState.diffPollId = null; }
 }
 function resetAutopilotPanel() {
+  hideAuditTrail();
   autopilotState.feed = [];
   autopilotState.eventCount = 0;
   autopilotState.budget = null;

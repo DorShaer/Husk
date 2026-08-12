@@ -2355,38 +2355,40 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.aut-recent-files {
+/* Metric strip: how many files the run touched, the mix it left behind, and the
+   lines it added and removed. */
+.aut-recent-metrics {
+  display: flex; align-items: center; gap: var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--fs-nano, 11px);
+  font-size: var(--fs-mono);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-.aut-recent-pill {
-  font-size: var(--fs-pico, 10px);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-pill);
-}
-.aut-recent-pill[data-status="ended"],
-.aut-recent-pill[data-status="natural"] {
-  background: color-mix(in srgb, #5bd994 14%, transparent);
-  color: #5bd994;
-  border: 1px solid color-mix(in srgb, #5bd994 45%, transparent);
-}
-.aut-recent-pill[data-status="halted"],
-.aut-recent-pill[data-status="budget"] {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-}
-.aut-recent-pill[data-status="cancelled"],
-.aut-recent-pill[data-status="user"] {
-  background: var(--bg-1);
+.aut-recent-files {
+  display: inline-flex; align-items: center; gap: 6px;
   color: var(--text-2);
-  border: 1px solid var(--line);
+  white-space: nowrap;
 }
+.aut-recent-files svg { width: 13px; height: 13px; color: var(--text-3); flex: none; }
+.aut-recent-files.is-empty { color: var(--text-3); }
+.aut-changebar {
+  display: flex; gap: 2px;
+  width: 72px; height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--state-muted-bg);
+  overflow: hidden;
+  flex: none;
+}
+.aut-changebar-seg { min-width: 3px; border-radius: var(--radius-pill); }
+.aut-changebar-seg[data-kind="added"] { background: var(--state-success-ink); }
+.aut-changebar-seg[data-kind="modified"] { background: var(--state-running-ink); }
+.aut-changebar-seg[data-kind="deleted"] { background: var(--state-error-ink); }
+.aut-recent-lines {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  white-space: nowrap;
+}
+.aut-recent-lines .is-ins { color: var(--state-success-ink); }
+.aut-recent-lines .is-del { color: var(--state-error-ink); }
 
 .aut-recent-rerun {
   display: inline-flex; align-items: center; gap: var(--space-2);
@@ -2423,6 +2425,118 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   border-color: color-mix(in srgb, var(--rose) 40%, var(--line-2));
 }
 .aut-recent-del svg { width: 13px; height: 13px; }
+
+/* ─── Audit trail ───────────────────────────────────────────────────────── */
+
+.aut-audit {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--surface-line);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+.aut-audit[hidden] { display: none; }
+.aut-audit-head {
+  display: flex; align-items: center; gap: var(--space-3);
+}
+.aut-audit-head .section-label { flex: 1; min-width: 0; }
+.aut-audit-filters {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+}
+.aut-audit-table {
+  display: flex; flex-direction: column;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--surface-line);
+  overflow: hidden;
+}
+.aut-audit-head-row,
+.aut-audit-row {
+  display: grid;
+  grid-template-columns: 140px minmax(120px, 200px) minmax(0, 1fr) 96px;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+}
+.aut-audit-head-row {
+  font-size: var(--fs-section);
+  font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--surface-line);
+}
+.aut-audit-rows { display: flex; flex-direction: column; }
+.aut-audit-row {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.aut-audit-row + .aut-audit-row { border-top: 1px solid var(--line); }
+.aut-audit-row:hover { background: var(--surface-raised); }
+.aut-audit-key,
+.aut-audit-when {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.aut-audit-when { text-align: right; white-space: nowrap; }
+.aut-audit-details {
+  min-width: 0;
+  line-height: var(--lh-base);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.aut-audit-details.is-empty,
+.aut-audit-key.is-empty { color: var(--text-3); opacity: 0.7; }
+.aut-audit-empty {
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  font-size: var(--fs-body);
+  color: var(--text-3);
+}
+.aut-audit-foot {
+  display: flex; align-items: center; justify-content: center; gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.aut-audit-more {
+  height: var(--control-h);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--surface-line);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.aut-audit-more:hover { color: var(--text); border-color: var(--line-3); }
+.aut-audit-more[hidden] { display: none; }
+.aut-audit-showing {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 1100px) {
+  .aut-audit-head-row,
+  .aut-audit-row { grid-template-columns: 120px minmax(0, 1fr) 80px; }
+  .aut-audit-head-row span:nth-child(3),
+  .aut-audit-row .aut-audit-details { display: none; }
+}
+
+/* The audit trail carries the finished run's events, so the live timeline card
+   stands down and the file list takes the row. */
+.page-autopilot.is-review-mode .aut-card-log-dash { display: none; }
+.page-autopilot.is-review-mode .aut-row-bottom { grid-template-columns: minmax(0, 1fr); }
 
 /* Live layout */
 .aut-page-live {

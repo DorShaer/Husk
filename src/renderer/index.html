@@ -1349,6 +1349,29 @@
               </div>
 
             </div>
+
+            <!-- Audit trail: every hash-chained row this run wrote, filtered by
+                 event type and paged newest first. -->
+            <section class="aut-audit" id="aut-audit" hidden>
+              <div class="aut-audit-head">
+                <span class="section-label">Audit trail<span class="section-label-count" id="aut-audit-total"></span></span>
+                <span class="pill" id="aut-audit-chain" data-state="muted" hidden></span>
+              </div>
+              <div class="aut-audit-filters" id="aut-audit-filters" role="group" aria-label="Filter by event type"></div>
+              <div class="aut-audit-table">
+                <div class="aut-audit-head-row">
+                  <span>Event</span>
+                  <span>Key</span>
+                  <span>Details</span>
+                  <span>When</span>
+                </div>
+                <div class="aut-audit-rows" id="aut-audit-rows"></div>
+              </div>
+              <div class="aut-audit-foot">
+                <button type="button" class="aut-audit-more" id="aut-audit-more" hidden>Load more</button>
+                <span class="aut-audit-showing" id="aut-audit-showing"></span>
+              </div>
+            </section>
           </div>
         </div>
 
