@@ -5906,32 +5906,38 @@ function wfxRefuse(code, message, detail, stage) {
   };
 }
 
-// statSync before readFileSync, always, and on the resolved path: an oversized
-// file is refused by asking the filesystem how big it is rather than by reading
-// it. parseArtifact repeats the size test on the string it gets, which covers
-// the drag-drop path where there is no file to stat.
+// The file is opened once and its kind, size and bytes all come from that one
+// descriptor: an oversized file is refused by asking the filesystem how big it
+// is rather than by reading it. parseArtifact repeats the size test on the
+// string it gets, which covers the drag-drop path where there is no file to open.
 function wfxReadArtifactAt(absPath) {
-  let st;
-  try { st = fs.statSync(absPath); } catch (err) {
+  let fd;
+  // O_NONBLOCK keeps a fifo from parking the open until someone writes to it.
+  try { fd = fs.openSync(absPath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0)); } catch (err) {
     return wfxRefuse('unreadable', 'that file could not be opened', err && err.message);
   }
-  if (!st.isFile()) return wfxRefuse('not-a-file', 'that path is not a file', absPath);
-  if (st.size > WorkflowArtifact.MAX_ARTIFACT_BYTES) {
-    return wfxRefuse('too-large',
-      `that file is ${st.size} bytes and a Husk workflow may be ${WorkflowArtifact.MAX_ARTIFACT_BYTES}`,
-      `${st.size} bytes`);
-  }
   let bytes;
-  try { bytes = fs.readFileSync(absPath); } catch (err) {
+  let size = 0;
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return wfxRefuse('not-a-file', 'that path is not a file', absPath);
+    size = st.size;
+    if (size > WorkflowArtifact.MAX_ARTIFACT_BYTES) {
+      return wfxRefuse('too-large',
+        `that file is ${size} bytes and a Husk workflow may be ${WorkflowArtifact.MAX_ARTIFACT_BYTES}`,
+        `${size} bytes`);
+    }
+    bytes = fs.readFileSync(fd);
+  } catch (err) {
     return wfxRefuse('unreadable', 'that file could not be read', err && err.message);
-  }
+  } finally { fs.closeSync(fd); }
   // The validator's answer travels back exactly as it came, refusal code and
   // all, since a surface keys its title and its recovery advice off that code.
   const result = WorkflowArtifact.parseArtifact(bytes);
   if (!result.ok) return Object.assign({ stage: 'validate' }, result);
   // chainCheck is this machine's finding rather than a field of the file, and it
   // rides beside the artifact so the sheet gets both in one round trip.
-  return { ok: true, artifact: result.artifact, warnings: result.warnings, chainCheck: result.chainCheck, bytes: st.size };
+  return { ok: true, artifact: result.artifact, warnings: result.warnings, chainCheck: result.chainCheck, bytes: size };
 }
 
 // ─── IPC: read an artifact ───────────────────────────────────────────────────
@@ -6357,16 +6363,20 @@ function wfxReadRunLog(sessionId) {
     return { ok: false, reason: 'unreadable', bytes: 0 };
   }
   const file = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'audit.jsonl');
+  let fd;
   try {
-    const st = fs.statSync(file);
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    const st = fs.fstatSync(fd);
     if (!st.isFile()) return { ok: false, reason: 'unreadable', bytes: 0 };
     if (st.size > WorkflowArtifact.MAX_CHAIN_BYTES) return { ok: false, reason: 'too-large', bytes: st.size };
-    const raw = fs.readFileSync(file, 'utf8');
+    const raw = fs.readFileSync(fd, 'utf8');
     const lines = raw.split('\n').filter((l) => l.length > 0);
     if (!lines.length) return { ok: false, reason: 'unreadable', bytes: st.size };
     return { ok: true, lines, bytes: st.size };
   } catch (_) {
     return { ok: false, reason: 'unreadable', bytes: 0 };
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
