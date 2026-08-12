@@ -7887,7 +7887,9 @@ input[type="checkbox"]:disabled {
   transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
 }
 .sp-tab:hover { color: var(--text-2); }
-.sp-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
+/* The pane picks a readout, not a destination, so its marker stays on the text ramp
+   and the accent underline belongs to the chat the thread is showing. */
+.sp-tab.is-active { color: var(--text); border-bottom-color: var(--text); }
 /* Panes stack on one another. The inactive pane keeps its layout box so its content
    is measured and fitted before it is ever shown. */
 .sp-panes {
