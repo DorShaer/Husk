@@ -685,6 +685,18 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.11.1': {
+    items: [
+      {
+        title: 'Steadier file handling',
+        body: 'Husk now opens a file once and works from that handle, so what it checked and what it reads are always the same file. This covers the statusline script, workflow files and their run logs, agent transcripts, and the folders Autopilot captures and restores.',
+      },
+      {
+        title: 'Guides that stay in the frame',
+        body: 'The workflow canvas guide keeps to the canvas on a short window instead of spilling over the toolbar.',
+      },
+    ],
+  },
   '2.11.0': {
     items: [
       {
