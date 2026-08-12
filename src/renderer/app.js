@@ -581,7 +581,7 @@ document.addEventListener('mousemove', (e) => {
 // own palette (e.g. OSC 11;#0D1117), which painted the canvas dark-on-light
 // until the next reload dropped the scrollback. The canvas colours belong to
 // the Husk theme, so colour sets are swallowed while pure `?` queries fall
-// through to xterm, whose answer carries the theme's real colours — that
+// through to xterm, whose answer carries the theme's real colours, and that
 // answer is how the agent detects light or dark.
 function guardTermColors(t) {
   const queryOnly = (data) => String(data).split(';').every((p) => p.trim() === '?');
@@ -3486,7 +3486,7 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
 }
 
 // The unlabelled drawing, built out of elements. Coordinates are the authored
-// ones normalised into the box, so the arrangement is kept exactly as drawn —
+// ones normalised into the box, so the arrangement is kept exactly as drawn,
 // but only while it draws readably. When pills at those positions would sit on
 // top of one another (a big graph in a small frame) the drawing falls back to
 // the graph's own columns, the same layering Arrange writes, scaled to fit:
@@ -4938,7 +4938,7 @@ function wfFitEditor(editor, hostSel, graph) {
 }
 
 // Semantic zoom. Below the threshold a step card drops its agent line and
-// badge and shows one bold centred name — the same call the grid thumbnails
+// badge and shows one bold centred name, the same call the grid thumbnails
 // made at 250px: at this size the arrangement carries the information and
 // small text is noise. The tier rides on the canvas container so the run
 // canvas shares it.

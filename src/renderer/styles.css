@@ -4631,7 +4631,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 
 /* Far zoom tier: below the threshold the agent line and the badge are noise,
-   so a step reads as one bold centred name — the pill language the grid
+   so a step reads as one bold centred name, the pill language the grid
    thumbnails already speak. data-zoom-tier is written by wfApplyZoomTier. */
 .wf-canvas[data-zoom-tier="far"] .wf-cv-node { padding: 16px 14px; }
 .wf-canvas[data-zoom-tier="far"] .wf-cv-node-badge,
