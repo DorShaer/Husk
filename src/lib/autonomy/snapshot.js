@@ -213,25 +213,41 @@ function captureScoped(absRoot, paths, entries, warnings, opts, bdir, seen) {
     const abs = joinSafely(absRoot, rel);
     if (!abs) { warnings.push({ path: String(rel), reason: 'path escapes workspaceRoot' }); continue; }
     const key = path.normalize(rel);
-    let lst;
+    // A link is recorded by its target rather than followed, and readlink says
+    // so in one call: it answers only for links, so the kind of everything else
+    // comes off the descriptor opened below.
+    let target = null;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
+    try { target = fs.readlinkSync(abs); } catch (_) { target = null; }
+    if (target !== null) { entries[key] = { type: 'symlink', target }; continue; }
+
+    // O_NOFOLLOW refuses a link that appeared since, and O_NONBLOCK keeps a
+    // fifo from parking the open until someone writes to it.
+    let fd;
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
-      lst = fs.lstatSync(abs);
+      fd = fs.openSync(abs, fs.constants.O_RDONLY
+        | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
     } catch (err) {
       if (err && err.code === 'ENOENT') { entries[key] = { type: 'absent' }; continue; }
+      // Where a directory cannot be opened for reading it still records as one.
+      if (err && err.code === 'EISDIR') { entries[key] = { type: 'dir' }; continue; }
+      // Sockets and devices refuse the open and carry no content anyway.
+      if (err && (err.code === 'ENXIO' || err.code === 'ENODEV' || err.code === 'ELOOP')) {
+        entries[key] = { type: 'unreadable' };
+        continue;
+      }
       warnings.push({ path: key, reason: err.message });
       entries[key] = { type: 'unreadable' };
       continue;
     }
     try {
-      if (lst.isSymbolicLink()) {
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
-        entries[key] = { type: 'symlink', target: fs.readlinkSync(abs) };
-      } else if (lst.isDirectory()) {
+      const st = fs.fstatSync(fd);
+      if (st.isDirectory()) {
         entries[key] = { type: 'dir' };
-      } else if (lst.isFile()) {
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- abs is bounded to absRoot
-        const content = fs.readFileSync(abs);
+      } else if (st.isFile()) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- reads the numeric fd opened above, not a path
+        const content = fs.readFileSync(fd);
         const sha = sha256OfBuffer(content);
         writeBlobAtomic(bdir, sha, content, opts.encrypt, seen);
         entries[key] = { type: 'file', sha };
@@ -242,7 +258,7 @@ function captureScoped(absRoot, paths, entries, warnings, opts, bdir, seen) {
     } catch (err) {
       warnings.push({ path: key, reason: err.message });
       entries[key] = { type: 'unreadable' };
-    }
+    } finally { fs.closeSync(fd); }
   }
 }
 
