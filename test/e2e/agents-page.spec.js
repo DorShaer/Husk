@@ -183,13 +183,13 @@ test('pinning toggles on the same nodes and lands in config', async () => {
   await expect(forge).toHaveClass(/is-pinned/);
   await expect(win.locator('#ag-state .ag-facet[data-key="pinned"] .ag-facet-n')).toHaveText('1');
   // Pinning has exactly one visible effect in the product, and it is this.
-  await expect(win.locator('#chat-sub')).toContainText('Forge');
+  await expect(win.locator('#sp-pane-work')).toContainText('Forge');
 
   // A pin repaints counts, never the list, so the row keeps its identity.
   await win.click('.ag-row[data-id="p-anvil"] .ag-pin');
   await expect(win.locator('#ag-state .ag-facet[data-key="pinned"] .ag-facet-n')).toHaveText('2');
-  // The header lists them in the order they were pinned, not alphabetically.
-  await expect(win.locator('#chat-sub')).toContainText('Forge, Anvil');
+  // The context pane lists them in the order they were pinned, not alphabetically.
+  await expect(win.locator('#sp-pane-work')).toContainText('Forge, Anvil');
 
   // The master checkbox is the whole shown scope in one write.
   await win.click('#ag-master');

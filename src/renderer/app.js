@@ -1176,7 +1176,6 @@ async function closeRejectedResumeTab(tab) {
   const id = tab.resumeAttempt.id ? ` ${String(tab.resumeAttempt.id).slice(0, 8)}` : '';
   const header = tab.resumeAttempt.previousHeader || null;
   if (header) {
-    if (Object.prototype.hasOwnProperty.call(header, 'chatSub') && $('#chat-sub')) $('#chat-sub').textContent = header.chatSub;
     if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
     if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
   }
@@ -1200,7 +1199,6 @@ async function closeHeldResumeTab(tab) {
   const d = { id: tab.resumeAttempt.id, project: tab.resumeAttempt.cwd || '', owner: tab.resumeAttempt.agent };
   const header = tab.resumeAttempt.previousHeader || null;
   if (header) {
-    if (Object.prototype.hasOwnProperty.call(header, 'chatSub') && $('#chat-sub')) $('#chat-sub').textContent = header.chatSub;
     if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
     if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
   }
@@ -1562,6 +1560,7 @@ async function confirmCloseTab(id) {
 // the same line as the label and align consistently across platforms.
 const TAB_EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
 const TAB_CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const TAB_NEW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
 
 // Render the tab strip. One pill per chat, always visible so every chat (even
 // the first) has a clickable label, a hover rename icon, and a close button.
@@ -1602,7 +1601,20 @@ function renderTabStrip() {
     btn.appendChild(x);
     strip.appendChild(btn);
   }
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'chat-tab-new';
+  add.title = 'New chat';
+  add.setAttribute('aria-label', 'New chat');
+  // eslint-disable-next-line no-unsanitized/property -- static SVG markup
+  add.innerHTML = TAB_NEW_SVG;
+  add.addEventListener('click', () => { openNewChatTab(); });
+  strip.appendChild(add);
   strip.classList.toggle('multi', tabs.length >= 1);
+  // The strip scrolls once the tabs outrun the head, so the focused chat is
+  // brought back into view after every render.
+  const active = strip.querySelector('.chat-tab.active');
+  if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 // Link each tab to the agent session it spawned, so a saved custom name can be
@@ -1927,17 +1939,15 @@ function sparkHTML(values, timestamps) {
 // No-op: retained so existing call sites stay valid.
 function spInfo(_tip) { return ''; }
 
-// ─── PAI-style context meter ───────────────────────────────────────────────────
-// Port of statusline-command.sh get_bucket_color: a 4-stop linear gradient
-// green(74,222,128) -> yellow(250,204,21) -> orange(251,146,60) -> red(239,68,68).
-// `pos` is a 0-100 position ALONG the bar, so the bar itself reads green->red.
+// ─── Context meter ─────────────────────────────────────────────────────────────
+// Bucket colour ramp across the bar: the theme's own emerald, through its amber,
+// to its rose. `pos` is a 0-100 position ALONG the bar, so the bar reads calm on
+// the left and alarming on the right.
 function ctxBucketColor(pos) {
   const p = Math.max(0, Math.min(100, pos));
-  let r, g, b;
-  if (p <= 33) { r = 74 + (250 - 74) * p / 33; g = 222 + (204 - 222) * p / 33; b = 128 + (21 - 128) * p / 33; }
-  else if (p <= 66) { const t = p - 33; r = 250 + (251 - 250) * t / 33; g = 204 + (146 - 204) * t / 33; b = 21 + (60 - 21) * t / 33; }
-  else { const t = p - 66; r = 251 + (239 - 251) * t / 34; g = 146 + (68 - 146) * t / 34; b = 60 + (68 - 60) * t / 34; }
-  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+  return p <= 50
+    ? `color-mix(in srgb, var(--amber) ${Math.round(p * 2)}%, var(--emerald))`
+    : `color-mix(in srgb, var(--rose) ${Math.round((p - 50) * 2)}%, var(--amber))`;
 }
 // Friendly model name for the status readout, derived from the model id.
 // Strips the tier suffix and vendor prefix, then splits the rest into family
@@ -1977,8 +1987,8 @@ function ctxBarHTML(pct, buckets = 26) {
 function ctxPctColor(pct) {
   const p = Number(pct) || 0;
   if (p >= 80) return 'var(--rose)';
-  if (p >= 60) return 'rgb(251,146,60)';
-  if (p >= 40) return 'rgb(251,191,36)';
+  if (p >= 60) return 'var(--amber)';
+  if (p >= 40) return 'var(--warn)';
   return 'var(--emerald)';
 }
 
@@ -2011,6 +2021,7 @@ function refreshShellStatusBar() {
 
 async function refreshStatusline() {
   refreshShellStatusBar();
+  refreshArtifactPane();
   if (!lastStats) return;
   const s = lastStats;
   const here = (s.location && s.location.city) || '';
@@ -2235,6 +2246,198 @@ function fitStatusContent() {
 // Re-fit whenever the panel itself resizes (window resize, collapse/expand).
 const spFitObserver = new ResizeObserver(() => fitStatusContent());
 if ($('#sp-content')) spFitObserver.observe($('#sp-content'));
+
+// ─── Context pane ────────────────────────────────────────────────────────────
+// The right column is a tabbed pane. Context holds what the session is pointed
+// at: the folder, its working tree, and the files handed to the agent. Status
+// holds the app readout. Panes keep their layout box while inactive, so their
+// content is measured and fitted before it is shown.
+let spPane = 'work';
+// Last working tree read, keyed by folder. Re-read only when the dirty count
+// moves, so the poll costs one process spawn per actual change.
+let workTree = { root: null, isRepo: false, files: [], dirty: -1 };
+const WORK_TREE_MAX = 12;
+const WORK_CONTEXT_MAX = 8;
+
+// Badge hue per working-tree state, drawn from the shared state tokens.
+const WORK_STATE = {
+  added: 'success',
+  untracked: 'success',
+  modified: 'warning',
+  'type-changed': 'warning',
+  renamed: 'running',
+  copied: 'running',
+  deleted: 'error',
+  conflicted: 'error',
+};
+
+// Trim a path to its last three segments so a deep one still ends in the part
+// that names it.
+const WORK_PATH_SEGMENTS = 3;
+function shortPath(p) {
+  const parts = String(p || '').split('/').filter(Boolean);
+  if (parts.length <= WORK_PATH_SEGMENTS) return String(p || '');
+  return '…/' + parts.slice(-WORK_PATH_SEGMENTS).join('/');
+}
+
+function setStatusPane(name) {
+  spPane = name === 'status' ? 'status' : 'work';
+  $$('.sp-tab').forEach((t) => {
+    const on = t.dataset.pane === spPane;
+    t.classList.toggle('is-active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  $$('.sp-pane').forEach((p) => p.classList.toggle('is-active', p.dataset.pane === spPane));
+  if (spPane === 'work') refreshWorkPane(true);
+  else fitStatusContent();
+  try { window.husk.config.set({ statusPane: spPane }); } catch (_) {}
+}
+$$('.sp-tab').forEach((t) => t.addEventListener('click', () => setStatusPane(t.dataset.pane)));
+
+// The names pinned to this chat, as one phrase.
+function pinnedAgentLabel() {
+  const active = getActiveProfileIds()
+    .map((id) => profilesCache.find((p) => p.id === id))
+    .filter(Boolean);
+  if (!active.length) return '';
+  if (active.length === 1) return active[0].name;
+  if (active.length === 2) return `${active[0].name}, ${active[1].name}`;
+  // Past two names, the count stands in for them.
+  return `${active.length} agents pinned`;
+}
+
+// The folder this session works in, and its display name.
+function workRoot() {
+  const project = projectsCache.find((p) => p.id === activeProjectId);
+  const ws = (lastStats && lastStats.workspace) || {};
+  const path = (chatSubBase && chatSubBase.dir) || (project ? project.path : '') || ws.cwd || (cfg && cfg.agentCwd) || huskHome || '';
+  const name = (project && project.name) || ws.name || (path ? path.split('/').filter(Boolean).pop() : '');
+  return { path, name };
+}
+
+async function readWorkTree(root, dirty) {
+  if (!root) { workTree = { root: null, isRepo: false, files: [], dirty: -1 }; return; }
+  try {
+    const r = await window.husk.fs.gitStatus(root);
+    if (!r || !r.ok) { workTree = { root, isRepo: false, files: [], dirty }; return; }
+    const files = r.isRepo ? window.husk.text.parseGitStatus(r.porcelain) : [];
+    workTree = { root, isRepo: !!r.isRepo, files: files.filter((f) => f.status !== 'ignored'), dirty };
+  } catch (_) {
+    workTree = { root, isRepo: false, files: [], dirty };
+  }
+}
+
+const FILE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+const FOLDER_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
+const DROP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+function workPaneHTML() {
+  const { path, name } = workRoot();
+  const ws = (lastStats && lastStats.workspace) || {};
+  const g = ws.git || {};
+  const pinned = pinnedAgentLabel();
+  const ahead = [];
+  if (g.ahead) ahead.push(`↑${g.ahead}`);
+  if (g.behind) ahead.push(`↓${g.behind}`);
+  const branch = g.isRepo ? `${g.branch || 'detached'}${ahead.length ? ' ' + ahead.join(' ') : ''}` : '';
+
+  const meta = [
+    name ? (branch
+      ? `<span class="pill is-mono" data-state="muted">${escapeHtml(branch)}</span>`
+      : '<span class="pill" data-state="muted">Not a repository</span>') : '',
+    pinned ? `<span class="pill" data-state="running">${escapeHtml(pinned)}</span>` : '',
+  ].filter(Boolean).join('');
+  const project = (name
+    ? `<div class="sp-work-name">${FOLDER_ICON_SVG}<span title="${escapeAttr(path)}">${escapeHtml(name)}</span></div>
+       ${path ? `<div class="sp-work-path" title="${escapeAttr(path)}">${escapeHtml(path)}</div>` : ''}`
+    : `<div class="sp-work-empty">${FOLDER_ICON_SVG}No folder open yet</div>`)
+    + (meta ? `<div class="sp-work-meta">${meta}</div>` : '');
+
+  const changed = workTree.files.slice(0, WORK_TREE_MAX);
+  const changes = !workTree.isRepo
+    ? `<div class="sp-work-empty">${FILE_ICON_SVG}Not a repository, so no changes are tracked</div>`
+    : (changed.length
+      ? changed.map((f) => `
+        <div class="sp-work-row is-clickable" data-change="${escapeAttr(f.path)}" title="${escapeAttr(f.path)} · ${escapeAttr(f.status)} · click to hand it to the agent">
+          <span class="sp-work-badge" data-state="${escapeAttr(WORK_STATE[f.status] || 'muted')}">${escapeHtml(window.husk.text.gitBadge(f.status))}</span>
+          <span class="sp-work-file is-path">${escapeHtml(shortPath(f.path))}</span>
+        </div>`).join('')
+        + (workTree.files.length > changed.length
+          ? `<div class="sp-work-more">${workTree.files.length - changed.length} more not shown</div>` : '')
+      : `<div class="sp-work-empty">${FILE_ICON_SVG}Working tree clean</div>`);
+
+  const shared = sessionContext.slice(0, WORK_CONTEXT_MAX);
+  const context = shared.length
+    ? shared.map((f) => `
+      <div class="sp-work-row is-clickable" data-share="${escapeAttr(f.path)}" data-name="${escapeAttr(f.name)}" title="${escapeAttr(f.name)}, click to share it again">
+        ${FILE_ICON_SVG}
+        <span class="sp-work-file">${escapeHtml(f.name)}</span>
+        <button class="sp-work-drop" data-drop="${escapeAttr(f.path)}" type="button" title="Remove from this session" aria-label="Remove from this session">${DROP_ICON_SVG}</button>
+      </div>`).join('')
+      + (sessionContext.length > shared.length
+        ? `<div class="sp-work-more">${sessionContext.length - shared.length} more not shown</div>` : '')
+    : `<div class="sp-work-empty">${FILE_ICON_SVG}No files shared yet</div>`;
+
+  return `
+    <div class="sp-work">
+      <section class="sp-work-group">
+        <div class="section-label sp-work-head"><span>Project</span></div>
+        ${project}
+      </section>
+      <section class="sp-work-group">
+        <div class="section-label sp-work-head"><span>Changes</span>${workTree.isRepo ? `<span class="section-label-count">${workTree.files.length}</span>` : ''}</div>
+        ${changes}
+      </section>
+      <section class="sp-work-group">
+        <div class="section-label sp-work-head"><span>In context</span><span class="section-label-count">${sessionContext.length}</span></div>
+        ${context}
+      </section>
+    </div>`;
+}
+
+function paintWorkPane() {
+  const pane = $('#sp-pane-work');
+  if (!pane) return;
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolated field is escaped or static markup.
+  pane.innerHTML = workPaneHTML();
+  pane.querySelectorAll('[data-share]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      const drop = e.target.closest('[data-drop]');
+      if (drop) {
+        removeFromSessionContext(drop.dataset.drop);
+        window.husk.context.remove(drop.dataset.drop).catch(() => {});
+        toast(`Removed: ${el.dataset.name}`, 'success');
+        return;
+      }
+      attachFileToChat(el.dataset.share);
+    });
+  });
+  pane.querySelectorAll('[data-change]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (!workTree.root) return;
+      attachFileToChat(`${workTree.root}/${el.dataset.change}`);
+    });
+  });
+}
+
+// Repaint the Context pane. The working tree is re-read only when the dirty
+// count reported by the poll moves, or when the pane is opened.
+async function refreshWorkPane(force = false) {
+  if (!$('#sp-pane-work')) return;
+  if (spPane !== 'work') return;
+  const { path } = workRoot();
+  const ws = (lastStats && lastStats.workspace) || {};
+  const dirty = (ws.git && typeof ws.git.dirty === 'number') ? ws.git.dirty : -1;
+  if (force || path !== workTree.root || dirty !== workTree.dirty) {
+    await readWorkTree(path, dirty);
+  }
+  paintWorkPane();
+}
+
+// Both panes read the same poll, so one call keeps whichever is open current.
+function refreshArtifactPane() {
+  refreshWorkPane().catch(() => {});
+}
 
 // ─── Projects page ─────────────────────────────────────────────────────────────
 let projectsCache = [];
@@ -2735,7 +2938,7 @@ async function refreshProjectsState() {
   activeProjectId = res.activeProjectId || null;
   updateActiveProjectChip();
   if (currentPage === 'projects') paintProjectsSurface();
-  // Refresh chat-sub since the agent cwd may have changed.
+  // Reread config since the agent cwd may have changed.
   try { cfg = await window.husk.config.get(); } catch (_) {}
   // The workspace moved, so Files moves with it.
   if (activeProjectId !== prevActiveId) fxSyncToWorkspace();
@@ -6506,9 +6709,9 @@ async function deactivateAllProfiles() {
   updateActiveChatProfile();
 }
 
-// The chat header names the tool, the folder and the pinned agents. A resumed
-// session hands its own tool and folder over here, and they hold until
-// preferences or the active project moves. One writer owns the line.
+// The tool and the folder this chat runs in. A resumed session hands its own
+// pair over here, and they hold until preferences or the active project moves.
+// The status bar and the Context pane both read from it.
 let chatSubBase = null;
 function setChatSubBase(base) {
   chatSubBase = base || null;
@@ -6516,23 +6719,8 @@ function setChatSubBase(base) {
 }
 
 function updateActiveChatProfile() {
-  const sub = $('#chat-sub');
-  if (!sub) return;
-  const active = getActiveProfileIds()
-    .map((id) => profilesCache.find((p) => p.id === id))
-    .filter(Boolean);
-  const project = projectsCache.find((p) => p.id === activeProjectId);
-  const toolName = (chatSubBase && chatSubBase.tool)
-    || ((cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'agent');
-  const dir = (chatSubBase && chatSubBase.dir)
-    || (project ? project.path : ((cfg && cfg.agentCwd) || huskHome));
-  let tag = '';
-  if (active.length === 1) tag = active[0].name;
-  else if (active.length === 2) tag = `${active[0].name}, ${active[1].name}`;
-  // Past two names, the count stands in for them.
-  else if (active.length > 2) tag = `${active.length} agents pinned`;
-  sub.textContent = tag ? `${toolName} · ${dir} · ${tag}` : `${toolName} · ${dir}`;
   refreshShellStatusBar();
+  refreshArtifactPane();
 }
 
 // ── Delete, duplicate ───────────────────────────────────────────────────────
@@ -8831,7 +9019,6 @@ async function resumeSessionInChat(d, opts) {
   closeDetail();
   setPage('chat');
   const previousHeader = {
-    chatSub: $('#chat-sub') ? $('#chat-sub').textContent : '',
     spAgent: $('#sp-agent') ? $('#sp-agent').textContent : '',
     spSessionId: $('#sp-session-id') ? $('#sp-session-id').textContent : '',
   };
@@ -10751,6 +10938,7 @@ function clearSessionContext() {
   refreshContextList();
 }
 function refreshContextList() {
+  refreshArtifactPane();
   const wrap = $('#rail-context-list');
   if (!wrap) return;
   if (!sessionContext.length) {
@@ -12192,7 +12380,30 @@ overlay.addEventListener('dragleave', () => {
 });
 
 // ─── Welcome screen actions ─────────────────────────────────────────────────────
-$('#ce-launch').addEventListener('click', () => launchAgent());
+// The composer starts the agent, with whatever it holds as the first message. An
+// empty composer starts it with nothing, which is the plain launch.
+// A newline at a live prompt submits it, so the field arrives as a single line
+// and every control character is stripped on the way, as for any other text
+// Husk hands to a running agent.
+function launchFromComposer() {
+  const box = $('#ce-prompt');
+  const text = window.husk.text.stripControls(box ? box.value : '').replace(/\s+/g, ' ').trim();
+  if (box) { box.value = ''; box.style.height = ''; }
+  launchAgent(text ? { initialPrompt: text } : {});
+}
+$('#ce-composer')?.addEventListener('submit', (e) => { e.preventDefault(); launchFromComposer(); });
+$('#ce-composer-attach')?.addEventListener('click', () => shareFilesViaPicker());
+// The field grows with its content up to the max height the stylesheet sets.
+$('#ce-prompt')?.addEventListener('input', (e) => {
+  const el = e.currentTarget;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+});
+$('#ce-prompt')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  e.preventDefault();
+  launchFromComposer();
+});
 $$('.ce-chip').forEach((c) => {
   c.addEventListener('click', () => {
     const text = c.dataset.prompt;
@@ -14516,6 +14727,7 @@ async function boot() {
   // however long that spawn takes.
   refreshTopbarAgents();
   await refreshStats();
+  setStatusPane(cfg.statusPane === 'status' ? 'status' : 'work');
   refreshStatusline();
   refreshVoiceStatus();
   refreshContextList();

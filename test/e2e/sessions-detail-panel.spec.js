@@ -317,7 +317,7 @@ setInterval(() => {}, 1000);
     const buf = tab.term.buffer.active;
     let text = '';
     for (let y = 0; y < buf.length; y++) text += (buf.getLine(y)?.translateToString(true) || '');
-    return { sub: document.getElementById('chat-sub').textContent, text };
+    return { sub: document.getElementById('statusbar').textContent, text };
   });
   expect(state.sub).not.toContain('--resume');
   expect(state.text).not.toContain('No session, task, or name matched');

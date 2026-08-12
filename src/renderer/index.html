@@ -597,28 +597,42 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Chat</h1>
-              <span class="page-sub" id="chat-sub">claude · ~</span>
             </div>
+            <div id="tab-strip" class="tab-strip"></div>
             <div class="page-head-right">
               <button class="ghost-btn" id="btn-head-add-context" title="Add a file to the agent's context">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                Add context
+                <span class="btn-label">Add context</span>
               </button>
-              <button class="ghost-btn" id="btn-restart" title="Restart agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> Restart</button>
+              <button class="ghost-btn" id="btn-restart" title="Restart agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> <span class="btn-label">Restart</span></button>
             </div>
           </div>
           <div id="autopilot-banner" class="autopilot-banner" hidden></div>
           <div id="trust-banner" class="trust-banner" hidden>
-            <span class="trust-banner-text">Claude hasn't trusted this folder, so your saved permissions are ignored.</span>
-            <button class="btn-primary trust-banner-btn" id="btn-trust-folder" type="button">Trust this folder</button>
+            <span class="trust-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg></span>
+            <span class="trust-banner-text">This folder is not trusted yet, so your saved permissions are ignored.</span>
+            <button class="ghost-btn trust-banner-btn" id="btn-trust-folder" type="button">Trust this folder</button>
             <button class="trust-banner-x" id="btn-trust-dismiss" type="button" title="Dismiss" aria-label="Dismiss">×</button>
           </div>
           <div class="chat-stage">
             <div id="chat-empty" class="chat-empty">
               <img class="ce-logo-img" src="assets/husk-logo.png" alt="Husk" />
               <div class="ce-title">Ready when you are</div>
-              <div class="ce-sub">Talking to <span id="ce-agent">claude</span> · drop files anywhere on the window</div>
-              <button class="ce-launch btn-primary" id="ce-launch">Start building</button>
+              <div class="ce-sub">Talking to <span id="ce-agent">Husk</span></div>
+              <form class="ce-composer" id="ce-composer">
+                <textarea class="ce-prompt" id="ce-prompt" rows="1" spellcheck="false" autocomplete="off"
+                  placeholder="Describe the first task&#10;/command · @file · drop a file anywhere to attach it"></textarea>
+                <div class="ce-composer-foot">
+                  <button class="ce-composer-btn" id="ce-composer-attach" type="button" title="Attach a file">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                    Attach
+                  </button>
+                  <span class="ce-composer-hint">Enter to start</span>
+                  <button class="ce-launch btn-primary" id="ce-launch" type="submit" title="Start the agent" aria-label="Start the agent">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                  </button>
+                </div>
+              </form>
               <label class="ce-skip">
                 <input type="checkbox" id="ce-skip-next" />
                 <span>Don't show this on next launch</span>
@@ -631,7 +645,6 @@
               </div>
             </div>
             <div class="terminal-wrap">
-              <div id="tab-strip" class="tab-strip"></div>
               <div id="terminal"></div>
             </div>
           </div>
@@ -2052,10 +2065,14 @@
             <path d="M9 18l6-6-6-6"/>
           </svg>
         </button>
-        <div class="sp-head">
-          <span class="sp-head-label">STATUS</span>
+        <div class="sp-head" role="tablist" aria-label="Session panel">
+          <button class="sp-tab is-active" id="sp-tab-work" type="button" role="tab" data-pane="work" aria-selected="true" aria-controls="sp-pane-work">Context</button>
+          <button class="sp-tab" id="sp-tab-status" type="button" role="tab" data-pane="status" aria-selected="false" aria-controls="sp-content">Status</button>
         </div>
-        <div id="sp-content" class="sp-content"></div>
+        <div class="sp-panes">
+          <div class="sp-pane is-active" id="sp-pane-work" role="tabpanel" data-pane="work" aria-labelledby="sp-tab-work"></div>
+          <div id="sp-content" class="sp-pane sp-content" role="tabpanel" data-pane="status" aria-labelledby="sp-tab-status"></div>
+        </div>
         <div class="sp-foot" id="sp-foot">
           <button class="topbar-version sp-version" id="btn-update" title="Click to check for updates">
             <span class="tv-dot" hidden></span>

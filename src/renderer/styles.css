@@ -1500,23 +1500,28 @@ body[data-page="boot"] .page { display: none !important; }
 /* Slim banner: no-op placeholder. The full Autopilot page is the live UI. */
 .autopilot-banner { display: none; }
 
-/* Untrusted-folder banner: prompts the user to trust the workspace so its
-   saved permissions apply. */
+/* Untrusted-folder banner: a state report, not an alarm. The card fill carries it,
+   the warning hue is confined to the leading glyph, and the action is a ghost
+   control so the accent stays with the page's own primary. */
 .trust-banner {
   display: flex; align-items: center; gap: var(--space-3);
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-3);
   padding: var(--space-2) var(--space-3);
-  background: color-mix(in srgb, var(--amber) 12%, var(--bg-1));
-  border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--line));
-  border-radius: var(--radius-md);
-  font-size: var(--fs-small); color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  font-size: var(--fs-body); color: var(--text-2);
 }
+.trust-banner-icon {
+  display: inline-flex; flex: 0 0 auto;
+  color: var(--state-warning-ink);
+}
+.trust-banner-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
 .trust-banner-text { flex: 1; min-width: 0; }
-/* Two classes deep so it outranks .btn-primary without !important. */
 .trust-banner .trust-banner-btn {
   height: var(--control-h-sm);
   padding: 0 var(--space-3);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-label);
   flex: 0 0 auto;
 }
 .trust-banner-x {
@@ -3620,13 +3625,47 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 
 /* ─── Chat page ─────────────────────────────────────────────────────────── */
 
-/* Positioning context only. The card is drawn once, by whichever layer is on top:
-   #terminal in the running state, .chat-empty in the welcome state. The stage takes
-   every pixel the page leaves it and sets no floor of its own. */
+/* The thread is the page, so the chrome above it is one band: the page title at the
+   page step, the tab strip, the two session actions, all on a single rule that the
+   thread hangs from. The tool, the folder and the model are named once, in the
+   status bar. */
+.page-chat { padding-top: var(--space-4); }
+.page-chat .page-head {
+  align-items: flex-end;
+  gap: var(--space-4);
+  min-height: 0;
+  /* The rule spans the column while the content keeps the page gutter, so the band
+     lines up with the thread that bleeds to the same edges below it. */
+  margin: 0 calc(var(--space-6) * -1) var(--space-3);
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--surface-line);
+  /* One row at every width: the tab strip is the part that gives, and it scrolls. */
+  flex-wrap: nowrap;
+}
+.page-chat .page-head-left { padding-bottom: 7px; }
+.page-chat .page-head-right { padding-bottom: 5px; flex-wrap: nowrap; }
+/* Below this the head buttons keep their glyph and drop their label, so the tab
+   strip keeps the room it needs. */
+@media (max-width: 1180px) {
+  .page-chat .page-head-right .btn-label { display: none; }
+  .page-chat .page-head-right .ghost-btn { padding: 0 8px; }
+}
+.page-chat .page-title {
+  font-family: var(--font-body);
+  font-size: var(--fs-page);
+  font-weight: var(--fw-page);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-2);
+}
+
+/* Positioning context only. The stage takes every pixel the page leaves it, and
+   bleeds through the page gutter to the rail and the side panel, so the thread runs
+   to the edges of its column. */
 .page-chat .chat-stage {
   flex: 1;
   min-height: 0;
   position: relative;
+  margin: 0 calc(var(--space-6) * -1) calc(var(--space-5) * -1);
 }
 
 .chat-empty {
@@ -3637,11 +3676,10 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
      Matches the status panel: flat var(--bg) in light mode, with the dark glass
      variant below. */
   background: var(--bg);
-  /* Same frame as #terminal, so the welcome state and the running state are
-     the same card. Content scrolls inside it when the window is short. */
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--elev-2);
+  /* Unframed like #terminal, so the welcome state and the running state occupy the
+     same unboxed stage. Content scrolls inside it when the window is short. */
+  border: 0;
+  border-radius: 0;
   overflow-y: auto;
   pointer-events: none;
   opacity: 0; transition: opacity var(--motion-slow) var(--ease-out);
@@ -3685,13 +3723,68 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   line-height: 1.55;
   letter-spacing: 0.005em;
 }
-.ce-launch {
-  margin-top: 10px;
-  height: var(--control-h-lg);
-  padding: 0 28px;
-  font-size: var(--fs-body-lg);
-  min-width: 180px;
+/* Composer: the one place on the welcome stage that takes typing, and the only
+   accent on it. The placeholder names what the field accepts, so the affordances
+   are read rather than remembered. */
+.ce-composer {
+  display: flex; flex-direction: column;
+  width: 100%; max-width: 620px;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+  transition: border-color var(--motion-fast) var(--ease-out);
 }
+.ce-composer:focus-within { border-color: var(--line-3); }
+.ce-prompt {
+  width: 100%;
+  min-height: 56px; max-height: 180px;
+  padding: var(--space-2);
+  background: transparent;
+  border: 0; outline: none; resize: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-base);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.ce-prompt::-webkit-scrollbar { width: 0; }
+.ce-prompt::placeholder { color: var(--text-3); }
+.ce-prompt:focus-visible { box-shadow: none; border-color: transparent !important; }
+.ce-composer-foot {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+.ce-composer-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--control-h-sm); padding: 0 10px;
+  background: transparent; border: 1px solid var(--surface-line);
+  border-radius: var(--radius-control);
+  color: var(--text-3);
+  font-family: inherit; font-size: var(--fs-label); font-weight: var(--fw-label);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.ce-composer-btn svg { width: 14px; height: 14px; display: block; }
+.ce-composer-btn:hover { color: var(--text); border-color: var(--line-3); }
+.ce-composer-hint {
+  flex: 1; min-width: 0;
+  text-align: right;
+  font-size: var(--fs-label); color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Two classes deep so the round icon shape outranks .btn-primary's own padding
+   and radius. */
+.ce-composer .ce-launch {
+  flex: 0 0 auto;
+  width: var(--control-h); height: var(--control-h);
+  min-width: 0; padding: 0;
+  border-radius: var(--radius-pill);
+}
+.ce-composer .ce-launch svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
 .ce-skip {
   margin-top: 12px;
   display: inline-flex; align-items: center; gap: 8px;
@@ -3721,40 +3814,6 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 .ce-chip:hover {
   color: var(--text); border-color: var(--line-3);
   background: var(--bg-2);
-}
-
-/* Chat empty state: input toolbar (model picker + context button) */
-.ce-input-bar {
-  display: flex; align-items: center; gap: 8px;
-  margin-top: 16px;
-  padding: 8px 12px;
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
-  max-width: 460px;
-  width: 100%;
-}
-.ce-input-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 12px;
-  height: 30px;
-  background: transparent; border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  color: var(--text-2); font-size: var(--fs-micro); font-family: inherit; font-weight: 500;
-  cursor: pointer; white-space: nowrap;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
-}
-.ce-input-btn:hover { background: var(--bg-2); color: var(--text); border-color: var(--line-3); }
-.ce-input-btn svg { width: 13px; height: 13px; display: block; flex: 0 0 auto; }
-.ce-model-btn {
-  margin-left: auto;
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
-  color: var(--text);
-}
-.ce-model-btn:hover {
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
-  border-color: var(--accent);
-  color: var(--text);
 }
 
 /* ─── Chats panel ────────────────────────────────────────────────────────── */
@@ -3858,42 +3917,55 @@ body[data-page="chat"] #chats-panel { display: flex; }
   position: absolute; inset: 0; z-index: 1;
   display: flex; flex-direction: column; min-height: 0;
 }
-/* Tab strip sits above the terminal panes, flush with the page column so the
-   pills align with the page title. Revealed by .multi once tabs exist. */
+/* Tab strip: it shares the page head's rule, so every chat reads as a tab in a strip
+   rather than a pill floating over the thread. Revealed by .multi once tabs exist. */
 .tab-strip {
   display: none;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-2);
-  padding-bottom: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: stretch;
+  gap: 2px;
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
+.tab-strip::-webkit-scrollbar { height: 0; }
 .tab-strip.multi { display: flex; }
 .chat-tab {
-  display: inline-flex; align-items: center; gap: var(--space-2);
+  display: inline-flex; align-items: center; gap: var(--space-1);
   max-width: 220px;
-  height: var(--control-h-sm);
-  padding: 0 var(--space-1) 0 var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: var(--bg-1);
-  color: var(--text-2);
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-3);
   font-family: inherit;
-  font-size: var(--fs-micro);
-  font-weight: 500;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
   cursor: pointer;
   white-space: nowrap;
   transition: background var(--motion-fast) var(--ease-out),
               color var(--motion-fast) var(--ease-out),
               border-color var(--motion-fast) var(--ease-out);
 }
-.chat-tab:hover { color: var(--text); border-color: var(--line-3); background: var(--bg-2); }
+.chat-tab:hover { color: var(--text-2); background: var(--surface); }
 .chat-tab.active {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-1));
+  border-bottom-color: var(--accent);
 }
+/* Opens another chat from the end of the strip, where a tab bar puts it. */
+.chat-tab-new {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  width: 28px; height: 30px;
+  margin-left: var(--space-1);
+  border: 0; background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
+}
+.chat-tab-new svg { width: 14px; height: 14px; display: block; }
+.chat-tab-new:hover { color: var(--text); background: var(--surface); }
 .chat-tab-label { overflow: hidden; text-overflow: ellipsis; }
 /* Breathing thinking indicator shown while a chat waits for its generated
    name (tab pill and Recent rail). Three dots pulse in sequence. */
@@ -3946,25 +4018,21 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .chat-tab:hover .chat-tab-close { opacity: 1; }
 .chat-tab-edit:hover { background: var(--bg-3); color: var(--text); }
 .chat-tab-close:hover { background: var(--bg-3); color: var(--text); }
-/* The conversation surface, and the only frame on this page: one border, one
-   radius, one shadow, sitting on the page gutter. Background matches the xterm
-   theme bg exactly so the corner clip stays seamless. focus-within tints the border
-   rather than lighting a halo. */
+/* The thread itself, unframed: it hangs from the head rule and runs to the edges of
+   its column, so nothing boxes it inside the page. Background matches the xterm theme
+   bg exactly, so the pane and the buffer are one surface. */
 #terminal {
   flex: 1; min-height: 0; position: relative;
   background: var(--term-bg, #0c0a09);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
-  box-shadow: var(--elev-2);
-  transition: border-color var(--motion-base) var(--ease), box-shadow var(--motion-base) var(--ease);
-}
-#terminal:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2));
+  transition: background var(--motion-base) var(--ease);
 }
 /* One pane per tab, stacked; only the active pane is shown. Background panes
-   keep their xterm buffer (scrollback) alive while hidden. */
-.term-pane { position: absolute; inset: 0; display: none; }
+   keep their xterm buffer (scrollback) alive while hidden. The pane carries the
+   reading gutter, so the surface reaches the column edges while the text does not. */
+.term-pane { position: absolute; inset: 0; display: none; padding: var(--space-2) var(--space-6); }
 .term-pane.show { display: block; }
 .xterm-viewport { background-color: transparent !important; }
 
@@ -7775,7 +7843,7 @@ input[type="checkbox"]:disabled {
   background: var(--bg);
   box-shadow: var(--hl-top);
   min-height: 0;
-  /* Keeps the STATUS header near the top so every section below it stays visible.
+  /* Keeps the tab strip near the top so every section below it stays visible.
      The offset drives both this padding and the toggle's top, so they move
      together. */
   --sp-top-offset: 6px;
@@ -7783,7 +7851,7 @@ input[type="checkbox"]:disabled {
 }
 .sp-toggle {
   /* Expanded: a quiet ghost button in the panel's top-right corner, aligned with
-     the STATUS header so it reads as part of the card. Collapsed (below) it
+     the tab strip so it reads as part of the card. Collapsed (below) it
      re-centres in the sliver. */
   position: absolute; top: calc(var(--sp-top-offset, 64px) + 4px); right: 10px; left: auto; z-index: 6;
   width: 26px; height: 26px;
@@ -7800,28 +7868,38 @@ input[type="checkbox"]:disabled {
   transition: transform var(--motion-base) var(--ease);
 }
 .sp-tiny { font-size: var(--fs-micro); line-height: 1.4; padding-top: 4px; }
+/* The column is a tabbed pane over the work, not a readout about the app. The head
+   is its tab strip; the toggle keeps the right end, so the strip stops short of it. */
 .sp-head {
-  display: flex; align-items: center; justify-content: center;
-  padding: 6px 16px 8px;
+  display: flex; align-items: stretch; gap: 2px;
+  padding: 0 40px 0 10px;
   border-bottom: 1px solid var(--line);
 }
-.sp-head-label {
-  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
-  font-size: var(--fs-h1);
-  line-height: 1.04;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
-  font-weight: 850;
-  /* Fixed identity. Accent is a separate axis from theme, so this reads only from
-     the theme text ramp: one wordmark under every accent, still legible on the
-     light-family themes. The vertical fade to --text-2 keeps the weight from going
-     flat. */
-  color: var(--text);
-  background: linear-gradient(180deg, var(--text) 0%, var(--text-2) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+.sp-tab {
+  height: 32px; padding: 0 var(--space-2);
+  border: 0; border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  cursor: pointer; white-space: nowrap;
+  transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
 }
+.sp-tab:hover { color: var(--text-2); }
+.sp-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
+/* Panes stack on one another. The inactive pane keeps its layout box so its content
+   is measured and fitted before it is ever shown. */
+.sp-panes {
+  position: relative;
+  flex: 1; min-height: 0;
+}
+.sp-pane {
+  position: absolute; inset: 0;
+  visibility: hidden; opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+.sp-pane.is-active { visibility: visible; opacity: 1; }
 .sp-live-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--emerald);
@@ -7839,7 +7917,7 @@ input[type="checkbox"]:disabled {
      excluded from that fit, so a zoomed-in panel scrolls instead of shrinking back.
      The scrollbar is hidden, so its width cannot feed back into the measurement.
      Top-aligned, so a short panel reads as a list from the top. */
-  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  overflow-y: auto; overflow-x: hidden;
   scrollbar-width: none;
   padding: 12px 14px;
   display: flex; flex-direction: column;
@@ -7857,10 +7935,11 @@ input[type="checkbox"]:disabled {
 .sp-section {
   display: flex; flex-direction: column; gap: 6px;
 }
+/* Same small caps step as the Context pane, so both tabs of the pane read as one. */
 .sp-section-head {
   display: flex; align-items: center; gap: 6px;
-  font-size: var(--fs-micro); font-weight: 600;
-  letter-spacing: 0.1em; text-transform: uppercase;
+  font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section); text-transform: uppercase;
   color: var(--text-3);
 }
 .sp-section-head .sp-h-icon {
@@ -7885,7 +7964,8 @@ input[type="checkbox"]:disabled {
   font-weight: 500;
 }
 .sp-section-body .sp-muted { color: var(--text-3); }
-.sp-section-body .sp-accent { color: var(--accent); font-weight: 600; }
+/* Counts and names are values, not actions, so they sit on the text ramp. */
+.sp-section-body .sp-accent { color: var(--text); font-weight: 600; }
 .sp-progress {
   width: 100%; height: 4px;
   background: var(--bg-3); border-radius: var(--radius-pill);
@@ -7908,7 +7988,7 @@ input[type="checkbox"]:disabled {
   flex: 1 1 0; min-width: 0;
   border-radius: var(--radius-sm);
 }
-.sp-ctxbar-empty { background: rgb(75, 82, 95); opacity: 0.5; }
+.sp-ctxbar-empty { background: var(--text-3); opacity: 0.35; }
 .sp-divider {
   height: 1px; background: var(--line); margin: 2px -14px;
 }
@@ -7937,6 +8017,90 @@ input[type="checkbox"]:disabled {
 .sp-spark-dates-single { justify-content: center; }
 .sp-clickable { cursor: pointer; transition: background var(--motion-fast) var(--ease); margin: -4px -8px; padding: 4px 8px; border-radius: var(--radius-md); }
 .sp-clickable:hover { background: var(--bg-3); }
+
+/* ─── Context pane ──────────────────────────────────────────────────────────
+   What the session is pointed at: the folder, the working tree, and the files
+   handed to the agent. Every group names its absent thing rather than collapsing,
+   so the shape of the pane is legible before there is any data. */
+.sp-work {
+  height: 100%;
+  overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none;
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-4);
+}
+.sp-work::-webkit-scrollbar { width: 0; }
+.sp-work-group { display: flex; flex-direction: column; gap: 6px; }
+.sp-work-head { justify-content: space-between; }
+.sp-work-name {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-body); font-weight: 600; color: var(--text);
+  min-width: 0;
+}
+.sp-work-name > span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sp-work-name svg { width: var(--icon-sm); height: var(--icon-sm); flex: none; color: var(--text-3); }
+.sp-work-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sp-work-meta {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+}
+.sp-work-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0;
+  padding: 4px 6px; margin: 0 -6px;
+  border-radius: var(--radius-control);
+  font-size: var(--fs-body); color: var(--text-2);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.sp-work-row.is-clickable { cursor: pointer; }
+.sp-work-row.is-clickable:hover { background: var(--surface); color: var(--text); }
+.sp-work-row svg { width: var(--icon-sm); height: var(--icon-sm); flex: none; color: var(--text-3); }
+.sp-work-file {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Working-tree rows read as paths, so they sit in the mono face. */
+.sp-work-row .sp-work-file.is-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+.sp-work-badge {
+  flex: none;
+  width: 16px; text-align: center;
+  font-family: var(--font-mono); font-size: var(--fs-mono);
+  color: var(--text-3);
+}
+.sp-work-badge[data-state="success"] { color: var(--state-success-ink); }
+.sp-work-badge[data-state="warning"] { color: var(--state-warning-ink); }
+.sp-work-badge[data-state="error"]   { color: var(--state-error-ink); }
+.sp-work-badge[data-state="running"] { color: var(--state-running-ink); }
+.sp-work-drop {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border: 0; background: transparent;
+  border-radius: var(--radius-pill);
+  color: var(--text-3); cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.sp-work-drop svg { width: 12px; height: 12px; }
+.sp-work-row:hover .sp-work-drop { opacity: 1; }
+.sp-work-drop:hover { color: var(--text); }
+.sp-work-empty {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 4px 0;
+  font-size: var(--fs-body); color: var(--text-3);
+}
+.sp-work-empty svg { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
+.sp-work-more { font-size: var(--fs-label); color: var(--text-3); padding-top: 2px; }
+
 .sp-foot {
   position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -9468,7 +9632,7 @@ kbd {
     grid-template-columns: 220px 1fr 420px;
   }
   body:not([data-status="expanded"]) #status-panel .sp-head,
-  body:not([data-status="expanded"]) #status-panel #sp-content,
+  body:not([data-status="expanded"]) #status-panel .sp-panes,
   body:not([data-status="expanded"]) #status-panel .sp-foot { display: none; }
   body:not([data-status="expanded"]) #status-panel { background: var(--bg-2); }
   body:not([data-status="expanded"]) .sp-toggle svg { transform: rotate(180deg); }
