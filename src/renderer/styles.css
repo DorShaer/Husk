@@ -1293,9 +1293,11 @@ body[data-rail="collapsed"] .rail-agent .ra-chev { display: none; }
 }
 body[data-rail="expanded"] .rail-agent .ra-label { opacity: 1; transform: translateX(0); }
 .rail-agent:hover { border-color: var(--line-3); background: var(--bg-2); }
+/* The selector sits in the nav stack, so it takes the row's type and gains only the
+   weight that marks it as the current choice. */
 .rail-agent .ra-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis;
-  font-weight: 700; font-size: var(--fs-body-lg); letter-spacing: 0.01em;
+  font-weight: 600; font-size: var(--fs-body); letter-spacing: 0.01em;
   color: var(--text);
   opacity: 0; transform: translateX(-4px); transition: opacity var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
@@ -1910,18 +1912,20 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 }
 @keyframes aut-files-spin { to { transform: rotate(360deg); } }
 
-/* Shared dot used by chat-page status and rail-item-autopilot badge. */
+/* Shared dot used by chat-page status and rail-item-autopilot badge. The hue is a
+   local property so each host picks the ink its own surface calls for. */
 .ap-dot {
+  --pulse-hue: var(--accent);
   width: 8px; height: 8px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--pulse-hue);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse-hue) 60%, transparent);
   animation: ap-pulse 1.6s ease-in-out infinite;
 }
 @keyframes ap-pulse {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); transform: scale(1); }
-  70%  { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); transform: scale(1.05); }
-  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); transform: scale(1); }
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse-hue) 55%, transparent); transform: scale(1); }
+  70%  { box-shadow: 0 0 0 8px color-mix(in srgb, var(--pulse-hue) 0%, transparent); transform: scale(1.05); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse-hue) 0%, transparent); transform: scale(1); }
 }
 
 /* Pulse beside the rail label, a status indicator next to the word "Autopilot".
@@ -1929,13 +1933,16 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
    transform: the ap-pulse animation writes transform every frame. */
 .rail-item-autopilot { position: relative; }
 .rail-aut-pulse {
+  /* A run in flight is a state, so it takes the running hue and leaves the accent
+     to the row marking where you are. */
+  --pulse-hue: var(--info);
   position: absolute;
   top: calc(50% - 3.5px);
   right: 14px;
   width: 7px; height: 7px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--pulse-hue);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse-hue) 60%, transparent);
   animation: ap-pulse 1.6s ease-in-out infinite;
 }
 /* Collapsed rail: the icon is centred with no room beside it for a badge, so the
@@ -1946,8 +1953,8 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   animation: ap-icon-blink 1.6s ease-in-out infinite;
 }
 @keyframes ap-icon-blink {
-  0%, 100% { color: var(--accent); opacity: 1; }
-  50%      { color: color-mix(in srgb, var(--accent) 45%, transparent); opacity: 0.55; }
+  0%, 100% { color: var(--info); opacity: 1; }
+  50%      { color: color-mix(in srgb, var(--info) 45%, transparent); opacity: 0.55; }
 }
 
 /* Empty state when no run is active: the landing hub for the whole feature, with
@@ -8894,6 +8901,12 @@ body[data-mode="light"] .ob-wordmark span {
   font-size: var(--fs-h3);
   font-family: inherit;
   border-bottom: 1px solid var(--line);
+}
+/* The field owns the keyboard from the moment the overlay opens, so its hairline
+   stays neutral and the accent is left to the row the selection is standing on. */
+#palette-input:focus-visible {
+  border-color: var(--line) !important;
+  box-shadow: none;
 }
 .palette-list {
   list-style: none; margin: 0; padding: 7px;
