@@ -16680,9 +16680,21 @@ function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, 
   if (summary && summary.chain && summary.chain.valid) lines.push('Audit chain verified (tamper-evident).');
   pushActivity(lines, '_review');
   renderRunConclusion(summary);
+  paintReviewLaneState(summary);
   renderTimeline();
   paintAutopilotBanner();
   loadAuditTrail(sessionId || (summary && summary.sessionId) || null, { reset: true });
+}
+// The replay lane holds a recording, so its badge reports how the run finished
+// rather than the starting state a live lane opens on.
+function paintReviewLaneState(sum) {
+  const el = document.querySelector('.aut-lane[data-key="_review"] .aut-lane-state');
+  if (!el) return;
+  const reason = summaryEndReason(sum);
+  const stopped = reason === 'user' || reason === 'cancelled';
+  const ok = summaryCompletedSuccessfully(sum);
+  el.dataset.state = ok ? 'done' : stopped ? 'stopped' : 'blocked';
+  el.textContent = ok ? 'completed' : stopped ? 'stopped' : 'incomplete';
 }
 // Conclusion card appended to the feed when a run is reviewed: why it ended,
 // the final numbers, and the agent's last narration as its report. A summary

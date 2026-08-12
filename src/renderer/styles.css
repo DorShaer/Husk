@@ -3097,8 +3097,8 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   box-shadow: 0 0 12px color-mix(in srgb, var(--lane-c) 20%, transparent);
   animation: aut-state-pulse 2s ease-in-out infinite;
 }
-.aut-lane-state[data-state="quiet"] { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 40%, transparent); background: color-mix(in srgb, #fbbf24 10%, transparent); animation: none; }
-.aut-lane-state[data-state="done"] { color: #5bd994; border-color: color-mix(in srgb, #5bd994 45%, transparent); background: color-mix(in srgb, #5bd994 10%, transparent); }
+.aut-lane-state[data-state="quiet"] { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); background: color-mix(in srgb, var(--amber) 10%, transparent); animation: none; }
+.aut-lane-state[data-state="done"] { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 45%, transparent); background: color-mix(in srgb, var(--emerald) 10%, transparent); }
 .aut-lane-state[data-state="blocked"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); animation: none; }
 .aut-lane-state[data-state="stopped"] { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 45%, transparent); background: color-mix(in srgb, var(--rose) 10%, transparent); }
 @keyframes aut-state-pulse {
