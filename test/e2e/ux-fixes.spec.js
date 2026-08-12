@@ -291,7 +291,7 @@ test('appearance changes preview live and persist only on save', async () => {
   // Changing the theme previews instantly: no dialog, nothing persisted, and
   // the unsaved-changes bar appears.
   await win.evaluate(() => {
-    openPrefsModal();
+    openPrefs();
     const sel = document.getElementById('pref-theme');
     sel.value = 'light';
     sel.dispatchEvent(new Event('change', { bubbles: true }));

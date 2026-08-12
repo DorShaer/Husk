@@ -324,6 +324,9 @@
   --topbar-h: 52px;
   --topbar-search-w: 440px;
   --statusbar-h: 26px;
+  /* Preferences: its nav column, and the measure its setting rows read at. */
+  --prefs-nav-w: 208px;
+  --prefs-measure: 760px;
   /* Three shapes carry the whole interface: controls, cards, pills. */
   --radius-control: 6px;
   --radius-card: 10px;
@@ -1535,11 +1538,13 @@ body[data-page="boot"] .page { display: none !important; }
 .page-sessions .page-head .page-title,
 .page-prompts .page-head .page-title,
 .page-autopilot .page-head .page-title,
-.page-projects .page-head .page-title {
+.page-projects .page-head .page-title,
+.page-prefs .page-head .page-title {
   font-size: var(--fs-page);
   font-weight: var(--fw-page);
   color: var(--text-2);
 }
+.page-prefs .page-sub,
 .page-agents .page-sub,
 .page-skills .page-sub,
 .page-sessions .page-sub,
@@ -7196,153 +7201,139 @@ input[type="checkbox"]:disabled {
   .fx { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 34%) 1fr; }
 }
 
-/* ─── Preferences page ──────────────────────────────────────────────────── */
+/* ─── Preferences page ──────────────────────────────────── */
 
-/* Two-column layout: 160px fixed left nav + scrollable right content */
+/* The head keeps the page gutter and rules the full width; the nav rule drops
+   from it and runs to the bottom of the window. */
+.page-prefs { padding: var(--space-5) 0 0; }
+.page-prefs .page-head {
+  flex: none;
+  align-items: baseline;
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--surface-line);
+}
+
 .prefs-layout {
   flex: 1; min-height: 0;
   display: flex; flex-direction: row;
   overflow: hidden;
 }
+
+/* Nav column: grouped entries above, the version stamp pinned below them. */
 .prefs-nav {
-  width: 160px; flex: 0 0 160px;
+  width: var(--prefs-nav-w); flex: 0 0 var(--prefs-nav-w);
   display: flex; flex-direction: column;
-  padding: 16px 8px;
-  border-right: 1px solid var(--line);
-  overflow-y: auto;
-  background: var(--bg);
+  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-6);
+  border-right: 1px solid var(--surface-line);
+  min-height: 0;
 }
-.prefs-nav-section-head {
-  font-size: var(--fs-pico); font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.13em;
-  color: var(--text-3);
-  padding: 4px 8px 10px;
+.prefs-nav-scroll {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.prefs-nav-group { display: flex; flex-direction: column; gap: 2px; }
+.prefs-nav-group + .prefs-nav-group { margin-top: var(--space-4); }
+.prefs-nav-group-head { padding: 0 var(--space-2) var(--space-2) var(--space-3); }
+/* An entry that answers to no group sits below a rule of its own. */
+.prefs-nav-group.is-standalone {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--surface-line);
 }
 .prefs-nav-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px;
-  border-radius: var(--radius-md);
-  background: transparent; border: 0;
-  font-size: var(--fs-small); font-weight: 500;
-  color: var(--text-2);
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; height: var(--row-h);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 0; border-radius: var(--radius-control);
+  background: transparent;
   font-family: inherit;
+  font-size: var(--fs-body); font-weight: var(--fw-label);
+  color: var(--text-2);
   text-align: left; cursor: pointer;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
-  width: 100%;
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
 }
-.prefs-nav-item:hover { background: var(--bg-2); color: var(--text); }
+.prefs-nav-item:hover { background: var(--surface); color: var(--text); }
 .prefs-nav-item.active {
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
-  color: var(--accent);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-weight: 600;
+}
+/* The accent marks where you are, the same bar the rail draws. */
+.prefs-nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
 }
 .pni-icon {
-  width: 16px; height: 16px;
+  width: var(--icon-sm); height: var(--icon-sm);
   display: inline-flex; align-items: center; justify-content: center;
   flex: 0 0 auto;
   color: inherit;
 }
-.pni-icon svg { width: 14px; height: 14px; display: block; }
+.pni-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
+.prefs-nav-foot {
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-2) 0;
+}
+.prefs-version {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
 
+/* Content column. One spacious measure holds every card, so a row's label and
+   its control stay a readable distance apart on a wide window. */
 .prefs-content {
   flex: 1; min-width: 0; min-height: 0;
   overflow-y: auto;
-  padding: 20px 24px;
+  padding: var(--space-5) var(--space-6) var(--space-5) var(--space-5);
   /* Column flex so the unsaved-appearance bar can pin to the pane's bottom
      (margin-top:auto) even when the active section is short. */
   display: flex; flex-direction: column;
+  /* The rows answer to this column, which the rail and the side panel size. */
+  container-type: inline-size;
 }
-.prefs-content > .pref-section { flex: 0 0 auto; }
+.prefs-content > .pref-section,
+.prefs-content > .pref-appearance-actions {
+  flex: 0 0 auto;
+  width: 100%; max-width: var(--prefs-measure);
+}
 .prefs-content::-webkit-scrollbar { width: 5px; }
 .prefs-content::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: var(--radius-sm); }
 .prefs-content::-webkit-scrollbar-track { background: transparent; }
 
 .pref-section { display: none; }
 .pref-section.active { display: block; }
-/* ─── Preferences modal ──────────────────────────────────────────────────── */
 
-.prefs-backdrop {
-  position: fixed; inset: 0; z-index: 200;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-  animation: prefs-fade-in 0.15s ease;
+/* Below this the nav gives up width before the measure does. */
+@media (max-width: 1180px) {
+  .page-prefs { --prefs-nav-w: 168px; }
+  .prefs-nav { padding-left: var(--space-5); }
+  .prefs-content { padding-right: var(--space-5); }
 }
-.prefs-modal {
-  position: fixed; z-index: 201;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(760px, calc(100vw - 64px));
-  height: min(560px, calc(100vh - 80px));
-  background: var(--bg);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-xl);
-  box-shadow: 0 24px 64px rgba(0,0,0,0.45), 0 4px 12px rgba(0,0,0,0.2);
-  display: flex; flex-direction: column;
-  overflow: hidden;
-  animation: prefs-slide-in 0.18s cubic-bezier(0.34, 1.2, 0.64, 1);
-}
-@keyframes prefs-fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-@keyframes prefs-slide-in {
-  from { opacity: 0; transform: translate(-50%, calc(-50% + 12px)); }
-  to   { opacity: 1; transform: translate(-50%, -50%); }
-}
-.prefs-modal-inner {
-  display: flex; flex-direction: row;
-  flex: 1; min-height: 0;
-}
-/* Nav column: matches LM Studio left panel */
-.prefs-modal .prefs-nav {
-  width: 168px; flex: 0 0 168px;
-  background: var(--bg-1);
-  border-right: 1px solid var(--line);
-  padding: 16px 8px 16px;
-  display: flex; flex-direction: column;
-  overflow-y: auto;
-  border-radius: var(--radius-xl) 0 0 14px;
-}
-.prefs-nav-spacer { flex: 1; }
-/* Content column */
-.prefs-modal .prefs-content {
-  flex: 1; min-width: 0;
-  overflow-y: auto;
-  padding: 40px 28px 24px;
-  position: relative;
-}
-.prefs-modal .prefs-content::-webkit-scrollbar { width: 5px; }
-.prefs-modal .prefs-content::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: var(--radius-sm); }
-.prefs-modal .prefs-content::-webkit-scrollbar-track { background: transparent; }
-/* X close button top-right of content area */
-.prefs-close-btn {
-  position: absolute; top: 12px; right: 14px;
-  width: 28px; height: 28px;
-  background: transparent; border: 0;
-  border-radius: var(--radius-md);
-  color: var(--text-3); cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
-  z-index: 2;
-}
-.prefs-close-btn:hover { background: var(--bg-2); color: var(--text); }
-.prefs-close-btn svg { width: 16px; height: 16px; display: block; }
+
 /* Preferences read as grouped settings lists: one flat surface per section,
    rows divided by inset hairlines, the control sitting on the right. */
 .pref-card {
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2xl);
+  background: var(--surface-raised);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
   padding: 4px 24px 18px;
   display: flex; flex-direction: column;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-raised);
 }
-.pref-card-title {
-  font-size: var(--fs-nano); font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.13em;
-  color: var(--text-3);
-  padding: 18px 0 8px;
-}
+.pref-card + .pref-card { margin-top: var(--space-4); }
+/* Type comes from the .section-label primitive; this only spaces it. */
+.pref-card-title { padding: 18px 0 8px; }
 .pref-row {
   display: flex; align-items: center; justify-content: space-between;
   gap: 28px; padding: 16px 0;
@@ -7359,12 +7350,12 @@ input[type="checkbox"]:disabled {
   display: flex; align-items: center; gap: 10px;
   justify-content: flex-end;
   padding: 14px 20px;
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2xl);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-  /* --bg-1 is translucent; blur what scrolls underneath while the bar is
-     stuck so text never smears through it. */
+  background: var(--surface-raised);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+  /* The raised surface is translucent; blur what scrolls underneath while the
+     bar is stuck so text never smears through it. */
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -7401,12 +7392,17 @@ input[type="checkbox"]:disabled {
 }
 .pref-field-group > input[type="text"]:focus { border-color: var(--accent); }
 .pref-rate-group { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 12px; }
-#pref-voice-rate-display { color: var(--accent); font-family: var(--font-mono); font-size: var(--fs-micro); min-width: 34px; text-align: right; }
+/* A read-out and the button that refreshes it share the control column. */
+.pref-inline-group { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-3); }
+#pref-voice-rate-display { color: var(--text-2); font-family: var(--font-mono); font-size: var(--fs-micro); min-width: 34px; text-align: right; }
 .pref-btn-row { display: flex; gap: 8px; margin-top: 14px; }
 .pref-btn-row .ghost-btn { flex: 1; }
-#pref-save { margin-top: 16px; }
+/* The one accent-filled control on the page sits at the end of the rows it commits. */
+#pref-save { margin-top: 16px; align-self: flex-end; }
 .pref-row select { font-family: inherit; }
-.pref-row select option { color: #111; background: #ffffff; }
+/* The native dropdown floats above the page, so it takes the opaque overlay
+   surface rather than a translucent one. */
+.pref-row select option { color: var(--text); background: var(--surface-overlay); }
 #pref-theme { flex: 0 0 auto; min-width: 110px; max-width: 140px; }
 .ghost-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .pref-row input[type="range"] { accent-color: var(--accent); flex: 1; max-width: 160px; }
@@ -7414,6 +7410,22 @@ input[type="checkbox"]:disabled {
 .pref-status.ok { color: var(--emerald); }
 .pref-status.err { color: var(--rose); }
 .pref-status.busy { color: var(--accent); }
+/* A column too narrow for two tracks puts the control under the setting it
+   belongs to, so a label never wraps to four lines beside a shrunken field. */
+@container (max-width: 600px) {
+  .pref-row { flex-direction: column; align-items: stretch; gap: var(--space-3); }
+  .pref-row-text { flex: 0 0 auto; }
+  .pref-row > input[type="text"],
+  .pref-row select,
+  .pref-field-group,
+  .pref-inline-group,
+  .pref-rate-group { width: 100%; max-width: none; }
+  .pref-row > input[type="checkbox"] { align-self: flex-start; }
+  .pref-row > .accent-picker,
+  .pref-row > .ghost-btn { align-self: flex-start; }
+  .pref-row input[type="range"] { max-width: none; }
+  #pref-theme { max-width: none; }
+}
 .aut-model-card.modal-card-md {
   width: 700px;
   max-width: 94vw;

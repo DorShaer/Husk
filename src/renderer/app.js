@@ -238,7 +238,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins']);
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -1103,16 +1103,9 @@ async function saveAppearancePreview() {
   pendingAppearance = null;
   try {
     cfg = await window.husk.config.set(patch);
-    // Same refresh semantics as refreshFromShortcut: the chat page restarts
-    // the agent, every other page gets a full renderer reload.
-    if (currentPage === 'chat') {
-      bindPrefs();
-      syncAppearanceActionsBar();
-      closePrefsModal();
-      await restartPty();
-    } else {
-      reloadRendererPreservingPlace();
-    }
+    // A theme reaches every surface, so the saved appearance lands with a full
+    // renderer reload that returns to the page it was saved from.
+    reloadRendererPreservingPlace();
     return;
   } catch (err) {
     restoreAppearanceSnapshot(appearanceSnapshot());
@@ -1750,6 +1743,9 @@ let pageForwardStack = [];
 
 function setPage(name, opts = {}) {
   name = normalizePageName(name);
+  // An uncommitted appearance preview belongs to Preferences, so leaving the
+  // page puts the saved theme, accent and rail back.
+  if (currentPage === 'prefs' && name !== 'prefs') revertAppearancePreview();
   if (!opts._nav && currentPage && currentPage !== name) {
     pageHistory.push(currentPage);
     if (pageHistory.length > 64) pageHistory.shift();
@@ -1775,10 +1771,10 @@ function setPage(name, opts = {}) {
   }
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
+  if (name === 'prefs') { bindPrefs(); paintPrefsVersion(); }
 }
 
-// Only rail items that name a page navigate; the Preferences gear (no
-// data-page) opens its modal over whatever page is currently shown.
+// Every rail item names the page it opens.
 $$('.rail-item').forEach((b) => b.addEventListener('click', () => { if (b.dataset.page) setPage(b.dataset.page); }));
 // Sidebar collapse/expand toggle: switches between the labeled rail (names) and
 // the icon-only rail. Persists the choice and refits the terminal.
@@ -10398,55 +10394,22 @@ async function flushRecap() {
   recapArmed = false;
   speak(text);
 }
-// Preferences modal: open/close + nav switching
-function openPrefsModal() {
-  const modal = $('#prefs-modal');
-  const backdrop = $('#prefs-backdrop');
-  if (!modal) return;
-  modal.hidden = false;
-  backdrop.hidden = false;
-  bindPrefs(); // refresh form values each open
+// Preferences is a page, and every entry point into it routes through here.
+function openPrefs(section) {
+  setPage('prefs');
+  if (section) showPrefsSection(section);
 }
-function closePrefsModal() {
-  const modal = $('#prefs-modal');
-  const backdrop = $('#prefs-backdrop');
-  if (!modal) return;
-  modal.hidden = true;
-  backdrop.hidden = true;
-  // Closing Preferences abandons any unsaved appearance preview, so the UI
-  // never keeps wearing a theme that was not committed.
-  revertAppearancePreview();
+function showPrefsSection(section) {
+  $$('.prefs-nav-item').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
+  $$('.pref-section').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
 }
-(function wirePrefsModal() {
-  // Gear icon in rail opens modal
-  const btnOpen = $('#btn-open-prefs');
-  if (btnOpen) btnOpen.addEventListener('click', openPrefsModal);
-
-  // Close button inside modal
-  const btnClose = $('#prefs-close');
-  if (btnClose) btnClose.addEventListener('click', closePrefsModal);
-
-  // Backdrop click closes
-  const backdrop = $('#prefs-backdrop');
-  if (backdrop) backdrop.addEventListener('click', closePrefsModal);
-
-  // ESC key closes
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#prefs-modal')?.hidden) closePrefsModal();
-  });
-
-  // Nav switching. Items without a section (Release Notes) act as commands
-  // and leave the active panel untouched.
+(function wirePrefs() {
   const nav = $('#prefs-nav');
   if (nav) {
     nav.addEventListener('click', (e) => {
       const item = e.target.closest('.prefs-nav-item');
       if (!item) return;
-      const section = item.dataset.prefsSection;
-      if (!section) return;
-      $$('.prefs-nav-item').forEach((el) => el.classList.remove('active'));
-      item.classList.add('active');
-      $$('.pref-section').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
+      showPrefsSection(item.dataset.prefsSection);
     });
   }
   $('#prefs-release-notes')?.addEventListener('click', async () => {
@@ -10454,6 +10417,15 @@ function closePrefsModal() {
     try { ver = ((await window.husk.updates.get()) || {}).current || ''; } catch (_) {}
     if (!whatsNewFor(ver)) ver = latestWhatsNewVersion();
     if (ver) showWhatsNew(ver);
+  });
+  $('#btn-pref-update-check')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try { await window.husk.updates.check(); } catch (_) {}
+    btn.disabled = false;
+  });
+  $('#btn-pref-repo')?.addEventListener('click', () => {
+    try { window.husk.urls.openExternal('https://github.com/DorShaer/Husk'); } catch (_) {}
   });
 })();
 
@@ -10770,6 +10742,23 @@ function paintUpdatePill() {
   btn.dataset.state = s.status;
   if (dot) dot.hidden = !showDot;
 }
+// The Preferences nav stamp and its About row read the same update state.
+function paintPrefsVersion() {
+  const s = updateState || { status: 'idle' };
+  const cur = s.current ? (s.current.startsWith('v') ? s.current : 'v' + s.current) : '';
+  const stamp = $('#prefs-version');
+  if (stamp) stamp.textContent = cur ? `Husk ${cur}` : 'Husk';
+  const el = $('#pref-about-version');
+  if (!el) return;
+  const next = s.version ? ('v' + s.version) : '';
+  let label = cur || 'version unknown';
+  if (s.status === 'checking') label = 'checking…';
+  else if (s.status === 'available' && next) label = `${next} available`;
+  else if (s.status === 'downloading') label = `downloading ${s.percent || 0}%`;
+  else if (s.status === 'ready') label = 'restart to update';
+  el.textContent = label;
+  el.className = s.status === 'error' ? 'pref-status err' : 'pref-status';
+}
 function openUpdatePop() {
   const pop = $('#update-pop');
   if (!pop) return;
@@ -10910,12 +10899,14 @@ function openUpdatePop() {
 window.husk.updates.onStatus((s) => {
   updateState = s;
   paintUpdatePill();
+  paintPrefsVersion();
   const pop = $('#update-pop');
   if (pop && !pop.hidden) openUpdatePop();
 });
 (async () => {
   try { updateState = (await window.husk.updates.get()) || updateState; } catch (_) {}
   paintUpdatePill();
+  paintPrefsVersion();
 })();
 
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
@@ -12323,7 +12314,7 @@ function paintAgentMenu() {
     });
   });
   const cfgBtn = menu.querySelector('#rai-config');
-  if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefsModal(); });
+  if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefs('agent'); });
 }
 function openAgentMenu() {
   // Paint instantly from cache, then re-detect so an agent installed since
@@ -12495,7 +12486,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
   { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins') },
-  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => openPrefsModal(), shortcut: 'Alt 6' },
+  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('prefs'),       shortcut: 'Alt 6' },
   { icon: ICONS.restart,     label: 'Restart Agent',                  run: restartPty },
   { icon: ICONS.plus,        label: 'New chat session',               run: () => openNewChatTab() },
   { icon: ICONS.plus,        label: 'Add custom MCP server',          run: () => openMcpCustomModal() },
@@ -14289,9 +14280,8 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
-    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '7': 'agents' };
+    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '6': 'prefs', '7': 'agents' };
     if (map[e.key]) { e.preventDefault(); setPage(map[e.key]); }
-    if (e.key === '6') { e.preventDefault(); openPrefsModal(); }
     // Alt-keyed like the rest of the chrome so it never eats terminal input.
     if (String(e.key || '').toLowerCase() === 'a') {
       e.preventDefault();
