@@ -47,36 +47,43 @@ function copyInto(worktreePath, workspaceRoot, rel) {
     if (!realPathInside(src, worktreePath)) {
       return { path: rel, ok: false, reason: 'source resolves outside worktree root' };
     }
+    // The source is held open from here on, so its kind and its bytes are the
+    // same file. O_NOFOLLOW refuses a symlink at open, and O_NONBLOCK keeps a
+    // fifo from parking the open until someone writes to it.
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- srcReal verified under worktreePath by realPathInside above
-    if (!fs.lstatSync(srcReal).isFile()) {
-      return { path: rel, ok: false, reason: 'source is not a regular file' };
-    }
+    const srcFd = fs.openSync(srcReal, fs.constants.O_RDONLY
+      | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+    try {
+      if (!fs.fstatSync(srcFd).isFile()) {
+        return { path: rel, ok: false, reason: 'source is not a regular file' };
+      }
 
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst re-confined under workspaceRoot above
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst re-confined under workspaceRoot above
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
 
-    // Destination parent must resolve under the workspace.
-    if (!realParentInside(dst, workspaceRoot)) {
-      return { path: rel, ok: false, reason: 'destination resolves outside workspace root' };
-    }
-    let existing = null;
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst string-confined above and its parent verified by realParentInside
-    try { existing = fs.lstatSync(dst); } catch (_) { existing = null; }
-    if (existing && existing.isSymbolicLink()) {
-      return { path: rel, ok: false, reason: 'destination is a symbolic link' };
-    }
-    if (existing && !existing.isFile()) {
-      return { path: rel, ok: false, reason: 'destination is not a regular file' };
-    }
+      // Destination parent must resolve under the workspace.
+      if (!realParentInside(dst, workspaceRoot)) {
+        return { path: rel, ok: false, reason: 'destination resolves outside workspace root' };
+      }
+      let existing = null;
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst string-confined above and its parent verified by realParentInside
+      try { existing = fs.lstatSync(dst); } catch (_) { existing = null; }
+      if (existing && existing.isSymbolicLink()) {
+        return { path: rel, ok: false, reason: 'destination is a symbolic link' };
+      }
+      if (existing && !existing.isFile()) {
+        return { path: rel, ok: false, reason: 'destination is not a regular file' };
+      }
 
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- srcReal verified under worktreePath by realPathInside above
-    const buf = fs.readFileSync(srcReal);
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst parent verified by realParentInside; O_NOFOLLOW refuses symlinks
-    const fd = fs.openSync(dst, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
-      | (fs.constants.O_NOFOLLOW || 0), 0o644);
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- writes to the numeric fd opened above, not a path
-    try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }
-    return { path: rel, ok: true, status: 'written' };
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- reads the numeric fd opened above, not a path
+      const buf = fs.readFileSync(srcFd);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst parent verified by realParentInside; O_NOFOLLOW refuses symlinks
+      const fd = fs.openSync(dst, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+        | (fs.constants.O_NOFOLLOW || 0), 0o644);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- writes to the numeric fd opened above, not a path
+      try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }
+      return { path: rel, ok: true, status: 'written' };
+    } finally { fs.closeSync(srcFd); }
   } catch (err) {
     return { path: rel, ok: false, reason: (err && err.message) || String(err) };
   }

@@ -9,7 +9,6 @@
 (function () {
   // ── The shell ──────────────────────────────────────────────────────────────
   // Looked up per call, so a markup change is reported rather than cached.
-  const $ = (sel) => document.querySelector(sel);
   const byId = (id) => document.getElementById(id);
 
   // The builder is required: a manifest renders through it or not at all.
