@@ -9769,15 +9769,16 @@ ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
   let text = '';
   let size = 0;
   try {
-    size = fs.statSync(transcript).size;
-    const fd = fs.openSync(transcript, 'r');
-    const start = Math.max(0, size - BG_PEEK_TAIL_BYTES);
-    const buf = Buffer.alloc(Math.min(size, BG_PEEK_TAIL_BYTES));
-    const n = fs.readSync(fd, buf, 0, buf.length, start);
-    fs.closeSync(fd);
-    text = buf.toString('utf8', 0, n);
-    // A mid-file start lands inside a line; drop the partial one.
-    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    const fd = fs.openSync(transcript, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    try {
+      size = fs.fstatSync(fd).size;
+      const start = Math.max(0, size - BG_PEEK_TAIL_BYTES);
+      const buf = Buffer.alloc(Math.min(size, BG_PEEK_TAIL_BYTES));
+      const n = fs.readSync(fd, buf, 0, buf.length, start);
+      text = buf.toString('utf8', 0, n);
+      // A mid-file start lands inside a line; drop the partial one.
+      if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    } finally { fs.closeSync(fd); }
   } catch (err) {
     return { ok: false, error: err.message };
   }
