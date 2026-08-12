@@ -1175,10 +1175,7 @@ async function closeRejectedResumeTab(tab) {
   const agent = tab.resumeAttempt.agent || 'session';
   const id = tab.resumeAttempt.id ? ` ${String(tab.resumeAttempt.id).slice(0, 8)}` : '';
   const header = tab.resumeAttempt.previousHeader || null;
-  if (header) {
-    if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
-    if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
-  }
+  if (header && Object.prototype.hasOwnProperty.call(header, 'subBase')) setChatSubBase(header.subBase);
   toast(`${agent}${id} is not resumable yet; refreshed sessions`, 'error');
   await closeTab(tab.id);
   try { await refreshRecentList(); } catch (err) { console.warn('recent refresh after rejected resume failed', err); }
@@ -1198,10 +1195,7 @@ async function closeHeldResumeTab(tab) {
   tab.writeBuf = '';
   const d = { id: tab.resumeAttempt.id, project: tab.resumeAttempt.cwd || '', owner: tab.resumeAttempt.agent };
   const header = tab.resumeAttempt.previousHeader || null;
-  if (header) {
-    if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
-    if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
-  }
+  if (header && Object.prototype.hasOwnProperty.call(header, 'subBase')) setChatSubBase(header.subBase);
   await closeTab(tab.id);
   if (typeof toastAction === 'function') {
     toastAction('An agent is running that session', 'Attach to it',
@@ -9018,10 +9012,9 @@ async function resumeSessionInChat(d, opts) {
   if (options.fork && plan && plan.forkCommand) cmd = plan.forkCommand;
   closeDetail();
   setPage('chat');
-  const previousHeader = {
-    spAgent: $('#sp-agent') ? $('#sp-agent').textContent : '',
-    spSessionId: $('#sp-session-id') ? $('#sp-session-id').textContent : '',
-  };
+  // The tool and folder the chat named before the resume, restored if the agent
+  // turns the session down.
+  const previousHeader = { subBase: chatSubBase };
   const cmdShort = attaching
     ? `claude attach ${plan.agentId}`
     : (forking ? `claude --resume ${d.id.slice(0, 8)} --fork-session`
