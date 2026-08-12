@@ -440,27 +440,36 @@
 
     <!-- Topbar -->
     <header id="topbar">
-      <button class="topbar-project" id="topbar-project" title="Active project (click to switch)" hidden>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
-        <span class="tp-name" id="topbar-project-name"></span>
+      <div class="topbar-side topbar-side-left">
+        <button class="topbar-project" id="topbar-project" title="Active project (click to switch)" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+          <span class="tp-name" id="topbar-project-name"></span>
+        </button>
+      </div>
+      <!-- Global search. Opens the command palette, which owns the query and the
+           result list. -->
+      <button class="topbar-search" id="btn-palette" type="button" title="Search Husk">
+        <svg class="tb-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+        <span class="tb-search-text">Search for anything…</span>
+        <span class="tb-search-key" id="btn-palette-key" aria-hidden="true">⌘K</span>
       </button>
-      <div class="topbar-spacer"></div>
-      <!-- Agents this project has. Hidden until there is one; a poll rewrites
-           the label, which stays out of the live region. -->
-      <button class="iconbtn topbar-agents" id="topbar-agents" type="button" hidden>
-        <span class="ta-dot" aria-hidden="true"></span>
-        <span class="ta-count" id="topbar-agents-count"></span>
-        <span class="ta-word" id="topbar-agents-word"></span>
-        <span class="ta-needs" id="topbar-agents-needs" hidden></span>
-        <span class="ta-key" aria-hidden="true">Alt+A</span>
-      </button>
-      <button class="iconbtn" id="btn-palette" title="Command palette (Ctrl+K)">⌘K</button>
-      <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Chat</button>
-      <button class="iconbtn iconbtn-square" id="btn-status-toggle" title="Toggle status panel" aria-label="Toggle status panel">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>
-        </svg>
-      </button>
+      <div class="topbar-side topbar-side-right">
+        <!-- Agents this project has. Hidden until there is one; a poll rewrites
+             the label, which stays out of the live region. -->
+        <button class="iconbtn topbar-agents" id="topbar-agents" type="button" hidden>
+          <span class="ta-dot" aria-hidden="true"></span>
+          <span class="ta-count" id="topbar-agents-count"></span>
+          <span class="ta-word" id="topbar-agents-word"></span>
+          <span class="ta-needs" id="topbar-agents-needs" hidden></span>
+          <span class="ta-key" aria-hidden="true">Alt+A</span>
+        </button>
+        <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New Chat</button>
+        <button class="iconbtn iconbtn-square" id="btn-status-toggle" title="Toggle status panel" aria-label="Toggle status panel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>
+          </svg>
+        </button>
+      </div>
     </header>
 
     <!-- Main: rail + page area -->
@@ -480,7 +489,7 @@
              so the tool selector and Preferences below stay pinned and visible. -->
         <div class="rail-scroll">
         <div class="rail-section">
-          <div class="rail-section-head">Workspace</div>
+          <div class="rail-section-head section-label">Workspace</div>
           <nav class="rail-nav">
             <button class="rail-item active" data-page="chat" title="Chat">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg></span>
@@ -510,7 +519,7 @@
         </div>
 
         <div class="rail-section">
-          <div class="rail-section-head">Tools</div>
+          <div class="rail-section-head section-label">Tools</div>
           <nav class="rail-nav">
             <button class="rail-item" data-page="skills" title="Skills">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
@@ -532,7 +541,7 @@
         </div>
 
         <div class="rail-section">
-          <div class="rail-section-head">History</div>
+          <div class="rail-section-head section-label">History</div>
           <nav class="rail-nav">
             <button class="rail-item" data-page="sessions" title="Sessions">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg></span>
@@ -542,7 +551,7 @@
         </div>
 
         <div class="rail-section rail-section-recent" id="rail-recent" hidden>
-          <div class="rail-section-head">
+          <div class="rail-section-head section-label">
             <span>Recent Chats</span>
             <button class="rail-section-action" id="btn-recent-all" title="See all sessions">View All</button>
           </div>
@@ -550,12 +559,12 @@
         </div>
 
         <div class="rail-section rail-section-context" id="rail-context">
-          <div class="rail-section-head">
+          <div class="rail-section-head section-label">
             <span>Files in context</span>
             <button class="rail-section-action" id="btn-context-add" title="Share a file with the agent">+</button>
           </div>
           <div class="rail-sub" id="rail-context-list">
-            <div class="rail-sub-empty">Drop a file or click +</div>
+            <div class="rail-sub-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>No files shared yet</div>
           </div>
         </div>
         </div>
@@ -2081,6 +2090,24 @@
       </aside>
     </main>
 
+    <!-- Status bar: one quiet line naming what the window is pointed at. Present on
+         every page. -->
+    <footer id="statusbar" class="statusbar">
+      <span class="sb-item" id="sb-agent-item" title="Active AI tool">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/></svg>
+        <span class="sb-value" id="sb-agent">agent</span>
+      </span>
+      <span class="sb-sep" aria-hidden="true"></span>
+      <span class="sb-item sb-item-path" id="sb-cwd-item" title="Working directory">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+        <span class="sb-value sb-mono" id="sb-cwd">~</span>
+      </span>
+      <span class="sb-sep" aria-hidden="true"></span>
+      <span class="sb-item" id="sb-model-item" title="Model the active session reports">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><path d="M9 1.5v2.5M15 1.5v2.5M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5"/></svg>
+        <span class="sb-value" id="sb-model">model unknown</span>
+      </span>
+    </footer>
 
     <!-- Create skill modal -->
     <div id="new-skill-modal" class="modal" hidden>

@@ -1736,10 +1736,10 @@ function applyAccent(accent) {
 // passes _nav so it does not re-record itself.
 let pageHistory = [];
 let pageForwardStack = [];
-// The palette badge shows the chord this platform actually uses.
+// The search field shows the chord this platform actually uses.
 {
-  const pal = document.getElementById('btn-palette');
-  if (pal && !/mac/i.test(navigator.platform)) pal.textContent = 'Ctrl+K';
+  const key = document.getElementById('btn-palette-key');
+  if (key && !/mac/i.test(navigator.platform)) key.textContent = 'Ctrl K';
 }
 
 function setPage(name, opts = {}) {
@@ -1982,7 +1982,35 @@ function ctxPctColor(pct) {
   return 'var(--emerald)';
 }
 
+// ─── Shell status bar ────────────────────────────────────────────────────────
+// One line under every page: the active tool, the folder it runs in, the model
+// the session reports. Reads the same stats poll the status panel reads, and
+// falls back to the configured tool and folder before the first poll lands.
+function refreshShellStatusBar() {
+  const agentEl = $('#sb-agent');
+  if (!agentEl) return;
+  const s = lastStats || {};
+  const u = s.usage || {};
+  const project = projectsCache.find((p) => p.id === activeProjectId);
+
+  const tool = (chatSubBase && chatSubBase.tool)
+    || s.agent
+    || ((cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'agent');
+  const dir = (chatSubBase && chatSubBase.dir)
+    || (project ? project.path : null)
+    || ((s.workspace && s.workspace.cwd) || (cfg && cfg.agentCwd) || huskHome || '~');
+  const model = (u.session && u.session.modelLabel)
+    || prettyModelLabel((u.session && u.session.model) || '');
+
+  agentEl.textContent = tool;
+  const cwdEl = $('#sb-cwd');
+  if (cwdEl) { cwdEl.textContent = dir; cwdEl.title = dir; }
+  const modelEl = $('#sb-model');
+  if (modelEl) modelEl.textContent = model || 'model unknown';
+}
+
 async function refreshStatusline() {
+  refreshShellStatusBar();
   if (!lastStats) return;
   const s = lastStats;
   const here = (s.location && s.location.city) || '';
@@ -6504,6 +6532,7 @@ function updateActiveChatProfile() {
   // Past two names, the count stands in for them.
   else if (active.length > 2) tag = `${active.length} agents pinned`;
   sub.textContent = tag ? `${toolName} · ${dir} · ${tag}` : `${toolName} · ${dir}`;
+  refreshShellStatusBar();
 }
 
 // ── Delete, duplicate ───────────────────────────────────────────────────────
@@ -10725,7 +10754,7 @@ function refreshContextList() {
   const wrap = $('#rail-context-list');
   if (!wrap) return;
   if (!sessionContext.length) {
-    wrap.innerHTML = '<div class="rail-sub-empty">Drop a file or click +</div>';
+    wrap.innerHTML = '<div class="rail-sub-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>No files shared yet</div>';
     return;
   }
   // eslint-disable-next-line no-unsanitized/property -- Session context fields are escaped via escapeHtml/escapeAttr.

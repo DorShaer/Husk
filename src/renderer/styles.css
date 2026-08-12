@@ -317,6 +317,10 @@
   --control-h: 32px;
   --control-h-sm: 26px;
   --control-h-lg: 38px;
+  /* Shell chrome: the topbar row, the centred search field and the status line. */
+  --topbar-h: 52px;
+  --topbar-search-w: 440px;
+  --statusbar-h: 26px;
   /* Three shapes carry the whole interface: controls, cards, pills. */
   --radius-control: 6px;
   --radius-card: 10px;
@@ -465,7 +469,7 @@ body {
   letter-spacing: 0;
   line-height: 1.5;
   display: grid;
-  grid-template-rows: 52px 1fr;
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--statusbar-h);
   overflow: hidden;
   -webkit-app-region: no-drag;
   /* Marker for "an agent is waiting on you". Declared on the element the theme
@@ -638,9 +642,12 @@ button.chip:hover, a.chip:hover,
 /* ─── Topbar ────────────────────────────────────────────────────────────── */
 
 #topbar {
-  display: flex; align-items: center; gap: 14px;
-  /* Left padding lands the 40px logo's horizontal centre at x=36px, the centre of
-     the collapsed rail's 72px column, so the logo column continues the rail. */
+  /* Three tracks with equal flexible sides, so the search field sits on the
+     window's centreline whatever the side content weighs. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--topbar-search-w)) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
   padding: 0 14px 0 16px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
@@ -659,7 +666,60 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
   user-select: none;
   -webkit-user-drag: none;
 }
-.topbar-spacer { flex: 1; -webkit-app-region: drag; min-height: 32px; }
+.topbar-side {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0; min-height: 32px;
+  -webkit-app-region: drag;
+}
+.topbar-side-right { justify-content: flex-end; }
+
+/* Global search. Reads as a field so the capability is visible, and carries its
+   own chord on the right. */
+.topbar-search {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-control);
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-body);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+.topbar-search:hover {
+  background: var(--surface-raised);
+  border-color: var(--line-3);
+  color: var(--text-2);
+}
+.topbar-search .tb-search-icon {
+  width: var(--icon-sm); height: var(--icon-sm); flex: 0 0 auto;
+  color: var(--text-3);
+}
+.topbar-search .tb-search-text {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topbar-search .tb-search-key {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+/* The field yields width to the actions before they start colliding with it. */
+@media (max-width: 1100px) { #topbar { --topbar-search-w: 300px; } }
+@media (max-width: 860px)  { #topbar { --topbar-search-w: 210px; } }
 
 /* Topbar version / update pill. Always shows; muted by default. When an
    update is available it grows a pulsing orange dot and a brighter label
@@ -729,13 +789,13 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
    are live the chip itself breathes, so the way in is visible from across the
    window rather than needing to be looked for. */
 .topbar-agents.is-running {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-color: color-mix(in srgb, var(--info) 42%, var(--line));
   animation: ta-alive 2.4s var(--ease-in-out) infinite;
 }
-.topbar-agents.is-running .ta-dot { background: var(--accent); animation: ta-breathe 2s var(--ease-in-out) infinite; }
+.topbar-agents.is-running .ta-dot { background: var(--info); animation: ta-breathe 2s var(--ease-in-out) infinite; }
 @keyframes ta-alive {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 26%, transparent); }
-  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 0%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 26%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--info) 0%, transparent); }
 }
 /* A blocked agent is the one that stopped and it wants a human, so it pulses
    harder and in amber, and its dot holds still against the moving frame. */
@@ -761,18 +821,18 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
    a ring that pulses out of it, then settles back into whatever state it is in,
    so the arrival is noticed without becoming permanent decoration. */
 .topbar-agents.is-new {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
+  border-color: color-mix(in srgb, var(--info) 70%, var(--line));
   animation: ta-arrive 1.6s var(--ease-out) 3;
 }
 .topbar-agents.is-new::after {
   content: ''; position: absolute; inset: -1px;
-  border: 1px solid var(--accent); border-radius: inherit;
+  border: 1px solid var(--info); border-radius: inherit;
   opacity: 0; pointer-events: none;
   animation: ta-arrive-ring 1.6s var(--ease-out) 3;
 }
 @keyframes ta-arrive {
   0%, 100% { box-shadow: none; }
-  22% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+  22% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--info) 22%, transparent); }
 }
 @keyframes ta-arrive-ring {
   0% { opacity: 0.9; transform: scale(1); }
@@ -782,10 +842,10 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .topbar-agents.is-running .ta-dot { animation: none; }
   .topbar-agents.is-running, .topbar-agents.is-blocked { animation: none; }
-  .topbar-agents.is-running { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .topbar-agents.is-running { box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 22%, transparent); }
   .topbar-agents.is-blocked { box-shadow: 0 0 0 2px color-mix(in srgb, var(--as-mark) 34%, transparent); }
   .topbar-agents.is-new, .topbar-agents.is-new::after { animation: none; }
-  .topbar-agents.is-new { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent); }
+  .topbar-agents.is-new { box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 26%, transparent); }
 }
 
 .update-pop {
@@ -867,6 +927,47 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
 .dot-warn { background: var(--amber); }
 .dot-error { background: var(--rose); }
 
+/* ─── Status bar ────────────────────────────────────────────────────────── */
+
+/* One line under every page naming the tool, the folder and the model. It reports,
+   it never acts, so it stays at the quietest ink the theme carries. */
+.statusbar {
+  display: flex; align-items: center;
+  gap: var(--space-2);
+  height: var(--statusbar-h);
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+.statusbar .sb-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0;
+}
+.statusbar .sb-item svg {
+  width: var(--icon-sm); height: var(--icon-sm); flex: 0 0 auto;
+  color: var(--text-3);
+  opacity: 0.8;
+}
+.statusbar .sb-value { overflow: hidden; text-overflow: ellipsis; }
+/* The path is the one field a reader scans character by character. */
+.statusbar .sb-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+/* The folder is the longest field, so it yields the width the other two need. */
+.statusbar .sb-item-path { flex: 0 1 auto; min-width: 0; }
+.statusbar .sb-sep {
+  width: 1px; height: 11px; flex: 0 0 auto;
+  background: var(--line-2);
+}
+
 /* ─── Main: rail | pages | status dashboard / detail panel ──────────────── */
 
 #main {
@@ -908,20 +1009,6 @@ body[data-status="collapsed"] #status-panel { display: none; }
   width: 48px;
   overflow: visible;
 }
-/* Brand accent stripe on the left edge of the rail: a full-height 2px column
-   ramping from accent at the top to transparent. */
-.rail::before {
-  content: "";
-  position: absolute;
-  top: 0; bottom: 0; left: 0;
-  width: 2px;
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 70%, transparent) 0%,
-    color-mix(in srgb, var(--accent) 35%, transparent) 18%,
-    transparent 42%);
-  pointer-events: none;
-  opacity: 0.9;
-}
 /* Rail brand: logo at top of icon strip */
 .rail-brand {
   display: flex; align-items: center; justify-content: center;
@@ -946,7 +1033,7 @@ body[data-status="collapsed"] #status-panel { display: none; }
 }
 .rail-toggle-btn:hover { background: var(--bg-2); color: var(--text); }
 .rail-toggle-btn svg {
-  width: 18px; height: 18px; display: block;
+  width: var(--icon-md); height: var(--icon-md); display: block;
   transition: transform var(--motion-base) var(--ease);
 }
 body[data-rail="collapsed"] .rail-toggle-btn svg { transform: rotate(180deg); }
@@ -964,9 +1051,9 @@ body[data-rail="collapsed"] .rail .rail-item {
   gap: 0 !important;
 }
 body[data-rail="collapsed"] .rail .rail-item .ri-icon {
-  width: 20px !important; height: 20px !important;
+  width: var(--icon-sm) !important; height: var(--icon-sm) !important;
 }
-body[data-rail="collapsed"] .rail .rail-item .ri-icon svg { width: 20px !important; height: 20px !important; }
+body[data-rail="collapsed"] .rail .rail-item .ri-icon svg { width: var(--icon-sm) !important; height: var(--icon-sm) !important; }
 body[data-rail="collapsed"] .rail .rail-agent {
   width: 36px !important; height: 36px !important;
   padding: 0 !important;
@@ -974,7 +1061,7 @@ body[data-rail="collapsed"] .rail .rail-agent {
   justify-content: center !important;
   gap: 0 !important;
 }
-body[data-rail="collapsed"] .rail .rail-agent .ra-icon { width: 20px; height: 20px; }
+body[data-rail="collapsed"] .rail .rail-agent .ra-icon { width: var(--icon-sm); height: var(--icon-sm); }
 body[data-rail="collapsed"] .rail .rail-nav { gap: 3px; align-items: center; }
 .rail .rail-section + .rail-section { margin-top: 8px; }
 
@@ -1016,21 +1103,23 @@ body[data-rail="expanded"] .rail-scroll { overflow-y: auto; }
   background: var(--bg-2);
   color: var(--text);
 }
+/* The one place the accent appears in the rail: a bar marking where you are. It
+   is drawn inside the row, which clips its overflow to keep long labels in. */
 .rail-item.active::before {
   content: "";
   position: absolute;
-  left: -8px; top: 6px; bottom: 6px;
+  left: 0; top: 6px; bottom: 6px;
   width: 3px;
   background: var(--accent);
   border-radius: var(--radius-pill);
 }
 .rail-item .ri-icon {
-  font-size: var(--fs-h1); flex: 0 0 auto; width: 20px; height: 20px;
+  flex: 0 0 auto; width: var(--icon-sm); height: var(--icon-sm);
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-3);
   transition: color var(--motion-fast) var(--ease);
 }
-.rail-item .ri-icon svg { width: 19px; height: 19px; display: block; }
+.rail-item .ri-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
 /* In the collapsed, icon-only rail the icons take bigger targets, a brighter colour
    and a square hit area, so the row reads as an icon nav. */
 body[data-rail="collapsed"] .rail-item {
@@ -1046,23 +1135,20 @@ body[data-rail="collapsed"] .rail-item:hover {
   color: var(--text);
 }
 body[data-rail="collapsed"] .rail-item .ri-icon {
-  width: 22px; height: 22px; font-size: var(--fs-h1);
+  width: var(--icon-sm); height: var(--icon-sm);
   color: inherit;
 }
-body[data-rail="collapsed"] .rail-item .ri-icon svg { width: 22px; height: 22px; }
+body[data-rail="collapsed"] .rail-item .ri-icon svg { width: var(--icon-sm); height: var(--icon-sm); }
 body[data-rail="collapsed"] .rail-section + .rail-section { margin-top: 8px; }
 body[data-rail="collapsed"] .rail-nav { gap: 4px; align-items: center; }
+/* The icon-only rail has no room for a bar, so the tint and the accent icon are
+   what mark where you are. */
 body[data-rail="collapsed"] .rail-item.active {
-  background: var(--bg-2);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-2));
   color: var(--text);
 }
 body[data-rail="collapsed"] .rail-item.active .ri-icon { color: var(--accent); }
 body[data-rail="collapsed"] .rail-item.active::before { display: none; }
-/* Accent-tinted background for active item in icon-only mode */
-body[data-rail="collapsed"] .rail-item.active {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-2));
-}
-body[data-rail="collapsed"] .rail-item.active .ri-icon { color: var(--accent); }
 .rail-item:hover .ri-icon, .rail-item.active .ri-icon { color: var(--text); }
 
 /* Labels: opacity+transform animation when expanding; fully removed when collapsed
@@ -1070,6 +1156,7 @@ body[data-rail="collapsed"] .rail-item.active .ri-icon { color: var(--accent); }
 .rail-item .ri-label { font-weight: 500; opacity: 0; transform: translateX(-4px); transition: opacity var(--motion-base) var(--ease), transform var(--motion-base) var(--ease); }
 body[data-rail="expanded"] .rail-item .ri-label { opacity: 1; transform: translateX(0); }
 body[data-rail="collapsed"] .ri-label { display: none; }
+/* Maturity marker on a nav row. It reports a state, so it takes the state recipe. */
 .rail-beta-tag {
   display: inline-flex;
   align-items: center;
@@ -1077,22 +1164,15 @@ body[data-rail="collapsed"] .ri-label { display: none; }
   height: 17px;
   margin-left: 8px;
   padding: 0 6px;
-  border: 1px solid color-mix(in srgb, #60a5fa 48%, transparent);
+  border: 1px solid var(--state-running-edge);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, #60a5fa 15%, transparent);
-  color: #93c5fd;
-  font-size: var(--fs-pico);
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  background: var(--state-running-bg);
+  color: var(--state-running-ink);
+  font-size: var(--fs-section);
+  font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
   line-height: 1;
   transform: translateY(-0.5px);
-}
-/* The pale blue only carries on a dark surface; on the light-family
-   themes the same glyph lands at 1.5:1 on its own fill. */
-[data-mode="light"] .rail-beta-tag {
-  color: #1d4ed8;
-  background: color-mix(in srgb, #60a5fa 18%, #fff);
-  border-color: color-mix(in srgb, #60a5fa 45%, #fff);
 }
 body[data-rail="collapsed"] .rail-beta-tag { display: none; }
 
@@ -1132,12 +1212,11 @@ body[data-rail="collapsed"] .rail-item:hover::after {
 /* Sectioned rail layout */
 .rail-section { display: flex; flex-direction: column; gap: 4px; }
 .rail-section + .rail-section { margin-top: 12px; }
+/* Type comes from .section-label; the rail adds its own spacing and the fade it
+   plays when the sidebar expands. */
 .rail-section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: var(--fs-pico); font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  padding: 6px 28px 4px 14px;
+  justify-content: space-between;
+  padding: 6px 14px 4px;
   opacity: 0; transition: opacity var(--motion-base) var(--ease);
   white-space: nowrap; overflow: hidden;
   user-select: none;
@@ -1146,7 +1225,8 @@ body[data-rail="expanded"] .rail-section-head { opacity: 1; }
 .rail-section-action {
   -webkit-app-region: no-drag;
   background: transparent; border: 0; cursor: pointer;
-  color: var(--text-3); font-size: var(--fs-pico); font-weight: 700; letter-spacing: 0.08em;
+  color: var(--text-3); font-size: var(--fs-section); font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
   text-transform: uppercase; line-height: 1;
   min-width: 18px; height: 18px; padding: 0 6px; border-radius: var(--radius-sm);
   display: inline-flex; align-items: center; justify-content: center; white-space: nowrap;
@@ -1180,12 +1260,12 @@ body[data-rail="expanded"] #rail-recent { display: flex; }
 }
 .rail-agent .ra-icon {
   flex: 0 0 auto;
-  width: 20px; height: 20px;
+  width: var(--icon-sm); height: var(--icon-sm);
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-3);
   transition: color var(--motion-fast) var(--ease);
 }
-.rail-agent .ra-icon svg { width: 19px; height: 19px; display: block; }
+.rail-agent .ra-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
 .rail-agent:hover { background: var(--bg-2); color: var(--text); }
 .rail-agent:hover .ra-icon { color: var(--text); }
 body[data-rail="collapsed"] .rail-agent {
@@ -1273,7 +1353,7 @@ body[data-rail="collapsed"] .rail-agent-menu { display: none !important; }
 /* Recent sessions list */
 .rail-section-recent { display: none; }
 body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
-.rail-section-action[data-pressed="1"] { color: var(--accent); }
+.rail-section-action[data-pressed="1"] { color: var(--text); }
 .rail-recent-item {
   display: flex; flex-direction: column; gap: 2px;
   padding: 7px 9px;
@@ -1298,10 +1378,12 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   overflow-y: auto;
   padding: 0 6px;
 }
+/* Empty rows name the absent thing and carry the icon of whatever would sit here. */
 .rail-sub-empty {
-  font-size: var(--fs-nano); color: var(--text-3); padding: 8px 8px;
-  font-style: italic;
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--fs-label); color: var(--text-3); padding: 8px;
 }
+.rail-sub-empty svg { width: var(--icon-sm); height: var(--icon-sm); flex: 0 0 auto; opacity: 0.7; }
 .rail-sub-item {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 8px;
@@ -1315,7 +1397,7 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
 .rail-sub-item:hover { background: var(--bg-3); color: var(--text); }
 .rail-sub-item .rsi-dot {
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent);
+  background: var(--text-3);
   flex: 0 0 auto;
   opacity: 0.7;
 }
@@ -8822,11 +8904,14 @@ body[data-mode="light"] .ob-wordmark span {
   padding: 10px 13px; border-radius: var(--radius-lg);
   font-size: var(--fs-body-lg); color: var(--text-2); cursor: pointer;
 }
-.palette-list li.active, .palette-list li:hover {
+.palette-list li:hover { background: var(--surface-raised); color: var(--text); }
+/* The accent marks the row the keyboard is standing on, and nothing else in the list. */
+.palette-list li.active {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-3)); color: var(--text);
 }
-.palette-list .pi-icon { color: var(--accent); width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-.palette-list .pi-icon svg { width: 16px; height: 16px; display: block; }
+.palette-list .pi-icon { color: var(--text-3); width: var(--icon-sm); height: var(--icon-sm); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.palette-list li.active .pi-icon, .palette-list li:hover .pi-icon { color: var(--text-2); }
+.palette-list .pi-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: var(--fs-nano); font-family: var(--font-mono); }
 /* ─── Agents under the chat that started them ──────────────────────────────
    A chat with agents is one card holding all of them. The card carries the surface;
@@ -9438,13 +9523,12 @@ kbd {
   }
   /* Detail panel slides in as an overlay rather than splitting the page. */
   body[data-detail="open"] .detail-panel {
-    position: fixed; top: 52px; right: 0; bottom: 0; left: 0;
+    position: fixed; top: var(--topbar-h); right: 0; bottom: var(--statusbar-h); left: 0;
     z-index: 80;
     width: 100%;
     border-left: 0;
     box-shadow: var(--shadow);
   }
-  .topbar-spacer { min-height: 32px; }
 }
 
 /* Print: should never happen in this app but kill animations defensively. */
