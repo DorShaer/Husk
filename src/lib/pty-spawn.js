@@ -7,10 +7,9 @@ const path = require('path');
 // real path to a program name, the way cmd.exe would. Returns the
 // absolute path on hit, null when no candidate exists. Pure: no spawn.
 //
-// Why this exists: Win32 CreateProcess does not honor PATHEXT. A bare
-// pty.spawn('claude') fails when claude is installed as a .cmd or .bat
-// shim (the npm shim shape). Resolving the path ourselves lets us call
-// pty.spawn(resolvedPath, argv) directly without a cmd.exe wrapper.
+// Win32 CreateProcess does not honor PATHEXT, so a bare pty.spawn('claude')
+// misses an agent installed as the .cmd or .bat shim npm writes. Resolving
+// the path here allows pty.spawn(resolvedPath, argv) with no cmd.exe wrapper.
 function resolveWindowsExe(exe, env) {
   if (typeof exe !== 'string' || !exe) return null;
   const e = env || {};
@@ -40,9 +39,7 @@ function resolveWindowsExe(exe, env) {
 // preferExecutableSibling upgrades a resolved path that Win32 CreateProcess
 // cannot launch directly. The npm install shape puts three files in the bin
 // dir: an extension-less `claude` (a POSIX shell shim), `claude.cmd`, and
-// `claude.ps1`. Resolving to the extension-less file (or being handed one that
-// already carries a .cmd/.bat) and spawning it raises "Cannot create process,
-// error code: 193". When the resolved file lacks a real executable extension,
+// `claude.ps1`. When the resolved file lacks a real executable extension,
 // probe for a PATHEXT sibling (claude -> claude.cmd) and return that instead.
 function preferExecutableSibling(resolved, env) {
   const ext = path.extname(resolved).toLowerCase();
@@ -54,8 +51,7 @@ function preferExecutableSibling(resolved, env) {
   // Windows file names are case-insensitive; npm writes `claude.cmd`
   // (lowercase) while PATHEXT is upper-case, so match without regard to case.
   let entries;
-  // dir is the directory of an already-resolved executable path; this is a
-  // read-only listing to find a runnable sibling, no contents are opened.
+  // Read-only listing of an already-resolved executable's own directory.
   // eslint-disable-next-line security/detect-non-literal-fs-filename
   try { entries = fs.readdirSync(dir); } catch (_) { return resolved; }
   for (const e of exts) {
@@ -67,9 +63,7 @@ function preferExecutableSibling(resolved, env) {
 }
 
 function safeExists(p) {
-  // resolveWindowsExe probes candidate file paths built from PATH+PATHEXT
-  // entries to find the real location of a program. This is a read-only
-  // existence + isFile check; no contents are opened or written.
+  // Read-only existence and isFile check on a PATH+PATHEXT candidate.
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     if (!fs.existsSync(p)) return false;
@@ -89,13 +83,12 @@ function safeExists(p) {
 //   linux    pty.spawn('/usr/bin/script',
 //              ['-q', '-c', shJoin(agentExe, agentArgs), '/dev/null'])
 //            falls through to pty.spawn('/bin/sh', ['-c', shJoin(...)])
-//            when /usr/bin/script is unavailable. The script wrapper is
-//            retained because `claude --resume <id>` exits 129 without
-//            its setsid + TIOCSCTTY setup on Linux; the inner string is
-//            shell-escaped by shJoin from src/lib/shell-quote.js.
+//            when /usr/bin/script is unavailable. The script wrapper gives
+//            the setsid + TIOCSCTTY setup a resumed session needs on Linux;
+//            the inner string is escaped by shJoin from src/lib/shell-quote.js.
 //   win32    pty.spawn(resolved-via-PATHEXT, agentArgs) when resolvable;
 //            falls back to pty.spawn('cmd.exe', ['/c', rawCmd]) when the
-//            exe cannot be resolved (preserves the legacy behavior).
+//            exe cannot be resolved, so cmd's own lookup gets the last word.
 function buildSpawnSpec(opts) {
   const platform = opts.platform;
   const agentExe = opts.agentExe;
@@ -117,9 +110,8 @@ function buildSpawnSpec(opts) {
     if (resolved) {
       const target = preferExecutableSibling(resolved, env);
       const ext = path.extname(target).toLowerCase();
-      // Only real executables can be handed to CreateProcess directly. A
-      // .cmd/.bat shim must run through the command interpreter, otherwise
-      // pty.spawn fails with "Cannot create process, error code: 193".
+      // CreateProcess takes real executables directly; a .cmd or .bat shim
+      // runs through the command interpreter.
       if (ext === '.exe' || ext === '.com') return { exe: target, argv: agentArgs };
       return { exe: cmdExe, argv: ['/c', target, ...agentArgs] };
     }

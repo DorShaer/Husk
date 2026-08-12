@@ -11,7 +11,10 @@ const { spawn, execFile } = require('child_process');
 const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
-const { resolveInside, isInside } = require('./lib/path-confine');
+const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
+const { openCommand: bgOpenCommand, controlArgs: bgControlArgs } = require('./lib/bg-agent-open');
+const { isLive: agentIsLive } = require('./lib/agent-state');
+const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
 const { buildSpawnSpec, withCopilotContextDir } = require('./lib/pty-spawn');
@@ -27,17 +30,12 @@ const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 const SharedMcp = require('./lib/mcp/shared');
 const { deriveCopilotSessionTitleFromEventsText } = require('./lib/copilot-session-title');
 
-// On macOS in particular, a GUI-launched Electron app inherits a
-// minimal PATH that does not include the npm-global, homebrew, or bun
-// install directories where users keep their agent CLIs. Read the
-// user's actual shell PATH so subsequent spawns can find their
-// binaries.
-//
-// This runs ASYNCHRONOUSLY: an interactive login shell sources the
-// user's full rc chain (nvm, pyenv, conda init), which can take
-// hundreds of ms to seconds. Doing it with spawnSync at module load
-// froze the whole process before the window appeared. Agent spawns
-// happen on user action, well after this resolves, so async is safe.
+// A GUI-launched Electron app inherits a minimal PATH that omits the
+// npm-global, homebrew, and bun install directories where agent CLIs live.
+// Read the user's shell PATH so later spawns can find their binaries. Runs
+// asynchronously because an interactive login shell sources the full rc chain
+// (nvm, pyenv, conda init), which can take seconds; agent spawns happen on
+// user action, well after this resolves.
 function augmentUserPathAsync() {
   if (process.platform !== 'darwin' && process.platform !== 'linux') return;
   const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
@@ -55,16 +53,11 @@ function augmentUserPathAsync() {
 augmentUserPathAsync();
 
 // resolveAgentExe(exe, envPath) turns a bare program name (e.g. 'claude') into
-// an absolute path so the spawn never depends on the child's PATH being right.
-// A GUI/desktop launch inherits a systemd PATH that omits ~/.local/bin etc, so
-// a bare 'claude' would not resolve even though it is installed. Strategy:
-//   1. walk envPath ourselves (cheap, no subprocess)
-//   2. fall back to asking a login shell `command -v` (POSIX) / `where` (win32),
-//      which sources the user's full rc chain and finds CLIs the inherited PATH
-//      misses -- this is the `which claude` / `where claude` lookup.
-// Returns exe unchanged when it is already a path, already resolvable, or when
-// the lookup fails (let the spawn surface the real error). The subprocess only
-// runs in the failure path, so a healthy PATH pays nothing.
+// an absolute path so the spawn does not depend on the child's PATH. It walks
+// envPath first (cheap, no subprocess), then asks a login shell `command -v`
+// (POSIX) / `where` (win32), which sources the user's full rc chain. Returns exe
+// unchanged when it is already a path, already resolvable, or when the lookup
+// fails, so the subprocess only runs on the fallback path.
 function resolveAgentExe(exe, envPath) {
   if (typeof exe !== 'string' || !exe) return exe;
   if (path.isAbsolute(exe) || exe.includes('/') || exe.includes('\\')) return exe;
@@ -113,6 +106,7 @@ const {
   sanitizeGraph,
   migrateWorkflow,
   graphToOrderedSteps,
+  layoutGraph,
   wfRouteInstruction,
   wfResolveNext,
   wfEdgeMatches,
@@ -132,10 +126,7 @@ function getAgentKind() {
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// GPU acceleration hints. Electron on Linux often falls back to software
-// compositing when --no-sandbox is set or the GPU sits on a blocklist,
-// that's the "feels like 30Hz" symptom. These three switches push it to
-// the GPU path. Safe defaults for desktop Electron 32.
+// GPU acceleration safe defaults for desktop Electron 32
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -174,12 +165,11 @@ function reloadMainWindow() {
 }
 
 // ─── Multi-session registry ────────────────────────────────────────────────
-// Each chat tab owns its own PTY child, output buffer, mouse-mode stripper,
-// and listener disposables, so several agents run in parallel. `sessions`
-// maps the renderer's sessionId to that state; `activeSessionId` is the
-// focused tab. The `ptyProc` / `activePtyCwd` / `ptyLastDataAt` mirrors below
-// always track the active session, so the autopilot + stats code (which
-// operates on "the current agent") needs no per-call session plumbing.
+// Each chat tab owns its own PTY child, output buffer, mouse-mode stripper and
+// listener disposables, so several agents run in parallel. `sessions` maps the
+// renderer's sessionId to that state; `activeSessionId` is the focused tab. The
+// mirrors below always track the active session, so the autopilot + stats code
+// needs no per-call session plumbing.
 const sessions = new Map();
 let activeSessionId = null;
 let sessionSeq = 0;
@@ -249,10 +239,8 @@ function flushSessionData(s) {
 // ─── Config ──────────────────────────────────────────────────────────────────────
 
 // An agent's system prompt is a whole document, not a field: the ones people
-// actually write run to tens of thousands of characters. This bound exists only
-// to stop a pathological paste from bloating the config, so it sits far above
-// any real prompt. Anything lower silently rewrites the user's work, and the
-// agent files Husk mirrors to each tool are rendered from this record.
+// actually write run to tens of thousands of characters, so this bound sits far
+// above any real prompt.
 const AGENT_PROMPT_MAX = 262144;
 const AGENT_NAME_MAX = 64;
 const AGENT_DESC_MAX = 1024;
@@ -305,11 +293,9 @@ const DEFAULT_CONFIG = {
   skipWelcome: false,
   recap: true,
   // LifeOS is the bundled Claude-Code-only assistant framework Husk drops into
-  // ~/.claude/. Defaults to enabled so existing Claude users get it on
-  // first run, but Copilot-only users can switch it off to skip the
-  // bootstrap, kill the statusline tick, and drop the framework reference
-  // from the Husk identity prompt. The key keeps its original name: renaming
-  // it would silently re-enable the framework for anyone who had turned it off.
+  // ~/.claude/. Enabled by default; switching it off skips the bootstrap, stops
+  // the statusline tick, and drops the framework reference from the Husk
+  // identity prompt. The key name is part of the stored config contract.
   paiEnabled: true,
   profiles: DEFAULT_PROFILES,
   activeProfileId: null,
@@ -319,14 +305,13 @@ const DEFAULT_CONFIG = {
   // new session and splitting one conversation across many transcripts.
   lastClaudeSessions: {},
   // Map of project path -> { mcpServerId: 'on' | 'off' }. A server with no
-  // entry inherits the global list, so an untouched project behaves exactly as
-  // it did before this existed. See src/lib/project-mcp.js.
+  // entry inherits the global list, so a project nobody has customized runs
+  // the CLI's own set untouched. See src/lib/project-mcp.js.
   projectMcp: {},
 };
 
-// The theme a config was running under before `theme` became a stored key. Any
-// config file that predates the key was showing this, so it is what that install
-// keeps.
+// The theme an install shows when its config file carries no `theme` key, so it
+// keeps the look it is already displaying.
 const PRE_EXISTING_THEME = 'midnight';
 
 // Themes whose --term-light token is 1 in styles.css. The renderer derives the
@@ -346,9 +331,8 @@ function loadConfig() {
   try {
     if (!fs.existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
     const stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-    // A config file on disk means this is an existing install, and an update must
-    // never move its theme. Where the file carries no theme, pin the one it was
-    // already showing so the new-install default cannot reach it.
+    // A config file on disk means an existing install: pin the theme it already
+    // shows when the file carries none.
     if (!Object.prototype.hasOwnProperty.call(stored, 'theme')) {
       stored.theme = PRE_EXISTING_THEME;
     }
@@ -360,7 +344,8 @@ function saveConfig(cfg) {
   try {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-    // Tighten any pre-existing-but-loose perms left over from before this guard.
+    // writeFileSync applies mode only when it creates the file, so set the mode
+    // on the file and its directory explicitly.
     try { fs.chmodSync(CONFIG_PATH, 0o600); } catch (_) {}
     try { fs.chmodSync(CONFIG_DIR, 0o700); } catch (_) {}
     return true;
@@ -370,29 +355,60 @@ function saveConfig(cfg) {
 let config = loadConfig();
 
 // ─── Framework bootstrap (packaged binaries) ─────────────────────────────────
-// When Husk runs from a packaged binary (electron-builder output), there is no
-// install.sh to copy libs/lifeos into ~/.claude/. We do it here on first launch.
-// In dev mode the bundle path won't exist; install.sh handles it.
-// Seed ~/.config/husk/prompts/ from the bundled curated set on first launch.
-// Never overwrites: a file that already exists in the destination is left
-// alone so user-edited prompts survive across upgrades.
-// Periodically run ~/.claude/statusline-command.sh so the side-effect caches
-// it does write (location-cache.json, weather-cache.json, model-cache.txt)
-// stay fresh while Husk is open. Note the script does NOT write
-// usage-cache.json; the 5h / 7d Anthropic limits are only fetched live each
-// CLI render, so Husk has to mirror that fetch itself. See
-// refreshAnthropicUsageCache below.
+// A packaged binary has no install.sh, so libs/lifeos is copied into ~/.claude/
+// here on first launch. In dev mode the bundle path does not exist and
+// install.sh handles it.
+// ~/.config/husk/prompts/ is seeded from the bundled curated set on first
+// launch. A file that already exists in the destination is left alone.
+// The statusline script runs periodically so the caches it writes
+// (location-cache.json, weather-cache.json, model-cache.txt) stay fresh while
+// Husk is open. It does not write usage-cache.json, so Husk fetches the 5h / 7d
+// limits itself. See refreshAnthropicUsageCache below.
 let statuslineTimer = null;
+
+// Runs the framework's statusline script, pinned by path and content.
+const STATUSLINE_CANDIDATES = () => [
+  path.join(CLAUDE_DIR, 'LIFEOS', 'LIFEOS_StatusLine.sh'),
+  path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
+  path.join(CLAUDE_DIR, 'statusline-command.sh'),
+];
+
+let statuslineRefusedOnce = false;
+
+// sha256 of a regular file, or null.
+function statuslineDigest(file) {
+  const st = fs.lstatSync(file);
+  if (!st.isFile()) return null;
+  if (st.size > 4 * 1024 * 1024) return null;
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+// Returns the script to run, or null. The rule lives in lib/statusline-trust.
+function statuslineScriptToRun() {
+  const pin = (config.statuslineTrust && typeof config.statuslineTrust === 'object')
+    ? config.statuslineTrust
+    : null;
+  const verdict = StatuslineTrust.decide(STATUSLINE_CANDIDATES(), pin, statuslineDigest);
+
+  if (verdict.pin) { config.statuslineTrust = verdict.pin; saveConfig(config); }
+
+  // Logged once per run rather than every tick.
+  if (verdict.reason && !statuslineRefusedOnce) {
+    statuslineRefusedOnce = true;
+    const why = {
+      [StatuslineTrust.REFUSE_APPEARED]: 'appeared on a machine that had none when Husk last looked.',
+      [StatuslineTrust.REFUSE_CHANGED]: 'no longer matches the copy Husk last trusted.',
+      [StatuslineTrust.REFUSE_MALFORMED]: 'could not be checked against a readable trust record.',
+    }[verdict.reason] || 'did not pass its trust check.';
+    console.warn('husk: the statusline script was not run because it ' + why
+      + ' Clear statuslineTrust in the Husk config to approve the current file.');
+  }
+  return verdict.run;
+}
+
 function refreshStatuslineCacheOnce() {
   try {
-    // Current layout ships the statusline inside LIFEOS/; the two older ones
-    // kept it under PAI/ and at the root. An install upgraded in place can be
-    // on any of them, so probe newest first and take whichever exists.
-    const slPath = [
-      path.join(CLAUDE_DIR, 'LIFEOS', 'LIFEOS_StatusLine.sh'),
-      path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
-      path.join(CLAUDE_DIR, 'statusline-command.sh'),
-    ].find((p) => fs.existsSync(p));
+    const slPath = statuslineScriptToRun();
     if (!slPath) return;
     const cwd = activePtyCwd || HOME;
     // Stub session JSON for the claude-statusline contract; missing fields
@@ -423,11 +439,10 @@ function stopStatuslineRefresh() {
   if (statuslineTimer) { clearInterval(statuslineTimer); statuslineTimer = null; }
 }
 
-// Hit the Anthropic OAuth usage endpoint with the user's claude credential
-// and write the result into ~/.claude/MEMORY/STATE/usage-cache.json. This
-// mirrors the inline fetch the PAI statusline does each render. The statusline
-// does not persist what it fetches, so Husk owns the cache write that the
-// stats:get path reads from.
+// Reads the plan usage endpoint with the user's claude credential and writes the
+// result into ~/.claude/MEMORY/STATE/usage-cache.json, which the stats:get path
+// reads from. The statusline makes the same request each render but persists
+// nothing, so Husk owns the cache write.
 function readClaudeOauthToken() {
   try {
     if (process.platform === 'darwin') {
@@ -445,26 +460,12 @@ function readClaudeOauthToken() {
   } catch (_) { return ''; }
 }
 
-// Security context (responding to CodeQL js/file-access-to-http and
-// js/http-to-file-access on this function):
-//
-// 1. The OAuth token sourced from ~/.claude/.credentials.json is sent ONLY
-//    to api.anthropic.com (hardcoded hostname + path; no user input flows
-//    into the URL). This mirrors what the bundled PAI statusline-command.sh
-//    already does on every render.
-// 2. The response body is JSON.parse'd; the cache write is restricted to a
-//    fixed allowlist of fields, each coerced to a primitive type (Number,
-//    String, ISO timestamp). The destination path is path.join(CLAUDE_DIR,
-//    'MEMORY', 'STATE', 'usage-cache.json'), no part of which is derived
-//    from the response.
-// 3. No raw nested objects from the response land in the cache, so even if
-//    the upstream response were tampered with, only typed scalars persist.
-//
-// As a defensive timeout, anything past 5s is dropped.
+// Hostname and path are literals, the cache write copies a fixed allowlist of
+// fields each coerced to a primitive, and the destination path is fixed.
+// Requests past 5s are dropped.
 function _coerceISOTimestamp(s) {
   if (typeof s !== 'string') return '';
   // RFC 3339-ish timestamp: digits, dashes, T, colons, dot, plus, Z.
-  // Reject anything outside that grammar to keep file content predictable.
   return /^[0-9T:\-+.Z]{1,40}$/.test(s) ? s : '';
 }
 
@@ -487,7 +488,7 @@ function refreshAnthropicUsageCache() {
     let bodyLen = 0;
     res.on('data', (chunk) => {
       bodyLen += chunk.length;
-      // Cap body size to bound the attacker (server) influence on memory.
+      // Bound the body size.
       if (bodyLen > 256 * 1024) { res.destroy(); return; }
       body += chunk;
     });
@@ -501,10 +502,8 @@ function refreshAnthropicUsageCache() {
         const cacheDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
         fs.mkdirSync(cacheDir, { recursive: true });
         const cachePath = path.join(cacheDir, 'usage-cache.json');
-        // Preserve scalar fields from a prior write (the slow admin API
-        // populates ws_cost_dollars + session_cost via a stop hook, not on
-        // every render). Only typed primitives are preserved, never raw
-        // objects from the prior cache.
+        // Carry scalar fields forward from a prior write: ws_cost_dollars and
+        // session_cost come from a stop hook rather than from every render.
         let priorWsDollars = 0;
         let priorSessionCost = '';
         try {
@@ -523,7 +522,7 @@ function refreshAnthropicUsageCache() {
         const sessionCost = typeof data.session_cost === 'string'
           ? data.session_cost.slice(0, 32)
           : priorSessionCost;
-        // Allowlisted, type-coerced fields only. No raw response objects.
+        // Allowlisted, type-coerced fields only.
         const cache = {
           usage_5h: Number(fh.utilization || 0),
           usage_7d: Number(sd && sd.utilization || 0),
@@ -584,11 +583,9 @@ function bootstrapHuskPromptsIfNeeded() {
 // without spinning up Electron.
 const PaiState = require('./lib/pai-state');
 
-// Digests of every CLAUDE.md template Husk has shipped. The toggle parks the
-// live file only when it still matches one of these, which is how we tell our
-// own untouched scaffold apart from a file the user wrote or edited. Older
-// entries stay listed forever so an install that never upgraded its scaffold
-// is still recognised as ours.
+// Digests of every CLAUDE.md template Husk has shipped, so the toggle parks the
+// live file only while it still matches Husk's own untouched scaffold. Older
+// entries stay listed for installs that never upgraded theirs.
 const SHIPPED_CLAUDE_MD_DIGESTS = [
   // LifeOS 7.1.1, the template in the current bundle. Read at call time rather
   // than hard-coded so it cannot drift from the file we actually ship.
@@ -615,13 +612,9 @@ function applyPaiState(active) {
 // to put its own output.
 const LIFEOS_MEMORY_SUBDIRS = ['WORK', 'KNOWLEDGE', 'LEARNING', 'STATE', 'OBSERVABILITY', 'SKILLS'];
 
-// The vendored bundle carries no bun lockfiles, by rule. Nothing here ever
-// installs from them: the per-skill tools are optional and the user resolves
-// them if and when they want one. A lockfile we never install from still pins
-// exact versions, so all it can do over time is hold the tree to dependency
-// versions that have since had advisories filed against them. Dropping them
-// means a user who does opt in resolves current versions instead. Keep the
-// package.json files, they are what makes that resolve possible.
+// The vendored bundle carries no bun lockfiles, by rule. The per-skill tools are
+// optional and a user who opts in resolves current versions. The package.json
+// files stay, since they are what makes that resolve possible.
 
 // Locate the bundled framework.
 // Packaged: app.isPackaged && process.resourcesPath/lifeos/ exists.
@@ -639,19 +632,15 @@ function findBundledFramework() {
 }
 
 function bootstrapPaiIfNeeded() {
-  // Hard opt-out: when the user has disabled the framework in Preferences, we
-  // do not touch ~/.claude/ on launch. Pre-existing files stay where they are
-  // (Husk never removes user files behind their back); the user can clean
-  // ~/.claude/{LIFEOS,agents,skills,hooks}/ manually if they want.
+  // Hard opt-out: with the framework disabled in Preferences, ~/.claude/ is
+  // left untouched on launch. Pre-existing files stay where they are, and the
+  // user can clean ~/.claude/{LIFEOS,agents,skills,hooks}/ themselves.
   if (config.paiEnabled === false) return;
   try {
     const claudeDir = path.join(HOME, '.claude');
 
-    // An install predating this version has the older framework laid out under
-    // ~/.claude/PAI/ with a CLAUDE.md whose imports point into it. Dropping the
-    // new tree beside it would leave two frameworks side by side and a routing
-    // file addressing only the old one, so leave that install alone entirely.
-    // Removing it is the user's call, not ours.
+    // A framework already laid out under ~/.claude/PAI/ owns its own CLAUDE.md
+    // imports, so that install is left alone entirely.
     if (fs.existsSync(path.join(claudeDir, 'PAI'))) return;
 
     const bundle = findBundledFramework();
@@ -668,12 +657,11 @@ function bootstrapPaiIfNeeded() {
     }
 
     // Framework subdirs: merge missing children into existing dirs (cp -Rn
-    // semantics). Each subdir is checked independently of CLAUDE.md, so a
-    // user who already has ~/.claude/CLAUDE.md (claude code creates it) still
-    // receives the bundled skills, agents, and hooks. Missing entries are
-    // added without ever overwriting a file the user already has.
-    // LIFEOS is spelled in caps to match the @LIFEOS/... imports CLAUDE.md
-    // carries: on a case-sensitive filesystem any other spelling dangles.
+    // semantics), checked independently of CLAUDE.md, so an install that
+    // already has ~/.claude/CLAUDE.md still receives the bundled skills, agents
+    // and hooks. LIFEOS is spelled in caps to match the @LIFEOS/... imports
+    // CLAUDE.md carries, since any other spelling dangles on a case-sensitive
+    // filesystem.
     for (const sub of ['LIFEOS', 'agents', 'commands', 'hooks', 'skills']) {
       const src = path.join(bundle, sub);
       const dst = path.join(claudeDir, sub);
@@ -683,8 +671,7 @@ function bootstrapPaiIfNeeded() {
     }
 
     // The identity scaffold lands inside the runtime tree so the @LIFEOS/USER/...
-    // imports resolve without a symlink. Every shipped file is a blank template;
-    // copyMissingChildren means an answered one is never overwritten.
+    // imports resolve without a symlink. Every shipped file is a blank template.
     const userSrc = path.join(bundle, 'USER');
     const userDst = path.join(claudeDir, 'LIFEOS', 'USER');
     if (fs.existsSync(userSrc)) {
@@ -700,19 +687,17 @@ function bootstrapPaiIfNeeded() {
   }
 }
 
-// Like cp -Rn at the immediate-children level: for each top-level entry in
-// src, copy it to dst only when the destination entry does not exist. Never
-// recurses into existing destination subtrees, so user-edited files inside
-// already-present skills are never touched.
+// Like cp -Rn at the immediate-children level: copy each top-level entry in src
+// to dst only when the destination entry does not exist. Never recurses into an
+// existing destination subtree.
 function copyMissingChildrenSync(src, dst) {
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     if (entry.isFile() && BUNDLE_INSTRUCTION_FILES.has(entry.name)) continue;
     const s = path.join(src, entry.name);
     const d = path.join(dst, entry.name);
     if (fs.existsSync(d)) continue;
-    // A skill the user disabled is renamed to _disabled_<name>. Treat that as
-    // already present so the original is not re-added alongside the disabled
-    // copy.
+    // A disabled skill is renamed to _disabled_<name>, and counts as already
+    // present so the original is not re-added beside it.
     if (fs.existsSync(path.join(dst, DISABLED_PREFIX + entry.name))) continue;
     if (entry.isDirectory()) copyDirRecursiveSync(s, d);
     else if (entry.isFile()) fs.copyFileSync(s, d);
@@ -720,11 +705,9 @@ function copyMissingChildrenSync(src, dst) {
   }
 }
 
-// Agent-instruction files carried inside the bundle. The upstream project
-// keeps these for its own repo, where they steer whoever is editing the
-// framework. Copied into a user's ~/.claude/ they become standing orders that
-// person never wrote, in the exact place the CLI looks for their own. Writing
-// their instructions is their business, so these stay in the bundle.
+// Agent-instruction files the bundle carries for the upstream project's own
+// repo. They stay in the bundle and are never copied into a user's ~/.claude/,
+// where writing the instructions is the user's business.
 const BUNDLE_INSTRUCTION_FILES = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']);
 
 function copyDirRecursiveSync(src, dst) {
@@ -745,9 +728,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1500,
     height: 950,
-    // Low enough that the responsive breakpoints (which collapse the rail and
-    // drop the side panels) actually engage, so the app stays fully usable in
-    // a small window instead of clipping its chrome.
+    // Low enough that the responsive breakpoints engage, so the app stays
+    // usable in a small window.
     minWidth: 720,
     minHeight: 520,
     // The window paints this before the renderer has run, so it has to match the
@@ -761,10 +743,8 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       zoomFactor: 1.0,
-      // DevTools available when running from source (./run.sh, npm start)
-      // so the maintainer can debug, locked in shipped builds so end users
-      // cannot open the inspector via F12, Ctrl+Shift+I, the View menu,
-      // or programmatic openDevTools.
+      // DevTools available when running from source (./run.sh, npm start),
+      // disabled in shipped builds.
       devTools: !app.isPackaged,
     },
   });
@@ -780,12 +760,10 @@ function createWindow() {
     }
     return { action: 'deny' };
   });
-  // A bare Alt press moves focus to the application menu bar, which
-  // silently swallows every keystroke after it until the user hits
-  // Escape; in a terminal-first app that reads as "typing broke".
-  // Swallow bare Alt before the menu sees it. Alt+key combos still
-  // arrive as their own events (input.key is the combo key), so
-  // terminal Alt-sequences keep working.
+  // A bare Alt press moves focus to the application menu bar, which then
+  // swallows keystrokes until Escape. Swallow bare Alt before the menu sees it;
+  // Alt+key combos still arrive as their own events (input.key is the combo
+  // key), so terminal Alt-sequences keep working.
   mainWindow.webContents.on('before-input-event', (event, input) => {
     const key = String(input.key || '').toLowerCase();
     const code = String(input.code || '');
@@ -804,8 +782,8 @@ function createWindow() {
     }
   });
 
-  // Belt-and-suspenders: also catch top-level navigation attempts so
-  // the main window cannot be hijacked away from its loaded index.html.
+  // Top-level navigation requests go to the default browser, and the main
+  // window stays on its loaded index.html.
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url === mainWindow.webContents.getURL()) return;
     event.preventDefault();
@@ -814,9 +792,8 @@ function createWindow() {
     }
   });
 
-  // The View submenu drops the DevTools toggle in shipped builds so the
-  // menu does not advertise an entry that webPreferences.devTools:false
-  // would silently no-op.
+  // The View submenu drops the DevTools toggle in shipped builds, where
+  // webPreferences.devTools is false.
   const viewSubmenu = [
     {
       label: 'Reload',
@@ -827,18 +804,16 @@ function createWindow() {
     },
     ...(app.isPackaged ? [] : [{ role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }]),
     // The renderer owns the Ctrl/Cmd +/-/0 keys (applies zoom, refits the
-    // terminal, shows the percent). `registerAccelerator: false` keeps the menu
-    // roles from binding the same accelerators, so the keys fire one path only.
-    // Menu clicks still work.
+    // terminal, shows the percent), so `registerAccelerator: false` keeps the
+    // menu roles from binding them too. Menu clicks still work.
     { role: 'resetZoom', registerAccelerator: false },
     { role: 'zoomIn', registerAccelerator: false },
     { role: 'zoomOut', registerAccelerator: false },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
-    // `paste` keeps `registerAccelerator: false` so Ctrl/Cmd+V is not bound twice:
-    // xterm already pastes on the native browser paste event, and a second
-    // `webContents.paste()` from the accelerator would duplicate the clipboard.
+    // `paste` keeps `registerAccelerator: false` so Ctrl/Cmd+V binds once:
+    // xterm already pastes on the native browser paste event.
     { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste', registerAccelerator: false }, { role: 'selectAll' }] },
     { label: 'View', submenu: viewSubmenu },
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] },
@@ -850,11 +825,8 @@ function createWindow() {
   });
 }
 
-// Aggressive cleanup: SIGKILL the whole process group of the PTY child so
-// `script` + `claude` (and any of its children) all die together. Without this,
-// closing the Husk window leaves orphan claude/script processes around.
-// SIGKILL one session's whole process group. `script` + agent (and any
-// children) all die together; killing an already-dead group is a no-op.
+// SIGKILL one session's whole process group, so `script` + agent (and any
+// children) die together. Killing an already-dead group is a no-op.
 function reapPid(pid) {
   if (!pid) return;
   try { process.kill(-pid, 'SIGTERM'); } catch (_) {}
@@ -948,28 +920,7 @@ function rememberClaudeSession(encodedCwd, sessionId) {
   saveConfig(config);
 }
 
-// Environment variables the renderer is allowed to set on a spawned agent.
-// An allowlist rather than a passthrough: the renderer hands this straight to a
-// child process, and names like PATH, LD_PRELOAD or NODE_OPTIONS decide which
-// code runs, not merely how it behaves. Values are single-line and bounded so a
-// crafted string cannot carry a newline into the environment block.
-const SPAWN_ENV_ALLOW = new Set(['CLAUDE_AGENTS_SELECT']);
-function sanitizeSpawnEnv(env) {
-  if (!env || typeof env !== 'object') return null;
-  const out = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (!SPAWN_ENV_ALLOW.has(k)) continue;
-    const value = String(v == null ? '' : v);
-    if (!value || value.length > 200 || /[\r\n\0]/.test(value)) continue;
-    out[k] = value;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-// extraEnv reaches the child process and nothing else. Attaching to a running
-// background agent is selected by an environment variable the CLI reads at
-// startup, so there is no command-line form to express it.
-function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null, resumeLast = false, extraEnv = null) {
+function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null, sessionId = null, resumeLast = false) {
   // Target an existing session (Restart replaces just that tab's child) or
   // create a new one (New Chat passes a fresh id so the running agents keep
   // going). Falls back to the active session, then a generated id.
@@ -978,9 +929,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   if (!s) {
     s = newSession(id);
   } else {
-    // Restart-in-place: dispose the previous child's listeners before we drop
-    // the reference (otherwise each restart leaks a node-pty emitter
-    // registration), drop any buffered output, and kill the old child.
+    // Restart-in-place: dispose the previous child's node-pty listeners before
+    // dropping the reference, drop buffered output, and kill the old child.
     try { if (s.dataDisposable) s.dataDisposable.dispose(); } catch (_) {}
     try { if (s.exitDisposable) s.exitDisposable.dispose(); } catch (_) {}
     s.dataDisposable = null;
@@ -993,10 +943,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     if (s.pty) try { s.pty.kill('SIGKILL'); } catch (_) {}
   }
   // Reset this session's transcript lock so it re-resolves its own session
-  // file instead of inheriting the previous child's or a background agent's.
-  // startedAt gates the lock (see readActiveSessionStats): only a file written
-  // at or after this spawn gets pinned, so a fresh chat never sticks to a
-  // stale or background transcript before its own file exists.
+  // file. startedAt gates the lock (see readActiveSessionStats): only a file
+  // written at or after this spawn gets pinned.
   s.startedAt = Date.now();
   s.transcript = null;
   const shellBin = process.platform === 'win32'
@@ -1011,52 +959,44 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     // right panel already surfaces. PAI side checks $HUSK_HOST and
     // early-exits.
     HUSK_HOST: '1',
-  }, extraEnv && typeof extraEnv === 'object' ? extraEnv : {});
+  });
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
-  // ~/.local/bin is where the native claude installer (and other user CLIs)
-  // land, but a GUI/desktop launch inherits a systemd PATH that omits it.
-  // augmentUserPathAsync recovers it from a login shell, but that's async and
-  // racy against the first agent spawn. Force-prepend it the same way as bun.
+  // ~/.local/bin is where the native installers land, and a GUI/desktop launch
+  // inherits a PATH that omits it. augmentUserPathAsync recovers it from a
+  // login shell asynchronously, so force-prepend it here the same way as bun.
   const localBin = path.join(HOME, '.local', 'bin');
   if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
 
   const rawCmd = (overrideCmd || config.agentCommand || 'claude').trim();
 
-  // Tokenize the user's agent command into program + extra args. Naive
-  // whitespace split is fine for the vast majority of cases (most users type
-  // 'claude' or 'claude --some-flag'); if someone sets an agent command with
-  // shell-quoted args we will mistokenize, but that is a corner case.
+  // Tokenize the user's agent command into program + extra args. A naive
+  // whitespace split covers the common forms ('claude', 'claude --some-flag').
   const userTokens = rawCmd.split(/\s+/).filter(Boolean);
   let agentExe = userTokens.shift() || 'claude';
   let agentArgs = userTokens;
   // A subcommand runs a different program under the same binary: `claude agents`
   // manages background agents and takes none of the chat flags. Decided from the
-  // command as typed, because injected flags are prepended below and would
-  // otherwise hide the subcommand behind them. Only the first token counts, so a
-  // flag's bare value ("--permission-mode default") is not mistaken for one.
+  // command as typed, since injected flags are prepended below, and only the
+  // first token counts so a flag's bare value is not mistaken for one.
   const isSubcommand = agentArgs.length > 0 && !String(agentArgs[0]).startsWith('-');
+
+  if (agentBaseName(agentExe) === 'kiro-cli' && (!agentArgs.length || String(agentArgs[0]).startsWith('-'))) {
+    agentArgs = ['chat', ...agentArgs];
+  }
 
   // Resolve a bare program name to an absolute path up front (which/where via a
   // login shell if needed) so the spawn does not depend on the child PATH being
   // correct. No-op when already a path or already on env.PATH.
   agentExe = resolveAgentExe(agentExe, env.PATH);
 
-  // For claude commands, inject the Husk runtime context: a settings override
-  // that silences the inline statusline, and an appended system prompt that
-  // forces the agent to identify by the user's chosen agentName regardless of
-  // any persona configured in the user's CLAUDE.md or memory files. Skip if
-  // the user already passed --settings, or if we're on Windows (see the
-  // platform switch below for why Windows uses cmd.exe /c without the inject).
-  // Deliver Husk's session directives (identity name, the speech-balloon
-  // line the desktop reads aloud, recap on/off) through each agent's own
-  // instruction channel. claude takes a --append-system-prompt flag here;
-  // copilot needs a project instructions file, written below once cwd is
-  // resolved. See src/lib/agent-inject.js.
-  //
-  // Note for claude: the statusline override goes through --settings as an
-  // inline JSON string. Claude merges it over the user's settings.json, while
-  // folder trust remains in ~/.claude.json.
+  // Deliver Husk's session directives (identity name, the speech-balloon line
+  // the desktop reads aloud, recap on/off) through each agent's own instruction
+  // channel: claude takes --append-system-prompt here, copilot needs a project
+  // instructions file written below once cwd is resolved. See
+  // src/lib/agent-inject.js. Skipped when the user already passed --settings and
+  // on Windows. For claude the statusline override rides --settings as inline
+  // JSON, which claude merges over the user's settings.json.
   const isWin32 = process.platform === 'win32';
   let injectionPlan = { method: 'none' };
   if (!isWin32 && !isSubcommand && !agentArgs.includes('--settings')) {
@@ -1076,10 +1016,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   //   2. active project's path (config.activeProjectId)
   //   3. user-configured config.agentCwd in Preferences
   //   4. fall back to HOME
-  // Why this matters: claude refuses to offer a permanent "remember this
-  // folder" trust for $HOME because that would grant agent access to the
-  // entire user profile. Pointing Husk at a project subdirectory restores
-  // the three-option trust prompt and lets the user grant durable trust.
+  // Pointing Husk at a project subdirectory rather than $HOME is what lets
+  // claude offer its three-option, durable "remember this folder" trust prompt.
   let cwd = HOME;
   if (config.agentCwd && typeof config.agentCwd === 'string') {
     try {
@@ -1098,19 +1036,16 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
       } catch (_) {}
     }
   }
-  // Note: selecting a repo-installed agent does NOT change the working
-  // directory. The agent is loaded by its CLI natively (Husk mirrors it into
-  // each CLI's agents dir), and the cwd stays whatever the user configured
-  // (agentCwd / active project / home). If a user wants the agent's relative
-  // `skills/<id>/SKILL.md` reads to resolve, they point Working directory at
-  // that repo themselves in Preferences.
+  // Selecting a repo-installed agent does not change the working directory: the
+  // agent is loaded by its CLI natively and the cwd stays whatever the user
+  // configured (agentCwd / active project / home).
   if (overrideCwd) {
     try {
       if (fs.existsSync(overrideCwd) && fs.statSync(overrideCwd).isDirectory()) {
         cwd = overrideCwd;
       } else {
-        // Original project dir is gone (deleted or moved). claude --resume keys sessions to
-        // the original cwd path, so we recreate it as an empty dir to let claude find the session.
+        // The original project dir is gone. claude --resume keys sessions to the
+        // original cwd path, so recreate it as an empty dir.
         try { fs.mkdirSync(overrideCwd, { recursive: true }); cwd = overrideCwd; } catch (_) {}
       }
     } catch (_) {}
@@ -1122,36 +1057,30 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     contextDir: path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT'),
   });
 
-  // Narrow this launch to the MCP servers the folder actually wants. Only the
-  // folders the user has customized get flags; everywhere else the CLI reads
-  // its own config exactly as before. Nothing on disk is rewritten, so running
-  // the CLI outside Husk still sees the user's own global set.
+  // Narrow this launch to the MCP servers the folder wants. Only customized
+  // folders get flags; everywhere else the CLI reads its own config. Nothing on
+  // disk is rewritten.
   if (!isSubcommand) {
     const mcpArgs = projectMcpLaunchArgs(agentExe, cwd, agentArgs);
     if (mcpArgs.length) agentArgs = [...agentArgs, ...mcpArgs];
   }
 
   // Bind this tab to a definite claude session id so stats/recent/resume read
-  // exactly this tab's transcript. On resume the id comes from --resume; for a
-  // new claude chat we generate one and pass --session-id so claude writes a
-  // known file, keeping each tab's transcript distinct even when several share
-  // a cwd. Windows is skipped because its spawn may fall back to
-  // `cmd.exe /c <rawCmd>`, which ignores agentArgs.
-  // Must match the agent CLI's own project-dir encoding (all non-alphanumerics
-  // become dashes, dots included); identical to the old form for paths without
-  // dots, so existing lastClaudeSessions keys stay valid.
+  // exactly this tab's transcript: --resume supplies it on a resume, and a new
+  // chat mints one and passes --session-id. Windows is skipped because its spawn
+  // may fall back to `cmd.exe /c <rawCmd>`, which ignores agentArgs.
+  // The encoding matches the agent CLI's own project-dir form (all
+  // non-alphanumerics become dashes), since lastClaudeSessions is keyed on it.
   const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   const resumeMatch = (rawCmd || '').match(/--resume[=\s]+([A-Za-z0-9][A-Za-z0-9-]{6,})/);
   const isClaudeAgent = agentExe === 'claude' || agentExe.endsWith('/claude') || agentExe.endsWith('\\claude');
   if (resumeMatch) {
     s.claudeSessionId = resumeMatch[1];
   } else if (isClaudeAgent && !isWin32 && !isSubcommand && !agentArgs.includes('--session-id') && !agentArgs.includes('--resume')) {
-    // Keep one discussion in one transcript across restarts (project switch, MCP
-    // reload, manual restart). Within a process the tab reuses its own
-    // claudeSessionId. Across a full app restart that in-memory id is gone, so
-    // a boot/launch continuation (resumeLast) rebinds to the last claude
-    // session recorded for this cwd and resumes it. A brand-new chat
-    // (openNewChatTab) does not set resumeLast, so it gets its own fresh session.
+    // Keep one discussion in one transcript across restarts. Within a process
+    // the tab reuses its own claudeSessionId; across an app restart a launch
+    // continuation (resumeLast) rebinds to the last claude session recorded for
+    // this cwd. A brand-new chat gets its own fresh session.
     const projDir = path.join(CLAUDE_DIR, 'projects', encodedCwd);
     if (!s.claudeSessionId && resumeLast) {
       s.claudeSessionId = lastClaudeSessionForCwd(encodedCwd, projDir);
@@ -1175,9 +1104,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
       const resumed = fs.existsSync(pinned);
       s.transcript = resumed ? pinned : null;
       // --resume names the conversation to continue, not the file that will be
-      // written: the CLI opens a fresh transcript under a new id and leaves the
-      // one it was handed frozen. Snapshot the directory so the successor is
-      // identifiable later as the file that was not here when this tab spawned.
+      // written: the CLI opens a fresh transcript under a new id. Snapshot the
+      // directory so the successor can be identified later.
       s.resumedTranscript = resumed;
       s.priorTranscripts = resumed ? new Set(listTranscriptNames(projDir)) : null;
     } catch (_) { s.transcript = null; }
@@ -1201,7 +1129,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
       } else {
         // A file the agent auto-reads (copilot, codex) that the user may also
         // own; merge Husk's marked block in non-destructively. Read directly and
-        // treat a missing file as empty, rather than check-then-read (which races).
+        // treat a missing file as empty.
         let existing = '';
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to cwd
         try { existing = fs.readFileSync(fileAbs, 'utf8'); } catch (_) {}
@@ -1211,11 +1139,10 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     } catch (_) {}
   }
 
-  // Refresh the HUSK-SESSION block in every OTHER managed instruction file
-  // that already carries one. Agent CLIs read each other's files (copilot
-  // also reads AGENTS.md / GEMINI.md), so each block must state the current
-  // directives regardless of which agent wrote it. Only files that exist
-  // and already contain Husk's markers are touched; nothing is created here.
+  // Refresh the HUSK-SESSION block in every other managed instruction file that
+  // already carries one, since agent CLIs read each other's files (copilot also
+  // reads AGENTS.md / GEMINI.md). Only existing files with Husk's markers are
+  // touched; nothing is created here.
   if (injectionPlan.refresh && Array.isArray(injectionPlan.refresh.filePaths)) {
     for (const rel of injectionPlan.refresh.filePaths) {
       if (rel === injectionPlan.filePath) continue;
@@ -1238,7 +1165,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   //            setup; argv inside the -c string is shell-escaped by shJoin
   //   win32    pty.spawn(resolved-via-PATHEXT, agentArgs) when the program
   //            name resolves to a real file; falls back to cmd.exe /c
-  //            <rawCmd> only when no candidate exists (preserves legacy)
+  //            <rawCmd> only when no candidate exists, so a command string
+  //            that names no file on disk still runs
   const spec = buildSpawnSpec({
     platform: process.platform,
     agentExe,
@@ -1255,13 +1183,12 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   s.cwd = cwd;
   // First-launch time of this tab's session, used to match it to the claude
   // session file it creates (so the tab can show that session's title). A
-  // restart-in-place keeps the original launch time.
+  // restart-in-place keeps the first launch time.
   if (!s.startedAt) s.startedAt = Date.now();
   lastPtyPid = s.pty.pid;
-  // Coalesce PTY output: a chatty agent (build logs, a big cat) emits
-  // many chunks per tick. Buffer them and flush once per microtask so
-  // the renderer receives one message per burst instead of one IPC send
-  // per chunk, which otherwise floods the channel and janks the UI.
+  // Coalesce PTY output: buffer the chunks a chatty agent emits per tick and
+  // flush once per microtask, so the renderer receives one message per burst
+  // instead of one IPC send per chunk.
   s.dataDisposable = s.pty.onData((data) => {
     s.lastDataAt = Date.now();
     s.dataBuf += data;
@@ -1285,18 +1212,15 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   return id;
 }
 
-// Read the most-recent claude session JSONL for the active PTY cwd and
-// return a coarse usage estimate: turn count + a token estimate based on
-// total content characters (chars/4 is the common heuristic). This is the
-// only honest "session usage" Husk can show, since the agent process owns
-// the real token counter and only writes it to usage-cache.json if PAI's
-// statusline is wired up. No statusline → 0% forever.
+// Read the most-recent claude session JSONL for the active PTY cwd and return a
+// coarse usage estimate: turn count plus a chars/4 token estimate. The agent
+// process owns the real token counter and writes it to usage-cache.json only
+// when the framework statusline is wired up.
 let _claudeJsonCache = { mtime: 0, data: null };
 function readClaudeJson() {
   try {
     const p = path.join(HOME, '.claude.json');
-    // Stat and read through one open descriptor so both operate on the same
-    // file even if the path is replaced between calls.
+    // Stat and read through one open descriptor.
     const fd = fs.openSync(p, 'r');
     try {
       const st = fs.fstatSync(fd);
@@ -1308,10 +1232,9 @@ function readClaudeJson() {
   } catch (_) { return null; }
 }
 
-// Per-project trust. Claude Code ignores a workspace's saved permissions until
-// the folder is trusted (projects[cwd].hasTrustDialogAccepted in ~/.claude.json),
-// printing a warning on every start. Husk surfaces this as an explicit,
-// user-initiated "trust this folder" action; it never sets trust silently.
+// Per-project trust. Claude Code reads a workspace's saved permissions once the
+// folder is trusted (projects[cwd].hasTrustDialogAccepted in ~/.claude.json).
+// Husk surfaces this as an explicit, user-initiated "trust this folder" action.
 function isCwdTrusted(cwd) {
   if (!cwd) return true;
   const j = readClaudeJson();
@@ -1346,8 +1269,7 @@ let _claudeSettingsCache = { mtime: 0, data: null };
 function readClaudeSettings() {
   try {
     const p = path.join(CLAUDE_DIR, 'settings.json');
-    // Stat and read through one open descriptor so both operate on the same
-    // file even if the path is replaced between calls.
+    // Stat and read through one open descriptor.
     const fd = fs.openSync(p, 'r');
     try {
       const st = fs.fstatSync(fd);
@@ -1361,10 +1283,9 @@ function readClaudeSettings() {
 
 // Base context-window capacity (tokens) per model family, across the agents
 // Husk can launch (claude, copilot, codex, gemini). The id is matched with its
-// tier suffix already stripped. Returns null for an unknown family so the
-// caller can fall back. Claude models report their 200K *default* tier here;
-// the 1M tier is opt-in (a "[1m]" suffix) and handled by resolveContextWindow,
-// not this table. Sources verified 2026-06: Anthropic models reference
+// tier suffix already stripped, and null for an unknown family. Claude models
+// report their 200K default tier here; the 1M tier is a "[1m]" suffix handled by
+// resolveContextWindow. Sources verified 2026-06: Anthropic models reference
 // (Opus/Sonnet/Haiku 200K default, 1M tier); OpenAI Codex docs (GPT-5.x-Codex
 // 400K product cap, GPT-4.1 1M, GPT-4o 128K, o-series 200K); Google Gemini docs
 // (Gemini 2.x/3 = 1M); GitHub Copilot CLI docs (128K default, 1M extended).
@@ -1394,16 +1315,13 @@ function baseContextWindow(model) {
 }
 
 // Resolve the live context-window size for the active model. The transcript
-// records only the bare model id (e.g. "claude-opus-4-8"); the 1M tier is
-// signalled by a "[1m]" suffix that Claude Code persists in ~/.claude.json
-// under projects[cwd].lastModelUsage. So: prefer an explicit 1M tier (from the
-// id or that usage record), else look up the family's base size, else infer.
-// Claude Code accepts short model aliases in settings.json ("opus", "sonnet",
-// "haiku", "opusplan"). The settings model is used whenever the transcript has
-// not yet named one. A bare alias matches none of the claude-* family regexes,
-// so expand known aliases to a canonical family id before matching; any tier suffix
-// ("opus[1m]") is preserved. Full ids ("claude-opus-4-8", "gpt-5-codex") and
-// unknown values pass through untouched.
+// records only the bare model id (e.g. "claude-opus-4-8"); the 1M tier is a
+// "[1m]" suffix Claude Code persists in ~/.claude.json under
+// projects[cwd].lastModelUsage. Prefer an explicit 1M tier, else the family's
+// base size, else infer. Claude Code also accepts short aliases in settings.json
+// ("opus", "sonnet", "haiku", "opusplan"), which are expanded to a canonical
+// family id before matching, tier suffix preserved. Full ids and unknown values
+// pass through untouched.
 function normalizeModelId(id) {
   const s = String(id || '').toLowerCase().trim();
   if (!s || s.includes('-')) return s; // full ids already contain a hyphen
@@ -1421,10 +1339,9 @@ function resolveContextWindow(cwd, model, ctxTokens) {
   try {
     // Explicit 1M tier on the id itself.
     if (is1m(norm)) return 1000000;
-    // Recover the tier from Claude Code's usage record. lastModelUsage is only
-    // written on session end, so the active project is empty mid-session: check
-    // it first, then the user's full history. If this model was ever run on the
-    // 1M tier, honor 1M; that reflects the user's actual model and license.
+    // Recover the tier from Claude Code's usage record. lastModelUsage is
+    // written on session end, so check the active project first, then the full
+    // history; a model ever run on the 1M tier reports 1M.
     const projects = (readClaudeJson() || {}).projects || {};
     if (bare) {
       const tierFor = (usage) => {
@@ -1469,23 +1386,18 @@ function readActiveSessionStats() {
       .sort((a, b) => b.mtime - a.mtime);
     if (!files.length) return null;
     // Resolve which transcript this tab reads. Several `claude` processes can
-    // write into one project dir at once (the foreground chat plus background
-    // agents), so each tab is bound to its own file. Once a tab's file is
-    // resolved it keeps reading that one so the readout stays stable and grows
-    // with the conversation; it re-resolves only when that file disappears.
+    // write into one project dir at once, so each tab binds to its own file and
+    // keeps reading it until that file disappears.
     const sess = activeSessionId ? sessions.get(activeSessionId) : null;
     let latest = null;
     if (sess && sess.resumedTranscript) {
       // A resumed tab was handed the id of the conversation to continue, and the
-      // CLI writes the continuation to a new file. Reading the id it was handed
-      // reports the source conversation forever: its model, its turn count, its
-      // occupancy, none of them moving. The live file is the one that was not in
-      // the directory when this tab spawned, written by an interactive session.
-      // The interactive test is what makes this reliable: hooks and title
-      // generators spawn their own sessions into the same directory, and one of
-      // them routinely appears before the chat's own first turn, so arrival
-      // order alone picks a two-turn helper. Earliest-first among the survivors,
-      // since the tab's transcript precedes any agent it goes on to spawn.
+      // CLI writes the continuation to a new file. The live file is the one that
+      // was not in the directory when this tab spawned, written by an
+      // interactive session: hooks and title generators spawn their own sessions
+      // into the same directory, so arrival order alone is not enough.
+      // Earliest-first among the survivors, since the tab's transcript precedes
+      // any agent it goes on to spawn.
       const claimed = new Set();
       for (const o of sessions.values()) if (o !== sess && o.transcript) claimed.add(o.transcript);
       const prior = sess.priorTranscripts || new Set();
@@ -1524,12 +1436,10 @@ function readActiveSessionStats() {
     } else if (files[0]) {
       latest = files[0].p;
     }
-    // Cap the read. A session JSONL grows for the whole conversation and
-    // can reach many megabytes; reading and parsing the entire file on
-    // every status poll stalls the main thread. Read at most the last
-    // CAP bytes (dropping the first partial line) so the cost stays
-    // bounded. For large sessions the turn/char numbers become a
-    // recent-tail estimate, which is acceptable for a coarse readout.
+    // Cap the read. A session JSONL grows for the whole conversation and can
+    // reach many megabytes, so read at most the last CAP bytes and drop the
+    // first partial line. For large sessions the turn/char numbers become a
+    // recent-tail estimate.
     const CAP = 1024 * 1024;
     // Defaults to empty: a brand-new session with no owned transcript yet
     // reports 0 context/turns rather than another session's numbers.
@@ -1553,22 +1463,17 @@ function readActiveSessionStats() {
     let turns = 0;
     let chars = 0;
     let model = '';
-    // Live context-window occupancy. Claude Code records per-turn token usage
-    // on each assistant message; the current context is the most recent
-    // assistant turn's input + cache-creation + cache-read tokens (the output
-    // of that turn becomes input on the next). This mirrors the number the PAI
-    // statusline shows from Claude Code's own context_window meter.
+    // Live context-window occupancy. Claude Code records per-turn token usage on
+    // each assistant message; the current context is the most recent assistant
+    // turn's input + cache-creation + cache-read tokens.
     let ctxTokens = 0;
     for (const line of raw) {
       try {
         const obj = JSON.parse(line);
         if (obj.type === 'user' || obj.type === 'assistant') turns++;
-        // The agent records the model on each assistant turn. Keep the most
-        // recent one so a mid-session model switch is reflected. Agents that
-        // do not write a session log simply never set this, and the UI hides
-        // the row.
-        // Skip Claude Code's "<synthetic>" placeholder model (used on
-        // resume-injected turns) so the real model id is what survives.
+        // The agent records the model on each assistant turn; keep the most
+        // recent so a mid-session switch is reflected. Claude Code's
+        // "<synthetic>" placeholder (used on resume-injected turns) is skipped.
         if (obj.message && typeof obj.message.model === 'string' && obj.message.model && obj.message.model !== '<synthetic>') model = obj.message.model;
         const usage = obj.message && obj.message.usage;
         if (usage) {
@@ -1587,22 +1492,16 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    // Model preference. settings.json is the model the user selected and the
-    // same value the CLI's own picker reports, so it answers "what is this
-    // running" directly and cannot name some other session. A transcript can
-    // only answer it by first being the right transcript, and this directory
-    // holds hundreds written by hooks, title generators and agent runs; picking
-    // the wrong one reports a model the user never chose. Transcripts are used
-    // for turn counts and occupancy, which are per-file by nature, and for the
-    // model only when settings names none.
+    // Model preference. settings.json holds the model the user selected and is
+    // the value the CLI's own picker reports. Transcripts are used for turn
+    // counts and occupancy, which are per-file by nature, and for the model only
+    // when settings names none.
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
     let effModel = settingsModel || model;
-    // Model label fallback, DISPLAY ONLY. If neither settings.json nor this
-    // tab's own transcript yielded a model (a brand-new tab before its first
-    // turn, or a non-claude tab), borrow the model from the newest transcript
+    // Model label fallback, DISPLAY ONLY. When neither settings.json nor this
+    // tab's own transcript names a model, borrow one from the newest transcript
     // in the project dir just for the label. Occupancy and turn counts above
-    // stay tied to this tab's own transcript, so a fresh chat never inherits
-    // another session's context figures (e.g. a 381K window from a sibling).
+    // stay tied to this tab's own transcript.
     if (!effModel && files[0]) {
       try {
         const fsz = files[0].size;
@@ -1626,11 +1525,9 @@ function readActiveSessionStats() {
       } catch (_) {}
     }
     // The model id carries the context tier (e.g. "[1m]"); resolve the window
-    // from it plus the user's actual model/license selection. ctxTokens is the
-    // real occupancy from claude's own per-turn usage (input + cache_read +
-    // cache_creation): the same figure the PAI statusline shows. This counts
-    // the cached PAI base plus the conversation, read from the latest usage
-    // record in the file's tail, so it stays correct even for huge transcripts.
+    // from it plus the user's model selection. ctxTokens is the real occupancy
+    // from claude's own per-turn usage (input + cache_read + cache_creation),
+    // read from the latest usage record in the file's tail.
     const ctxWindow = resolveContextWindow(activePtyCwd, effModel, ctxTokens);
     const ctxPct = ctxWindow ? Math.round((ctxTokens / ctxWindow) * 1000) / 10 : 0;
     return { turns, chars, tokens: Math.round(chars / 4), file: latest, model: effModel, modelLabel: catalogModelLabel(effModel), ctxTokens, ctxWindow, ctxPct };
@@ -1643,16 +1540,16 @@ function readActiveSessionStats() {
 function targetSession(sessionId) {
   return (sessionId && sessions.get(sessionId)) || activeSession();
 }
-ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast, env } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast, sanitizeSpawnEnv(env)));
+ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast));
 // List the chat PTYs that are still alive, so a reloaded renderer can rebuild
 // its tabs and reattach instead of orphaning them and minting a fresh chat.
 ipcMain.handle('pty:list', () => {
   const list = [];
   for (const [id, s] of sessions) {
     if (!s.pty) continue;
-    // Only mark a claude session resumable if its transcript actually exists. A
-    // chat whose claude exited 0 before writing leaves no .jsonl, and
-    // `claude --resume <id>` on it fails with "No conversation found".
+    // Only mark a claude session resumable when its transcript exists: a chat
+    // that exited before writing leaves no .jsonl, and `claude --resume <id>`
+    // then reports "No conversation found".
     let resumable = false;
     if (s.claudeSessionId && s.cwd) {
       try {
@@ -1665,25 +1562,20 @@ ipcMain.handle('pty:list', () => {
   return { ok: true, sessions: list, activeSessionId };
 });
 // Reattach a reloaded renderer tab to an existing PTY without disturbing it:
-// resize to the new viewport and re-mark it active. Used only for agents that
-// cannot resume a session (claude chats are resumed instead, which re-renders
-// full history cleanly). No scrollback replay: a PTY byte stream is terminal-
-// control sequences, not a log, and replaying it into a fresh terminal mangles.
+// resize to the new viewport and re-mark it active. Used for agents that cannot
+// resume a session; claude chats are resumed instead. No scrollback replay: a
+// PTY byte stream is terminal-control sequences, not a log.
 ipcMain.handle('pty:reattach', (_e, { sessionId, cols, rows, activate } = {}) => {
   const s = sessions.get(sessionId);
   if (!s || !s.pty) return { ok: false, error: 'no live session' };
-  // The reloaded terminal is empty and this stream carries no history to fill
-  // it, so the repaint has to come from the agent. A full-screen agent redraws
-  // on SIGWINCH, and the kernel raises that only when the size actually
-  // changes, so asking for the size the PTY already has delivers nothing and
-  // leaves the pane blank until something else forces a redraw.
+  // The reloaded terminal is empty and this stream carries no history, so the
+  // repaint has to come from the agent. A full-screen agent redraws on SIGWINCH,
+  // which the kernel raises only when the size actually changes.
   //
-  // Stepping to a neighbouring size and back produces that change. The two
-  // steps have to be separated in time: on Linux the agent runs under
-  // `script`, which handles the signal asynchronously and then reads whatever
-  // the size is by the time it looks. Back-to-back calls are read once, as no
-  // change at all. A short gap is enough for each step to be seen, and the
-  // correct size is what the agent is left sitting at.
+  // Stepping to a neighbouring size and back produces that change. The two steps
+  // are separated in time because on Linux the agent runs under `script`, which
+  // handles the signal asynchronously and reads whatever the size is by the time
+  // it looks. The correct size is what the agent is left sitting at.
   const c = Math.max(2, Number(cols) || 0);
   const r = Math.max(2, Number(rows) || 0);
   if (cols && rows) {
@@ -1758,18 +1650,15 @@ ipcMain.handle('pty:close', (_e, sessionId) => {
 
 // ─── Autopilot Mode IPC ────────────────────────────────────────────────────
 //
-// The supervisor module owns one autonomous-run lifecycle: snapshot,
-// audit log, budget meter, halt-on-cap. main.js wires it through IPC
-// and tracks the active runner so multiple windows / a runaway
-// renderer cannot start two runs at once over the same session id.
+// The supervisor module owns one autonomous-run lifecycle: snapshot, audit log,
+// budget meter, halt-on-cap. main.js wires it through IPC and tracks the active
+// runner, so one session id only ever has one run.
 //
-// Encryption: electron safeStorage wraps OS keychain APIs (libsecret /
-// macOS Keychain / Windows DPAPI). When available we use it on every
-// blob the snapshot store and the audit log write. The runtime
-// check (`isEncryptionAvailable`) returns false on a headless / dev
-// build, in which case blobs land in plaintext on disk inside the
-// Husk user-data dir; the supervisor still reports the run as
-// "trusted-by-rewind".
+// Encryption: electron safeStorage wraps the OS keychain APIs (libsecret /
+// macOS Keychain / Windows DPAPI). When `isEncryptionAvailable` reports true,
+// every snapshot-store and audit-log blob is wrapped with it. On a headless or
+// dev build it reports false, blobs are written plain inside the Husk user-data
+// dir, and the supervisor reports the run as "trusted-by-rewind".
 
 const Autopilot = require('./lib/autonomy');
 const AgentOneShot = require('./lib/agent-oneshot');
@@ -1792,7 +1681,7 @@ const pendingRuns = []; // { runId, payload, workspaceRoot } queued past the con
 const AP_MAX_CONCURRENT = 4;
 const AUT_OUTPUT_FLUSH_MS = 250;
 
-const applyWorktreeChanges = require('./lib/autopilot-apply').applyWorktreeChanges;
+const { applyWorktreeChanges, isSafeRelPath: isSafeApplyRelPath } = require('./lib/autopilot-apply');
 const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
 const { modelArgsFor, classifyTier } = require('./lib/model-routing');
@@ -1812,10 +1701,9 @@ function autopilotStorageRoot() {
 }
 
 // Retained-runs registry: a finished run keeps its worktree on disk until the
-// operator applies or discards it, so the changes the agent made are reviewable
-// and mergeable rather than thrown away on completion. The registry is a small
-// JSON file so retained worktrees survive an app restart and orphans are
-// discoverable (each entry names its worktree path + origin workspace).
+// operator applies or discards it, so the agent's changes stay reviewable. The
+// registry is a small JSON file, so retained worktrees survive an app restart
+// and each entry names its worktree path and origin workspace.
 function retainedRegistryPath() {
   return path.join(app.getPath('userData'), 'autopilot-retained.json');
 }
@@ -1913,15 +1801,12 @@ function removeRunWorktree(worktreePath, workspaceRoot) {
   }
 }
 
-// Startup reconciliation for crash-orphaned worktrees. An app crash or
-// force-quit during a live run never reaches finishRun, so its worktree is
-// left under autopilot-worktrees/ with no retained-runs entry -- a silent
-// disk leak, and the agent's work is invisible to Apply/Discard. On startup
-// the runs Map is empty, so every worktree dir not in the retained registry
-// is such an orphan. A provably-CLEAN orphan (no uncommitted changes) is
-// safe to prune; an orphan with real changes is RETAINED so the review UI
-// surfaces it and nothing the agent did is ever destroyed. Fully guarded so
-// a reconcile failure can never block startup.
+// Startup reconciliation for crash-orphaned worktrees. A crash or force-quit
+// during a live run never reaches finishRun, so its worktree is left under
+// autopilot-worktrees/ with no retained-runs entry. On startup the runs Map is
+// empty, so every worktree dir not in the retained registry is such an orphan: a
+// clean one is pruned, and one with real changes is retained so the review UI
+// surfaces it. Fully guarded so a reconcile failure never blocks startup.
 function reconcileOrphanWorktrees() {
   const wtRoot = path.join(app.getPath('userData'), 'autopilot-worktrees');
   let entries;
@@ -1977,12 +1862,10 @@ function reconcileOrphanWorktrees() {
   }
 }
 
-// Parse an agent's own CUMULATIVE token counter out of raw PTY output
-// (codex "1,234 tokens used", "total tokens: 56k"). Only explicit
-// cumulative counters count. Context gauges ("152k/200k tokens") and
-// per-turn stream counters ("↓ 1.5k tokens") are deliberately NOT
-// matched: a context gauge reports the loaded window, not consumption,
-// and does not belong in a usage meter.
+// Parse an agent's own cumulative token counter out of raw PTY output (codex
+// "1,234 tokens used", "total tokens: 56k"). Context gauges ("152k/200k tokens")
+// and per-turn stream counters ("↓ 1.5k tokens") are not matched: they report
+// the loaded window, not consumption.
 function parseRunTokenStatus(text) {
   if (!text) return null;
   const toN = (raw, suffix) => {
@@ -2033,10 +1916,9 @@ function stripAnsi(s) {
 // Mirrors the renderer's detection; lives here because run PTYs have no
 // renderer terminal and the idle watchdog below observes the run directly.
 const AP_RUN_WORKING_RE = /esc to interrupt|\(\s*\d+\s*s\s*[·•.]|\bworking\b/i;
-// Generous quiet windows: a run PTY can go byteless for a long stretch during
-// a silent tool call (build, test suite) with a static busy marker on screen.
-// Nudging too early types into the agent mid-tool; these thresholds only trip
-// on runs that are genuinely parked.
+// Generous quiet windows: a run PTY can go byteless for a long stretch during a
+// silent tool call (build, test suite) with a static busy marker on screen, so
+// these thresholds only trip on runs that are genuinely parked.
 const AP_RUN_NUDGE_PAUSE_MS = 45000;
 const AP_RUN_IDLE_END_MS = 120000;
 const AP_RUN_MAX_NUDGES = 5;
@@ -2045,9 +1927,8 @@ const AP_INTEGRATOR_IDLE_END_MS = 60000;
 const AP_RUN_STARTUP_STALL_MS = 180000;
 
 // Agents sometimes paraphrase the completion sentinel ("Goal fully met",
-// "audit complete", "Stopping.") instead of printing it verbatim. When the
-// last narration reads as a completion claim and the agent has gone quiet,
-// the run is treated as complete instead of nudged.
+// "audit complete", "Stopping.") instead of printing it verbatim, so a quiet
+// agent whose last narration reads as a completion claim finishes the run.
 const AP_COMPLETION_CLAIM_RE = new RegExp(
   '\\b(goal (is )?(already )?(fully )?(met|achieved|complete)'
   + '|task (is )?(complete|finished|done)'
@@ -2064,15 +1945,13 @@ const AP_COMPLETION_CLAIM_RE = new RegExp(
 const AP_RUN_FEED_LINE_MAX = 300;
 
 // ── Per-run activity source ─────────────────────────────────────────────────
-// Each run streams its own activity to the renderer, keyed by runId. Primary
-// source is the agent's session transcript (jsonl) written under the run's
-// worktree project dir: clean structured narration (text + tool calls) plus
-// authoritative token usage. Agents that write no transcript fall back to
-// ANSI-stripped complete lines from the run's PTY, deduped per run, so the
-// feed stays populated for any CLI.
+// Each run streams its own activity to the renderer, keyed by runId. The primary
+// source is the agent's session transcript (jsonl) under the run's worktree
+// project dir: structured narration plus authoritative token usage. Agents that
+// write no transcript fall back to ANSI-stripped complete lines from the run's
+// PTY, deduped per run.
 // Project-dir name the agent CLI uses for a cwd's transcripts: every
-// non-alphanumeric character becomes a dash, including dots in hidden
-// directories. The same encoding is required to locate transcript tails.
+// non-alphanumeric character becomes a dash, dots included.
 function claudeProjectDirName(cwd) {
   return String(cwd || '').replace(/[^a-zA-Z0-9]/g, '-');
 }
@@ -2124,11 +2003,9 @@ function hashToolInput(input) {
 }
 
 // Translate one transcript entry into structured feed items:
-// {kind: 'thought'|'tool', text}. Assistant text is the agent's live
-// narration (the dashboard's thinking stream); tool_use becomes a tool
-// item and also updates the run's "current tool" state for the fleet
-// strip. Token usage feeds the run's meter with the same figure the
-// agent's own status line shows (context occupancy).
+// {kind: 'thought'|'tool', text}. Assistant text is the agent's live narration;
+// tool_use becomes a tool item and updates the run's "current tool" state for
+// the fleet strip. Token usage feeds the run's meter.
 function runTranscriptEntryToLines(r, obj) {
   const lines = [];
   const msg = obj && obj.message;
@@ -2138,10 +2015,9 @@ function runTranscriptEntryToLines(r, obj) {
     for (const part of content) {
       if (!part) continue;
       if (part.type === 'text' && typeof part.text === 'string') {
-        // Keep the agent's latest narration: it becomes the run conclusion
-        // shown in review, and it is the authoritative surface for the
-        // completion sentinel (the PTY view wraps and decorates lines, so
-        // exact-line matching there misses real finishes).
+        // Keep the agent's latest narration: it becomes the run conclusion shown
+        // in review and is the authoritative surface for the completion
+        // sentinel, since the PTY view wraps and decorates lines.
         const whole = part.text.trim();
         if (whole) {
           r.lastAssistantText = whole.slice(0, 4000);
@@ -2169,17 +2045,16 @@ function runTranscriptEntryToLines(r, obj) {
         const toolText = `${part.name}${detail ? '  ' + detail : ''}`;
         r.lastToolText = toolText.slice(0, 180);
         r.lastToolAt = Date.now();
-        // Feed the governor a stable action signature (tool + target) so it
-        // can catch a genuine loop: the same tool on the same target four
-        // times with no forward progress between them.
+        // Feed the governor a stable action signature (tool + target) so it can
+        // catch a genuine loop.
         try { r.runner.reportAction(`${part.name}:${actionHash || detail}`); } catch (_) {}
         lines.push({ kind: 'tool', text: `→ ${toolText}`.slice(0, 320) });
       }
     }
   }
-  // Pin the meter's billing rate to the model that actually produced this
-  // turn (transcript is ground truth; the start-time model may be a guess or
-  // a tier alias). Cheap + idempotent, so feed it every turn.
+  // Pin the meter's billing rate to the model that produced this turn, since the
+  // start-time model may be a tier alias. Cheap and idempotent, so feed it every
+  // turn.
   if (typeof msg.model === 'string' && msg.model && msg.model !== '<synthetic>'
       && r.runner && typeof r.runner.setModel === 'function') {
     try { r.runner.setModel(msg.model); } catch (_) {}
@@ -2187,11 +2062,10 @@ function runTranscriptEntryToLines(r, obj) {
   }
   const usage = msg.usage;
   if (usage) {
-    // Exact per-turn usage. Feed each tier separately so the meter bills it
-    // precisely: fresh input + output at their rates, cache writes at 1.25x
-    // input, cache reads at 0.1x input. Cache reads are billed (they cost a
-    // tenth, not nothing) but excluded from the token cap basis inside the
-    // meter, so a cap of "200k tokens" still means fresh work.
+    // Exact per-turn usage, fed one tier at a time: fresh input and output at
+    // their rates, cache writes at 1.25x input, cache reads at 0.1x input. Cache
+    // reads are billed but excluded from the token cap basis inside the meter,
+    // so a cap of "200k tokens" means fresh work.
     const u = {
       input: usage.input_tokens || 0,
       output: usage.output_tokens || 0,
@@ -2318,8 +2192,7 @@ function tailRunTranscript(runId) {
   if (!r) return false;
   const file = findRunTranscript(r);
   if (!file) return false;
-  // One handle serves both the size check and the read, so the size can
-  // never describe a different file than the bytes that follow.
+  // One handle serves both the size check and the read.
   let fd;
   try { fd = fs.openSync(file, 'r'); } catch (_) { return false; }
   let chunk = '';
@@ -2334,10 +2207,9 @@ function tailRunTranscript(runId) {
       return false;
     }
     if (sz === (r.transcriptOffset || 0)) {
-      // Rotation guard: the agent starts a fresh jsonl on compaction/clear.
-      // A pinned file that stops growing while a newer sibling exists would
-      // silently kill the feed mid-run; re-pin to the newer file. Token
-      // reporting stays monotonic (maxReportedTokens only ever increases).
+      // Rotation guard: the agent starts a fresh jsonl on compaction/clear, so
+      // a pinned file that stops growing while a newer sibling exists re-pins to
+      // the newer file. Token reporting stays monotonic.
       r.transcriptStaleTicks = (r.transcriptStaleTicks || 0) + 1;
       if (r.transcriptStaleTicks >= 10) {
         const newest = newestRunJsonl(r);
@@ -2389,8 +2261,7 @@ function streamRunPtyLines(runId, clean) {
   const r = runs.get(runId);
   if (!r || r.transcriptPath) return;
   // Grace window: give the structured transcript a chance to appear before
-  // narrating raw PTY lines, so the two sources never overlap. Only agents
-  // that write no transcript at all fall through to this path.
+  // narrating raw PTY lines, so the two sources never overlap.
   if (Date.now() - (r.spawnedAt || 0) < 8000) return;
   r.ptyFallbackActive = true;
   if (!r.ptySeenLines) { r.ptySeenLines = new Set(); r.ptySeenOrder = []; }
@@ -2408,10 +2279,9 @@ function streamRunPtyLines(runId, clean) {
   if (out.length) {
     r.feedEverStreamed = true;
     r.lastFeedAt = Date.now();
-    // Parity with transcript agents: keep the latest narrative-looking
-    // line as the run's last words, so completion-claim detection and
-    // the end-of-run final report work for every CLI, not only the
-    // ones that write a structured transcript.
+    // Parity with transcript agents: keep the latest narrative-looking line as
+    // the run's last words, so completion-claim detection and the end-of-run
+    // final report work for every CLI.
     for (let i = out.length - 1; i >= 0; i--) {
       const t = out[i];
       if (t.length >= 24 && !/^[→>$#]/.test(t)) {
@@ -2431,20 +2301,17 @@ function streamRunPtyLines(runId, clean) {
   }
 }
 
-// Submission verifier: the injected goal's trailing Enter can be consumed by
-// a still-mounting TUI, leaving the goal sitting unsubmitted in the composer
-// (proven by transcript forensics: submitted messages were goal+nudge
-// concatenations). The agent writes its session transcript only after a real
-// submit, so transcript presence IS the submit signal; until it appears,
-// resend a bare Enter every few seconds. Idempotent: the text already sits in
-// the composer, an extra Enter on an empty composer is a no-op. Capped so
-// agents that never write transcripts get at most a few harmless keypresses.
+// Submission verifier: the injected goal's trailing Enter can be consumed by a
+// still-mounting TUI, leaving the goal sitting unsubmitted in the composer. The
+// agent writes its session transcript only after a real submit, so transcript
+// presence is the submit signal; until it appears, resend a bare Enter every few
+// seconds. Idempotent and capped.
 function ensureRunGoalSubmitted(runId) {
   const r = runs.get(runId);
   if (!r || r.goalSubmitted || !r.goalInjectedAt) return;
-  // Submit-proof: a NON-EMPTY transcript. The user message row is written at
-  // submit time, so bytes in the file mean the goal went through; a merely
-  // pre-created empty file must keep the resend loop alive.
+  // Submit-proof: a non-empty transcript. The user message row is written at
+  // submit time, so bytes in the file mean the goal went through, while a
+  // pre-created empty file keeps the resend loop alive.
   if (r.transcriptPath) {
     let sz = 0;
     try { sz = fs.statSync(r.transcriptPath).size; } catch (_) {}
@@ -2477,12 +2344,11 @@ function runLiveState(r) {
   return 'quiet';
 }
 
-// Idle watchdog, per run, observing the run's own PTY and transcript,
-// never a chat terminal: a focused-terminal proxy can suppress nudges or
-// end a healthy run. While the busy marker is on screen
-// the agent is working. Once it has worked and gone quiet without printing
-// the completion sentinel, nudge it to continue; after the nudges are spent
-// and it stays quiet, end the run as idle.
+// Idle watchdog, per run, observing the run's own PTY and transcript rather than
+// a chat terminal. While the busy marker is on screen the agent is working. Once
+// it has worked and gone quiet without printing the completion sentinel, nudge
+// it to continue; after the nudges are spent and it stays quiet, end the run as
+// idle.
 function runIdleWatchdog(runId) {
   const r = runs.get(runId);
   if (!r || r.finishing || r.sentinelSeen) return;
@@ -2499,18 +2365,15 @@ function runIdleWatchdog(runId) {
   }
   if (!r.feedEverStreamed) return;
   const quietMs = now - (r.lastFeedAt || now);
-  // CLI-neutral working signal: any PTY bytes in the last few seconds mean
-  // the agent is alive (spinners, tool output, repaints), regardless of
-  // whether its busy marker matches the known regex. The regex is a
-  // stronger, earlier signal on top, never the sole gate.
+  // CLI-neutral working signal: any PTY bytes in the last few seconds mean the
+  // agent is alive (spinners, tool output, repaints). The busy-marker regex is a
+  // stronger, earlier signal on top of it.
   if (now - (r.lastPtyDataAt || 0) < 6000) return;
   const workGoneMs = r.workingSeenAt ? now - r.workingSeenAt : Infinity;
   if (workGoneMs < 6000) return;
-  // Completion claim: the agent said it's done in plain words and went
-  // quiet. Finish as complete; nudging a finished agent only makes it
-  // re-declare completion in a loop.
-  // Only the tail of the last message counts: "task done, moving on to X"
-  // mid-message is progress narration, not a completion claim.
+  // Completion claim: the agent said it is done in plain words and went quiet,
+  // so the run finishes as complete. Only the tail of the last message counts,
+  // since "task done, moving on to X" mid-message is progress narration.
   if (quietMs >= AP_RUN_NUDGE_PAUSE_MS && r.lastAssistantText
       && AP_COMPLETION_CLAIM_RE.test(r.lastAssistantText.slice(-400))) {
     if (mainWindow) mainWindow.webContents.send('autopilot:activity', {
@@ -2538,17 +2401,13 @@ function runIdleWatchdog(runId) {
   }
 }
 
-// Per-run output flush: buffer this run's PTY bytes and, once per
-// quarter-second, append one agent_output audit row (size + timestamp only,
-// not fed to the budget meter) and re-broadcast the run's budget state so its
-// rings stay live. Char counts are audit-only: the chars/4 estimate is wildly
-// wrong for TUI agents (cursor escapes, color codes, in-place repaints), so
-// authoritative token counts come from the agent's own status line, parsed
-// here from the run's raw output (per-run PTYs have no renderer terminal).
-// Cap: a long run emits megabytes of TUI repaints and none of it is worth
-// keeping past the tail a human will read. Past the cap the file is rewritten
-// from its second half, so the newest output always survives and the file
-// cannot grow without bound.
+// Per-run output flush: buffer this run's PTY bytes and, once per quarter
+// second, append one agent_output audit row (size and timestamp only) and
+// re-broadcast the run's budget state so its rings stay live. Char counts are
+// audit-only, since the chars/4 estimate is wildly wrong for TUI agents;
+// authoritative token counts come from the agent's own status line, parsed here
+// from the run's raw output. Past the cap the transcript file is rewritten from
+// its second half, so the newest output survives and the file stays bounded.
 const RUN_TRANSCRIPT_CAP = 2 * 1024 * 1024;
 function appendRunTranscript(r, chunk) {
   let fd = null;
@@ -2556,12 +2415,9 @@ function appendRunTranscript(r, chunk) {
     const sessionId = r.runner && r.runner.sessionId;
     if (!sessionId) return;
     const file = path.join(autopilotStorageRoot(), 'sessions', String(sessionId), 'transcript.log');
-    // One descriptor for the whole append-and-trim. A run writes here from the
-    // agent's output callback while the reader below may be open on the same
-    // file, so asking the path a question and then acting on the answer can act
-    // on a different file than the one that was asked. Opening once and working
-    // through the descriptor removes the gap; a missing session directory turns
-    // into the throw this already swallows.
+    // One descriptor for the whole append-and-trim, so both act on the same
+    // file. A missing session directory turns into the throw this already
+    // swallows.
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to the run's own session dir
     fd = fs.openSync(file, 'a+');
     fs.appendFileSync(fd, chunk);
@@ -2592,11 +2448,9 @@ function flushRunOutput(runId) {
     });
   } catch (_) {}
   // The audit row carries this chunk's size, not its text, so the chain stays
-  // small and tamper-evident. That left the readable output living only in the
-  // renderer's in-memory feed, which is dropped when the run ends, so cancelling
-  // destroyed the one copy of what the agent actually said. The transcript is
-  // written beside the audit log instead, surviving the run ending, navigating
-  // away, and restarting the app.
+  // small and every row still hashes over the whole of the one before it. The
+  // readable output goes to the transcript beside the audit log, where it
+  // survives the run ending, navigating away, and restarting the app.
   appendRunTranscript(r, chunk);
   if (mainWindow) mainWindow.webContents.send('autopilot:budget', {
     runId,
@@ -2604,10 +2458,9 @@ function flushRunOutput(runId) {
     governor: (typeof r.runner.governorState === 'function') ? r.runner.governorState() : null,
   });
   // Submit-proof for agents without a transcript: the composer echo of an
-  // injected goal accounts for roughly its own length in PTY bytes, so
-  // sustained output well past that means the agent is answering and the
-  // Enter-resend loop must stop. Transcript agents get the stronger
-  // non-empty-transcript proof in ensureRunGoalSubmitted.
+  // injected goal accounts for roughly its own length in PTY bytes, so sustained
+  // output well past that means the agent is answering. Transcript agents get
+  // the non-empty-transcript proof in ensureRunGoalSubmitted.
   if (!r.goalSubmitted && r.goalInjectedAt) {
     r.bytesSinceInject = (r.bytesSinceInject || 0) + chunk.length;
     if (r.bytesSinceInject > (r.injectTextLen || 0) + 8000) r.goalSubmitted = true;
@@ -2620,16 +2473,14 @@ function flushRunOutput(runId) {
     r.observedModel = statusModel;
     try { r.runner.setModel(statusModel); } catch (_) {}
   }
-  // Busy-marker tracking for the idle watchdog: the marker on screen means
-  // the agent is mid-generation or mid-tool, so nudges must hold off.
+  // Busy-marker tracking for the idle watchdog: the marker on screen means the
+  // agent is mid-generation or mid-tool, so nudges hold off.
   if (AP_RUN_WORKING_RE.test(clean)) r.workingSeenAt = Date.now();
   // Feed fallback for agents without a transcript (no-op once one exists).
   streamRunPtyLines(runId, clean);
-  // Token meter fallback for agents without a structured transcript:
-  // scan for the agent's own cumulative counter and keep the running
-  // max (the meter is monotonic; status lines flicker). Once a
-  // transcript streams, its exact per-turn deltas are authoritative
-  // and the PTY scan stops.
+  // Token meter fallback for agents without a structured transcript: scan for
+  // the agent's own cumulative counter and keep the running max, since status
+  // lines flicker. Once a transcript streams, its per-turn deltas take over.
   if (!r.transcriptPath) {
     let maxTok = -1;
     for (const line of clean.split('\n')) {
@@ -2637,19 +2488,15 @@ function flushRunOutput(runId) {
       if (parsed != null && parsed > maxTok) maxTok = parsed;
     }
     if (maxTok >= 0 && maxTok > (r.maxReportedTokens || 0)) {
-      // Poison guard: this scans the agent's whole output, not a trusted
-      // status-line region, so a line the agent PRINTS (editing a tokenizer,
-      // cat-ing a benchmark log, echoing a cost report) can carry a huge
-      // number. Because setReportedTokens is monotonic, one poisoned reading
-      // would latch forever and SIGINT a healthy run on a fake budget cap.
-      // Reject an implausible absolute value or a jump too large to be one
-      // run's real growth; the true counter climbs smoothly and re-registers
-      // on the next flush.
+      // Plausibility filter on the parsed counter, since this scans the whole
+      // output rather than a status-line region. Reject an implausible absolute
+      // value or a jump too large to be one run's real growth; the true counter
+      // climbs smoothly and re-registers on the next flush.
       const prev = r.maxReportedTokens || 0;
-      const ABS_CEIL = 50_000_000;              // no real single-run cumulative reaches this
+      const ABS_CEIL = 50_000_000;              // above any real single-run cumulative
       const plausible = maxTok <= ABS_CEIL
-        && (prev === 0 ? maxTok <= 2_000_000     // first sighting: a sane context ceiling
-                       : maxTok <= prev * 8 + 1_000_000); // later: generous but bounded growth
+        && (prev === 0 ? maxTok <= 2_000_000     // first sighting: a context ceiling
+                       : maxTok <= prev * 8 + 1_000_000); // later: bounded growth
       if (plausible) {
         r.maxReportedTokens = maxTok;
         try { r.runner.setReportedTokens(maxTok); } catch (_) {}
@@ -2710,10 +2557,8 @@ function spawnRunPty(runId, cwd) {
   r._exitDisposable = runPty.onExit((ev) => {
     const rs = runs.get(runId);
     if (rs && !rs.finishing) {
-      // Preserve the agent's exit code. A run "dying" unexpectedly (e.g. the
-      // moment a second agent is launched in a chat tab) shows up here; the
-      // code distinguishes a clean quit (0) from a crash (non-zero) so the
-      // audit trail names WHY the agent left, not just that it did.
+      // Preserve the agent's exit code, which separates a clean quit (0) from a
+      // crash (non-zero), so the audit trail records how the agent left.
       const exitCode = ev && typeof ev.exitCode === 'number' ? ev.exitCode : null;
       const signal = ev && typeof ev.signal === 'number' ? ev.signal : null;
       if (mainWindow) mainWindow.webContents.send('autopilot:halt', { runId, reason: 'agent-exited', exitCode, signal });
@@ -2731,15 +2576,13 @@ function injectGoalToRunPty(runId, text) {
   const r = runs.get(runId);
   if (!r || !r.pty) return false;
   try {
-    // The injected text itself contains the completion sentinel (the
-    // directive tells the agent to print it), and the TUI echoes pasted
-    // text. Timestamp the injection so the PTY sentinel scan can ignore
-    // the echo window.
+    // The injected text contains the completion sentinel and the TUI echoes
+    // pasted text, so timestamp the injection for the PTY sentinel scan.
     r.lastInjectAt = Date.now();
     const body = String(text).replace(/\r/g, ' ').replace(/\n/g, ' ');
-    // Submit-proof bookkeeping for agents without a transcript: output
-    // volume well beyond the composer echo of this text means the agent
-    // is answering (see flushRunOutput).
+    // Submit-proof bookkeeping for agents without a transcript: output volume
+    // well beyond the composer echo of this text means the agent is answering
+    // (see flushRunOutput).
     r.injectTextLen = body.length;
     r.bytesSinceInject = 0;
     const agentKind = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
@@ -2851,9 +2694,8 @@ function drainPendingRun() {
     if (activeAutopilotRunCount() >= maxConcurrent) { drainingPendingRuns = false; return; }
     const next = pendingRuns.shift();
     if (!next) { drainingPendingRuns = false; return; }
-    // A queued run that fails to start must still be accounted to its collab
-    // group, or the team's remaining-counter stalls and the integrator never
-    // spawns (the whole team would hang with no error surfaced).
+    // A queued run that fails to start is still accounted to its collab group,
+    // so the team's remaining-counter keeps moving and the integrator spawns.
     doStartRun(next.runId, next.payload, next.workspaceRoot)
       .then((res) => {
         if (!res || !res.ok) noteCollabStartFailure(next.payload, (res && res.error) || 'failed to start');
@@ -2879,10 +2721,7 @@ function hasCompletionMarkerLine(text) {
 }
 
 // Wrap a user goal in an autonomous-operator preamble. An autopilot run is
-// unattended: the agent must make its own decisions and never block on input.
-// Without this the agent behaves like an interactive session, asks a
-// clarifying question (e.g. "which tech stack?"), and stalls, which the
-// watchdog then reads as a finished run.
+// unattended, so the agent makes its own decisions and never blocks on input.
 function buildAutopilotGoal(goal) {
   return [
     '[AUTONOMOUS MODE] You are running unattended. No human is available to answer questions.',
@@ -2944,12 +2783,11 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
 });
 
 // ── Collab mode ─────────────────────────────────────────────────────────────
-// One orchestrator call decomposes the goal into 2..K sub-goals (the planner
-// decides the team size, not the user), each sub-goal becomes a normal
-// isolated run labeled with its role, and when the last worker finishes an
+// One orchestrator call decomposes the goal into 2..K sub-goals, each becoming a
+// normal isolated run labeled with its role. When the last worker finishes, an
 // integrator run merges every worker worktree into its own, which becomes the
-// single Apply target. The only dedicated state is this tracker; everything
-// else rides the existing run model exactly like raceId does.
+// single Apply target. This tracker is the only dedicated state; everything else
+// rides the existing run model the way raceId does.
 const collabGroups = new Map(); // groupId -> { goal, caps, snapshot, workspaceRoot, remaining, workers, integratorSpawned }
 // Set while the collab orchestrator is planning (before any worker run
 // exists), so Stop can cancel that phase instead of reporting no active run.
@@ -2960,8 +2798,8 @@ function newRunId() {
 }
 
 ipcMain.handle('autopilot:startCollab', async (_e, payload = {}) => {
-  // Any throw here must land as a visible error in the renderer, never a
-  // rejected invoke that a UI path might swallow.
+  // Any throw lands as a visible error in the renderer rather than a rejected
+  // invoke.
   try {
     return await startCollabTeam(payload);
   } catch (err) {
@@ -2987,9 +2825,8 @@ async function startCollabTeam(payload = {}) {
   if (maxConcurrent < 2) {
     return { ok: false, error: 'team mode needs at least 2 concurrent Autopilot slots; raise the Autopilot concurrency limit or start a solo run' };
   }
-  // The planner runs as a detached child with no entry in `runs`, so make the
-  // planning phase cancellable: track the child and let autopilot:cancel kill
-  // it, otherwise Stop reports "no active run" for the 1-2 min plan window.
+  // The planner runs as a detached child with no entry in `runs`, so track it
+  // here and let autopilot:cancel kill it during the 1-2 min plan window.
   let planChild = null;
   let planCancelled = false;
   activePlanning = { cancel: () => { planCancelled = true; try { planChild && planChild.kill('SIGKILL'); } catch (_) {} } };
@@ -3174,7 +3011,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
   }
   const agentName = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
     .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
-  const vendorBilled = ['copilot', 'codex', 'aider', 'gemini'].includes(agentName);
+  const vendorBilled = ['copilot', 'codex', 'aider', 'gemini', 'kiro-cli'].includes(agentName);
   const originalGoal = (payload && typeof payload.originalGoal === 'string' && payload.originalGoal.trim())
     ? payload.originalGoal.trim().slice(0, 4096)
     : null;
@@ -3255,10 +3092,9 @@ async function doStartRun(runId, payload, workspaceRoot) {
     try { refreshRunCopilotStats(rs); } catch (_) {}
     // Every ~20s, compute a content-sensitive signature of the worktree diff
     // off-thread and feed it to the governor as the forward-progress signal.
-    // stat(size+mtime) per changed file is cheap and catches repeated edits
-    // to the same file (which keep status='modified'); a stat failure falls
-    // back to status so a missing file never fakes progress. Throttled and
-    // guarded so at most one diff walk per run is ever in flight.
+    // stat(size+mtime) per changed file catches repeated edits to the same file,
+    // and a stat failure falls back to status. Throttled and guarded so at most
+    // one diff walk per run is in flight.
     rs._diffTick = (rs._diffTick || 0) + 1;
     if (rs._diffTick % 20 === 0 && !rs._diffPending) {
       rs._diffPending = true;
@@ -3335,9 +3171,8 @@ async function doStartRun(runId, payload, workspaceRoot) {
       if (ok && rs) {
         // The TUI may still be mounting when the paste lands, eating the
         // trailing Enter. Mark the injection so the per-run tick can verify
-        // submission (the transcript only appears after a real submit) and
-        // resend Enter until it does. Also arm the idle watchdog NOW: rescue
-        // must never depend on banner bytes racing the fallback grace window.
+        // submission and resend Enter until it does, and arm the idle watchdog
+        // now rather than on the first banner bytes.
         rs.goalInjectedAt = Date.now();
         rs.goalSubmitted = false;
         rs.feedEverStreamed = true;
@@ -3388,10 +3223,8 @@ ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
     }
     return { ok: true, cancelledPlanning: true };
   }
-  // Resolve the target run. With an explicit id, cancel exactly that run.
-  // Without one, fall back ONLY when a single run is active; cancelling an
-  // arbitrary "first" run when several are live could stop a run the user
-  // never aimed at.
+  // Resolve the target run. With an explicit id, cancel exactly that run;
+  // without one, fall back only when a single run is active.
   let rid = null;
   let queuedIdx = -1;
   let queuedPayload = null;
@@ -3424,11 +3257,9 @@ ipcMain.handle('autopilot:cancel', (_e, detail = {}) => {
   }
   const r = rid ? runs.get(rid) : null;
   if (!r || !rid) return { ok: false, error: runId ? 'run not found' : 'no active run' };
-  // Stop the WHOLE autopilot team, not just the focused run: every live
-  // run in this run's collab group, plus queued members that have not
-  // started yet, plus the group tracker so no integrator spawns after the
-  // stop. Only autopilot-owned run PTYs are touched; chat sessions live in
-  // a separate registry and are never affected.
+  // Stop the whole autopilot team: every live run in this run's collab group,
+  // queued members that have not started, and the group tracker. Only
+  // autopilot-owned run PTYs are touched; chat sessions live elsewhere.
   const groupId = r.groupId || null;
   const targets = [rid];
   if (groupId) {
@@ -3469,14 +3300,11 @@ ipcMain.handle('autopilot:end', (_e, detail = {}) => {
 });
 
 // Close one run: stop its meter, drain its PTY output into the audit log, run
-// the end-of-run diff, summarize WHILE THE WORKTREE STILL EXISTS, tear down its
-// PTY, then RETAIN the worktree (it holds the agent's changes) and register it
-// for later apply/discard. Broadcasts autopilot:ended. Guarded against re-entry
-// (an agent crash and a user cancel can both target the same run) via the
-// per-run `finishing` flag. On exit, drains the pending queue so a freed slot
-// starts the next run.
-//
-// The order is summarize → retain, and removal only happens on explicit apply/discard.
+// the end-of-run diff, summarize while the worktree still exists, tear down its
+// PTY, then retain the worktree and register it for later apply/discard.
+// Broadcasts autopilot:ended, guards re-entry via the per-run `finishing` flag,
+// and drains the pending queue on exit so a freed slot starts the next run.
+// Removal happens only on an explicit apply or discard.
 async function finishRun(runId, detail) {
   const r = runs.get(runId);
   if (!r || r.finishing) return { ok: false, error: 'no active run' };
@@ -3533,10 +3361,9 @@ async function finishRun(runId, detail) {
       if (sum.summary && sum.summary.meter) sum.summary.meter.tokensPartial = !!r.tokensPartial;
       if (sum.summary && r.fleetStartedAt) sum.summary.fleetDurationMs = Math.max(0, Date.now() - r.fleetStartedAt);
     }
-    // Retain the worktree for review. A run whose worktree is inside the
-    // managed root (i.e. it really was isolated) is retained with its diff so
-    // Apply/Discard can act later; a run that somehow ran in-place has nothing
-    // to retain.
+    // Retain the worktree for review. A run isolated in the managed root is
+    // retained with its diff so Apply/Discard can act later; a run that ran
+    // in-place has nothing to retain.
     if (runRoot && origRoot && runRoot !== origRoot) {
       const changes = (sum && Array.isArray(sum.diff)) ? sum.diff : [];
       const meter = (sum && sum.summary && sum.summary.meter) || {};
@@ -3581,6 +3408,40 @@ async function finishRun(runId, detail) {
   }
 }
 
+// Apply is the only step that leaves the isolated worktree and writes into the
+// user's real project, and the worktree is removed right after a successful
+// apply. So the destination side is captured before the apply, scoped to exactly
+// the paths about to be written. Paths that do not exist yet are recorded as
+// absent, which is what lets the undo delete files the run added.
+function applyUndoSessionId(sessionId) {
+  return `${sessionId}-preapply`;
+}
+
+// Returns the undo session id on success, or null when there was nothing to
+// capture. A failure is reported to the caller rather than swallowed, so
+// applying without a usable undo stays the operator's decision.
+function captureApplyUndo(sessionId, workspaceRoot, changes) {
+  if (!isSafeAutopilotSessionId(sessionId) || !workspaceRoot) {
+    return { ok: false, error: 'run has no session id or workspace root; cannot record an undo point' };
+  }
+  const undoId = applyUndoSessionId(sessionId);
+  if (!isSafeAutopilotSessionId(undoId)) return { ok: false, error: 'invalid undo session id' };
+  const paths = (Array.isArray(changes) ? changes : [])
+    .map((c) => c && c.path)
+    .filter((p) => isSafeApplyRelPath(p) && p !== AutopilotStatus.STATUS_FILE);
+  if (!paths.length) return { ok: true, undoId: null };
+  const { encrypt } = autopilotCrypto();
+  try {
+    const res = Autopilot.snapshot.captureSnapshot(
+      workspaceRoot, autopilotStorageRoot(), undoId, { paths, encrypt },
+    );
+    if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'undo snapshot failed' };
+    return { ok: true, undoId };
+  } catch (err) {
+    return { ok: false, error: `undo snapshot crashed: ${(err && err.message) || String(err)}` };
+  }
+}
+
 // Apply a retained run's changes into its origin workspace. A complete success
 // removes the worktree and registry entry; a partial failure keeps them so the
 // unapplied work remains reviewable/retryable.
@@ -3588,13 +3449,14 @@ ipcMain.handle('autopilot:applyRun', async (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
   const entry = getRetained(runId);
   if (!entry) return { ok: false, error: 'no retained run with that id' };
-  // While a collab team is still active, worker worktrees are the
-  // integrator's inputs and the integrator is the intended Apply target;
-  // applying a lone slice early ships partial work. After the group ends,
-  // workers become normal retained runs (the integrator-failure fallback).
+  // While a collab team is still active, worker worktrees are the integrator's
+  // inputs and the integrator is the intended Apply target. After the group
+  // ends, workers become normal retained runs.
   if (entry.groupId && collabGroups.has(entry.groupId) && !entry.isIntegrator) {
     return { ok: false, error: 'this run is part of an active team; wait for the integrator to finish, then apply its result' };
   }
+  const undo = captureApplyUndo(entry.sessionId, entry.workspaceRoot, entry.changes || []);
+  if (!undo.ok) return { ok: false, runId, applied: [], failed: [], error: `${undo.error}; nothing was applied` };
   const result = applyWorktreeChanges(entry.worktreePath, entry.workspaceRoot, entry.changes || []);
   if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed };
   try { removeRunWorktree(entry.worktreePath, entry.workspaceRoot); } catch (_) {}
@@ -3607,8 +3469,7 @@ ipcMain.handle('autopilot:discardRun', async (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
   const entry = getRetained(runId);
   if (!entry) return { ok: false, error: 'no retained run with that id' };
-  // Discarding a worker mid-team would delete a worktree the integrator is
-  // about to read, silently dropping that agent's contribution.
+  // A worker's worktree is an integrator input while the team is still live.
   if (entry.groupId && collabGroups.has(entry.groupId) && !entry.isIntegrator) {
     return { ok: false, error: 'this run is part of an active team; its work feeds the integrator. Discard after the team finishes' };
   }
@@ -3661,6 +3522,8 @@ ipcMain.handle('autopilot:applyWinner', async (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
   const winner = getRetained(runId);
   if (!winner) return { ok: false, error: 'no retained run with that id' };
+  const undo = captureApplyUndo(winner.sessionId, winner.workspaceRoot, winner.changes || []);
+  if (!undo.ok) return { ok: false, runId, applied: [], failed: [], discarded: 0, error: `${undo.error}; nothing was applied` };
   const result = applyWorktreeChanges(winner.worktreePath, winner.workspaceRoot, winner.changes || []);
   if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed, discarded: 0 };
   try { removeRunWorktree(winner.worktreePath, winner.workspaceRoot); } catch (_) {}
@@ -3704,11 +3567,9 @@ ipcMain.handle('autopilot:list', () => {
   return { ok: true, runs: active, queued: pendingRuns.length };
 });
 
-// The restore/diff target for a session is the directory the snapshot
-// was captured from, recorded in its manifest. Never trust a caller-
-// supplied workspaceRoot for a destructive revert: an empty value used
-// to fall back to HOME, and the restore deletes every file not in the
-// snapshot, so a wrong root would wipe an unrelated directory.
+// The restore/diff target for a session is the directory the snapshot was
+// captured from, recorded in its manifest, so a revert takes its root from
+// there rather than from the caller.
 function manifestWorkspaceRoot(sessionId) {
   if (!isSafeAutopilotSessionId(sessionId)) return null;
   try {
@@ -3746,23 +3607,37 @@ ipcMain.handle('autopilot:revert', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
-  const workspaceRoot = manifestWorkspaceRoot(sessionId);
+  const storageRoot = autopilotStorageRoot();
+  // Once a run has been applied, the thing to undo is the write into the
+  // project. The pre-apply manifest is written only by an apply, so its presence
+  // selects it, and it describes the later of the two events.
+  const undoId = applyUndoSessionId(sessionId);
+  const targetId = Autopilot.snapshot.hasSnapshot(storageRoot, undoId) ? undoId : sessionId;
+  const workspaceRoot = manifestWorkspaceRoot(targetId);
   if (!workspaceRoot) return { ok: false, error: 'snapshot manifest has no workspace root; cannot revert safely' };
+  // A run whose only manifest names a worktree that Apply removed has nothing to
+  // restore into, so say that rather than recreating a directory nobody reads.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- workspaceRoot comes from the manifest, not the caller
+  if (!fs.existsSync(workspaceRoot)) {
+    return { ok: false, error: 'the directory this snapshot was taken from no longer exists, so there is nothing to revert' };
+  }
   const { decrypt } = autopilotCrypto();
-  return Autopilot.supervisor.revertRun({
-    sessionId,
+  const res = Autopilot.supervisor.revertRun({
+    sessionId: targetId,
     workspaceRoot,
-    storageRoot: autopilotStorageRoot(),
+    storageRoot,
     decrypt,
     preserveExtras: !!payload.preserveExtras,
   });
+  // Tell the renderer which of the two things it just undid.
+  return (res && typeof res === 'object')
+    ? { ...res, scope: targetId === undoId ? 'apply' : 'run', workspaceRoot }
+    : res;
 });
 
-// Renderer-side terminal snapshot parser reports the agent's own
-// cumulative token count here. claude prints "↓ 1.5k tokens" in its
-// status line; we treat that as truth and override the chars/4
-// estimate the budget meter would otherwise produce. Cap firing
-// also uses the authoritative number when present.
+// The renderer's terminal snapshot parser reports the agent's own cumulative
+// token count here (claude prints "↓ 1.5k tokens" in its status line). It
+// overrides the meter's chars/4 estimate and drives cap firing.
 ipcMain.handle('autopilot:reportTokens', (_e, payload = {}) => {
   const runId = String(payload && payload.runId || '').trim();
   let rid = runId;
@@ -3911,10 +3786,9 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
   return { ok: true, runs: groupedRuns.slice(0, 24) };
 });
 
-// Delete a past run: removes its session directory (manifest, audit log,
-// and all snapshot blobs). Refuses an active run and validates the
-// sessionId so the recursive remove can only ever touch a single session
-// folder under the autopilot storage root.
+// Delete a past run: removes its session directory (manifest, audit log and all
+// snapshot blobs). Refuses an active run, and the sessionId is validated so the
+// recursive remove touches a single session folder under the storage root.
 ipcMain.handle('autopilot:deleteRun', (_e, payload = {}) => {
   const sessionId = String(payload && payload.sessionId || '').trim();
   if (!sessionId || !isSafeAutopilotSessionId(sessionId)) {
@@ -3926,8 +3800,8 @@ ipcMain.handle('autopilot:deleteRun', (_e, payload = {}) => {
   }
   const dir = path.join(autopilotStorageRoot(), 'sessions', sessionId);
   const root = path.join(autopilotStorageRoot(), 'sessions');
-  // Belt and suspenders: the resolved target must sit directly under the
-  // sessions root and not be the root itself.
+  // The resolved target sits directly under the sessions root and is not the
+  // root itself.
   const resolved = path.resolve(dir);
   if (resolved === path.resolve(root) || path.dirname(resolved) !== path.resolve(root)) {
     return { ok: false, error: 'path escapes autopilot storage' };
@@ -3955,15 +3829,14 @@ ipcMain.handle('autopilot:fileDiff', async (_e, payload = {}) => {
     return { ok: false, error: 'sessionId and path required' };
   }
   if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
-  // The run's files live in its own worktree, so the workspace resolves
-  // from the session record (manifest, else the run_identity audit row)
-  // rather than from the caller: callers carry the origin project as a
-  // label, and the "after" side of the diff only exists in the worktree.
-  // Caller value is a fallback for legacy sessions with no recorded root.
+  // The run's files live in its own worktree, so the workspace resolves from the
+  // session record (manifest, else the run_identity audit row) rather than from
+  // the caller, which carries the origin project as a label. The caller value is
+  // a fallback for legacy sessions with no recorded root.
   const workspaceRoot = manifestWorkspaceRoot(sessionId)
     || String(payload && payload.workspaceRoot || '').trim();
   if (!workspaceRoot) return { ok: false, error: 'no workspace recorded for this session' };
-  // Path traversal guard: reuse the snapshot joinSafely contract.
+  // Confines the resolved file to the workspace.
   const safeWorkspace = path.resolve(workspaceRoot);
   const safeAbs = path.resolve(safeWorkspace, relPath);
   if (!(safeAbs === safeWorkspace || safeAbs.startsWith(safeWorkspace + path.sep))) {
@@ -4008,6 +3881,9 @@ ipcMain.handle('autopilot:fileDiff', async (_e, payload = {}) => {
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- safeAbs bounded under safeWorkspace
     if (fs.existsSync(safeAbs)) {
+      if (!realPathInside(safeAbs, safeWorkspace)) {
+        return { ok: false, error: 'path escapes workspace' };
+      }
       exists = true;
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- safeAbs bounded
       const buf = fs.readFileSync(safeAbs);
@@ -4069,8 +3945,7 @@ ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
   if (!sessionId) return { ok: false, error: 'sessionId required' };
   if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
   const { decrypt } = autopilotCrypto();
-  // Diff the recorded workspace only, never a caller-supplied path, so this
-  // read cannot be used to enumerate an arbitrary directory tree. Use the
+  // Diff the recorded workspace rather than a caller-supplied path, using the
   // async walker so loading a past run from history does not freeze the UI.
   const workspaceRoot = manifestWorkspaceRoot(sessionId);
   return Autopilot.supervisor.summarizeRunAsync({
@@ -4081,33 +3956,20 @@ ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
   });
 });
 
-// Fleet Receipt: aggregate a set of finished runs into one shareable
-// summary (total spend, what landed, and the waste the governor caught).
-// The renderer passes the fleet it launched as [{ sessionId, agent,
-// model }]; each run is summarized from its own audit log (authoritative
-// and resilient even after its worktree was applied or discarded), then
-// folded into the receipt. Pure aggregation lives in autonomy/receipt.
 // Read back the transcript written during a run. Bounded by the caller so a
 // review panel never pulls two megabytes into the renderer at once; the tail is
 // what a human reads, so that is what is returned.
 ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
   const sessionId = String((payload && payload.sessionId) || '').trim();
-  // The character class alone is not enough: ".." is made entirely of allowed
-  // characters, so it passed and resolved one level above sessions/. Requiring
-  // an alphanumeric first character rejects it, along with "." and any leading
-  // dot or dash.
+  // A session id starts with an alphanumeric and carries only [A-Za-z0-9._-].
   if (!sessionId || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId)) return { ok: false, error: 'bad sessionId' };
   const maxBytes = Math.min(Math.max(Number(payload.maxBytes) || 262144, 4096), 1048576);
   try {
     const file = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'transcript.log');
-    // Second layer, independent of the pattern above: resolve both sides and
-    // require the file to sit under sessions/. realpath is used where the path
-    // exists so a symlinked session directory cannot point outside the root.
+    // Resolve both sides and require the file to sit under sessions/. The real
+    // path is used where there is something to resolve, and the lexical form
+    // where there is not.
     const sessionsRoot = path.join(autopilotStorageRoot(), 'sessions');
-    // Resolve by asking for the real path and taking the lexical form when
-    // there is nothing there to resolve. Asking whether it exists first and
-    // resolving after would answer for a path that no longer has to be the one
-    // that gets opened.
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are built from the storage root
     const realOf = (target) => { try { return fs.realpathSync(target); } catch (_) { return path.resolve(target); } };
     const realRoot = realOf(sessionsRoot);
@@ -4115,8 +3977,7 @@ ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
     if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
       return { ok: false, error: 'bad sessionId' };
     }
-    // The run may still be appending, so the size is read from the descriptor
-    // that is about to be read rather than from the path.
+    // The run may still be appending, so the size comes from the descriptor.
     let fd;
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to sessions/ above
     try { fd = fs.openSync(file, 'r'); } catch (_) {
@@ -4134,6 +3995,11 @@ ipcMain.handle('autopilot:transcript', async (_e, payload = {}) => {
   }
 });
 
+// Fleet Receipt: aggregate a set of finished runs into one shareable summary
+// (total spend, what landed, and the waste the governor caught). The renderer
+// passes the fleet it launched as [{ sessionId, agent, model }]; each run is
+// summarized from its own audit log and folded into the receipt. Pure
+// aggregation lives in autonomy/receipt.
 ipcMain.handle('autopilot:receipt', async (_e, payload = {}) => {
   const items = Array.isArray(payload && payload.runs) ? payload.runs : [];
   if (!items.length) return { ok: false, error: 'runs required' };
@@ -4194,7 +4060,7 @@ function safeAgentCommandHead(agentCommand) {
   const exe = tokens[0] || 'claude';
   const base = agentBaseName(exe);
   if (!modelFlagFor(base)) return null;
-  return { exe, base };
+  return { exe, base, args: tokens.slice(1) };
 }
 
 function savedRoutingModels(vendor) {
@@ -4313,18 +4179,56 @@ function runAiderModelProbe(agentCommand) {
   });
 }
 
+function runKiroModelProbe(agentCommand) {
+  return new Promise((resolve) => {
+    const head = safeAgentCommandHead(agentCommand);
+    if (!head) return resolve({ ok: false, output: '', error: 'active agent is not supported for model discovery' });
+    const env = Object.assign(buildAgentEnv(), { NO_COLOR: '1', HUSK_MODEL_PROBE: '1' });
+    const exe = resolveAgentExe(head.exe, env.PATH);
+    const args = [...(head.args || [])];
+    if (!args.length || String(args[0]).startsWith('-')) args.unshift('chat');
+    args.push('--list-models', '--format', 'json');
+    let child;
+    try {
+      child = spawn(exe, args, {
+        cwd: modelProbeCwd(),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    } catch (err) {
+      return resolve({ ok: false, output: '', error: (err && err.message) || String(err) });
+    }
+    let output = '';
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill('SIGKILL'); } catch (_) {}
+      resolve(result);
+    };
+    const collect = (d) => {
+      if (output.length < MODEL_PROBE_OUTPUT_CAP) output += String(d);
+    };
+    const timer = setTimeout(() => {
+      done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list timed out' });
+    }, Math.min(MODEL_PROBE_TIMEOUT_MS, 8000));
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    child.on('error', (err) => done({ ok: false, output, error: (err && err.message) || String(err) }));
+    child.on('close', () => done({ ok: output.trim().length > 0, output, error: output.trim() ? '' : 'model list exited with no output' }));
+  });
+}
+
 // What the CLI itself calls a model, taken from the catalog its own /model
-// picker produced. Deriving a name from the id can only ever print what the id
-// already spells out: the alias "opus[1m]" carries no version, so it reads as a
-// bare "Opus" until a transcript turn happens to name the full id. The catalog
-// is the provider's own wording, so a model Husk has never heard of arrives
-// correctly named the day it ships.
+// picker produced. The catalog carries the provider's own wording, so a model
+// Husk has never heard of arrives correctly named the day it ships, where an
+// alias like "opus[1m]" would otherwise read as a bare "Opus".
 //
-// Returns '' for a full versioned id such as claude-opus-5, on purpose: the
-// name derived from it is already right, and resolving it through an alias row
-// would report whatever the alias points at today, relabelling an older session
-// as the current model. '' is also the answer before the catalog has been read.
-// Both cases leave the id-derived name in place.
+// Returns '' for a full versioned id such as claude-opus-5, whose id-derived
+// name is already right, and '' before the catalog has been read. Both cases
+// leave the id-derived name in place.
 function catalogModelLabel(id, command = null) {
   const raw = String(id || '').trim();
   if (!raw) return '';
@@ -4332,10 +4236,9 @@ function catalogModelLabel(id, command = null) {
   if (!head) return '';
   const cached = modelCatalogCache.get(`${head.base}:${head.exe}`);
   const live = cached && cached.value && Array.isArray(cached.value.models) ? cached.value.models : null;
-  // The live catalog is only there once something has asked the CLI for it, and
-  // asking means driving its picker in a terminal. Not worth spawning the user's
-  // agent binary unprompted just to title a row, so fall back to the names we
-  // already know for this vendor.
+  // The live catalog exists only once something has driven the CLI's picker in a
+  // terminal, so fall back to the names already known for this vendor rather
+  // than spawning the agent binary to title a row.
   const models = (live && live.length) ? live : fallbackModelsFor(head.base);
   if (!models || !models.length) return '';
   // Compare with the context tier and vendor prefix removed, so "opus[1m]",
@@ -4345,10 +4248,8 @@ function catalogModelLabel(id, command = null) {
   const hit = models.find((m) => key(m.value) === want);
   if (!hit) return '';
   // Catalog labels read "Opus 5 With 1M Context · Best for everyday use". The
-  // panel wants the model's name: not the blurb, and not the context tier,
-  // which it already reports on its own row and which is a property of the
-  // session rather than part of what the model is called. The dropdown keeps
-  // the full wording, since choosing a tier is the point there.
+  // panel wants the model's name: not the blurb, and not the context tier, which
+  // it reports on its own row. The dropdown keeps the full wording.
   return String(hit.label || '').split('·')[0]
     .replace(/\bwith\s+1m\s+context\b/ig, '')
     .replace(/\(1m context\)/ig, '')
@@ -4357,9 +4258,9 @@ function catalogModelLabel(id, command = null) {
 }
 
 async function discoverModelCatalog({ refresh = false, command = null, fast = false } = {}) {
-  // `command` lets a caller ask for a specific vendor's models (a workflow step
-  // can run a different agent than the active one). Falls back to the active
-  // agent when omitted, which is what the Autopilot page wants.
+  // `command` lets a caller ask for a specific vendor's models, since a workflow
+  // step can run a different agent than the active one. Falls back to the active
+  // agent when omitted.
   const rawCommand = command || config.agentCommand || 'claude';
   const head = safeAgentCommandHead(rawCommand);
   const vendor = head ? head.base : agentBaseName(rawCommand);
@@ -4384,8 +4285,8 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
 
   // Fast path: the known catalog plus any saved selections, with no live probe.
   // The live probe spawns the CLI in a PTY and drives its /model picker, which
-  // takes seconds and can hang; a builder switching agents must not wait on that.
-  // Callers use fast for the dropdown and pass refresh only on an explicit reload.
+  // takes seconds. Callers use fast for the dropdown and pass refresh only on an
+  // explicit reload.
   if (fast && !refresh) {
     const cached = modelCatalogCache.get(`${vendor}:${head.exe}`);
     if (cached && cached.value && (cached.value.models || []).length) {
@@ -4407,9 +4308,10 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
 
   const probe = vendor === 'aider'
     ? await runAiderModelProbe(rawCommand)
-    : await runSlashModelProbe(rawCommand, vendor);
+    : (vendor === 'kiro-cli' ? await runKiroModelProbe(rawCommand) : await runSlashModelProbe(rawCommand, vendor));
   const probeOutput = probe.output || '';
-  const authBlocked = vendor === 'copilot' && /not logged in to select a model|use \/login to authenticate/i.test(probeOutput);
+  const authBlocked = (vendor === 'copilot' && /not logged in to select a model|use \/login to authenticate/i.test(probeOutput))
+    || (vendor === 'kiro-cli' && /not logged in|opening browser|kiro-cli login/i.test(probeOutput));
   const partialCopilotCatalog = vendor === 'copilot' && !/Model\b[\s\S]{0,80}\bReasoning/i.test(probeOutput);
   const liveModels = (authBlocked || partialCopilotCatalog) ? [] : parseModelCatalog(probeOutput, vendor);
   const savedModels = savedRoutingModels(vendor);
@@ -4417,12 +4319,12 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
   const models = uniqueModels([...liveModels, ...fallbackModels, ...savedModels]);
   const value = Object.assign(base, {
     models,
-    source: liveModels.length ? (vendor === 'aider' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
+    source: liveModels.length ? (vendor === 'aider' || vendor === 'kiro-cli' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
     sourceLabel: liveModels.length
-      ? (vendor === 'aider' ? 'Read from aider --list-models' : 'Read from /model')
+      ? (vendor === 'aider' ? 'Read from aider --list-models' : (vendor === 'kiro-cli' ? 'Read from kiro-cli chat --list-models' : 'Read from /model'))
       : (fallbackModels.length ? 'Known provider catalog' : (savedModels.length ? 'Saved selections' : 'No models discovered')),
     error: (liveModels.length || fallbackModels.length) ? '' : (authBlocked
-      ? 'Copilot requires login before it will list models.'
+      ? (vendor === 'kiro-cli' ? 'Kiro requires login before it will list models.' : 'Copilot requires login before it will list models.')
       : (partialCopilotCatalog ? 'Copilot model picker did not finish loading. Refresh models to retry.' : ((probe && probe.error) || 'No models were found in the provider output.'))),
   });
   modelCatalogCache.set(cacheKey, { cachedAt: Date.now(), value });
@@ -4434,10 +4336,17 @@ ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ re
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('config:get', () => ({ ...config }));
+// Config keys the renderer may not write.
+const CONFIG_KEYS_MAIN_OWNS = new Set(['statuslineTrust']);
+
 ipcMain.handle('config:set', (_e, partial) => {
-  const paiChanged = Object.prototype.hasOwnProperty.call(partial || {}, 'paiEnabled')
-    && partial.paiEnabled !== config.paiEnabled;
-  config = { ...config, ...partial };
+  const incoming = {};
+  for (const key of Object.keys(partial || {})) {
+    if (!CONFIG_KEYS_MAIN_OWNS.has(key)) incoming[key] = partial[key];
+  }
+  const paiChanged = Object.prototype.hasOwnProperty.call(incoming, 'paiEnabled')
+    && incoming.paiEnabled !== config.paiEnabled;
+  config = { ...config, ...incoming };
   saveConfig(config);
   if (paiChanged) {
     // Park or restore ~/.claude/CLAUDE.md so the next agent restart sees the
@@ -4451,10 +4360,10 @@ ipcMain.handle('config:set', (_e, partial) => {
 });
 
 // Probe well-known CLI agents on PATH so the rail's quick-switcher and the
-// first-launch wizard can show which ones are actually installed. Cheap
-// synchronous PATH walk, no subprocess. On Windows we also walk PATHEXT
-// (.cmd, .bat, .exe) because npm-installed CLIs land as <name>.cmd shims
-// and Win32 file lookup does NOT auto-append PATHEXT.
+// first-launch wizard can show which ones are installed. Cheap synchronous PATH
+// walk, no subprocess. On Windows PATHEXT (.cmd, .bat, .exe) is walked too,
+// because npm-installed CLIs land as <name>.cmd shims and Win32 file lookup does
+// not auto-append PATHEXT.
 const KNOWN_AGENTS = [
   {
     id: 'claude', label: 'Claude Code', command: 'claude',
@@ -4481,15 +4390,17 @@ const KNOWN_AGENTS = [
     install: { tool: 'npm', args: ['install', '-g', '@google/gemini-cli'] },
     docs: 'https://github.com/google-gemini/gemini-cli',
   },
+  {
+    id: 'kiro-cli', label: 'Kiro CLI', command: 'kiro-cli',
+    docs: 'https://kiro.dev',
+  },
 ];
 
-// loginShellPath() returns the PATH a login+interactive shell produces (which
-// sources .profile/.bashrc and so includes ~/.local/bin, nvm, etc). A
-// GUI/desktop launch inherits a stripped systemd PATH, so a bare process.env
-// .PATH check misreports CLIs like claude (installed in ~/.local/bin) as
-// missing -- which is exactly what the first-launch wizard showed when Husk was
-// started from the taskbar instead of a terminal. Cached: one subprocess for
-// the whole session. Returns '' on win32 or on failure.
+// loginShellPath() returns the PATH a login+interactive shell produces, which
+// sources .profile/.bashrc and so includes ~/.local/bin, nvm, and the like. A
+// GUI/desktop launch inherits a stripped PATH, so a bare process.env.PATH check
+// misreports CLIs installed in ~/.local/bin as missing. Cached: one subprocess
+// for the whole session. Returns '' on win32 or on failure.
 let _loginShellPathCache;
 function loginShellPath() {
   if (_loginShellPathCache !== undefined) return _loginShellPathCache;
@@ -4505,21 +4416,20 @@ function loginShellPath() {
   return _loginShellPathCache;
 }
 
-// extraAgentBinDirs() are user-install locations that a GUI/desktop launch's
-// PATH omits and that even a login shell does not reliably restore (bash login
-// shells read .bash_profile, not .profile/.bashrc, so ~/.local/bin can be
-// missing). These are the SAME dirs the agent spawn force-prepends, so that
-// "FOUND" in the wizard always implies the spawn will actually resolve the CLI.
+// extraAgentBinDirs() are user-install locations a GUI/desktop launch's PATH
+// omits and a login shell does not reliably restore (bash login shells read
+// .bash_profile, not .profile/.bashrc). These are the same dirs the agent spawn
+// force-prepends, so "FOUND" in the wizard implies the spawn resolves the CLI.
 function extraAgentBinDirs() {
   if (process.platform === 'win32') return [];
   return [path.join(HOME, '.local', 'bin'), path.join(HOME, '.bun', 'bin')];
 }
 
-function isOnPath(binName) {
+// Absolute path of a command on PATH, or null.
+function resolveOnPath(binName) {
   const isWin = process.platform === 'win32';
-  // Union of: the inherited PATH, the login-shell PATH (nvm/pyenv/etc), and the
-  // known user-install dirs. Deduped in order, so detection is correct whether
-  // Husk was launched from a terminal or the GUI.
+  // Union of the inherited PATH, the login-shell PATH (nvm/pyenv), and the known
+  // user-install dirs, deduped in order.
   const seen = new Set();
   const dirs = [process.env.PATH || '', isWin ? '' : loginShellPath()]
     .flatMap((p) => p.split(path.delimiter))
@@ -4534,12 +4444,23 @@ function isOnPath(binName) {
         const p = path.join(d, c);
         const st = fs.statSync(p);
         if (!st.isFile()) continue;
-        if (isWin) return true;
-        if (st.mode & 0o111) return true;
+        if (isWin) return p;
+        if (st.mode & 0o111) return p;
       } catch (_) {}
     }
   }
-  return false;
+  return null;
+}
+
+function isOnPath(binName) {
+  return resolveOnPath(binName) !== null;
+}
+
+// On Windows, resolves a bare command name to its absolute path on PATH.
+// Returns the name unchanged on POSIX, or when it is not found.
+function spawnName(binName) {
+  if (process.platform !== 'win32') return binName;
+  return resolveOnPath(binName) || binName;
 }
 
 ipcMain.handle('agents:detect', () => {
@@ -4579,8 +4500,7 @@ ipcMain.handle('agents:install', async (_e, { id }) => {
       if (mainWindow) mainWindow.webContents.send('agents:install:progress', { id, line });
     };
     try {
-      // shell:false. spawn looks the tool up via PATH; on Windows we also
-      // get PATHEXT resolution since spawn calls ShellExecuteEx-equivalent.
+      // spawn looks the tool up via PATH, with PATHEXT resolution on Windows.
       proc = spawn(tool, args, { shell: process.platform === 'win32', windowsHide: true });
     } catch (err) {
       resolve({ ok: false, error: err.message });
@@ -4603,10 +4523,9 @@ ipcMain.handle('agents:install', async (_e, { id }) => {
 });
 
 // ─── MCP servers (~/.claude.json mcpServers) ────────────────────────────────────
-// We treat ~/.claude.json's `mcpServers` object as the source of truth (Claude
-// Code's user-scoped MCP config). For "disabled" state, we move entries to a
-// Husk-private key `_huskMcpDisabled` so a toggle never loses configuration,
-// just hides it from claude until re-enabled.
+// ~/.claude.json's `mcpServers` object is the source of truth (Claude Code's
+// user-scoped MCP config). A disabled entry moves to a Husk-private key
+// `_huskMcpDisabled`, so a toggle hides it from claude and keeps the config.
 // Curated list of well-known MCP servers users can install in one click.
 // Each entry can declare required env vars; the renderer prompts for them.
 // Anything that requires a path uses kind:'path' so the renderer opens the
@@ -4748,7 +4667,7 @@ ipcMain.handle('projectMcp:set', (_e, payload = {}) => {
   if (Object.keys(entry).length) map[key] = entry;
   else delete map[key];
   config = { ...config, projectMcp: map };
-  saveConfig();
+  saveConfig(config);
   return { ok: true };
 });
 
@@ -4758,7 +4677,7 @@ ipcMain.handle('projectMcp:clear', (_e, cwd) => {
   const map = { ...(config.projectMcp || {}) };
   delete map[key];
   config = { ...config, projectMcp: map };
-  saveConfig();
+  saveConfig(config);
   return { ok: true };
 });
 
@@ -4814,12 +4733,10 @@ function safeCount(dir, predicate) {
 function readJSON(p, fb) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (_) { return fb; } }
 function countLines(p) { try { return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).length; } catch (_) { return 0; } }
 
-// Resolve the active agent CLI's version by running `<cmd> --version`. Uses the
-// agent spawn env so the command resolves against the user's real PATH (a macOS
-// GUI app starts with a minimal PATH that augmentUserPathAsync fills in shortly
-// after launch). Every result (including empty) is cached so that each CLI is
-// probed at most once per app session; this avoids repeated side-effectful
-// spawns on every stats poll when the version string cannot be parsed.
+// Resolve the active agent CLI's version by running `<cmd> --version`, using the
+// agent spawn env so the command resolves against the user's real PATH. Every
+// result (including empty) is cached, so each CLI is probed at most once per app
+// session rather than on every stats poll.
 const _agentVersionCache = {};
 function getAgentVersion(cmd) {
   if (cmd in _agentVersionCache) return _agentVersionCache[cmd];
@@ -4866,12 +4783,11 @@ function gitSummary(cwd) {
 }
 
 // Session stats for a Copilot chat, read from its own transcript at
-// <COPILOT_HOME>/session-state/<uuid>/events.jsonl. Returns the live model
-// (from session.model_change), the turn count, and the summed output
-// tokens Copilot records per assistant message. Copilot does not log
-// input/context-window totals, so ctxTokens/ctxWindow stay 0 and the
-// panel's Context Window row is correctly omitted for it. Picks the
-// newest session whose workspace cwd matches the active chat's cwd.
+// <COPILOT_HOME>/session-state/<uuid>/events.jsonl: the live model (from
+// session.model_change), the turn count, and the summed output tokens. Copilot
+// logs no input/context-window totals, so ctxTokens/ctxWindow stay 0 and the
+// panel omits the Context Window row. Picks the newest session whose workspace
+// cwd matches the active chat's cwd.
 function readCopilotSessionStats(cwd) {
   const root = path.join(COPILOT_DIR, 'session-state');
   let dirs = [];
@@ -4893,9 +4809,8 @@ function readCopilotSessionStats(cwd) {
   let raw = '';
   try {
     const CAP = 512 * 1024;
-    // Open once and size/read through the same descriptor so the file can't
-    // be swapped between the size check and the read (the path is resolved
-    // a single time). On a huge transcript keep only the trailing CAP bytes.
+    // Open once and size/read through the same descriptor. On a huge transcript
+    // keep only the trailing CAP bytes.
     const fd = fs.openSync(best, 'r');
     try {
       const sz = fs.fstatSync(fd).size;
@@ -5013,10 +4928,9 @@ function mcpSummary() {
 
 ipcMain.handle('stats:get', () => {
   const agentCmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
-  // The model, per-session context, and plan-usage caches all come from
-  // ~/.claude state and describe the Claude CLI only. For any other agent
-  // they would surface a different, unrelated Claude session's model and
-  // usage, so they are read solely when the active agent is claude.
+  // The model, per-session context and plan-usage caches come from ~/.claude
+  // state and describe the Claude CLI only, so they are read solely when the
+  // active agent is claude.
   const agentIsClaude = agentCmd === 'claude';
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   const skills = safeCount(skillsDir, (d) => d.isDirectory());
@@ -5122,9 +5036,9 @@ ipcMain.handle('stats:get', () => {
       extra_limit: usage.extra_limit_dollars || 0,
       session_cost: usage.session_cost || '',
       cache_present: Object.keys(usage).length > 0,
-      // Session model/turns read from each agent's OWN transcript, so the
-      // figure always belongs to the active agent (never a different CLI's
-      // session): claude from ~/.claude, copilot from ~/.copilot.
+      // Session model/turns read from each agent's own transcript, so the figure
+      // belongs to the active agent: claude from ~/.claude, copilot from
+      // ~/.copilot.
       session: agentIsClaude ? readActiveSessionStats()
         : (agentCmd === 'copilot' ? readCopilotSessionStats(activePtyCwd) : null),
       // A CLI's own session usage counter parsed from its status line
@@ -5175,10 +5089,9 @@ function listClaudeSkills() {
         }
         let description = '';
         try { description = extractDescription(fs.readFileSync(mdPath, 'utf8')); } catch (_) {}
-        // The directory's own mtime is when its files were written, which is
-        // the install. Enabling or disabling renames the directory, and a
-        // rename touches the parent rather than the entry, so this survives
-        // the switch being flipped.
+        // The directory's own mtime is when its files were written, i.e. the
+        // install. Enabling or disabling renames the directory, and a rename
+        // touches the parent rather than the entry.
         let installedAt = 0;
         try { installedAt = fs.statSync(dir).mtimeMs; } catch (_) {}
         return { source: 'claude', name, id: dirName, path: dir, mdPath, description, disabled, installedAt };
@@ -5217,8 +5130,7 @@ ipcMain.handle('profiles:list', () => getProfiles());
 // ─── Workflows ────────────────────────────────────────────────────────────────
 
 const WORKFLOWS_PATH = path.join(CONFIG_DIR, 'workflows.json');
-// Runs outlive the process. Without this a workflow can never say whether it
-// worked last night, which is the first thing anyone wants to know about one.
+// Runs outlive the process, so a workflow can report how its last run went.
 const WORKFLOW_RUNS_PATH = path.join(CONFIG_DIR, 'workflow-runs.json');
 const WF_RUNS_MAX = 200;
 // Only the newest runs keep their step output, so a long history does not turn
@@ -5229,7 +5141,11 @@ const WF_STEP_LOG_CHARS = 12000;
 function loadWorkflows() {
   try {
     if (!fs.existsSync(WORKFLOWS_PATH)) return [];
-    return JSON.parse(fs.readFileSync(WORKFLOWS_PATH, 'utf8'));
+    // The Array.isArray guard matches loadWorkflowRuns below: anything that
+    // parses to a non-array reads as an empty list, so the workflows page shows
+    // an empty grid the user can rebuild from.
+    const list = JSON.parse(fs.readFileSync(WORKFLOWS_PATH, 'utf8'));
+    return Array.isArray(list) ? list : [];
   } catch (_) { return []; }
 }
 
@@ -5264,14 +5180,85 @@ function recordWorkflowRun(run, workflow) {
         name: (byId.get(id) || {}).name || 'Step',
         status: st.status,
         ms: st.ms || 0,
+        // Whether the per-step timer killed this step, recorded as a fact rather
+        // than inferred later from a duration near the timeout.
+        timedOut: st.timedOut === true,
+        // The vendor's own token report for this step, kept verbatim. Only
+        // claude is run with stream-json, so this is absent for other agents
+        // and the receipt says so.
+        usage: st.usage || null,
         entries,
         truncated: entries.length < log.entries.length,
       };
     });
     const failed = steps.find((st) => st.status === 'failed');
+    // The fingerprint of the graph as it ran, not as it stands now: a receipt
+    // names the program it was earned on, and a workflow with an edited step is
+    // a different program under the same id. Recomputed here rather than read
+    // from the artifact, because a locally authored workflow has none.
+    let graphHash = null;
+    try {
+      const h = WorkflowArtifact.graphHash(workflow.graph);
+      if (h && h.ok) graphHash = h.hash;
+    } catch (_) { /* a graph we cannot fingerprint still gets its history row */ }
+    // The machine these steps ran on, recorded now rather than assembled at
+    // publish time: the agents the graph named, the platform, and the Husk that
+    // drove it. agentResolved is a single name because the schema holds it to
+    // one, so it records the agent that ran the most steps while
+    // requires.agentCommands lists them all.
+    const agentCounts = new Map();
+    for (const n of nodes) {
+      const base = AgentOneShot.agentBaseName(n.agentCommand || config.agentCommand || 'claude');
+      if (base) agentCounts.set(base, (agentCounts.get(base) || 0) + 1);
+    }
+    const agentResolved = [...agentCounts.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0];
+    let environment = null;
+    try {
+      // git decides, not the presence of a .git entry: a directory can carry an
+      // empty .git and not be a repository. Failing the question means this is
+      // not a work tree, which makes both fields below true.
+      let vcs = 'none';
+      let tracked = '0';
+      if (run.cwd) {
+        const git = (args) => require('child_process').execFileSync('git', args, {
+          cwd: run.cwd, encoding: 'utf8', timeout: 4000, maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        try {
+          if (String(git(['rev-parse', '--is-inside-work-tree']) || '').trim() === 'true') {
+            vcs = 'git';
+            // Bucketed, never exact: a reader only needs to know whether this
+            // ran against something their size.
+            const n = String(git(['ls-files']) || '').split('\n').filter(Boolean).length;
+            tracked = n === 0 ? '0'
+              : n <= 100 ? '1-100'
+                : n <= 1000 ? '100-1k'
+                  : n <= 10000 ? '1k-10k'
+                    : n <= 100000 ? '10k-100k' : '100k+';
+          }
+        } catch (_) { /* not a work tree, or no git: the defaults above are the honest answer */ }
+      }
+      environment = {
+        agentResolved: agentResolved ? agentResolved[0] : 'claude',
+        // Left empty rather than guessed: Husk does not ask the CLI its version.
+        agentVersion: '',
+        os: process.platform,
+        huskVersion: app.getVersion(),
+        workspace: { vcs, trackedFiles: tracked, languages: [] },
+      };
+    } catch (_) {
+      // Anything that could not be measured means no environment block at all,
+      // so the receipt carries one fewer author claim.
+      environment = null;
+    }
     const entry = {
       id: run.id,
       workflowId: run.workflowId,
+      graphHash,
+      environment,
+      // Which session under the autonomy storage root holds this run's chained
+      // log, or null for a run with none. The publisher reads this to find the
+      // rows it may attach; a row without it stays author-stated.
+      auditSessionId: (run.audit && run.audit.sessionId) || null,
       workflowName: workflow.name || '',
       status: run.status,
       startedAt: run.startedAt,
@@ -5287,11 +5274,48 @@ function recordWorkflowRun(run, workflow) {
       i < WF_RUNS_WITH_LOGS ? r : { ...r, steps: (r.steps || []).map((st) => ({ ...st, entries: undefined })) }
     ));
     writeJsonAtomic(WORKFLOW_RUNS_PATH, trimmed);
+    wfPruneRunLogs(trimmed);
   } catch (_) { /* history is a nicety; never fail a run over it */ }
 }
 
-// Write through a temp file and rename, so a crash mid-write cannot leave a
-// truncated file behind: rename is atomic within a filesystem.
+// Drop the log directories of runs the history no longer holds.
+//
+// The history is capped at WF_RUNS_MAX and the logs are not, so this keeps the
+// two in step: a run that fell off the end of the list can no longer be
+// published from.
+//
+// Only directories whose name is exactly the `run-<digits>` shape this feature
+// mints are considered, so an autopilot session (`auto-<base36>-<hex>`) is never
+// a candidate. And only a bounded number go per call, since this runs at the end
+// of a run on the main thread.
+const WF_LOG_PRUNE_MAX = 16;
+const WF_RUN_SESSION_RE = /^run-[0-9]{1,20}$/;
+
+function wfPruneRunLogs(history) {
+  try {
+    const keep = new Set();
+    for (const row of history) {
+      if (row && typeof row.auditSessionId === 'string') keep.add(row.auditSessionId);
+    }
+    const sessionsRoot = path.join(autopilotStorageRoot(), 'sessions');
+    let entries;
+    try { entries = fs.readdirSync(sessionsRoot, { withFileTypes: true }); } catch (_) { return; }
+    let removed = 0;
+    for (const entry of entries) {
+      if (removed >= WF_LOG_PRUNE_MAX) break;
+      if (!entry.isDirectory()) continue;
+      if (!WF_RUN_SESSION_RE.test(entry.name)) continue;
+      if (keep.has(entry.name)) continue;
+      try {
+        fs.rmSync(path.join(sessionsRoot, entry.name), { recursive: true, force: true });
+        removed += 1;
+      } catch (_) { /* a directory we cannot remove is not worth a second attempt */ }
+    }
+  } catch (_) { /* pruning is housekeeping; it never costs a run its history */ }
+}
+
+// Write through a temp file and rename, so a crash mid-write leaves the previous
+// file intact: rename is atomic within a filesystem.
 function writeJsonAtomic(target, value) {
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
   const tmp = `${target}.${process.pid}.tmp`;
@@ -5328,10 +5352,9 @@ function buildAgentEnv() {
 }
 
 // How the active agent is billed, so the UI can be honest about the dollar
-// figure. Claude bills per token only when ANTHROPIC_API_KEY is set; without it
-// the run goes through a Pro/Max subscription, which is a flat monthly fee with
-// usage limits, not a per-token charge. The other CLIs are metered by their own
-// account, which Husk cannot see, so they are reported as not-metered too.
+// figure. Claude bills per token only when ANTHROPIC_API_KEY is set; otherwise
+// the run goes through a subscription, a flat monthly fee with usage limits. The
+// other CLIs are metered by their own account, which Husk cannot see.
 ipcMain.handle('autopilot:billingMode', () => {
   const agent = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
   const base = agent.split(/[\\/]/).pop();
@@ -5354,13 +5377,13 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
     let settled = false;
     const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
 
-    const child = require('child_process').spawn(cmd, ['-p', prompt], {
+    const child = require('child_process').spawn(cmd, AgentOneShot.oneShotArgs(cmd, prompt), {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: buildAgentEnv(),
     });
 
     // Hard timeout. The spawn `timeout` option is unreliable when the CLI
-    // catches SIGTERM, so we force-kill with SIGKILL and resolve regardless.
+    // catches SIGTERM, so force-kill with SIGKILL and resolve regardless.
     const killTimer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch (_) {}
       const text = out.trim();
@@ -5381,22 +5404,76 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
   });
 });
 
-ipcMain.handle('workflows:create', (_e, payload = {}) => {
+// The single place a workflow record is minted. Installing an imported artifact
+// goes through this function rather than around it, so the field list below
+// stays the only shape that reaches workflows.json. That is what lets an
+// artifact's own requires and receipts blocks live in a sidecar file keyed on
+// the id this returns, instead of widening every write path to carry them.
+function createWorkflowRecord(payload) {
+  const p = (payload && typeof payload === 'object') ? payload : {};
   const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
   const validTriggers = ['manual', 'ai-suggested'];
   const entry = {
     id,
-    name: String(payload.name || 'New Workflow').slice(0, 80),
-    description: String(payload.description || '').slice(0, 256),
-    graph: sanitizeGraph(payload.graph),
-    trigger: validTriggers.includes(payload.trigger) ? payload.trigger : 'manual',
+    name: String(p.name || 'New Workflow').slice(0, 80),
+    description: String(p.description || '').slice(0, 256),
+    graph: sanitizeGraph(p.graph),
+    trigger: validTriggers.includes(p.trigger) ? p.trigger : 'manual',
+    // Where this workflow came from, stated on the record rather than inferred
+    // from whether a sidecar row can be found. A row can be absent in three
+    // ways: a duplicate carries every prompt, an install can finish with its row
+    // never reaching disk, and an unreadable store answers for every workflow at
+    // once.
+    //
+    // Only workflows:install passes 'imported'. An artifact's fields are
+    // projected onto an allowlist long before they arrive here, and
+    // workflows:update carries its own whitelist which omits this.
+    origin: p.origin === 'imported' ? 'imported' : 'local',
     createdAt: now,
     updatedAt: now,
   };
-  const list = [...loadWorkflows(), entry];
-  saveWorkflows(list);
+  saveWorkflows([...loadWorkflows(), entry]);
   return entry;
+}
+
+ipcMain.handle('workflows:create', (_e, payload = {}) => createWorkflowRecord(payload));
+
+// Duplicating carries the origin and drops the consent.
+//
+// The row travels, so the copy is still a stranger's work, and consentedAt is
+// null, so the reader confirms it once on its own terms. The decision lives here
+// rather than in the renderer so every caller gets it.
+ipcMain.handle('workflows:duplicate', (_e, payload = {}) => {
+  const sourceId = String((payload && payload.workflowId) || '').trim();
+  if (!sourceId) return { ok: false, error: 'workflowId required' };
+  const source = loadWorkflows().find((w) => w && w.id === sourceId);
+  if (!source) return { ok: false, error: 'no workflow with that id' };
+
+  const migrated = migrateWorkflow(source);
+  const copy = createWorkflowRecord({
+    name: `${migrated.name || 'Workflow'} copy`.slice(0, 80),
+    description: migrated.description,
+    graph: migrated.graph,
+    trigger: migrated.trigger,
+    // Carried on the record as well as through the sidecar copy below, because
+    // the sidecar copy depends on the source's row being readable and this does
+    // not.
+    origin: migrated.origin === 'imported' ? 'imported' : 'local',
+  });
+
+  const row = sidecarFor(sourceId);
+  if (row && row.origin === 'imported') {
+    writeSidecar({
+      workflowId: copy.id,
+      origin: 'imported',
+      artifact: row.artifact || null,
+      boundCwd: row.boundCwd || null,
+      installedAt: row.installedAt || null,
+      consentedAt: null,
+    });
+  }
+  return { ok: true, workflow: copy, sidecar: sidecarFor(copy.id) };
 });
 
 ipcMain.handle('workflows:update', (_e, payload = {}) => {
@@ -5422,10 +5499,28 @@ ipcMain.handle('workflows:delete', (_e, id) => {
   if (live) return { ok: false, error: 'this workflow is running; stop it first' };
   if (!id) return { ok: false, error: 'missing id' };
   saveWorkflows(loadWorkflows().filter((w) => w.id !== id));
+  // The sidecar row goes with the workflow, so a row never outlives the workflow
+  // it describes and cannot be inherited by a later id.
+  pruneSidecarStore();
   return { ok: true };
 });
 
-ipcMain.handle('workflows:run', (event, workflowId) => {
+// Tidy coordinates for a graph, computed from its shape alone: columns by
+// depth, branches stacked, columns centred. Pure and read-only — the caller
+// decides whether the result is ever saved.
+ipcMain.handle('workflows:layout', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  try {
+    return { ok: true, graph: layoutGraph(p.graph) };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'layout failed' };
+  }
+});
+
+// opts is the second argument and carries the run's working directory. An
+// imported workflow must have one. Locally authored workflows pass opts nothing
+// and keep wfRunStep's own fallback chain.
+ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
   const already = [...activeRuns.values()].find((r) => r.status === 'running');
   if (already) {
     return { ok: false, error: 'a workflow is already running', runId: already.id, workflowId: already.workflowId };
@@ -5437,6 +5532,28 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
     return { ok: false, error: 'workflow has no steps' };
   }
 
+  // The gate runs against the directory as it is right now rather than as it was
+  // at install time, and the probes are three syscalls.
+  const sidecar = sidecarFor(workflowId);
+  const requested = (opts && typeof opts.cwd === 'string' && opts.cwd) ? opts.cwd : null;
+  const boundCwd = requested || (sidecar && sidecar.boundCwd) || null;
+  const resolvedCwd = boundCwd ? path.resolve(boundCwd) : null;
+  const gate = WorkflowInstall.runGateDecision(Object.assign(
+    {
+      sidecar,
+      cwd: resolvedCwd,
+      // The record's own account of where it came from, and whether the store
+      // that would hold its consent row could be read. Together these separate
+      // "locally authored" from "imported, and the row is missing".
+      recordOrigin: workflow.origin === 'imported' ? 'imported' : 'local',
+      storeUnreadable: loadSidecarStore().unreadable === true,
+    },
+    wfxDirFacts(resolvedCwd),
+  ));
+  if (!gate.ok) {
+    return { ok: false, error: gate.message, code: gate.code, message: gate.message, detail: gate.detail, workflowId };
+  }
+
   const runId = `run-${Date.now()}`;
   const runState = {
     id: runId,
@@ -5446,10 +5563,18 @@ ipcMain.handle('workflows:run', (event, workflowId) => {
     currentChild: null,
     children: new Set(),   // every concurrently-running step, so Stop kills them all
     startedAt: new Date().toISOString(),
+    // null for a locally authored workflow, which is what keeps wfRunStep's
+    // own fallback chain in play for everything with no bound directory.
+    cwd: gate.cwd,
+    // Whether the instructions this run executes were written by somebody else.
+    // Read once here, where the sidecar is already in hand for the consent gate,
+    // rather than per step: the answer holds for the whole run. Either source is
+    // enough, so a duplicate of an imported workflow keeps the same answer.
+    untrusted: workflow.origin === 'imported' || !!(sidecar && sidecar.origin === 'imported'),
   };
   activeRuns.set(runId, runState);
   executeWorkflow(event, workflow, runState);
-  return { ok: true, runId };
+  return { ok: true, runId, cwd: gate.cwd };
 });
 
 // Returns a context block to inject at session start for ai-suggested workflows.
@@ -5504,9 +5629,9 @@ ipcMain.handle('workflows:nodeLog', (_e, payload) => {
   };
 });
 
-// Re-attach to a run already in flight. The renderer can be reloaded (or the
-// user can navigate away and back) while the agent keeps working in the main
-// process; without this the run would continue with nothing watching it.
+// Re-attach to a run already in flight, since the renderer can be reloaded, or
+// the user can navigate away and back, while the agent keeps working in the main
+// process.
 ipcMain.handle('workflows:runs', () => ({ ok: true, runs: loadWorkflowRuns() }));
 
 ipcMain.handle('workflows:activeRun', () => {
@@ -5529,14 +5654,987 @@ ipcMain.handle('workflows:activeRun', () => {
   };
 });
 
+// ─── Portable workflows ───────────────────────────────────────────────────────
+//
+// A workflow becomes one .husk.json you can commit, and someone else's file
+// shows you exactly what it will run on your machine before you press Run.
+// This section owns the four things that need the main process: writing a file
+// out, reading a file in, checking what that file needs against this machine,
+// and gating a run.
+//
+// Everything inside the file, including its own graphHash and receipts, was
+// written elsewhere. Every check lives in src/lib/workflow-artifact.js where it
+// is unit tested against deliberately awkward fixtures, and nothing here
+// re-implements one: this file supplies the syscalls those checks are about and
+// hands the results to pure functions.
+//
+// Two rules the handlers below keep.
+//
+// No value from a manifest reaches mcp:add, mcp:addMany or mcp:parseSnippet on
+// any code path. requires.mcpServers carries a name, an optional fingerprint and
+// a boolean and nothing else. The preflight's fix affordance is a label the
+// renderer turns into a click that opens the empty MCP form.
+//
+// Every read of a cloned tree is confined, and every path component of it is
+// lstat-ed.
+
+const WorkflowArtifact = require('./lib/workflow-artifact');
+const WorkflowReceipt = require('./lib/workflow-receipt');
+const WorkflowInstall = require('./lib/workflow-install');
+
+// One row per workflow that came from a file, keyed on the local workflow id.
+// Deliberately a separate file from workflows.json: see createWorkflowRecord
+// above for why the record's field whitelist must never widen to hold this.
+const WORKFLOW_ARTIFACTS_PATH = path.join(CONFIG_DIR, 'workflow-artifacts.json');
+
+// Bounds on walking a cloned repository, in three directions at once: how deep
+// the walk goes, how many entries it looks at in total, and how many candidates
+// it collects.
+const WFX_SCAN_DEPTH = 3;
+const WFX_SCAN_ENTRIES = 4000;
+const WFX_MAX_CANDIDATES = 32;
+const WFX_SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'vendor', 'target']);
+
+function loadSidecarStore() {
+  try {
+    if (!fs.existsSync(WORKFLOW_ARTIFACTS_PATH)) return WorkflowInstall.normalizeStore(null);
+    return WorkflowInstall.normalizeStore(JSON.parse(fs.readFileSync(WORKFLOW_ARTIFACTS_PATH, 'utf8')));
+  } catch (_) {
+    // An unreadable store is not the same answer as a readable empty one, so it
+    // says which it is. It degrades to empty rather than throwing, since taking
+    // the workflows page down over this one file is its own kind of outage, and
+    // the run gate treats a record that calls itself imported with no readable
+    // row as a refusal.
+    const empty = WorkflowInstall.normalizeStore(null);
+    empty.unreadable = true;
+    return empty;
+  }
+}
+
+function saveSidecarStore(store) {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    writeJsonAtomic(WORKFLOW_ARTIFACTS_PATH, WorkflowInstall.normalizeStore(store));
+    return true;
+  } catch (_) { return false; }
+}
+
+function sidecarFor(workflowId) {
+  if (typeof workflowId !== 'string' || !workflowId) return null;
+  const store = loadSidecarStore();
+  return Object.prototype.hasOwnProperty.call(store.rows, workflowId) ? store.rows[workflowId] : null;
+}
+
+// Returns the row on success and null when it did not reach disk, so a caller
+// can tell a recorded install from one whose row failed to persist.
+function writeSidecar(row) {
+  if (!row || !row.workflowId) return null;
+  const store = loadSidecarStore();
+  store.rows[row.workflowId] = row;
+  return saveSidecarStore(store) ? row : null;
+}
+
+// Called after any workflow disappears, so a row never outlives the workflow it
+// describes. Duplicating is handled by workflows:duplicate, which copies the row
+// and clears its consent.
+function pruneSidecarStore() {
+  try {
+    const live = loadWorkflows().map((w) => w && w.id).filter((id) => typeof id === 'string');
+    const pruned = WorkflowInstall.pruneStore(loadSidecarStore(), live);
+    if (pruned.removed > 0) saveSidecarStore(pruned.store);
+    return pruned.removed;
+  } catch (_) { return 0; }
+}
+
+// ─── machine facts ───────────────────────────────────────────────────────────
+
+// The three directory probes the preflight rows and the run gate both read.
+// Kept together so the sheet and the gate always agree about a path.
+function wfxDirFacts(cwd) {
+  const facts = { cwdIsDir: false, cwdIsHome: false, cwdInWorkTree: false };
+  if (typeof cwd !== 'string' || !cwd) return facts;
+  const abs = path.resolve(cwd);
+  facts.cwdIsHome = abs === path.resolve(HOME);
+  try { facts.cwdIsDir = fs.statSync(abs).isDirectory(); } catch (_) { facts.cwdIsDir = false; }
+  if (facts.cwdIsDir) facts.cwdInWorkTree = wfxInWorkTree(abs);
+  return facts;
+}
+
+function wfxInWorkTree(abs) {
+  try {
+    const out = execFileSync('git', ['-C', abs, 'rev-parse', '--is-inside-work-tree'],
+      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.trim() === 'true';
+  } catch (_) { return false; }
+}
+
+// The top of the work tree the directory sits in, for the export dialog's
+// default path. A bare repository or a detached directory has none, and the
+// caller falls back rather than inventing one.
+function wfxGitRoot(abs) {
+  try {
+    const out = execFileSync('git', ['-C', abs, 'rev-parse', '--show-toplevel'],
+      { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const root = out.trim();
+    return root ? root : null;
+  } catch (_) { return null; }
+}
+
+// The MCP servers configured here, reduced to the two fields a comparison is
+// allowed to see. env is dropped before the fingerprint is taken and never
+// leaves this function, and a fingerprint over it would mismatch for everyone
+// anyway, since two people never share an API key.
+function wfxLocalMcpServers() {
+  try {
+    const r = SharedMcp.list(config.agentCommand, { sync: false });
+    const servers = (r && Array.isArray(r.servers)) ? r.servers : [];
+    return servers
+      .filter((s) => s && s.enabled !== false)
+      .map((s) => ({ name: String(s.id || ''), fingerprint: WorkflowInstall.mcpFingerprint(s) }));
+  } catch (_) { return []; }
+}
+
+// The skills installed here, fingerprinted by the bytes of their markdown. A
+// disabled skill is left out rather than reported as present-but-off: from the
+// workflow's point of view a skill the agent will not load is not there.
+//
+// Both the directory name and the display name are offered, since a manifest is
+// author-declared prose and the format does not say which one the author wrote.
+function wfxLocalSkills() {
+  const out = [];
+  const seen = new Set();
+  const push = (id, fingerprint) => {
+    if (typeof id !== 'string' || !id || seen.has(id)) return;
+    seen.add(id);
+    out.push({ id, fingerprint });
+  };
+  try {
+    const items = [...listClaudeSkills(), ...listHuskPrompts()];
+    for (const it of items) {
+      if (!it || it.disabled) continue;
+      let fingerprint = null;
+      try { fingerprint = WorkflowInstall.skillFingerprint(fs.readFileSync(it.mdPath)); } catch (_) {}
+      push(it.id, fingerprint);
+      push(it.name, fingerprint);
+    }
+  } catch (_) {}
+  return out;
+}
+
+// Marker file existence in the bound directory. The names come out of a file, so
+// each one is resolved through resolveInside rather than path.join.
+function wfxMarkerFiles(cwd, markers) {
+  const found = {};
+  if (typeof cwd !== 'string' || !cwd) return found;
+  for (const marker of (Array.isArray(markers) ? markers : [])) {
+    if (typeof marker !== 'string' || !marker) continue;
+    try { found[marker] = fs.existsSync(resolveInside(cwd, marker)); }
+    catch (_) { found[marker] = false; }
+  }
+  return found;
+}
+
+// ─── confined reads of a cloned tree ─────────────────────────────────────────
+
+// A path is safe to read out of a clone when it resolves inside the clone and no
+// component of it, from the root down to the leaf, is a symlink, so every
+// component is walked rather than only the file itself.
+function wfxResolveConfined(root, rel) {
+  const abs = resolveInside(root, rel);
+  const rootAbs = path.resolve(root);
+  const parts = path.relative(rootAbs, abs).split(path.sep).filter(Boolean);
+  let walk = rootAbs;
+  for (const part of parts) {
+    walk = path.join(walk, part);
+    const st = fs.lstatSync(walk);
+    if (st.isSymbolicLink()) throw new Error('refusing to follow a symlink inside the cloned repository');
+  }
+  return abs;
+}
+
+// Find the .husk.json files in a cloned tree, bounded in depth, in total entries
+// looked at, and in candidates collected. Symlinked entries are skipped rather
+// than followed, so the walk stays inside the tree and always terminates.
+function wfxFindArtifacts(root) {
+  const rootAbs = path.resolve(root);
+  const found = [];
+  let seen = 0;
+  const walk = (dir, rel, depth) => {
+    if (depth > WFX_SCAN_DEPTH || found.length >= WFX_MAX_CANDIDATES || seen >= WFX_SCAN_ENTRIES) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+    for (const entry of entries) {
+      if (found.length >= WFX_MAX_CANDIDATES || seen >= WFX_SCAN_ENTRIES) return;
+      seen += 1;
+      if (entry.isSymbolicLink()) continue;
+      const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (WFX_SKIP_DIRS.has(entry.name)) continue;
+        walk(path.join(dir, entry.name), entryRel, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith('.husk.json')) continue;
+      found.push({ relPath: entryRel, depth });
+    }
+  };
+  walk(rootAbs, '', 0);
+  // Shallowest first, then alphabetical, so the choice is deterministic across
+  // machines and the surface can name the file it read.
+  found.sort((a, b) => (a.depth - b.depth) || a.relPath.localeCompare(b.relPath));
+  const preferred = found.find((f) => f.relPath === 'workflow.husk.json');
+  if (preferred) {
+    found.splice(found.indexOf(preferred), 1);
+    found.unshift(preferred);
+  }
+  return found;
+}
+
+function wfxRefuse(code, message, detail, stage) {
+  return {
+    ok: false,
+    stage: stage || 'source',
+    code,
+    message: String(message),
+    detail: (detail === undefined || detail === null) ? null : String(detail).slice(0, 512),
+  };
+}
+
+// statSync before readFileSync, always, and on the resolved path: an oversized
+// file is refused by asking the filesystem how big it is rather than by reading
+// it. parseArtifact repeats the size test on the string it gets, which covers
+// the drag-drop path where there is no file to stat.
+function wfxReadArtifactAt(absPath) {
+  let st;
+  try { st = fs.statSync(absPath); } catch (err) {
+    return wfxRefuse('unreadable', 'that file could not be opened', err && err.message);
+  }
+  if (!st.isFile()) return wfxRefuse('not-a-file', 'that path is not a file', absPath);
+  if (st.size > WorkflowArtifact.MAX_ARTIFACT_BYTES) {
+    return wfxRefuse('too-large',
+      `that file is ${st.size} bytes and a Husk workflow may be ${WorkflowArtifact.MAX_ARTIFACT_BYTES}`,
+      `${st.size} bytes`);
+  }
+  let bytes;
+  try { bytes = fs.readFileSync(absPath); } catch (err) {
+    return wfxRefuse('unreadable', 'that file could not be read', err && err.message);
+  }
+  // The validator's answer travels back exactly as it came, refusal code and
+  // all, since a surface keys its title and its recovery advice off that code.
+  const result = WorkflowArtifact.parseArtifact(bytes);
+  if (!result.ok) return Object.assign({ stage: 'validate' }, result);
+  // chainCheck is this machine's finding rather than a field of the file, and it
+  // rides beside the artifact so the sheet gets both in one round trip.
+  return { ok: true, artifact: result.artifact, warnings: result.warnings, chainCheck: result.chainCheck, bytes: st.size };
+}
+
+// ─── IPC: read an artifact ───────────────────────────────────────────────────
+
+// payload: { source: 'repo' | 'file', url?, path? }
+//
+// The repo path reuses cloneRepo, the app's one network primitive here: git
+// clone and nothing else. Every read below goes through wfxResolveConfined.
+ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const source = p.source === 'file' ? 'file' : 'repo';
+
+  if (source === 'file') {
+    const raw = typeof p.path === 'string' ? p.path.trim() : '';
+    if (!raw) return wfxRefuse('no-path', 'pick a .husk.json file to read', null);
+    const abs = path.resolve(raw.startsWith('~/') ? path.join(HOME, raw.slice(2)) : raw);
+    const read = wfxReadArtifactAt(abs);
+    if (!read.ok) return read;
+    return {
+      ok: true,
+      artifact: read.artifact,
+      warnings: read.warnings,
+      chainCheck: read.chainCheck,
+      bytes: read.bytes,
+      source: { kind: 'file', path: abs, relPath: path.basename(abs), root: null, url: null, candidates: [] },
+    };
+  }
+
+  const url = typeof p.url === 'string' ? p.url.trim() : '';
+  if (!url) return wfxRefuse('no-url', 'paste the https URL of a repository', null);
+  const cloned = await cloneRepo(url, 'agent-repos');
+  if (!cloned.ok) return wfxRefuse('clone-failed', cloned.error || 'that repository could not be cloned', url);
+
+  const candidates = wfxFindArtifacts(cloned.root);
+  if (!candidates.length) {
+    return wfxRefuse('no-artifact-found',
+      'that repository has no .husk.json in it',
+      'Husk looks three directories deep for a file whose name ends in .husk.json');
+  }
+  let abs;
+  try { abs = wfxResolveConfined(cloned.root, candidates[0].relPath); }
+  catch (err) { return wfxRefuse('unsafe-path', 'that file is a link rather than a file, so Husk will not read it', err && err.message); }
+
+  const read = wfxReadArtifactAt(abs);
+  if (!read.ok) return Object.assign(read, { relPath: candidates[0].relPath });
+  return {
+    ok: true,
+    artifact: read.artifact,
+    warnings: read.warnings,
+    chainCheck: read.chainCheck,
+    bytes: read.bytes,
+    source: {
+      kind: 'repo',
+      path: abs,
+      relPath: candidates[0].relPath,
+      root: cloned.root,
+      url,
+      candidates: candidates.map((c) => c.relPath),
+      // Whether these bytes came off the network just now or out of a clone that
+      // could not be refreshed. The sheet says which, since a fingerprint
+      // recomputed from a copy of unknown age is a fact about the copy.
+      stale: cloned.stale === true,
+      staleReason: cloned.stale === true ? (cloned.staleReason || null) : null,
+      fetchedAt: cloned.stale === true ? (cloned.fetchedAt || null) : null,
+    },
+  };
+});
+
+// The file picker for the install sheet's second source. Filtered to json,
+// because a native filter cannot express the double extension .husk.json.
+ipcMain.handle('workflows:pickArtifactFile', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a workflow file',
+    properties: ['openFile'],
+    filters: [{ name: 'Husk workflow', extensions: ['json'] }],
+  });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
+
+// ─── IPC: preflight ──────────────────────────────────────────────────────────
+
+// payload: { artifact?, workflowId?, cwd? }
+//
+// The artifact is revalidated even though it just came back from
+// workflows:artifactRead, since it crossed into the renderer and back.
+// Revalidation is microseconds, and the projection it returns is the one every
+// check below reads.
+ipcMain.handle('workflows:preflight', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const stored = typeof p.workflowId === 'string' ? sidecarFor(p.workflowId) : null;
+  const candidate = p.artifact || (stored && stored.artifact) || null;
+  if (!candidate) return wfxRefuse('not-artifact', 'there is nothing to check yet', null, 'validate');
+
+  const checked = WorkflowArtifact.validateArtifact(candidate);
+  if (!checked.ok) return Object.assign({ stage: 'validate' }, checked);
+  const artifact = checked.artifact;
+
+  const cwdRaw = (typeof p.cwd === 'string' && p.cwd) ? p.cwd : (stored && stored.boundCwd) || null;
+  const cwd = cwdRaw ? path.resolve(cwdRaw) : null;
+  const dirFacts = wfxDirFacts(cwd);
+
+  const agentsOnPath = {};
+  for (const name of (artifact.requires.agentCommands || [])) agentsOnPath[name] = isOnPath(name);
+
+  const facts = Object.assign({
+    agentsOnPath,
+    mcpServers: wfxLocalMcpServers(),
+    skills: wfxLocalSkills(),
+    markerFiles: wfxMarkerFiles(cwd, artifact.requires.workspace.markerFiles),
+    cwd,
+    huskVersion: app.getVersion(),
+  }, dirFacts);
+
+  const result = WorkflowInstall.evaluatePreflight(artifact, facts);
+  if (!result.ok) return wfxRefuse('not-artifact', result.error, null, 'validate');
+  return {
+    ok: true,
+    checks: result.checks,
+    blocking: result.blocking,
+    cautions: result.cautions,
+    oks: result.oks,
+    // Recomputed on this pass rather than carried over from the read, for the
+    // same reason the artifact itself is: a finding is worth the moment it was
+    // made.
+    chainCheck: checked.chainCheck,
+    cwd,
+    huskVersion: app.getVersion(),
+  };
+});
+
+// ─── IPC: install ────────────────────────────────────────────────────────────
+
+// payload: { artifact, cwd, source? }
+//
+// One call rather than a create followed by a sidecar write, so there is never a
+// window where the workflow exists and its row does not.
+ipcMain.handle('workflows:install', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const checked = WorkflowArtifact.validateArtifact(p.artifact);
+  if (!checked.ok) return Object.assign({ stage: 'validate' }, checked);
+  const artifact = checked.artifact;
+
+  const cwd = (typeof p.cwd === 'string' && p.cwd) ? path.resolve(p.cwd) : null;
+  if (!cwd) return wfxRefuse('cwd-required', 'pick the directory this workflow will run in', null, 'install');
+  const dirFacts = wfxDirFacts(cwd);
+  if (dirFacts.cwdIsHome) return wfxRefuse('cwd-is-home', 'Husk will not bind an imported workflow to your home directory', cwd, 'install');
+  if (!dirFacts.cwdIsDir) return wfxRefuse('cwd-not-a-directory', 'that path is not a directory', cwd, 'install');
+  if (artifact.requires.workspace.vcs === 'git' && !dirFacts.cwdInWorkTree) {
+    return wfxRefuse('cwd-not-a-work-tree', 'this workflow declares it needs git, and that directory is not inside a work tree', cwd, 'install');
+  }
+
+  const workflow = createWorkflowRecord({
+    name: artifact.name,
+    description: artifact.description || '',
+    // The canonical n0..nk ids and the quantised layout come straight across,
+    // and sanitizeGraph runs over them inside createWorkflowRecord.
+    graph: artifact.graph,
+    trigger: 'manual',
+    // The one call site that may say this. It is what keeps the gate honest when
+    // the sidecar row is missing for any reason.
+    origin: 'imported',
+  });
+
+  const row = WorkflowInstall.sidecarRow({
+    workflowId: workflow.id,
+    origin: 'imported',
+    artifact,
+    boundCwd: cwd,
+    installedAt: new Date().toISOString(),
+    // Installing writes a file and executes nothing, so consent is asked for at
+    // the first Run and recorded here when it is given.
+    consentedAt: null,
+  });
+  // An install whose sidecar row did not reach disk is not an install, so the
+  // record is removed rather than left behind half-installed.
+  if (!writeSidecar(row)) {
+    try { saveWorkflows(loadWorkflows().filter((w) => w && w.id !== workflow.id)); } catch (_) {}
+    return wfxRefuse('sidecar-write-failed',
+      'the workflow could not be marked as imported, so nothing was installed',
+      null, 'install');
+  }
+  return { ok: true, workflow, sidecar: row };
+});
+
+// ─── IPC: the sidecar ────────────────────────────────────────────────────────
+
+// Every row at once, because the workflows grid paints every card in one pass
+// and asking per card would be one IPC round trip per workflow on every
+// repaint. The rows carry the whole artifact, which is bounded at a megabyte
+// each by the reader that let them in.
+//
+// Each row travels with this machine's own finding about the log inside it,
+// under `chainCheck`, recomputed on every read rather than stored: a tier above
+// "author states" is something this machine did, just now, to the bytes in front
+// of it.
+ipcMain.handle('workflows:sidecars', () => {
+  const rows = loadSidecarStore().rows;
+  const sidecars = {};
+  for (const id of Object.keys(rows)) {
+    const row = rows[id];
+    sidecars[id] = Object.assign({}, row, { chainCheck: wfxChainCheckFor(row && row.artifact) });
+  }
+  return { ok: true, sidecars };
+});
+
+// The answer for one stored artifact, in the four-field shape the surfaces
+// read: { checked, valid, agrees, detail }. A workflow with no artifact, or one
+// whose receipts ship no log, gets checked:false, which is the honest answer to
+// "was there anything here to check" and leaves every figure author-stated.
+function wfxChainCheckFor(artifact) {
+  const unchecked = { checked: false, valid: null, agrees: null, detail: null };
+  if (!artifact || !Array.isArray(artifact.receipts) || !artifact.receipts.length) return unchecked;
+  try {
+    let answer = unchecked;
+    for (const receipt of artifact.receipts) {
+      const check = WorkflowArtifact.checkReceiptEvidence(receipt);
+      if (!check.checked) continue;
+      // The first failure decides it for the file: an honest receipt beside one
+      // contradicted by its own log does not earn a tier.
+      if (check.valid !== true || check.agrees !== true) return check;
+      answer = check;
+    }
+    return answer;
+  } catch (_) {
+    return unchecked;
+  }
+}
+
+// Recording consent. The timestamp is written before the run starts rather
+// than after it finishes, so a run that crashes does not ask again for
+// something the user already read and agreed to.
+ipcMain.handle('workflows:consent', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const row = sidecarFor(p.workflowId);
+  if (!row) return wfxRefuse('no-sidecar', 'that workflow did not come from a file, so there is nothing to consent to', null, 'consent');
+  if (row.consentedAt) return { ok: true, consentedAt: row.consentedAt, sidecar: row };
+  row.consentedAt = new Date().toISOString();
+  writeSidecar(row);
+  return { ok: true, consentedAt: row.consentedAt, sidecar: row };
+});
+
+// Rebinding the directory. Changing it clears nothing: consent was given to a
+// set of prompts, not to a folder, and the folder is named in the run header
+// before the first step spawns either way.
+ipcMain.handle('workflows:bindCwd', (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const row = sidecarFor(p.workflowId);
+  if (!row) return wfxRefuse('no-sidecar', 'that workflow did not come from a file', null, 'bind');
+  const cwd = (typeof p.cwd === 'string' && p.cwd) ? path.resolve(p.cwd) : null;
+  if (!cwd) return wfxRefuse('cwd-required', 'pick a directory', null, 'bind');
+  const dirFacts = wfxDirFacts(cwd);
+  if (dirFacts.cwdIsHome) return wfxRefuse('cwd-is-home', 'Husk will not bind an imported workflow to your home directory', cwd, 'bind');
+  if (!dirFacts.cwdIsDir) return wfxRefuse('cwd-not-a-directory', 'that path is not a directory', cwd, 'bind');
+  row.boundCwd = cwd;
+  writeSidecar(row);
+  return { ok: true, boundCwd: cwd, sidecar: row };
+});
+
+// ─── IPC: receipts ───────────────────────────────────────────────────────────
+
+// The local run figures for every saved workflow, keyed on workflow id, in one
+// call. Every card on the grid carries a receipts strip and the grid paints in
+// one pass, so this follows workflows:sidecars rather than asking per card.
+//
+// The figures are aggregated against the fingerprint of the graph as it stands
+// now, so editing a step drops the strip back to empty. That is the point of
+// fingerprinting a run: those numbers were earned by a different program.
+ipcMain.handle('workflows:receipts', () => {
+  const runs = loadWorkflowRuns();
+  const aggregates = {};
+  for (const raw of loadWorkflows()) {
+    try {
+      const workflow = migrateWorkflow(raw);
+      if (!workflow || typeof workflow.id !== 'string') continue;
+      const fingerprint = WorkflowArtifact.graphHash(workflow.graph);
+      if (!fingerprint || !fingerprint.ok) continue;
+      const r = wfxReceiptsFor(workflow, fingerprint.hash, runs);
+      if (r.summary && r.summary.runs > 0) aggregates[workflow.id] = r.summary;
+    } catch (_) {
+      // One unreadable workflow costs itself its strip and nothing else, since
+      // the grid is drawn from this map.
+    }
+  }
+  return { ok: true, aggregates };
+});
+
+// ─── IPC: export ─────────────────────────────────────────────────────────────
+
+// The receipts a published file would carry, aggregated from local run
+// history, and the same figures the card's own receipts strip reads.
+//
+// `receipts` is the wire form and is empty unless the aggregate is publishable.
+// `summary` is the local form and is present whenever the runs could be read at
+// all, which is what the strip needs: a single run is a number a reader may see
+// on their own machine before it is a claim worth publishing.
+//
+// runs is passed in by callers that already hold the history, because
+// loadWorkflowRuns parses the whole file and the workflows grid asks this
+// question once per card.
+//
+// opts.attachLog asks for the runs' own audit rows to travel with the figures,
+// which changes where the figures come from: with a log attached the receipt is
+// built from the log, over exactly the runs whose rows are in it, so the reader
+// recomputes the same numbers they were sent.
+function wfxReceiptsFor(workflow, graphHash, runs, opts) {
+  const attachLog = !!(opts && opts.attachLog);
+  const agg = WorkflowReceipt.aggregateRuns(Array.isArray(runs) ? runs : loadWorkflowRuns(), {
+    workflowId: workflow.id,
+    graphHash,
+    historyMax: WF_RUNS_MAX,
+    stepTimeoutMs: WF_STEP_TIMEOUT_MS,
+  });
+  if (!agg.ok) return { receipts: [], summary: null, reason: agg.error };
+  const a = agg.aggregate;
+  const summary = {
+    runs: a.runs,
+    sourceRuns: a.sourceRuns,
+    excluded: a.excluded,
+    runsWindowed: a.runsWindowed,
+    outcomes: a.outcomes,
+    outcomeBasis: a.outcomeBasis,
+    medianDurationMs: a.medianDurationMs,
+    medianDurationN: a.medianDurationN,
+    // Kept off the wire by aggregateRuns and carried here on purpose: two runs
+    // are a range by the copy rule, and a range needs both ends.
+    durationRangeMs: a.durationRangeMs,
+    durationCensored: a.durationCensored,
+    medianTokens: a.medianTokens,
+    medianTokensN: a.medianTokensN,
+    precision: a.precision,
+    publishable: a.publishable,
+    publishBlockers: a.publishBlockers,
+  };
+  if (!a.publishable) {
+    return {
+      receipts: [],
+      summary,
+      // Runs are stamped with the fingerprint of the graph they executed, so an
+      // unhashed row cannot be attached to this graph or any other. Saying which
+      // of the two reasons applies is what the publisher can act on.
+      reason: a.excluded.unhashed > 0
+        ? 'some runs in your history were recorded before Husk stamped a run with the graph it executed, so they cannot be attached to this fingerprint'
+        : `nothing publishable yet: ${a.publishBlockers.join(', ')}`,
+    };
+  }
+  // The environment is taken from the runs themselves rather than from this
+  // machine as it stands now: recordWorkflowRun stamps each row as it finishes,
+  // so the most recent matching row describes a machine that executed this
+  // fingerprint. A row without the stamp contributes nothing, and the receipt
+  // ships without an environment block.
+  const matching = (Array.isArray(runs) ? runs : loadWorkflowRuns()).filter((r) => r
+    && r.workflowId === workflow.id
+    && r.graphHash === graphHash
+    && r.environment && typeof r.environment === 'object');
+
+  // With a log attached the figures are the log's, so the aggregate above
+  // becomes only the local summary the publish sheet shows. A refusal travels
+  // back rather than being downgraded to a quiet evidence:"none".
+  const evidence = attachLog
+    ? wfxCollectEvidence(workflow, graphHash, Array.isArray(runs) ? runs : loadWorkflowRuns())
+    : null;
+  if (evidence && !evidence.ok) return { receipts: [], summary, reason: null, refusal: evidence.refusal };
+  const figures = evidence ? evidence.figures : a;
+
+  // With evidence attached, the machine described is one of the machines the
+  // attached rows came from. The environment stays an author claim either way,
+  // and the session id of a run is its run id, so the pairing costs one lookup.
+  const attached = evidence ? new Set(evidence.chain.sessionIds) : null;
+  const described = attached ? matching.filter((r) => attached.has(r.id)) : matching;
+  const environment = described.length ? described[0].environment : null;
+
+  // Derived from what the receipt says rather than randomly, so republishing an
+  // unchanged history produces an unchanged file. A format meant to be committed
+  // next to code should not churn when nothing happened.
+  const receiptId = `rcp_${crypto.createHash('sha256').update([
+    graphHash,
+    String(figures.runs),
+    (figures.window && figures.window.firstRunAt) || '',
+    (figures.window && figures.window.lastRunAt) || '',
+  ].join(' ')).digest('hex').slice(0, 16)}`;
+
+  const receipt = {
+    id: receiptId,
+    graphHash,
+    runs: figures.runs,
+    // A log carries no view of the history it was drawn from, so this stays the
+    // aggregate's answer either way: a fact about the publisher's run list
+    // rather than about the rows in the envelope, and never recomputed.
+    runsWindowed: a.runsWindowed || (evidence ? evidence.windowed : false),
+    window: figures.window,
+    outcomes: figures.outcomes,
+    outcomeBasis: figures.outcomeBasis,
+    medianDurationMs: figures.medianDurationMs,
+    durationCensored: figures.durationCensored,
+    medianTokens: figures.medianTokens,
+    // No log is shipped unless the publisher asks for one, so a receipt on its
+    // own is an author claim and says so through this field.
+    evidence: evidence ? 'inline' : 'none',
+    chain: evidence ? evidence.chain : null,
+  };
+  if (environment) receipt.environment = environment;
+
+  return {
+    receipts: [receipt],
+    summary,
+    reason: null,
+    warnings: evidence ? evidence.warnings : [],
+  };
+}
+
+// One run's chained log, read off disk and bounded.
+//
+// The session id comes out of workflow-runs.json, so it is charset-checked
+// before it is joined onto a path. The size is asked of the filesystem before
+// the bytes are read, as in the artifact reader.
+//
+// The two ways this fails are two different sentences for the publisher, so they
+// come back as two different reasons: a log that is simply missing, and one
+// larger than a published file may carry, whose size the publisher can be told
+// next to the budget it passed.
+function wfxReadRunLog(sessionId) {
+  if (typeof sessionId !== 'string' || !WF_RUN_SESSION_RE.test(sessionId)) {
+    return { ok: false, reason: 'unreadable', bytes: 0 };
+  }
+  const file = path.join(autopilotStorageRoot(), 'sessions', sessionId, 'audit.jsonl');
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) return { ok: false, reason: 'unreadable', bytes: 0 };
+    if (st.size > WorkflowArtifact.MAX_CHAIN_BYTES) return { ok: false, reason: 'too-large', bytes: st.size };
+    const raw = fs.readFileSync(file, 'utf8');
+    const lines = raw.split('\n').filter((l) => l.length > 0);
+    if (!lines.length) return { ok: false, reason: 'unreadable', bytes: st.size };
+    return { ok: true, lines, bytes: st.size };
+  } catch (_) {
+    return { ok: false, reason: 'unreadable', bytes: 0 };
+  }
+}
+
+// The evidence a publish may attach: whole sessions, newest first, each one
+// walked here before it is offered to anybody.
+//
+// Sessions go in whole or not at all. A chain is a sequence of rows that hash
+// into each other, so half of one is a chain that fails on arrival and collapses
+// the receipt it came with. Whole sessions also keep the arithmetic honest,
+// since the receipt is then rebuilt from exactly what is in the envelope.
+//
+// The budget is a refusal, never a trim, because trimming breaks the chain. Over
+// budget, the publisher is told both numbers and can publish the same figures
+// without the log.
+function wfxCollectEvidence(workflow, graphHash, runs) {
+  const warnings = [];
+  const rows = (Array.isArray(runs) ? runs : []).filter((r) => r
+    && r.workflowId === workflow.id
+    && r.graphHash === graphHash
+    && typeof r.auditSessionId === 'string');
+  if (!rows.length) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'none of the runs behind these figures left a log Husk can attach',
+        'a run records one only under a Husk that writes them, so the next run of this workflow will have one',
+        'export'),
+    };
+  }
+
+  // The history arrives newest first and a chain is written oldest first, so the
+  // selection is taken off the front and reversed below, leaving a reader
+  // walking the rows in the order they happened.
+  const selected = [];
+  let broken = 0;
+  let oversize = 0;
+  let oversizeBytes = 0;
+  for (const row of rows) {
+    if (selected.length >= WorkflowArtifact.MAX_CHAIN_SESSIONS) break;
+    const read = wfxReadRunLog(row.auditSessionId);
+    if (!read.ok) {
+      if (read.reason === 'too-large') { oversize += 1; oversizeBytes = Math.max(oversizeBytes, read.bytes); }
+      broken += 1;
+      continue;
+    }
+    const walk = WorkflowArtifact.verifyArtifactChain(read.lines, row.auditSessionId, { graphHash });
+    // A local log that does not check out is dropped rather than shipped, since
+    // it would fail the same walk on the reader's machine. The publisher is told
+    // how many were set aside.
+    if (!walk.valid) { broken += 1; continue; }
+    selected.push({ sessionId: row.auditSessionId, lines: read.lines });
+  }
+  if (!selected.length) {
+    if (oversize === broken) {
+      return {
+        ok: false,
+        refusal: wfxRefuse('evidence-too-large',
+          'the log for these runs is larger than a published file may carry, so nothing was written',
+          `one run's log alone is ${oversizeBytes} bytes, against a budget of ${WorkflowArtifact.MAX_CHAIN_BYTES} for every log in the file. Publishing without the log writes the same figures as author-stated.`,
+          'export'),
+      };
+    }
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'the logs behind these figures do not hold together on this machine, so there is nothing to attach',
+        `${broken} log${broken === 1 ? '' : 's'} could not be read, or did not check out on this machine`,
+        'export'),
+    };
+  }
+  if (broken > 0) {
+    warnings.push({
+      code: 'evidence-partial',
+      message: `${broken} run log${broken === 1 ? ' was' : 's were'} unreadable and left out, so these figures cover the runs whose rows are attached`,
+    });
+  }
+  // Two different reasons a run can be missing from the figures, and they get
+  // two different sentences. Above: its log could not be read. Here: the loop
+  // stopped at the session cap before it looked, which is what a publisher with
+  // a long history hits and what makes the receipt a claim about the recent
+  // past.
+  const unexamined = rows.length - (selected.length + broken);
+  const windowed = selected.length < rows.length;
+  if (unexamined > 0) {
+    warnings.push({
+      code: 'evidence-windowed',
+      message: `these figures cover the ${selected.length} most recent runs, which are the ones whose logs travel with the file`,
+    });
+  }
+
+  selected.reverse();
+  const lines = [];
+  let bytes = 0;
+  for (const session of selected) {
+    for (const line of session.lines) {
+      lines.push(line);
+      bytes += Buffer.byteLength(line, 'utf8');
+    }
+  }
+  if (bytes > WorkflowArtifact.MAX_CHAIN_BYTES || lines.length > WorkflowArtifact.MAX_CHAIN_LINES) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-too-large',
+        'the logs for these runs are larger than a published file may carry, so nothing was written',
+        `${bytes} bytes across ${lines.length} rows, against a budget of ${WorkflowArtifact.MAX_CHAIN_BYTES} bytes across ${WorkflowArtifact.MAX_CHAIN_LINES}. Publishing without the log writes the same figures as author-stated.`,
+        'export'),
+    };
+  }
+
+  // Walked once more as the single chain the file will carry, since that is the
+  // arrangement the reader walks.
+  const sessionIds = selected.map((s) => s.sessionId);
+  const walk = WorkflowArtifact.verifyArtifactChain(lines, sessionIds, { graphHash });
+  if (!walk.valid) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'the log Husk assembled for this file does not hold together, so nothing was written',
+        `${walk.reason} (${walk.predicate})`,
+        'export'),
+    };
+  }
+  const derived = WorkflowReceipt.figuresFromChain(walk.sessions);
+  if (!derived.ok) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable', 'the figures for this file could not be recomputed from its own log', derived.error, 'export'),
+    };
+  }
+  if (!derived.figures.publishable) {
+    return {
+      ok: false,
+      refusal: wfxRefuse('evidence-unavailable',
+        'the attached runs do not add up to a receipt that can be published',
+        `nothing publishable yet: ${derived.figures.publishBlockers.join(', ')}`,
+        'export'),
+    };
+  }
+
+  return {
+    ok: true,
+    warnings,
+    windowed,
+    figures: derived.figures,
+    chain: {
+      sessionIds,
+      head: walk.head,
+      lineCount: lines.length,
+      lines,
+    },
+  };
+}
+
+// The path a published file defaults to. A workflow bound to a work tree
+// belongs in that tree, committed next to the code its prompts assume, which
+// is the whole premise of the format. Anything else falls back to the
+// downloads folder rather than to a repo the workflow has nothing to do with.
+function wfxDefaultExportPath(workflow, sidecar) {
+  const fileName = WorkflowInstall.artifactFileName(workflow && workflow.name);
+  const bound = sidecar && sidecar.boundCwd ? sidecar.boundCwd : null;
+  if (bound) {
+    const root = wfxGitRoot(bound);
+    if (root) return path.join(root, '.husk', 'workflows', fileName);
+  }
+  let downloads = HOME;
+  try { downloads = app.getPath('downloads') || HOME; } catch (_) {}
+  return path.join(downloads, fileName);
+}
+
+// A .husk.json is meant to be committed, so it is written as an ordinary repo
+// file: 0644, two-space JSON, and a trailing newline. writeJsonAtomic writes
+// 0600 into a 0700 directory, which is right for the config folder it was built
+// for and wrong for a file everyone who checks the repo out has to read.
+function wfxWriteArtifactAtomic(target, artifact) {
+  const text = `${JSON.stringify(artifact, null, 2)}\n`;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, text, { mode: 0o644 });
+  fs.renameSync(tmp, target);
+  return Buffer.byteLength(text, 'utf8');
+}
+
+// payload: { workflowId, targetPath?, notes?, publisher?, revision?, attachLog? }
+//
+// targetPath skips the dialog, which is what a republish onto an already
+// chosen file wants: the second publish of the same workflow writes
+// immediately and offers an Undo rather than asking the same question again.
+ipcMain.handle('workflows:export', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const raw = loadWorkflows().find((w) => w.id === p.workflowId);
+  if (!raw) return wfxRefuse('not-found', 'that workflow is not in your list any more', p.workflowId, 'export');
+  const workflow = migrateWorkflow(raw);
+
+  // The one refusal that names a step before the builder phrases it, because it
+  // is the refusal a user can act on: a step with no agent resolves at run time
+  // to whatever the reader's config says, so the receipt would describe a
+  // different program.
+  const unbound = ((workflow.graph && workflow.graph.nodes) || [])
+    .filter((n) => n && !n.agentCommand)
+    .map((n) => ({ id: n.id, name: String(n.name || 'Step').slice(0, 64) }));
+  if (unbound.length) {
+    return Object.assign(wfxRefuse('bad-agent',
+      `the step "${unbound[0].name}" does not say which agent it runs, so a published file could not say what it does`,
+      unbound.map((s) => s.name).join(', '), 'export'),
+    { step: unbound[0], steps: unbound });
+  }
+
+  const sidecar = sidecarFor(p.workflowId);
+  const prior = sidecar && sidecar.artifact ? sidecar.artifact : null;
+  const fingerprint = WorkflowArtifact.graphHash(workflow.graph);
+  const receipts = fingerprint.ok
+    ? wfxReceiptsFor(workflow, fingerprint.hash, null, { attachLog: p.attachLog === true })
+    : { receipts: [], summary: null, reason: fingerprint.error };
+  // The toggle is answered rather than absorbed: a publisher who asked for the
+  // log is told when it could not be attached.
+  if (receipts.refusal) return receipts.refusal;
+
+  const built = WorkflowArtifact.buildArtifact(workflow, {
+    huskVersion: app.getVersion(),
+    // Republishing keeps the artifact's identity and moves its revision, so a
+    // reader can tell a new version of a workflow they know from a different
+    // workflow that happens to share a name.
+    artifactId: (typeof p.artifactId === 'string' && p.artifactId) || (prior && prior.artifactId) || undefined,
+    revision: Number.isSafeInteger(p.revision) ? p.revision : ((prior && prior.revision ? prior.revision : 0) + 1),
+    publisher: p.publisher === undefined ? null : p.publisher,
+    notes: typeof p.notes === 'string' ? p.notes : null,
+    requires: (p.requires && typeof p.requires === 'object') ? p.requires : (prior ? prior.requires : undefined),
+    receipts: receipts.receipts,
+  });
+  if (!built.ok) return Object.assign({ stage: 'export' }, built, { step: null });
+
+  const warnings = (built.warnings || []).slice();
+  // What the evidence collector set aside on the way to this file: logs it could
+  // not read, and runs whose logs did not fit in the envelope. Both are
+  // statements about which runs the figures cover, so they travel with them.
+  for (const w of (receipts.warnings || [])) warnings.push(w);
+  if (receipts.reason) {
+    warnings.push({ code: 'no-receipts', message: receipts.reason });
+  }
+
+  let target = (typeof p.targetPath === 'string' && p.targetPath) ? path.resolve(p.targetPath) : null;
+  if (!target) {
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export workflow',
+      defaultPath: wfxDefaultExportPath(workflow, sidecar),
+      filters: [{ name: 'Husk workflow', extensions: ['json'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    });
+    if (r.canceled || !r.filePath) return { ok: false, cancelled: true, stage: 'export', code: 'cancelled', message: 'export cancelled', detail: null };
+    target = r.filePath;
+  }
+
+  let bytes;
+  try { bytes = wfxWriteArtifactAtomic(target, built.artifact); }
+  catch (err) { return wfxRefuse('write-failed', 'that file could not be written', err && err.message, 'export'); }
+
+  return {
+    ok: true,
+    path: target,
+    bytes,
+    artifact: built.artifact,
+    warnings,
+    receiptSummary: receipts.summary,
+  };
+});
+
 // ─── Workflow graph model ─────────────────────────────────────────────────────
 // A workflow is a graph of step nodes connected by edges. Edges carry a
 // routing condition (used by the 2b branch engine; 2a treats all as 'always').
 
-// Per-node scrollback. A run outlives the window that started it: the renderer
-// can be reloaded, and a node's terminal can be opened long after the node has
-// finished, so the output has to live here rather than only in the event that
-// announced it. Bounded, because a chatty agent would otherwise grow forever.
+// Per-node scrollback. A run outlives the window that started it, and a node's
+// terminal can be opened long after the node finished, so the output lives here
+// rather than only in the event that announced it. Bounded, because a chatty
+// agent would otherwise grow it forever.
 const WF_LOG_MAX_ENTRIES = 4000;
 const WF_LOG_MAX_CHARS = 400000;
 
@@ -5561,9 +6659,8 @@ function wfRecord(run, nodeId, entry) {
   }
 }
 
-// Broadcast, not point-to-point. Sending only to event.sender means a renderer
-// reload leaves the run executing with no way to see it: the window that asked
-// for the run is not necessarily the window that needs to watch it.
+// Broadcast, not point-to-point: the window that asked for the run is not
+// necessarily the window that needs to watch it.
 function wfEmit(event, channel, data) {
   const run = data && data.runId ? activeRuns.get(data.runId) : null;
   if (run) {
@@ -5593,6 +6690,99 @@ function wfEmit(event, channel, data) {
 const WF_MAX_PARALLEL = 4;
 const WF_STEP_TIMEOUT_MS = 300000;
 
+// ─── the run log ──────────────────────────────────────────────────────────────
+//
+// Every workflow run writes a hash-chained audit log, the same append-only JSONL
+// the autonomy supervisor writes, through the same module. There is one chain
+// implementation in this app and this uses it rather than growing a second one.
+//
+// The log is what lets a stranger's Husk recompute a receipt's figures from rows
+// it re-hashes locally, and the tier of a figure it recomputes is "matches the
+// shipped log". That is the ceiling: the chain is anchored at a public genesis
+// constant with no signature, so a passing chain means this JSONL is internally
+// consistent and nothing more.
+//
+// Row 1 is the binding, immediately after row 0 opens the session, and it
+// carries the graphHash the run executed. Keeping it inside the chain is the
+// point: a log moved onto another workflow's receipt names the wrong
+// fingerprint, and moving it costs a rehash of every row after it.
+//
+// A row carries a node id, a step name already in the graph beside it, a status,
+// a duration and the vendor's token report. No working directory, no prompt
+// text, no agent output, since these rows get committed to a public repo.
+// Nothing here is large enough to spill into the blob store either, and a
+// blob_ref row reads as an opaque hash (the blobs go through safeStorage and are
+// bound to this machine's keychain), dropping a step out of the recomputed
+// figures.
+const WF_AUDIT_ROWS = {
+  start: WorkflowArtifact.ROW_START,
+  binding: WorkflowArtifact.ROW_BINDING,
+  stepStart: 'step_start',
+  stepEnd: 'step_end',
+  summary: WorkflowArtifact.ROW_SUMMARY,
+};
+
+// Open the log for one run and write the two rows that open a session. Returns
+// the writer, or null when anything at all went wrong.
+//
+// Null is a run with no receipt and nothing else: the workflow still executes,
+// the history row is still written, and the publish sheet says there is no log
+// to attach.
+function wfOpenRunAudit(run, workflow, graph) {
+  try {
+    // A run id is `run-${Date.now()}`, already inside the character set audit.js
+    // confines a session directory to, so the log lands beside the autopilot
+    // sessions under one storage root with no id translation. The `run-` prefix
+    // is what tells the two apart on disk: autopilot mints `auto-<base36>-<hex>`,
+    // and the prune below only touches ours.
+    const opened = Autopilot.audit.createAuditLog(autopilotStorageRoot(), run.id, {});
+    if (!opened.ok) return null;
+    const fingerprint = WorkflowArtifact.graphHash(workflow.graph);
+    // No fingerprint, no log: a chain whose binding row cannot name the graph it
+    // ran is a chain no receipt may be built on.
+    if (!fingerprint.ok) return null;
+    const writer = opened.writer;
+    const started = writer.append({
+      kind: WF_AUDIT_ROWS.start,
+      payload: {
+        startedAt: run.startedAt,
+        steps: graph.nodes.length,
+        os: process.platform,
+        huskVersion: app.getVersion(),
+      },
+    });
+    if (!started.ok) return null;
+    const bound = writer.append({ kind: WF_AUDIT_ROWS.binding, payload: { graphHash: fingerprint.hash } });
+    if (!bound.ok) return null;
+    return { writer, sessionId: run.id, graphHash: fingerprint.hash };
+  } catch (_) {
+    return null;
+  }
+}
+
+// One row, appended to a run's log if it has one. Every call site is a place
+// something already happened, so a failure here is swallowed: a full disk must
+// not take down a run that is otherwise working, and a log that stops mid-run
+// fails the reader's terminal-row check.
+function wfAudit(run, kind, payload) {
+  if (!run || !run.audit) return;
+  try { run.audit.writer.append({ kind, payload }); } catch (_) {}
+}
+
+// A finished step, in the shape figuresFromChain reads back. `ms` and the
+// vendor's usage record are the two figures a receipt is built from, and
+// timedOut is what keeps a censored median from being quoted as a median.
+function wfAuditStepEnd(run, node, state) {
+  const st = state || {};
+  wfAudit(run, WF_AUDIT_ROWS.stepEnd, {
+    nodeId: node.id,
+    status: typeof st.status === 'string' ? st.status : 'failed',
+    ms: Number.isFinite(st.ms) ? st.ms : 0,
+    timedOut: st.timedOut === true,
+    usage: st.usage || null,
+  });
+}
+
 // Run one step to completion: build the prompt from its incoming context, spawn
 // the agent, stream its output, and resolve with the result. Pure per-step; the
 // scheduler owns ordering.
@@ -5607,6 +6797,16 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   };
 
   const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  // Steps run the agent found on PATH, by name only. A name carrying a path
+  // separator is refused here, and isAllowedAgentCommand then holds the basename
+  // to the agents Husk knows how to drive (workflow-graph.js:35-41).
+  if (/[\\/]/.test(cmd)) {
+    activity('error', `Step "${step.name}" names an agent by path ("${cmd}"). Steps run the agent found on your PATH, by name only.`);
+    stepState.status = 'failed';
+    stepState.ms = Date.now() - stepState.startedAt;
+    wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: step.id, status: 'failed' });
+    return { status: 'failed', output: '' };
+  }
   if (!isAllowedAgentCommand(cmd)) {
     activity('error', `Step "${step.name}" needs one of ${Array.from(wfLib.ALLOWED_AGENT_COMMANDS).join(', ')}; got "${cmd}".`);
     stepState.status = 'failed';
@@ -5637,21 +6837,25 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   }
 
   let args;
+  const modelFlag = step.model ? modelFlagFor(cmd) : null;
+  const modelArgs = (modelFlag && step.model) ? [modelFlag, String(step.model)] : [];
   if (cmd === 'claude') {
     args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
+    if (modelArgs.length) args = [...args, ...modelArgs];
   } else {
-    args = AgentOneShot.oneShotArgs(cmd, `${wfSystem}\n\n${prompt}`);
-  }
-  if (step.model) {
-    const flag = modelFlagFor(cmd);
-    if (flag) args = [...args, flag, String(step.model)];
+    args = AgentOneShot.oneShotArgs(cmd, `${wfSystem}\n\n${prompt}`, { untrusted: run.untrusted === true, modelArgs });
   }
 
   let resultText = '';
   let lineBuf = '';
   let sawAnyEvent = false;
-  const wfCwd = activePtyCwd || (config && config.treeRoot) || HOME;
-  const child = spawn(cmd, args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
+  // run.cwd is set only for a workflow that came from a file, where the
+  // directory was chosen at install, stored in the sidecar, and re-probed by the
+  // gate on this Run press. Everything authored here leaves run.cwd null and
+  // falls through the chain below instead.
+  const wfCwd = run.cwd || activePtyCwd || (config && config.treeRoot) || HOME;
+  // spawnName resolves the allowlisted name to the file it refers to.
+  const child = spawn(spawnName(cmd), args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
   run.children.add(child);
   activity('status', step.model ? `Starting ${cmd} (${step.model})...` : `Starting ${cmd}...`);
 
@@ -5666,6 +6870,12 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
       let ev;
       try { ev = JSON.parse(line); } catch (_) { activity('text', line); continue; }
       sawAnyEvent = true;
+      // The result event is the only place the vendor states what the step cost.
+      // Kept verbatim in the vendor's own spelling; workflow-receipt.js reads
+      // both the camelCase and snake_case tiers, so nothing here normalizes.
+      if (ev && ev.type === 'result' && ev.usage && typeof ev.usage === 'object') {
+        stepState.usage = ev.usage;
+      }
       handleStreamEvent(ev, activity, (txt) => { resultText = txt; });
     }
   });
@@ -5673,6 +6883,10 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
 
   const killTimer = setTimeout(() => {
     activity('error', 'Step timed out after 5 minutes, killing the agent.');
+    // Recorded before the kill, because the close handler cannot tell a step
+    // stopped by the timer from one that failed on its own, and a receipt has to
+    // count its censored runs before it quotes a median.
+    stepState.timedOut = true;
     try { child.kill('SIGKILL'); } catch (_) {}
   }, WF_STEP_TIMEOUT_MS);
 
@@ -5751,6 +6965,11 @@ async function executeWorkflow(event, workflow, run) {
   run.stepStates = {};
   graph.nodes.forEach((n) => { run.stepStates[n.id] = { status: 'pending', output: '' }; });
 
+  // Opened before the first step so the binding row is written before anything
+  // has run, and against the graph this scheduler is about to walk rather than
+  // whatever the store says later.
+  run.audit = wfOpenRunAudit(run, workflow, graph);
+
   let anyFailed = false;
   let resolveAll;
   const allSettled = new Promise((r) => { resolveAll = r; });
@@ -5780,6 +6999,10 @@ async function executeWorkflow(event, workflow, run) {
     if (nodeDone.has(n.id)) return;
     run.stepStates[n.id].status = 'skipped';
     nodeDone.add(n.id);
+    // A skipped step is logged with the rest, so the log describes the same
+    // workflow the run history row lists and a reader counting step rows counts
+    // the program whose fingerprint sits in row 1.
+    wfAuditStepEnd(run, n, run.stepStates[n.id]);
     wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: n.id, status: 'skipped' });
     // A skipped node takes none of its outgoing edges.
     graph.edges.filter((e) => e.from === n.id).forEach((e) => { if (edgeState.get(e.id) === 'pending') edgeState.set(e.id, 'skipped'); });
@@ -5790,6 +7013,16 @@ async function executeWorkflow(event, workflow, run) {
     if (run.status === 'running') run.status = anyFailed ? 'failed' : 'done';
     run.finishedAt = new Date().toISOString();
     run.currentNodeId = null;
+    // The terminal row, written before the history row it has to agree with. Its
+    // presence is what tells a reader the log reaches its end, which genesis
+    // anchoring alone cannot show since the anchor covers the head.
+    wfAudit(run, WF_AUDIT_ROWS.summary, {
+      status: run.status,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      ms: run.startedAt ? (new Date(run.finishedAt) - new Date(run.startedAt)) : 0,
+      steps: graph.nodes.length,
+    });
     recordWorkflowRun(run, workflow);
     wfEmit(event, 'wf:run:done', { runId: run.id, status: run.status });
     activeRuns.delete(run.id);
@@ -5831,7 +7064,17 @@ async function executeWorkflow(event, workflow, run) {
   const startNode = (n) => {
     running.add(n.id);
     const ctx = contextFor(n);
+    // The step rows are written here rather than inside wfRunStep, which has
+    // three exits. The scheduler has one place a step begins and two where one
+    // ends, and both already read the step's own state.
+    wfAudit(run, WF_AUDIT_ROWS.stepStart, {
+      nodeId: n.id,
+      name: n.name || '',
+      agent: AgentOneShot.agentBaseName(n.agentCommand || config.agentCommand || 'claude') || '',
+      model: n.model || null,
+    });
     wfRunStep(event, run, graph, byId, n, ctx).then(({ status, output }) => {
+      wfAuditStepEnd(run, n, run.stepStates[n.id]);
       try { wfSettleNode(n, status, output); } catch (err) {
         wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'error', text: `scheduler error: ${err && err.message}` });
         anyFailed = true;
@@ -5839,6 +7082,9 @@ async function executeWorkflow(event, workflow, run) {
       pump();
     }).catch((err) => {
       running.delete(n.id); nodeDone.add(n.id); anyFailed = true;
+      // A step that crashed still ended, and the log says so: a step_start with
+      // no step_end is a shape the reader refuses.
+      wfAuditStepEnd(run, n, Object.assign({}, run.stepStates[n.id], { status: 'failed' }));
       wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: n.id, kind: 'error', text: `step crashed: ${err && err.message}` });
       pump();
     });
@@ -5943,13 +7189,11 @@ function installedAgentDirs() {
   try { if (fs.existsSync(COPILOT_DIR)) out.push(COPILOT_AGENTS_DIR); } catch (_) {}
   return out;
 }
-// Mirror every user (non-builtin) agent profile into each installed CLI's
-// agents dir. The stored record is the source of truth for every tool, so the
-// file is rendered from the profile and written over whatever is there: an
-// edited name, description or system prompt reaches disk, and no single tool's
-// copy of a file can outrank the record. The blast radius matches delete: an
-// agent file authored outside Husk whose name slugs to the same basename is
-// replaced by the stored record.
+// Mirror every user (non-builtin) agent profile into each installed CLI's agents
+// dir. The stored record is the source of truth for every tool, so the file is
+// rendered from the profile and written over whatever is there, and an edited
+// name, description or system prompt reaches disk. The blast radius matches
+// delete: a file whose name slugs to the same basename is replaced by the record.
 function syncAgentFiles() {
   try {
     const dirs = installedAgentDirs();
@@ -5962,17 +7206,15 @@ function syncAgentFiles() {
       for (const dir of dirs) {
         const target = path.join(dir, fname);
         try {
-          // mkdir recursive is idempotent, so it avoids a check-then-act race
-          // on the directory.
+          // mkdir recursive is idempotent.
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir is a fixed CLI agents dir, fname is slugified
           fs.mkdirSync(dir, { recursive: true });
           let existing = null;
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
           try { existing = fs.readFileSync(target, 'utf8'); } catch (_) {}
           // A file Husk rendered is Husk's to update, so an edit reaches disk.
-          // Anything else belongs to the user or to the tool that installed it:
-          // only extend it, never trade a longer body for a shorter one. That
-          // is the shape a truncated record takes, and it is not recoverable.
+          // Anything else belongs to the user or to the tool that installed it,
+          // and is only ever extended, never traded for a shorter body.
           if (existing && !isHuskManaged(existing) && agentMdBody(existing).length > newBody.length) continue;
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to a CLI agents dir + slugified basename
           fs.writeFileSync(target, content, { mode: 0o600 });
@@ -6128,34 +7370,83 @@ function stripAgentExt(filename) {
   return filename.replace(/\.agent\.md$/, '').replace(/\.md$/, '');
 }
 
+// Two spellings of one repository are one repository: a trailing .git and a
+// trailing slash are punctuation, not identity. Anything else is a different
+// remote and a checkout that carries it is not the answer to this URL.
+function sameGitRemote(a, b) {
+  const norm = (s) => String(s || '').trim().replace(/\/+$/, '').replace(/\.git$/, '').replace(/\/+$/, '');
+  return norm(a) !== '' && norm(a) === norm(b);
+}
+
+// When a reused clone was last brought up to date. FETCH_HEAD is written by
+// every fetch and pull, so its mtime is the moment this checkout last agreed
+// with the remote. A clone that has never been pulled has none, and the
+// directory's own mtime is then the clone itself.
+function repoFetchedAt(dest) {
+  for (const rel of ['.git/FETCH_HEAD', '.git']) {
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- managed clone under userData
+      return fs.statSync(path.join(dest, rel)).mtime.toISOString();
+    } catch (_) { /* try the next one */ }
+  }
+  return null;
+}
+
 // Clone an https repo URL into a managed userData directory and return the
 // local path. The clone persists because installed agents keep repoRoot as
-// their working directory. An existing clone is refreshed with a best-effort
-// fast-forward pull instead of re-cloning. Validation and error wording live
-// in src/lib/repo-agents.js. GIT_TERMINAL_PROMPT=0 makes private repos fail
-// fast instead of hanging on a credential prompt.
+// their working directory. An existing clone is refreshed with a fast-forward
+// pull instead of re-cloning. Validation and error wording live in
+// src/lib/repo-agents.js. GIT_TERMINAL_PROMPT=0 makes private repos fail fast
+// instead of hanging on a credential prompt.
+//
+// Resolves { ok: true, root, stale, staleReason?, fetchedAt? }. `stale` labels a
+// copy returned after a pull that did not succeed, so the surface can say the
+// fingerprint was recomputed from a checkout of unknown age. The copy is still
+// returned, since an older checkout beats no checkout with no network.
 const RepoAgents = require('./lib/repo-agents');
-function cloneAgentRepo(url) {
+// Clones url into userData/<bucket>, reusing the checkout when it matches.
+function cloneRepo(url, bucket) {
   return new Promise((resolve) => {
     const v = RepoAgents.validateRepoUrl(url);
     if (!v.ok) return resolve(v);
-    const clonesRoot = path.join(app.getPath('userData'), 'agent-repos');
+    const clonesRoot = path.join(app.getPath('userData'), bucket || 'agent-repos');
     const dest = path.join(clonesRoot, v.dirName);
     const { execFile } = require('child_process');
     const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-    if (fs.existsSync(path.join(dest, '.git'))) {
-      execFile('git', ['-C', dest, 'pull', '--ff-only'], { timeout: 60000, env: gitEnv }, () => resolve({ ok: true, root: dest }));
-      return;
-    }
-    try { fs.mkdirSync(clonesRoot, { recursive: true }); } catch (err) {
-      return resolve({ ok: false, error: 'Husk cannot write to its data folder (permission denied).' });
-    }
-    execFile('git', ['clone', '--depth', '1', v.url, dest], { timeout: 120000, env: gitEnv }, (err) => {
-      if (err) {
-        try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
-        return resolve({ ok: false, error: RepoAgents.friendlyCloneError(err) });
+
+    const cloneFresh = () => {
+      try { fs.mkdirSync(clonesRoot, { recursive: true }); } catch (err) {
+        return resolve({ ok: false, error: 'Husk cannot write to its data folder (permission denied).' });
       }
-      resolve({ ok: true, root: dest });
+      execFile('git', ['clone', '--depth', '1', v.url, dest], { timeout: 120000, env: gitEnv }, (err) => {
+        if (err) {
+          try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
+          return resolve({ ok: false, error: RepoAgents.friendlyCloneError(err) });
+        }
+        resolve({ ok: true, root: dest, stale: false });
+      });
+    };
+
+    if (!fs.existsSync(path.join(dest, '.git'))) return cloneFresh();
+
+    // Reuse is conditional on the checkout being the repository that was asked
+    // for: the folder name carries a digest of the URL, and the remote is
+    // checked before the clone is read.
+    execFile('git', ['-C', dest, 'remote', 'get-url', 'origin'], { timeout: 15000, env: gitEnv }, (rErr, stdout) => {
+      if (rErr || !sameGitRemote(stdout, v.url)) {
+        try { fs.rmSync(dest, { recursive: true, force: true }); } catch (_) {}
+        return cloneFresh();
+      }
+      execFile('git', ['-C', dest, 'pull', '--ff-only'], { timeout: 60000, env: gitEnv }, (pErr) => {
+        if (!pErr) return resolve({ ok: true, root: dest, stale: false });
+        resolve({
+          ok: true,
+          root: dest,
+          stale: true,
+          staleReason: RepoAgents.friendlyCloneError(pErr),
+          fetchedAt: repoFetchedAt(dest),
+        });
+      });
     });
   });
 }
@@ -6171,7 +7462,7 @@ ipcMain.handle('repoAgents:pickDir', async () => {
 ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
   let root = String((payload && payload.root) || '').trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(root)) {
-    const cloned = await cloneAgentRepo(root);
+    const cloned = await cloneRepo(root, 'agent-repos');
     if (!cloned.ok) return cloned;
     root = cloned.root;
   } else {
@@ -6208,7 +7499,8 @@ ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
               name,
               description: (parsed.description || '').slice(0, AGENT_DESC_MAX),
               bodyLength: (parsed.body || '').length,
-              alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', entry.name)),
+              // Keyed on the file syncAgentFiles will write.
+              alreadyInClaude: fs.existsSync(path.join(CLAUDE_DIR, 'agents', agentFileName(name))),
               alreadyImported: existingProfileNames.has(name.toLowerCase()),
             });
           } catch (_) {}
@@ -6248,6 +7540,7 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
   const list = getProfiles().slice();
   const importedIds = [];
   const copiedToClaude = [];
+  const skippedExisting = [];
   for (const pick of picks) {
     // filename may be nested relative to the agents dir (core/reviewer.md);
     // resolve it, including any symlinks, and require the real file to live
@@ -6264,7 +7557,13 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
       const name = (parsed.name || stripAgentExt(basename)).slice(0, 64);
       if (installToAllAgents) {
         const dest = path.join(claudeAgentsDir, basename);
-        try { fs.copyFileSync(src, dest); copiedToClaude.push(dest); } catch (_) {}
+        // Never replaces an agent the user already has; collisions are reported.
+        try {
+          fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+          copiedToClaude.push(dest);
+        } catch (err) {
+          if (err && err.code === 'EEXIST') skippedExisting.push(basename);
+        }
       }
       const id = `profile-imp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       list.push({
@@ -6304,6 +7603,9 @@ ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
     imported: importedIds.length,
     importedIds,
     copiedToClaude,
+    // Names the repository shares with agents the user already had. Those files
+    // were left alone, and the list says which.
+    skippedExisting,
     distributedTo,
   };
 });
@@ -6340,10 +7642,17 @@ ipcMain.handle('repoMcp:pickDir', async () => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
-ipcMain.handle('repoMcp:scan', (_e, payload = {}) => {
-  const root = String((payload && payload.root) || '').trim();
-  if (!root || !path.isAbsolute(root)) {
-    return { ok: false, error: 'absolute path required' };
+// Scans a repository for mcp-servers/, cloning it first when given a URL.
+ipcMain.handle('repoMcp:scan', async (_e, payload = {}) => {
+  let root = String((payload && payload.root) || '').trim();
+  if (!root) return { ok: false, error: 'a repository URL or a folder path is required' };
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(root)) {
+    const cloned = await cloneRepo(root, 'mcp-repos');
+    if (!cloned.ok) return cloned;
+    root = cloned.root;
+  } else if (!path.isAbsolute(root)) {
+    return { ok: false, error: 'a repository URL or an absolute folder path is required' };
   }
   return RepoMcp.scanRepoForMcpServers(root);
 });
@@ -6366,16 +7675,15 @@ ipcMain.handle('repoMcp:build', async (_e, payload = {}) => {
 
   const cap = Date.now() + 5 * 60 * 1000;
   const runOnce = (script) => new Promise((resolve) => {
-    // --ignore-scripts blocks preinstall/install/postinstall lifecycle hooks,
-    // which would otherwise run arbitrary code from a repo the user merely
-    // pointed at. MCP servers that genuinely need a native build run their
-    // build via the explicit `build` script below, not install hooks.
+    // --ignore-scripts holds the install to fetching packages. MCP servers that
+    // need a native build run it through the explicit `build` script below.
     const args = script === 'install'
       ? ['install', '--ignore-scripts', '--no-audit', '--no-fund']
       : ['run', script];
     let proc;
     try {
-      proc = spawn('npm', args, { cwd: dir, env: process.env, windowsHide: true });
+      // The command is resolved from PATH rather than left as a bare name.
+      proc = spawn(spawnName('npm'), args, { cwd: dir, env: process.env, windowsHide: true });
     } catch (err) {
       resolve({ ok: false, error: err.message, stdoutTail: '', stderrTail: '' });
       return;
@@ -6413,11 +7721,12 @@ ipcMain.handle('repoMcp:build', async (_e, payload = {}) => {
 //   copilot  → adapter.add() writes ~/.copilot/mcp-config.json
 //   codex    → snippet only (TOML), no write yet
 //   aider    → snippet only (CLI --mcp flag), no write yet
+//   kiro-cli → snippet only (kiro-cli mcp add), no write yet
 //
 // Per-target results are independent. A failure in one does not block
 // the others. The renderer paints a per-target status pill from the
 // returned `results` map.
-const SNIPPET_TARGETS = new Set(['codex', 'aider']);
+const SNIPPET_TARGETS = new Set(['codex', 'aider', 'kiro-cli']);
 const WRITE_TARGETS = new Set(['claude', 'copilot', 'gemini']);
 const KNOWN_TARGETS = new Set([...SNIPPET_TARGETS, ...WRITE_TARGETS]);
 
@@ -6445,13 +7754,12 @@ ipcMain.handle('repoMcp:install', (_e, payload = {}) => {
     if (SNIPPET_TARGETS.has(target)) {
       const snippet = target === 'codex'
         ? RepoMcp.renderCodexSnippet(serverId, spec)
-        : RepoMcp.renderAiderSnippet(serverId, spec);
+        : (target === 'kiro-cli' ? RepoMcp.renderKiroSnippet(serverId, spec) : RepoMcp.renderAiderSnippet(serverId, spec));
       results[target] = { status: 'snippet', snippet };
       continue;
     }
     // Real write path: hand off to the per-CLI adapter. add() refuses
-    // duplicates by design; we surface that as a benign "already
-    // installed" status instead of swallowing it.
+    // duplicates, which is surfaced as an "already installed" status.
     const adapter = McpAdapters.ADAPTERS[target];
     if (!adapter || !adapter.supportsWrite) {
       results[target] = { status: 'error', error: 'adapter does not support writes' };
@@ -6669,9 +7977,9 @@ function lastSessionMsForCwd(cwd) {
 
 // Derived, per-project signal for the Projects board: what is going on in each
 // folder right now. Computed on demand (page open, window focus), returned in
-// one round trip, and NEVER persisted; the stored project record stays the
-// small thing the user created. The renderer paints the list first and
-// enriches when this lands, so a slow git call cannot hold the page hostage.
+// one round trip, and never persisted, so the stored project record stays the
+// small thing the user created. The renderer paints the list first and enriches
+// when this lands.
 ipcMain.handle('projects:state', () => {
   const projects = _projectsList();
   const retainedRuns = Object.values(readRetained());
@@ -6692,18 +8000,17 @@ ipcMain.handle('projects:state', () => {
     // each one is an open loop for the workspace it came from.
     st.retainedCount = retainedRuns.filter((r) => r && r.workspaceRoot === p.path).length;
     st.lastSessionMs = lastSessionMsForCwd(p.path);
-    // .git can be a directory or, for worktrees and submodules, a file.
-    try { st.isGit = fs.existsSync(path.join(p.path, '.git')); } catch (_) {}
-    if (st.isGit) {
-      try {
-        const txt = execFileSync('git', ['-C', p.path, 'status', '--porcelain=v1', '--branch'], {
-          encoding: 'utf8', stdio: 'pipe', timeout: 4000, maxBuffer: 4 * 1024 * 1024,
-        });
-        Object.assign(st, parseGitStatus(txt));
-      } catch (_) {
-        // A repo mid-rebase, or a machine without git, degrades to the
-        // plain-folder display rather than an error.
-      }
+    // git decides; the .git entry is the fallback when git cannot be reached.
+    let hasGitEntry = false;
+    try { hasGitEntry = fs.existsSync(path.join(p.path, '.git')); } catch (_) {}
+    try {
+      const txt = execFileSync('git', ['-C', p.path, 'status', '--porcelain=v1', '--branch'], {
+        encoding: 'utf8', stdio: 'pipe', timeout: 4000, maxBuffer: 4 * 1024 * 1024,
+      });
+      st.isGit = true;
+      Object.assign(st, parseGitStatus(txt));
+    } catch (_) {
+      st.isGit = hasGitEntry;
     }
   }
   return { ok: true, states, groups: groupBoard(projects, states, Date.now()) };
@@ -6752,8 +8059,8 @@ ipcMain.handle('projects:markViewed', (_e, id) => {
 });
 
 // Delete a Husk prompt. Confines the unlink to HUSK_PROMPTS_DIR by resolving
-// both the supplied path and the prompts directory, then verifying that the
-// resolved file lives directly under it. Symlink/traversal-proof.
+// both the supplied path and the prompts directory, then requiring the resolved
+// file to live directly under it.
 ipcMain.handle('prompts:delete', (_e, mdPath) => {
   if (!mdPath || typeof mdPath !== 'string') return { ok: false, error: 'Missing path' };
   try {
@@ -6780,9 +8087,7 @@ function renderPromptMd(name, description, content) {
   return `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
 }
 
-// Resolve a caller-supplied prompt path against the prompts directory. The
-// renderer hands these back from a listing, so the check is against a crafted
-// path rather than against ordinary use.
+// Resolve a caller-supplied prompt path against the prompts directory.
 function resolvePromptPath(mdPath) {
   if (!mdPath || typeof mdPath !== 'string') return { error: 'Missing path' };
   const root = path.resolve(HUSK_PROMPTS_DIR);
@@ -6813,11 +8118,9 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the prompts dir above
       fs.writeFileSync(target, body, { mode: 0o644 });
     } else {
-      // A rename has to claim the new name without overwriting a prompt that
-      // already holds it. Asking whether the name is free and then writing
-      // leaves a gap another window can write into, so the name is claimed by
-      // the create itself: 'wx' fails when the file exists. The enabled and
-      // disabled forms are both claimed, since they are the same prompt.
+      // A rename claims the new name through the create itself: 'wx' fails when
+      // the file exists. The enabled and disabled forms are both claimed, since
+      // they are the same prompt.
       const twin = nextPath.endsWith('.disabled')
         ? nextPath.slice(0, -'.disabled'.length)
         : `${nextPath}.disabled`;
@@ -6829,9 +8132,8 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
         if (err && err.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
         throw err;
       }
-      // The other form of the same name is claimed the same way rather than
-      // asked about, then given straight back: a create that succeeds is proof
-      // the name was free, where a question is only proof it was free once.
+      // The other form of the same name is claimed the same way, then given
+      // straight back.
       let twinFd;
       try {
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths are inside the prompts dir
@@ -6853,16 +8155,14 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
     return { ok: true, id: path.basename(nextPath), path: nextPath, mdPath: nextPath };
   } catch (err) {
     // A prompt that is not there is reported by the operation that reached for
-    // it rather than by a question asked beforehand.
+    // it.
     if (err && err.code === 'ENOENT') return { ok: false, error: 'Prompt file not found' };
     return { ok: false, error: err.message };
   }
 });
 
 // Create a new Husk prompt. Always writes to HUSK_PROMPTS_DIR regardless of
-// agentKind (the existing skills:create handler routes by agent and would
-// instead create a claude skill for claude users; we want prompts to be
-// distinct).
+// agentKind, unlike skills:create, which routes by agent.
 ipcMain.handle('prompts:create', (_e, payload = {}) => {
   const { name, description, content } = payload;
   if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
@@ -6907,8 +8207,7 @@ ipcMain.handle('skills:list', () => {
 });
 
 ipcMain.handle('skills:read', (_e, mdPath) => {
-  // Confine reads to the two roots skills/prompts actually live under, so a
-  // crafted mdPath cannot exfiltrate arbitrary files via the renderer bridge.
+  // Confined to the skills and prompts roots.
   if (typeof mdPath !== 'string' || !mdPath) return { ok: false, error: 'Missing path' };
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   if (!isInside(skillsDir, mdPath) && !isInside(HUSK_PROMPTS_DIR, mdPath)) {
@@ -6925,8 +8224,7 @@ ipcMain.handle('skills:create', (_e, { name, description, content }) => {
   if (!description || !description.trim()) {
     return { ok: false, error: 'Description is required.' };
   }
-  // Escape backslashes before quotes so YAML double-quoted strings parse
-  // backslash-quote pairs correctly.
+  // Escape backslashes before quotes so YAML double-quoted strings parse.
   const safeDesc = description.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const body = (content || '').trim() || `# ${name}\n\n${description.trim()}\n\n## When to use\n\nDescribe trigger conditions.\n\n## How to use\n\nDescribe steps.\n`;
   const md = `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
@@ -6946,8 +8244,7 @@ ipcMain.handle('skills:create', (_e, { name, description, content }) => {
     if (fs.existsSync(mdPath + '.disabled')) {
       return { ok: false, error: `A prompt named "${name}" already exists.` };
     }
-    // Atomic create-if-not-exists via O_EXCL avoids a TOCTOU race between an
-    // existsSync probe and the writeFileSync. Throws EEXIST if the path is
+    // Atomic create-if-not-exists via O_EXCL. Throws EEXIST when the path is
     // already there.
     try {
       fs.writeFileSync(mdPath, md, { flag: 'wx', mode: 0o644 });
@@ -7035,9 +8332,8 @@ function activePluginContext() {
   return null;
 }
 
-// Resolve a validated installed plugin's install path, confined to the
-// plugins root. Returns null when unknown or outside the root (a
-// tampered registry must not turn the editor into an arbitrary-fs API).
+// Resolve a validated installed plugin's install path, confined to the plugins
+// root. Returns null when unknown or outside the root.
 function pluginInstallPath(id) {
   if (!Plugins.isSafePluginId(id)) return null;
   const ctx = activePluginContext();
@@ -7076,10 +8372,9 @@ ipcMain.handle('plugins:run', (_e, payload = {}) => {
   const ctx = activePluginContext();
   if (!ctx) return { ok: false, error: 'the active agent has no plugin system' };
   const verb = String(payload.action || '');
-  // buildPluginCliArgs owns the verb allowlist AND the id validation
-  // (isSafePluginId): null means one of them failed. The id rides as a
-  // single argv element with no shell, so neither flags nor
-  // metacharacters can ride along.
+  // buildPluginCliArgs owns the verb allowlist and the id validation
+  // (isSafePluginId); null means one of them failed. The id rides as a single
+  // argv element with no shell.
   const argv = Plugins.buildPluginCliArgs(ctx.agent, verb, String(payload.id || ''));
   if (!argv) return { ok: false, error: 'invalid plugin action or identifier' };
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
@@ -7123,9 +8418,8 @@ ipcMain.handle('plugins:readFile', (_e, payload = {}) => {
   let abs;
   try { abs = resolveInside(installPath, String(payload.relPath || '')); }
   catch (_) { return { ok: false, error: 'invalid file path' }; }
-  // Open with O_NOFOLLOW so a symlink (a marketplace plugin could ship one
-  // pointing outside its own dir) is refused, and stat + read through the one
-  // descriptor so the regular-file check and the read see the same inode.
+  // Confine to the plugin dir, then read through one descriptor.
+  if (!realPathInside(abs, installPath)) return { ok: false, error: 'file not found' };
   let fd;
   try { fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)); }
   catch (_) { return { ok: false, error: 'file not found' }; }
@@ -7150,9 +8444,7 @@ ipcMain.handle('plugins:writeFile', (_e, payload = {}) => {
   try { abs = resolveInside(installPath, String(payload.relPath || '')); }
   catch (_) { return { ok: false, error: 'invalid file path' }; }
   if (!Plugins.isEditableName(abs)) return { ok: false, error: 'file type is not editable' };
-  // Open the existing file with O_NOFOLLOW (no create, no symlink follow) and
-  // write through that descriptor, so the regular-file guarantee and the write
-  // target are the same inode even if the path is swapped after validation.
+  if (!realPathInside(abs, installPath)) return { ok: false, error: 'file not found' };
   let fd;
   try { fd = fs.openSync(abs, fs.constants.O_WRONLY | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0)); }
   catch (_) { return { ok: false, error: 'file not found' }; }
@@ -7209,11 +8501,11 @@ ipcMain.handle('prds:list', () => {
   } catch (err) { return { ok: false, error: err.message, prds: [] }; }
 });
 
-// Decode an encoded project dir name back to a real on-disk path.
-// Claude's encoding: cwd's path with '/' → '-'. Problem: directory names that contain
-// literal dashes in directory names become indistinguishable from path separators.
-// Strategy: try all-slash interpretation first; if it doesn't exist, BFS over "merge
-// adjacent segments with a dash" combinations and return the first that exists.
+// Decode an encoded project dir name back to a real on-disk path. The CLI's
+// encoding turns '/' into '-', so a directory name containing a literal dash
+// reads the same as a separator. Try the all-slash interpretation first, then BFS
+// over "merge adjacent segments with a dash" combinations and return the first
+// that exists.
 const projectPathCache = new Map();
 function decodeProjectPath(encoded) {
   if (!encoded) return '';
@@ -7252,13 +8544,11 @@ function readHead(filePath, bytes) {
   return buf.toString('utf8', 0, n);
 }
 
-// Whether a transcript holds any human-typed turn. Used to tell a real chat
+// Whether a transcript holds any human-typed turn, used to tell a real chat
 // (keep) from a purely SDK-driven background transcript (hide) when the 32KB
 // head was inconclusive. A real chat's first human turn can sit past the head
-// when an SDK context turn was prepended (PAI hooks inject one), so the whole
-// file is scanned before anything is hidden. Bounded: past the cap a file is
-// too big to verify cheaply and is kept, never hidden -- false-show is safe,
-// false-hide loses a real conversation.
+// when an SDK context turn was prepended, so the whole file is scanned. Past the
+// cap a file is kept rather than hidden.
 const HUMAN_SCAN_CAP = 4 * 1024 * 1024;
 function transcriptHasHumanTurn(fullPath, fileSize) {
   if (fileSize > HUMAN_SCAN_CAP) return true;
@@ -7269,16 +8559,14 @@ function transcriptHasHumanTurn(fullPath, fileSize) {
 
 // Agents append a title entry to the transcript once the conversation earns a
 // name, and further entries as they refine it. Both land wherever the
-// conversation had reached, which in a long session is hundreds of kilobytes past
-// the head, so a title cannot be found by reading the head alone.
+// conversation had reached, which in a long session is far past the head.
 //
-// Scan forward from wherever the last read stopped and keep the newest title.
-// A poll then costs the bytes appended since the previous poll rather than the
-// size of the whole transcript, which matters because this runs every few
-// seconds for each open tab and transcripts reach tens of megabytes.
+// Scan forward from wherever the last read stopped and keep the newest title, so
+// a poll costs the bytes appended since the previous poll rather than the size of
+// the whole transcript.
 //
-// The shape of the entry differs per CLI, so a dialect supplies a cheap substring
-// to prefilter lines on and an extractor to pull the title out of a parsed one.
+// The shape of the entry differs per CLI, so a dialect supplies a cheap
+// substring to prefilter lines on and an extractor to pull the title out.
 const TITLE_DIALECTS = Object.freeze({
   // claude: {"type":"ai-title","aiTitle":"..."}
   claude: {
@@ -7302,9 +8590,8 @@ function latestTranscriptTitle(fullPath, dialectName) {
   const key = `${dialectName}:${fullPath}`;
   const prev = titleScanCache.get(key);
 
-  // Open once and measure the descriptor. Sizing the read from a stat of the
-  // path and then opening the path again reads whatever the name points at by
-  // then, which need not be the file that was measured.
+  // Open once and measure the descriptor, so the size and the bytes describe the
+  // same file.
   let fd;
   try { fd = fs.openSync(fullPath, 'r'); } catch (_) { return ''; }
 
@@ -7511,9 +8798,7 @@ function parseSessionHead(fullPath) {
   // An interactive session opens with the terminal preamble the CLI writes when
   // a person is driving it. One-shot helper runs (title generation, hooks that
   // summarise a conversation) land in the same project directory with the same
-  // cwd and a fresh timestamp, but never emit that preamble. Without this the
-  // two are indistinguishable, and a helper transcript can be mistaken for a
-  // chat the user just started.
+  // cwd and a fresh timestamp, but never emit that preamble.
   let interactive = false;
   try {
     const text = readHead(fullPath, 32768);
@@ -7533,8 +8818,8 @@ function parseSessionHead(fullPath) {
           if (tp) text = tp.text.trim();
         }
         // Skip slash-command and system wrappers (e.g. "<local-command-...>",
-        // "<command-name>", a caveat banner, a system-reminder). They are not a
-        // human message and read as garbage titles; keep scanning for a real one.
+        // "<command-name>", a caveat banner, a system-reminder), which are not
+        // human messages, and keep scanning for a real one.
         if (text && !isCommandWrapperText(text)) userMessage = text;
       }
       if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') queueContent = obj.content.trim();
@@ -7561,9 +8846,8 @@ function activeAgentName() {
 
 // Parse a copilot session's workspace.yaml (a flat key: value file) into an
 // object. Returns null if it cannot be read.
-// Copilot session state is polled from several places (title sync, Recent
-// list, stats). With hundreds of session dirs a naive pass rereads tens of MB
-// per tick, so both readers below are cached on file identity (size + mtime):
+// Copilot session state is polled from several places (title sync, Recent list,
+// stats), so both readers below are cached on file identity (size + mtime):
 // unchanged files parse once, and a poll cycle degrades to stat() calls.
 const copilotWorkspaceCache = new Map(); // dir -> { sig, ws }
 const copilotTitleCache = new Map(); // dir -> { sig, value }
@@ -7571,8 +8855,7 @@ const COPILOT_CACHE_MAX = 4000;
 
 function readCopilotWorkspace(dir) {
   const yamlPath = path.join(dir, 'workspace.yaml');
-  // The cache signature and the contents both come from one descriptor, so the
-  // entry can never describe a different file than the one that was read.
+  // The cache signature and the contents both come from one descriptor.
   let fd;
   try { fd = fs.openSync(yamlPath, 'r'); } catch (_) { return null; }
   try {
@@ -7676,11 +8959,10 @@ function listCopilotSessions(opts = {}) {
     catch (_) { if (!mtime) { try { mtime = fs.statSync(full).mtimeMs; } catch (_e) {} } }
     const startedMs = Date.parse(ws.created_at) || mtime;
     const name = (ws.name && ws.name !== 'null') ? ws.name.slice(0, 120) : '';
-    // The CLI creates a session directory the moment it launches and only writes
-    // events.jsonl once the conversation starts, so a chat opened and closed
-    // without a turn leaves a directory that holds nothing, can never earn a
-    // name, and cannot be resumed. That is not history: it is listed only for
-    // callers that bind a live tab to its session, which need every candidate.
+    // The CLI creates a session directory at launch and writes events.jsonl only
+    // once the conversation starts, so a chat opened and closed without a turn
+    // leaves a directory that holds nothing and cannot be resumed. It is listed
+    // only for callers that bind a live tab to its session.
     const hasContent = sizeBytes > 0 || !!name;
     if (!hasContent && opts.includeEmpty !== true) continue;
     const title = name || eventTitle.title || 'New Copilot chat';
@@ -7697,8 +8979,8 @@ function listCopilotSessions(opts = {}) {
       named: !!(name || eventTitle.generatedTitle),
       firstMessage,
       prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
-      // Tab discovery prefers a session that carries content: a tab bound to an
-      // empty one shows the pending dots forever.
+      // Tab discovery prefers a session that carries content, since an empty one
+      // can never earn a name.
       hasContent,
       startedISO: ws.created_at || new Date(mtime || 0).toISOString(),
       startedMs,
@@ -7784,11 +9066,8 @@ ipcMain.handle('sessions:list', () => {
     }
   } catch (_) {}
 
-  // A PRD is created moments after the session that runs it starts, so
-  // match only near the session START. Matching anywhere in the session
-  // lifetime stamped one PRD's task onto every long-lived session whose
-  // window happened to span it (including sessions of other projects),
-  // making unrelated rows look like duplicates of one conversation.
+  // A PRD is created moments after the session that runs it starts, so match
+  // only near the session start rather than anywhere in its lifetime.
   const PRD_MATCH_WINDOW_MS = 5 * 60_000;
   function matchPrd(sessionStartMs) {
     let best = null; let bestDiff = Infinity;
@@ -7836,10 +9115,10 @@ ipcMain.handle('sessions:list', () => {
       let sawAssistant = false;
       let headComplete = false;
       // How this session's turns were authored. A human-typed chat carries
-      // promptSource "typed" / origin.kind "human" on at least one turn; a
+      // promptSource "typed" / origin.kind "human" on at least one turn, and a
       // purely SDK-driven background transcript carries only "sdk". Accumulated
-      // across every turn in the head, not just the first: an SDK context turn
-      // can be prepended to a real chat, so one human turn anywhere keeps it.
+      // across every turn in the head, since an SDK context turn can be
+      // prepended to a real chat.
       let sawHumanTurn = false;
       let sawSdkTurn = false;
       let sawPromptSource = false;
@@ -7872,33 +9151,28 @@ ipcMain.handle('sessions:list', () => {
           if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') {
             queueContent = obj.content.trim();
           }
-          // Only short-circuit when the head is partial (a big file): we
-          // already have the title fields and need not read the rest. For a
-          // small file that fits entirely in the window, keep scanning so
-          // sawAssistant is decided over the whole file (the receipt-skip
-          // below depends on it).
+          // Short-circuit only when the head is partial (a big file), where the
+          // title fields are already in hand. For a small file that fits
+          // entirely in the window, keep scanning so sawAssistant is decided
+          // over the whole file, which the receipt-skip below reads.
           if (!headComplete && aiTitle && startedISO && userMessage && originalCwd) break;
         }
       } catch (_) {}
-      // Husk drives claude over the SDK; every enqueued prompt also writes a
-      // tiny queue-operation receipt file with no assistant turn. Those are
-      // shadows of prompts that actually ran in the real session file, so
-      // listing them produces a duplicate row per prompt. A file whose whole
-      // head fits in the read window AND carries no assistant turn is such a
-      // receipt: skip it. Real conversations always have assistant output.
+      // Husk drives claude over the SDK, and every enqueued prompt also writes a
+      // tiny queue-operation receipt file with no assistant turn, shadowing a
+      // prompt that ran in the real session file. A file whose whole head fits
+      // in the read window and carries no assistant turn is such a receipt: skip
+      // it, since real conversations always have assistant output.
       if (headComplete && !sawAssistant) continue;
 
       // The Sessions list is for chats the user actually held. Husk also spawns
-      // claude over the SDK for its own background work -- PAI hooks that shell
-      // out to `claude --print` for sentiment/context scoring, and the autopilot
-      // and workflow orchestrators -- and every one of those leaves a transcript
-      // in this same projects dir, each auto-titled differently, so one real
-      // conversation sits among a crowd of look-alike SDK runs on disk.
-      // A transcript with SDK turns and no human turn anywhere is such a
-      // background run: skip it. If the head was inconclusive on a larger file,
-      // scan the whole file first -- a real chat can open with a prepended SDK
-      // context turn. Files that predate promptSource carry no signal and are
-      // kept, so real history is never hidden.
+      // claude over the SDK for background work (framework hooks that shell out
+      // to `claude --print`, the autopilot and workflow orchestrators), and each
+      // leaves a transcript in this same projects dir. A transcript with SDK
+      // turns and no human turn anywhere is such a run: skip it. When the head
+      // was inconclusive on a larger file, scan the whole file first, since a
+      // real chat can open with a prepended SDK context turn. Files that predate
+      // promptSource carry no signal and are kept.
       let background = sawSdkTurn && !sawHumanTurn && sawPromptSource;
       if (background && !headComplete) background = !transcriptHasHumanTurn(fullPath, st.size);
       if (background) continue;
@@ -7940,10 +9214,10 @@ ipcMain.handle('sessions:list', () => {
     }
   }
 
-  // Deduplicate Claude's shadow/sidecar JSONL files. For a single conversation
-  // Claude can persist multiple files (queue snapshots, resume shadows) that share
-  // the same first user prompt and ai-title. Group by (project, title, firstMessage)
-  // and keep only the largest file, the canonical session always grows past its shadows.
+  // Deduplicate Claude's shadow/sidecar JSONL files: one conversation can persist
+  // several (queue snapshots, resume shadows) sharing the same first user prompt
+  // and ai-title. Group by (project, title, firstMessage) and keep the largest,
+  // since the canonical session grows past its shadows.
   const dedup = new Map();
   for (const s of out) {
     const key = `${s.project}${(s.title || '').toLowerCase()}${(s.firstMessage || '').slice(0, 200).toLowerCase()}`;
@@ -7985,9 +9259,8 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
     const known = String((payload && payload.knownAgentId) || '');
     if (known) {
       // Known id: read exactly that session's dir instead of scanning every
-      // session under session-state (this path polls every few seconds per
-      // open tab). The id came from our own discovery, but validate it anyway
-      // so the path join can never escape the session-state root.
+      // session under session-state, since this path polls every few seconds per
+      // open tab. The id is validated before it is joined onto a path.
       const custom = customFor(known);
       let hit = null;
       if (/^[A-Za-z0-9][A-Za-z0-9-]{5,80}$/.test(known)) {
@@ -8027,17 +9300,15 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
     const exclude = new Set(Array.isArray(payload && payload.excludeAgentIds) ? payload.excludeAgentIds : []);
 
     // Candidates are the sessions in this tab's cwd that this tab could have
-    // started. Two rules pick between them, and both matter:
+    // started. Two rules pick between them.
     //
     // The tab launches the CLI, so its session cannot predate it. Sessions that
-    // started before the tab belong to an earlier chat, and are only considered
-    // when nothing started after it (the window keeps a little slack for clock
-    // skew, but a session from a chat a minute ago must not win).
+    // started before the tab belong to an earlier chat and are only considered
+    // when nothing started after it, with a little slack for clock skew.
     //
     // Prefer a session that carries content. The CLI can create several session
-    // directories for one chat and only write the conversation into the last, so
-    // the empty ones left behind can never earn a name: a tab bound to one shows
-    // the pending dots for good.
+    // directories for one chat and write the conversation into only the last, so
+    // the empty ones left behind can never earn a name.
     const candidates = [];
     for (const x of list) {
       if (exclude.has(x.id)) continue;
@@ -8156,9 +9427,8 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
       const info = parseSessionHead(full);
       if (!info) continue;
       // Only a real chat can back a tab. Helper runs share this directory, this
-      // cwd and this minute, and they carry a title describing whatever chat
-      // they were summarising, so binding to one renames the tab after a
-      // different conversation.
+      // cwd and this minute, and carry a title describing a different
+      // conversation.
       if (!info.interactive) continue;
       if (info.originalCwd && info.originalCwd !== s.cwd) continue;
       const startedMs = info.startedISO ? Date.parse(info.startedISO) : st.mtimeMs;
@@ -8185,11 +9455,47 @@ ipcMain.handle('sessions:resolveLiveTitle', (_e, payload = {}) => {
 // claude and copilot resume by id, so the string is fixed. gemini resumes by
 // position in its own list, so the index has to be resolved against the sessions
 // on disk right now rather than baked into a stale render.
-ipcMain.handle('sessions:resumeCommand', (_e, payload = {}) => {
+//
+// A session a background agent is still holding is the one case where the
+// resume form is not the answer. The CLI owns that transcript for as long as
+// the agent lives and refuses a second reader, so the command that opens it is
+// an attach, and the command that opens a copy of it forks. Both are named
+// here, where the state is, rather than guessed by a surface after the refusal
+// has already been printed into a terminal.
+ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
   const agent = String(payload.agent || activeAgentName()).trim().toLowerCase();
   const id = String(payload.id || '');
   if (!id) return { ok: false, error: 'no session id' };
-  if (agent === 'claude') return { ok: true, command: `claude --resume ${id}` };
+  if (agent === 'claude') {
+    const holder = await sessionHolder(id);
+    const fork = `claude --resume ${id} --fork-session`;
+    if (holder && holder.kind === 'background') {
+      return {
+        ok: true,
+        mode: 'attach',
+        command: `claude attach ${holder.id}`,
+        forkCommand: fork,
+        agentId: holder.id,
+        agentName: holder.name,
+        agentState: holder.state,
+        cwd: holder.cwd,
+      };
+    }
+    // A chat open in another window. There is no id to attach to, so the copy
+    // is the only way in, and it is named as a copy rather than offered as a
+    // resume that would be refused.
+    if (holder) {
+      return {
+        ok: true,
+        mode: 'fork',
+        command: fork,
+        forkCommand: fork,
+        agentName: holder.name,
+        cwd: holder.cwd,
+      };
+    }
+    return { ok: true, mode: 'resume', command: `claude --resume ${id}` };
+  }
   if (agent === 'copilot') {
     const hit = findCopilotSessionForResume(id, String(payload.cwd || ''));
     if (!hit) return { ok: false, error: 'that copilot session is no longer listed' };
@@ -8206,17 +9512,16 @@ ipcMain.handle('sessions:resumeCommand', (_e, payload = {}) => {
 
 // ─── Background agents ───────────────────────────────────────────────────────
 // A chat can start agents that keep working on their own. They are separate
-// top-level sessions, not turns inside the chat, which is why they surface as
-// peers in a naive session listing and why resuming one the ordinary way fails:
-// the CLI refuses while the agent is still running and points at its own picker.
+// top-level sessions rather than turns inside the chat, so they surface as peers
+// in a naive session listing, and the CLI points at its own picker rather than
+// resuming one while it is still running.
 
 // The parent a background agent was forked from. Two records carry it and
-// neither is sufficient alone. The transcript's snake_case `session_id` is the
-// id of the process that wrote the line, so on a forked file it keeps naming
-// the parent while `sessionId` names the child; it is exact, but only once the
-// agent has written a turn. The daemon roster is exact from the moment of
-// spawn, and is dropped the moment the worker exits. Together they cover the
-// whole lifetime.
+// neither is sufficient alone: the transcript's snake_case `session_id` names
+// the process that wrote the line, so on a forked file it keeps naming the
+// parent while `sessionId` names the child, but only once the agent has written
+// a turn. The daemon roster is exact from spawn and dropped at exit. Together
+// they cover the whole lifetime.
 function bgAgentParent(sessionId, projDir) {
   try {
     const roster = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'daemon', 'roster.json'), 'utf8'));
@@ -8258,88 +9563,305 @@ function bgAgentJobState(shortId) {
   } catch (_) { return {}; }
 }
 
-ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
-  const agent = activeAgentName();
-  // Tool-agnostic by construction: a CLI with no agent concept reports that it
-  // has none, rather than the UI naming a vendor it happens to know about.
-  if (agent !== 'claude') return { ok: true, supported: false, agents: [] };
-  const cwd = String((payload && payload.cwd) || activePtyCwd || '').trim();
+// Where a session's transcript actually lives. An agent can belong to any
+// project on the machine (the map lists them all), so the lookup starts at the
+// project dir its own cwd names and then scans the projects root once. Bounded:
+// one readdir over a directory with one entry per project.
+function bgFindTranscript(sessionId, cwdHint) {
+  const id = String(sessionId || '');
+  if (!/^[0-9a-fA-F-]{16,}$/.test(id)) return '';
+  const name = `${id}.jsonl`;
+  const projRoot = path.join(CLAUDE_DIR, 'projects');
+  if (cwdHint) {
+    const p = path.join(projRoot, String(cwdHint).replace(/[^a-zA-Z0-9]/g, '-'), name);
+    if (fs.existsSync(p)) return p;
+  }
+  try {
+    for (const dir of fs.readdirSync(projRoot)) {
+      const p = path.join(projRoot, dir, name);
+      if (fs.existsSync(p)) return p;
+    }
+  } catch (_) {}
+  return '';
+}
+
+// The working directory a transcript was recorded in, read off its head lines.
+// Resuming from anywhere else makes the CLI deny the session exists.
+function bgTranscriptCwd(transcript) {
+  try {
+    const head = readHead(transcript, 256 * 1024);
+    for (const line of head.split('\n')) {
+      const m = line.match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+      if (m) { try { return JSON.parse(`"${m[1]}"`); } catch (_) { return m[1]; } }
+    }
+  } catch (_) {}
+  return '';
+}
+
+// The CLI's own inventory of what it is running, parsed once. Both the fleet
+// list and the question "is this session busy" read the same answer, so the two
+// can never disagree about which agent is live.
+async function bgAgentRows({ cwd = '', all = false, allProjects = false, timeout = 8000 } = {}) {
   const args = ['agents', '--json'];
-  if (cwd) args.push('--cwd', cwd);
-  if (payload && payload.all) args.push('--all');
+  // Background agents belong to the machine, not to one project. The fleet
+  // surfaces ask for all of them; anything scoped passes its own directory.
+  if (cwd && !allProjects) args.push('--cwd', cwd);
+  if (all) args.push('--all');
   const env = buildAgentEnv();
   const exe = resolveAgentExe('claude', env.PATH);
   let raw = '';
   try {
     raw = await new Promise((resolve, reject) => {
-      execFile(exe, args, { env, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      execFile(exe, args, { env, timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
         if (err) reject(err); else resolve(String(stdout || ''));
       });
     });
   } catch (err) {
-    return { ok: false, supported: true, agents: [], error: (err && err.message) || 'could not list agents' };
+    return { ok: false, rows: [], error: (err && err.message) || 'could not list agents' };
   }
   let rows = [];
   try { rows = JSON.parse(raw); } catch (_) {
-    return { ok: false, supported: true, agents: [], error: 'agent list was not readable' };
+    return { ok: false, rows: [], error: 'agent list was not readable' };
   }
-  if (!Array.isArray(rows)) return { ok: true, supported: true, agents: [] };
-  const projDir = cwd ? path.join(CLAUDE_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-')) : '';
+  return { ok: true, rows: Array.isArray(rows) ? rows : [] };
+}
+
+// Whether a process is still there. Signal 0 delivers nothing and only asks;
+// EPERM is a process this user does not own, which is still a process.
+function pidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try { process.kill(n, 0); return true; } catch (err) { return err && err.code === 'EPERM'; }
+}
+
+// Who is holding a session right now, when anybody is. A held session cannot be
+// resumed: the CLI will not open a second reader on a transcript a live process
+// is writing, and says so instead of opening.
+//
+// The test is the process, not the reported state. A background agent that has
+// finished its turn reports state "done" and keeps its pid, because the agent
+// is idle rather than gone, and it holds the session for exactly as long as
+// that process lives. Reading the state word here would call that session free
+// and hand back a command the CLI refuses. An interactive row is a chat open
+// somewhere else, which is held the same way and has no agent id to attach to.
+//
+// The probe is short and every failure answers "nobody is holding it". A slow
+// or missing CLI must not turn opening a session into a stall, and the resume
+// that answer falls back to is what this path did before the question existed.
+async function sessionHolder(sessionId) {
+  const id = String(sessionId || '').trim();
+  if (!id) return null;
+  const res = await bgAgentRows({ all: true, allProjects: true, timeout: 3000 });
+  if (!res.ok) return null;
+  for (const r of res.rows) {
+    if (!r || String(r.sessionId || '') !== id) continue;
+    if (!pidAlive(r.pid)) continue;
+    const background = r.kind === 'background';
+    return {
+      kind: background ? 'background' : 'interactive',
+      // Only a background agent has an id the CLI will attach to.
+      id: background ? String(r.id || id.slice(0, 8)) : '',
+      sessionId: id,
+      name: String(r.name || '').slice(0, 120),
+      state: String(r.state || ''),
+      status: String(r.status || ''),
+      cwd: String(r.cwd || ''),
+    };
+  }
+  return null;
+}
+
+ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
+  const agent = activeAgentName();
+  // A CLI with no agent concept reports that it has none.
+  if (agent !== 'claude') return { ok: true, supported: false, agents: [] };
+  const cwd = String((payload && payload.cwd) || activePtyCwd || '').trim();
+  const listed = await bgAgentRows({
+    cwd,
+    all: !!(payload && payload.all),
+    allProjects: !!(payload && payload.allProjects),
+  });
+  if (!listed.ok) return { ok: false, supported: true, agents: [], error: listed.error };
+  const rows = listed.rows;
+  if (!rows.length) return { ok: true, supported: true, agents: [], chats: [] };
+  // The chats an agent can descend from. They are listed alongside agents but
+  // are not agents, so they travel separately and only the graph reads them.
+  const chats = rows
+    .filter((r) => r && r.kind === 'interactive' && r.sessionId)
+    .map((r) => ({
+      id: String(r.sessionId).slice(0, 8),
+      sessionId: String(r.sessionId),
+      name: String(r.name || '').slice(0, 120),
+      cwd: String(r.cwd || ''),
+      status: String(r.status || ''),
+      startedAt: Number(r.startedAt) || 0,
+    }));
   const agents = rows
     .filter((r) => r && r.kind === 'background' && r.sessionId)
     .map((r) => {
       const shortId = String(r.id || String(r.sessionId).slice(0, 8));
       const job = bgAgentJobState(shortId);
-      const transcript = projDir ? path.join(projDir, `${r.sessionId}.jsonl`) : '';
+      // Resolved against the agent's own project, not the asking chat's, so an
+      // agent from another project still finds its transcript.
+      const transcript = bgFindTranscript(String(r.sessionId), String(r.cwd || '') || cwd);
+      let lastActivityAt = 0;
+      if (transcript) { try { lastActivityAt = Math.round(fs.statSync(transcript).mtimeMs); } catch (_) {} }
       return {
         id: shortId,
         sessionId: String(r.sessionId),
         name: String(r.name || '').slice(0, 120),
         cwd: String(r.cwd || ''),
-        // A pid means a live worker. Attaching is only valid then; once it is
-        // gone the session resumes like any other chat.
-        running: r.pid != null,
+        // Live means working or waiting on the user. Every other reported
+        // state has stopped.
+        running: agentIsLive(r.state),
+        // A live agent is reached by attaching to it; a stopped one resumes
+        // from its transcript like any other chat.
+        attachable: agentIsLive(r.state),
+        // Whether the session is spoken for, which is a different question from
+        // whether the agent is mid-turn. An idle agent still owns its
+        // transcript for as long as its process lives, and the CLI refuses to
+        // resume a session anything is holding.
+        held: pidAlive(r.pid),
         status: String(r.status || ''),
-        state: String(r.state || job.state || ''),
+        state: String(r.state || ''),
         detail: job.detail || '',
         intent: job.intent || '',
         needs: job.needs || '',
         tokens: job.tokens || 0,
         startedAt: Number(r.startedAt) || 0,
-        updatedAt: job.updatedAt || 0,
-        parentSessionId: projDir ? bgAgentParent(String(r.sessionId), projDir) : '',
+        updatedAt: Math.max(job.updatedAt || 0, lastActivityAt),
+        parentSessionId: transcript ? bgAgentParent(String(r.sessionId), path.dirname(transcript)) : '',
         // An agent can be listed and running with nothing on disk yet, so the
         // caller must not treat a missing transcript as a missing agent.
-        hasTranscript: !!(transcript && fs.existsSync(transcript)),
+        hasTranscript: !!transcript,
         transcript,
       };
     });
-  return { ok: true, supported: true, agents };
+  return { ok: true, supported: true, agents, chats };
 });
 
-// How to reach one agent. Validated before it is handed back, the way copilot
-// and gemini already are: returning a command blind is what produces a tab that
-// opens onto nothing.
+// The tail of one agent's conversation, compacted to what a human skims: what
+// it said last, which tools it reached for, what it was asked. Read fresh per
+// call off the transcript tail, so the detail pane can poll it while the agent
+// works and the feed moves in near real time.
+const BG_PEEK_TAIL_BYTES = 192 * 1024;
+ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
+  const sessionId = String((payload && payload.sessionId) || '').trim();
+  if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'no session' };
+  const transcript = bgFindTranscript(sessionId, String((payload && payload.cwd) || ''));
+  if (!transcript) return { ok: true, entries: [], model: '', empty: true };
+  let text = '';
+  let size = 0;
+  try {
+    size = fs.statSync(transcript).size;
+    const fd = fs.openSync(transcript, 'r');
+    const start = Math.max(0, size - BG_PEEK_TAIL_BYTES);
+    const buf = Buffer.alloc(Math.min(size, BG_PEEK_TAIL_BYTES));
+    const n = fs.readSync(fd, buf, 0, buf.length, start);
+    fs.closeSync(fd);
+    text = buf.toString('utf8', 0, n);
+    // A mid-file start lands inside a line; drop the partial one.
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  const entries = [];
+  let model = '';
+  const clip = (s, max) => {
+    const t = String(s || '').replace(/\s+/g, ' ').trim();
+    return t.length > max ? t.slice(0, max - 1) + '\u2026' : t;
+  };
+  // One-line summary of a tool call: the argument a human would use to name
+  // it. Paths keep their tail, the interesting part, rather than the noise
+  // of a temp prefix.
+  const toolArg = (input) => {
+    if (!input || typeof input !== 'object') return '';
+    for (const k of ['file_path', 'path']) {
+      if (typeof input[k] === 'string' && input[k]) {
+        const segs = input[k].split(/[\\/]/).filter(Boolean);
+        return clip(segs.slice(-2).join('/'), 72);
+      }
+    }
+    const keys = ['command', 'pattern', 'query', 'url', 'description', 'prompt'];
+    for (const k of keys) if (typeof input[k] === 'string' && input[k]) return clip(input[k], 80);
+    return '';
+  };
+  for (const line of text.split('\n')) {
+    if (!line || line.length > 2 * 1024 * 1024) continue;
+    let o = null;
+    try { o = JSON.parse(line); } catch (_) { continue; }
+    if (!o || typeof o !== 'object') continue;
+    const ts = o.timestamp ? Date.parse(o.timestamp) : 0;
+    if (o.type === 'user' && o.message) {
+      const c = o.message.content;
+      if (typeof c === 'string' && c.trim()) {
+        entries.push({ kind: 'user', text: clip(c, 200), ts });
+      } else if (Array.isArray(c)) {
+        for (const part of c) {
+          if (part && part.type === 'text' && String(part.text || '').trim()) {
+            entries.push({ kind: 'user', text: clip(part.text, 200), ts });
+            break;
+          }
+        }
+      }
+    } else if (o.type === 'assistant' && o.message) {
+      if (typeof o.message.model === 'string') model = o.message.model;
+      const c = o.message.content;
+      if (!Array.isArray(c)) continue;
+      for (const part of c) {
+        if (!part) continue;
+        if (part.type === 'text' && String(part.text || '').trim()) {
+          entries.push({ kind: 'assistant', text: clip(part.text, 240), ts });
+        } else if (part.type === 'tool_use') {
+          entries.push({ kind: 'tool', tool: clip(part.name, 40), text: toolArg(part.input), ts });
+        }
+      }
+    }
+  }
+  return { ok: true, entries: entries.slice(-24), model, empty: entries.length === 0 };
+});
+
+// How to reach one agent, validated before it is handed back the way copilot and
+// gemini already are, so the command opens onto something.
 ipcMain.handle('bgAgents:openCommand', (_e, payload = {}) => {
   const agent = activeAgentName();
   if (agent !== 'claude') return { ok: false, error: `background agents are not available for ${agent}` };
   const id = String((payload && payload.id) || '').trim();
   const sessionId = String((payload && payload.sessionId) || '').trim();
-  if (!id && !sessionId) return { ok: false, error: 'no agent selected' };
-  if (payload && payload.running) {
-    // A running agent is owned by its worker; the CLI refuses --resume against
-    // one and says so. Its own fleet view is the supported way in, and it opens
-    // straight onto this agent when told which one.
-    if (!/^[A-Za-z0-9][A-Za-z0-9-]{2,}$/.test(id)) return { ok: false, error: 'that agent has no id to attach to' };
-    return { ok: true, mode: 'attach', command: 'claude agents', env: { CLAUDE_AGENTS_SELECT: id } };
+  // The transcript names the only directory the CLI will resume this session
+  // from. Found wherever it lives, so opening works from any project, and the
+  // tab is told to start there instead of in the asking chat's directory.
+  const hint = String((payload && payload.cwd) || activePtyCwd || '');
+  const transcript = sessionId ? bgFindTranscript(sessionId, hint) : '';
+  return bgOpenCommand({
+    id,
+    sessionId,
+    attach: !!(payload && payload.attach),
+    transcript,
+    cwd: (transcript && bgTranscriptCwd(transcript)) || String((payload && payload.cwd) || ''),
+  });
+});
+
+// End one agent. `stop` halts the worker and keeps the conversation; `remove`
+// discards the job and its worktree.
+ipcMain.handle('bgAgents:control', async (_e, payload = {}) => {
+  const agent = activeAgentName();
+  if (agent !== 'claude') return { ok: false, error: `background agents are not available for ${agent}` };
+  const plan = bgControlArgs(payload && payload.action, payload && payload.id);
+  if (!plan.ok) return plan;
+  const env = buildAgentEnv();
+  const exe = resolveAgentExe('claude', env.PATH);
+  try {
+    const out = await new Promise((resolve, reject) => {
+      execFile(exe, plan.args, { env, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        if (err) reject(new Error(String(stderr || err.message || '').trim() || 'the agent did not stop'));
+        else resolve(String(stdout || '').trim());
+      });
+    });
+    return { ok: true, action: plan.args[0], id: plan.args[1], message: out.slice(0, 200) };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'the agent did not stop' };
   }
-  if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'that agent has no session to resume' };
-  const cwd = String((payload && payload.cwd) || activePtyCwd || '');
-  const projDir = path.join(CLAUDE_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
-  if (!fs.existsSync(path.join(projDir, `${sessionId}.jsonl`))) {
-    return { ok: false, error: 'that agent finished without leaving a transcript' };
-  }
-  return { ok: true, mode: 'resume', command: `claude --resume ${sessionId}` };
 });
 
 ipcMain.handle('sessions:rename', (_e, payload = {}) => {
@@ -8353,7 +9875,13 @@ ipcMain.handle('sessions:rename', (_e, payload = {}) => {
   return { ok: true, name };
 });
 
+// Reads a PRD, confined to the work directory.
 ipcMain.handle('sessions:read', (_e, prdPath) => {
+  if (typeof prdPath !== 'string' || !prdPath) return { ok: false, error: 'Missing path' };
+  const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
+  if (!isInside(workDir, prdPath) || !realPathInside(prdPath, workDir)) {
+    return { ok: false, error: 'Refusing to read outside the work directory' };
+  }
   try { return { ok: true, content: fs.readFileSync(prdPath, 'utf8') }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
@@ -8477,7 +10005,7 @@ ipcMain.handle('context:list', () => {
 ipcMain.handle('context:remove', (_e, filePath) => {
   if (!filePath) return { ok: false, error: 'No path' };
   const ctxDir = path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT');
-  // Defense in depth: only allow removal inside the CONTEXT dir.
+  // Only removes files inside the CONTEXT dir.
   const resolved = path.resolve(filePath);
   if (!resolved.startsWith(path.resolve(ctxDir) + path.sep)) {
     return { ok: false, error: 'Refusing to remove outside CONTEXT/' };
@@ -8490,11 +10018,14 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
   if (!sourcePath || typeof sourcePath !== 'string') return { ok: false, error: 'No source path' };
   if (!fs.existsSync(sourcePath)) return { ok: false, error: 'Source not found' };
   try {
-    // path.basename normalizes ".." segments to "..", so we also reject any
-    // basename starting with "..", a literal "/", or a "\", defense in depth.
+    // Require a plain file name: no leading "..", no separators, no control
+    // characters.
     const baseName = path.basename(sourcePath);
     if (!baseName || baseName.startsWith('..') || /[\/\\]/.test(baseName)) {
       return { ok: false, error: 'Invalid file name' };
+    }
+    if (/[\x00-\x1F\x7F-\x9F]/.test(baseName)) {
+      return { ok: false, error: 'That file name contains control characters' };
     }
     let destDir; let dest;
     if (kind === 'skill') {
@@ -8512,7 +10043,10 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
       fs.mkdirSync(destDir, { recursive: true });
       dest = resolvedDest;
     }
-    fs.copyFileSync(sourcePath, dest);
+    const buf = fs.readFileSync(sourcePath);
+    const fd = fs.openSync(dest, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+      | (fs.constants.O_NOFOLLOW || 0), 0o644);
+    try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }
     return { ok: true, dest };
   } catch (err) { return { ok: false, error: err.message }; }
 });
@@ -8541,15 +10075,15 @@ ipcMain.handle('fs:listDir', async (_e, { dir, showHidden }) => {
 ipcMain.handle('fs:home', () => HOME);
 
 // ─── Files command-center IPC ────────────────────────────────────────────────
-// Backs the redesigned Files page: a fuzzy-searchable index, inline preview,
-// and git decoration. Every read is confined under `root` via path-confine so a
-// crafted relative path can never escape the browsed directory.
+// Backs the Files page: a fuzzy-searchable index, inline preview, and git
+// decoration. Every read is confined under `root` via path-confine.
 const FILE_PREVIEW_MAX_BYTES = 2 * 1024 * 1024; // 2 MB: past this the renderer would jank
 const FILE_INDEX_MAX = 20000;                    // cap the flat index so search stays instant
 const { detectLanguage } = require('./lib/lang-detect');
 
 // A path is safe to read when it resolves inside root. resolveInside throws on
-// absolute/traversal/null-byte; we translate that into a uniform error.
+// an absolute path, one that climbs out of root, or one carrying a null byte,
+// and all three become a uniform error.
 function confinedAbs(root, rel) {
   if (rel === '' || rel === '.') return path.resolve(root);
   return resolveInside(root, rel);
@@ -8601,19 +10135,16 @@ ipcMain.handle('fs:readFile', async (_e, { root, rel } = {}) => {
   let abs;
   try { abs = confinedAbs(root, rel); }
   catch (_) { return { ok: false, error: 'path outside root' }; }
-  // Symlink guard: confinedAbs proves the path string is inside root, but a
-  // symlink whose target is outside root would still be followed by readFile.
-  // Canonicalize and re-check so a link like <root>/x -> /etc/passwd is refused.
+  // confinedAbs proves the path string is inside root; canonicalize and re-check
+  // so the resolved target is inside root too.
   try {
     const real = fs.realpathSync(abs);
     if (!isInside(path.resolve(root), real)) return { ok: false, error: 'path outside root' };
   } catch (_) { return { ok: false, error: 'could not resolve path' }; }
-  // Open without following a final-component symlink, then stat and read
-  // through the SAME handle: the canonicalized path checked above and the
-  // bytes returned are guaranteed to be the same file object, closing the
-  // window in which the path could be swapped for a link out of the root.
-  // O_NOFOLLOW is POSIX-only; on platforms without it the realpath check
-  // above remains the guard.
+  // Open without following a final-component symlink, then stat and read through
+  // the same handle, so the canonicalized path checked above and the bytes
+  // returned are the same file object. O_NOFOLLOW is POSIX-only; elsewhere the
+  // realpath check above is the guard.
   let fd;
   try {
     fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
@@ -8638,10 +10169,9 @@ ipcMain.handle('fs:readFile', async (_e, { root, rel } = {}) => {
 });
 
 // Write edited text back to a file for the inline editor. Confined and
-// symlink-guarded like readFile. Takes an optional `expectMtimeMs`: when the
-// file on disk has changed since the editor loaded it (for example the agent
-// edited it), the write is refused as a conflict rather than clobbering the
-// newer content, unless `force` is set.
+// symlink-guarded like readFile. Takes an optional `expectMtimeMs`: when the file
+// on disk has changed since the editor loaded it, the write is refused as a
+// conflict unless `force` is set.
 ipcMain.handle('fs:writeFile', async (_e, { root, rel, content, expectMtimeMs, force } = {}) => {
   if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
   if (typeof rel !== 'string' || !rel) return { ok: false, error: 'rel required' };
@@ -8655,19 +10185,22 @@ ipcMain.handle('fs:writeFile', async (_e, { root, rel, content, expectMtimeMs, f
     if (!isInside(path.resolve(root), real)) return { ok: false, error: 'path outside root' };
     abs = real;
   } catch (_) {
-    // A brand-new file has no realpath yet; confinedAbs already proved the
-    // string is inside root, so a create is allowed.
+    // New file: confine its parent instead.
+    if (!realParentInside(abs, root)) return { ok: false, error: 'path outside root' };
   }
   try {
     let current = null;
-    try { current = fs.statSync(abs); } catch (_) { current = null; }
+    try { current = fs.lstatSync(abs); } catch (_) { current = null; }
     if (current) {
+      if (current.isSymbolicLink()) return { ok: false, error: 'path is a symbolic link' };
       if (!current.isFile()) return { ok: false, error: 'not a file' };
       if (!force && typeof expectMtimeMs === 'number' && Math.abs(current.mtimeMs - expectMtimeMs) > 1) {
         return { ok: false, error: 'conflict', reason: 'This file changed on disk since you opened it (the agent may have edited it). Reload to see the new version, or save anyway to overwrite it.' };
       }
     }
-    fs.writeFileSync(abs, content, 'utf8');
+    const fd = fs.openSync(abs, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+      | (fs.constants.O_NOFOLLOW || 0), 0o644);
+    try { fs.writeFileSync(fd, content, 'utf8'); } finally { fs.closeSync(fd); }
     const st = fs.statSync(abs);
     return { ok: true, bytes: st.size, mtimeMs: st.mtimeMs };
   } catch (err) { return { ok: false, error: err.message }; }
@@ -8688,8 +10221,8 @@ ipcMain.handle('fs:gitStatus', async (_e, { root } = {}) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
-// Unified git diff for one file (staged + unstaged). Path confined; passed as a
-// pathspec after `--` so it is never interpreted as a flag.
+// Unified git diff for one file (staged + unstaged). Path confined, and passed
+// as a pathspec after `--`.
 ipcMain.handle('fs:gitDiff', async (_e, { root, rel } = {}) => {
   if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
   if (typeof rel !== 'string' || !rel) return { ok: false, error: 'rel required' };
@@ -8721,10 +10254,9 @@ ipcMain.handle('fs:gitDiff', async (_e, { root, rel } = {}) => {
 //
 // Two backends:
 //   - Linux: Piper (downloaded into ~/.local/share/husk/piper, ~50 MB)
-//   - macOS: built-in `say` command. No install needed, no download. The Linux
-//     Piper binary is x86_64 ELF and won't run on Darwin anyway, so the darwin
-//     branch uses `say` and never attempts to install Piper, which would throw
-//     'spawn Unknown system error -8' from the running-not-runnable binary.
+//   - macOS: the built-in `say` command, with no install or download. The Piper
+//     binary is x86_64 ELF and does not run on Darwin, so the darwin branch uses
+//     `say` and never installs Piper.
 
 const IS_MAC = process.platform === 'darwin';
 const IS_WIN = process.platform === 'win32';
@@ -8764,6 +10296,10 @@ const VOICES_DIR = path.join(PIPER_DIR, 'voices');
 const PIPER_RELEASE = IS_WIN
   ? 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip'
   : 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
+// Expected sha256 of the release assets above.
+const PIPER_SHA256 = IS_WIN
+  ? 'f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea'
+  : 'a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992';
 const VOICE_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
 const MAC_SAY_BIN = '/usr/bin/say';
 const MAC_DEFAULT_VOICE = 'Samantha';
@@ -8825,10 +10361,21 @@ ipcMain.handle('voice:install', async (_e, { voice = 'en_US-amy-medium' } = {}) 
     if (!fs.existsSync(PIPER_BIN)) {
       // Windows ships a .zip (piper.exe + DLLs + espeak-ng-data); Linux a
       // .tar.gz. `tar -xf` auto-detects both on Win10+ (bsdtar) and Linux.
-      const archivePath = path.join(os.tmpdir(), IS_WIN ? 'piper-husk.zip' : 'piper-husk.tar.gz');
-      await runStep('curl', ['-fsSL', '-o', archivePath, PIPER_RELEASE], 'Downloading Piper binary');
-      await runStep('tar', ['-xf', archivePath, '-C', HUSK_DATA], 'Extracting Piper');
-      try { fs.unlinkSync(archivePath); } catch (_) {}
+      // Private staging directory per install.
+      const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-piper-'));
+      const archivePath = path.join(stageDir, IS_WIN ? 'piper.zip' : 'piper.tar.gz');
+      const cleanup = () => { try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch (_) {} };
+      try {
+        await runStep('curl', ['-fsSL', '-o', archivePath, PIPER_RELEASE], 'Downloading Piper binary');
+
+        // Checked before extraction.
+        const got = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+        if (got !== PIPER_SHA256) {
+          return { ok: false, error: 'The downloaded voice engine did not match its expected checksum, so it was discarded. Nothing was installed.' };
+        }
+
+        await runStep('tar', ['-xf', archivePath, '-C', HUSK_DATA], 'Extracting Piper');
+      } finally { cleanup(); }
       if (!IS_WIN) { try { fs.chmodSync(PIPER_BIN, 0o755); } catch (_) {} }
     }
 
@@ -9039,9 +10586,11 @@ function setupAutoUpdater() {
   updaterInstance = autoUpdater;
   autoUpdater.autoDownload = false;       // we choose when to download
   autoUpdater.autoInstallOnAppQuit = false;
+  // No web installer is shipped, so the feed may not name one.
+  autoUpdater.disableWebInstaller = true;
 
   // Route the updater's log to a file. It defaults to `console`, whose output is
-  // unreachable for a GUI-launched app, leaving field failures undiagnosable.
+  // unreachable for a GUI-launched app.
   try {
     const log = require('electron-log');
     log.transports.file.level = 'info';
@@ -9091,19 +10640,18 @@ function setupAutoUpdater() {
     logPath: updaterLogPath,
   }));
 
-  // Fire one check shortly after launch and again every 6 hours. Both are
+  // Fire one check shortly after launch and again every 6 hours. Both timers are
   // stored and unref'd so they can be cleared at quit and never pin the event
-  // loop open after the window closes (which left the main process alive).
+  // loop open after the window closes.
   updaterInitialTimer = setTimeout(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 4000);
   updaterInitialTimer.unref();
   updaterPeriodicTimer = setInterval(() => { try { autoUpdater.checkForUpdates(); } catch (_) {} }, 6 * 60 * 60 * 1000);
   updaterPeriodicTimer.unref();
 }
 
-// Synchronous on purpose. The preload reads this at document start and stamps the
-// theme onto <body> the moment it exists, which is what keeps a light install from
-// painting index.html's baked-in dark default first. An async channel resolves too
-// late to beat the first frame.
+// Synchronous on purpose. The preload reads this at document start and stamps
+// the theme onto <body> the moment it exists, which is what keeps a light
+// install from painting index.html's baked-in dark default first.
 ipcMain.on('config:boot-theme', (e) => {
   e.returnValue = {
     theme: config.theme,
@@ -9133,18 +10681,15 @@ ipcMain.handle('update:download', async () => {
 ipcMain.handle('update:install', () => {
   if (!updaterInstance) return { ok: false, error: 'no updater' };
   // Quit, install, relaunch, with forceRunAfter so the user does not have to
-  // relaunch by hand.
-  //
-  // Call this inline and report what it does. On Linux the install is a
-  // synchronous shell out to the package manager through pkexec, which fails
-  // when there is no polkit agent or the password prompt is dismissed. Those
-  // failures must reach the renderer rather than being swallowed here.
+  // relaunch by hand. Called inline and reported on: on Linux the install shells
+  // out to the package manager through pkexec, and those failures reach the
+  // renderer rather than being swallowed here.
   updateInstallAttempted = true;
   try {
     updaterInstance.quitAndInstall(false, true);
-    // A successful install quits the app, so reaching this line means the package
-    // manager declined. electron-updater reports that through its 'error' event,
-    // which the handler above turns into an 'install' phase failure.
+    // A successful install quits the app, so reaching this line means the
+    // package manager declined. electron-updater reports that through its
+    // 'error' event, which the handler above turns into an 'install' failure.
     return { ok: true };
   } catch (err) {
     const message = (err && err.message) || String(err);
@@ -9180,14 +10725,13 @@ ipcMain.handle('urls:openExternal', (_e, url) => {
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────────
 
-// Only allow one Husk at a time. A second launch focuses the existing window
-// instead of spawning another process tree (which would pile up orphans
-// burning the inotify_user_instances limit).
+// Only one Husk at a time. A second launch focuses the existing window instead
+// of spawning another process tree.
 const gotLock = app.requestSingleInstanceLock();
-// The running instance records its version here so a second launch can tell
-// "user double-clicked again" (same version: just focus, stay silent) apart
-// from "user launched a NEW version while the old one runs" (versions differ:
-// warn the user, because the new binary quits and the OLD window gets focus).
+// The running instance records its version here so a second launch can tell a
+// repeat double-click (same version: focus and stay silent) from a launch of a
+// different version (warn, since the new binary quits and the running window
+// takes focus).
 const instanceInfoPath = () => path.join(app.getPath('userData'), 'instance.json');
 if (!gotLock) {
   let runningVersion = null;
@@ -9236,11 +10780,9 @@ if (!gotLock) {
   });
   app.on('window-all-closed', () => {
     killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();
-    // Exit HARD. app.quit()'s graceful teardown can hang on a real compositor
-    // (it waits for the GPU and renderer processes to exit), leaving the main
-    // process alive with no window, the exact stacking we are preventing. An
-    // unref'd timer fallback is not reliably serviced while that quit is stuck.
-    // app.exit() terminates immediately and does not wait on the teardown.
+    // Exit hard. app.quit()'s graceful teardown waits for the GPU and renderer
+    // processes to exit, which on a real compositor can hang and leave the main
+    // process alive with no window. app.exit() terminates immediately.
     app.exit(0);
   });
   app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater(); });

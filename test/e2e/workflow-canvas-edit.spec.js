@@ -204,7 +204,7 @@ test('the canvas legend covers every case and remembers being dismissed', async 
 
     expect(open.collapsed).toBe(false);            // open the first time, for discovery
     expect(open.groups).toEqual(['Steps', 'Connections', 'Canvas']);
-    expect(open.rows).toBe(10);
+    expect(open.rows).toBe(11);
     expect(open.insideCanvas).toBe(true);
     expect(open.label).toBe('Hide guide');
     // Every documented case, including the two that did not exist before.
@@ -212,6 +212,9 @@ test('the canvas legend covers every case and remembers being dismissed', async 
     expect(open.text).toContain('Del');
     expect(open.text).toContain('nothing is kept');
     expect(open.text).toContain('never left pointing at nothing');
+    // Tidying is discoverable from the guide, beside the button that does it.
+    expect(open.text).toContain('Tidy up');
+    expect(open.text).toContain('Arrange');
 
     await win.click('#wf-legend-toggle');
     await win.waitForTimeout(250);
@@ -227,6 +230,47 @@ test('the canvas legend covers every case and remembers being dismissed', async 
     await win.evaluate(() => openWorkflowBuilder(null));
     await win.waitForTimeout(600);
     expect(await win.evaluate(() => document.getElementById('wf-legend').classList.contains('is-collapsed'))).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test('a dense workflow card renders a signature instead of a tiny graph', async () => {
+  test.setTimeout(90_000);
+  const { app, win } = await openBuilder(makeHome());
+  try {
+    const graph = {
+      nodes: Array.from({ length: 18 }, (_x, i) => ({
+        id: `n${i}`,
+        name: `Step ${i + 1}`,
+        prompt: `Do step ${i + 1}`,
+        x: i * 120,
+        y: i % 2 ? 120 : 40,
+        passContext: 'full',
+      })),
+      edges: Array.from({ length: 17 }, (_x, i) => ({
+        id: `e${i}`,
+        from: `n${i}`,
+        to: `n${i + 1}`,
+        condition: { type: 'always', value: '' },
+      })),
+    };
+    const card = await win.evaluate(async (g) => {
+      await window.husk.workflows.create({ name: 'Large flow', trigger: 'manual', graph: g });
+      await renderWorkflows();
+      const c = document.querySelector('#wf-grid .wf-card');
+      return {
+        signature: !!c.querySelector('.wf-signature'),
+        hero: (c.querySelector('.wf-signature-hero strong') || {}).textContent || '',
+        miniNodes: c.querySelectorAll('.wf-mini-node').length,
+        tags: [...c.querySelectorAll('.wf-card-tags .wf-tag')].map((t) => t.textContent.trim()),
+      };
+    }, graph);
+
+    expect(card.signature).toBe(true);
+    expect(card.hero).toBe('18');
+    expect(card.miniNodes).toBe(0);
+    expect(card.tags).not.toContain('18 steps');
   } finally {
     await app.close();
   }

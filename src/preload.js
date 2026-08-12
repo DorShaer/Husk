@@ -4,6 +4,8 @@ const { extractRecap } = require('./lib/recap-extract');
 const { fuzzyFilter } = require('./lib/fuzzy');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
+const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
+const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
 
 // Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
 // -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
@@ -70,6 +72,12 @@ contextBridge.exposeInMainWorld('husk', {
     highlightLines: (code, lang) => { try { return highlightLines(code, lang); } catch (_) { return null; } },
     parseGitStatus: (porcelain) => { try { return parsePorcelain(porcelain); } catch (_) { return []; } },
     gitBadge: (status) => { try { return statusBadge(status); } catch (_) { return ''; } },
+    // Guards for text on its way to a live agent's terminal. They fail closed:
+    // an error strips everything rather than passing the original through,
+    // because the original is the thing being guarded against.
+    stripControls: (s) => { try { return stripControls(s); } catch (_) { return ''; } },
+    hasControls: (s) => { try { return hasControls(s); } catch (_) { return true; } },
+    chatFileRef: (p) => { try { return chatFileRef(p); } catch (_) { return ''; } },
   },
   config: {
     get: () => ipcRenderer.invoke('config:get'),
@@ -99,7 +107,10 @@ contextBridge.exposeInMainWorld('husk', {
   // Agents page, which edits reusable agent definitions.
   bgAgents: {
     list: (payload) => ipcRenderer.invoke('bgAgents:list', payload || {}),
+    peek: (payload) => ipcRenderer.invoke('bgAgents:peek', payload || {}),
     openCommand: (payload) => ipcRenderer.invoke('bgAgents:openCommand', payload || {}),
+    stop: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'stop', id }),
+    remove: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'remove', id }),
   },
   prds: { list: () => ipcRenderer.invoke('prds:list') },
   plugins: {
@@ -143,6 +154,8 @@ contextBridge.exposeInMainWorld('husk', {
     remove: (filePath) => ipcRenderer.invoke('context:remove', filePath),
   },
   agents: {
+    state: (state, opts) => { try { return agentState(state, opts || {}); } catch (_) { return 'done'; } },
+    isLive: (state) => { try { return agentIsLive(state); } catch (_) { return false; } },
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
@@ -150,9 +163,20 @@ contextBridge.exposeInMainWorld('husk', {
   workflows: {
     list: () => ipcRenderer.invoke('workflows:list'),
     create: (payload) => ipcRenderer.invoke('workflows:create', payload),
+    // Duplicating has its own channel rather than going through create with a
+    // copied record, so an imported workflow's origin travels with the copy
+    // while its consent does not.
+    duplicate: (workflowId) => ipcRenderer.invoke('workflows:duplicate', { workflowId }),
     update: (payload) => ipcRenderer.invoke('workflows:update', payload),
     delete: (id) => ipcRenderer.invoke('workflows:delete', id),
-    run: (id) => ipcRenderer.invoke('workflows:run', id),
+    // Tidy coordinates for a graph, computed from its own shape. Read-only:
+    // nothing is saved until the user saves the workflow that asked.
+    layout: (graph) => ipcRenderer.invoke('workflows:layout', { graph }),
+    // opts.cwd binds this run to a directory. An imported workflow is refused
+    // without one; a workflow authored here ignores it and keeps the fallback
+    // chain it always had, so the existing single-argument call sites are
+    // unchanged.
+    run: (id, opts) => ipcRenderer.invoke('workflows:run', id, opts || {}),
     stop: (runId) => ipcRenderer.invoke('workflows:stop', runId),
     generateStepPrompt: (desc) => ipcRenderer.invoke('workflows:generateStepPrompt', desc),
     getSessionContext: () => ipcRenderer.invoke('workflows:getSessionContext'),
@@ -166,6 +190,31 @@ contextBridge.exposeInMainWorld('husk', {
     onNodeDone: (cb) => ipcRenderer.on('wf:node:done', (_e, d) => cb(d)),
     onEdgeTaken: (cb) => ipcRenderer.on('wf:edge:taken', (_e, d) => cb(d)),
     onRunDone: (cb) => ipcRenderer.on('wf:run:done', (_e, d) => cb(d)),
+
+    // Portable workflows: one file you can commit, and someone else's file
+    // read on this machine before it runs anything.
+    //
+    // Every one of these resolves rather than rejects. A refusal comes back as
+    // { ok: false, stage, code, message, detail } with a code the install
+    // sheet keys its title and its recovery advice off, and the codes from
+    // stage "validate" are the artifact validator's own closed enum passed
+    // through untouched. A surface that catches instead of branching on ok
+    // will render nothing at all on the paths that matter most.
+    export: (payload) => ipcRenderer.invoke('workflows:export', payload || {}),
+    artifactRead: (payload) => ipcRenderer.invoke('workflows:artifactRead', payload || {}),
+    pickArtifactFile: () => ipcRenderer.invoke('workflows:pickArtifactFile'),
+    preflight: (payload) => ipcRenderer.invoke('workflows:preflight', payload || {}),
+    install: (payload) => ipcRenderer.invoke('workflows:install', payload || {}),
+    // Every sidecar row in one call, because the grid paints every card in one
+    // pass and a per-card round trip would be one IPC hop per workflow on
+    // every repaint.
+    sidecars: () => ipcRenderer.invoke('workflows:sidecars'),
+    // The local run figures for every workflow, in one call for the same
+    // reason. A workflow with no finished run of its current graph is absent
+    // from the map rather than present and empty.
+    receipts: () => ipcRenderer.invoke('workflows:receipts'),
+    consent: (workflowId) => ipcRenderer.invoke('workflows:consent', { workflowId }),
+    bindCwd: (workflowId, cwd) => ipcRenderer.invoke('workflows:bindCwd', { workflowId, cwd }),
   },
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),

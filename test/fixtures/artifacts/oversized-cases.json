@@ -1,0 +1,35 @@
+{
+  "why": "Four hostile inputs whose literal bytes run from two megabytes to fifteen. Committing them would put twenty-odd megabytes into every clone of this repository to test four refusals, so each one is declared here and built by the test from this base file. Every other hostile case is a real file in this directory.",
+  "base": "valid-worked-example.json",
+  "cases": [
+    {
+      "name": "two-mib-file",
+      "kind": "padded-notes",
+      "bytes": 2097152,
+      "expect": "too-large",
+      "why": "the whole-file byte cap, checked before JSON.parse"
+    },
+    {
+      "name": "ten-mb-node-id",
+      "kind": "long-node-id",
+      "chars": 10000000,
+      "expect": "bad-id",
+      "why": "a node id must be length-checked before it reaches any matcher"
+    },
+    {
+      "name": "hundred-thousand-nodes",
+      "kind": "many-nodes",
+      "count": 100000,
+      "expect": "too-many-nodes",
+      "why": "collection sizes are counted before anything is mapped over"
+    },
+    {
+      "name": "chain-over-budget",
+      "kind": "fat-chain",
+      "lines": 4000,
+      "lineChars": 200,
+      "expect": "chain-invalid",
+      "why": "the chain byte budget is a sum across every receipt, not a per-item maximum"
+    }
+  ]
+}

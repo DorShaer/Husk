@@ -2,21 +2,18 @@
 
 // Apply or discard the changes an Autopilot run made inside its isolated
 // worktree. A run executes in <userData>/autopilot-worktrees/<runId>, a full
-// git worktree of the project at run start. Its edits live there and NOWHERE
-// else until the operator explicitly applies them, so this module is what
-// turns a reviewed run into real changes in the workspace.
+// git worktree of the project at run start. Its edits stay there until the
+// operator applies them, so this module is what turns a reviewed run into
+// real changes in the workspace.
 //
-// Design rules:
-//   - Never copy outside the destination workspace root (path confinement).
-//   - Report per-file results honestly: a partial apply must be visible, not
-//     hidden behind a single "success". This mirrors the snapshot/revert
-//     contract elsewhere in the codebase.
-//   - Deterministic and side-effect-scoped: only the paths named in `changes`
-//     are touched.
+// Copies are confined to the destination workspace root, only the paths
+// named in `changes` are touched, and every file reports its own result so
+// a partial apply stays visible instead of folding into one "success".
 
 const fs = require('fs');
 const path = require('path');
 const { STATUS_FILE } = require('./autopilot-status');
+const { realParentInside, realPathInside } = require('./path-confine');
 
 // A change entry is { path: <relative>, status: 'added'|'modified'|'deleted' },
 // exactly the shape diffWorkspace/diffWorkspaceAsync already emit.
@@ -41,23 +38,65 @@ function copyInto(worktreePath, workspaceRoot, rel) {
     return { path: rel, ok: false, reason: 'source escapes worktree root' };
   }
   try {
+    // Source must resolve to a regular file under the worktree.
+    let srcReal;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- src string-confined under worktreePath above; resolution is itself the check
+    try { srcReal = fs.realpathSync(src); } catch (_) {
+      return { path: rel, ok: false, reason: 'source could not be resolved' };
+    }
+    if (!realPathInside(src, worktreePath)) {
+      return { path: rel, ok: false, reason: 'source resolves outside worktree root' };
+    }
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- srcReal verified under worktreePath by realPathInside above
+    if (!fs.lstatSync(srcReal).isFile()) {
+      return { path: rel, ok: false, reason: 'source is not a regular file' };
+    }
+
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst re-confined under workspaceRoot above
     fs.mkdirSync(path.dirname(dst), { recursive: true });
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- src and dst both re-confined above
-    fs.copyFileSync(src, dst);
+
+    // Destination parent must resolve under the workspace.
+    if (!realParentInside(dst, workspaceRoot)) {
+      return { path: rel, ok: false, reason: 'destination resolves outside workspace root' };
+    }
+    let existing = null;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst string-confined above and its parent verified by realParentInside
+    try { existing = fs.lstatSync(dst); } catch (_) { existing = null; }
+    if (existing && existing.isSymbolicLink()) {
+      return { path: rel, ok: false, reason: 'destination is a symbolic link' };
+    }
+    if (existing && !existing.isFile()) {
+      return { path: rel, ok: false, reason: 'destination is not a regular file' };
+    }
+
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- srcReal verified under worktreePath by realPathInside above
+    const buf = fs.readFileSync(srcReal);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dst parent verified by realParentInside; O_NOFOLLOW refuses symlinks
+    const fd = fs.openSync(dst, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+      | (fs.constants.O_NOFOLLOW || 0), 0o644);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- writes to the numeric fd opened above, not a path
+    try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }
     return { path: rel, ok: true, status: 'written' };
   } catch (err) {
     return { path: rel, ok: false, reason: (err && err.message) || String(err) };
   }
 }
 
-// Delete one file from the workspace (the run removed it in its worktree).
+// Delete one file from the workspace, with its parent confined under root.
 function deleteFrom(workspaceRoot, rel) {
   const dst = path.join(workspaceRoot, rel);
   if (!path.resolve(dst).startsWith(path.resolve(workspaceRoot) + path.sep)) {
     return { path: rel, ok: false, reason: 'target escapes workspace root' };
   }
   try {
+    try {
+      if (!realParentInside(dst, workspaceRoot)) {
+        return { path: rel, ok: false, reason: 'target resolves outside workspace root' };
+      }
+    } catch (_) {
+      // No parent means nothing to delete.
+      return { path: rel, ok: true, status: 'deleted' };
+    }
     fs.rmSync(dst, { force: true });
     return { path: rel, ok: true, status: 'deleted' };
   } catch (err) {

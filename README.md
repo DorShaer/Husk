@@ -13,7 +13,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/DorShaer/Husk?style=flat&color=F74A1D)](https://github.com/DorShaer/Husk/stargazers)
 
-Husk wraps `claude`, `copilot`, `codex`, `aider`, or any other terminal-based AI agent in a clean Electron window with a real PTY, drag-drop file context, voice output, session resume, and a one-glance dashboard. The reasoning, thinking format, and Algorithm phase machine are bundled in. Clone, install, run.
+Husk wraps `claude`, `copilot`, `codex`, `aider`, `gemini`, `kiro`, or any other terminal-based AI agent in a clean Electron window with a real PTY, drag-drop file context, voice output, session resume, and a one-glance dashboard. The reasoning, thinking format, and Algorithm phase machine are bundled in. Clone, install, run.
 
 
 https://github.com/user-attachments/assets/83dcddc4-27eb-4c3c-b36c-388214416d6f
@@ -318,7 +318,7 @@ CI runs both jobs on every push to `main`, `development`, and `dev/**`, and on e
 
 All settings live in `~/.config/husk/config.json` and are editable from the Preferences page:
 
-- **Agent command** (`claude`, `copilot`, `codex`, `aider`, or any binary on `$PATH`) and **agent name**
+- **Agent command** (`claude`, `copilot`, `codex`, `aider`, `gemini`, `kiro`, or any binary on `$PATH`) and **agent name**
 - **Active agent profiles**: one or more agent personas applied to the next session
 - **Active project**: drives the agent's working directory so per-folder trust prompts work
 - **Theme** (10 themes: Midnight default, Dark, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula, Light, Sepia) and **accent color** (orange / cyan / indigo / emerald / rose)

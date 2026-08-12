@@ -49,6 +49,8 @@ function setEnabled(adapter, id, enabled) {
   return adapter.toggle(id);
 }
 
+// Writes one server. oldId marks an edit; without it, an id that already
+// exists is a collision and is refused rather than replaced.
 function addOrUpdate(adapter, oldId, payload, enabled) {
   const id = payload && payload.id;
   if (!id) return { ok: false, error: 'missing id' };
@@ -59,6 +61,9 @@ function addOrUpdate(adapter, oldId, payload, enabled) {
     if (typeof adapter.update !== 'function') return { ok: false, error: 'update not supported' };
     r = adapter.update(oldId, { ...payload, newId: id });
   } else if (existingNew) {
+    if (!oldId) {
+      return { ok: false, collision: true, error: `MCP server "${id}" already exists. Rename it, or edit the existing one.` };
+    }
     if (typeof adapter.update !== 'function') return { ok: false, error: 'update not supported' };
     r = adapter.update(id, { ...payload, newId: id });
   } else {
@@ -143,14 +148,21 @@ function add(payload = {}) {
   const id = payload && payload.id;
   const results = {};
   let failures = 0;
+  let collided = false;
   for (const [key, adapter] of writeAdapters()) {
     const r = addOrUpdate(adapter, null, payload, true);
     if (r && r.ok) results[key] = { status: 'installed', configPath: adapter.configPath };
-    else { failures++; results[key] = { status: 'error', error: (r && r.error) || 'install failed', configPath: adapter.configPath }; }
+    else {
+      failures++;
+      if (r && r.collision) collided = true;
+      results[key] = { status: 'error', error: (r && r.error) || 'install failed', configPath: adapter.configPath };
+    }
   }
-  return failures
-    ? { ok: false, id, results, error: `MCP server "${id || ''}" could not be installed for ${failures} target${failures === 1 ? '' : 's'}` }
-    : { ok: true, id, results };
+  if (!failures) return { ok: true, id, results };
+  const error = collided
+    ? `MCP server "${id || ''}" already exists. Rename it, or edit the existing one.`
+    : `MCP server "${id || ''}" could not be installed for ${failures} target${failures === 1 ? '' : 's'}`;
+  return { ok: false, id, results, collision: collided, error };
 }
 
 function update(oldId, payload = {}) {

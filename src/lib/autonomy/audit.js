@@ -7,30 +7,19 @@
 // subprocess spawn, error, start/halt/end markers) lands as one
 // JSONL row in <storageRoot>/sessions/<sessionId>/audit.jsonl.
 //
-// Each row carries the sha256 of the previous row's serialized line
-// in a `prev` field. The chain is anchored at GENESIS_HASH so the
-// first row's prev is a fixed known value. Tampering with any row
-// (or splicing rows in or out) breaks the chain at the affected
-// position, which `verifyAuditChain` reports as the first invalid
-// row index.
+// Each row carries the sha256 of the previous row's serialized line in a
+// `prev` field, anchored at GENESIS_HASH for the first row.
+// `verifyAuditChain` walks the file in order and reports the first row
+// whose `prev` does not match.
 //
 // Large payloads (anything that would make a row exceed
-// opts.maxInlineBytes, default 4 KiB) spill into the same blob
-// store the snapshot module uses: blobs/<sha256> under the session
-// dir, optionally encrypted via opts.encrypt. The row then carries
-// `blob_ref: <sha>` instead of `payload`. The JSONL stays cheap to
-// grep / tail even when individual events are huge.
+// opts.maxInlineBytes, default 4 KiB) spill into the same blob store the
+// snapshot module uses: blobs/<sha256> under the session dir, optionally
+// encrypted via opts.encrypt. The row then carries `blob_ref: <sha>`
+// instead of `payload`, so the JSONL stays cheap to grep and tail.
 //
-// Design rules enforced inside this module:
-//   - never writes outside storageRoot/sessions/<sessionId>/
-//   - sessionId validated against [A-Za-z0-9._-]{1,128}
-//   - opt-in encryption applies to EVERY spilled blob, not just
-//     "sensitive" ones (no implicit secret-detection)
-//   - re-opening an existing log resumes the chain from the last
-//     line's hash, so multiple writer sessions over a single
-//     audit.jsonl stay chained end-to-end
-//   - genesis hash is a public constant, not random; verifiers do
-//     not need any shared secret
+// Re-opening an existing log resumes the chain from the last line's hash,
+// so several writer sessions over one audit.jsonl stay chained end to end.
 
 const fs = require('fs');
 const path = require('path');
@@ -60,11 +49,10 @@ function sha256Hex(data) {
 }
 
 // readLastLineSync returns the last non-empty line of the file at
-// filePath, or null if the file is empty or missing. Used to resume
-// the hash chain when re-opening an existing audit log.
+// filePath, or null if the file is empty or missing. Callers resume
+// the hash chain from it when re-opening an existing audit log.
 function readLastLineSync(filePath) {
-  // Read directly in a single call rather than stat-then-read, so there is
-  // no check-then-use window. A missing or empty file yields null.
+  // One read call; a missing or empty file yields null.
   let buf;
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under sessionDir
@@ -145,9 +133,8 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
     let payload = event.payload === undefined ? null : event.payload;
     let blobRef = null;
 
-    // Spill check: serialize payload alone, see if it would push the
-    // row over the inline cap. We measure the payload, not the whole
-    // row, to keep the heuristic stable as we add metadata fields.
+    // Spill check: serialize the payload alone and compare it to the
+    // inline cap, so metadata fields do not move the threshold.
     if (payload !== null) {
       let payloadJson;
       try { payloadJson = JSON.stringify(payload); } catch (_) { payloadJson = null; }
@@ -159,9 +146,8 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under bdir
           const toWrite = encrypt ? encrypt(buf) : buf;
           try {
-            // wx (O_CREAT|O_EXCL) creates the blob only if absent in one
-            // syscall, so there is no check-then-write race. EEXIST means
-            // the identical content is already stored (keyed by its sha).
+            // wx creates the blob in one syscall only when it is absent;
+            // EEXIST means the identical content is already stored.
             // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded under bdir
             fs.writeFileSync(blobAbs, toWrite, { flag: 'wx' });
           } catch (e) {
@@ -187,9 +173,8 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
     if (turn !== null) row.turn = turn;
     if (blobRef) row.blob_ref = blobRef;
     else if (payload !== null) row.payload = payload;
-    // Stable JSON: Object key order in modern JS engines preserves
-    // insertion order. Keep insertion deterministic above so two
-    // identical events produce identical serialized rows.
+    // Key insertion order above is deterministic, and JS engines preserve
+    // it, so two identical events serialize to identical rows.
 
     let line;
     try {
@@ -203,8 +188,8 @@ function createAuditLog(storageRoot, sessionId, opts = {}) {
     } catch (err) {
       return { ok: false, error: `could not write audit line: ${err.message}` };
     }
-    // The chain bookkeeping happens AFTER a successful write, so a
-    // failed write does not poison the next append's prev pointer.
+    // Chain bookkeeping runs after a successful write, so prev always
+    // points at the last line on disk.
     prevHash = sha256Hex(line);
     seq += 1;
     return { ok: true, record: row, line };

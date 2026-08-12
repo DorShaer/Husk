@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { resolveInside, isInside } = require('../../src/lib/path-confine');
+const { resolveInside, isInside, realParentInside, realPathInside } = require('../../src/lib/path-confine');
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-pc-'));
 
@@ -76,8 +76,7 @@ test('isInside: non-string root or target returns false', () => {
   assert.equal(isInside(ROOT, null), false);
 });
 
-// Symlink-escape guard: the composition the fs:readFile handler uses to refuse
-// a link inside root that points outside root (realpath, then isInside).
+// The composition the fs:readFile handler uses: realpath, then isInside.
 test('isInside rejects a symlink whose target escapes root (realpath re-check)', () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-sym-'));
   try {
@@ -94,5 +93,134 @@ test('isInside rejects a symlink whose target escapes root (realpath re-check)',
     assert.equal(isInside(root, fs.realpathSync(evil)), false);
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ─── realParentInside ──────────────────────────────────────────────────────
+
+// realParentInside canonicalizes the parent directory, so a path that does not
+// exist yet is still confined to root.
+
+test('realParentInside: an ordinary new file under root is allowed', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpi-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(root);
+    assert.equal(realParentInside(path.join(root, 'new.txt'), root), true);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realParentInside: a new file under a real subdirectory is allowed', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpi-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+    assert.equal(realParentInside(path.join(root, 'sub', 'new.txt'), root), true);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realParentInside: a new file under a linked directory is refused', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpi-'));
+  try {
+    const root = path.join(base, 'root');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(root);
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(root, 'linkdir'));
+    // The string resolves under root; the directory it names does not.
+    assert.equal(realParentInside(path.join(root, 'linkdir', 'new.txt'), root), false,
+      'a link in the path was accepted as inside root');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realParentInside: a parent that does not exist is refused, not assumed', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpi-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(root);
+    assert.equal(realParentInside(path.join(root, 'missing', 'new.txt'), root), false);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realParentInside: a similar sibling name is not inside root', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpi-'));
+  try {
+    fs.mkdirSync(path.join(base, 'root'));
+    fs.mkdirSync(path.join(base, 'rootevil'));
+    assert.equal(realParentInside(path.join(base, 'rootevil', 'f.txt'), path.join(base, 'root')), false);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realParentInside: non-string input is refused', () => {
+  for (const bad of [null, undefined, 42, '', {}]) {
+    assert.equal(realParentInside(bad, '/tmp'), false);
+    assert.equal(realParentInside('/tmp/x', bad), false);
+  }
+});
+
+// ─── realPathInside ────────────────────────────────────────────────────────
+
+// The read-side counterpart: realPathInside canonicalizes the full path before
+// comparing it to root.
+
+test('realPathInside: an ordinary file under root is inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'sub', 'f.txt'), 'x');
+    assert.equal(realPathInside(path.join(root, 'sub', 'f.txt'), root), true);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a link pointing out of root is not inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(root); fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'x');
+    fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(root, 'link.txt'));
+    assert.equal(realPathInside(path.join(root, 'link.txt'), root), false,
+      'a link out of root was accepted as inside it');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a file under a linked directory is not inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(root); fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'x');
+    fs.symlinkSync(outside, path.join(root, 'linkdir'));
+    assert.equal(realPathInside(path.join(root, 'linkdir', 'secret.txt'), root), false);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a link that stays inside root is inside', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, 'real.txt'), 'x');
+    fs.symlinkSync(path.join(root, 'real.txt'), path.join(root, 'alias.txt'));
+    assert.equal(realPathInside(path.join(root, 'alias.txt'), root), true,
+      'a link that never leaves root was refused');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: a path that does not exist is refused, not assumed', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-rpath-'));
+  try {
+    fs.mkdirSync(path.join(base, 'root'));
+    assert.equal(realPathInside(path.join(base, 'root', 'missing.txt'), path.join(base, 'root')), false);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('realPathInside: non-string input is refused', () => {
+  for (const bad of [null, undefined, 42, '', {}]) {
+    assert.equal(realPathInside(bad, '/tmp'), false);
+    assert.equal(realPathInside('/tmp/x', bad), false);
   }
 });

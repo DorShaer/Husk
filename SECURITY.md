@@ -77,7 +77,7 @@ Out of scope:
 ## What Husk does not do
 
 - **No code signing or notarization on macOS.** The mac `.dmg` and `.zip` are unsigned. Gatekeeper will challenge them on first launch. See the README's "macOS first launch" section for the bypass. Apple Developer ID signing is on the roadmap; in-app auto-update on macOS is disabled until then and the update pill falls back to the releases page.
-- **No SHA verification on Piper or voice-model downloads.** The Piper archive (Linux tarball, Windows zip) and `.onnx` models come from `github.com/rhasspy/piper` and `huggingface.co` over HTTPS, but Husk does not pin a hash for them. A compromise of those release assets would be honored.
+- **No hash pinning on voice-model downloads.** The Piper archive is pinned to a published SHA-256 and verified before extraction. The `.onnx` voice models come from `huggingface.co` over HTTPS and are not pinned.
 - **No renderer sandbox.** Husk runs with `sandbox: false` because node-pty's preload needs it. `contextIsolation` and CSP still apply.
 - **No encryption at rest of MCP secrets.** MCP env vars and HTTP headers are stored in `~/.claude.json`, `~/.copilot/mcp-config.json`, or `~/.gemini/settings.json` at mode 0600 in plaintext, which matches the on-disk format of the agent CLIs themselves. If you need stronger protection, keep secrets in your OS keychain and reference them via env vars in the MCP entry.
 - **No fine-grained permission prompts inside the agent's own tool calls.** Husk does not interpose between the agent and its tool calls; tool gating is whatever the agent CLI provides.

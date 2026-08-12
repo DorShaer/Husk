@@ -6,7 +6,9 @@
 // file into each installed CLI's agents directory makes a Husk agent usable in
 // whichever CLI the user runs.
 
-// Slugify the agent name into a safe, traversal-free filename.
+// Slugify the agent name into a filename. The name comes from elsewhere, so the
+// slug keeps only lowercase letters, digits and dashes, which keeps the write
+// inside the agents directory it is joined to.
 function agentFileName(name) {
   const slug = String(name || 'agent')
     .toLowerCase()

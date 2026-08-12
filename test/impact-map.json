@@ -42,7 +42,10 @@
       "specs": [
         "agents-page.spec.js",
         "agent-files.spec.js",
-        "agent-inject-clis.spec.js"
+        "agent-inject-clis.spec.js",
+        "agent-center.spec.js",
+        "agent-canvas.spec.js",
+        "agent-attach.spec.js"
       ],
       "tokens": [
         "ag",
@@ -54,7 +57,9 @@
         "page:agents",
         "ipc:profiles",
         "ipc:repoagents",
-        "ipc:repomcp"
+        "ipc:repomcp",
+        "am",
+        "ipc:bgagents"
       ],
       "paths": [
         "src/lib/agent-file.js",
@@ -142,6 +147,7 @@
     "mcp": {
       "specs": [
         "mcp-shared.spec.js",
+        "mcp-collision.spec.js",
         "project-mcp.spec.js"
       ],
       "tokens": [
@@ -225,6 +231,7 @@
         "recap-voice.spec.js",
         "reload-no-copilot-session.spec.js",
         "reload-repaint.spec.js",
+        "term-colors.spec.js",
         "wheel-forward.spec.js"
       ],
       "tokens": [
@@ -258,6 +265,27 @@
         "src/lib/highlight.js",
         "src/lib/lang-detect.js",
         "src/lib/path-confine.js"
+      ]
+    },
+    "workflowArtifact": {
+      "specs": [
+        "workflow-artifact-e2e.spec.js"
+      ],
+      "tokens": [
+        "wfx",
+        "artifact",
+        "receipt",
+        "ipc:workflows"
+      ],
+      "paths": [
+        "src/lib/workflow-artifact.js",
+        "src/lib/workflow-receipt.js",
+        "src/lib/workflow-install.js",
+        "src/lib/stable-json.js",
+        "src/renderer/wfx-dom.js",
+        "src/renderer/wfx-install.js",
+        "src/renderer/wfx-publish.js",
+        "src/renderer/wfx-artifact-ui.js"
       ]
     }
   }

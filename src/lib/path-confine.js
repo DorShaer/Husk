@@ -2,10 +2,8 @@
 
 const path = require('path');
 
-// resolveInside(root, name) returns an absolute path that is provably
-// inside `root`. Throws when `name` is empty, absolute, contains a
-// null byte, or would resolve outside `root`. Use whenever a fixed
-// root is joined with a name that comes from outside the function.
+// Joins root and name, returning an absolute path under root. Throws when name
+// is empty, absolute, contains a null byte, or resolves outside root.
 function resolveInside(root, name) {
   if (typeof root !== 'string' || !root) throw new Error('resolveInside: root required');
   if (typeof name !== 'string' || !name) throw new Error('resolveInside: name required');
@@ -19,7 +17,7 @@ function resolveInside(root, name) {
   return candidate;
 }
 
-// isInside is the predicate form: true when `target` resolves under `root`.
+// True when target resolves under root, by string only.
 function isInside(root, target) {
   if (typeof root !== 'string' || typeof target !== 'string') return false;
   const rootAbs = path.resolve(root);
@@ -27,4 +25,36 @@ function isInside(root, target) {
   return targetAbs === rootAbs || targetAbs.startsWith(rootAbs + path.sep);
 }
 
-module.exports = { resolveInside, isInside };
+// True when target's parent directory, as the filesystem resolves it, is under
+// root. Use before creating a file. False when the parent cannot be resolved.
+function realParentInside(target, root) {
+  if (typeof target !== 'string' || typeof root !== 'string' || !target || !root) return false;
+  const fs = require('fs');
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving root is this confinement check's own mechanism; no data is read
+    const rootReal = fs.realpathSync(path.resolve(root));
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving the candidate parent is the check itself; no data is read
+    const parentReal = fs.realpathSync(path.dirname(path.resolve(target)));
+    return parentReal === rootReal || parentReal.startsWith(rootReal + path.sep);
+  } catch (_) {
+    return false;
+  }
+}
+
+// True when target itself, as the filesystem resolves it, is under root. Use
+// before reading or writing an existing path. False when it cannot be resolved.
+function realPathInside(target, root) {
+  if (typeof target !== 'string' || typeof root !== 'string' || !target || !root) return false;
+  const fs = require('fs');
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving root is this confinement check's own mechanism; no data is read
+    const rootReal = fs.realpathSync(path.resolve(root));
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving the candidate is the check itself; no data is read
+    const targetReal = fs.realpathSync(path.resolve(target));
+    return targetReal === rootReal || targetReal.startsWith(rootReal + path.sep);
+  } catch (_) {
+    return false;
+  }
+}
+
+module.exports = { resolveInside, isInside, realParentInside, realPathInside };

@@ -23,6 +23,10 @@ function withAutopilotArgs(agentCommand, args = []) {
     if (!hasFlag(out, ['--auto-accept-architect', '--no-auto-accept-architect'])) add('--auto-accept-architect');
   } else if (base === 'codex') {
     if (!hasFlag(out, ['--ask-for-approval', '--approval-mode'])) add('--ask-for-approval', 'never');
+  } else if (base === 'kiro-cli') {
+    if (out.length && !String(out[0]).startsWith('-') && out[0] !== 'chat') return out;
+    if (!out.length || String(out[0]).startsWith('-')) out.unshift('chat');
+    if (!hasFlag(out, ['--trust-all-tools', '--trust-tools'])) add('--trust-all-tools');
   }
 
   return out;

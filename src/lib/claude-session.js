@@ -9,8 +9,8 @@ const nodePath = require('node:path');
 //
 // Order of preference:
 //   1. a previously-saved id whose transcript still exists on disk
-//   2. the newest transcript in the project dir (covers first upgrade, or a
-//      session started outside Husk)
+//   2. the newest transcript in the project dir (covers a project with no
+//      saved id yet, or a session started outside Husk)
 //   3. null -> the caller mints a fresh session id
 //
 // `deps` is injectable so this stays a pure, testable unit.

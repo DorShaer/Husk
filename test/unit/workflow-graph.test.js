@@ -39,7 +39,7 @@ test('sanitizeNode: agentCommand outside the allowlist becomes null', () => {
 });
 
 test('sanitizeNode: known agent commands are preserved', () => {
-  for (const good of ['claude', 'copilot', 'codex', 'aider', 'gemini']) {
+  for (const good of ['claude', 'copilot', 'codex', 'aider', 'gemini', 'kiro-cli']) {
     const n = wf.sanitizeNode({ agentCommand: good });
     assert.equal(n.agentCommand, good);
   }
@@ -376,8 +376,112 @@ test('the workflow step runner gates the spawn behind isAllowedAgentCommand', ()
   // body so a future edit cannot accidentally re-introduce an
   // unconstrained spawn.
   const guardAt = body.indexOf('isAllowedAgentCommand(cmd)');
-  const spawnAt = body.indexOf('spawn(cmd, args');
+  // The command may be handed to spawn bare or resolved to an absolute path
+  // first; both are the same step and the ordering is what this pins.
+  const spawnMatch = body.match(/spawn\((?:spawnName\()?cmd\)?, args/);
+  const spawnAt = spawnMatch ? body.indexOf(spawnMatch[0]) : -1;
   assert.ok(guardAt > -1, 'isAllowedAgentCommand(cmd) check missing in executeWorkflow');
-  assert.ok(spawnAt > -1, 'spawn(cmd, args, ...) not found in executeWorkflow');
+  assert.ok(spawnAt > -1, 'the step spawn of cmd was not found in executeWorkflow');
   assert.ok(guardAt < spawnAt, 'isAllowedAgentCommand check must precede the spawn call');
+});
+
+// The allowlist proves the NAME is one Husk will run. On Windows it does not
+// prove which file that name refers to: libuv searches the child's working
+// directory before PATH, and a workflow's bound directory is a checkout its
+// author chose. Resolving from PATH is what closes the gap between the two.
+test('the workflow step spawn resolves its command rather than passing a bare name', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const text = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const m = text.match(/async function wfRunStep[\s\S]*?\n\}/);
+  assert.ok(m, 'wfRunStep not found');
+  assert.match(m[0], /spawn\(spawnName\(cmd\), args/,
+    'the step spawn passes a bare command name, which Windows resolves against the repo first');
+});
+
+// ─── layoutGraph ─────────────────────────────────────────────────────────────
+
+// The layout owes its caller three things: a column per depth so the flow
+// reads left to right, siblings stacked near their shared parent, and nothing
+// but coordinates touched. A cycle must terminate rather than recurse.
+
+function lgNode(id, extra) { return { id, name: id, agentCommand: 'claude', ...extra }; }
+function lgEdge(from, to) { return { id: `${from}->${to}`, from, to, condition: { type: 'always', value: '' } }; }
+
+test('layoutGraph: a step lands one column right of the deepest step that feeds it', () => {
+  // a -> b -> d, a -> c -> d, and a long arm a -> e -> f -> d: d sits after f.
+  const g = wf.layoutGraph({
+    nodes: [lgNode('a'), lgNode('b'), lgNode('c'), lgNode('d'), lgNode('e'), lgNode('f')],
+    edges: [lgEdge('a', 'b'), lgEdge('a', 'c'), lgEdge('b', 'd'), lgEdge('c', 'd'),
+      lgEdge('a', 'e'), lgEdge('e', 'f'), lgEdge('f', 'd')],
+  });
+  const x = new Map(g.nodes.map((n) => [n.id, n.x]));
+  assert.ok(x.get('b') > x.get('a'), 'b right of a');
+  assert.ok(x.get('f') > x.get('e'), 'f right of e');
+  assert.ok(x.get('d') > x.get('f'), 'd right of the longest arm, not beside b');
+});
+
+test('layoutGraph: parallel branches out of one step stack in one column without overlap', () => {
+  const fan = ['r1', 'r2', 'r3', 'r4', 'r5'];
+  const g = wf.layoutGraph({
+    nodes: [lgNode('root'), ...fan.map((id) => lgNode(id))],
+    edges: fan.map((id) => lgEdge('root', id)),
+  });
+  const rows = g.nodes.filter((n) => n.id !== 'root');
+  assert.equal(new Set(rows.map((n) => n.x)).size, 1, 'one column for the fan');
+  const ys = rows.map((n) => n.y).sort((a, b) => a - b);
+  for (let i = 1; i < ys.length; i += 1) {
+    assert.ok(ys[i] - ys[i - 1] >= 64, `rows ${i - 1} and ${i} overlap: ${ys[i - 1]} vs ${ys[i]}`);
+  }
+});
+
+test('layoutGraph: only coordinates change and edges travel through untouched', () => {
+  const graph = {
+    nodes: [lgNode('a', { prompt: 'keep me', x: 999, y: 999 }), lgNode('b', { model: 'opus-5', x: -5, y: 12 })],
+    edges: [lgEdge('a', 'b')],
+  };
+  const g = wf.layoutGraph(graph);
+  const a = g.nodes.find((n) => n.id === 'a');
+  const b = g.nodes.find((n) => n.id === 'b');
+  assert.equal(a.prompt, 'keep me');
+  assert.equal(b.model, 'opus-5');
+  assert.notEqual(a.x, 999, 'a was re-placed');
+  assert.deepEqual(g.edges.map((e) => `${e.from}->${e.to}`), ['a->b']);
+});
+
+test('layoutGraph: a cycle terminates and the loop re-entry sits beside the step it loops over', () => {
+  // a -> b -> c -> b: b and c are a cycle; the call must return, every node
+  // must carry finite coordinates, and c stays right of b.
+  const g = wf.layoutGraph({
+    nodes: [lgNode('a'), lgNode('b'), lgNode('c')],
+    edges: [lgEdge('a', 'b'), lgEdge('b', 'c'), lgEdge('c', 'b')],
+  });
+  assert.equal(g.nodes.length, 3);
+  for (const n of g.nodes) {
+    assert.ok(Number.isFinite(n.x) && Number.isFinite(n.y), `${n.id} has real coordinates`);
+  }
+  const at = new Map(g.nodes.map((n) => [n.id, n]));
+  assert.ok(at.get('c').x > at.get('b').x, 'c right of b despite the back edge');
+});
+
+test('layoutGraph: a self-loop neither wedges the walk nor moves its node off the flow', () => {
+  const g = wf.layoutGraph({
+    nodes: [lgNode('a'), lgNode('b')],
+    edges: [lgEdge('a', 'b'), lgEdge('b', 'b')],
+  });
+  const at = new Map(g.nodes.map((n) => [n.id, n]));
+  assert.ok(at.get('b').x > at.get('a').x);
+});
+
+test('layoutGraph: deterministic for the same graph', () => {
+  const graph = {
+    nodes: ['a', 'b', 'c', 'd', 'e'].map((id) => lgNode(id)),
+    edges: [lgEdge('a', 'b'), lgEdge('a', 'c'), lgEdge('b', 'd'), lgEdge('c', 'd'), lgEdge('d', 'e')],
+  };
+  assert.deepEqual(wf.layoutGraph(graph), wf.layoutGraph(graph));
+});
+
+test('layoutGraph: an empty graph is returned empty rather than thrown on', () => {
+  assert.deepEqual(wf.layoutGraph({ nodes: [], edges: [] }), { nodes: [], edges: [] });
+  assert.deepEqual(wf.layoutGraph(null), { nodes: [], edges: [] });
 });

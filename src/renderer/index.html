@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <title>Husk</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self';" />
     <link rel="stylesheet" href="vendor/xterm.css" />
     <link rel="stylesheet" href="vendor/drawflow.min.css" />
     <link rel="stylesheet" href="styles.css" />
@@ -16,9 +16,7 @@
 
     <!-- First-run onboarding -->
     <div id="onboarding" class="onboarding" hidden data-step="0">
-      <!-- Ambience sits outside .ob-stage: that stage scrolls, so it clips, and a
-           clipped blur ends on a straight edge that is plainly visible on a pale
-           background. -->
+      <!-- Ambient backdrop, outside the scrolling stage. -->
       <div class="ob-ambient" aria-hidden="true">
         <div class="ob-aurora"><i></i><i></i></div>
         <div class="ob-embers"><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -61,8 +59,7 @@
                 <linearGradient id="hk-pit" x1="0.5" y1="0" x2="0.5" y2="1">
                   <stop offset="0" stop-color="#6b3316" /><stop offset="1" stop-color="#38180a" />
                 </linearGradient>
-                <!-- userSpaceOnUse so the blink lids can reuse this fill and match the
-                     body exactly instead of resampling the gradient over their own box. -->
+                <!-- userSpaceOnUse so the blink lids reuse this fill and match the body. -->
                 <radialGradient id="hk-body" gradientUnits="userSpaceOnUse" cx="88" cy="58" r="108">
                   <stop offset="0" stop-color="#fff6e2" />
                   <stop offset="0.4" stop-color="#fdd191" />
@@ -93,9 +90,7 @@
               <!-- the pod's inner cavity, so the opening reads as depth and not a hole -->
               <path class="hk-pit" d="M46 52 C 58 96, 78 150, 100 202 C 122 150, 142 96, 154 52 C 132 84, 68 84, 46 52 Z" fill="url(#hk-pit)" />
               <!-- Each half carries a dark liner shaped like the opposite half, so the
-                   two together always fill the gap between them however far they swing.
-                   They hinge on the same point as the halves and are drawn under both,
-                   so a shut pod covers them and they never spill past its outline. -->
+                   two together fill the gap between them at any swing. -->
               <g class="hk-petal hk-petal-l hk-liner">
                 <path d="M100 12 C 140 46, 170 76, 170 108 C 170 142, 140 178, 100 202 Z" fill="url(#hk-pit)" />
               </g>
@@ -103,9 +98,7 @@
                 <path d="M100 12 C 60 46, 30 76, 30 108 C 30 142, 60 178, 100 202 Z" fill="url(#hk-pit)" />
               </g>
 
-              <!-- The breath rides its own group. A CSS animation outranks a transition
-                   on the same property, so breathing on the seed itself would make the
-                   seed snap to the bottom the moment the animation is dropped. -->
+              <!-- The breath rides its own group so the seed keeps its own transform. -->
               <g class="hk-seed"><g class="hk-breath">
                 <g class="hk-sprout-g">
                   <path d="M99 34 C 96 18, 88 8, 73 3 C 84 -4, 100 4, 105 18 C 110 4, 122 -3, 135 2 C 129 20, 115 32, 102 35 Z" fill="url(#hk-sprout)" />
@@ -266,9 +259,8 @@
       </div>
     </div>
 
-    <!-- What's new. A page, not a dialog: one change per screen, stepped
-         through with Next, or skipped straight into the app. Shown once per
-         version, and replayable from Preferences. -->
+    <!-- What's new. One change per screen, shown once per version and
+         replayable from Preferences. -->
     <div id="whatsnew" class="onboarding wn-page" hidden data-step="0">
       <div class="ob-ambient" aria-hidden="true">
         <div class="ob-aurora"><i></i><i></i></div>
@@ -320,8 +312,7 @@
     <!-- Agents this chat started that keep working on their own. -->
     <div id="agent-switch" class="palette" hidden>
       <div class="palette-card">
-        <!-- The glyph holds the same column the row dots do, so the query text
-             starts on the left edge every result title and section label uses. -->
+        <!-- The glyph holds the same column the row dots do. -->
         <div class="as-head">
           <svg class="as-head-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
           <input type="text" id="agent-switch-input" placeholder="Filter agents" autocomplete="off" spellcheck="false" role="combobox" aria-controls="agent-switch-list" aria-expanded="true" aria-autocomplete="list" />
@@ -338,6 +329,115 @@
       </div>
     </div>
 
+    <!-- Agent command center: every background agent on this machine, as a live
+         spawn graph or a grouped list, beside a detail pane that streams what
+         the selected agent is doing right now. -->
+    <div id="agent-map" class="modal" hidden>
+      <div class="modal-card am-card" role="dialog" aria-modal="true" aria-labelledby="am-title">
+        <header class="am-top">
+          <div class="am-id">
+            <h2 class="am-title" id="am-title">Agents</h2>
+            <p class="am-sub" id="am-sub">&nbsp;</p>
+          </div>
+          <button class="am-close" id="am-close" aria-label="Close" title="Close (Esc)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </header>
+        <div class="am-filters" id="am-filters">
+          <!-- Live leads and is where the center opens: the reason to look is
+               what is happening now. The rest stays one click away. -->
+          <div class="am-chipset" role="tablist" aria-label="Filter agents">
+            <button class="am-chip is-live is-active" data-am-filter="live" role="tab" aria-selected="true">Live <span class="am-chip-n" id="am-n-live"></span></button>
+            <button class="am-chip is-blocked" data-am-filter="blocked" role="tab" aria-selected="false">Needs you <span class="am-chip-n" id="am-n-blocked"></span></button>
+            <button class="am-chip is-running" data-am-filter="running" role="tab" aria-selected="false">Running <span class="am-chip-n" id="am-n-running"></span></button>
+            <button class="am-chip is-done" data-am-filter="done" role="tab" aria-selected="false">Finished <span class="am-chip-n" id="am-n-done"></span></button>
+            <button class="am-chip" data-am-filter="all" role="tab" aria-selected="false">All <span class="am-chip-n" id="am-n-all"></span></button>
+          </div>
+          <div class="am-views" id="am-views" role="tablist" aria-label="View">
+            <button class="am-view is-active" data-am-view="canvas" role="tab" aria-selected="true" title="Spawn graph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.1 10.9 15.9 6.9M7.1 13.1l8.8 4"/></svg>
+              Graph
+            </button>
+            <button class="am-view" data-am-view="list" role="tab" aria-selected="false" title="List">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+              List
+            </button>
+          </div>
+          <label class="am-search" for="am-search-input">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+            <input type="text" id="am-search-input" placeholder="Search" autocomplete="off" spellcheck="false" />
+            <kbd aria-hidden="true">/</kbd>
+          </label>
+        </div>
+        <div class="am-body">
+          <!-- Spawn graph. One transformed layer holds the dot grid, the edge
+               svg and the node layer, so pan and zoom move all three together. -->
+          <div class="am-canvas-pane" id="am-canvas-pane" hidden>
+            <div class="am-cv-grid" id="am-cv-grid" aria-hidden="true"></div>
+            <div class="am-cv-stage" id="am-cv-stage">
+              <svg class="am-cv-edges" id="am-cv-edges" aria-hidden="true" focusable="false"></svg>
+              <div class="am-cv-nodes" id="am-cv-nodes" role="listbox" aria-label="Agent spawn graph" tabindex="0"></div>
+            </div>
+            <div class="am-cv-hud">
+              <button class="am-cv-btn" id="am-cv-out" type="button" aria-label="Zoom out" title="Zoom out">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>
+              </button>
+              <button class="am-cv-zoom" id="am-cv-zoom" type="button" title="Reset zoom">100%</button>
+              <button class="am-cv-btn" id="am-cv-in" type="button" aria-label="Zoom in" title="Zoom in">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg>
+              </button>
+              <span class="am-cv-sep" aria-hidden="true"></span>
+              <button class="am-cv-btn" id="am-cv-fit" type="button" aria-label="Fit to view" title="Fit to view">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4H5.5A1.5 1.5 0 0 0 4 5.5V9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15M15 20h3.5a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
+              </button>
+              <button class="am-cv-btn" id="am-cv-expand" type="button" aria-label="Fill the window" aria-pressed="false" title="Fill the window">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="am-list-pane" id="am-list-pane">
+            <ol class="am-list" id="am-list" role="listbox" aria-label="Agents" tabindex="0"></ol>
+            <div class="am-blank" id="am-blank" hidden>
+              <img class="am-blank-art" id="am-blank-art" src="assets/agent-empty.svg" alt="" aria-hidden="true" hidden />
+              <div class="am-blank-icon" id="am-blank-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="6" width="14" height="12" rx="3"/><path d="M12 6V3.5"/><circle cx="12" cy="2.75" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.4" cy="11" r="0.9" fill="currentColor" stroke="none"/><circle cx="14.6" cy="11" r="0.9" fill="currentColor" stroke="none"/><path d="M9.5 14.6h5"/></svg>
+              </div>
+              <p class="am-blank-t" id="am-blank-t">No agents yet</p>
+              <p class="am-blank-m" id="am-blank-m">Ask any chat to keep working in the background, then watch it here live.</p>
+              <button class="ghost-btn am-blank-act" id="am-blank-act" hidden></button>
+            </div>
+          </div>
+          <aside class="am-detail-pane" id="am-detail-pane">
+            <div class="am-detail-blank" id="am-detail-blank">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h9M4 12h16M4 18h12"/></svg>
+              <p>Select an agent to watch it work</p>
+            </div>
+            <div class="am-detail" id="am-detail" hidden>
+              <div class="am-d-head">
+                <span class="am-state" id="am-d-state"></span>
+                <span class="am-d-elapsed" id="am-d-elapsed"></span>
+              </div>
+              <h3 class="am-d-name" id="am-d-name" dir="auto"></h3>
+              <p class="am-d-intent" id="am-d-intent"></p>
+              <div class="am-d-feed-wrap">
+                <div class="am-d-feed-label">Activity</div>
+                <ol class="am-d-feed" id="am-d-feed"></ol>
+              </div>
+              <dl class="am-d-facts" id="am-d-facts"></dl>
+              <div class="am-d-actions">
+                <button class="am-d-open" id="am-d-open">Open session</button>
+                <button class="am-d-end" id="am-d-end" title="Stop this agent">Stop</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+        <footer class="am-foot">
+          <span class="am-foot-note" id="am-foot"></span>
+          <span class="am-foot-sum" id="am-foot-sum"></span>
+        </footer>
+      </div>
+    </div>
+
     <!-- Topbar -->
     <header id="topbar">
       <button class="topbar-project" id="topbar-project" title="Active project (click to switch)" hidden>
@@ -345,10 +445,8 @@
         <span class="tp-name" id="topbar-project-name"></span>
       </button>
       <div class="topbar-spacer"></div>
-      <!-- Agents this project has. Silent until there is one. The label is
-           rewritten by a poll, so it stays out of the live region: a chip that
-           re-announces itself every few seconds is noise, and the title says
-           the same thing on demand. -->
+      <!-- Agents this project has. Hidden until there is one; a poll rewrites
+           the label, which stays out of the live region. -->
       <button class="iconbtn topbar-agents" id="topbar-agents" type="button" hidden>
         <span class="ta-dot" aria-hidden="true"></span>
         <span class="ta-count" id="topbar-agents-count"></span>
@@ -526,12 +624,6 @@
             <div class="terminal-wrap">
               <div id="tab-strip" class="tab-strip"></div>
               <div id="terminal"></div>
-              <!-- Covers the tool's own agent picker while Husk drives it. -->
-              <div id="agent-boot" class="agent-boot" hidden>
-                <span class="ab-dot" aria-hidden="true"></span>
-                <span class="ab-name" id="agent-boot-name"></span>
-                <span class="ab-sub">Opening</span>
-              </div>
             </div>
           </div>
         </div>
@@ -559,16 +651,13 @@
                 <button class="wf-band-btn" id="wf-band-watch">Watch</button>
               </aside>
 
-              <!-- The landing hub for the whole feature: what a graph buys you,
-                   the topologies worth copying, the flows already saved, and how
-                   they have been behaving. -->
+              <!-- The landing hub: what a graph does, the patterns to copy, the
+                   saved flows, and how they have been behaving. -->
               <div class="wfx">
 
                 <section class="wfx-hero">
                   <div class="wfx-hero-art" aria-hidden="true">
-                    <!-- The viewBox is cropped to the drawing's actual extents
-                         (y 30..275) rather than the 300-unit canvas, so the meet
-                         fit does not letterbox empty rows inside the art column. -->
+                    <!-- The viewBox is cropped to the drawing's own extents. -->
                     <svg class="wfx-dag" viewBox="0 20 760 262" preserveAspectRatio="xMidYMid meet">
                         <defs>
                           <linearGradient id="wfx-card-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="wfx-cg0"/><stop offset="1" class="wfx-cg1"/></linearGradient>
@@ -586,18 +675,16 @@
 
                         <rect width="760" height="300" fill="url(#wfx-grid)" mask="url(#wfx-grid-mask)"/>
 
-                        <!-- The lifecycle the columns are built on, set as a header
-                             rail so it can never collide with the panel below. -->
+                        <!-- The lifecycle the columns are built on, as a header rail. -->
                         <text class="wfx-stage" x="97" y="40">PLAN</text>
                         <text class="wfx-stage" x="297" y="40">SCAN</text>
                         <text class="wfx-stage" x="461" y="40">GATE</text>
                         <text class="wfx-stage" x="663" y="40">SHIP</text>
                         <line class="wfx-rule" x1="31" y1="52" x2="729" y2="52"/>
 
-                        <!-- Every handle is horizontal and offset by half its gap, so no curve
-                             crosses itself and each one meets a border square on. The branch is
-                             given the widest gap of the three: it is the only edge carrying a
-                             label, and a label needs a clear band of background around it. -->
+                        <!-- Every handle is horizontal and offset by half its gap, so each
+                             curve meets a border square on. The branch takes the widest gap
+                             because it is the one edge carrying a label. -->
                         <g class="wfx-wires">
                           <path class="wfx-wire" d="M163,176 C 197,176 197,112 231,112"/>
                           <path class="wfx-wire" d="M163,176 C 197,176 197,176 231,176"/>
@@ -686,8 +773,7 @@
                           <text class="wfx-meta" x="641" y="240">findings</text>
                         </g>
 
-                        <!-- Seated beside the branch, never on it: both sit off the stroke's
-                             normal with a clear band of background between type and wire. -->
+                        <!-- Both labels sit beside the branch, off the stroke. -->
                         <text class="wfx-edge-label" x="528" y="133">pass</text>
                         <text class="wfx-edge-label is-idle" x="528" y="223">fail</text>
                       </svg>
@@ -791,6 +877,10 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
                   Add node
                 </button>
+                <button class="ghost-btn" id="btn-wf-arrange" title="Lay the steps out in columns by graph depth">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="3" y="4" width="5" height="6" rx="1"/><rect x="10" y="9" width="5" height="6" rx="1"/><rect x="17" y="4" width="4" height="6" rx="1"/><rect x="17" y="14" width="4" height="6" rx="1"/></svg>
+                  Arrange
+                </button>
                 <button class="ghost-btn" id="btn-run-from-builder" title="Save this workflow and run it">
                   <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" width="13" height="13" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
                   Run
@@ -817,8 +907,7 @@
               </div>
               <div class="wf-canvas-wrap">
                 <div id="wf-canvas" class="wf-canvas"></div>
-                <!-- Every interaction this canvas supports, in one place. Each
-                     line is behaviour that exists; nothing aspirational. -->
+                <!-- Every interaction this canvas supports, in one place. -->
                 <div class="wf-legend" id="wf-legend">
                   <div class="wf-legend-body" id="wf-legend-body">
                     <div class="wf-legend-group">
@@ -839,6 +928,7 @@
                       <div class="wf-legend-title">Canvas</div>
                       <div class="wf-legend-row"><span class="wf-legend-what">Pan</span><span class="wf-legend-how">drag the background</span></div>
                       <div class="wf-legend-row"><span class="wf-legend-what">Zoom</span><span class="wf-legend-how"><kbd>Ctrl</kbd> + scroll</span></div>
+                      <div class="wf-legend-row"><span class="wf-legend-what">Tidy up</span><span class="wf-legend-how">the <b>Arrange</b> button, top right</span></div>
                     </div>
                     <p class="wf-legend-note">Deleting a step takes its lines with it, so a line is never left pointing at nothing.</p>
                   </div>
@@ -850,8 +940,8 @@
                 <div class="wf-drawer" id="wf-node-panel" hidden>
                   <div class="wf-drawer-scrim" aria-hidden="true"></div>
                   <div class="wf-drawer-panel" role="dialog" aria-label="Configure step">
-                    <!-- The prompt is the only field that wants room, so the
-                         panel itself gives it: drag this edge, or hit Widen. -->
+                    <!-- Resizes the panel to give the prompt more room. Widen does
+                         the same. -->
                     <div class="wf-drawer-grip" id="wf-drawer-grip" role="separator" aria-orientation="vertical" aria-label="Resize this panel" title="Drag to resize"></div>
                     <div class="wf-nm-head">
                       <div class="wf-nm-head-title">
@@ -862,8 +952,7 @@
                     </div>
                     <div class="wf-drawer-body">
                       <!-- The short controls travel together, so a wide panel
-                           can stand them beside the editor instead of leaving
-                           a column of dead space next to them. -->
+                           stands them beside the editor. -->
                       <div class="wf-nm-fields">
                       <div class="form-row">
                         <label class="form-label">Name</label>
@@ -918,9 +1007,8 @@
                         <div class="wf-ide" id="wf-ide">
                           <div class="wf-ide-gutter" id="wf-np-gutter" aria-hidden="true"></div>
                           <textarea class="wf-ide-input" id="wf-np-prompt" maxlength="8192" spellcheck="false" placeholder="What should this step do? Write a rough idea, then Generate with AI to polish it."></textarea>
-                          <!-- Off-screen twin of the editor's text column. Each
-                               logical line is measured here so the gutter can
-                               give a wrapped paragraph one number, not five. -->
+                          <!-- Off-screen twin of the editor's text column. Measures
+                               each logical line so the gutter numbers it once. -->
                           <div class="wf-ide-mirror" id="wf-ide-mirror" aria-hidden="true"></div>
                           <div class="wf-gen-review" id="wf-gen-review" hidden>
                             <div class="wf-gen-review-head">
@@ -1036,9 +1124,8 @@
         <div class="page page-autopilot" data-page="autopilot" hidden>
           <div class="page-head">
             <div class="page-head-left">
-              <!-- Review navigation lives top-left where the eye looks for
-                   "back", not in the footer with the destructive actions.
-                   Esc, Alt+Left, and the mouse back button do the same. -->
+              <!-- Review navigation. Esc, Alt+Left, and the mouse back button
+                   do the same. -->
               <button class="aut-back-pill" id="aut-review-back" hidden title="Back to all runs (Esc, Alt+Left, or mouse back button)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
                 <span>All runs</span>
@@ -1048,8 +1135,8 @@
               <span class="page-sub" id="aut-page-sub">hand the agent a goal and supervise the run</span>
             </div>
             <div class="page-head-right">
-              <!-- One command slot across states: Stop while live, Rerun /
-                   Start-new in review. Acting on a run always lives here. -->
+              <!-- One command slot across states: Stop while live, Rerun and
+                   Start-new in review. -->
               <button class="aut-hero-secondary aut-review-only" id="aut-review-rerun" hidden>Rerun this task</button>
               <button class="btn-primary aut-review-only" id="aut-review-new" hidden>Start a new run</button>
               <div class="aut-page-status" id="aut-page-status" hidden>
@@ -1146,9 +1233,9 @@
             </section>
           </div>
 
-            <!-- Cockpit: one dense left rail (mission, agents, files, run log)
-                 and agent lanes owning every remaining pixel. The value/cap
-                 ids and .aut-page-meter class are what the budget JS targets. -->
+            <!-- Cockpit: mission, agents, files and run log beside the agent
+                 lanes. The budget JS targets the value/cap ids and
+                 .aut-page-meter. -->
           <div class="aut-page-live" id="aut-page-live" hidden>
             <div class="aut-dash-wrapper">
               
@@ -1268,10 +1355,9 @@
             </div>
           </div>
 
-          <!-- One band of chrome over one list. Origin is a property of the agent, so
-               it groups and it filters. Pinning is a view, so it only filters.
-               The caret's agent is read in full beside the list, so knowing what
-               an agent actually says costs no click. -->
+          <!-- One band of chrome over one list. Origin groups and filters,
+               pinning only filters, and the caret's agent is read in full
+               beside the list. -->
           <div class="ag-split" id="ag-split">
           <div class="ag" id="ag-panel">
             <div class="ag-bar" id="ag-bar">
@@ -1373,8 +1459,26 @@
               <button class="modal-close" id="rm-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ra-hint">Point Husk at a cloned repo that ships an <code>mcp-servers/</code> directory. Each subfolder with a <code>package.json</code> is offered as a separate server. Husk will build it when needed and write the right entry into the active CLI's MCP config. Claude and Copilot get a real config write; Codex and Aider get a snippet you can paste.</p>
-              <div class="ra-pathrow">
+              <p class="ra-hint">Point Husk at a repo that ships an <code>mcp-servers/</code> directory. Each subfolder with a <code>package.json</code> is offered as a separate server. Husk will build it when needed and write the right entry into the active CLI's MCP config. Claude and Copilot get a real config write; Codex and Aider get a snippet you can paste.</p>
+              <!-- Two doors, as in the agent-pack import: a URL is cloned into
+                   Husk's own data folder, a path is read where it sits. -->
+              <div class="ra-sources">
+                <button type="button" class="ra-source" id="rm-src-github">
+                  <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+                  <span class="ra-source-title">Import from GitHub</span>
+                  <span class="ra-source-desc">Paste a repository URL, Husk clones it for you</span>
+                </button>
+                <button type="button" class="ra-source" id="rm-src-local">
+                  <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
+                  <span class="ra-source-title">Import locally</span>
+                  <span class="ra-source-desc">Pick a cloned repository folder on disk</span>
+                </button>
+              </div>
+              <div class="ra-pathrow" id="rm-row-github" hidden>
+                <input type="text" id="rm-url" class="ra-root" placeholder="https://github.com/dev/mcp-servers-repo" autocomplete="off" spellcheck="false" />
+                <button class="ghost-btn" id="rm-fetch">Fetch</button>
+              </div>
+              <div class="ra-pathrow" id="rm-row-local" hidden>
                 <input type="text" id="rm-root" class="ra-root" placeholder="/path/to/repo-with-mcp-servers" autocomplete="off" spellcheck="false" />
                 <button class="ghost-btn" id="rm-browse">Browse&hellip;</button>
               </div>
@@ -1456,8 +1560,7 @@
             </div>
 
             <div id="agent-edit-step" class="modal-body">
-              <!-- Drafting is one row at the top of the form, so the form is what
-                   opens and a draft is something you ask for. -->
+              <!-- Drafting is one row at the top of the form. -->
               <div class="form-row ag-gen" id="agent-generate-step">
                 <label class="form-label" for="agent-generate-desc">Draft from a description</label>
                 <div class="ag-gen-row">
@@ -1619,8 +1722,7 @@
               <button class="btn-primary" id="btn-skills-new" title="Create a new skill"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Create skill</button>
             </div>
           </div>
-          <!-- One filter bar over one full-width list. A library this size is
-               read description-first, so the width belongs to the list. -->
+          <!-- One filter bar over one full-width list. -->
           <div class="sk">
             <aside class="sk-rail" aria-label="Filters">
               <div class="sk-rail-cap">Sources</div>
@@ -1721,7 +1823,7 @@
           </div>
           <div class="plugins-body" id="plugins-body">
             <!-- Shown instead of both sections when nothing is installed and no
-                 marketplace is configured: one icon, one instruction, one action. -->
+                 marketplace is configured. -->
             <div class="plugins-zero" id="plugins-zero" hidden>
               <div class="pz-lead">
                 <div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg></div>
@@ -1931,7 +2033,7 @@
           </div>
         </div>
 
-        <!-- preferences moved to floating modal below -->
+        <!-- preferences live in the floating modal below -->
 
       </section>
 
@@ -2150,6 +2252,768 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══ Portable workflows ═══════════════════════════════════════════════
+         Install, publish and the first-run consent gate share one shell:
+         .modal > .modal-card.wfx-sheet, a flex column whose body is the only
+         scroller. Every pane of every state ships in this file.
+
+         The content inside .wfx-pane-ready is a worked example, laid out in
+         the order wfx-artifact-ui.js builds it. At run time that host is
+         emptied and rebuilt with el().
+    -->
+
+    <!-- Install a workflow. wfxCloseInstall is registered in MODAL_CLOSERS, so
+         Escape aborts an in-flight clone and drops the staged install. -->
+    <div class="modal" id="wfx-install-modal" hidden>
+      <div class="modal-card wfx-sheet" data-state="idle" role="dialog" aria-modal="true"
+           aria-labelledby="wfx-in-title">
+
+        <div class="modal-head">
+          <h2 class="modal-title" id="wfx-in-title">Install a workflow</h2>
+          <button class="modal-close" id="wfx-in-x" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- One short live region per sheet. The builder writes a single
+               sentence here: what state was reached and why. -->
+          <span class="wfx-sr" role="status" id="wfx-in-say"></span>
+
+          <p class="ra-hint">A <code>workflow.husk.json</code> carries the graph, what it needs to run, and receipts from its author's runs. The file is read on this machine and nothing is sent anywhere.</p>
+
+          <div class="ra-sources">
+            <button type="button" class="ra-source selected" id="wfx-in-src-repo" aria-pressed="true">
+              <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+              <span class="ra-source-title">From a repository</span>
+              <span class="ra-source-desc">Husk clones it and looks for <code>*.husk.json</code></span>
+            </button>
+            <button type="button" class="ra-source" id="wfx-in-src-file" aria-pressed="false">
+              <span class="ra-source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span>
+              <span class="ra-source-title">From a file</span>
+              <span class="ra-source-desc">Pick a <code>.husk.json</code> already on this disk</span>
+            </button>
+          </div>
+
+          <div class="ra-pathrow" id="wfx-in-row-repo">
+            <input type="text" id="wfx-in-url" class="ra-root" spellcheck="false" autocomplete="off"
+                   placeholder="https://github.com/dev/flows" aria-label="Repository URL" />
+            <button class="ghost-btn" id="wfx-in-fetch">Fetch</button>
+          </div>
+          <div class="ra-pathrow" id="wfx-in-row-file" hidden>
+            <input type="text" id="wfx-in-path" class="ra-root" spellcheck="false" autocomplete="off"
+                   placeholder="/path/to/workflow.husk.json" aria-label="File path" />
+            <button class="ghost-btn" id="wfx-in-browse">Choose file…</button>
+          </div>
+
+          <div class="ra-status ra-status-info" id="wfx-in-status" hidden>
+            <span>Cloning <code>github.com/lex-mm/husk-flows</code> into a scratch directory. Husk reads it there and copies nothing else out.</span>
+          </div>
+
+          <!-- The error variant, carrying the blocking preflight row's glyph so
+               the sheet keeps one mark idiom. The builder clones this, writes
+               the reason onto #wfx-in-foot with .is-error, and scrolls the
+               banner into view. -->
+          <div class="ra-status ra-status-error" id="wfx-in-err" hidden role="alert">
+            <span class="ra-status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+            <span>Nothing was written. Husk could not create <code>.husk/workflows</code> in ~/code/orbit: EACCES. The staged install is still here, so fixing the permission and pressing Install again costs nothing.</span>
+          </div>
+
+          <!-- Idle: the sheet's resting state. -->
+          <div class="wfx-pane wfx-pane-idle">
+            <div class="wfx-empty">
+              <p class="wfx-empty-t">What arrives with the file</p>
+              <p class="wfx-empty-m">The graph and every prompt in it, the concrete agents and tools it needs, and whatever run history its author chose to attach. Husk recomputes the graph's fingerprint here before it shows you any of the numbers.</p>
+            </div>
+          </div>
+
+          <!-- Busy: the clone. These are the ready pane's own containers with
+               skeleton bars in the slots that get filled, so the layout is
+               committed before content lands. The bar count matches the line
+               count the ready pane arrives with. Every container is
+               aria-hidden; the live region is the sentence at the end. -->
+          <div class="wfx-pane wfx-pane-busy" role="status" aria-live="polite">
+            <div class="ra-status ra-status-info" aria-hidden="true">
+              <i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i>
+            </div>
+            <div class="wfx-note" aria-hidden="true">
+              <i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i>
+            </div>
+            <!-- Four lozenges standing in for the four nodes. Their widths,
+                 heights and inset are the drawing's own viewBox units; see the
+                 rule in styles.css. -->
+            <div class="wf-card-graph" aria-hidden="true">
+              <div class="wf-mini wfx-sk-graph">
+                <i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i>
+              </div>
+            </div>
+            <div class="wfx-figs" aria-hidden="true">
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-fig"><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+            </div>
+            <div class="wfx-pf" aria-hidden="true">
+              <div class="wfx-pf-h"><i class="wfx-sk"></i></div>
+              <div class="wfx-pf-row"><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-pf-row"><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+              <div class="wfx-pf-row"><i class="wfx-sk"></i><i class="wfx-sk"></i><i class="wfx-sk"></i></div>
+            </div>
+            <span class="wfx-sr">Reading the manifest</span>
+          </div>
+
+          <!-- Refused: the file is not usable. No Install control exists on this
+               path in any state, and both fingerprints are rendered whole. -->
+          <div class="wfx-pane wfx-pane-refused" role="alert">
+            <div class="wfx-refuse">
+              <!-- The same enclosed glyph the blocking preflight row uses, so
+                   severity reads as one language here. Direct child of a
+                   two-column grid: icon gutter, text column. -->
+              <span class="wfx-refuse-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+              <p class="wfx-refuse-t" id="wfx-in-ref-t">These receipts do not belong to this workflow</p>
+              <p class="wfx-refuse-m" id="wfx-in-ref-m">The fingerprint written into this file is not the one Husk computed from the graph inside the same file. Either the graph was edited after the receipts were attached, or the receipts were taken from a different workflow. Nothing here can be trusted to describe what would run, so nothing is offered to install.</p>
+              <!-- A description list rather than a padded block: the two values
+                   are 64 hex characters each and wrap. -->
+              <dl class="wfx-refuse-e" id="wfx-in-ref-e">
+                <dt>code</dt><dd>hash-mismatch</dd>
+                <dt>file</dt><dd>husk-flows/triage-patch-verify.husk.json</dd>
+                <dt>declared</dt><dd>husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914</dd>
+                <dt>recomputed</dt><dd>husk-wfg-1:sha256:a7f31c05e9b842dd6710fa3b2c85049e17d6ba33f0c25e894ab71d60f3e8c542</dd>
+              </dl>
+            </div>
+          </div>
+
+          <!-- Ready: emptied and rebuilt by wfx-artifact-ui.js on open. Every
+               child is a text node or an element built with el(). The static
+               copy below is the shape that builder produces. -->
+          <div class="wfx-pane wfx-pane-ready" id="wfx-in-ready">
+
+            <!-- Every chip sits inside a plain wrapper rather than directly in a
+                 flex column: .wfx-claim is inline-flex and would stretch. -->
+            <div class="ra-status ra-status-info">
+              <!-- Copies the fingerprint, which is 78 monospace characters a
+                   reader compares against the source repo. -->
+              <div class="wfx-fp-h">
+                <span><span class="wfx-claim is-computed"><i class="wfx-claim-m" aria-hidden="true"></i>computed here</span></span>
+                <button type="button" class="ghost-btn" id="wfx-in-fp-copy" aria-label="Copy the fingerprint">Copy</button>
+              </div>
+              <code>husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914</code>
+              <span>Recomputed from the bytes of this file, not read out of them. Every receipt below declares the same fingerprint.</span>
+            </div>
+
+            <!-- The artifact's identity, in .wfx-note. -->
+            <div class="wfx-note">
+              <p class="wfx-note-t">Triage, patch, verify &middot; lex-mm</p>
+              <p class="wfx-note-m">Reproduces a failing test, writes the smallest patch that makes it pass, then reruns the suite and loops back while anything is red.</p>
+            </div>
+
+            <div class="wf-card-graph">
+              <svg class="wf-mini" viewBox="0 0 250 74" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M171.3 39.1 C 191.7 39.1, 191.7 18.5, 212 18.5" class="wf-mini-edge" /><path d="M171.3 39.1 C 125 39.1, 125 55.5, 78.7 55.5" class="wf-mini-edge" /><path d="M104.7 55.5 C 125 55.5, 125 39.1, 145.3 39.1" class="wf-mini-edge" /><path d="M38 43.2 C 58.4 43.2, 58.4 55.5, 78.7 55.5" class="wf-mini-edge" /><rect x="145.3" y="32.6" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="212.0" y="12.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="78.7" y="49.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="12.0" y="36.7" width="26" height="13" rx="4" class="wf-mini-node" /></svg>
+            </div>
+
+            <!-- Four figures, four chips. Each chip is a child of the tile it
+                 describes, so a number always carries its provenance. -->
+            <div class="wfx-figs">
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">31</span>
+                <span class="wfx-fig-l">runs</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">4m 48<span class="wfx-fig-u">s</span></span>
+                <span class="wfx-fig-l">median run</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">26<span class="wfx-fig-u">/31</span></span>
+                <span class="wfx-fig-l">zero exit</span>
+                <span><span class="wfx-claim is-said"><i class="wfx-claim-m" aria-hidden="true"></i>author states</span></span>
+              </div>
+              <!-- "at your rates" rides on the value line in .wfx-fig-q, which
+                   keeps this tile to one line like its three siblings. -->
+              <div class="wfx-fig">
+                <span class="wfx-fig-v">&asymp;$0.41 <span class="wfx-fig-q">at your rates</span></span>
+                <span class="wfx-fig-l">your estimate</span>
+                <span><span class="wfx-claim is-computed"><i class="wfx-claim-m" aria-hidden="true"></i>computed here</span></span>
+              </div>
+            </div>
+
+            <div class="ra-pathrow">
+              <span class="wfx-path">
+                <span class="wfx-path-dir">/home/user/code/</span>
+                <span class="wfx-path-file">orbit</span>
+              </span>
+              <button type="button" class="ghost-btn" id="wfx-in-cwd-change">Change directory</button>
+            </div>
+
+            <!-- Sorted by severity: block, then caution, then ok. The builder
+                 emits them in the same order. All three marks share one stroke
+                 weight and one enclosed idiom. -->
+            <div class="wfx-pf">
+              <div class="wfx-pf-h">Against this machine</div>
+
+              <div class="wfx-pf-row is-block">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+                <span class="wfx-pf-n"><code>codex</code> is not on your PATH</span>
+                <span class="wfx-pf-note">Step 04, Report, names it, and a step whose agent cannot be resolved stops the run. Husk will not substitute your own agent for the author's: that would run a different program and quietly keep the author's numbers. Install codex, or ask lex-mm for a revision that does not need it.</span>
+                <button type="button" class="ghost-link wfx-pf-fix">Where Husk looks for agents</button>
+              </div>
+
+              <div class="wfx-pf-row is-caution">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                <span class="wfx-pf-n">You have an MCP server called <code>postgres</code></span>
+                <span class="wfx-pf-note">It is not the one this was written against. The author's entry and yours hash differently, which means two different servers wearing the same name, and the author's prompts were written for theirs. Husk changes nothing here.</span>
+                <button type="button" class="ghost-link wfx-pf-fix">Show both fingerprints</button>
+              </div>
+
+              <div class="wfx-pf-row is-caution">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+                <span class="wfx-pf-n">The skill <code>test-writer</code> is not installed here</span>
+                <span class="wfx-pf-note">The manifest marks it optional and step 02's prompt mentions it by name. The step will run without it and will read differently than the receipts describe.</span>
+                <button type="button" class="ghost-link wfx-pf-fix">Browse skills</button>
+              </div>
+
+              <div class="wfx-pf-row is-ok">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+                <span class="wfx-pf-n"><code>claude</code> is on your PATH</span>
+                <span class="wfx-pf-note">/home/user/.local/bin/claude, reporting version 2.1.4. Three of the four steps name it.</span>
+              </div>
+
+              <div class="wfx-pf-row is-ok">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+                <span class="wfx-pf-n">The four model pins will hold</span>
+                <span class="wfx-pf-note">claude and codex both take a model flag, so claude-sonnet-5, claude-opus-4-8 and gpt-5.4-codex reach the CLI they were written for.</span>
+              </div>
+
+              <div class="wfx-pf-row is-ok">
+                <span class="wfx-pf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+                <span class="wfx-pf-n"><code>package.json</code> is in ~/code/orbit</span>
+                <span class="wfx-pf-note">The author declares it as the marker for <code>bun test</code>, and ~/code/orbit is inside a git work tree, which this workflow also declares it needs.</span>
+              </div>
+            </div>
+
+            <div class="wfx-steps">
+              <details class="wfx-step">
+                <summary>
+                  <span class="wfx-step-n">01</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Reproduce</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-sonnet-5 &middot;</span> <span class="wfx-step-pc">carries nothing forward</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Read the failing test named in the task. Reproduce it and report the exact assertion that fails, the file and the line. Do not fix anything.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">02</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Patch</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">You have the failure report above:
+
+<mark>{{previousOutput}}</mark>
+
+Write the smallest patch that makes that one assertion pass. Touch no other file unless the compiler forces you to. If the repo has a test-writer skill, follow its conventions for the regression test.</pre>
+              </details>
+
+              <details class="wfx-step">
+                <summary>
+                  <span class="wfx-step-n">03</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Verify</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the last 50 lines</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Run the full test suite with bun test. If every test passes, end your response with the exact line ALL TESTS PASS. If anything fails, end with the exact line TESTS FAIL followed by the first failing assertion.</pre>
+              </details>
+
+              <details class="wfx-step">
+                <summary>
+                  <span class="wfx-step-n">04</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Report</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">codex &middot; gpt-5.4-codex &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Summarize what broke, why, and what the patch changed. Three bullets, no preamble.</pre>
+              </details>
+            </div>
+
+            <!-- The point of the whole sheet, at heading rank. -->
+            <div class="wfx-note">
+              <p class="wfx-note-t">What the numbers above are worth</p>
+              <p class="wfx-note-m">This file ships no run log, so 31 runs, 4m 48s and 26 of 31 runs finishing with a zero exit are the author's own account and nothing on this machine checked them. Exit code is all that "zero exit" means. One of the 31 was killed at the five minute per-step limit, so the median is cut off at the top. Installing writes a file and runs nothing.</p>
+            </div>
+          </div>
+
+          <!-- The success state takes the same shape as the two refusals: icon
+               gutter, enclosed glyph at the same stroke weight, bordered block
+               with a wash. It shows the bound directory and names the footer's
+               Run it. -->
+          <div class="wfx-pane wfx-pane-done" aria-live="polite">
+            <div class="wfx-affirm">
+              <span class="wfx-affirm-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.8 2.8L16 9.8"/></svg></span>
+              <p class="wfx-note-t">Installed.</p>
+              <p class="wfx-note-m" id="wfx-in-done-m">Triage, patch, verify is saved and has not run. Run it opens all four prompts once more and waits for you to say yes before anything spawns.</p>
+              <span class="wfx-path">
+                <span class="wfx-path-dir">/home/user/code/</span>
+                <span class="wfx-path-file">orbit</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- aria-disabled, not disabled: the button stays in the tab order so
+             aria-describedby can be read out. The click handler no-ops while
+             aria-disabled is "true" and re-announces the reason through
+             #wfx-in-say.
+
+             Run it is the done state's forward move and is a ghost, not the
+             primary. It opens #wfx-consent-modal on the workflow just
+             written. -->
+        <div class="modal-foot">
+          <span class="wfx-foot-note" id="wfx-in-foot">Installing writes a file. It does not run anything.</span>
+          <button class="ghost-btn" id="wfx-in-cancel">Cancel</button>
+          <button class="ghost-btn" id="wfx-in-run" hidden>Run it</button>
+          <button class="btn-primary" id="wfx-in-go" hidden aria-disabled="true" aria-describedby="wfx-in-foot">Install</button>
+          <button class="btn-primary" id="wfx-in-done" hidden>Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Publish a workflow as a file. Single column, unconditionally. -->
+    <div class="modal" id="wfx-publish-modal" hidden>
+      <div class="modal-card wfx-sheet" data-state="ready" role="dialog" aria-modal="true"
+           aria-labelledby="wfx-pub-title">
+
+        <!-- The subject line carries the workflow's identity, so the title stays
+             the name of the operation. -->
+        <div class="modal-head">
+          <div class="wfx-sheet-id">
+            <h2 class="modal-title" id="wfx-pub-title">Export this workflow</h2>
+            <p class="wfx-sheet-sub" id="wfx-pub-subject" dir="ltr"><span dir="auto">Triage, patch, verify</span> &middot; 4 steps &middot; revision 3</p>
+          </div>
+          <button class="modal-close" id="wfx-pub-x" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <span class="wfx-sr" role="status" id="wfx-pub-say"></span>
+
+          <!-- Publishing refuses too, and this pane holds those refusals. The
+               shared shell routes data-state="refused" here. role="alert" sits
+               on the title rather than the pane, so an announcement names what
+               was refused without reciting the detail list. -->
+          <div class="wfx-pane wfx-pane-refused">
+            <div class="wfx-refuse">
+              <span class="wfx-refuse-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+              <p class="wfx-refuse-t" id="wfx-pub-ref-t" role="alert">The run log is larger than a workflow file may carry</p>
+              <p class="wfx-refuse-m" id="wfx-pub-ref-m">Evidence travels inline or not at all, and the budget is 512 KiB. Export without the log and the receipts travel as your own account.</p>
+              <dl class="wfx-refuse-e" id="wfx-pub-ref-e">
+                <dt>code</dt><dd>evidence-too-large</dd>
+                <dt>budget</dt><dd>524288 bytes</dd>
+                <dt>measured</dt><dd>1341902 bytes across 4 sessions</dd>
+              </dl>
+            </div>
+          </div>
+
+          <div class="wfx-pane wfx-pane-ready" id="wfx-pub-ready">
+
+            <!-- The gate: what stops this workflow being published, and the
+                 control that clears it. Reuses .wfx-refuse whole, and sits as
+                 the first child of the pane. -->
+            <div class="wfx-refuse wfx-gate" id="wfx-pub-gate" hidden>
+              <span class="wfx-refuse-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg></span>
+              <p class="wfx-refuse-t" id="wfx-pub-gate-t">3 steps do not name an agent</p>
+              <p class="wfx-refuse-m" id="wfx-pub-gate-m">An exported step names its agent, so a reader runs the same program you did. Set one on each and Export unlocks.</p>
+              <div class="wfx-gate-fix" id="wfx-pub-gate-fix">
+                <label class="wfx-gate-fix-l" id="wfx-pub-fix-label" for="wfx-pub-fix-agent">Set them all to</label>
+                <select class="wfx-gate-sel" id="wfx-pub-fix-agent"></select>
+                <button type="button" class="ghost-btn" id="wfx-pub-fix-go">Set on 3 steps</button>
+              </div>
+              <p class="wfx-gate-who" id="wfx-pub-gate-who"><code dir="auto">Reproduce</code>, <code dir="auto">Patch</code> and <code dir="auto">Verify</code></p>
+            </div>
+
+            <div class="wf-card-graph">
+              <svg class="wf-mini" viewBox="0 0 250 74" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M171.3 39.1 C 191.7 39.1, 191.7 18.5, 212 18.5" class="wf-mini-edge" /><path d="M171.3 39.1 C 125 39.1, 125 55.5, 78.7 55.5" class="wf-mini-edge" /><path d="M104.7 55.5 C 125 55.5, 125 39.1, 145.3 39.1" class="wf-mini-edge" /><path d="M38 43.2 C 58.4 43.2, 58.4 55.5, 78.7 55.5" class="wf-mini-edge" /><rect x="145.3" y="32.6" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="212.0" y="12.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="78.7" y="49.0" width="26" height="13" rx="4" class="wf-mini-node" /><rect x="12.0" y="36.7" width="26" height="13" rx="4" class="wf-mini-node" /></svg>
+            </div>
+
+            <div class="ra-pathrow">
+              <span class="wfx-path">
+                <span class="wfx-path-dir" dir="ltr">/home/user/code/orbit/.husk/workflows/</span>
+                <span class="wfx-path-file" dir="ltr">triage-patch-verify.husk.json</span>
+              </span>
+              <button type="button" class="ghost-btn" id="wfx-pub-dest-change">Change</button>
+            </div>
+
+            <!-- The sentence is the toggle's own copy, so it hangs under the
+                 label's words rather than under the checkbox. -->
+            <div class="wfx-note wfx-ack">
+              <label class="ai-foot-toggle" for="wfx-pub-attach">
+                <input type="checkbox" id="wfx-pub-attach" class="ai-check" />
+                <span class="ai-check-box" aria-hidden="true"></span>
+                Attach the run log
+              </label>
+              <p class="wfx-empty-m wfx-pub-note">Ships the goal text you typed and the absolute path of the workspace each run used.</p>
+            </div>
+
+            <!-- What the bytes will say, folded: prompts in full, the
+                 fingerprinted graph, counts as exit codes, MCP and skills as
+                 names plus fingerprints, workspace requirements as the author's
+                 claim. is-plain on both tables, since these rows report no
+                 severity. -->
+            <div class="wfx-steps">
+              <details class="wfx-step" id="wfx-pub-what">
+                <summary>
+                  <span class="wfx-step-n">FILE</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">What travels in this file</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">4 steps &middot; 3 connections &middot; claude, codex &middot;</span> <span class="wfx-step-pc">no receipts</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+
+                <div class="wfx-pf is-plain" id="wfx-pub-record">
+                  <div class="wfx-pf-h">Contents</div>
+                  <div class="wfx-pf-row">
+                    <span class="wfx-pf-n">4 steps, 3 connections, every prompt in full</span>
+                    <span class="wfx-pf-note">A reader sees the prompt text before anything runs.</span>
+                  </div>
+                  <div class="wfx-pf-row">
+                    <span class="wfx-pf-n">Graph fingerprint</span>
+                    <span class="wfx-pf-note">Rechecked on the reader's machine before anything is shown.</span>
+                  </div>
+                </div>
+
+                <div class="wfx-pf is-plain" id="wfx-pub-requires">
+                  <div class="wfx-pf-h">Requires</div>
+                  <div class="wfx-pf-row">
+                    <span class="wfx-pf-n"><code>claude</code> and <code>codex</code>, with 4 model pins</span>
+                    <span class="wfx-pf-note">Bare basenames, resolved on the reader's PATH. Your paths stay here.</span>
+                  </div>
+                  <div class="wfx-pf-row">
+                    <span class="wfx-pf-n">An MCP server named <code>postgres</code>, and the skill <code>test-writer</code></span>
+                    <span class="wfx-pf-note">Names and fingerprints only. No commands, no environment.</span>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+          </div>
+
+          <div class="wfx-pane wfx-pane-done">
+            <div class="wfx-note" aria-live="polite">
+              <p class="wfx-note-t">Written.</p>
+              <p class="wfx-note-m">4.1 KB, 1 receipt covering 31 runs, no run log. Untracked until you commit it.</p>
+            </div>
+
+            <span class="wfx-path">
+              <span class="wfx-path-dir" dir="ltr">/home/user/code/orbit/.husk/workflows/</span>
+              <span class="wfx-path-file" dir="ltr">triage-patch-verify.husk.json</span>
+            </span>
+
+            <!-- The bytes live here, where they exist. The whole file is
+                 readable before the git line below publishes it. -->
+            <div class="wfx-steps">
+              <details class="wfx-step" id="wfx-pub-raw">
+              <summary>
+                <span class="wfx-step-n">RAW</span>
+                <span class="wfx-step-b">
+                  <span class="wfx-step-name">The exact bytes that were written</span>
+                  <span class="wfx-step-sub"><span class="wfx-step-meta">4.1 KB &middot; 1 receipt &middot;</span> <span class="wfx-step-pc">no log attached</span></span>
+                </span>
+                <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+              </summary>
+<pre class="wfx-prompt" tabindex="0">{
+  "kind": "husk.workflow",
+  "schemaVersion": 1,
+  "artifactId": "wfa_3q7kd8f2mn6r1vb9xz4c0hjtwp",
+  "revision": 3,
+  "name": "Triage, patch, verify",
+  "description": "Reproduces a failing test, writes the smallest patch that makes it pass, then reruns the suite and loops back while anything is red.",
+  "publishedAt": "2026-02-06T10:02:41.117Z",
+  "publisher": { "name": "lex-mm", "url": "https://github.com/lex-mm/husk-flows" },
+  "huskVersion": "2.11.0",
+  "graph": {
+    "nodes": [
+      { "id": "n0", "name": "Verify", "agentCommand": "claude", "model": "claude-opus-4-8",
+        "branchMode": "parallel", "passContext": "last50", "x": 560, "y": 100,
+        "prompt": "Run the full test suite with bun test. If every test passes, end your response with the exact line ALL TESTS PASS. If anything fails, end with the exact line TESTS FAIL followed by the first failing assertion." },
+      { "id": "n1", "name": "Report", "agentCommand": "codex", "model": "gpt-5.4-codex",
+        "branchMode": "parallel", "passContext": "full", "x": 840, "y": 0,
+        "prompt": "Summarize what broke, why, and what the patch changed. Three bullets, no preamble." },
+      { "id": "n2", "name": "Patch", "agentCommand": "claude", "model": "claude-opus-4-8",
+        "branchMode": "parallel", "passContext": "full", "x": 280, "y": 180,
+        "prompt": "You have the failure report above:\n\n{{previousOutput}}\n\nWrite the smallest patch that makes that one assertion pass. Touch no other file unless the compiler forces you to. If the repo has a test-writer skill, follow its conventions for the regression test." },
+      { "id": "n3", "name": "Reproduce", "agentCommand": "claude", "model": "claude-sonnet-5",
+        "branchMode": "parallel", "passContext": "none", "x": 0, "y": 120,
+        "prompt": "Read the failing test named in the task. Reproduce it and report the exact assertion that fails, the file and the line. Do not fix anything." }
+    ],
+    "edges": [
+      { "id": "e0", "from": "n0", "to": "n1", "condition": { "type": "contains", "value": "ALL TESTS PASS" } },
+      { "id": "e1", "from": "n0", "to": "n2", "condition": { "type": "contains", "value": "TESTS FAIL" } },
+      { "id": "e2", "from": "n2", "to": "n0", "condition": { "type": "always", "value": "" } },
+      { "id": "e3", "from": "n3", "to": "n2", "condition": { "type": "always", "value": "" } }
+    ]
+  },
+  "graphHash": "husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914",
+  "requires": {
+    "agentCommands": ["claude", "codex"],
+    "models": [
+      { "node": "n0", "model": "claude-opus-4-8" },
+      { "node": "n1", "model": "gpt-5.4-codex" },
+      { "node": "n2", "model": "claude-opus-4-8" },
+      { "node": "n3", "model": "claude-sonnet-5" }
+    ],
+    "mcpServers": [
+      { "name": "postgres", "fingerprint": "sha256:1f5c8ad70b3e94612ca0df85b7620e3348d91ac5f07b26e8d43ba190c7f52e6b", "optional": false }
+    ],
+    "skills": [
+      { "id": "test-writer", "fingerprint": "sha256:6d02b41ce7f8a9530bd14e6072cf83a195d7be40128fc6a3e59b0d7412ac835f", "optional": true }
+    ],
+    "workspace": { "vcs": "git", "markerFiles": ["package.json"], "commands": ["bun test"] },
+    "huskMin": "2.11.0"
+  },
+  "receipts": [
+    {
+      "id": "rcp_9f02aa41c7d6b380",
+      "graphHash": "husk-wfg-1:sha256:5c9e2b7a41d0f83e6ab5107c9d24fe8813bb0a6752cf49d1e0873ac6b5f2d914",
+      "runs": 31,
+      "runsWindowed": false,
+      "window": { "firstRunAt": "2026-01-09T08:11:03.220Z", "lastRunAt": "2026-02-06T09:35:00.860Z" },
+      "outcomes": { "completed": 26, "failed": 4, "stopped": 0, "timedOut": 1 },
+      "outcomeBasis": "process-exit",
+      "medianDurationMs": 288000,
+      "durationCensored": 1,
+      "medianTokens": { "input": 9110, "output": 806, "cacheRead": 12800, "cacheCreate": 0 },
+      "environment": {
+        "agentResolved": "claude",
+        "agentVersion": "2.1.4",
+        "modelResolved": "claude-opus-4-8",
+        "os": "linux",
+        "huskVersion": "2.11.0",
+        "workspace": { "vcs": "git", "trackedFiles": "1k-10k", "languages": ["typescript"] }
+      },
+      "evidence": "none",
+      "chain": null
+    }
+  ],
+  "notes": "The loop back from Verify to Patch is bounded by the 5 minute per-step timeout."
+}</pre>
+              </details>
+            </div>
+
+            <!-- The git command, pre-written and copyable. -->
+            <div class="ra-pathrow">
+<pre class="wfx-prompt" tabindex="0">git add .husk/workflows/triage-patch-verify.husk.json &&
+git commit -m "workflow: triage, patch, verify (revision 3)"</pre>
+              <button type="button" class="ghost-btn" id="wfx-pub-copy" aria-label="Copy the git command">Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Two primaries, one per verdict. .is-refusal-go swaps them, so the
+             ordinary Export steps aside for the one that says what the refusal
+             costs. Both are declared here rather than relabelled at runtime.
+
+             Back is the move for every other refusal: it returns to the pane
+             holding the destination and the toggle the reader already set. -->
+        <div class="modal-foot">
+          <span class="wfx-foot-note" id="wfx-pub-foot">Nothing leaves this machine. Exporting writes one file where you point it.</span>
+          <button class="ghost-btn" id="wfx-pub-cancel">Cancel</button>
+          <button class="ghost-btn is-refusal-back" id="wfx-pub-back">Back to the details</button>
+          <button class="btn-primary" id="wfx-pub-go">Export</button>
+          <button class="btn-primary is-refusal-go" id="wfx-pub-go-nolog">Export without the log</button>
+          <button class="btn-primary" id="wfx-pub-done" hidden>Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- First run of an imported workflow. The gate sits at Run rather than at
+         Install, since installing writes a file and executes nothing. -->
+    <div class="modal" id="wfx-consent-modal" hidden>
+      <div class="modal-card wfx-sheet" data-state="ready" role="dialog" aria-modal="true"
+           aria-labelledby="wfx-cs-title">
+
+        <div class="modal-head">
+          <h2 class="modal-title" id="wfx-cs-title">Read this before it runs</h2>
+          <button class="modal-close" id="wfx-cs-x" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <span class="wfx-sr" role="status" id="wfx-cs-say"></span>
+
+          <div class="wfx-pane wfx-pane-ready" id="wfx-cs-ready">
+            <div class="wfx-note">
+              <p class="wfx-note-t">Triage, patch, verify</p>
+              <p class="wfx-note-m">Installed from github.com/lex-mm/husk-flows on 6 February. You have not run it. Husk asks once, on the first run, and never again for this workflow.</p>
+            </div>
+
+            <span class="wfx-path">
+              <span class="wfx-path-dir">/home/user/code/</span>
+              <span class="wfx-path-file">orbit</span>
+            </span>
+
+            <p class="ra-hint">Steps 01 to 03 spawn <code>claude</code> and step 04 spawns <code>codex</code>, each in that directory, each with the prompt below and the previous step's output pasted in where the prompt asks for it. Because this workflow was imported, codex keeps its own refusal to run outside a trusted git directory and aider would run with auto-commit off, so no step here can approve itself or write a commit under your name.</p>
+
+            <div class="wfx-steps">
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">01</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Reproduce</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-sonnet-5 &middot;</span> <span class="wfx-step-pc">carries nothing forward</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Read the failing test named in the task. Reproduce it and report the exact assertion that fails, the file and the line. Do not fix anything.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">02</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Patch</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">You have the failure report above:
+
+<mark>{{previousOutput}}</mark>
+
+Write the smallest patch that makes that one assertion pass. Touch no other file unless the compiler forces you to. If the repo has a test-writer skill, follow its conventions for the regression test.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">03</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Verify</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">claude &middot; claude-opus-4-8 &middot;</span> <span class="wfx-step-pc">carries the last 50 lines</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Run the full test suite with bun test. If every test passes, end your response with the exact line ALL TESTS PASS. If anything fails, end with the exact line TESTS FAIL followed by the first failing assertion.</pre>
+              </details>
+
+              <details class="wfx-step" open>
+                <summary>
+                  <span class="wfx-step-n">04</span>
+                  <span class="wfx-step-b">
+                    <span class="wfx-step-name">Report</span>
+                    <span class="wfx-step-sub"><span class="wfx-step-meta">codex &middot; gpt-5.4-codex &middot;</span> <span class="wfx-step-pc">carries the whole transcript</span></span>
+                  </span>
+                  <svg class="wfx-step-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                </summary>
+<pre class="wfx-prompt" tabindex="0">Summarize what broke, why, and what the patch changed. Three bullets, no preamble.</pre>
+              </details>
+            </div>
+
+            <!-- The control that unlocks Run it, in its own container. -->
+            <div class="wfx-ack">
+              <label class="ai-foot-toggle" for="wfx-cs-ack">
+                <input type="checkbox" id="wfx-cs-ack" class="ai-check" />
+                <span class="ai-check-box" aria-hidden="true"></span>
+                I have read all four prompts
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- The note names the precondition. The builder swaps it for the
+             sent-from sentence once #wfx-cs-ack is ticked, and aria-describedby
+             makes the withheld button announce the precondition.
+
+             aria-disabled and not disabled, as on the install footer, so the
+             button keeps its place in the tab order. The click handler no-ops
+             while aria-disabled is "true". -->
+        <div class="modal-foot">
+          <span class="wfx-foot-note" id="wfx-cs-foot">Read the four prompts, then tick the box at the end to enable Run it.</span>
+          <button class="ghost-btn" id="wfx-cs-cancel">Cancel</button>
+          <button class="btn-primary" id="wfx-cs-go" aria-describedby="wfx-cs-foot" aria-disabled="true">Run it</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- The card receipts strip, one template per state. It is cloned into the
+         .wf-card between .wf-card-graph and .wf-card-status, above the auto
+         margin that bottom-anchors status, footer and Run.
+
+         The figures are filled in from the local receipt store; the chip word
+         comes from the same validator that decided the tier.
+
+         The chip is a real <button> and the saved workflow card's one
+         keyboard-reachable control. Clicking it opens the install sheet as a
+         read-only inspector over that workflow's stored artifact. Its
+         aria-label carries the workflow name and the figures, and the builder
+         rewrites each one with setAttribute when it clones the template. -->
+
+    <!-- 31 runs, evidence "none". Nothing on this machine checked any of it. -->
+    <template id="wfx-rcp-tpl">
+      <div class="wfx-rcp">
+        <div class="wfx-figs is-inline">
+          <span class="wfx-fig"><span class="wfx-fig-v">31</span><span class="wfx-fig-l">runs</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">4m 48<span class="wfx-fig-u">s</span></span><span class="wfx-fig-l">median</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">26<span class="wfx-fig-u">/31</span></span><span class="wfx-fig-l">zero exit</span></span>
+        </div>
+        <button type="button" class="wfx-claim is-said" data-wfx-receipt=""
+                aria-label="Receipts for Triage, patch, verify: 31 runs, author states. Open the record.">
+          <i class="wfx-claim-m" aria-hidden="true"></i>author states
+        </button>
+      </div>
+    </template>
+
+    <!-- Same three figures, evidence "inline", with the chain re-hashed here.
+         The chip word stops at consistency: the shipped log agrees with the
+         numbers beside it. -->
+    <template id="wfx-rcp-tpl-log">
+      <div class="wfx-rcp">
+        <div class="wfx-figs is-inline">
+          <span class="wfx-fig"><span class="wfx-fig-v">31</span><span class="wfx-fig-l">runs</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">4m 48<span class="wfx-fig-u">s</span></span><span class="wfx-fig-l">median</span></span>
+          <span class="wfx-fig"><span class="wfx-fig-v">26<span class="wfx-fig-u">/31</span></span><span class="wfx-fig-l">zero exit</span></span>
+        </div>
+        <button type="button" class="wfx-claim is-consistent" data-wfx-receipt=""
+                aria-label="Receipts for Triage, patch, verify: 31 runs, matches the shipped log. Open the record.">
+          <i class="wfx-claim-m" aria-hidden="true"></i>matches the shipped log
+        </button>
+      </div>
+    </template>
+
+    <!-- Two runs. A median of two numbers is the two numbers, so the pair is
+         shown as a range instead. Both figures derived from that pair carry
+         is-thin; the run count keeps full weight.
+
+         The .wfx-sr carries the qualifier at card density. At panel density the
+         builder emits the visible form instead: a .wfx-fig-q inside the value
+         slot reading "of 2 runs". -->
+
+    <template id="wfx-rcp-tpl-thin">
+      <div class="wfx-rcp">
+        <div class="wfx-figs is-inline">
+          <span class="wfx-fig"><span class="wfx-fig-v">2</span><span class="wfx-fig-l">runs</span></span>
+          <span class="wfx-fig is-thin"><span class="wfx-fig-v">3m 51<span class="wfx-fig-u">s</span> &ndash; 6m 12<span class="wfx-fig-u">s</span></span><span class="wfx-fig-l">range</span></span>
+          <span class="wfx-fig is-thin"><span class="wfx-fig-v">2<span class="wfx-fig-u">/2</span></span><span class="wfx-fig-l">zero exit</span><span class="wfx-sr">from 2 runs, too few to rate</span></span>
+        </div>
+        <button type="button" class="wfx-claim is-said" data-wfx-receipt=""
+                aria-label="Receipts for Triage, patch, verify: 2 runs, author states. Open the record.">
+          <i class="wfx-claim-m" aria-hidden="true"></i>author states
+        </button>
+      </div>
+    </template>
+
+    <!-- No receipts yet. -->
+    <template id="wfx-rcp-tpl-none">
+      <div class="wfx-rcp is-none">
+        <span>No receipts yet &middot; run it to earn one</span>
+      </div>
+    </template>
 
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
     <div id="confirm-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
@@ -2391,10 +3255,17 @@
     </div><!-- /prefs-modal-inner -->
   </div><!-- /prefs-modal -->
 
+    <!-- Portable workflows, four scripts in dependency order. wfx-dom.js loads
+         first because wfx-artifact-ui.js reads window.WfxDom at load. All four
+         come before app.js, which configures them while it evaluates; they read
+         back lazily and guarded by typeof. -->
+    <script src="wfx-dom.js"></script>
+    <script src="wfx-artifact-ui.js"></script>
+    <script src="wfx-install.js"></script>
+    <script src="wfx-publish.js"></script>
     <script src="app.js"></script>
-      <!-- Run log. The transcript lives on disk beside the audit log, so this
-         reads a finished run's output back rather than depending on anything
-         the renderer still holds in memory. -->
+    <!-- Run log. The transcript lives on disk beside the audit log, so this
+         reads a finished run's output back from there. -->
     <div class="aut-transcript" id="aut-transcript" hidden>
       <div class="aut-transcript-panel" role="dialog" aria-modal="true" aria-labelledby="aut-transcript-title">
         <header class="aut-transcript-head">

@@ -1,59 +1,37 @@
 'use strict';
 
-// Progress governor for Husk Autonomy Mode -- the "busy-stall" detector.
+// Progress governor for Husk Autonomy Mode: the busy-stall detector.
 //
-// There are two ways an autonomous run wastes money, and they need two
-// different detectors:
+// A run that goes silent is handled by the idle-watchdog in main.js, which
+// nudges a few times and then ends the run. This module covers the loud
+// case: the agent keeps chattering and retrying while the workspace never
+// changes and tokens keep climbing.
 //
-//   quiet-stall -- the agent goes silent (hung, deadlocked, waiting on
-//                  nothing). This is already handled well by the run
-//                  idle-watchdog in main.js: it nudges a few times, then
-//                  ends the run. It checks live PTY bytes and the busy
-//                  marker so it never touches an agent that is genuinely
-//                  working through a long silent tool call.
+// It halts on evidence of active waste, always gated on the workspace
+// making no forward progress:
 //
-//   busy-stall  -- the agent is LOUD (chattering, retrying, re-running the
-//                  same failing command) so the quiet-watchdog thinks it is
-//                  fine, but the workspace never changes and tokens keep
-//                  climbing. Nothing else in the system catches this, and
-//                  it is where real money leaks. That is this module's job.
+//   spinning - the workspace diff has not advanced for noProgressMs while
+//              the agent burned at least minWasteTokens in that window.
+//   loop     - the same identifiable action repeated loopRepeat times with
+//              no forward progress between repeats. Any diff advance resets
+//              the loop, so a try/adjust/retry cycle runs to completion.
 //
-// The governor deliberately does NOT halt on silence -- doing so would
-// false-kill a healthy agent waiting on a 3-minute build. It halts only on
-// evidence of active waste, always gated on the workspace making no forward
-// progress:
-//
-//   spinning -- the workspace diff has not advanced for noProgressMs WHILE
-//               the agent burned at least minWasteTokens in that window.
-//               Frozen output + real spend = spinning. A silent or idle
-//               agent (no token growth) is NOT spinning; that is the
-//               watchdog's quiet-stall.
-//   loop     -- the same identifiable action repeated loopRepeat times with
-//               no forward progress between repeats. Any diff advance resets
-//               the loop, so a legitimate try/adjust/retry cycle never trips.
-//
-// Design rules (same contract as budget.js): pure, caller-supplied clock,
-// no fs. The caller feeds the parsed signals; the workspace diff signature
-// and cumulative token count come from the supervisor. `progress` -- a
-// change in the diff signature -- is the single source of truth that resets
-// both waste signals, so a run that keeps changing files can never be
-// halted no matter how slow, chatty, or long it runs.
+// Same contract as budget.js: pure, caller-supplied clock, no fs. The
+// caller feeds the parsed signals; the workspace diff signature and the
+// cumulative token count come from the supervisor. A change in the diff
+// signature is the progress marker that resets both waste signals.
 
 const DEFAULT_THRESHOLDS = Object.freeze({
-  // Diff frozen at least this long is the first half of "spinning". Five
-  // minutes is long enough that reading/exploring a codebase before the
-  // first edit, or a slow multi-step tool sequence, never trips it.
+  // A diff frozen at least this long is the first half of "spinning".
   noProgressMs: 300000,
-  // ...and the agent must have burned at least this many tokens in that
-  // frozen window for it to count as waste. Without real spend it is not
-  // "spinning", it is idle -- which the quiet-watchdog owns, not this.
+  // Tokens the agent must burn inside that frozen window for it to count
+  // as waste rather than as idle.
   minWasteTokens: 6000,
-  // The same action this many times in a row with no diff progress between
-  // them is a loop. Four is the smallest count that cannot be a legitimate
-  // try/adjust/retry cycle.
+  // The same action this many times in a row, with no diff progress between
+  // them, counts as a loop.
   loopRepeat: 4,
-  // Idle telemetry only (surfaced for the UI ramp); the governor never
-  // HALTS on idle -- the quiet-watchdog does.
+  // Idle telemetry for the UI ramp. The governor reports idle and never
+  // halts on it.
   idleMs: 90000,
 });
 
@@ -71,15 +49,15 @@ function createProgressMeter(opts = {}) {
   // Loop tracking (reset by any forward progress).
   let lastSignature = null;
   let repeatCount = 0;
-  // Progress tracking. lastProgressAt is the last time the diff changed;
+  // Progress tracking. lastProgressAt is the last time the diff changed and
   // tokensAtProgress is the cumulative token count at that moment. sawDiff
-  // stays false until a diff signature is ever fed, which keeps "spinning"
-  // dormant for callers that do not supply diffs.
+  // stays false until a diff signature is fed, so "spinning" stays dormant
+  // for callers that do not supply diffs.
   let lastDiffSignature = null;
   let lastProgressAt = startedAt;
   let tokensAtProgress = 0;
   let sawDiff = false;
-  // Monotonic cumulative tokens; never regresses on a flaky report.
+  // Monotonic cumulative token count.
   let curTokens = 0;
 
   // tick({ now?, charsFromAgent?, signature?, diffSignature?, totalTokens? })
@@ -104,15 +82,12 @@ function createProgressMeter(opts = {}) {
       }
     }
 
-    // A distinct action is also forward progress. The diff is not the only way
-    // a run moves: a read-only task (audit, review, report) never changes the
-    // workspace, but reading a new file or running a new command is real work.
-    // So a NEW action signature resets the waste timers exactly like a diff
-    // change, while the SAME action repeated accrues the loop count. This is
-    // what keeps a legitimate audit from being read as spinning: spinning now
-    // means loud, spending, AND doing the same thing, not merely that no files
-    // changed. The action signature hashes only the action's own fields (tool,
-    // command, path), so it stays stable across a genuine repeat.
+    // A distinct action is also forward progress: a read-only task never
+    // changes the workspace, but reading a new file or running a new command
+    // is real work. A new action signature resets the waste timers like a
+    // diff change, while the same action repeated accrues the loop count.
+    // The signature hashes only the action's own fields (tool, command,
+    // path), so it stays stable across a genuine repeat.
     if (typeof input.signature === 'string' && input.signature.length) {
       if (input.signature === lastSignature) {
         repeatCount += 1;
@@ -133,9 +108,8 @@ function createProgressMeter(opts = {}) {
     const sinceProgressMs = Math.max(0, now - lastProgressAt);
     const tokensSinceProgress = Math.max(0, curTokens - tokensAtProgress);
 
-    // spinning: needs a diff baseline, a long frozen window, AND real spend
-    // in that window. All three so a silent/idle or exploring-but-cheap run
-    // is never mistaken for waste.
+    // spinning: a diff baseline, a long frozen window, and real spend
+    // inside that window.
     const spinning = sawDiff
       && sinceProgressMs >= th.noProgressMs
       && tokensSinceProgress >= th.minWasteTokens;

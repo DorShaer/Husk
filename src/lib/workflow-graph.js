@@ -13,7 +13,18 @@ const ALLOWED_AGENT_COMMANDS = new Set([
   'codex',
   'aider',
   'gemini',
+  'kiro-cli',
 ]);
+
+// Truncates to a maximum length by UTF-16 code unit, dropping a trailing high
+// surrogate so the result never ends in half an astral character.
+function clipText(value, max) {
+  const s = String(value);
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return (last >= 0xd800 && last <= 0xdbff) ? cut.slice(0, -1) : cut;
+}
 
 // isAllowedAgentCommand(value) returns true when the first whitespace-
 // separated token's basename (case-insensitive) is in the allowlist.
@@ -32,18 +43,18 @@ function isAllowedAgentCommand(value) {
 // allowlist at run time.
 function sanitizeNode(n) {
   n = n || {};
-  const raw = String(n.agentCommand || '').slice(0, 128);
+  const raw = clipText(n.agentCommand || '', 128);
   const agentCommand = (raw && isAllowedAgentCommand(raw)) ? raw : null;
   return {
     id: n.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    name: String(n.name || 'Step').slice(0, 64),
+    name: clipText(n.name || 'Step', 64),
     agentCommand,
     // A pinned model id, e.g. "claude-opus-4-8" or "gemini-2.5-pro". Free text so
     // a new model works without a Husk update; the run engine only passes it when
     // the vendor exposes a model flag.
-    model: n.model ? String(n.model).slice(0, 128) : null,
+    model: n.model ? clipText(n.model, 128) : null,
     branchMode: n.branchMode === 'ai' ? 'ai' : 'parallel',
-    prompt: String(n.prompt || '').slice(0, 8192),
+    prompt: clipText(n.prompt || '', 8192),
     passContext: ['full', 'last50', 'none'].includes(n.passContext) ? n.passContext : 'full',
     x: Number.isFinite(n.x) ? n.x : 0,
     y: Number.isFinite(n.y) ? n.y : 0,
@@ -59,7 +70,7 @@ function sanitizeEdge(e) {
     to: String(e.to || ''),
     condition: {
       type: ['always', 'contains', 'regex', 'otherwise'].includes(c.type) ? c.type : 'always',
-      value: String(c.value || '').slice(0, 256),
+      value: clipText(c.value || '', 256),
     },
   };
 }
@@ -113,8 +124,20 @@ function graphToOrderedSteps(graph) {
   // Breadth-first from every root (a node with no incoming edge). A
   // pure-cycle graph has no root, so seed with the first node to stay
   // terminating while still emitting every node.
-  const roots = g.nodes.filter((n) => !hasIncoming.has(n.id));
-  const queue = (roots.length ? roots : [g.nodes[0]]).map((n) => n.id);
+  //
+  // Roots are seeded in wiring order, so the walk is a function of the graph
+  // rather than of the order the node array happened to arrive in. Roots wired
+  // to nothing follow in node order, after the wired ones.
+  const rooted = new Set();
+  const queue = [];
+  const seedRoot = (id) => {
+    if (rooted.has(id) || hasIncoming.has(id) || !byId.has(id)) return;
+    rooted.add(id);
+    queue.push(id);
+  };
+  for (const e of g.edges) seedRoot(e.from);
+  for (const n of g.nodes) seedRoot(n.id);
+  if (!queue.length) queue.push(g.nodes[0].id);
   while (queue.length) {
     const id = queue.shift();
     if (seen.has(id)) continue;
@@ -134,14 +157,108 @@ function graphToOrderedSteps(graph) {
   return order;
 }
 
+// layoutGraph(graph, opts) computes tidy coordinates for every node: steps in
+// columns by how deep they sit in the graph, parallel branches stacked in
+// their column, each column centred on the shared middle. Pure: returns
+// { nodes, edges } with only x and y rewritten; everything else, edge order
+// included, travels through untouched.
+//
+// Columns come from a longest-path layering over a Kahn walk, so a step lands
+// one column right of the deepest step that feeds it. A node on a cycle never
+// leaves Kahn's queue; those keep node order and land one column right of
+// their deepest already-ranked predecessor, which terminates and puts a loop's
+// re-entry beside the step it loops back over rather than at the origin.
+//
+// Row order inside a column is the barycentre of each node's predecessors in
+// the previous column, walked left to right, so branches that fan out of one
+// step sit together instead of crossing. Ties keep node order.
+function layoutGraph(graph, opts) {
+  const g = sanitizeGraph(graph);
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  const nodeW = Number.isFinite(o.nodeW) ? o.nodeW : 216;
+  const nodeH = Number.isFinite(o.nodeH) ? o.nodeH : 64;
+  const gapX = Number.isFinite(o.gapX) ? o.gapX : 72;
+  const gapY = Number.isFinite(o.gapY) ? o.gapY : 40;
+  if (!g.nodes.length) return g;
+
+  const indexOf = new Map(g.nodes.map((n, i) => [n.id, i]));
+  const preds = new Map(g.nodes.map((n) => [n.id, []]));
+  const succs = new Map(g.nodes.map((n) => [n.id, []]));
+  const indegree = new Map(g.nodes.map((n) => [n.id, 0]));
+  for (const e of g.edges) {
+    // Self-loops contribute nothing to depth and would wedge Kahn's queue.
+    if (e.from === e.to) continue;
+    preds.get(e.to).push(e.from);
+    succs.get(e.from).push(e.to);
+    indegree.set(e.to, indegree.get(e.to) + 1);
+  }
+
+  // Longest-path ranks over a Kahn walk, in node order for determinism.
+  const rank = new Map();
+  const queue = g.nodes.filter((n) => indegree.get(n.id) === 0).map((n) => n.id);
+  for (const id of queue) rank.set(id, 0);
+  while (queue.length) {
+    const id = queue.shift();
+    for (const to of succs.get(id)) {
+      const r = Math.max(rank.get(to) ?? 0, rank.get(id) + 1);
+      rank.set(to, r);
+      indegree.set(to, indegree.get(to) - 1);
+      if (indegree.get(to) === 0) queue.push(to);
+    }
+  }
+  // Cycle members: one column right of the deepest ranked predecessor.
+  for (const n of g.nodes) {
+    if (rank.has(n.id)) continue;
+    const ranked = preds.get(n.id).filter((p) => rank.has(p));
+    rank.set(n.id, ranked.length ? Math.max(...ranked.map((p) => rank.get(p))) + 1 : 0);
+  }
+
+  const columns = [];
+  for (const n of g.nodes) {
+    const r = rank.get(n.id);
+    if (!columns[r]) columns[r] = [];
+    columns[r].push(n.id);
+  }
+
+  // Order each column by predecessor barycentre in the column to its left.
+  const rowOf = new Map();
+  (columns[0] || []).forEach((id, i) => rowOf.set(id, i));
+  for (let c = 1; c < columns.length; c += 1) {
+    const col = columns[c] || [];
+    const keyed = col.map((id) => {
+      const rows = preds.get(id).map((p) => rowOf.get(p)).filter((v) => v !== undefined);
+      const bary = rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : Infinity;
+      return { id, bary };
+    });
+    keyed.sort((a, b) => a.bary - b.bary || indexOf.get(a.id) - indexOf.get(b.id));
+    keyed.forEach((k, i) => rowOf.set(k.id, i));
+    columns[c] = keyed.map((k) => k.id);
+  }
+
+  const tallest = Math.max(...columns.map((col) => (col || []).length));
+  const xy = new Map();
+  columns.forEach((col, c) => {
+    const list = col || [];
+    // Centre the column on the tallest one's middle.
+    const offset = ((tallest - list.length) * (nodeH + gapY)) / 2;
+    list.forEach((id, i) => {
+      xy.set(id, { x: c * (nodeW + gapX), y: offset + i * (nodeH + gapY) });
+    });
+  });
+
+  return {
+    nodes: g.nodes.map((n) => ({ ...n, ...xy.get(n.id) })),
+    edges: g.edges,
+  };
+}
+
 function wfEdgeMatches(condition, output) {
   const c = condition || { type: 'always' };
   const text = String(output || '');
   if (c.type === 'contains') return text.toLowerCase().includes(String(c.value || '').toLowerCase());
   if (c.type === 'regex') {
-    // c.value is the user's own workflow routing pattern, capped at
-    // 256 chars by sanitizeEdge. Match runs against this node's output,
-    // not against any privileged input.
+    // c.value is the workflow's own routing pattern, capped at 256 characters
+    // by sanitizeEdge, and matches against this node's output.
     try {
       // eslint-disable-next-line security/detect-non-literal-regexp
       return new RegExp(c.value || '').test(text);
@@ -203,12 +320,14 @@ function wfResolveNext(graph, node, output, byId) {
 
 module.exports = {
   ALLOWED_AGENT_COMMANDS,
+  clipText,
   isAllowedAgentCommand,
   sanitizeNode,
   sanitizeEdge,
   sanitizeGraph,
   migrateWorkflow,
   graphToOrderedSteps,
+  layoutGraph,
   wfEdgeMatches,
   wfPickNextEdge,
   wfIsAiRouted,

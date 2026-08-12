@@ -6,16 +6,18 @@ const geminiAdapter = require('./gemini');
 const { makeStub } = require('./stub');
 const { agentKey } = require('./common');
 
-// codex and aider have no safe programmatic MCP-config path: codex uses a
+// codex, aider, and Kiro have no safe programmatic MCP-config path: codex uses a
 // shared ~/.codex/config.toml (no safe merge without a TOML writer) and
-// aider takes MCP via a CLI flag, so both are handled by the paste-a-snippet
-// install flow (see repo-mcp.js) rather than a read/write adapter.
+// aider takes MCP via a CLI flag. Kiro's MCP config is owned by a login-gated
+// CLI command. All three are handled by paste-a-snippet install flows (see
+// repo-mcp.js) rather than a read/write adapter.
 const ADAPTERS = {
   claude: claudeAdapter,
   copilot: copilotAdapter,
   gemini: geminiAdapter,
   codex: makeStub('codex'),
   aider: makeStub('aider'),
+  'kiro-cli': makeStub('kiro-cli'),
 };
 
 // getAdapter(agentCommand) returns the right MCP adapter for the

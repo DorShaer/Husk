@@ -30,10 +30,9 @@ function shapeServer(id, def, disabled) {
 }
 
 // readJsonFile + writeJsonFile share a config-file pattern used by
-// claude and copilot. filePath is provided by the calling adapter and
-// is one of a small fixed set (~/.claude.json, ~/.copilot/mcp-config
-// .json). Both files hold secrets (API keys, OAuth tokens, MCP env
-// vars) so the write is mode 0o600.
+// claude and copilot. filePath comes from the calling adapter and is
+// one of a small fixed set (~/.claude.json, ~/.copilot/mcp-config
+// .json). Writes use mode 0o600.
 function readJsonFile(filePath) {
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename
@@ -46,11 +45,8 @@ function readJsonFile(filePath) {
 }
 
 // Strict reader for the read-modify-write path. A missing file is a
-// clean empty config, but a file that exists yet does not parse is an
-// error: returning {} there would let a mutating op overwrite a config
-// it could not actually read and drop every key it holds. The config
-// file is owned and written by the agent CLI itself, so callers must
-// refuse to write when this returns ok:false.
+// clean empty config; a file that exists yet does not parse returns
+// ok:false, and callers refuse to write on that result.
 function readJsonFileStrict(filePath) {
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename
@@ -63,18 +59,14 @@ function readJsonFileStrict(filePath) {
   }
 }
 
-// Atomic write: serialize to a sibling temp file then rename over the
-// target. rename is atomic on a single filesystem, so a crash or full
-// disk mid-write leaves the original config intact instead of a
-// half-written, unparseable file.
+// Atomic write: serialize to a sibling temp file, then rename over the
+// target. rename is atomic within a single filesystem.
 function writeJsonFile(filePath, obj) {
   let tmp;
   try {
     const dir = path.dirname(filePath);
-    // The agent's config dir may not exist yet (e.g. configuring an MCP
-    // server before the CLI has ever run and created ~/.gemini). Create it
-    // so the write, and the atomic rename that follows, cannot fail on a
-    // missing directory.
+    // The agent's config dir may not exist yet (configuring an MCP server
+    // before the CLI has ever run and created ~/.gemini), so create it.
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     tmp = path.join(dir, '.' + path.basename(filePath) + '.husk-' + process.pid + '.tmp');
@@ -116,7 +108,7 @@ function agentKey(agentCommand) {
   if (!raw) return 'claude';
   const first = raw.split(/\s+/)[0];
   const base = first.split(/[\\/]/).pop().toLowerCase();
-  // Strip Windows extensions for resilience (claude.exe, claude.cmd).
+  // Strip Windows extensions (claude.exe, claude.cmd).
   return base.replace(/\.(exe|cmd|bat|ps1)$/i, '');
 }
 

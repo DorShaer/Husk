@@ -17,6 +17,7 @@ const {
   buildServerSpec,
   renderCodexSnippet,
   renderAiderSnippet,
+  renderKiroSnippet,
 } = require('../../src/lib/repo-mcp');
 
 let tmp;
@@ -330,6 +331,18 @@ test('renderAiderSnippet: includes env object when env is non-empty', () => {
   assert.equal(obj.s.env.TOKEN, 'abc');
 });
 
+test('renderKiroSnippet: emits a kiro-cli mcp add command with repeated args and env', () => {
+  const out = renderKiroSnippet('my-server', {
+    command: 'node',
+    args: ['/abs/path.js', '--flag with space'],
+    env: { TOKEN: 'abc' },
+  });
+  assert.match(out, /^kiro-cli mcp add --scope global --name my-server --command node/);
+  assert.match(out, /--args \/abs\/path\.js/);
+  assert.match(out, /--args '--flag with space'/);
+  assert.match(out, /--env TOKEN=abc/);
+});
+
 // ─── Anti-criteria sanity checks ───────────────────────────────────────────
 
 test('ISC-A1: a freshly built spec is structurally always { command: string, args: array }', () => {
@@ -352,4 +365,83 @@ test('ISC-A1: a freshly built spec is structurally always { command: string, arg
     assert.ok(!out.spec.command.includes(' '));
     assert.ok(Array.isArray(out.spec.args));
   }
+});
+
+// ─── both ways in ──────────────────────────────────────────────────────────
+
+// "Install MCP servers from repo" has to mean either kind of repository. The
+// agent-pack import already accepts a URL or a folder, and this reads the same
+// kind of repository for a different directory inside it, so accepting only a
+// local path made the title describe something narrower than it said.
+//
+// The handler and the markup live in files that expect a whole Electron page,
+// so the contract is asserted against the source. That is enough to catch the
+// regression, which is a shape check rejecting a URL before it can be cloned.
+test('the MCP repo scan accepts a URL as well as a local path', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const handler = MAIN.match(/ipcMain\.handle\('repoMcp:scan'[\s\S]*?\n\}\);/);
+  assert.ok(handler, 'the repoMcp:scan handler was not found');
+
+  const body = handler[0];
+  assert.match(body, /cloneRepo\(/, 'a URL is never cloned, so only local folders can be read');
+  const schemeAt = body.search(/\[a-z\]\[a-z0-9\+\.-\]\*:/);
+  const absoluteAt = body.indexOf('isAbsolute');
+  assert.ok(schemeAt > -1, 'the handler does not recognise a URL at all');
+  assert.ok(absoluteAt > -1, 'the handler no longer validates a local path');
+  assert.ok(schemeAt < absoluteAt,
+    'the absolute-path check runs first, so a URL is refused before it can be cloned');
+});
+
+test('the MCP repo modal offers both a URL and a folder', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const HTML = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'renderer', 'index.html'), 'utf8');
+  const modal = HTML.match(/<div id="repo-mcp-modal"[\s\S]*?\n        <\/div>/);
+  assert.ok(modal, 'the repo-mcp modal was not found');
+  for (const id of ['rm-src-github', 'rm-src-local', 'rm-url', 'rm-fetch', 'rm-root', 'rm-browse']) {
+    assert.ok(modal[0].includes(`id="${id}"`), `the modal is missing ${id}`);
+  }
+
+  const APP = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'renderer', 'app.js'), 'utf8');
+  assert.match(APP, /setMcpRepoSource/, 'nothing switches between the two rows');
+  assert.match(APP, /#rm-fetch'\) &&/, 'the Fetch control is not wired');
+});
+
+// ─── config writes that reach disk ─────────────────────────────────────────
+
+// saveConfig takes the object to write and returns false when it cannot. Called
+// with nothing, JSON.stringify(undefined) is undefined, writeFileSync rejects
+// that, the catch swallows it and the caller reads success. The in-memory value
+// is already updated, so the setting works for the rest of the session and is
+// gone at the next launch, which is the shape that hides it.
+test('every saveConfig call passes the config it means to persist', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const bare = MAIN.match(/saveConfig\(\s*\)/g) || [];
+  assert.deepEqual(bare, [], 'saveConfig is called with no object, so the write silently fails');
+  assert.ok((MAIN.match(/saveConfig\(config\)/g) || []).length >= 4,
+    'the persisting call sites disappeared');
+});
+
+// A project is any pinned directory, and a directory inside a repository is a
+// working directory git answers for. Deciding on a .git entry beside the folder
+// reports every such project as a plain folder.
+test('project git state is decided by git, not by a .git entry beside the folder', () => {
+  const fsx = require('node:fs');
+  const px = require('node:path');
+  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const handler = MAIN.match(/ipcMain\.handle\('projects:state'[\s\S]*?\n\}\);/);
+  assert.ok(handler, 'the projects:state handler was not found');
+  const body = handler[0];
+
+  const statusAt = body.indexOf("'status', '--porcelain=v1'");
+  const setTrue = body.indexOf('st.isGit = true');
+  assert.ok(statusAt > -1, 'the handler no longer asks git for status');
+  assert.ok(setTrue > -1 && setTrue > statusAt,
+    'isGit is not set from the git call that actually answers the question');
+  assert.ok(!/st\.isGit = fs\.existsSync/.test(body),
+    'isGit is still decided by a .git entry directly inside the pinned folder');
 });

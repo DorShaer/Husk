@@ -5,6 +5,7 @@
 // Pure logic, no Electron, so it can be unit tested directly (mirrors
 // src/lib/repo-mcp.js).
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -32,8 +33,14 @@ function validateRepoUrl(input) {
   if (!segments.length) {
     return { ok: false, error: `That URL points to a site, not a repository. Expected something like ${URL_EXAMPLE}.` };
   }
-  const dirName = [u.hostname, ...segments].join('-').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 200);
-  return { ok: true, url: u.href, dirName };
+  // The folder name is a readable flattening of the URL plus a digest that
+  // identifies the URL it came from. The digest is taken over a normalized
+  // URL rather than u.href, so the two spellings of one repository share a
+  // clone: a trailing .git and a trailing slash are the same repository.
+  const normalized = `${u.protocol}//${u.host}/${segments.join('/')}`;
+  const digest = crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 10);
+  const readable = [u.hostname, ...segments].join('-').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 180);
+  return { ok: true, url: u.href, dirName: `${readable}-${digest}` };
 }
 
 // Validate a local repository path. Returns { ok: true, root } with the
@@ -91,8 +98,7 @@ function friendlyCloneError(err) {
   if (/not a git repository|does not appear to be a git repository/i.test(text)) {
     return 'That URL is not a git repository.';
   }
-  // Surface git's own "fatal:" line when there is one; it is the only line
-  // that describes the failure without echoing the command or local paths.
+  // Surface git's own "fatal:" line when there is one.
   const fatal = text.split('\n').map((l) => l.trim()).find((l) => /^fatal:/i.test(l));
   if (fatal) return `Clone failed. ${fatal.replace(/^fatal:\s*/i, '')}`.slice(0, 200);
   return 'Clone failed. Check the URL and your connection, then try again.';

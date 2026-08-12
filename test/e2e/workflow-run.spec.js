@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-// Stands in for claude: speaks the same stream-json the run engine parses, so
+// Stands in for the agent CLI: speaks the stream-json the run engine parses, so
 // the test drives the real code path (tool events, text, result) with no network.
 const FAKE_AGENT = [
   '#!/usr/bin/env bash',
@@ -124,8 +124,7 @@ test('the run plays out on the graph and each node has its own terminal', async 
     // A finished node still opens: the buffer outlives the run.
     await win.click('#wf-run-canvas .wf-rn-node');
     await win.waitForSelector('#wf-term:not([hidden])', { timeout: 8000 });
-    // The buffer comes back from the main process, so wait for it to land rather
-    // than reading the terminal the instant it opens.
+    // The buffer arrives from the main process, so wait for it to land.
     await win.waitForFunction(() => {
       const t = document.querySelector('#wf-term-body .xterm-rows');
       return t && /hello from the fake agent/.test(t.innerText || '');
@@ -206,7 +205,8 @@ test('a finished run is remembered, and the card reads it back', async () => {
       };
     });
     expect(card.pill).toMatch(/Passed/);
-    expect(card.dots).toBe(1);
+    // The outcome strip starts at the second run, where it shows a trend.
+    expect(card.dots).toBe(0);
     expect(card.miniNodes).toBe(2);        // the flow's shape, drawn on the card
     expect(card.runs).toBe('1');           // the hero counts it too
     expect(card.pass).toBe('100%');
@@ -274,12 +274,10 @@ test('running from the builder saves first, then runs', async () => {
     await win.waitForSelector('#wf-grid .wf-card', { timeout: 15000 });
     await win.click('#wf-grid .wf-edit-btn');
     await win.waitForSelector('#wf-builder-view:not([hidden])', { timeout: 10000 });
-    // The builder builds its canvas on a timeout, so wait for the graph to exist
-    // rather than racing it.
+    // The builder builds its canvas on a timeout, so wait for the graph to exist.
     await win.waitForSelector('#wf-canvas .drawflow-node', { timeout: 10000 });
     await win.click('#btn-run-from-builder');
-    // Straight into the run view, on the graph. A run that is already finished
-    // is still a run that happened, so accept either state rather than racing it.
+    // Straight into the run view, on the graph. Accept a live run or a finished one.
     await win.waitForSelector('#wf-run-view:not([hidden])', { timeout: 10000 });
     await win.waitForFunction(() => {
       const live = document.querySelector('#wf-run-canvas .wf-rn-node.is-running');
@@ -318,8 +316,7 @@ test('editing a flow keeps its step ids, so run history stays attached', async (
     await win.waitForSelector('#wf-list-view:not([hidden])', { timeout: 10000 });
 
     const after = JSON.parse(fs.readFileSync(wfFile, 'utf8'))[0].graph.nodes.map((n) => n.id);
-    // Drawflow numbers its own nodes 1..n. If those leak into the saved graph the
-    // ids change on every save and old runs point at the wrong steps.
+    // Drawflow numbers its own nodes 1..n; the saved graph keeps the step ids.
     expect(after.sort()).toEqual(before.sort());
     expect(after.some((id) => /^\d+$/.test(id))).toBe(false);
   } finally {
@@ -350,10 +347,8 @@ test('a second run is refused while one is in flight', async () => {
 });
 
 test('a flow built and run in one sitting lights up on its first run', async () => {
-  // Regression: the builder and run canvases each hold a Drawflow that numbers
-  // its nodes from 1, so running from the builder puts duplicate node-N ids in
-  // the document. An unscoped lookup then paints every state change onto the
-  // hidden builder canvas: nodes stay "Pending" forever while the run works.
+  // Both canvases hold a Drawflow that numbers its nodes from 1, so every
+  // lookup here is scoped to the run canvas.
   test.setTimeout(120000);
   const env = setup();
   // The user starts from nothing: no stored workflows, straight into the builder.
@@ -372,7 +367,7 @@ test('a flow built and run in one sitting lights up on its first run', async () 
     await win.waitForSelector('#wf-canvas .drawflow-node', { timeout: 10000 });
     await win.fill('#wf-name-input', 'First run flow');
     // Spread the steps out the way a user would drag them: the add button drops
-    // nodes near the same spot, and a covered node cannot be clicked.
+    // nodes near the same spot.
     await win.evaluate(() => {
       wfAddCanvasNode(null, 380, 80);
       wfAddCanvasNode(null, 700, 80);
@@ -387,9 +382,9 @@ test('a flow built and run in one sitting lights up on its first run', async () 
     await win.click('#btn-run-from-builder');
     await win.waitForSelector('#wf-run-view:not([hidden])', { timeout: 10000 });
 
-    // The heart of the regression: a RUN-CANVAS node must visibly run...
+    // A run-canvas node visibly runs...
     await win.waitForFunction(() => document.querySelector('#wf-run-canvas .wf-rn-node.is-running'), null, { timeout: 20000 });
-    // ...and clicking it must open its terminal (same lookup, same collision).
+    // ...and clicking it opens its terminal.
     await win.click('#wf-run-canvas .wf-rn-node.is-running');
     await win.waitForSelector('#wf-term:not([hidden])', { timeout: 10000 });
     // Let the run move on, and the taken edge fires its dash on the run canvas.

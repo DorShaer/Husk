@@ -3,10 +3,9 @@
 // Per-agent instruction injection.
 //
 // Husk's session directives (the agent's name and, when recaps are enabled,
-// the speech-balloon line the desktop app reads aloud) are delivered to each
-// agent through that agent's OWN native instruction channel. AGENT_CHANNELS
-// below is the single registry that knows the per-agent mechanism; adding
-// support for a new CLI is one entry there.
+// the speech-balloon line the desktop app reads aloud) reach each agent
+// through that agent's own native instruction channel. AGENT_CHANNELS is the
+// registry of those mechanisms; a new CLI is one entry there.
 //
 //   system-prompt-arg  -> a CLI flag, no files touched (claude)
 //   instructions-file  -> a marker-managed block in a project file the CLI
@@ -14,14 +13,11 @@
 //   read-file          -> a Husk-owned file passed via a CLI flag (aider)
 //   none               -> the agent gets no Husk directives
 //
-// Agent CLIs read EACH OTHER's instruction files (copilot also reads
-// AGENTS.md and GEMINI.md), so every plan carries a `refresh` set: the full
-// list of managed instruction files whose existing HUSK-SESSION blocks are
-// rewritten with the current directives on every launch. This keeps every
-// file an agent may read in agreement with the current settings.
+// Agent CLIs read each other's instruction files, so every plan carries a
+// `refresh` set: the managed instruction files whose HUSK-SESSION blocks are
+// rewritten with the current directives on every launch.
 //
-// planInjection is PURE: it returns a plan. The caller applies it (adds the
-// args, or reads/merges/writes the instructions files).
+// planInjection is PURE: it returns a plan. The caller applies it.
 
 const { agentKey } = require('./mcp/common');
 const { buildHuskPrompt } = require('./pai-state');
@@ -29,9 +25,8 @@ const { buildHuskPrompt } = require('./pai-state');
 const HUSK_SESSION_START = '<!-- HUSK-SESSION:START -->';
 const HUSK_SESSION_END = '<!-- HUSK-SESSION:END -->';
 
-// The per-agent delivery channel registry. Vendor-agnostic by construction:
-// planInjection and the cross-file refresh list are both derived from it, so
-// a new agent CLI is supported by adding one entry here (and nothing else).
+// The per-agent delivery channel registry. planInjection and the cross-file
+// refresh list are both derived from it, so one entry adds a new agent CLI.
 const AGENT_CHANNELS = {
   // claude takes --append-system-prompt; no files touched.
   claude: { method: 'system-prompt-arg' },
@@ -45,9 +40,8 @@ const AGENT_CHANNELS = {
   aider: { method: 'read-file', filePath: '.husk-aider.md', args: (fp) => ['--read', fp] },
 };
 
-// Every auto-read instruction file Husk manages a block in. Any agent may
-// read any of them, so all of them are refreshed on every launch (existing
-// files only) to keep their blocks in agreement with the current settings.
+// Every auto-read instruction file Husk manages a block in. All of them are
+// refreshed on every launch, existing files only.
 function instructionFilePaths() {
   return Object.values(AGENT_CHANNELS)
     .filter((c) => c.method === 'instructions-file')
@@ -60,11 +54,9 @@ function cleanName(agentName) {
     .slice(0, 40) || 'Husk';
 }
 
-// Vendor-neutral session directives for any agent that is not claude. Plain
-// prose, no claude / CLAUDE.md / PAI references. Covers identity naming and,
-// when the user has the recap line enabled, the speech-balloon line Husk's
-// voice reads. The recap preference acts as a pure switch: disabled means
-// the directive is simply omitted; no suppression prose is injected.
+// Vendor-neutral session directives for any agent that is not claude. Covers
+// identity naming and, when the recap preference is on, the speech-balloon
+// line Husk's voice reads. Recap off simply omits that directive.
 function buildGenericDirectives({ agentName, recap } = {}) {
   const name = cleanName(agentName);
   const lines = [
@@ -93,10 +85,7 @@ function renderSessionBlock(body) {
 }
 
 // Remove every Husk-marked region from a text. Well-formed START..END pairs
-// are dropped whole. A START with no matching END loses only the marker
-// itself; pairing it with a LATER block's END would swallow the user's own
-// content in between, so that is never done. Orphan END markers likewise
-// lose only the marker text.
+// are dropped whole. An unpaired START or END loses only the marker text.
 function stripSessionBlocks(text) {
   const out = [];
   let i = 0;
@@ -116,11 +105,9 @@ function stripSessionBlocks(text) {
   return out.join('').split(HUSK_SESSION_END).join('');
 }
 
-// Merge the session block into an existing instructions document,
-// non-destructively: replace the marked region in place when present, else
-// append. Content outside the markers is always preserved, and however many
-// (possibly malformed) marked regions the file has accumulated, exactly one
-// fresh block comes out.
+// Merge the session block into an existing instructions document: replace the
+// marked region in place when present, else append. Content outside the
+// markers is preserved, and exactly one fresh block comes out.
 function mergeSessionBlock(existingText, body) {
   const existing = typeof existingText === 'string' ? existingText : '';
   const block = renderSessionBlock(body);
@@ -143,10 +130,9 @@ function mergeSessionBlock(existingText, body) {
   return parts.join('\n\n') + '\n';
 }
 
-// Plan how to deliver the directives to a given agent. Every plan also
-// carries `refresh` (see file header): the managed instruction files whose
-// existing HUSK-SESSION blocks the caller rewrites with the current
-// directives, keeping every file an agent may read in agreement.
+// Plan how to deliver the directives to a given agent. Every plan carries
+// `refresh` (see file header): the managed instruction files whose
+// HUSK-SESSION blocks the caller rewrites with the current directives.
 //   { method: 'system-prompt-arg', args, refresh }                  (claude)
 //   { method: 'instructions-file', filePath, body, refresh }        (copilot, codex, gemini)
 //   { method: 'read-file', filePath, body, args, refresh }          (aider)
@@ -161,11 +147,9 @@ function planInjection({ agentCommand, agentName, paiEnabled, recap } = {}) {
     const prompt = buildHuskPrompt({ agentName, paiEnabled: paiEnabled !== false, recap });
     // Silence the agent's own inline statusline inside Husk; Husk's right-side
     // STATUS panel is the visual statusline. Delivered as an inline --settings
-    // JSON string, which claude MERGES over the user's settings.json (so every
-    // other user setting still applies) and, being a string rather than a temp
-    // file, is never written back to, so folder-trust in ~/.claude.json is left
-    // intact. statusLine cannot be null per the schema, so a no-op command that
-    // prints nothing blanks it.
+    // JSON string, which claude merges over the user's settings.json so every
+    // other user setting still applies. statusLine cannot be null per the
+    // schema, so a no-op command that prints nothing blanks it.
     const settingsOverride = JSON.stringify({ statusLine: { type: 'command', command: '/bin/true' } });
     return { method: 'system-prompt-arg', args: ['--settings', settingsOverride, '--append-system-prompt', prompt], refresh };
   }
