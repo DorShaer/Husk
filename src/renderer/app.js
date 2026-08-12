@@ -16559,10 +16559,14 @@ function renderAuditChain(chain) {
 function renderAuditFoot(shown, filtered) {
   const more = $('#aut-audit-more');
   const showing = $('#aut-audit-showing');
+  const noun = filtered === 1 ? 'event' : 'events';
+  // The page stops at a ceiling, so the count says the newest ones are what is
+  // on screen instead of implying the rest are one more click away.
+  const capped = shown >= AUT_AUDIT_MAX && shown < filtered;
   if (showing) {
-    showing.textContent = filtered
-      ? `Showing ${shown} of ${filtered} ${filtered === 1 ? 'event' : 'events'}`
-      : 'No events to show';
+    showing.textContent = !filtered ? 'No events to show'
+      : capped ? `Showing the newest ${shown} of ${filtered} ${noun}`
+      : `Showing ${shown} of ${filtered} ${noun}`;
   }
   if (more) more.hidden = shown >= filtered || shown >= AUT_AUDIT_MAX;
 }
