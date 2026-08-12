@@ -5272,8 +5272,10 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 .ag-bar-filters::-webkit-scrollbar { height: 0; }
 /* The one field that narrows the list sits on the same band as the chips that
-   narrow it, so every filter on the page is one row of chrome. */
-.ag-bar > .ag-search { margin-left: auto; padding-left: var(--space-2); flex: 0 1 200px; min-width: 96px; }
+   narrow it, so every filter on the page is one row of chrome. It shrinks a
+   hundred times faster than the axes beside it, so a tight band takes the width
+   out of the field and leaves every chip on screen. */
+.ag-bar > .ag-search { margin-left: auto; padding-left: var(--space-2); flex: 0 100 200px; min-width: 96px; }
 .ag-bar > .ag-search .ghost-input { min-width: 0; width: 100%; }
 .ag-facets { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
 /* Each axis stands under a named head that folds it away, so which chip belongs
@@ -5287,7 +5289,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .ag-facet {
   display: inline-flex; align-items: center; gap: var(--space-2);
   flex: 0 0 auto;
-  height: var(--control-h); padding: 0 var(--space-3);
+  height: var(--control-h); padding: 0 var(--space-2);
   border: 0; border-radius: var(--radius-pill);
   background: none; color: var(--text-2);
   font-family: inherit; font-size: var(--fs-body); font-weight: var(--fw-body);
@@ -5324,7 +5326,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
    to hold the two apart. */
 .ag-bar-sep {
   flex: 0 0 auto; width: 1px; height: 16px;
-  background: var(--line); margin: 0 var(--space-3);
+  background: var(--line); margin: 0 var(--space-2);
 }
 /* ── The legend ─────────────────────────────────────────────────────────── */
 /* Under the rows, not over them: the band holds the filters and this holds
@@ -5645,6 +5647,14 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 .ag-foot-gap { flex: 1; }
 
 /* ── Narrow ─────────────────────────────────────────────────────────────── */
+/* The reader takes a fixed column out of the page, so the band runs out of room
+   for two named heads long before the page runs out of width. Under that the
+   rule between the axes carries the split and every chip stays reachable
+   without a sideways scroll. */
+@container (max-width: 1240px) {
+  .ag-bar .filter-group-head { display: none; }
+  .ag-bar .filter-group[data-open="false"] .filter-group-body { display: flex; }
+}
 /* The legend gives up whole bindings rather than the words that name them, so
    every shortcut it still shows is still readable as a sentence. */
 @container (max-width: 1100px) {
