@@ -375,12 +375,18 @@ const STATUSLINE_CANDIDATES = () => [
 
 let statuslineRefusedOnce = false;
 
-// sha256 of a regular file, or null.
+// sha256 of a regular file, or null. The kind, the size and the bytes are all
+// read from one descriptor. O_NOFOLLOW refuses a symlink at open, O_NONBLOCK
+// keeps a fifo from parking the open until someone writes to it.
 function statuslineDigest(file) {
-  const st = fs.lstatSync(file);
-  if (!st.isFile()) return null;
-  if (st.size > 4 * 1024 * 1024) return null;
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const fd = fs.openSync(file, fs.constants.O_RDONLY
+    | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    if (st.size > 4 * 1024 * 1024) return null;
+    return crypto.createHash('sha256').update(fs.readFileSync(fd)).digest('hex');
+  } finally { fs.closeSync(fd); }
 }
 
 // Returns the script to run, or null. The rule lives in lib/statusline-trust.
