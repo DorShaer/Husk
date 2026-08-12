@@ -3179,7 +3179,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .aut-rf-group[data-lane="3"] { --lane-c: var(--lane-3); }
 .aut-rf-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--lane-c); flex: 0 0 auto; box-shadow: 0 0 8px color-mix(in srgb, var(--lane-c) 60%, transparent); }
 .aut-rf-name {
-  font-size: var(--fs-micro); font-weight: 600; color: var(--text-1);
+  font-size: var(--fs-micro); font-weight: 600; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .aut-rf-count { margin-left: auto; font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); }
@@ -3261,7 +3261,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   grid-template-columns: 8px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 7px;
-  font-size: var(--fs-micro); font-weight: 600; color: var(--text-1);
+  font-size: var(--fs-micro); font-weight: 600; color: var(--text);
   min-width: 0;
   padding-right: 16px;
   overflow: hidden;
