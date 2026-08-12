@@ -50,7 +50,13 @@ test('a halt row leads with the cap it tripped', () => {
 test('an unknown kind still reports its own scalar fields', () => {
   const row = projectAuditRow({ kind: 'something_new', payload: { path: 'src/a.js', count: 3, list: [1, 2] } });
   assert.equal(row.key, 'src/a.js');
-  assert.equal(row.details, 'path src/a.js · count 3 · list 2');
+  assert.equal(row.details, 'count 3 · list 2');
+});
+
+test('the field promoted into the key is left out of the details', () => {
+  const row = projectAuditRow({ kind: 'end_run', payload: { reason: 'agent_complete' } });
+  assert.equal(row.key, 'agent_complete');
+  assert.equal(row.details, '');
 });
 
 test('a spilled payload is flagged so the table can say so', () => {

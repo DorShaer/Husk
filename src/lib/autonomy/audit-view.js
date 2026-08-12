@@ -15,13 +15,19 @@ function clip(value, max) {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
-function firstString(obj, keys) {
-  if (!obj || typeof obj !== 'object') return '';
+// firstField returns the first named field carrying a usable string, plus the
+// name it came from so the details column can leave it out.
+function firstField(obj, keys) {
+  if (!obj || typeof obj !== 'object') return { value: '', from: null };
   for (const k of keys) {
     const v = obj[k];
-    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'string' && v.trim()) return { value: v.trim(), from: k };
   }
-  return '';
+  return { value: '', from: null };
+}
+
+function firstString(obj, keys) {
+  return firstField(obj, keys).value;
 }
 
 function compactNumber(n) {
@@ -33,13 +39,14 @@ function compactNumber(n) {
 }
 
 // A payload with no dedicated projection reads as its own scalar fields, so an
-// unknown kind still shows something a human can act on.
-function genericDetails(payload) {
+// unknown kind still shows something a human can act on. The field already
+// promoted into the key column is left out, so no row says the same thing twice.
+function genericDetails(payload, skipKey) {
   if (payload == null) return '';
   if (typeof payload !== 'object') return clip(payload, MAX_DETAILS);
   const bits = [];
   for (const [k, v] of Object.entries(payload)) {
-    if (v == null) continue;
+    if (v == null || k === skipKey) continue;
     if (typeof v === 'string') bits.push(`${k} ${clip(v, 120)}`);
     else if (typeof v === 'number' || typeof v === 'boolean') bits.push(`${k} ${v}`);
     else if (Array.isArray(v)) bits.push(`${k} ${v.length}`);
@@ -87,21 +94,22 @@ function projectPayload(kind, payload) {
         details: clip(bits.join(' · '), MAX_DETAILS),
       };
     }
-    case 'end_run':
-      return { key: firstString(p, ['reason']) || 'end', details: genericDetails(p) };
+    case 'end_run': {
+      const found = firstField(p, ['reason']);
+      return { key: found.value || 'end', details: genericDetails(p, found.from) };
+    }
     default:
       break;
   }
   if (/^halt_/.test(String(kind || ''))) {
+    const found = firstField(p, ['cap', 'reason']);
     return {
-      key: firstString(p, ['cap', 'reason']) || String(kind).slice(5),
-      details: genericDetails(p),
+      key: found.value || String(kind).slice(5),
+      details: genericDetails(p, found.from),
     };
   }
-  return {
-    key: firstString(p, ['path', 'name', 'id', 'status', 'reason', 'cap', 'tool']),
-    details: genericDetails(p),
-  };
+  const found = firstField(p, ['path', 'name', 'id', 'status', 'reason', 'cap', 'tool']);
+  return { key: found.value, details: genericDetails(p, found.from) };
 }
 
 // projectAuditRow turns one stored row into the shape a table paints.

@@ -621,12 +621,20 @@ body {
   color: var(--text-3);
 }
 button.chip, a.chip { cursor: pointer; }
-button.chip:hover, a.chip:hover,
-.chip.is-active {
+button.chip:hover, a.chip:hover {
   color: var(--text);
   border-color: var(--line-3);
   background: var(--surface-raised);
 }
+/* The selected axis carries a weight step as well as the surface lift, so it
+   stays distinct from whatever the pointer happens to be over. */
+.chip.is-active {
+  color: var(--text);
+  border-color: var(--text-3);
+  background: var(--surface-raised);
+  font-weight: 600;
+}
+.chip.is-active .chip-count { color: var(--text-2); }
 .chip[data-state="success"] {
   background: var(--state-success-bg); border-color: var(--state-success-edge); color: var(--state-success-ink);
 }
@@ -1511,9 +1519,13 @@ body[data-page="boot"] .page { display: none !important; }
 .page-skills .page-head,
 .page-sessions .page-head,
 .page-prompts .page-head,
+.page-autopilot .page-head,
 .page-projects .page-head {
   align-items: center;
   min-height: 0;
+  /* The page is a column flex box, so a head with no floor collapses under a
+     page that scrolls itself. */
+  flex: none;
   margin-bottom: var(--space-4);
 }
 /* The head selector carries the page step past the dark family's own title rule,
@@ -1522,6 +1534,7 @@ body[data-page="boot"] .page { display: none !important; }
 .page-skills .page-head .page-title,
 .page-sessions .page-head .page-title,
 .page-prompts .page-head .page-title,
+.page-autopilot .page-head .page-title,
 .page-projects .page-head .page-title {
   font-size: var(--fs-page);
   font-weight: var(--fw-page);
@@ -1531,6 +1544,7 @@ body[data-page="boot"] .page { display: none !important; }
 .page-skills .page-sub,
 .page-sessions .page-sub,
 .page-prompts .page-sub,
+.page-autopilot .page-sub,
 .page-projects .page-sub {
   font-size: var(--fs-body);
   color: var(--text-3);
@@ -1946,14 +1960,29 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 .aut-file-row { cursor: pointer; }
 .aut-file-row:hover .aut-file-path { color: var(--accent); }
 
-/* End-of-run conclusion card appended to the feed in review mode. */
+/* End-of-run conclusion card: a quiet surface with an edge in the state it reports. */
 .aut-conclusion {
   margin-top: 10px;
   padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid var(--state-muted-edge);
+  border-left: 3px solid var(--state-muted-ink);
+  border-radius: var(--radius-card);
+  background: var(--state-muted-bg);
+}
+.aut-conclusion[data-state="success"] {
+  border-color: var(--state-success-edge);
+  border-left-color: var(--state-success-ink);
+  background: var(--state-success-bg);
+}
+.aut-conclusion[data-state="warning"] {
+  border-color: var(--state-warning-edge);
+  border-left-color: var(--state-warning-ink);
+  background: var(--state-warning-bg);
+}
+.aut-conclusion[data-state="error"] {
+  border-color: var(--state-error-edge);
+  border-left-color: var(--state-error-ink);
+  background: var(--state-error-bg);
 }
 .aut-conclusion-title { font-weight: 600; font-size: var(--fs-small); color: var(--text); }
 .aut-conclusion-meta {
@@ -2255,10 +2284,10 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 /* RECENT RUNS LIST */
 .aut-recent {
   display: flex; flex-direction: column;
-  border-radius: var(--radius-xl, 12px);
-  border: 1px solid var(--line-2);
-  box-shadow: var(--elev-2);
-  background: var(--bg-1);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--surface-line);
+  box-shadow: var(--shadow-raised);
+  background: var(--surface);
   overflow: hidden;
 }
 .aut-recent .aut-page-feed-empty {
@@ -2266,9 +2295,10 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 }
 .aut-recent-row {
   display: grid;
-  /* checkbox · goal/meta · files · status pill · rerun · delete. Exactly one column
-     per child, or the surplus child wraps onto its own grid row. */
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  /* checkbox · goal/meta · metrics · status pill · rerun · delete. Exactly one column
+     per child, or the surplus child wraps onto its own grid row. The metric and
+     pill tracks are fixed so every row's numbers land on the same vertical. */
+  grid-template-columns: auto minmax(0, 1fr) 210px 108px auto auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
@@ -2341,7 +2371,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 }
 .aut-recent-bulkdel:hover { background: color-mix(in srgb, var(--rose) 18%, transparent); }
 .aut-recent-row + .aut-recent-row { border-top: 1px solid var(--line); }
-.aut-recent-row:hover { background: var(--bg-2); }
+.aut-recent-row:hover { background: var(--surface-raised); }
 .aut-recent-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .aut-recent-goal {
   font-size: var(--fs-small); font-weight: 500;
@@ -2366,6 +2396,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 }
 .aut-recent-files {
   display: inline-flex; align-items: center; gap: 6px;
+  width: 48px;
   color: var(--text-2);
   white-space: nowrap;
 }
@@ -2384,11 +2415,16 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .aut-changebar-seg[data-kind="modified"] { background: var(--state-running-ink); }
 .aut-changebar-seg[data-kind="deleted"] { background: var(--state-error-ink); }
 .aut-recent-lines {
-  display: inline-flex; align-items: center; gap: var(--space-2);
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 1; min-width: 0;
   white-space: nowrap;
 }
 .aut-recent-lines .is-ins { color: var(--state-success-ink); }
 .aut-recent-lines .is-del { color: var(--state-error-ink); }
+/* The outcome pill fills its track, so the word sits on the same vertical in
+   every row whatever the run's outcome was. */
+.aut-recent-row > .pill { justify-content: center; }
 
 .aut-recent-rerun {
   display: inline-flex; align-items: center; gap: var(--space-2);
@@ -2467,12 +2503,23 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   background: var(--surface-raised);
   border-bottom: 1px solid var(--surface-line);
 }
-.aut-audit-rows { display: flex; flex-direction: column; }
+.aut-audit-rows {
+  display: flex; flex-direction: column;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.aut-audit-rows::-webkit-scrollbar { width: 8px; }
+.aut-audit-rows::-webkit-scrollbar-thumb {
+  background: var(--state-muted-bg);
+  border-radius: var(--radius-pill);
+}
 .aut-audit-row {
   font-size: var(--fs-body);
   color: var(--text-2);
   transition: background var(--motion-fast) var(--ease-out);
 }
+/* The event pill hugs its own name rather than filling the column. */
+.aut-audit-row > .pill { justify-self: start; }
 .aut-audit-row + .aut-audit-row { border-top: 1px solid var(--line); }
 .aut-audit-row:hover { background: var(--surface-raised); }
 .aut-audit-key,
@@ -2536,7 +2583,11 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 /* The audit trail carries the finished run's events, so the live timeline card
    stands down and the file list takes the row. */
 .page-autopilot.is-review-mode .aut-card-log-dash { display: none; }
-.page-autopilot.is-review-mode .aut-row-bottom { grid-template-columns: minmax(0, 1fr); }
+.page-autopilot.is-review-mode .aut-row-bottom {
+  grid-template-columns: minmax(0, 1fr);
+  height: auto;
+  max-height: 460px;
+}
 
 /* Live layout */
 .aut-page-live {

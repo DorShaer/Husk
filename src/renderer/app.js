@@ -16460,7 +16460,10 @@ function autAuditState(kind) {
   if (/error|fail|blocked|denied|broken/.test(k)) return 'error';
   if (/^halt|warn|cap|stall|idle|nudge/.test(k)) return 'warning';
   if (/summary|end_run|complete|done/.test(k)) return 'success';
-  if (/start|identity|status|output|tool|run_|agent_/.test(k)) return 'running';
+  // Streamed output is the bulk of any log, so it stays quiet and the events
+  // worth reading keep the colour.
+  if (/output|chunk|token/.test(k)) return 'muted';
+  if (/start|identity|status|tool|run_|agent_/.test(k)) return 'running';
   return 'muted';
 }
 
@@ -16620,6 +16623,8 @@ function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, 
   // in the runs list.
   const pageEl0 = document.querySelector('.page-autopilot');
   if (pageEl0 && !autopilotReview) autopilotHubScroll = pageEl0.scrollTop;
+  // A review opens at its own top, so the run reads from the first card down.
+  if (pageEl0) pageEl0.scrollTop = 0;
   autopilotActive = false;
   autopilotReview = true;
   autopilotReviewData = { sessionId, workspaceRoot, summary, retained, runId };
@@ -16689,6 +16694,12 @@ function renderRunConclusion(sum) {
   const reason = sum.endReason || '';
   const card = document.createElement('div');
   card.className = 'aut-conclusion';
+  card.dataset.state =
+    reason === 'agent_complete' ? 'success'
+    : (reason === 'agent_failed' || reason === 'agent_blocked') ? 'error'
+    : (reason === 'user' || halt === 'user') ? 'muted'
+    : (halt === 'natural' && !reason) ? 'success'
+    : 'warning';
   const title = document.createElement('div');
   title.className = 'aut-conclusion-title';
   title.textContent =
@@ -16772,7 +16783,7 @@ function renderFleetReceipt(receipt) {
   const noOp = receipt.outcome === 'no-op';
   const card = document.createElement('div');
   card.className = 'aut-conclusion aut-receipt';
-  card.style.borderLeft = `2px solid ${incomplete ? 'var(--warn, #f59e0b)' : 'var(--accent, #67e8f9)'}`;
+  card.dataset.state = incomplete ? 'warning' : (noOp ? 'muted' : 'success');
 
   const label = document.createElement('div');
   label.className = 'aut-conclusion-label';
