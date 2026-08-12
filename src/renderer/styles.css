@@ -532,8 +532,9 @@ body {
   line-height: var(--lh-snug);
   color: var(--text-3);
 }
-/* A count beside a section header reads as data, so it drops the small caps. */
-.section-label .section-label-count {
+/* A count beside a section header reads as data, so it drops the small caps. It
+   styles itself, so it can sit inside the label or beside it. */
+.section-label-count {
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
   font-weight: 400;
@@ -1515,15 +1516,15 @@ body[data-page="boot"] .page { display: none !important; }
   min-height: 0;
   margin-bottom: var(--space-4);
 }
-.page-agents .page-title,
-.page-skills .page-title,
-.page-sessions .page-title,
-.page-prompts .page-title,
-.page-projects .page-title {
-  font-family: var(--font-body);
+/* The head selector carries the page step past the dark family's own title rule,
+   so all ten themes print the title at one size. */
+.page-agents .page-head .page-title,
+.page-skills .page-head .page-title,
+.page-sessions .page-head .page-title,
+.page-prompts .page-head .page-title,
+.page-projects .page-head .page-title {
   font-size: var(--fs-page);
   font-weight: var(--fw-page);
-  letter-spacing: var(--tracking-tight);
   color: var(--text-2);
 }
 .page-agents .page-sub,
@@ -5787,7 +5788,7 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
   flex: 0 0 auto;
   display: flex; flex-direction: column; justify-content: center; gap: 2px;
   min-height: var(--row-h-lg);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -6446,7 +6447,7 @@ input[type="checkbox"]:disabled {
 }
 .session-task { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .session-task strong {
-  font-weight: 600; font-size: var(--fs-body);
+  font-weight: var(--fw-label); font-size: var(--fs-body);
   color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -12651,7 +12652,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
    text share a single left edge. Column text aligns because cells carry no boxes of
    their own. One row-height variable keeps the real rows and the ghost rows below
    them on the same rhythm. */
-.ws-table { --ws-pad-x: var(--space-5); --ws-row-h: var(--row-h-lg); }
+.ws-table { --ws-pad-x: var(--space-5); --ws-row-h: var(--row-h); }
 .ws-thead, .ws-row {
   display: grid;
   /* Every text track flexes, so leftover width spreads across four columns
@@ -12695,7 +12696,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--
 .ws-col-name { grid-area: name; display: flex; align-items: center; gap: 9px; min-width: 0; }
 .ws-col-name .tv-dot { flex: 0 0 auto; }
 .ws-row-title {
-  font-weight: 600; font-size: var(--fs-body); color: var(--text);
+  font-weight: var(--fw-label); font-size: var(--fs-body); color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ws-col-path {
