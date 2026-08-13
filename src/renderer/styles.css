@@ -6555,10 +6555,13 @@ input[type="checkbox"]:disabled {
   align-items: center; justify-content: center;
   gap: 10px; color: var(--text-3);
 }
-.empty-state .es-icon { font-size: var(--fs-hero); opacity: 0.4; display: flex; justify-content: center; }
-.empty-state .es-icon svg { width: 44px; height: 44px; display: block; }
-.modal-icon svg { width: 32px; height: 32px; display: block; margin: 0 auto; color: var(--accent); }
+.empty-state .es-icon { font-size: var(--icon-lg); opacity: 0.55; display: flex; justify-content: center; line-height: 1; }
+.empty-state .es-icon svg { width: var(--icon-lg); height: var(--icon-lg); display: block; }
+.modal-icon svg { width: var(--icon-lg); height: var(--icon-lg); display: block; margin: 0 auto; color: var(--accent); }
 .empty-state .es-msg { font-size: var(--fs-body-lg); text-align: center; max-width: 420px; }
+/* The way out of an empty state lives inside it. */
+.empty-state > .btn-primary,
+.empty-state > .ghost-btn { margin-top: var(--space-2); flex: 0 0 auto; }
 /* An empty state inside a CSS grid lands in the first cell, so it spans all columns
    and takes a min-height, which centres the message in the visible page area. */
 .ws-board > .empty-state,

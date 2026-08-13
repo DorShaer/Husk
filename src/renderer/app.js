@@ -2632,7 +2632,9 @@ function paintBoard(filter) {
   const match = (p) => !q || (p.name + ' ' + p.path).toLowerCase().includes(q);
   if (!projectsCache.length) {
     // eslint-disable-next-line no-unsanitized/property -- Static markup.
-    board.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-title">No projects yet</div><div class="es-msg">Pin a folder so the agent can launch into it with one click, and this board can tell you what is going on inside it.</div></div>`;
+    board.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-title">No projects yet</div><div class="es-msg">Pin a folder so the agent can launch into it with one click, and this board can tell you what is going on inside it.</div><button type="button" class="ghost-btn" id="projects-empty-add">Add project</button></div>`;
+    const addBtn = $('#projects-empty-add');
+    if (addBtn) addBtn.addEventListener('click', () => { const b = $('#btn-projects-new'); if (b) b.click(); });
     return;
   }
   const groups = projectGroups || { needsYou: [], active: projectsCache.map((p) => p.id), quiet: [] };
