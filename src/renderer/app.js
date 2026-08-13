@@ -10673,6 +10673,18 @@ if ($('#aut-mr-save')) {
     toast('Model routing saved', 'success');
   });
 }
+// Picking a detected command fills the field; Custom hands the field back.
+$('#pref-agent-pick') && $('#pref-agent-pick').addEventListener('change', function () {
+  const field = $('#pref-agent');
+  if (!field) return;
+  if (this.value === PREF_AGENT_CUSTOM) {
+    field.hidden = false;
+    field.focus();
+    return;
+  }
+  field.hidden = true;
+  field.value = this.value;
+});
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
   const cwdInput = $('#pref-agent-cwd');
@@ -15720,12 +15732,15 @@ async function refreshAutopilotHistory() {
   }
   const runs = r.runs || [];
   while (list.firstChild) list.removeChild(list.firstChild);
+  // Bulk selection needs rows to act on, and the section states the fact once.
+  const tools = $('#aut-recent-tools');
+  if (tools) tools.hidden = !runs.length;
+  if (meta) meta.textContent = '';
   if (!runs.length) {
     const empty = document.createElement('div');
     empty.className = 'aut-page-feed-empty';
-    empty.textContent = 'No prior runs in this project.';
+    empty.textContent = 'No runs in this workspace yet. Start one from a preset above.';
     list.appendChild(empty);
-    if (meta) meta.textContent = 'no runs yet';
     return;
   }
   // Selection survives a refresh only for sessions that still exist.
