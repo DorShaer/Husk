@@ -1853,8 +1853,7 @@ async function refreshStats() {
     // Sessions subheader is a hint until renderSessions reads the active
     // agent's sessions and takes ownership of the line.
     if (!sessionsSubOwned) {
-      const agentNow = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0];
-      $('#sessions-sub').textContent = `${agentNow} sessions · click to preview, Resume to continue`;
+      $('#sessions-sub').textContent = 'Click a session to preview, Resume to continue';
     }
   } catch (err) { console.warn('stats error', err); }
 }
@@ -8715,23 +8714,22 @@ async function renderSessions() {
       ? `<span class="ss-note">${hidden} Autopilot ${hidden === 1 ? 'session is' : 'sessions are'} hidden here and kept under Autopilot Recent runs</span>`
       : '';
     if (res.supported === false) {
-      subEl.textContent = `Session history for ${sessionsAgent} is not available yet`;
+      subEl.textContent = 'Session history is not available for this agent yet';
     } else {
-      // The hint reads as prose; the agent and its directory sit in a mono chip
-      // that truncates, so a deep project path cannot widen the head.
-      const where = `${sessionsAgent} sessions at ${sessionsDir || ''}`;
-      // eslint-disable-next-line no-unsanitized/property -- Agent and path are escaped here.
-      subEl.innerHTML = '<span>Click a session to preview, Resume to continue</span>'
-        + (sessionsDir ? `<span class="ss-path" title="${escapeAttr(where)}">${escapeHtml(where)}</span>` : '')
-        + hiddenHTML;
+      // The head reads as prose; where the sessions live rides the button that
+      // opens them, so a deep project path cannot widen the head.
+      // eslint-disable-next-line no-unsanitized/property -- the note is built from a count.
+      subEl.innerHTML = '<span>Click a session to preview, Resume to continue</span>' + hiddenHTML;
     }
     sessionsSubOwned = true;
   }
+  const openBtn = $('#btn-sessions-open');
+  if (openBtn) openBtn.title = sessionsDir ? `Open ${sessionsDir} in your file manager` : 'Open in your file manager';
   if (res.supported === false) {
     // eslint-disable-next-line no-unsanitized/property -- Static, agent name escaped.
     $('#sessions-list').innerHTML = sessionsEmptyCard({
       title: 'Not available for this agent',
-      msg: `Husk does not read ${escapeHtml(sessionsAgent)} sessions yet. Switch the active agent to claude or copilot to browse sessions.`,
+      msg: 'Husk does not read this agent\'s session history yet. Switch the active agent in Preferences to browse sessions.',
     });
     return;
   }

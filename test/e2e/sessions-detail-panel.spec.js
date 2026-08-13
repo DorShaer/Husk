@@ -302,8 +302,8 @@ setInterval(() => {}, 1000);
 
   await win.evaluate(() => setPage('sessions'));
   await win.waitForSelector('.session-row', { timeout: 10_000 });
-  const sub = await win.textContent('#sessions-sub');
-  expect(sub).toContain(path.join(copilotHome, 'session-state'));
+  const where = await win.getAttribute('#btn-sessions-open', 'title');
+  expect(where).toContain(path.join(copilotHome, 'session-state'));
   await win.click('.session-row');
   await win.click('#dp-foot .btn-primary');
 

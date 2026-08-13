@@ -6479,24 +6479,11 @@ input[type="checkbox"]:disabled {
 /* Same grammar as the agent ages nested under it: one time column, one casing. */
 .session-effort { font-size: var(--fs-label); color: var(--text-3); font-weight: var(--fw-label); }
 
-/* Sub-line: the hint stays prose, the agent + directory ride in a mono chip
-   that truncates instead of growing the head toward the control cluster. */
+/* Sub-line: one sentence, with the hidden-run note beside it when there is one. */
 #sessions-sub {
   display: flex; align-items: center; flex-wrap: wrap;
   gap: var(--space-2);
-  font-size: var(--fs-micro);
   min-width: 0;
-}
-.ss-path {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  max-width: 420px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ss-note { color: var(--text-3); }
 
@@ -6516,11 +6503,8 @@ input[type="checkbox"]:disabled {
 }
 .sessions-list > .empty-state .es-icon {
   opacity: 1;
-  line-height: 1;
   color: var(--text-3);
-  font-size: var(--fs-display);
 }
-.sessions-list > .empty-state .es-icon svg { width: 36px; height: 36px; }
 .sessions-list > .empty-state .es-msg {
   color: var(--text-2);
   line-height: var(--lh-snug);
