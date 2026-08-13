@@ -326,7 +326,7 @@
   --statusbar-h: 26px;
   /* Preferences: its nav column, and the measure its setting rows read at. */
   --prefs-nav-w: 208px;
-  --prefs-measure: 760px;
+  --prefs-measure: 1040px;
   /* Three shapes carry the whole interface: controls, cards, pills. */
   --radius-control: 6px;
   --radius-card: 10px;
@@ -7285,7 +7285,7 @@ input[type="checkbox"]:disabled {
   /* Column flex so the unsaved-appearance bar can pin to the pane's bottom
      (margin-top:auto) even when the active section is short. */
   display: flex; flex-direction: column;
-  /* The rows answer to this column, which the rail and the side panel size. */
+  /* The rows answer to this column, which the rail and the window size. */
   container-type: inline-size;
 }
 .prefs-content > .pref-section,
