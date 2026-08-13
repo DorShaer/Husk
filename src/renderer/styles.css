@@ -522,10 +522,14 @@ body {
   --state-muted-edge: var(--line-2);
   --state-muted-ink: var(--text-3);
 
-  /* A switch that is on inverts: the track takes the muted foreground and the knob
-     takes the page, so on reads at a glance without spending the accent. */
-  --switch-on: var(--text-3);
+  /* A switch that is on takes the success hue on its track and the page ground on
+     its knob, so enabled reads by colour rather than by knob position. Both sides
+     resolve per theme, so all ten keep their own green. */
+  --switch-on: var(--state-success-ink);
   --switch-knob-on: var(--bg);
+  /* Off stays the quiet state: page-level track, muted knob. */
+  --switch-off: var(--bg-1);
+  --switch-knob-off: var(--text-3);
 }
 
 /* ─── Shared primitives ─────────────────────────────────────────────────── */
@@ -6412,7 +6416,7 @@ input[type="checkbox"] {
   padding: 0;
   margin: 0;
   border-radius: var(--radius-pill);
-  background: var(--bg-1);
+  background: var(--switch-off);
   border: 1px solid var(--line);
   cursor: pointer;
   outline: none;
@@ -6430,7 +6434,7 @@ input[type="checkbox"]::before {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--text-2);
+  background: var(--switch-knob-off);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   transition: transform var(--motion-base) var(--ease),
               background var(--motion-base) var(--ease);
