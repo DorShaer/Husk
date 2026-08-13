@@ -1545,9 +1545,9 @@ async function confirmCloseTab(id) {
 
 // SVG glyphs for the tab controls. Block-level SVGs (not emoji) so they sit on
 // the same line as the label and align consistently across platforms.
-const TAB_EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
-const TAB_CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
-const TAB_NEW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
+const TAB_EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+const TAB_CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const TAB_NEW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
 
 // Render the tab strip. One pill per chat, always visible so every chat (even
 // the first) has a clickable label, a hover rename icon, and a close button.
@@ -2364,7 +2364,7 @@ async function readWorkTree(root, dirty) {
 
 const FILE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
 const FOLDER_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
-const DROP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const DROP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
 function workPaneHTML() {
   const { path, name } = workRoot();
@@ -2585,9 +2585,9 @@ function paintProjectsSurface() {
   paintBoard(search ? search.value || '' : '');
 }
 
-const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
+const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
 const WS_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
-const WS_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const WS_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 
 // Git chip for one project, shared by board rows and the workspace header.
 function wsBranchChip(st) {
@@ -2718,7 +2718,7 @@ function paintWorkspace(id) {
   }
   const loopsPanel = loops.length ? `
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>Open loops</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>Open loops</div>
           ${loops.join('')}
         </section>` : '';
 
@@ -2740,7 +2740,7 @@ function paintWorkspace(id) {
       </div>
       <div class="ws-title-actions">
         ${isActive ? '<button class="ghost-btn" id="ws-leave" title="Close this project; the agent runs in your home folder">Exit project</button>' : ''}
-        ${(missing || isActive) ? '' : `<button class="btn-primary" id="ws-launch">Launch<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
+        ${(missing || isActive) ? '' : `<button class="btn-primary" id="ws-launch">Launch<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
       </div>
     </div>
     <div class="ws-tiles">
@@ -2753,7 +2753,7 @@ function paintWorkspace(id) {
         </div>
       </div>
       <div class="ws-tile${loops.length ? ' is-attn' : ''}">
-        <span class="ws-tile-ic${loops.length ? ' is-warn-ic' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></span>
+        <span class="ws-tile-ic${loops.length ? ' is-warn-ic' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Open loops</div>
           <div class="ws-tile-value">${loops.length}</div>
@@ -2761,7 +2761,7 @@ function paintWorkspace(id) {
         </div>
       </div>
       <div class="ws-tile">
-        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg></span>
+        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Sessions</div>
           <div class="ws-tile-value" id="ws-tile-sessions">&hellip;</div>
@@ -2769,7 +2769,7 @@ function paintWorkspace(id) {
         </div>
       </div>
       <div class="ws-tile">
-        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg></span>
+        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Last activity</div>
           <div class="ws-tile-value" id="ws-tile-activity">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
@@ -2779,25 +2779,25 @@ function paintWorkspace(id) {
     <div class="ws-cols">
       <div class="ws-col-l">${loopsPanel}
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg>Recent sessions</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg>Recent sessions</div>
           <div id="ws-sessions-list"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
       </div>
       <div class="ws-col-r">
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>Details</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>Details</div>
           <div class="ws-details">${details}<div class="ws-detail" id="ws-commit-row" hidden><span class="ws-detail-k">Last commit</span><span class="ws-detail-v" id="ws-commit-v"></span></div></div>
         </section>
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg>Autopilot runs</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg>Autopilot runs</div>
           <div id="ws-runs"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg>MCP servers in this folder</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg>MCP servers in this folder</div>
           <div id="ws-mcp"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>Danger zone</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>Danger zone</div>
           <div class="ws-danger"><span class="ws-danger-hint">Removes it from Husk; the folder itself is not touched.</span><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button></div>
         </section>
       </div>
@@ -2932,7 +2932,7 @@ async function wsFillSessions(p) {
         <div class="ws-sess-title" title="${escapeHtml(s.title || '')}">${escapeHtml(s.title || '(untitled)')}</div>
         <div class="ws-sess-meta">${escapeHtml(fmtRelTime(s.mtime || s.startedMs))}</div>
       </div>
-      <span class="ws-link-btn" aria-hidden="true">Resume<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
+      <span class="ws-link-btn" aria-hidden="true">Resume<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
     </div>`).join('');
   list.querySelectorAll('.ws-sess').forEach((row, i) => {
     const go = () => resumeSessionInChat({ id: rows[i].id, project: p.path, owner: rows[i].owner });
@@ -3839,12 +3839,12 @@ function wfPatternGraph(spec) {
 }
 
 const WF_ICONS = {
-  chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/><path d="M14.5 9.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7"/></svg>',
-  fan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="20" cy="19" r="2"/><path d="M6 12h12M6 11l12-5M6 13l12 5"/></svg>',
-  route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h5l4-6h9"/><path d="M12 18h9"/><path d="M8 12l4 6"/><path d="M18 3l3 3-3 3"/><path d="M18 15l3 3-3 3"/></svg>',
-  grade: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><path d="M8 12l3 3 9-9"/></svg>',
-  vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.3 5.5 6 .5-4.6 3.9 1.4 5.8L12 15.6 6.9 18.7l1.4-5.8L3.7 9l6-.5z"/></svg>',
-  ship: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>',
+  chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/><path d="M14.5 9.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7"/></svg>',
+  fan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="20" cy="19" r="2"/><path d="M6 12h12M6 11l12-5M6 13l12 5"/></svg>',
+  route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h5l4-6h9"/><path d="M12 18h9"/><path d="M8 12l4 6"/><path d="M18 3l3 3-3 3"/><path d="M18 15l3 3-3 3"/></svg>',
+  grade: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><path d="M8 12l3 3 9-9"/></svg>',
+  vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.3 5.5 6 .5-4.6 3.9 1.4 5.8L12 15.6 6.9 18.7l1.4-5.8L3.7 9l6-.5z"/></svg>',
+  ship: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>',
 };
 
 const WF_PATTERNS = [
@@ -4006,7 +4006,7 @@ function wfPaintPatterns() {
       <div class="wfx-pattern-body">${escapeHtml(p.blurb)}</div>
       <div class="wfx-pattern-foot">
         <span>${escapeHtml(p.trait)}</span>
-        <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
+        <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
       </div>`;
     // The thumbnail is appended as elements, since the builder returns them and
     // puts step names in as text. The card goes into the grid first so the
@@ -4115,7 +4115,7 @@ function paintWorkflowList() {
         <div class="wf-card-actions">
           <button class="ghost-link wf-edit-btn" data-id="${escapeAttr(w.id)}">Edit</button>
           ${runs.length ? `<button class="ghost-link wf-last-btn" data-open-run="${escapeAttr(w.id)}">Last run</button>` : ''}
-          <button class="card-cta wf-run-btn" data-id="${escapeAttr(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+          <button class="card-cta wf-run-btn" data-id="${escapeAttr(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>`;
   // The trailing tracks of the row would otherwise be empty background, so the
@@ -4123,7 +4123,7 @@ function paintWorkflowList() {
   // .wf-card click handler opens the builder on a blank graph.
   }).join('') + `
       <button type="button" class="wf-card wf-ghost-card">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         <span>New workflow</span>
         <small>start from a blank graph</small>
       </button>`;
@@ -4901,7 +4901,7 @@ function wfBuildRunCanvas(workflow) {
           <span class="wf-rn-dot"></span>
           <span class="wf-rn-live" data-live="${escapeAttr(n.id)}">Pending</span>
           <span class="wf-rn-open" title="Open this step's terminal">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
           </span>
         </div>
       </div>`;
@@ -6070,11 +6070,11 @@ const AG_FACET_LABEL = {
   pinned: 'Pinned',
 };
 // Shared stroke attributes for the row glyphs.
-const AG_STROKE = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+const AG_STROKE = 'fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 const AG_EDIT_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`;
 const AG_VIEW_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const AG_TRASH_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
-const AG_PIN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.3V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.7a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`;
+const AG_PIN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.3V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.7a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`;
 
 // The single mount test. It reads the DOM rather than a page variable, so it
 // stays true no matter which route put the page on screen.
@@ -7185,7 +7185,7 @@ async function openAgentsImportModal() {
     listEl.innerHTML = `<div class="ai-empty">No agents found on this machine.</div>`;
     return;
   }
-  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
   listEl.innerHTML = res.agents.map((a) => {
     if (a.alreadyImported) {
@@ -7360,7 +7360,7 @@ async function scanRepoRoot(root) {
     listEl.innerHTML = `<div class="ai-empty">No <code>agents/*.md</code> files in that folder.</div>`;
     return;
   }
-  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
   listEl.innerHTML = res.agents.map((a) => {
     const pill = a.alreadyImported
@@ -7801,8 +7801,8 @@ const promptBodyCache = new Map();
 
 const PR_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
 const PR_PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
-const PR_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
-const PR_ARROW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>';
+const PR_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const PR_ARROW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>';
 
 async function renderPrompts() {
   const pane = $('#prompts-pane');
@@ -8817,7 +8817,7 @@ function agentChipHTML(parentId) {
     ? `<span class="sa-live">${blocked} needs you</span>`
     : (live ? `<span class="sa-live">${live} running</span>` : '');
   return `<span class="session-agents${blocked ? ' has-blocked' : ''}" role="button" tabindex="0" data-agents-for="${escapeAttr(parentId)}" aria-expanded="${open ? 'true' : 'false'}">
-      <svg class="sa-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      <svg class="sa-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
       <span class="sa-count">${kids.length} agent${kids.length === 1 ? '' : 's'}</span>${tail}
     </span>`;
 }
@@ -12726,7 +12726,7 @@ function agentSwitchMatches(query) {
 // card is centred and iconed rather than one orphaned line at the row indent.
 function agentSwitchEmptyHTML(title, hint) {
   return `<li class="as-empty" role="presentation">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6"/></svg>
       <strong>${escapeHtml(title)}</strong><span>${escapeHtml(hint)}</span>
     </li>`;
 }
@@ -13588,7 +13588,7 @@ function amNodeEl(a) {
   el.dataset.amId = a.id;
   // eslint-disable-next-line no-unsanitized/property -- Static shell; every value lands via textContent in amPaintNode.
   el.innerHTML = '<span class="am-node-glyph">'
-    + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
+    + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
     + '<b class="am-node-kids"></b></span>'
     + '<span class="am-node-plate">'
     + '<span class="am-node-label"></span>'
@@ -15108,77 +15108,77 @@ const AUTOPILOT_PRESETS = [
     title: 'Security audit pass',
     body: 'Walk the codebase for obvious security issues: auth bypass, missing input validation, secrets in source, unsafe deserialization. Report findings inline.',
     caps: { minutes: 60, tokens: 250000, dollars: 6 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>',
   },
   {
     id: 'cleanup-todos',
     title: 'Cleanup TODOs',
     body: 'Find every TODO and FIXME comment in source. Group by area, propose a fix for each, do not push.',
     caps: { minutes: 30, tokens: 120000, dollars: 3 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
   },
   {
     id: 'docs-pass',
     title: 'Documentation pass',
     body: 'Generate or improve docstrings, comments, and README sections for public APIs. Match the existing tone.',
     caps: { minutes: 45, tokens: 180000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   },
   {
     id: 'add-tests',
     title: 'Add missing tests',
     body: 'Identify functions and modules with no test coverage. Write unit tests using the existing test framework. Do not modify production code.',
     caps: { minutes: 60, tokens: 220000, dollars: 5 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg>',
   },
   {
     id: 'refactor-types',
     title: 'Tighten types',
     body: 'Find loosely typed code (any, unknown, missing return types) and add precise types. Run the type checker after each change.',
     caps: { minutes: 45, tokens: 200000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/><path d="M9 21h6"/><path d="M12 3v18"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/><path d="M9 21h6"/><path d="M12 3v18"/></svg>',
   },
   {
     id: 'dep-bump',
     title: 'Bump dependencies',
     body: 'Review outdated dependencies. Bump patch and minor versions where safe. Run the test suite after each batch. Do not bump major versions without explicit confirmation.',
     caps: { minutes: 30, tokens: 100000, dollars: 2 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
   },
   {
     id: 'fix-failing-tests',
     title: 'Fix failing tests',
     body: 'Run the test suite. Diagnose each failure and fix the code or the test, whichever is wrong. Re-run after each fix until green. Do not delete or skip tests.',
     caps: { minutes: 60, tokens: 250000, dollars: 6 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4L3 18v3h3l5.3-5.3a4.5 4.5 0 0 0 6.4-6.4z"/><path d="M15 9l6-6"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4L3 18v3h3l5.3-5.3a4.5 4.5 0 0 0 6.4-6.4z"/><path d="M15 9l6-6"/></svg>',
   },
   {
     id: 'remove-dead-code',
     title: 'Remove dead code',
     body: 'Find unused functions, exports, files, and dependencies. Confirm each is unreferenced before deleting. Run the test suite after removal.',
     caps: { minutes: 45, tokens: 180000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
   },
   {
     id: 'harden-errors',
     title: 'Harden error handling',
     body: 'Find swallowed errors, empty catch blocks, and unchecked async results. Add proper handling with clear messages. Do not change behavior on the happy path.',
     caps: { minutes: 45, tokens: 200000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
   },
   {
     id: 'accessibility-pass',
     title: 'Accessibility pass',
     body: 'Review UI markup for accessibility: missing labels, keyboard navigation, focus states, contrast. Fix low-risk issues directly, report the rest inline.',
     caps: { minutes: 45, tokens: 180000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M7 10.5l4 1v3l-1.5 4M17 10.5l-4 1v3l1.5 4"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M7 10.5l4 1v3l-1.5 4M17 10.5l-4 1v3l1.5 4"/></svg>',
   },
   {
     id: 'release-notes',
     title: 'Draft release notes',
     body: 'Read the commits since the last tag. Draft release notes grouped by features, fixes, and breaking changes. Write to a file, do not tag or push.',
     caps: { minutes: 20, tokens: 80000, dollars: 2 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L11 3H4v7l9.6 10.4a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8z"/><circle cx="8" cy="7" r="1.5"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L11 3H4v7l9.6 10.4a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8z"/><circle cx="8" cy="7" r="1.5"/></svg>',
   },
 ];
 
