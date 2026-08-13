@@ -6253,19 +6253,16 @@ function agPaintDetail() {
   const acts = `<button type="button" class="ag-pin" data-ag-dt-act="pin" aria-pressed="${pinned ? 'true' : 'false'}" aria-label="${pinned ? 'Unpin' : 'Pin'} ${escapeAttr(name)}" title="${escapeAttr(agPinTitle(pinned))}">${AG_PIN_SVG}</button>`
     + `<button type="button" class="ag-act-btn" data-ag-dt-act="edit" aria-label="${escapeAttr(openLabel)}" title="${escapeAttr(openTitle)}">${builtin ? AG_VIEW_SVG : AG_EDIT_SVG}</button>`
     + (builtin ? '' : `<button type="button" class="ag-act-btn is-danger" data-ag-dt-act="del" aria-label="Delete ${escapeAttr(name)}" title="Delete · ${escapeAttr(AG_MOD)} Backspace">${AG_TRASH_SVG}</button>`);
+  // Source names a repository, so it stands only for a record that came from one.
   const meta = agMetaHtml('Origin', AG_ORIGIN_LABEL[agOriginOf(p)] || 'Custom')
     + agMetaHtml('Auto-select', p.autoSelect ? 'On' : 'Off')
-    + agMetaHtml('Source', p.repoRoot ? agShortPath(p.repoRoot) : '', 'ag-dt-cell-wide', { mono: true, none: 'Not from a repo' });
-  // The pane carries the description only for a row whose column cut it off,
-  // which is exactly the rows that gained a title attribute. A record with no
-  // sentence at all says so rather than leaving the slot out.
-  const row = agRowEl(p.id);
+    + (p.repoRoot ? agMetaHtml('Source', agShortPath(p.repoRoot), 'ag-dt-cell-wide', { mono: true }) : '');
+  // The sentence about the agent is the pane's lede, whatever the row managed to
+  // show. A record with no sentence at all says so rather than leaving the slot out.
   const full = agDesc(p);
-  const desc = row && row.querySelector('.ag-desc[title]') ? full : '';
   // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
   el.innerHTML = `<div class="ag-dt-head"><h2 class="ag-dt-name" title="${escapeAttr(name)}">${escapeHtml(name)}</h2><span class="ag-dt-acts">${acts}</span></div>`
-    + (desc ? `<p class="ag-dt-desc">${escapeHtml(desc)}</p>` : '')
-    + (full ? '' : '<p class="ag-dt-desc is-empty">No description</p>')
+    + (full ? `<p class="ag-dt-desc">${escapeHtml(full)}</p>` : '<p class="ag-dt-desc is-empty">No description</p>')
     + `<dl class="ag-dt-meta">${meta}</dl>`
     + '<p class="ag-dt-label">System prompt</p>'
     + (prompt
@@ -6492,7 +6489,7 @@ function paintAgents() {
     const chips = (loading || rows.length) ? onRows : wayBack;
     // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml
     keysEl.innerHTML = chips.map(([keys, v]) => '<span class="ag-key"><span class="ag-key-caps">'
-      + keys.map((k) => `<kbd class="ag-kbd">${escapeHtml(k)}</kbd>`).join('')
+      + keys.map((k) => `<kbd class="kbd-cap">${escapeHtml(k)}</kbd>`).join('')
       + `</span><span class="ag-key-word">${escapeHtml(v)}</span></span>`).join('');
   }
 

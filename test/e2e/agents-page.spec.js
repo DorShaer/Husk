@@ -339,8 +339,9 @@ test('the reader carries what the row has no column for', async () => {
     ['Auto-select', 'Off'],
     ['Source', '~/packs/agents'],
   ]);
-  // The row prints the sentence in full, so the pane does not print it twice.
-  await expect(win.locator('#ag-detail .ag-dt-desc')).toHaveCount(0);
+  // The sentence about the agent is the pane's lede, whatever the row managed to
+  // show, so a reader who opened the pane never lands on metadata first.
+  await expect(win.locator('#ag-detail .ag-dt-desc')).toHaveText('Installed from a pack.');
 
   // The verbs the row carries are on the record the reader is already reading,
   // and pinning from the pane is a toggle rather than a printed value.
