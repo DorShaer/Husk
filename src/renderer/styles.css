@@ -1107,12 +1107,14 @@ body[data-context-pane="off"] #btn-status-toggle { display: none; }
   -webkit-user-drag: none;
   opacity: 0.85;
 }
+/* The glyph starts on the rail's icon column, so the rail has one left edge. */
 .rail-toggle-btn {
-  width: 32px; height: 32px;
+  width: 38px; height: 32px;
+  padding: 0 0 0 10px;
   background: transparent; border: 0;
   border-radius: var(--radius-md);
   color: var(--text-3); cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: flex-start;
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
 }
 .rail-toggle-btn:hover { background: var(--bg-2); color: var(--text); }
@@ -1300,7 +1302,7 @@ body[data-rail="collapsed"] .rail-item:hover::after {
    plays when the sidebar expands. */
 .rail-section-head {
   justify-content: space-between;
-  padding: 6px 14px 4px;
+  padding: 6px 10px 4px;
   opacity: 0; transition: opacity var(--motion-base) var(--ease);
   white-space: nowrap; overflow: hidden;
   user-select: none;
@@ -1331,6 +1333,7 @@ body[data-rail="expanded"] #rail-recent { display: flex; }
   display: flex; align-items: center; gap: 12px;
   width: 100%;
   padding: 7px 10px;
+  text-align: left;
   background: transparent; color: var(--text-2);
   border: 0; border-radius: var(--radius-md);
   cursor: pointer; font-family: inherit;
@@ -9740,17 +9743,12 @@ kbd {
 @media (max-width: 1180px) {
   #main { --rail-w: 72px; }
   body[data-rail="expanded"] #main { --rail-w: 220px; }
-  /* A sliver rather than nothing, so the way back to the pane stays on screen. */
-  body:not([data-status="expanded"]) #main { --side-w: 30px; }
+  /* Collapsed gives the column back entirely; the top bar holds the way in. */
+  body:not([data-status="expanded"]) #main { --side-w: 0px; }
   body[data-context-pane="off"] #main { --side-w: 0px; }
-  /* With the detail panel open, the third column belongs to it rather than to the
-     status-panel sliver. */
+  /* With the detail panel open, the third column belongs to it. */
   body[data-detail="open"] #main { --side-w: 420px; }
-  body:not([data-status="expanded"]) #status-panel .sp-head,
-  body:not([data-status="expanded"]) #status-panel .sp-panes,
-  body:not([data-status="expanded"]) #status-panel .sp-foot { display: none; }
-  body:not([data-status="expanded"]) #status-panel { background: var(--bg-2); }
-  body:not([data-status="expanded"]) .sp-toggle svg { transform: rotate(180deg); }
+  body:not([data-status="expanded"]) #status-panel { display: none; }
 }
 
 /* Narrow window: force the rail to its icon-only width. The labels stay in the DOM
@@ -9759,7 +9757,7 @@ kbd {
 @media (max-width: 960px) {
   #main,
   body[data-rail="expanded"] #main { --rail-w: 64px; }
-  body:not([data-status="expanded"]) #main { --side-w: 30px; }
+  body:not([data-status="expanded"]) #main { --side-w: 0px; }
   body[data-status="expanded"] #main { --side-w: 320px; }
   body[data-context-pane="off"] #main { --side-w: 0px; }
   body[data-detail="open"] #main { --side-w: 380px; }
