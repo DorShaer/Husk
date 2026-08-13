@@ -7639,25 +7639,23 @@ input[type="checkbox"]:disabled {
 /* Zero state as onboarding, not as an announcement of absence. The real next step
    happens in the agent CLI, so the page teaches that path and uses the width to say
    what a plugin is. */
+/* Top-anchored, so the onboarding starts where the reader's eye already is. */
 .plugins-zero:not([hidden]) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: var(--space-6);
-  padding: var(--space-5) 0;
+  justify-content: flex-start;
+  gap: var(--space-5);
+  padding: var(--space-2) 0 var(--space-5);
   overflow-y: auto;
 }
-/* Centred rather than top-anchored, because the block is a full onboarding surface.
-   Leftover height splits above and below instead of collecting in one band under
-   the content. */
 
 .pz-lead { display: flex; gap: var(--space-4); align-items: flex-start; }
 .pz-lead-text { min-width: 0; }
 .page-plugins .plugins-zero .es-icon {
   flex: 0 0 auto;
-  width: 44px; height: 44px;
+  width: 40px; height: 40px;
   display: flex; align-items: center; justify-content: center;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
