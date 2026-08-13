@@ -1009,25 +1009,30 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
 
 #main {
   display: grid;
-  /* Collapsed rail (default columns): [48px icon strip] [pages] [380px status]. The
-     sidebar toggle switches data-rail to widen the strip into a labeled sidebar. */
-  grid-template-columns: 48px 1fr 380px;
+  /* Each outer column is one token, so the rail, the context pane and the detail
+     panel each size themselves. The default is a 48px icon strip and a 380px
+     pane; the sidebar toggle switches data-rail to widen the strip into a
+     labeled sidebar. Later rules win at equal specificity, so the detail panel
+     is last and takes the column from whatever else claimed it. */
+  --rail-w: 48px;
+  --side-w: 380px;
+  grid-template-columns: var(--rail-w) 1fr var(--side-w);
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   position: relative;
 }
 /* Expanded rail: a labeled sidebar (icons + names + section heads + recent). */
-body[data-rail="expanded"] #main { grid-template-columns: 232px 1fr 380px; }
+body[data-rail="expanded"] #main { --rail-w: 232px; }
 
-/* Status / detail variants. */
-body[data-detail="open"] #main { grid-template-columns: 48px 1fr 460px; }
+/* Side column: the context pane, collapsed to nothing, or the detail panel. */
+body[data-status="collapsed"] #main { --side-w: 0px; }
+body[data-context-pane="off"] #main { --side-w: 0px; }
+body[data-detail="open"] #main { --side-w: 460px; }
+body[data-status="collapsed"] #status-panel,
+body[data-context-pane="off"] #status-panel,
 body[data-detail="open"] #status-panel { display: none; }
-body[data-status="collapsed"] #main { grid-template-columns: 48px 1fr 0; }
-body[data-detail="open"][data-status="collapsed"] #main { grid-template-columns: 48px 1fr 460px; }
-body[data-rail="expanded"][data-detail="open"] #main { grid-template-columns: 232px 1fr 460px; }
-body[data-rail="expanded"][data-status="collapsed"] #main { grid-template-columns: 232px 1fr 0; }
-body[data-rail="expanded"][data-detail="open"][data-status="collapsed"] #main { grid-template-columns: 232px 1fr 460px; }
-body[data-status="collapsed"] #status-panel { display: none; }
+/* The pane's topbar toggle only means something where the pane can appear. */
+body[data-context-pane="off"] #btn-status-toggle { display: none; }
 
 /* ─── Rail ──────────────────────────────────────────────────────────────── */
 
@@ -9899,27 +9904,21 @@ kbd {
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ─── Responsive breakpoints ─────────────────────────────────────────────
-   Layout adapts at three widths. The body-attribute toggles for rail and status
-   panel always win (specificity 1,1,0 > 1,0,0), so an explicit user choice at
-   narrow widths still holds. The defaults below apply only without one. */
+   Layout adapts at three widths, each re-pointing the --rail-w and --side-w
+   column tokens. Rules run in the same order as the base layout, so the detail
+   panel is last and takes the side column from whatever else claimed it. */
 
 /* Tablet / docked-side: auto-collapse the status panel unless the user has
    explicitly expanded it. The rail keeps its preference. */
 @media (max-width: 1180px) {
-  body:not([data-status="expanded"]) #main {
-    grid-template-columns: 72px 1fr 30px;
-  }
-  body[data-rail="expanded"]:not([data-status="expanded"]) #main {
-    grid-template-columns: 220px 1fr 30px;
-  }
+  #main { --rail-w: 72px; }
+  body[data-rail="expanded"] #main { --rail-w: 220px; }
+  /* A sliver rather than nothing, so the way back to the pane stays on screen. */
+  body:not([data-status="expanded"]) #main { --side-w: 30px; }
+  body[data-context-pane="off"] #main { --side-w: 0px; }
   /* With the detail panel open, the third column belongs to it rather than to the
      status-panel sliver. */
-  body[data-detail="open"] #main {
-    grid-template-columns: 72px 1fr 420px;
-  }
-  body[data-detail="open"][data-rail="expanded"] #main {
-    grid-template-columns: 220px 1fr 420px;
-  }
+  body[data-detail="open"] #main { --side-w: 420px; }
   body:not([data-status="expanded"]) #status-panel .sp-head,
   body:not([data-status="expanded"]) #status-panel .sp-panes,
   body:not([data-status="expanded"]) #status-panel .sp-foot { display: none; }
@@ -9932,18 +9931,11 @@ kbd {
    .rail-item. Page padding tightens. */
 @media (max-width: 960px) {
   #main,
-  body[data-rail="expanded"] #main,
-  body[data-rail="expanded"][data-status="expanded"] #main {
-    grid-template-columns: 64px 1fr 30px;
-  }
-  body[data-detail="open"] #main,
-  body[data-detail="open"][data-rail="expanded"] #main {
-    grid-template-columns: 64px 1fr 380px;
-  }
-  body[data-status="expanded"]:not([data-detail="open"]) #main,
-  body[data-rail="expanded"][data-status="expanded"]:not([data-detail="open"]) #main {
-    grid-template-columns: 64px 1fr 320px;
-  }
+  body[data-rail="expanded"] #main { --rail-w: 64px; }
+  body:not([data-status="expanded"]) #main { --side-w: 30px; }
+  body[data-status="expanded"] #main { --side-w: 320px; }
+  body[data-context-pane="off"] #main { --side-w: 0px; }
+  body[data-detail="open"] #main { --side-w: 380px; }
   /* Force icon-only rail visuals regardless of data-rail attribute. */
   .rail { padding: 10px 6px 14px; }
   .rail-item { padding: 12px 0; justify-content: center; gap: 0; }
@@ -9961,11 +9953,11 @@ kbd {
    action buttons wrap to a second row, card grids drop to a single column, and
    modals get edge padding. */
 @media (max-width: 760px) {
+  /* Two columns only: there is no room for a side column at this width, so the
+     grid drops it outright rather than sizing it. */
   #main,
   body[data-rail="expanded"] #main,
-  body[data-status="expanded"] #main {
-    grid-template-columns: 56px 1fr;
-  }
+  body[data-status="expanded"] #main,
   body[data-detail="open"] #main {
     grid-template-columns: 56px 1fr;
   }

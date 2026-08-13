@@ -295,9 +295,15 @@ const initialRouteState = readStoredState(RELOAD_STATE_KEY, false) || readStored
 let currentPage = normalizePageName((initialRouteState && initialRouteState.page) || 'chat');
 let chatHasInput = false;
 
+// The context pane speaks about a chat session: its folder, its working tree,
+// the files handed to it. Only the chat has one, so every other page takes that
+// width for its own content.
+const CONTEXT_PANE_PAGES = new Set(['chat']);
+
 function applyPageShell(name) {
   const page = normalizePageName(name);
   document.body.dataset.page = page;
+  document.body.dataset.contextPane = CONTEXT_PANE_PAGES.has(page) ? 'on' : 'off';
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== page; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === page));
 }

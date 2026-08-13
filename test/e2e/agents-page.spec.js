@@ -182,7 +182,8 @@ test('pinning toggles on the same nodes and lands in config', async () => {
   await expect(forge.locator('.ag-pin')).toHaveAttribute('aria-pressed', 'true');
   await expect(forge).toHaveClass(/is-pinned/);
   await expect(win.locator('#ag-state .ag-facet[data-key="pinned"] .ag-facet-n')).toHaveText('1');
-  // Pinning has exactly one visible effect in the product, and it is this.
+  // Pinning has exactly one effect in the product, and it is this: the chat's
+  // context pane names who is pinned.
   await expect(win.locator('#sp-pane-work')).toContainText('Forge');
 
   // A pin repaints counts, never the list, so the row keeps its identity.
