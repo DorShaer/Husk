@@ -1822,9 +1822,9 @@ function syncRailToggleTitle() {
   t.title = document.body.dataset.rail === 'expanded' ? 'Collapse sidebar' : 'Expand sidebar';
 }
 function syncStatusToggleTitle() {
-  const t = $('#sp-toggle');
+  const t = $('#btn-status-toggle');
   if (!t) return;
-  t.title = document.body.dataset.status === 'collapsed' ? 'Expand status panel' : 'Collapse status panel';
+  t.title = document.body.dataset.status === 'collapsed' ? 'Expand the side panel' : 'Collapse the side panel';
 }
 // Rail is permanently icon-only.
 
@@ -1835,10 +1835,8 @@ async function toggleStatusPanel() {
   cfg = await window.husk.config.set({ statusCollapsed: !collapsed });
   setTimeout(fitNow, 200);
 }
-// The in-panel chevron collapses; the top-bar button collapses too and is the
-// way back once the panel is hidden entirely.
-const spToggle = $('#sp-toggle');
-if (spToggle) spToggle.addEventListener('click', toggleStatusPanel);
+// One control owns the side panel, in the top bar, so it is in the same place
+// whether the panel is showing or hidden.
 const topStatusToggle = $('#btn-status-toggle');
 if (topStatusToggle) topStatusToggle.addEventListener('click', toggleStatusPanel);
 

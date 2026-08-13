@@ -7998,30 +7998,12 @@ input[type="checkbox"]:disabled {
   --sp-top-offset: 6px;
   padding-top: var(--sp-top-offset, 64px);
 }
-.sp-toggle {
-  /* Expanded: a quiet ghost button in the panel's top-right corner, aligned with
-     the tab strip so it reads as part of the card. Collapsed (below) it
-     re-centres in the sliver. */
-  position: absolute; top: calc(var(--sp-top-offset, 64px) + 4px); right: 10px; left: auto; z-index: 6;
-  width: 26px; height: 26px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--text-3); cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
-}
-.sp-toggle:hover { background: var(--bg-2); color: var(--text); border-color: var(--line-2); }
-.sp-toggle svg {
-  width: 16px; height: 16px; display: block;
-  transition: transform var(--motion-base) var(--ease);
-}
 .sp-tiny { font-size: var(--fs-micro); line-height: 1.4; padding-top: 4px; }
-/* The column is a tabbed pane over the work, not a readout about the app. The head
-   is its tab strip; the toggle keeps the right end, so the strip stops short of it. */
+/* The column is a tabbed pane over the work, not a readout about the app, and the
+   head is its tab strip. */
 .sp-head {
   display: flex; align-items: stretch; gap: 2px;
-  padding: 0 40px 0 10px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--line);
 }
 .sp-tab {
