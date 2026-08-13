@@ -368,15 +368,14 @@
   --fs-label: 12px;
   --fw-label: 500;
   --fs-mono: 12px;
-  /* Icons: 16px in rails and rows, 18px in headers. */
+  /* Four glyph steps: inside a control, in rails and rows, in headers, and in an
+     empty state. Nothing draws an icon at a size that is not one of these. */
+  --icon-xs: 13px;
   --icon-sm: 16px;
   --icon-md: 18px;
+  --icon-lg: 28px;
   /* Wider ramp, for headlines and the surfaces that sit above the five steps. */
   --fs-hero: 46px;
-  /* The two page heroes (Workflows, Autopilot) share one headline size so the cards
-     read as one system. Kept separate from --fs-hero, which also sizes the
-     empty-state and drag-target glyphs. */
-  --fs-page-hero: 38px;
   --fs-display: 32px;
   --fs-h1: 22px;
   --fs-h2: 18px;
@@ -1494,11 +1493,15 @@ body[data-rail="expanded"] .rail-section-recent:not([hidden]) { display: flex; }
   overflow: hidden;
 }
 body[data-page="boot"] .page { display: none !important; }
+/* Every page opens on the same band: title over one muted line on the left, the
+   actions on the right, one gap below it. The page is a column flex box, so the
+   head keeps no floor and never grows under a body that scrolls itself. */
 .page-head {
-  display: flex; justify-content: space-between; align-items: baseline;
+  display: flex; justify-content: space-between; align-items: center;
   gap: 16px;
-  min-height: 48px;
-  margin-bottom: 28px;
+  min-height: 0;
+  flex: none;
+  margin-bottom: var(--space-4);
   flex-wrap: wrap;
 }
 .page-head-left { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -1517,59 +1520,22 @@ body[data-page="boot"] .page { display: none !important; }
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
 }
+/* The rail already says which page this is, so the title reports at the page step
+   rather than announcing at display size. One rule, so a new page inherits it. */
 .page-title {
   font-family: var(--font-display);
-  font-size: var(--fs-display);
-  font-weight: 600;
+  font-size: var(--fs-page);
+  font-weight: var(--fw-page);
   letter-spacing: -0.02em;
   margin: 0;
-  color: var(--text);
+  color: var(--text-2);
   line-height: 1.1;
 }
 .page-sub {
-  font-size: var(--fs-small);
-  color: var(--text-2);
-  letter-spacing: var(--tracking-normal);
-  line-height: var(--lh-snug);
-}
-/* The collections share one head: the title at the page step over one muted
-   line, with the actions on the same band. The rail already says which page this
-   is, so the title reports rather than announces and the list gets the height. */
-.page-agents .page-head,
-.page-skills .page-head,
-.page-sessions .page-head,
-.page-prompts .page-head,
-.page-autopilot .page-head,
-.page-projects .page-head {
-  align-items: center;
-  min-height: 0;
-  /* The page is a column flex box, so a head with no floor collapses under a
-     page that scrolls itself. */
-  flex: none;
-  margin-bottom: var(--space-4);
-}
-/* The head selector carries the page step past the dark family's own title rule,
-   so all ten themes print the title at one size. */
-.page-agents .page-head .page-title,
-.page-skills .page-head .page-title,
-.page-sessions .page-head .page-title,
-.page-prompts .page-head .page-title,
-.page-autopilot .page-head .page-title,
-.page-projects .page-head .page-title,
-.page-prefs .page-head .page-title {
-  font-size: var(--fs-page);
-  font-weight: var(--fw-page);
-  color: var(--text-2);
-}
-.page-prefs .page-sub,
-.page-agents .page-sub,
-.page-skills .page-sub,
-.page-sessions .page-sub,
-.page-prompts .page-sub,
-.page-autopilot .page-sub,
-.page-projects .page-sub {
   font-size: var(--fs-body);
   color: var(--text-3);
+  letter-spacing: var(--tracking-normal);
+  line-height: var(--lh-snug);
 }
 .ghost-btn {
   background: transparent;
@@ -1708,7 +1674,6 @@ body[data-page="boot"] .page { display: none !important; }
    background, where --bg-1 is the page colour itself in the light family. */
 .page-autopilot::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
 .page-autopilot::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
-.page-autopilot .page-head { margin-bottom: var(--space-4); }
 .page-autopilot .page-head-right { display: flex; align-items: center; gap: var(--space-3); }
 /* Unified button sizing inside the Autopilot page. Colour and intent classes
    (.btn-primary, .btn-stop) set palette only; geometry comes from this scope. */
@@ -3803,13 +3768,6 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
   .page-chat .page-head-right .btn-label { display: none; }
   .page-chat .page-head-right .ghost-btn { padding: 0 8px; }
 }
-.page-chat .page-title {
-  font-family: var(--font-body);
-  font-size: var(--fs-page);
-  font-weight: var(--fw-page);
-  letter-spacing: var(--tracking-tight);
-  color: var(--text-2);
-}
 
 /* Positioning context only. The stage takes every pixel the page leaves it, and
    bleeds through the page gutter to the rail and the side panel, so the thread runs
@@ -5181,7 +5139,6 @@ body[data-page="chat"] #chats-panel { display: flex; }
 }
 /* The list carries the height, so the head gives some back. The title keeps the
    app-wide treatment every other page wears. */
-.page-agents .page-head { margin-bottom: var(--space-4); min-height: 32px; }
 
 /* Two columns of one workspace, both running the full height of the page. Rows sit
    on the page surface under one band of chrome and clip at the fold; the reader is
@@ -6487,7 +6444,6 @@ input[type="checkbox"]:disabled {
 .sessions-list::-webkit-scrollbar-track { background: transparent; }
 /* Controls in the head sit on the optical centre of the title block rather
    than on the h1 baseline, which the two-line text column throws off. */
-.page-sessions .page-head { align-items: center; }
 .session-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -6689,7 +6645,6 @@ input[type="checkbox"]:disabled {
 /* This page is a full-height two-pane cockpit, so the header gives its space back:
    the control row centres on the whole title and path stack, and the gap under it
    is one spacing step. */
-.page-files .page-head { align-items: center; margin-bottom: var(--space-4); }
 .fx {
   flex: 1; min-height: 0;
   /* The index column scales with the window rather than stopping at a fixed cap, so
@@ -10700,128 +10655,33 @@ kbd {
   .wfx-gate-mark, .wfx-state.is-live { animation: none; opacity: 1; }
 }
 
-.wfx-hero-eyebrow {
-  grid-column: 1; grid-row: 1;
-  font-family: var(--font-mono);
-  font-size: var(--fs-nano); letter-spacing: 0.24em; text-transform: uppercase;
-  color: var(--text-3);
-  font-weight: 600;
-  margin-bottom: var(--space-3);
-}
-.wfx-hero-title {
-  grid-column: 1; grid-row: 2;
-  font-family: var(--font-display);
-  font-size: var(--fs-page-hero); font-weight: 700;
-  letter-spacing: -0.025em; line-height: 1.05;
-  color: var(--text);
-  margin: 0 0 var(--space-4) 0;
-  max-width: 600px;
-}
-.wfx-hero-body {
-  grid-column: 1; grid-row: 3;
-  font-size: var(--fs-h3); line-height: 1.6;
-  color: var(--text-2);
-  max-width: 620px;
-  margin: 0 0 var(--space-5) 0;
-}
-.wfx-hero-actions {
-  grid-column: 1; grid-row: 4;
-  display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap;
-  margin-bottom: var(--space-5);
-}
-.wfx-hero-secondary {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--text);
-  border-radius: var(--radius-md);
-  height: var(--control-h);
-  padding: 0 16px;
-  font-family: inherit; font-size: var(--fs-small); font-weight: 600;
-  cursor: pointer;
-  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease);
-}
-.wfx-hero-secondary:hover { background: var(--bg-2); border-color: var(--line-2); }
-.wfx-hero-stats {
-  grid-column: 1 / -1; grid-row: 5;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, max-content));
-  gap: var(--space-7);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--line-2);
-}
-.wfx-hero-stat-value {
-  font-family: var(--font-display);
-  font-size: var(--fs-display); font-weight: 700; letter-spacing: -0.015em;
-  color: var(--text); font-variant-numeric: tabular-nums;
-  margin-bottom: var(--space-1);
-}
-.wfx-hero-stat-label {
-  font-size: var(--fs-micro); letter-spacing: var(--tracking-wide); text-transform: uppercase;
-  color: var(--text-3); font-weight: 600;
-}
 @media (max-width: 900px) {
-  .wfx-hero { padding: var(--space-5) var(--space-5) var(--space-4); }
-  .wfx-hero-title { font-size: var(--fs-display); }
-  .wfx-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
+  .wfx-concept-art { display: none; }
 }
 
-/* Compact hero. Once a flow is saved the pitch gives up size rather than content,
-   so the saved cards and their Run buttons clear the fold. Toggled from
-   paintWorkflowList() off the same count that reveals "Your workflows". */
-.wfx-hero.is-compact {
-  /* The graph is the page's one picture of what a workflow is, so compact
-     buys its height back from the copy column, not from the art. */
-  grid-template-columns: minmax(0, 1fr) 48%;
-  padding: var(--space-4) var(--space-6);
+/* The page's own figures, on the head band beside the primary action. */
+.wfx-figures {
+  display: flex; align-items: center; gap: var(--space-4);
+  margin-right: var(--space-2);
 }
-.wfx-hero.is-compact .wfx-hero-eyebrow { margin-bottom: var(--space-2); }
-.wfx-hero.is-compact .wfx-hero-title {
-  /* Compact gives up padding and stat layout, not type size. The headline
-     holds the Autopilot hero's scale so both cards read as one system. */
-  font-size: var(--fs-page-hero);
-  letter-spacing: -0.025em;
-  margin-bottom: var(--space-3);
-  max-width: 600px;
+.wfx-figure {
+  font-size: var(--fs-body); color: var(--text-3);
+  white-space: nowrap;
 }
-.wfx-hero.is-compact .wfx-hero-body {
-  font-size: var(--fs-h3); line-height: 1.6;
-  max-width: 620px;
-  margin-bottom: var(--space-3);
-  /* Two lines, reserved, so the panel's height does not track the copy. */
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.wfx-hero.is-compact .wfx-hero-actions { margin-bottom: var(--space-4); }
-.wfx-hero.is-compact .wfx-hero-stats {
-  gap: var(--space-5);
-  padding-top: var(--space-4);
-}
-/* Four headline figures become one meta row: same numbers, one line of height. */
-.wfx-hero.is-compact .wfx-hero-stat {
-  display: flex; align-items: baseline; gap: var(--space-2);
-}
-.wfx-hero.is-compact .wfx-hero-stat-value {
-  font-size: var(--fs-h1); margin-bottom: 0;
-}
-.wfx-hero.is-compact .wfx-hero-stat-label { font-size: var(--fs-micro); }
-/* Sized against the hero, not the window: the status panel and the collapsed rail
-   both resize this box. The headline gives up type size before its two-line break,
-   and the graph leaves before the copy crowds it. */
-@container (max-width: 1040px) { .wfx-hero-title { font-size: var(--fs-display); } }
-@container (max-width: 900px) { .wfx-hero-title { font-size: var(--fs-display); } }
-@container (max-width: 900px) {
-  .wfx-hero, .wfx-hero.is-compact { grid-template-columns: minmax(0, 1fr); }
-  .wfx-hero-art { display: none; }
-  .wfx-hero-title { font-size: var(--fs-display); }
-  .wfx-hero-title, .wfx-hero-body { max-width: 100%; }
+.wfx-figure b {
+  font-family: var(--font-mono); font-size: var(--fs-mono); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  margin-right: 4px;
 }
 
 /* Section shell shared by patterns, concepts, saved flows and history. */
 .wfx-section { display: flex; flex-direction: column; gap: var(--space-4); }
 .wfx-section-head { display: flex; flex-direction: column; gap: var(--space-1); }
+/* A step below .page-title, the same rank Autopilot's sections take. */
 .wfx-section-title {
   font-family: var(--font-display);
-  font-size: var(--fs-h1); font-weight: 600; letter-spacing: -0.012em;
+  font-size: var(--fs-h2); font-weight: 600; letter-spacing: -0.012em;
   color: var(--text); margin: 0;
 }
 .wfx-section-sub { font-size: var(--fs-micro); color: var(--text-3); }
