@@ -1003,14 +1003,12 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
   user-select: none;
   -webkit-app-region: no-drag;
 }
-/* What the window points at reads from the left; how the chat stands reads from
-   the right edge. */
+/* One cluster at the left: what the window points at, then how the chat stands. */
 .statusbar .sb-group {
   display: flex; align-items: center;
   gap: var(--space-2);
 }
 .statusbar .sb-group-target { flex: 0 1 auto; min-width: 0; overflow: hidden; }
-.statusbar .sb-group-state { flex: 0 0 auto; margin-left: auto; }
 .statusbar .sb-item {
   display: inline-flex; align-items: center; gap: 6px;
   flex: 0 0 auto;

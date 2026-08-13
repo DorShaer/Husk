@@ -2031,7 +2031,15 @@ function refreshShellStatusBar() {
     || prettyModelLabel((u.session && u.session.model) || '')
     || modelFromCommand((tab && tab.command) || (cfg && cfg.agentCommand) || '');
 
+  // The rail names the configured tool a row above, so the bar carries it only
+  // when this chat is running something else.
+  const configured = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : '';
+  const showTool = !!tool && tool !== configured;
   agentEl.textContent = tool;
+  const agentItem = $('#sb-agent-item');
+  if (agentItem) agentItem.hidden = !showTool;
+  const agentSep = $('#sb-agent-sep');
+  if (agentSep) agentSep.hidden = !showTool;
   const cwdEl = $('#sb-cwd');
   if (cwdEl) { cwdEl.textContent = homeRelativePath(dir); cwdEl.title = dir; }
   const modelEl = $('#sb-model');

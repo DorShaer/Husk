@@ -2351,11 +2351,11 @@
          every page. -->
     <footer id="statusbar" class="statusbar">
       <div class="sb-group sb-group-target">
-        <span class="sb-item" id="sb-agent-item" title="Active AI tool">
+        <span class="sb-item" id="sb-agent-item" title="This chat's tool" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/></svg>
           <span class="sb-value" id="sb-agent">agent</span>
         </span>
-        <span class="sb-sep" aria-hidden="true"></span>
+        <span class="sb-sep" id="sb-agent-sep" aria-hidden="true" hidden></span>
         <span class="sb-item sb-item-path" id="sb-cwd-item" title="Working directory">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
           <span class="sb-value sb-mono" id="sb-cwd">~</span>
@@ -2366,7 +2366,7 @@
           <span class="sb-value" id="sb-model"></span>
         </span>
       </div>
-      <div class="sb-group sb-group-state">
+        <span class="sb-sep" aria-hidden="true"></span>
         <span class="sb-item sb-state" id="sb-state-item" data-state="none">
           <span class="sb-dot" aria-hidden="true"></span>
           <span class="sb-value" id="sb-state">no session</span>
