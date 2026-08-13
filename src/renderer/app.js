@@ -10418,7 +10418,16 @@ function showPrefsSection(section) {
     if (!whatsNewFor(ver)) ver = latestWhatsNewVersion();
     if (ver) showWhatsNew(ver);
   });
+  // Nothing pending is one click to recheck; anything pending opens the card
+  // that carries the install, the manual steps and the release notes.
   $('#btn-pref-update-check')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (updateNeedsDetail(updateState || {})) {
+      const pop = $('#update-pop');
+      if (!pop) return;
+      if (pop.hidden) openUpdatePop(); else pop.hidden = true;
+      return;
+    }
     const btn = e.currentTarget;
     btn.disabled = true;
     try { await window.husk.updates.check(); } catch (_) {}
@@ -10703,61 +10712,65 @@ $('#pref-pai') && $('#pref-pai').addEventListener('change', async (e) => {
   toast(msg, 'success');
 });
 
-// ─── Update pill (topbar) ───────────────────────────────────────────────────────
-// One element drives every state: idle, checking, up-to-date, available,
-// downloading (n%), ready (restart to install), error. The dot pulses only
-// when there's something for the user to do.
+// ─── Updates (Preferences > About) ──────────────────────────────────────────────
+// The version and its update action live on the About row: idle, checking,
+// up-to-date, available, downloading (n%), ready (restart to install), error.
+// The dot pulses only when there's something for the user to do.
 let updateState = { status: 'idle', current: 'v?' };
-function paintUpdatePill() {
-  const btn = $('#btn-update');
-  const text = $('#tv-text');
-  const dot = btn ? btn.querySelector('.tv-dot') : null;
-  if (!btn) return;
-  const s = updateState || { status: 'idle' };
-  const cur = s.current ? (s.current.startsWith('v') ? s.current : 'v' + s.current) : '';
-  const next = s.version ? ('v' + s.version) : '';
-  const baseLabel = cur ? `Husk ${cur}` : 'Husk';
-  let label;
-  let title;
-  let showDot = false;
-  switch (s.status) {
-    case 'checking':
-      label = `${baseLabel} · checking…`; title = 'Looking for a new version'; break;
-    case 'available':
-      label = `${next} available →`; title = `Update from ${cur} to ${next}`; showDot = true; break;
-    case 'downloading':
-      label = `downloading ${s.percent || 0}%`; title = 'Downloading update'; break;
-    case 'ready':
-      label = 'restart to update'; title = `${next} ready, click to install and relaunch`; showDot = true; break;
-    case 'up-to-date':
-      label = `${baseLabel} · check for updates ↻`; title = `You're up to date (${cur}) · click to recheck`; break;
-    case 'error':
-      label = `${baseLabel} · check for updates ↻`; title = `Update check failed: ${s.error || 'unknown'}`; break;
-    case 'idle':
-    default:
-      label = `${baseLabel} · check for updates ↻`; title = 'Click to check for updates';
-  }
-  text.textContent = label;
-  btn.title = title;
-  btn.dataset.state = s.status;
-  if (dot) dot.hidden = !showDot;
+
+// States that carry more than a one-word action, so the button opens the card
+// that explains them instead of firing another check.
+function updateNeedsDetail(s) {
+  if (s.dev) return true;
+  if (s.status === 'available' || s.status === 'downloading' || s.status === 'ready') return true;
+  return s.status === 'error' && s.phase === 'install';
 }
+
 // The Preferences nav stamp and its About row read the same update state.
 function paintPrefsVersion() {
   const s = updateState || { status: 'idle' };
   const cur = s.current ? (s.current.startsWith('v') ? s.current : 'v' + s.current) : '';
   const stamp = $('#prefs-version');
   if (stamp) stamp.textContent = cur ? `Husk ${cur}` : 'Husk';
-  const el = $('#pref-about-version');
-  if (!el) return;
   const next = s.version ? ('v' + s.version) : '';
-  let label = cur || 'version unknown';
-  if (s.status === 'checking') label = 'checking…';
-  else if (s.status === 'available' && next) label = `${next} available`;
-  else if (s.status === 'downloading') label = `downloading ${s.percent || 0}%`;
-  else if (s.status === 'ready') label = 'restart to update';
-  el.textContent = label;
-  el.className = s.status === 'error' ? 'pref-status err' : 'pref-status';
+  const el = $('#pref-about-version');
+  if (el) {
+    let label = cur || 'version unknown';
+    if (s.status === 'checking') label = 'checking…';
+    else if (s.status === 'available' && next) label = `${next} available`;
+    else if (s.status === 'downloading') label = `downloading ${s.percent || 0}%`;
+    else if (s.status === 'ready') label = 'restart to update';
+    el.textContent = label;
+    el.className = s.status === 'error' ? 'pref-status err' : 'pref-status';
+  }
+  const btn = $('#btn-pref-update-check');
+  if (!btn) return;
+  const text = $('#tv-text');
+  const dot = btn.querySelector('.tv-dot');
+  let label = 'Check now';
+  let title = 'Look for a new version';
+  let showDot = false;
+  switch (s.status) {
+    case 'checking':
+      label = 'Checking…'; title = 'Looking for a new version'; break;
+    case 'available':
+      label = 'Install update'; title = `Update from ${cur} to ${next}`; showDot = true; break;
+    case 'downloading':
+      label = `Downloading ${s.percent || 0}%`; title = 'Downloading update'; break;
+    case 'ready':
+      label = 'Restart and install'; title = `${next} ready, click to install and relaunch`; showDot = true; break;
+    case 'up-to-date':
+      title = `You're up to date (${cur}), click to recheck`; break;
+    case 'error':
+      title = `Update check failed: ${s.error || 'unknown'}`; break;
+    default:
+      break;
+  }
+  if (s.dev) { label = 'Releases'; title = 'Auto-update only runs in packaged builds'; }
+  if (text) text.textContent = label;
+  btn.title = title;
+  btn.dataset.state = s.status;
+  if (dot) dot.hidden = !showDot;
 }
 function openUpdatePop() {
   const pop = $('#update-pop');
@@ -10878,34 +10891,23 @@ function openUpdatePop() {
   pop.hidden = false;
 }
 {
-  const btn = $('#btn-update');
-  if (btn) {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const pop = $('#update-pop');
-      if (!pop) return;
-      if (pop.hidden) openUpdatePop(); else pop.hidden = true;
-    });
-  }
   const close = $('#up-close');
   if (close) close.addEventListener('click', () => { const p = $('#update-pop'); if (p) p.hidden = true; });
   window.addEventListener('click', (e) => {
     const pop = $('#update-pop');
     if (!pop || pop.hidden) return;
-    if (e.target.closest('#update-pop') || e.target.closest('#btn-update')) return;
+    if (e.target.closest('#update-pop') || e.target.closest('#btn-pref-update-check')) return;
     pop.hidden = true;
   });
 }
 window.husk.updates.onStatus((s) => {
   updateState = s;
-  paintUpdatePill();
   paintPrefsVersion();
   const pop = $('#update-pop');
   if (pop && !pop.hidden) openUpdatePop();
 });
 (async () => {
   try { updateState = (await window.husk.updates.get()) || updateState; } catch (_) {}
-  paintUpdatePill();
   paintPrefsVersion();
 })();
 

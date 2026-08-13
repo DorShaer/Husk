@@ -773,33 +773,16 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
 @media (max-width: 1100px) { #topbar { --topbar-search-w: 300px; } }
 @media (max-width: 860px)  { #topbar { --topbar-search-w: 210px; } }
 
-/* Topbar version / update pill. Always shows; muted by default. When an
-   update is available it grows a pulsing orange dot and a brighter label
-   to invite a click. Clicking opens the small update-pop card below. */
-.topbar-version {
-  -webkit-app-region: no-drag;
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 10px;
-  height: 24px;
-  background: transparent;
-  color: var(--text-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--fs-nano);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
-}
-.topbar-version:hover { color: var(--text); border-color: var(--line-3); background: var(--bg-2); }
-.topbar-version[data-state="available"], .topbar-version[data-state="ready"] {
+/* Update control, on the Preferences About row beside the version read-out. It
+   is quiet until there is something to do, when it takes the accent and a
+   pulsing dot and opens the update-pop card below it. */
+.pref-update { position: relative; }
+#btn-pref-update-check { gap: 8px; font-variant-numeric: tabular-nums; }
+#btn-pref-update-check[data-state="available"], #btn-pref-update-check[data-state="ready"] {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 50%, var(--line-2));
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.topbar-version[data-state="downloading"] { color: var(--text-2); }
 .tv-dot {
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent);
@@ -917,6 +900,8 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* Hangs off the control that opened it, right edges aligned. */
+.update-pop-anchored { top: calc(100% + 8px); right: 0; }
 .update-pop .up-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .update-pop .up-head strong { color: var(--text); font-size: var(--fs-small); }
 .update-pop .up-close { background: transparent; border: 0; color: var(--text-3); font-size: var(--fs-h2); cursor: pointer; padding: 0 4px; line-height: 1; }
@@ -8435,29 +8420,6 @@ input[type="checkbox"]:disabled {
   display: flex; align-items: center; justify-content: center;
   padding: 12px 12px 14px;
   border-top: 1px solid var(--line);
-}
-.sp-version {
-  font-size: var(--fs-micro) !important;
-  padding: 8px 14px !important;
-  letter-spacing: 0.03em;
-  color: var(--text-2) !important;
-  border-color: color-mix(in srgb, var(--accent) 25%, var(--line)) !important;
-  background: var(--bg-2) !important;
-}
-.sp-version:hover {
-  color: var(--text) !important;
-  border-color: var(--accent) !important;
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2)) !important;
-}
-.update-pop-bottom {
-  top: auto !important;
-  bottom: 56px;
-  right: 14px;
-  animation: tv-pop-up 0.16s ease-out;
-}
-@keyframes tv-pop-up {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ─── Modal ─────────────────────────────────────────────────────────────── */
