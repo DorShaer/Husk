@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1
       - run: npm ci --no-audit --no-fund
       - name: smoke test under xvfb
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:e2e
+        run: npm run test:e2e
       # What a failing run saw, so a red job is read rather than guessed at.
       - name: upload e2e failure context
         if: failure()
@@ -72,7 +72,7 @@ jobs:
           sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1
       - run: npm ci --no-audit --no-fund
       - name: memory and stability profile under xvfb
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:perf
+        run: npm run test:perf
       - name: upload perf report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -21,9 +21,9 @@
     "dist:mac": "node scripts/check-build-node.js && electron-builder --mac --publish never",
     "dist:win": "node scripts/check-build-node.js && electron-builder --win --publish never",
     "test": "node --test test/unit/*.test.js",
-    "test:e2e": "playwright test --config test/playwright.config.js",
+    "test:e2e": "node scripts/run-e2e.js test/playwright.config.js",
     "test:all": "npm run test && npm run test:e2e",
-    "test:perf": "playwright test --config test/playwright.perf.config.js",
+    "test:perf": "node scripts/run-e2e.js test/playwright.perf.config.js",
     "test:e2e:changed": "node scripts/select-e2e.js"
   },
   "dependencies": {
