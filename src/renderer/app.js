@@ -10947,10 +10947,10 @@ async function attachFileToChat(filePath) {
   }, 60);
 }
 
-// ─── Rail "In context" list ─────────────────────────────────────────────────────
+// ─── "In context" list ──────────────────────────────────────────────────────────
 // Tracks files the user shared with the agent during this Husk session only.
-// The context directory on disk is never enumerated, so the sidebar reflects
-// what was shared with this agent now rather than everything ever written.
+// The context directory on disk is never enumerated, so the pane reflects what
+// was shared with this agent now rather than everything ever written.
 const sessionContext = [];
 function addToSessionContext({ name, path }) {
   if (!path) return;
@@ -10969,35 +10969,9 @@ function clearSessionContext() {
   sessionContext.length = 0;
   refreshContextList();
 }
+// Every share, drop and removal lands in the context pane's In context section.
 function refreshContextList() {
   refreshArtifactPane();
-  const wrap = $('#rail-context-list');
-  if (!wrap) return;
-  if (!sessionContext.length) {
-    wrap.innerHTML = '<div class="rail-sub-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>No files shared yet</div>';
-    return;
-  }
-  // eslint-disable-next-line no-unsanitized/property -- Session context fields are escaped via escapeHtml/escapeAttr.
-  wrap.innerHTML = sessionContext.map((it) => `
-    <div class="rail-sub-item" data-path="${escapeAttr(it.path)}" data-name="${escapeAttr(it.name)}" title="${escapeAttr(it.name)}, click to re-share with the agent">
-      <span class="rsi-dot"></span>
-      <span class="rsi-name">${escapeHtml(it.name)}</span>
-      <button class="rsi-remove" data-remove="1" title="Remove from this session"></button>
-    </div>
-  `).join('');
-  wrap.querySelectorAll('.rail-sub-item').forEach((el) => {
-    el.addEventListener('click', async (e) => {
-      if (e.target.closest('[data-remove]')) {
-        // Remove from sidebar AND delete the copy in CONTEXT/. The original
-        // source file on the user's disk is not touched.
-        removeFromSessionContext(el.dataset.path);
-        try { await window.husk.context.remove(el.dataset.path); } catch (_) {}
-        toast(`Removed: ${el.dataset.name}`, 'success');
-        return;
-      }
-      attachFileToChat(el.dataset.path);
-    });
-  });
 }
 async function attachContextSource(sourcePath, name, successLabel = 'Attached') {
   const result = await window.husk.fs.dropFile({ sourcePath, kind: 'context' });

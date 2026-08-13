@@ -407,7 +407,7 @@ test('adding a context file types its path and nothing else', async () => {
     return r && r.dest ? r.dest : '';
   }, sourcePath);
   expect(dest).toContain('cert.der');
-  await win.waitForFunction(() => document.querySelector('#rail-context-list')?.textContent.includes('cert.der'));
+  await win.waitForFunction(() => document.querySelector('#sp-pane-work')?.textContent.includes('cert.der'));
   // The terminal wraps at its own width, so compare with whitespace stripped:
   // a path split across two rows is still the path that was typed.
   const flatten = (s) => String(s || '').replace(/\s+/g, '');
@@ -416,10 +416,10 @@ test('adding a context file types its path and nothing else', async () => {
     flatten(dest)
   );
   const state = await win.evaluate(() => ({
-    rail: document.querySelector('#rail-context-list')?.textContent || '',
+    pane: document.querySelector('#sp-pane-work')?.textContent || '',
     terminal: window.__termText(),
   }));
-  expect(state.rail).toContain('cert.der');
+  expect(state.pane).toContain('cert.der');
   // The path is the whole message: the user writes the request around it, and
   // nothing is submitted on their behalf.
   expect(flatten(state.terminal)).toContain(flatten(dest));

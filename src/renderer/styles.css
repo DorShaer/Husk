@@ -1271,10 +1271,6 @@ body[data-rail="expanded"] .rail-section-head { opacity: 1; }
 }
 .rail-section-action:hover { color: var(--text); background: var(--bg-2); }
 
-/* Chat-context sub list (files in ~/.claude/MEMORY/CONTEXT/) */
-.rail-section-context { display: none; }
-body[data-rail="expanded"] .rail-section-context { display: flex; }
-
 /* Recent Chats list: shown in the expanded (labeled) rail, hidden in the
    collapsed icon rail where its text has no room. */
 #rail-recent { display: none; }
@@ -8415,12 +8411,14 @@ input[type="checkbox"]:disabled {
 .sp-work-empty svg { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
 .sp-work-more { font-size: var(--fs-label); color: var(--text-3); padding-top: 2px; }
 
+/* The pane's action bar: one control, on the list it feeds. */
 .sp-foot {
   position: relative;
-  display: flex; align-items: center; justify-content: center;
-  padding: 12px 12px 14px;
+  display: flex; align-items: center;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--line);
 }
+.sp-foot-btn { flex: 1; justify-content: center; }
 
 /* ─── Modal ─────────────────────────────────────────────────────────────── */
 
@@ -9955,8 +9953,7 @@ kbd {
   .rail-agent .ra-name,
   .rail-agent .ra-chev { display: none; }
   .rail-agent { padding: 10px 0; justify-content: center; gap: 0; }
-  .rail-section-recent,
-  .rail-section-context { display: none; }
+  .rail-section-recent { display: none; }
   .page { padding: 20px 22px 14px; }
 }
 

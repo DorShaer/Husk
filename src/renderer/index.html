@@ -558,15 +558,6 @@
           <div class="rail-sub" id="rail-recent-list"></div>
         </div>
 
-        <div class="rail-section rail-section-context" id="rail-context">
-          <div class="rail-section-head section-label">
-            <span>Files in context</span>
-            <button class="rail-section-action" id="btn-context-add" title="Share a file with the agent">+</button>
-          </div>
-          <div class="rail-sub" id="rail-context-list">
-            <div class="rail-sub-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>No files shared yet</div>
-          </div>
-        </div>
         </div>
         <!-- /rail-scroll -->
 
@@ -2402,7 +2393,12 @@
           <div class="sp-pane is-active" id="sp-pane-work" role="tabpanel" data-pane="work" aria-labelledby="sp-tab-work"></div>
           <div id="sp-content" class="sp-pane sp-content" role="tabpanel" data-pane="status" aria-labelledby="sp-tab-status"></div>
         </div>
-        <div class="sp-foot" id="sp-foot"></div>
+        <div class="sp-foot" id="sp-foot">
+          <button class="ghost-btn sp-foot-btn" id="btn-context-add" type="button" title="Share a file with the agent">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="btn-label">Add a file to this chat</span>
+          </button>
+        </div>
       </aside>
 
       <aside id="detail-panel" class="detail-panel" hidden>
