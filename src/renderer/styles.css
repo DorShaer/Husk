@@ -6246,6 +6246,10 @@ textarea.pr-body-edit:focus-visible {
 .sk-list {
   flex: 1; min-height: 0; overflow-y: auto;
   scrollbar-gutter: stable;
+  /* A row cut by the container's floor fades out, so a partial row reads as
+     "more below" rather than as a rendering fault. */
+  mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+  padding-bottom: var(--space-3);
 }
 /* Nothing to list means the message owns the list area rather than a strip at
    the top of it. */

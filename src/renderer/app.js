@@ -8269,8 +8269,8 @@ function applyPromptsLabels() {
     const n = skillsCache.length || ((lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null);
     const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
     skillsSub.textContent = count + (agentKindCache === 'claude'
-      ? 'an enabled skill is called automatically whenever the agent decides it fits'
-      : 'switch off anything this agent should not see');
+      ? 'An enabled skill is called automatically whenever the agent decides it fits'
+      : 'Switch off anything this agent should not see');
   }
 }
 async function injectPromptToChat(content) {
@@ -8354,6 +8354,17 @@ function skMatches(sk, q, counts) {
   return (sk.name + ' ' + (sk.description || '')).toLowerCase().includes(q);
 }
 
+// A skill's frontmatter is written for the model: the sentence is followed by
+// routing clauses the reader has no use for. The row prints what comes first.
+function skBlurb(desc) {
+  const text = String(desc || '').trim();
+  if (!text) return '';
+  const cut = text.search(/\b(USE WHEN|NOT FOR|USE_WHEN|NOT_FOR|Triggers on)\b/);
+  if (cut <= 0) return text;
+  const head = text.slice(0, cut).trim().replace(/[·|,;\s]+$/, '');
+  return head || text;
+}
+
 function paintSkills(list, query) {
   const q = (query || '').toLowerCase().trim();
   const counts = skPrefixCounts(list);
@@ -8380,10 +8391,9 @@ function paintSkills(list, query) {
       <span class="sk-source-name">${escapeHtml(label)}</span>
       <span class="sk-source-n">${n}</span>
     </button>`).join('');
-  // The section header carries how many filters stand under it, the way the
-  // rows carry how many skills stand under them.
+  // The rows carry their own counts, so the header names the axis and nothing else.
   const sourcesN = $('#skills-sources-n');
-  if (sourcesN) sourcesN.textContent = String(entries.length);
+  if (sourcesN) sourcesN.textContent = '';
 
   // Each state names its own size, so choosing one costs no guess about what
   // is behind it.
@@ -8441,7 +8451,7 @@ function paintSkills(list, query) {
     return `
     <div class="sk-row${on ? '' : ' disabled'}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
       <div class="sk-row-label" title="${escapeAttr(sk.name)}">${escapeHtml(skShortName(sk, key))}</div>
-      <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
+      <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(skBlurb(sk.description) || 'No description.')}</div>
       <button class="toggle ${on ? 'on' : ''}" data-toggle="1" title="${on ? 'Disable' : 'Enable'} skill"></button>
     </div>`;
   }).join('');
