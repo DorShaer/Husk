@@ -7542,15 +7542,28 @@ input[type="checkbox"]:disabled {
 }
 .mcp-card:hover .mc-icon { color: var(--text-2); }
 .mcp-card .mc-name { font-weight: 600; font-size: var(--fs-body-lg); color: var(--text); flex: 1; }
-/* The whole card is the target, so its action label reads as a hint until the
-   pointer is on it. */
+/* The whole card is the target, and its action carries a button's shape so the
+   one thing this page asks for looks like something to press. */
 .mcp-card .mc-add {
-  color: var(--text-3);
-  font-size: var(--fs-micro); font-weight: 600;
-  transition: color var(--motion-fast) var(--ease);
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center;
+  height: 22px; padding: 0 var(--space-3);
+  border: 1px solid var(--line-2); border-radius: var(--radius-md);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: var(--fs-label); font-weight: 500;
+  text-transform: capitalize;
+  transition: color var(--motion-fast) var(--ease),
+              background var(--motion-fast) var(--ease),
+              border-color var(--motion-fast) var(--ease);
 }
-.mcp-card:hover .mc-add { color: var(--text); }
-.mcp-card[data-installed="1"] .mc-add { color: var(--text-3); }
+.mcp-card:hover .mc-add {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+.mcp-card[data-installed="1"] .mc-add,
+.mcp-card[data-installed="1"]:hover .mc-add {
+  background: transparent; border-color: var(--line); color: var(--text-3);
+}
 .mcp-card .mc-desc { font-size: var(--fs-micro); color: var(--text-2); line-height: 1.5; }
 
 /* ─── Plugins page ─────────────────────────────────────────────────────── */
