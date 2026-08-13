@@ -2459,11 +2459,13 @@ function paintWorkPane() {
 // count reported by the poll moves, or when the pane is opened.
 async function refreshWorkPane(force = false) {
   if (!$('#sp-pane-work')) return;
-  if (spPane !== 'work') return;
   const { path } = workRoot();
   const ws = (lastStats && lastStats.workspace) || {};
   const dirty = (ws.git && typeof ws.git.dirty === 'number') ? ws.git.dirty : -1;
-  if (force || path !== workTree.root || dirty !== workTree.dirty) {
+  // The tree costs a round trip, so it is re-read for the pane that is showing.
+  // The rest is local state, and painting it keeps the hidden pane true to the
+  // session for the moment it is opened.
+  if (spPane === 'work' && (force || path !== workTree.root || dirty !== workTree.dirty)) {
     await readWorkTree(path, dirty);
   }
   paintWorkPane();
@@ -14822,7 +14824,7 @@ async function boot() {
   // however long that spawn takes.
   refreshTopbarAgents();
   await refreshStats();
-  setStatusPane(cfg.statusPane === 'status' ? 'status' : 'work');
+  setStatusPane(cfg.statusPane === 'work' ? 'work' : 'status');
   refreshStatusline();
   refreshVoiceStatus();
   refreshContextList();

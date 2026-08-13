@@ -586,9 +586,6 @@
         <!-- CHAT PAGE -->
         <div class="page page-chat" data-page="chat">
           <div class="page-head">
-            <div class="page-head-left">
-              <h1 class="page-title">Chat</h1>
-            </div>
             <div id="tab-strip" class="tab-strip"></div>
             <div class="page-head-right">
               <button class="ghost-btn" id="btn-head-add-context" title="Add a file to the agent's context">
@@ -2312,12 +2309,12 @@
 
       <aside id="status-panel">
         <div class="sp-head" role="tablist" aria-label="Session panel">
-          <button class="sp-tab is-active" id="sp-tab-work" type="button" role="tab" data-pane="work" aria-selected="true" aria-controls="sp-pane-work">Context</button>
-          <button class="sp-tab" id="sp-tab-status" type="button" role="tab" data-pane="status" aria-selected="false" aria-controls="sp-content">Status</button>
+          <button class="sp-tab is-active" id="sp-tab-status" type="button" role="tab" data-pane="status" aria-selected="true" aria-controls="sp-content">Status</button>
+          <button class="sp-tab" id="sp-tab-work" type="button" role="tab" data-pane="work" aria-selected="false" aria-controls="sp-pane-work">Context</button>
         </div>
         <div class="sp-panes">
-          <div class="sp-pane is-active" id="sp-pane-work" role="tabpanel" data-pane="work" aria-labelledby="sp-tab-work"></div>
-          <div id="sp-content" class="sp-pane sp-content" role="tabpanel" data-pane="status" aria-labelledby="sp-tab-status"></div>
+          <div id="sp-content" class="sp-pane sp-content is-active" role="tabpanel" data-pane="status" aria-labelledby="sp-tab-status"></div>
+          <div class="sp-pane" id="sp-pane-work" role="tabpanel" data-pane="work" aria-labelledby="sp-tab-work"></div>
         </div>
         <div class="sp-foot" id="sp-foot">
           <button class="ghost-btn sp-foot-btn" id="btn-context-add" type="button" title="Share a file with the agent">

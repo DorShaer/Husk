@@ -316,6 +316,10 @@
   --topbar-h: 52px;
   --topbar-search-w: 440px;
   --statusbar-h: 26px;
+  /* The chat band: the head over the thread and the head over the side panel share
+     it, so their rules meet across the column edge. */
+  --chat-band-h: 38px;
+  --chat-band-top: 16px;
   /* Preferences: its nav column, and the measure its setting rows read at. */
   --prefs-nav-w: 208px;
   --prefs-measure: 1040px;
@@ -3733,7 +3737,7 @@ textarea.aut-goal-input:focus { outline: none; border-color: var(--accent); }
 .page-chat .page-head {
   align-items: flex-end;
   gap: var(--space-4);
-  min-height: 0;
+  min-height: var(--chat-band-h);
   /* The rule spans the column while the content keeps the page gutter, so the band
      lines up with the thread that bleeds to the same edges below it. */
   margin: 0 calc(var(--space-6) * -1) var(--space-3);
@@ -4022,14 +4026,8 @@ body[data-page="chat"] #chats-panel { display: flex; }
   scrollbar-width: none;
 }
 .tab-strip::-webkit-scrollbar { height: 0; }
-/* A rule sets the tabs apart from the page title beside them, so the title is
-   never read as a greyed-out tab. */
-.tab-strip.multi {
-  display: flex;
-  padding-left: var(--space-4);
-  margin-left: var(--space-2);
-  border-left: 1px solid var(--surface-line);
-}
+/* The chat names open the band, so they start on the page gutter. */
+.tab-strip.multi { display: flex; }
 .chat-tab {
   display: inline-flex; align-items: center; gap: var(--space-1);
   max-width: 220px;
@@ -4132,8 +4130,11 @@ body[data-page="chat"] #chats-panel { display: flex; }
 /* One pane per tab, stacked; only the active pane is shown. Background panes
    keep their xterm buffer (scrollback) alive while hidden. The pane carries the
    reading gutter, so the surface reaches the column edges while the text does not. */
-.term-pane { position: absolute; inset: 0; display: none; padding: var(--space-2) var(--space-6); }
+.term-pane { position: absolute; inset: 0; display: none; }
 .term-pane.show { display: block; }
+/* The reading gutter belongs to the terminal element, because that is the padding
+   the fit addon subtracts when it sizes the buffer to the pane. */
+#terminal .xterm { height: 100%; padding: var(--space-2) var(--space-6); }
 .xterm-viewport { background-color: transparent !important; }
 
 
@@ -7991,17 +7992,16 @@ input[type="checkbox"]:disabled {
   background: var(--bg);
   box-shadow: var(--hl-top);
   min-height: 0;
-  /* Keeps the tab strip near the top so every section below it stays visible.
-     The offset drives both this padding and the toggle's top, so they move
-     together. */
-  --sp-top-offset: 6px;
-  padding-top: var(--sp-top-offset, 64px);
+  /* The head starts on the same line as the page head beside it, so the two rules
+     below them read as one. */
+  padding-top: var(--chat-band-top);
 }
 .sp-tiny { font-size: var(--fs-micro); line-height: 1.4; padding-top: 4px; }
 /* The column is a tabbed pane over the work, not a readout about the app, and the
    head is its tab strip. */
 .sp-head {
-  display: flex; align-items: stretch; gap: 2px;
+  display: flex; align-items: flex-end; gap: 2px;
+  height: var(--chat-band-h);
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
 }
