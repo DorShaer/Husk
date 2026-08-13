@@ -1145,12 +1145,12 @@
                 <kbd class="aut-back-kbd">esc</kbd>
               </button>
               <h1 class="page-title">Autopilot</h1>
-              <span class="page-sub" id="aut-page-sub">hand the agent a goal and supervise the run</span>
+              <span class="page-sub" id="aut-page-sub">hand the agent a goal; Husk snapshots the workspace, caps time, tokens and spend, and can revert the whole run</span>
             </div>
             <div class="page-head-right">
               <!-- One command slot across states: Stop while live, Rerun and
                    Start-new in review. -->
-              <button class="aut-hero-secondary aut-review-only" id="aut-review-rerun" hidden>Rerun this task</button>
+              <button class="ghost-btn aut-review-only" id="aut-review-rerun" hidden>Rerun this task</button>
               <button class="btn-primary aut-review-only" id="aut-review-new" hidden>Start a new run</button>
               <div class="aut-page-status" id="aut-page-status" hidden>
                 <span class="ap-dot" aria-hidden="true"></span>
@@ -1161,65 +1161,14 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 Stop run
               </button>
-              <button class="ghost-btn" id="aut-page-start">Start a run</button>
+              <!-- Hub controls, hidden while a run is live or under review. -->
+              <button class="ghost-btn aut-hub-only" id="aut-configure-orch">Configure models</button>
+              <button class="ghost-btn aut-hub-only" id="aut-jump-presets">Browse presets</button>
+              <button class="btn-primary" id="aut-page-start"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg> Start a run</button>
             </div>
           </div>
 
           <div class="aut-page-empty" id="aut-page-empty">
-            <section class="aut-hero">
-              <div class="aut-hero-art" aria-hidden="true">
-                <svg class="aut-plane" viewBox="0 0 340 230">
-                  <defs><linearGradient id="aut-fuse" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbeecb"/><stop offset="1" stop-color="#e4cc95"/></linearGradient><g id="aut-cloud"><ellipse cx="0" cy="7" rx="30" ry="9"/><circle cx="-17" cy="3" r="10"/><circle cx="-3" cy="-5" r="13"/><circle cx="13" cy="-1" r="11"/><circle cx="24" cy="4" r="8"/></g></defs>
-                  <g class="aut-speed" stroke="var(--accent)" stroke-width="3.5" stroke-linecap="round" opacity="0.5"><line x1="14" y1="122" x2="48" y2="122"/><line x1="4" y1="144" x2="42" y2="144"/><line x1="22" y1="166" x2="50" y2="166"/></g>
-                  <g class="aut-clouds"><use href="#aut-cloud" transform="translate(56,188)" opacity="0.55"/><use href="#aut-cloud" transform="translate(300,70) scale(1)" opacity="0.4"/><use href="#aut-cloud" transform="translate(152,206) scale(0.66)" opacity="0.34"/></g>
-                  <path class="aut-p-accent" d="M92,152 L70,114 L90,126 L104,150 Z"/>
-                  <path class="aut-p-accent" d="M150,168 L124,198 L182,180 Z"/>
-                  <path class="aut-p-body" d="M78,152 Q88,128 134,125 L236,125 Q274,127 292,152 Q274,180 236,182 L134,180 Q86,178 78,152 Z"/>
-                  <circle cx="150" cy="152" r="6.5" fill="#7fb7c9"/><circle cx="150" cy="152" r="6.5" fill="none" stroke="#d8c290" stroke-width="1.5"/>
-                  <circle cx="172" cy="154" r="5.5" fill="#7fb7c9"/><circle cx="172" cy="154" r="5.5" fill="none" stroke="#d8c290" stroke-width="1.5"/>
-                  <ellipse class="aut-p-accent" cx="298" cy="152" rx="4" ry="26" opacity="0.32"/>
-                  <circle cx="292" cy="152" r="6" fill="#c9762f"/>
-                  <path class="aut-scarf" d="M188,120 Q158,131 133,124 Q121,120 129,137 Q153,143 184,133 Z" fill="#f3f0e6"/>
-                  <ellipse cx="200" cy="130" rx="33" ry="9" fill="#d7bd86"/>
-                </svg>
-                <div class="aut-kernel-slot"></div>
-                <svg class="aut-hat" viewBox="150 44 100 94">
-                  <path d="M177,86 C 177,100 177,112 176,124 C 174,131 168,131 165,126 C 160,116 160,100 161,86 C 160,66 182,52 200,52 C 218,52 240,66 239,86 C 240,100 240,116 235,126 C 232,131 226,131 224,124 C 223,112 223,100 223,86 C 214,80 186,80 177,86 Z" fill="#7c4a26"/>
-                  <path d="M176,64 Q200,55 224,64" stroke="#4a2c14" stroke-width="5" fill="none" stroke-linecap="round"/>
-                  <circle cx="185" cy="64" r="8.5" fill="#2b3340"/><circle cx="185" cy="64" r="8.5" fill="none" stroke="#cfa66a" stroke-width="2.5"/>
-                  <circle cx="215" cy="64" r="8.5" fill="#2b3340"/><circle cx="215" cy="64" r="8.5" fill="none" stroke="#cfa66a" stroke-width="2.5"/>
-                  <circle cx="182" cy="61" r="2.2" fill="#8fb3c9" opacity="0.85"/><circle cx="212" cy="61" r="2.2" fill="#8fb3c9" opacity="0.85"/>
-                </svg>
-                <svg class="aut-plane-front" viewBox="0 0 340 230">
-                  <path class="aut-p-body" d="M118,146 Q188,137 258,146 Q266,160 258,176 Q188,186 122,180 Q112,162 118,146 Z"/>
-                  <circle cx="150" cy="156" r="6" fill="#7fb7c9"/><circle cx="150" cy="156" r="6" fill="none" stroke="#d8c290" stroke-width="1.5"/>
-                  <circle cx="172" cy="158" r="5" fill="#7fb7c9"/><circle cx="172" cy="158" r="5" fill="none" stroke="#d8c290" stroke-width="1.5"/>
-                </svg>
-              </div>
-              <div class="aut-hero-eyebrow">AUTOPILOT</div>
-              <h2 class="aut-hero-title">Hand off entire tasks.<br/>Reach further while you focus.</h2>
-              <p class="aut-hero-body">Husk snapshots your workspace, audits every agent step in a hash-chained log, and caps the run on time, tokens, or dollars. Stop anytime. Revert anything.</p>
-              <div class="aut-hero-actions">
-                <button class="btn-primary aut-hero-cta" id="aut-page-start-2">Start a run</button>
-                <button class="aut-hero-secondary" id="aut-configure-orch">Configure models</button>
-                <button class="aut-hero-secondary" id="aut-jump-presets">Browse presets</button>
-              </div>
-              <div class="aut-hero-stats" id="aut-hero-stats" hidden>
-                <div class="aut-hero-stat">
-                  <div class="aut-hero-stat-value" id="aut-hero-runs">0</div>
-                  <div class="aut-hero-stat-label">runs completed</div>
-                </div>
-                <div class="aut-hero-stat">
-                  <div class="aut-hero-stat-value" id="aut-hero-files">0</div>
-                  <div class="aut-hero-stat-label">files changed</div>
-                </div>
-                <div class="aut-hero-stat">
-                  <div class="aut-hero-stat-value" id="aut-hero-spend">$0</div>
-                  <div class="aut-hero-stat-label">total spend</div>
-                </div>
-              </div>
-            </section>
-
             <section class="aut-section" id="aut-presets-section">
               <div class="aut-section-head">
                 <h3 class="aut-section-title">Start from a preset</h3>

@@ -878,28 +878,6 @@ function latestWhatsNewVersion() {
   };
   return Object.keys(WHATS_NEW).sort(bySemver).pop() || '';
 }
-// Clone Kernel into an empty-state stage. Ids are re-prefixed per mount so
-// clones stay distinct from the onboarding original and from each other.
-let emptyKernelSeq = 0;
-function mountEmptyKernel(slot) {
-  const src = $('#ob-kernel');
-  if (!src || !slot) return null;
-  const prefix = `ek${++emptyKernelSeq}`;
-  const markup = src.outerHTML
-    .replaceAll('id="hk-', `id="${prefix}-`)
-    .replaceAll('url(#hk-', `url(#${prefix}-`)
-    .replace('id="ob-kernel"', '');
-  // eslint-disable-next-line no-unsanitized/property -- own static SVG markup, id-prefixed
-  slot.innerHTML = markup;
-  const hk = slot.querySelector('svg');
-  if (!hk) return null;
-  hk.removeAttribute('style');
-  // Bare, static Kernel: `.is-bare` hides the pod shell and stops the idle
-  // motion, and the viewBox tightens around the seed.
-  hk.className.baseVal = 'hk is-bare';
-  hk.setAttribute('viewBox', '40 -14 120 176');
-  return null;
-}
 // Older entries are a flat list of strings with a bold lead-in. Both shapes
 // render as slides, so replaying an old version still works.
 function wnSlides(entry) {
@@ -15099,9 +15077,6 @@ const AUTOPILOT_PRESETS = [
 ];
 
 function renderAutopilotPage() {
-  // Mount the real Kernel into the hero art once (the slot lives in the hero).
-  const kSlot = document.querySelector('.aut-kernel-slot');
-  if (kSlot && !kSlot.querySelector('svg')) mountEmptyKernel(kSlot);
   // The dollar figure means different things on an API key vs a plan; learn
   // which so the label is honest before any numbers paint.
   refreshAutBilling();
@@ -15115,6 +15090,8 @@ function renderAutopilotPage() {
       card.type = 'button';
       card.className = 'aut-preset';
       card.dataset.preset = p.id;
+      const head = document.createElement('div');
+      head.className = 'aut-preset-head';
       const icon = document.createElement('div');
       icon.className = 'aut-preset-icon';
       // eslint-disable-next-line no-unsanitized/property -- inline SVG from a static constant, no user input
@@ -15122,6 +15099,8 @@ function renderAutopilotPage() {
       const title = document.createElement('div');
       title.className = 'aut-preset-title';
       title.textContent = p.title;
+      head.appendChild(icon);
+      head.appendChild(title);
       const body = document.createElement('div');
       body.className = 'aut-preset-body';
       body.textContent = p.body;
@@ -15135,8 +15114,7 @@ function renderAutopilotPage() {
       caps.appendChild(capLine('time', `${p.caps.minutes}m`));
       caps.appendChild(capLine('tokens', formatTokens(p.caps.tokens)));
       caps.appendChild(capLine('spend', `$${p.caps.dollars}`));
-      card.appendChild(icon);
-      card.appendChild(title);
+      card.appendChild(head);
       card.appendChild(body);
       card.appendChild(caps);
       card.addEventListener('click', () => loadPresetIntoStartModal(p));
@@ -15688,10 +15666,6 @@ function paintRunLineStats() {
 async function refreshAutopilotHistory() {
   const list = $('#aut-recent');
   const meta = $('#aut-recent-meta');
-  const heroRuns = $('#aut-hero-runs');
-  const heroFiles = $('#aut-hero-files');
-  const heroSpend = $('#aut-hero-spend');
-  const heroStats = $('#aut-hero-stats');
   if (!list) return;
   const active = projectsCache.find((p) => p && p.id === activeProjectId);
   const workspaceRoot = active && active.path ? active.path : null;
@@ -15704,7 +15678,6 @@ async function refreshAutopilotHistory() {
     empty.className = 'aut-page-feed-empty';
     empty.textContent = 'Could not load history.';
     list.appendChild(empty);
-    if (heroStats) heroStats.hidden = true;
     return;
   }
   const runs = r.runs || [];
@@ -15715,15 +15688,8 @@ async function refreshAutopilotHistory() {
     empty.textContent = 'No prior runs in this project.';
     list.appendChild(empty);
     if (meta) meta.textContent = 'no runs yet';
-    // A row of three zeros is a 128px band of nothing. The strip only earns
-    // its space once there is a number worth reading.
-    if (heroStats) heroStats.hidden = true;
-    if (heroRuns) heroRuns.textContent = '0';
-    if (heroFiles) heroFiles.textContent = '0';
-    if (heroSpend) heroSpend.textContent = '$0';
     return;
   }
-  if (heroStats) heroStats.hidden = false;
   // Selection survives a refresh only for sessions that still exist.
   const present = new Set(runs.flatMap((r) => Array.isArray(r.sessionIds) ? r.sessionIds : [r.sessionId]));
   for (const sid of [...selectedRunSessions]) if (!present.has(sid)) selectedRunSessions.delete(sid);
@@ -15827,10 +15793,11 @@ async function refreshAutopilotHistory() {
     row.addEventListener('click', () => openAutopilotHistoryRun(run));
     list.appendChild(row);
   }
-  if (meta) meta.textContent = `${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`;
-  if (heroRuns) heroRuns.textContent = String(runs.length);
-  if (heroFiles) heroFiles.textContent = String(totalFiles);
-  if (heroSpend) heroSpend.textContent = formatDollars(totalSpend);
+  // Totals ride the section's own line, and a zero figure is left off it.
+  const metaParts = [`${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`];
+  if (totalFiles) metaParts.push(`${totalFiles} ${totalFiles === 1 ? 'file' : 'files'} changed`);
+  if (totalSpend) metaParts.push(`${formatDollars(totalSpend)} spent`);
+  if (meta) meta.textContent = metaParts.join(' · ');
   updateBulkDeleteUi();
   fillRunLineStats(runs);
 }
@@ -18199,15 +18166,10 @@ try {
   }
 } catch (_) {}
 
-// Dedicated Autopilot page buttons. The header Start and the empty-state
-// CTA both open the existing start-run modal. The Stop button cancels
-// the active run (SIGINT into the PTY via the IPC handler).
+// Dedicated Autopilot page buttons. Start opens the start-run modal; Stop
+// cancels the active run (SIGINT into the PTY via the IPC handler).
 $('#aut-page-start') && $('#aut-page-start').addEventListener('click', () => {
   if (autopilotActive) { toast('A run is already active', 'info'); return; }
-  openAutopilotStart();
-});
-$('#aut-page-start-2') && $('#aut-page-start-2').addEventListener('click', () => {
-  if (autopilotActive) return;
   openAutopilotStart();
 });
 $('#aut-page-stop-top') && $('#aut-page-stop-top').addEventListener('click', () => cancelAutopilot());
@@ -18218,6 +18180,9 @@ $('#aut-page-goal-text') && $('#aut-page-goal-text').addEventListener('click', f
 $('#aut-jump-presets') && $('#aut-jump-presets').addEventListener('click', () => {
   const el = $('#aut-presets-section');
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Land on the gallery itself so the keyboard carries on from the first card.
+  const first = el && el.querySelector('.aut-preset');
+  if (first) first.focus();
 });
 $('#aut-diff-close') && $('#aut-diff-close').addEventListener('click', closeFileDiffModal);
 $('#aut-diff-modal') && $('#aut-diff-modal').addEventListener('click', (e) => { if (e.target === $('#aut-diff-modal')) closeFileDiffModal(); });

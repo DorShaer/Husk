@@ -1680,11 +1680,9 @@ body[data-page="boot"] .page { display: none !important; }
 .page-autopilot .page-head { margin-bottom: var(--space-4); }
 .page-autopilot .page-head-right { display: flex; align-items: center; gap: var(--space-3); }
 /* Unified button sizing inside the Autopilot page. Colour and intent classes
-   (.btn-primary, .btn-stop, .aut-hero-secondary) set palette only; geometry comes
-   from this scope. */
+   (.btn-primary, .btn-stop) set palette only; geometry comes from this scope. */
 .page-autopilot .btn-primary,
-.page-autopilot .btn-stop,
-.page-autopilot .aut-hero-secondary {
+.page-autopilot .btn-stop {
   height: 40px;
   padding: 0 var(--space-4);
   font-size: var(--fs-small);
@@ -1700,21 +1698,8 @@ body[data-page="boot"] .page { display: none !important; }
   min-width: 0;
   transition: transform var(--motion-base) var(--ease), box-shadow var(--motion-base) var(--ease), background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease);
 }
-/* One accent fill per page. On the hub the hero CTA owns the primary action, so the
-   header button steps down to a quiet outline. */
-.page-autopilot:not(.is-live) #aut-page-start {
-  background: transparent;
-  border: 1px solid var(--line-2);
-  color: var(--text-2);
-  box-shadow: none;
-}
-.page-autopilot:not(.is-live) #aut-page-start:hover {
-  transform: none;
-  box-shadow: none;
-  color: var(--text);
-  border-color: var(--line-3);
-  background: var(--bg-2);
-}
+/* Hub-only controls; the live and review states put their own buttons here. */
+.page-autopilot.is-live .aut-hub-only { display: none; }
 .page-autopilot .btn-primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
@@ -1724,10 +1709,8 @@ body[data-page="boot"] .page { display: none !important; }
   box-shadow: 0 4px 12px rgba(255, 107, 126, 0.4);
 }
 .page-autopilot .btn-stop svg,
-.page-autopilot .btn-primary svg,
-.page-autopilot .aut-hero-secondary svg { width: 14px; height: 14px; }
-/* Header buttons sit next to the status pill, so they shrink to the
-   pill's compact scale. Hero + footer CTAs keep the prominent 40px. */
+.page-autopilot .btn-primary svg { width: 14px; height: 14px; }
+/* Header buttons sit next to the status pill, so they take its compact scale. */
 .page-autopilot .page-head-right .btn-primary,
 .page-autopilot .page-head-right .btn-stop {
   height: var(--control-h);
@@ -2054,136 +2037,11 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   50%      { color: color-mix(in srgb, var(--info) 45%, transparent); opacity: 0.55; }
 }
 
-/* Empty state when no run is active: the landing hub for the whole feature, with
-   hero, preset gallery and recent runs. Calm and explanatory with no run in flight,
-   dense and active with one. */
+/* Hub state when no run is active: preset gallery over the run history. Calm and
+   explanatory with no run in flight, dense and active with one. */
 .aut-page-empty {
   display: flex; flex-direction: column;
   gap: var(--space-5);
-}
-
-/* HERO */
-.aut-hero {
-  position: relative;
-  padding: var(--space-6);
-  border-radius: var(--radius-xl, 12px);
-  background:
-    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),
-    radial-gradient(80% 80% at 100% 100%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
-    var(--bg-1);
-  border: 1px solid var(--line-2);
-  box-shadow: var(--elev-2);
-  overflow: hidden;
-}
-/* The plane is absolutely positioned, so the static hero copy takes an explicit
-   layer above it. */
-.aut-hero-eyebrow,
-.aut-hero-title,
-.aut-hero-body,
-.aut-hero-actions,
-.aut-hero-stats { position: relative; z-index: 1; }
-.aut-hero::before {
-  content: "";
-  position: absolute;
-  top: -120px; right: -80px;
-  width: 360px; height: 360px;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 24%, transparent), transparent 70%);
-  pointer-events: none;
-  filter: blur(8px);
-}
-/* Autopilot hero: the real Kernel flying a little plane. Funny, on-brand,
-   and it uses the actual mascot art instead of a hand-drawn face. */
-.aut-hero-art {
-  position: absolute; right: 3%; top: 50%; z-index: 0;
-  width: 340px; height: 230px; pointer-events: none;
-  transform: translateY(-50%);
-  animation: apk-float 6s ease-in-out infinite;
-}
-@media (max-width: 1080px) { .aut-hero-art { display: none; } }
-.aut-plane { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.42)); }
-/* The fuselage front lip sits ABOVE Kernel so his lower body tucks inside. */
-.aut-plane-front { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 3; pointer-events: none; }
-.aut-p-body { fill: url(#aut-fuse); }
-.aut-p-accent { fill: var(--accent); }
-/* Clouds must read on both skies: white on the dark hero, soft slate on light. */
-.aut-clouds { fill: #ffffff; }
-[data-mode="light"] .aut-clouds { fill: #9db4d4; }
-/* Kernel sits DOWN in the cockpit; the front lip hides his lower half. */
-.aut-kernel-slot { position: absolute; left: 55%; top: 26px; transform: translateX(-50%); z-index: 2; line-height: 0; }
-.aut-kernel-slot .hk { width: 96px; height: auto; cursor: default; }
-/* Pilot cap overlaid on the real Kernel's head. */
-.aut-hat { position: absolute; left: 55%; top: 44px; transform: translateX(-50%); width: 108px; height: auto; z-index: 4; overflow: visible; }
-@keyframes apk-float { 0%, 100% { transform: translateY(-50%) rotate(0deg); } 50% { transform: translateY(-56%) rotate(1.2deg); } }
-@media (prefers-reduced-motion: reduce) { .aut-hero-art { animation: none; } }
-.aut-hero-eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--fs-nano, 11px);
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--accent);
-  font-weight: 600;
-  margin-bottom: var(--space-3);
-}
-/* Flat --text, no gradient text-fill: a 135deg gradient across a two-line headline
-   drops the last words to --text-2 and kills subpixel rendering. */
-.aut-hero-title {
-  font-family: var(--font-display);
-  font-size: var(--fs-page-hero);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 1.05;
-  color: var(--text);
-  margin: 0 0 var(--space-4) 0;
-  max-width: 800px;
-}
-.aut-hero-body {
-  font-size: var(--fs-h3);
-  line-height: 1.6;
-  color: var(--text-2);
-  max-width: 620px;
-  margin: 0 0 var(--space-5) 0;
-}
-.aut-hero-actions {
-  display: flex; gap: var(--space-3); align-items: center;
-  flex-wrap: wrap;
-}
-.aut-hero-secondary {
-  background: transparent;
-  border: 1px solid var(--line-2);
-  color: var(--text);
-  cursor: pointer;
-  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease);
-}
-.aut-hero-secondary:hover {
-  background: var(--bg-2);
-  border-color: var(--line-3);
-}
-/* The strip carries its own top margin so that hiding it (empty history,
-   where every figure is a zero) collapses cleanly with no dangling gap. */
-.aut-hero-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, max-content));
-  gap: var(--space-7);
-  margin-top: var(--space-6);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--line-2);
-}
-.aut-hero-stat-value {
-  font-family: var(--font-display);
-  font-size: var(--fs-h1);
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-  margin-bottom: var(--space-1);
-}
-.aut-hero-stat-label {
-  font-size: var(--fs-micro);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  font-weight: 600;
 }
 
 /* SECTION HEADERS */
@@ -2239,18 +2097,25 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   transform: translateY(-2px);
 }
 .aut-preset:active { transform: translateY(0); }
+/* The glyph names the preset, it does not report state, so it stays neutral and
+   rides on the title's line. */
+.aut-preset-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0;
+}
 .aut-preset-icon {
-  width: 32px; height: 32px;
+  flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-1));
-  color: var(--accent);
+  color: var(--text-3);
+  transition: color var(--motion-base) var(--ease);
 }
 .aut-preset-icon svg { width: 16px; height: 16px; }
+.aut-preset:hover .aut-preset-icon { color: var(--text-2); }
 .aut-preset-title {
   font-size: var(--fs-h3); font-weight: 600;
   letter-spacing: -0.005em;
   color: var(--text);
+  min-width: 0;
 }
 .aut-preset-body {
   font-size: var(--fs-micro);
@@ -8727,14 +8592,6 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
   overflow: visible;
   cursor: pointer;
 }
-/* ── Bare Kernel ─────────────────────────────────────────────────────────
-   The mascot on his own, for pages that want him as illustration rather than as the
-   live boot animation: pod shell, hands, glow and sparks hidden, the seed at rest,
-   every animation and transition off. */
-.hk.is-bare .hk-petal, .hk.is-bare .hk-pit, .hk.is-bare .hk-shadow,
-.hk.is-bare .hk-glow, .hk.is-bare .hk-hands, .hk.is-bare .hk-sparks { display: none; }
-.hk.is-bare .hk-seed { transform: none; opacity: 1; }
-.hk.is-bare, .hk.is-bare * { animation: none !important; transition: none !important; }
 /* Every animated part is positioned in viewBox units, so transform-origin is
    read against the viewBox rather than each element's own tight bounding box. */
 .hk-petal, .hk-seed, .hk-sprout-g, .hk-eyes, .hk-lid,
@@ -10828,8 +10685,6 @@ kbd {
 }
 .wfx-hero-body {
   grid-column: 1; grid-row: 3;
-  /* Stated to match .aut-hero-body. The two page heroes are separate CSS
-     blocks that can drift apart, so both scales are written the same. */
   font-size: var(--fs-h3); line-height: 1.6;
   color: var(--text-2);
   max-width: 620px;
