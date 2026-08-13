@@ -2368,20 +2368,28 @@
     <!-- Status bar: one quiet line naming what the window is pointed at. Present on
          every page. -->
     <footer id="statusbar" class="statusbar">
-      <span class="sb-item" id="sb-agent-item" title="Active AI tool">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/></svg>
-        <span class="sb-value" id="sb-agent">agent</span>
-      </span>
-      <span class="sb-sep" aria-hidden="true"></span>
-      <span class="sb-item sb-item-path" id="sb-cwd-item" title="Working directory">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
-        <span class="sb-value sb-mono" id="sb-cwd">~</span>
-      </span>
-      <span class="sb-sep" aria-hidden="true"></span>
-      <span class="sb-item" id="sb-model-item" title="Model the active session reports">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><path d="M9 1.5v2.5M15 1.5v2.5M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5"/></svg>
-        <span class="sb-value" id="sb-model">model unknown</span>
-      </span>
+      <div class="sb-group sb-group-target">
+        <span class="sb-item" id="sb-agent-item" title="Active AI tool">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/></svg>
+          <span class="sb-value" id="sb-agent">agent</span>
+        </span>
+        <span class="sb-sep" aria-hidden="true"></span>
+        <span class="sb-item sb-item-path" id="sb-cwd-item" title="Working directory">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+          <span class="sb-value sb-mono" id="sb-cwd">~</span>
+        </span>
+        <span class="sb-sep" id="sb-model-sep" aria-hidden="true" hidden></span>
+        <span class="sb-item" id="sb-model-item" title="Model this chat runs" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><path d="M9 1.5v2.5M15 1.5v2.5M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5"/></svg>
+          <span class="sb-value" id="sb-model"></span>
+        </span>
+      </div>
+      <div class="sb-group sb-group-state">
+        <span class="sb-item sb-state" id="sb-state-item" data-state="none">
+          <span class="sb-dot" aria-hidden="true"></span>
+          <span class="sb-value" id="sb-state">no session</span>
+        </span>
+      </div>
     </footer>
 
     <!-- Create skill modal -->

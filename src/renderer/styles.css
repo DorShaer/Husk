@@ -988,8 +988,17 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
   user-select: none;
   -webkit-app-region: no-drag;
 }
+/* What the window points at reads from the left; how the chat stands reads from
+   the right edge. */
+.statusbar .sb-group {
+  display: flex; align-items: center;
+  gap: var(--space-2);
+}
+.statusbar .sb-group-target { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.statusbar .sb-group-state { flex: 0 0 auto; margin-left: auto; }
 .statusbar .sb-item {
   display: inline-flex; align-items: center; gap: 6px;
+  flex: 0 0 auto;
   min-width: 0;
 }
 .statusbar .sb-item svg {
@@ -997,18 +1006,31 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
   color: var(--text-3);
   opacity: 0.8;
 }
-.statusbar .sb-value { overflow: hidden; text-overflow: ellipsis; }
+.statusbar .sb-value { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* The path is the one field a reader scans character by character. */
 .statusbar .sb-mono {
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
 }
-/* The folder is the longest field, so it yields the width the other two need. */
+/* The folder is the longest field, so it is the one that yields width. */
 .statusbar .sb-item-path { flex: 0 1 auto; min-width: 0; }
+/* A path is named by its tail, so it drops its head: the box runs right to left
+   and the mark ahead of the text keeps the path itself left to right. */
+.statusbar .sb-item-path .sb-value { direction: rtl; }
+.statusbar .sb-item-path .sb-value::before { content: "\200E"; }
 .statusbar .sb-sep {
   width: 1px; height: 11px; flex: 0 0 auto;
   background: var(--line-2);
 }
+/* The state dot carries the hue; the word carries the meaning. */
+.statusbar .sb-dot {
+  width: 6px; height: 6px; flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--text-3);
+}
+.statusbar .sb-state[data-state="live"] .sb-dot { background: var(--emerald); }
+.statusbar .sb-state[data-state="exited"] .sb-dot { background: var(--amber); }
+.statusbar .sb-state[data-state="exited"] .sb-value { color: var(--text-2); }
 
 /* ─── Main: rail | pages | status dashboard / detail panel ──────────────── */
 

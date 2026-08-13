@@ -371,6 +371,11 @@ function createTab(idOverride) {
   const tab = {
     id, term: t, fitAddon: fa, el,
     mouseOn: false, chatHasInput: false, restarting: false,
+    // exited flips when this tab's agent process ends, and back when one starts
+    // in its place. command is the line that started it, which is where a
+    // pinned model is named.
+    exited: false,
+    command: null,
     // title is the auto-derived name (agent session title, else this default).
     // customTitle, when set, is the user's rename and wins over title.
     // agentId links this tab to its claude session once resolved.
@@ -1216,6 +1221,8 @@ window.husk.pty.onExit((sessionId, code) => {
   const tab = TABS.get(sessionId);
   // Skip the exit notice while this tab's PTY is being torn down on purpose.
   if (!tab || tab.restarting) return;
+  tab.exited = true;
+  refreshShellStatusBar();
   if (code === 127) {
     // 127 = shell could not find the agent binary; route the user to setup.
     const cmd = (cfg && cfg.agentCommand || 'the agent').split(/\s+/)[0];
@@ -1301,7 +1308,10 @@ async function startPty() {
   // Launch always opens a fresh chat rather than resuming the last discussion.
   // Reopening a specific past conversation is an explicit action from the
   // Sessions list, not something the app does automatically on startup.
+  tab.command = (cfg && cfg.agentCommand) || null;
+  tab.exited = false;
   await window.husk.pty.start({ cols, rows, sessionId: tab.id, resumeLast: false });
+  refreshShellStatusBar();
   term.focus();
   maybeShowTrustBanner();
   // Inject ai-suggested workflow context so the AI knows what workflows exist
@@ -1341,7 +1351,10 @@ async function openNewChatTab(opts = {}) {
   chatHasInput = false;
   resetSpeechState();
   clearSessionContext();
+  tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+  tab.exited = false;
   await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
+  refreshShellStatusBar();
   tab.term.focus();
   maybeShowTrustBanner();
   // skipWelcome: the caller is about to write into this chat, so painting the
@@ -1373,6 +1386,8 @@ async function restartPty(opts = {}) {
   clearSessionContext();
   // First wipe so any earlier scrollback is gone before kill output starts.
   try { tab.term.reset(); } catch (_) { try { tab.term.clear(); } catch (_) {} }
+  tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+  tab.exited = false;
   await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   // Quiet window that lets the closing PTY drain its tail notice into the
   // suppressed handlers before output is re-enabled.
@@ -1380,6 +1395,7 @@ async function restartPty(opts = {}) {
   // Second wipe, so the new PTY's banner starts on a clean canvas.
   try { tab.term.reset(); } catch (_) {}
   tab.restarting = false;
+  refreshShellStatusBar();
   // Respect the "Don't show this on next launch" toggle on restart too.
   if (!(cfg && cfg.skipWelcome)) $('#chat-empty').classList.add('show');
   tab.term.focus();
@@ -1968,14 +1984,41 @@ function ctxPctColor(pct) {
 
 // ─── Shell status bar ────────────────────────────────────────────────────────
 // One line under every page: the active tool, the folder it runs in, the model
-// the session reports. Reads the same stats poll the status panel reads, and
-// falls back to the configured tool and folder before the first poll lands.
+// this chat runs, and whether its agent is still there. Reads the same stats
+// poll the status panel reads, and falls back to the configured tool and folder
+// before the first poll lands.
+
+// The model a launch command pins, for the CLIs that take one as a flag.
+function modelFromCommand(cmd) {
+  const m = String(cmd || '').match(/--model[=\s]+("[^"]+"|'[^']+'|[^\s-]\S*)/);
+  return m ? m[1].replace(/^["']|["']$/g, '') : '';
+}
+
+// Paths read home-relative, the way a shell writes them.
+function homeRelativePath(p) {
+  const full = String(p || '');
+  const home = String(huskHome || '');
+  if (!home || home === '~' || !full.startsWith(home)) return full;
+  const rest = full.slice(home.length);
+  if (!rest) return '~';
+  return (rest.startsWith('/') || rest.startsWith('\\')) ? '~' + rest : full;
+}
+
+// Whether the chat this window is pointed at still has an agent behind it.
+function shellSessionState() {
+  const tab = TABS.get(activeTabId);
+  if (!tab) return { key: 'none', word: 'no session', title: 'No chat is open' };
+  if (tab.exited) return { key: 'exited', word: 'agent exited', title: 'The agent for this chat has exited; Restart starts a new one' };
+  return { key: 'live', word: 'connected', title: 'Husk is attached to the agent running this chat' };
+}
+
 function refreshShellStatusBar() {
   const agentEl = $('#sb-agent');
   if (!agentEl) return;
   const s = lastStats || {};
   const u = s.usage || {};
   const project = projectsCache.find((p) => p.id === activeProjectId);
+  const tab = TABS.get(activeTabId);
 
   const tool = (chatSubBase && chatSubBase.tool)
     || s.agent
@@ -1983,14 +2026,27 @@ function refreshShellStatusBar() {
   const dir = (chatSubBase && chatSubBase.dir)
     || (project ? project.path : null)
     || ((s.workspace && s.workspace.cwd) || (cfg && cfg.agentCwd) || huskHome || '~');
+  // The session's own reading first, then the model the command that started
+  // this chat named. Neither knows one, so neither does the bar.
   const model = (u.session && u.session.modelLabel)
-    || prettyModelLabel((u.session && u.session.model) || '');
+    || prettyModelLabel((u.session && u.session.model) || '')
+    || modelFromCommand((tab && tab.command) || (cfg && cfg.agentCommand) || '');
 
   agentEl.textContent = tool;
   const cwdEl = $('#sb-cwd');
-  if (cwdEl) { cwdEl.textContent = dir; cwdEl.title = dir; }
+  if (cwdEl) { cwdEl.textContent = homeRelativePath(dir); cwdEl.title = dir; }
   const modelEl = $('#sb-model');
-  if (modelEl) modelEl.textContent = model || 'model unknown';
+  if (modelEl) modelEl.textContent = model;
+  const modelItem = $('#sb-model-item');
+  if (modelItem) modelItem.hidden = !model;
+  const modelSep = $('#sb-model-sep');
+  if (modelSep) modelSep.hidden = !model;
+
+  const state = shellSessionState();
+  const stateEl = $('#sb-state');
+  if (stateEl) stateEl.textContent = state.word;
+  const stateItem = $('#sb-state-item');
+  if (stateItem) { stateItem.dataset.state = state.key; stateItem.title = state.title; }
 }
 
 async function refreshStatusline() {
