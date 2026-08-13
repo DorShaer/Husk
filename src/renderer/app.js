@@ -1329,7 +1329,7 @@ async function startPty() {
 }
 
 // Open a brand-new chat in its own tab, leaving every existing tab's agent
-// running. Backs the "+ New Chat" action.
+// running. Backs the "+ New chat" action.
 async function openNewChatTab(opts = {}) {
   const tab = createTab();
   if (opts.resumeAttempt) {

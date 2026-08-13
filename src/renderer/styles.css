@@ -729,7 +729,7 @@ button.chip:hover, a.chip:hover {
 /* macOS hiddenInset title bar places the close/minimize/zoom controls over the
    top-left, so shift the topbar content right to keep the logo clear of them. */
 [data-platform="mac"] #topbar { padding-left: 78px; }
-/* The New Chat action only applies to the chat page; hide it everywhere else. */
+/* The New chat action only applies to the chat page; hide it everywhere else. */
 body:not([data-page="chat"]) #btn-new-session { display: none; }
 .brand { display: flex; align-items: center; -webkit-app-region: no-drag; }
 .logo-img {
@@ -4030,7 +4030,14 @@ body[data-page="chat"] #chats-panel { display: flex; }
   scrollbar-width: none;
 }
 .tab-strip::-webkit-scrollbar { height: 0; }
-.tab-strip.multi { display: flex; }
+/* A rule sets the tabs apart from the page title beside them, so the title is
+   never read as a greyed-out tab. */
+.tab-strip.multi {
+  display: flex;
+  padding-left: var(--space-4);
+  margin-left: var(--space-2);
+  border-left: 1px solid var(--surface-line);
+}
 .chat-tab {
   display: inline-flex; align-items: center; gap: var(--space-1);
   max-width: 220px;
