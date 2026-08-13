@@ -12,8 +12,8 @@
      The backdrop-blur treatment lives in the GLASS OVERRIDES block at the end of
      this file. */
   --bg:   #0c0a09;
-  --bg-1: rgba(255, 255, 255, 0.035);
-  --bg-2: rgba(255, 255, 255, 0.06);
+  --bg-1: rgba(255, 255, 255, 0.055);
+  --bg-2: rgba(255, 255, 255, 0.085);
   --bg-3: rgba(255, 255, 255, 0.10);
   --bg-4: rgba(255, 255, 255, 0.14);
   --line:   rgba(255, 255, 255, 0.08);
@@ -41,11 +41,10 @@
   --shadow-soft: var(--shadow-raised);
   /* Ambient gradient lighting under the chrome. Four radial pools
      of color in the corners produce depth without painted surfaces. */
-  --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(255, 140, 84, 0.10), transparent 65%),
-    radial-gradient(700px circle at 90% 14%, rgba(255, 96, 60, 0.08), transparent 60%),
-    radial-gradient(800px circle at 70% 95%, rgba(255, 120, 71, 0.10), transparent 65%),
-    radial-gradient(1200px circle at 50% 50%, rgba(246, 183, 60, 0.03), transparent 70%);
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(255, 140, 84, 0.045), transparent 65%),
+    radial-gradient(700px circle at 90% 14%, rgba(255, 96, 60, 0.036), transparent 60%),
+    radial-gradient(800px circle at 70% 95%, rgba(255, 120, 71, 0.045), transparent 65%),
+    radial-gradient(1200px circle at 50% 50%, rgba(246, 183, 60, 0.013), transparent 70%);
   /* Inner-top hairline highlight, used on every elevated surface so they read as
      crafted material with a lip of light at the top. Single source for the material
      system. */
@@ -87,8 +86,8 @@
   --shadow: var(--shadow-overlay);
   --shadow-soft: var(--shadow-raised);
   --bg-radial: radial-gradient(1200px 720px at 100% 100%,
-                rgba(217, 119, 87, 0.05) 0%,
-                rgba(217, 119, 87, 0.02) 28%,
+                rgba(217, 119, 87, 0.023) 0%,
+                rgba(217, 119, 87, 0.009) 28%,
                 transparent 62%);
   --hl-top: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   --hl-top-strong: inset 0 1px 0 rgba(255, 255, 255, 1);
@@ -111,10 +110,9 @@
   --text-2: rgba(232, 236, 244, 0.70);
   --text-3: rgba(232, 236, 244, 0.54);
   --notif-bg: #131a29;
-  --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(99, 140, 255, 0.12), transparent 65%),
-    radial-gradient(800px circle at 82% 14%, rgba(120, 90, 255, 0.09), transparent 60%),
-    radial-gradient(1000px circle at 60% 95%, rgba(60, 120, 220, 0.08), transparent 65%);
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(99, 140, 255, 0.054), transparent 65%),
+    radial-gradient(800px circle at 82% 14%, rgba(120, 90, 255, 0.041), transparent 60%),
+    radial-gradient(1000px circle at 60% 95%, rgba(60, 120, 220, 0.036), transparent 65%);
   --term-bg: #0d1220;
   --term-fg: #e8ecf4;
 }
@@ -130,9 +128,8 @@
   --amber: #ebcb8b;
   --info: #88c0d0;
   --notif-bg: #3b4252;
-  --bg-radial:
-    radial-gradient(900px circle at 15% 0%, rgba(136, 192, 208, 0.12), transparent 65%),
-    radial-gradient(800px circle at 85% 18%, rgba(129, 161, 193, 0.10), transparent 60%);
+  --bg-radial: radial-gradient(900px circle at 15% 0%, rgba(136, 192, 208, 0.054), transparent 65%),
+    radial-gradient(800px circle at 85% 18%, rgba(129, 161, 193, 0.045), transparent 60%);
   --term-bg: #2e3440;
   --term-fg: #e5e9f0;
 }
@@ -148,9 +145,8 @@
   --amber: #f1fa8c;
   --info: #8be9fd;
   --notif-bg: #343746;
-  --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(189, 147, 249, 0.14), transparent 65%),
-    radial-gradient(800px circle at 85% 15%, rgba(255, 121, 198, 0.10), transparent 60%);
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(189, 147, 249, 0.063), transparent 65%),
+    radial-gradient(800px circle at 85% 15%, rgba(255, 121, 198, 0.045), transparent 60%);
   --term-bg: #282a36;
   --term-fg: #f8f8f2;
 }
@@ -185,7 +181,7 @@
   --elev-2: var(--shadow-raised);
   --elev-3: var(--shadow-overlay);
   --elev-4: var(--shadow-overlay);
-  --bg-radial: radial-gradient(1200px 720px at 100% 100%, rgba(169, 121, 31, 0.07), transparent 62%);
+  --bg-radial: radial-gradient(1200px 720px at 100% 100%, rgba(169, 121, 31, 0.032), transparent 62%);
   --term-bg: #faf3e4;
   --term-fg: #433422;
   --term-light: 1;
@@ -202,9 +198,8 @@
   --amber: #e0af68;
   --info: #7aa2f7;
   --notif-bg: #24283b;
-  --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(122, 162, 247, 0.14), transparent 65%),
-    radial-gradient(820px circle at 84% 16%, rgba(187, 154, 247, 0.10), transparent 60%);
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(122, 162, 247, 0.063), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(187, 154, 247, 0.045), transparent 60%);
   --term-bg: #1a1b26;
   --term-fg: #c0caf5;
 }
@@ -220,9 +215,8 @@
   --amber: #f9e2af;
   --info: #89b4fa;
   --notif-bg: #292c3c;
-  --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(203, 166, 247, 0.14), transparent 65%),
-    radial-gradient(820px circle at 84% 16%, rgba(137, 180, 250, 0.10), transparent 60%);
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(203, 166, 247, 0.063), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(137, 180, 250, 0.045), transparent 60%);
   --term-bg: #1e1e2e;
   --term-fg: #cdd6f4;
 }
@@ -238,9 +232,8 @@
   --amber: #f6c177;
   --info: #c4a7e7;
   --notif-bg: #21202e;
-  --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(235, 111, 146, 0.12), transparent 65%),
-    radial-gradient(820px circle at 84% 16%, rgba(196, 167, 231, 0.10), transparent 60%);
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(235, 111, 146, 0.054), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(196, 167, 231, 0.045), transparent 60%);
   --term-bg: #191724;
   --term-fg: #e0def4;
 }
@@ -256,9 +249,8 @@
   --amber: #fabd2f;
   --info: #83a598;
   --notif-bg: #3c3836;
-  --bg-radial:
-    radial-gradient(900px circle at 12% 0%, rgba(254, 128, 25, 0.12), transparent 65%),
-    radial-gradient(820px circle at 84% 16%, rgba(215, 153, 33, 0.10), transparent 60%);
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(254, 128, 25, 0.054), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(215, 153, 33, 0.045), transparent 60%);
   --term-bg: #282828;
   --term-fg: #ebdbb2;
 }
