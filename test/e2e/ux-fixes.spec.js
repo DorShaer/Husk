@@ -648,11 +648,11 @@ test('Files opens on the pinned project, not the saved tree root', async () => {
   await win.waitForFunction(() => typeof projectsCache !== 'undefined' && projectsCache.length > 0); // eslint-disable-line no-undef
   await win.evaluate(() => setPage('files')); // eslint-disable-line no-undef
   await win.waitForFunction(
-    (p) => (document.querySelector('#files-sub')?.textContent || '') === p,
+    (p) => (document.querySelector('#btn-files-open')?.title || '') === p,
     projectDir
   );
   const state = await win.evaluate(() => ({
-    sub: document.querySelector('#files-sub')?.textContent || '',
+    sub: document.querySelector('#btn-files-open')?.title || '',
     label: document.querySelector('#fx-open-folder-label')?.textContent || '',
     rows: document.querySelector('#fx-list')?.innerText || '',
   }));
@@ -679,9 +679,9 @@ test('leaving the project drops Files back to the configured tree root', async (
   const win = await ready(app);
   await win.waitForFunction(() => typeof projectsCache !== 'undefined' && projectsCache.length > 0); // eslint-disable-line no-undef
   await win.evaluate(() => setPage('files')); // eslint-disable-line no-undef
-  await win.waitForFunction((p) => (document.querySelector('#files-sub')?.textContent || '') === p, projectDir);
+  await win.waitForFunction((p) => (document.querySelector('#btn-files-open')?.title || '') === p, projectDir);
   await win.evaluate(async () => { await window.husk.projects.clearActive(); await refreshProjectsState(); }); // eslint-disable-line no-undef
-  await win.waitForFunction((p) => (document.querySelector('#files-sub')?.textContent || '') === p, otherDir);
+  await win.waitForFunction((p) => (document.querySelector('#btn-files-open')?.title || '') === p, otherDir);
   const rows = await win.evaluate(() => document.querySelector('#fx-list')?.innerText || '');
   expect(rows).toContain('outside-project.txt');
   await app.close();

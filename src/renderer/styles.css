@@ -6786,7 +6786,7 @@ input[type="checkbox"]:disabled {
   text-transform: uppercase; color: var(--text-3); font-family: var(--font-body);
 }
 .fx-ov-title {
-  margin: var(--space-1) 0 0; font-family: var(--font-display); font-size: var(--fs-h1);
+  margin: var(--space-1) 0 0; font-family: var(--font-display); font-size: var(--fs-h2);
   font-weight: 700; letter-spacing: var(--tracking-tight); color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -6806,13 +6806,17 @@ input[type="checkbox"]:disabled {
   color: var(--text); font-variant-numeric: tabular-nums;
 }
 .fx-ov-stat-l { font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-3); }
+/* The cards take the height their rows need, so an empty working tree is one
+   short panel rather than a full column of nothing. */
 .fx-ov-grid {
-  flex: 1; min-height: 0; display: grid; gap: var(--space-4);
+  flex: 0 1 auto; min-height: 0; display: grid; gap: var(--space-4);
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-content: start;
 }
 .fx-ov-card {
-  display: flex; flex-direction: column; min-height: 168px; overflow: hidden;
-  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  display: flex; flex-direction: column;
+  min-height: 148px; max-height: 340px; overflow: hidden;
+  background: var(--bg-2); border-radius: var(--radius-lg);
 }
 .fx-ov-card-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);

@@ -9206,7 +9206,12 @@ async function fxLoad(root) {
   fx.loaded = false;
   fx.selected = null;
   fx.diffOpen = false;
-  const sub = $('#files-sub'); if (sub) sub.textContent = root || '';
+  // The head reads as a sentence; the folder itself is named on the button that
+  // changes it and on the overview below.
+  const sub = $('#files-sub');
+  if (sub) sub.textContent = root ? 'Read, edit and search the files in this workspace' : 'No folder open';
+  const openBtn = $('#btn-files-open');
+  if (openBtn) openBtn.title = root || 'Choose the folder to browse';
   if (!root) { fxRenderList([]); fxShowEmptyPreview('Set a root folder to browse.'); return; }
   // Git status first so the index can decorate rows.
   fx.gitByPath = new Map();
