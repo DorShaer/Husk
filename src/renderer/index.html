@@ -675,8 +675,28 @@
                    saved flows, and how they have been behaving. -->
               <div class="wfx">
 
-                <section class="wfx-hero">
-                  <div class="wfx-hero-art" aria-hidden="true">
+                <section class="wfx-section" id="wfx-mine-section" hidden>
+                  <div class="wfx-section-head">
+                    <h3 class="wfx-section-title">Your workflows</h3>
+                    <span class="wfx-section-sub" id="wfx-mine-sub"></span>
+                  </div>
+                  <div id="wf-grid" class="wf-grid"></div>
+                </section>
+
+                <section class="wfx-section" id="wfx-patterns-section">
+                  <div class="wfx-section-head">
+                    <h3 class="wfx-section-title">Start from a pattern</h3>
+                    <span class="wfx-section-sub">The topologies that keep showing up in agent systems, wired and ready to edit</span>
+                  </div>
+                  <div class="wfx-pattern-grid" id="wfx-pattern-grid"></div>
+                </section>
+
+                <section class="wfx-section" id="wfx-concepts-section">
+                  <div class="wfx-section-head">
+                    <h3 class="wfx-section-title">How a run works</h3>
+                    <span class="wfx-section-sub">Four ideas, and you have the whole model</span>
+                  </div>
+                  <div class="wfx-concept-art" aria-hidden="true">
                     <!-- The viewBox is cropped to the drawing's own extents. -->
                     <svg class="wfx-dag" viewBox="0 20 760 262" preserveAspectRatio="xMidYMid meet">
                         <defs>
@@ -797,55 +817,6 @@
                         <text class="wfx-edge-label" x="528" y="133">pass</text>
                         <text class="wfx-edge-label is-idle" x="528" y="223">fail</text>
                       </svg>
-                  </div>
-                  <div class="wfx-hero-eyebrow">AGENTIC WORKFLOWS</div>
-                  <h2 class="wfx-hero-title">Stop chaining prompts.<br/>Start running graphs.</h2>
-                  <p class="wfx-hero-body">A workflow is a directed graph of agent steps. Fan three reviewers out in parallel, let a triage step name the branch it wants, gate a release on the literal test output, then join it all back into one answer. Every node runs in a real CLI session with its own terminal, and the finished run replays on the graph so you can see the exact path it took.</p>
-                  <div class="wfx-hero-actions">
-                    <button class="wfx-hero-secondary" id="wfx-cta-build">Build a workflow</button>
-                    <button class="wfx-hero-secondary" id="wfx-cta-patterns">Start from a pattern</button>
-                    <button class="wfx-hero-secondary" id="wfx-cta-learn">How a run works</button>
-                  </div>
-                  <div class="wfx-hero-stats">
-                    <div class="wfx-hero-stat">
-                      <div class="wfx-hero-stat-value" id="wfx-stat-flows">0</div>
-                      <div class="wfx-hero-stat-label">flows saved</div>
-                    </div>
-                    <div class="wfx-hero-stat">
-                      <div class="wfx-hero-stat-value" id="wfx-stat-runs">0</div>
-                      <div class="wfx-hero-stat-label">runs this week</div>
-                    </div>
-                    <div class="wfx-hero-stat">
-                      <div class="wfx-hero-stat-value" id="wfx-stat-pass">n/a</div>
-                      <div class="wfx-hero-stat-label">passed</div>
-                    </div>
-                    <div class="wfx-hero-stat">
-                      <div class="wfx-hero-stat-value" id="wfx-stat-median">n/a</div>
-                      <div class="wfx-hero-stat-label">median run</div>
-                    </div>
-                  </div>
-                </section>
-
-                <section class="wfx-section" id="wfx-mine-section" hidden>
-                  <div class="wfx-section-head">
-                    <h3 class="wfx-section-title">Your workflows</h3>
-                    <span class="wfx-section-sub" id="wfx-mine-sub"></span>
-                  </div>
-                  <div id="wf-grid" class="wf-grid"></div>
-                </section>
-
-                <section class="wfx-section" id="wfx-patterns-section">
-                  <div class="wfx-section-head">
-                    <h3 class="wfx-section-title">Start from a pattern</h3>
-                    <span class="wfx-section-sub">the topologies that keep showing up in agent systems, wired and ready to edit</span>
-                  </div>
-                  <div class="wfx-pattern-grid" id="wfx-pattern-grid"></div>
-                </section>
-
-                <section class="wfx-section" id="wfx-concepts-section">
-                  <div class="wfx-section-head">
-                    <h3 class="wfx-section-title">How a run works</h3>
-                    <span class="wfx-section-sub">four ideas, and you have the whole model</span>
                   </div>
                   <div class="wfx-concepts">
                     <div class="wfx-concept">

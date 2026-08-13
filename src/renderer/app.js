@@ -4054,29 +4054,23 @@ function paintWorkflowList() {
   wfPaintPatterns();
   wfPaintRecentRuns();
 
-  // Hero figures: what this page is worth at a glance.
+  // The figures report on runs, so they stand only once a run exists.
   const week = wfRunsCache.filter((r) => Date.now() - new Date(r.finishedAt).getTime() < 7 * 864e5);
   const passed = week.filter((r) => r.status === 'done').length;
   const setStat = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
+  const durations = wfRunsCache.map((r) => r.ms || 0).filter(Boolean).sort((a, b) => a - b);
   setStat('#wfx-stat-flows', String(workflowsCache.length));
   setStat('#wfx-stat-runs', String(week.length));
   setStat('#wfx-stat-pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
-  if (wfRunsCache.length) {
-    const durations = wfRunsCache.map((r) => r.ms || 0).filter(Boolean).sort((a, b) => a - b);
-    setStat('#wfx-stat-median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
-  } else {
-    setStat('#wfx-stat-median', 'n/a');
-  }
+  setStat('#wfx-stat-median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
+  const figures = $('#wfx-figures');
+  if (figures) figures.hidden = !wfRunsCache.length;
 
   // Nothing saved yet: the patterns gallery is the call to action, so the
   // "your workflows" section stays out of the way entirely.
   const mine = $('#wfx-mine-section');
   const mineSub = $('#wfx-mine-sub');
   if (mine) mine.hidden = !workflowsCache.length;
-  // The full hero is the pitch for an empty workspace; once flows exist it
-  // drops to a band and hands the fold back to the saved cards.
-  const hero = document.querySelector('.wfx-hero');
-  if (hero) hero.classList.toggle('is-compact', workflowsCache.length > 0);
   if (mineSub) {
     mineSub.textContent = workflowsCache.length === 1
       ? '1 flow saved in this workspace'
@@ -5570,15 +5564,6 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
 
 // Button wiring
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
-$('#wfx-cta-build') && $('#wfx-cta-build').addEventListener('click', () => openWorkflowBuilder(null));
-// The two learn-more CTAs scroll rather than navigate: the answer to both is
-// already further down this page, and a jump keeps the context.
-const wfxScrollTo = (sel) => {
-  const el = $(sel);
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-};
-$('#wfx-cta-patterns') && $('#wfx-cta-patterns').addEventListener('click', () => wfxScrollTo('#wfx-patterns-section'));
-$('#wfx-cta-learn') && $('#wfx-cta-learn').addEventListener('click', () => wfxScrollTo('#wfx-concepts-section'));
 
 // ─── Portable workflows: the install sheet, the record, the publish sheet ────
 //

@@ -6130,7 +6130,7 @@ textarea.pr-body-edit:focus-visible {
 }
 .card-cta:hover {
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 .card-cta-arrow {
@@ -10474,51 +10474,15 @@ kbd {
    sections fill in. */
 .wfx { display: flex; flex-direction: column; gap: var(--space-6); }
 
-.wfx-hero {
+/* The lifecycle graph as documentation: it heads "How a run works" rather than
+   selling the page. Bounded by its own aspect ratio so it never takes the fold. */
+.wfx-concept-art {
   position: relative;
-  /* Copy and art are two columns of one grid, and the stats bar is its own
-     full-width row underneath, so the art is bounded by the rows it spans. A
-     container query, not a media query: the status panel and the collapsed rail
-     both change this box without changing the window. */
-  container-type: inline-size;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 52%;
-  column-gap: 32px;
-  align-content: start;
-  padding: var(--space-6) var(--space-6) var(--space-5);
-  border-radius: var(--radius-2xl);
-  /* --bg-1 is translucent in the dark themes, so it is flattened onto an opaque
-     --bg here and the panel's brightness stops tracking its position. */
-  background:
-    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--text) 6%, transparent), transparent 60%),
-    linear-gradient(var(--bg-1), var(--bg-1)),
-    var(--bg);
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-/* Ambient corner light, kept well under the diagram so it reads as depth
-   rather than as another thing to look at. */
-.wfx-hero::before {
-  content: "";
-  position: absolute;
-  top: -140px; right: -60px;
-  width: 380px; height: 380px;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--text) 7%, transparent), transparent 70%);
+  width: 100%;
+  max-width: 760px;
+  aspect-ratio: 760 / 262;
+  margin: 0 auto var(--space-2);
   pointer-events: none;
-  filter: blur(16px);
-}
-/* A live DAG: start chip, parallel security reviewers, a gate, and a ship/fix
-   branch. The art states the product thesis without competing with the copy. */
-.wfx-hero-art {
-  position: relative;
-  /* Spans the copy's rows and stops there. The box takes its height from the column
-     beside it rather than from its own width, and the SVG letterboxes inside
-     whatever it gets. */
-  grid-column: 2; grid-row: 1 / 5;
-  align-self: stretch;
-  min-height: 0;
-  pointer-events: none; z-index: 0;
   contain: paint;
 }
 .wfx-dag { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -10699,7 +10663,7 @@ kbd {
   display: flex; flex-direction: column; gap: var(--space-3);
   padding: var(--space-4);
   border-radius: var(--radius-2xl);
-  /* Opaque surface: see the note on .wfx-hero. */
+  /* Opaque surface: --bg-1 is a translucent white in the dark themes. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   border: 1px solid var(--line);
   text-align: left; font-family: inherit; color: inherit;
@@ -10776,7 +10740,7 @@ kbd {
 .wfx-concept {
   display: flex; flex-direction: column; gap: var(--space-2);
   padding: var(--space-4);
-  /* Opaque surface: see the note on .wfx-hero. */
+  /* Opaque surface: --bg-1 is a translucent white in the dark themes. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
 }
 .wfx-concept-num {
@@ -10798,7 +10762,7 @@ kbd {
   display: flex; flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius-2xl);
-  /* Opaque surface: see the note on .wfx-hero. */
+  /* Opaque surface: --bg-1 is a translucent white in the dark themes. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   overflow: hidden;
 }
@@ -11145,7 +11109,7 @@ kbd {
 .wfx-fig {
   display: flex; flex-direction: column; gap: var(--space-1);
   padding: var(--space-3);
-  /* Opaque surface: see the note on .wfx-hero. --bg-1 is a white alpha in seven of
+  /* Opaque surface: --bg-1 is a white alpha in seven of
      the ten themes, so a single-layer fill would let the ambient corner pools read
      through and the tile's brightness would track its scroll position. The 1px gap
      over a --line ground is the divider, so there are no border rules to keep in
@@ -11755,9 +11719,9 @@ button.wfx-claim:hover {
    should not trade elevation with the theme.
 
    The panel recipe wins rather than --bg-2, because it is what every other
-   top-level plate in this file uses and because it is opaque; see the note on
-   .wfx-hero. Nested fills stay on --bg-2. Controls are exempt: the source cards and
-   the URL field are pressable and typeable and sit above the plate they are on. */
+   top-level plate in this file uses and because it flattens the translucent --bg-1
+   onto an opaque ground. Nested fills stay on --bg-2. Controls are exempt: the
+   source cards and the URL field are pressable and sit above the plate. */
 .wfx-pf { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-lg); background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg); overflow: hidden; }
 .wfx-pf-h {
   padding: var(--space-2) var(--space-3);
@@ -12116,7 +12080,7 @@ body[data-mode="light"] .wfx-sheet:not([data-state="working"]) > .modal-foot .gh
   display: flex; flex-direction: column; gap: var(--space-3);
   padding: var(--space-4) var(--space-4) var(--space-3);
   border: 1px solid var(--line); border-radius: var(--radius-2xl);
-  /* Opaque surface: see the note on .wfx-hero. Two identical cards have to read
+  /* Opaque surface: --bg-1 is translucent here. Two identical cards have to read
      as the same surface wherever they land in the row. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   box-shadow: var(--elev-2);
