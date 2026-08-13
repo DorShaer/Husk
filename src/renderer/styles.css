@@ -5791,6 +5791,8 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
   flex: 1; min-height: 0; overflow-y: auto;
   padding: var(--space-2);
   display: flex; flex-direction: column; gap: var(--space-1);
+  /* A row cut by the container's floor fades out rather than slicing glyphs. */
+  mask-image: linear-gradient(to bottom, black calc(100% - 20px), transparent 100%);
 }
 .pr-item {
   position: relative;
@@ -5903,14 +5905,15 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 .pr-detail-actions { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
 /* Neutral high-contrast commit button. Reads as the strongest thing in the
    pane in all themes without putting label text on the accent fill. */
+/* Run is what this page tells you to do, so it is where the accent is spent. */
 .pr-run {
   display: inline-flex; align-items: center; gap: var(--space-2);
   height: var(--control-h-lg);
   padding: 0 var(--space-4);
-  border: 1px solid var(--text);
+  border: 1px solid var(--accent);
   border-radius: var(--radius-md);
-  background: var(--text);
-  color: var(--bg);
+  background: var(--accent);
+  color: var(--on-accent);
   font-family: inherit;
   font-size: var(--fs-small);
   font-weight: 600;
