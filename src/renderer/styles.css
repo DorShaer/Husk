@@ -521,6 +521,11 @@ body {
   --state-muted-bg: color-mix(in srgb, var(--text) 8%, var(--surface));
   --state-muted-edge: var(--line-2);
   --state-muted-ink: var(--text-3);
+
+  /* A switch that is on inverts: the track takes the muted foreground and the knob
+     takes the page, so on reads at a glance without spending the accent. */
+  --switch-on: var(--text-3);
+  --switch-knob-on: var(--bg);
 }
 
 /* ─── Shared primitives ─────────────────────────────────────────────────── */
@@ -2091,8 +2096,8 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   transition: border-color var(--motion-base) var(--ease), background var(--motion-base) var(--ease), transform var(--motion-fast) var(--ease), box-shadow var(--motion-base) var(--ease);
 }
 .aut-preset:hover {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--line-2));
-  background: color-mix(in srgb, var(--accent) 5%, var(--bg-1));
+  border-color: var(--line-3);
+  background: var(--bg-2);
   box-shadow: var(--elev-3);
   transform: translateY(-2px);
 }
@@ -2928,10 +2933,10 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   font-size: var(--fs-nano); font-weight: 800;
   padding: 4px 10px;
   border-radius: var(--radius-pill);
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  color: var(--accent);
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
   font-family: var(--font-mono);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--bg-2);
   white-space: nowrap;
 }
 .aut-lane-state {
@@ -3357,9 +3362,9 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   white-space: nowrap;
 }
 .aut-model-pill {
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-2);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
   max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
@@ -3444,7 +3449,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .fx-filter-btn:hover { color: var(--text); background: var(--bg-2); }
 /* Same read as the active tab: fill and border carry the on state, the glyph
    stays at full text contrast so it does not sink on light surfaces. */
-.fx-filter-btn.is-on { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 38%, transparent); }
+.fx-filter-btn.is-on { color: var(--text); background: var(--bg-3); border-color: var(--line-2); }
 .fx-filter { position: relative; display: flex; align-items: center; padding: 0 var(--space-3) var(--space-2); }
 .fx-filter-input {
   flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid transparent; border-radius: var(--radius-md);
@@ -3463,11 +3468,11 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .fx-chip {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: var(--fs-nano); font-family: var(--font-mono); font-weight: 600;
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text-2); background: var(--bg-3);
+  border: 1px solid var(--line-2);
   border-radius: var(--radius-pill); padding: 2px 8px; cursor: pointer;
 }
-.fx-chip:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.fx-chip:hover { background: var(--bg-4); color: var(--text); }
 .fx-chip-x { opacity: 0.7; }
 
 /* ── Race scorecard (head-to-head agent comparison) ── */
@@ -5578,7 +5583,7 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .ag-row.is-cursor {
   box-shadow: none;
   background:
-    linear-gradient(var(--focus-ink), var(--focus-ink)) 0 0 / 2px 100% no-repeat,
+    linear-gradient(var(--text-3), var(--text-3)) 0 0 / 2px 100% no-repeat,
     linear-gradient(var(--ag-cursor-fill), var(--ag-cursor-fill));
   background-origin: border-box;
   background-clip: border-box;
@@ -5847,8 +5852,8 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
 }
 .pr-item:hover { background: var(--bg-2); }
 .pr-item:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-/* Selected row. The accent bar is the active-item indicator, the one place
-   this page spends accent. */
+/* Selected row. The lifted fill and the leading bar say which prompt the pane
+   beside the list is reading. */
 .pr-item.is-active {
   background: var(--bg-3);
   border-color: var(--line-2);
@@ -5858,7 +5863,7 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
   position: absolute;
   left: -1px; top: var(--space-2); bottom: var(--space-2);
   width: 2px;
-  background: var(--accent);
+  background: var(--text-3);
   border-radius: var(--radius-pill);
 }
 .pr-item.is-disabled .pr-item-name { color: var(--text-3); }
@@ -6411,25 +6416,25 @@ input[type="checkbox"]::before {
 .husk-switch.on,
 .toggle.on,
 input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--switch-on);
+  border-color: var(--switch-on);
 }
 .husk-switch.on::before,
 .toggle.on::before,
 input[type="checkbox"]:checked::before {
   transform: translateX(16px);
-  background: #ffffff;
+  background: var(--switch-knob-on);
 }
 
 /* A partly enabled group parks its knob mid-track, so it reads as neither on
    nor off. */
 .toggle.is-mixed {
-  background: color-mix(in srgb, var(--accent) 42%, var(--bg-3));
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+  background: color-mix(in srgb, var(--switch-on) 42%, var(--bg-3));
+  border-color: color-mix(in srgb, var(--switch-on) 48%, var(--line));
 }
 .toggle.is-mixed::before {
   transform: translateX(8px);
-  background: #ffffff;
+  background: var(--switch-knob-on);
 }
 .husk-switch:focus-visible,
 .toggle:focus-visible,
@@ -6710,12 +6715,11 @@ input[type="checkbox"]:disabled {
 /* The selected tab carries its state in the fill and the border, and its label goes
    to full text contrast so it stays ahead of the muted inactive labels on light
    surfaces. */
-.fx-tab.is-active { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 38%, transparent); }
+.fx-tab.is-active { color: var(--text); background: var(--bg-3); border-color: var(--line-2); }
 .fx-tab-count {
   font-size: var(--fs-pico); min-width: 16px; text-align: center; border-radius: var(--radius-pill);
-  background: var(--accent); color: var(--on-accent); padding: 0 5px; line-height: 15px;
+  background: var(--bg-4); color: var(--text-2); padding: 0 5px; line-height: 15px;
 }
-[data-mode="light"] .fx-tab-count { color: var(--on-accent); }
 /* 4px of list padding plus 8px of row padding puts every row's first glyph on
    the same 12px inset as the search field and the tab row above it. */
 .fx-list {
@@ -6730,7 +6734,7 @@ input[type="checkbox"]:disabled {
   white-space: nowrap; overflow: hidden;
 }
 .fx-row:hover { background: var(--bg-2); color: var(--text); }
-.fx-row.is-selected { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); color: var(--text); }
+.fx-row.is-selected { background: var(--bg-3); color: var(--text); }
 /* Keyboard cursor. It has to read on both row shapes, the flat search list and the
    tree, so it is not scoped to .fx-row alone. */
 /* One ring, whether the row became current by Tab or by an arrow. The generic
@@ -6773,7 +6777,7 @@ input[type="checkbox"]:disabled {
   white-space: nowrap; color: var(--text-2); overflow: hidden;
 }
 .fx-trow:hover { background: var(--bg-2); color: var(--text); }
-.fx-trow.is-selected { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); color: var(--text); }
+.fx-trow.is-selected { background: var(--bg-3); color: var(--text); }
 /* Files keep the twisty's box so their icon stays on the same column as the
    folder icons around them; the box is kept as narrow as the glyph allows. */
 .fx-tchevron {
@@ -7510,7 +7514,7 @@ input[type="checkbox"]:disabled {
 .mcp-dot-pending { background: var(--amber); }
 .mcp-dot-off { background: var(--text-3); }
 .mcp-card-custom { border-style: dashed; }
-.mcp-card-custom .mc-icon { color: var(--accent); -webkit-background-clip: initial; background-clip: initial; }
+.mcp-card-custom .mc-icon { color: var(--text-2); -webkit-background-clip: initial; background-clip: initial; }
 .ce-mcps {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   margin-top: 14px;
@@ -7592,11 +7596,20 @@ input[type="checkbox"]:disabled {
 .mcp-card .mc-head { display: flex; align-items: center; gap: 10px; }
 .mcp-card .mc-icon {
   font-size: var(--fs-h2);
-  color: var(--accent);
+  color: var(--text-3);
   flex: 0 0 auto;
+  transition: color var(--motion-fast) var(--ease);
 }
+.mcp-card:hover .mc-icon { color: var(--text-2); }
 .mcp-card .mc-name { font-weight: 600; font-size: var(--fs-body-lg); color: var(--text); flex: 1; }
-.mcp-card .mc-add { color: var(--accent); font-size: var(--fs-micro); font-weight: 600; }
+/* The whole card is the target, so its action label reads as a hint until the
+   pointer is on it. */
+.mcp-card .mc-add {
+  color: var(--text-3);
+  font-size: var(--fs-micro); font-weight: 600;
+  transition: color var(--motion-fast) var(--ease);
+}
+.mcp-card:hover .mc-add { color: var(--text); }
 .mcp-card[data-installed="1"] .mc-add { color: var(--text-3); }
 .mcp-card .mc-desc { font-size: var(--fs-micro); color: var(--text-2); line-height: 1.5; }
 
@@ -7696,7 +7709,7 @@ input[type="checkbox"]:disabled {
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   background: var(--bg-2);
-  color: var(--accent);
+  color: var(--text-3);
   opacity: 1;
 }
 .plugins-zero .es-icon svg { width: 22px; height: 22px; }
@@ -10496,8 +10509,7 @@ kbd {
   /* --bg-1 is translucent in the dark themes, so it is flattened onto an opaque
      --bg here and the panel's brightness stops tracking its position. */
   background:
-    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),
-    radial-gradient(80% 80% at 100% 100%, color-mix(in srgb, var(--accent-2) 10%, transparent), transparent 60%),
+    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--text) 6%, transparent), transparent 60%),
     linear-gradient(var(--bg-1), var(--bg-1)),
     var(--bg);
   border: 1px solid var(--line);
@@ -10511,7 +10523,7 @@ kbd {
   top: -140px; right: -60px;
   width: 380px; height: 380px;
   border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--text) 7%, transparent), transparent 70%);
   pointer-events: none;
   filter: blur(16px);
 }
@@ -10554,9 +10566,9 @@ kbd {
    on. Both keyframe values are plain lengths, because a calc() against a bare
    length steps instead of interpolating. */
 .wfx-pulse path {
-  fill: none; stroke: var(--accent); stroke-width: 2.25; stroke-linecap: round;
+  fill: none; stroke: var(--info); stroke-width: 2.25; stroke-linecap: round;
   stroke-dasharray: var(--d) 200;
-  filter: drop-shadow(0 0 3px var(--accent-glow));
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--info) 45%, transparent));
   animation-duration: 6s; animation-iteration-count: infinite;
   animation-timing-function: linear;
 }
@@ -10579,14 +10591,12 @@ kbd {
 }
 
 /* Cards are the only things that leave the plane. State lives on the border
-   and its dot: emerald done, accent running. */
+   and its dot: emerald done, the running hue live. */
 .wfx-card { fill: url(#wfx-card-g); stroke: var(--line-3); stroke-width: 1; }
-.wfx-card.is-entry { stroke: color-mix(in srgb, var(--accent) 52%, transparent); }
-/* Done is said once, by the dot, so the accent border belongs to the live
-   step alone and has a neutral field to stand out against. */
-.wfx-card.is-live { stroke: color-mix(in srgb, var(--accent) 58%, transparent); }
-/* Accent marks the live spine only: the entry, the gate deciding, and the step
-   running now. A finished step already says so with its dot. */
+.wfx-card.is-entry { stroke: color-mix(in srgb, var(--text) 34%, transparent); }
+/* Done is said once, by the dot, so the lit border belongs to the live step
+   alone and has a neutral field to stand out against. */
+.wfx-card.is-live { stroke: color-mix(in srgb, var(--info) 55%, transparent); }
 .wfx-node.is-done .wfx-glyph { stroke: color-mix(in srgb, var(--text) 58%, transparent); }
 /* The branch not taken says so once, with its dashed edge; the card just
    steps back. */
@@ -10598,11 +10608,11 @@ kbd {
 .wfx-cg1 { stop-color: var(--bg-2); }
 
 .wfx-chip { fill: color-mix(in srgb, var(--text) 8%, transparent); }
-.wfx-chip.is-accent { fill: color-mix(in srgb, var(--accent) 20%, transparent); }
-.wfx-glyph { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wfx-chip.is-accent { fill: color-mix(in srgb, var(--text) 14%, transparent); }
+.wfx-glyph { fill: none; stroke: var(--text-2); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .wfx-glyph * { vector-effect: non-scaling-stroke; }
-.wfx-play { fill: var(--accent); }
-.wfx-entry-rail { fill: var(--accent); }
+.wfx-play { fill: var(--text-2); }
+.wfx-entry-rail { fill: color-mix(in srgb, var(--text) 34%, transparent); }
 
 .wfx-title {
   fill: color-mix(in srgb, var(--text) 94%, transparent);
@@ -10618,7 +10628,7 @@ kbd {
 .wfx-state { fill: color-mix(in srgb, var(--text) 24%, transparent); }
 .wfx-state.is-done { fill: var(--emerald); }
 .wfx-state.is-live {
-  fill: var(--accent);
+  fill: var(--info);
   transform-box: fill-box; transform-origin: center;
   animation: wfx-lit 6s ease-in-out infinite;
 }
@@ -10631,11 +10641,11 @@ kbd {
 
 /* The diamond is the decision, so it is the one lit shape. */
 .wfx-gate {
-  fill: color-mix(in srgb, var(--accent) 10%, var(--bg-4));
-  stroke: color-mix(in srgb, var(--accent) 70%, transparent); stroke-width: 2;
+  fill: var(--bg-4);
+  stroke: color-mix(in srgb, var(--text) 45%, transparent); stroke-width: 2;
 }
 .wfx-gate-mark {
-  fill: none; stroke: var(--accent); stroke-width: 3;
+  fill: none; stroke: var(--text); stroke-width: 3;
   stroke-linecap: round; stroke-linejoin: round;
   animation: wfx-gatelit 6s ease-in-out infinite;
 }
@@ -10668,9 +10678,7 @@ kbd {
   grid-column: 1; grid-row: 1;
   font-family: var(--font-mono);
   font-size: var(--fs-nano); letter-spacing: 0.24em; text-transform: uppercase;
-  /* Pulling the accent toward the theme's text colour keeps this readable at 11px
-     on both near-white and near-black panels, in all ten themes. */
-  color: color-mix(in srgb, var(--accent) 60%, var(--text));
+  color: var(--text-3);
   font-weight: 600;
   margin-bottom: var(--space-3);
 }
@@ -10813,42 +10821,41 @@ kbd {
   transition: border-color var(--motion-base) var(--ease), background var(--motion-base) var(--ease), transform var(--motion-fast) var(--ease), box-shadow var(--motion-base) var(--ease);
 }
 .wfx-pattern:hover {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--line-2));
-  background:
-    linear-gradient(color-mix(in srgb, var(--accent) 5%, var(--bg-1)), color-mix(in srgb, var(--accent) 5%, var(--bg-1))),
-    var(--bg);
+  border-color: var(--line-3);
+  background: linear-gradient(var(--bg-2), var(--bg-2)), var(--bg);
   transform: translateY(-2px);
   box-shadow: var(--elev-2);
 }
 .wfx-pattern:active { transform: translateY(0); }
 .wfx-pattern-top { display: flex; align-items: center; gap: 10px; }
+/* The glyph rides the title's line with no chip behind it, so the topology below
+   is the only thing on the card carrying weight. */
 .wfx-pattern-icon {
-  width: 34px; height: 34px; flex: 0 0 auto;
+  flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-1));
-  color: var(--accent);
+  color: var(--text-3);
+  transition: color var(--motion-fast) var(--ease);
 }
-.wfx-pattern-icon svg { width: 17px; height: 17px; }
+.wfx-pattern:hover .wfx-pattern-icon { color: var(--text-2); }
+.wfx-pattern-icon svg { width: var(--icon-sm); height: var(--icon-sm); }
 .wfx-pattern-title { font-size: var(--fs-body-lg); font-weight: 650; letter-spacing: -0.005em; color: var(--text); }
 .wfx-pattern-shape {
   padding: 8px 0 4px;
   border-radius: var(--radius-lg);
-  background:
-    radial-gradient(80% 120% at 50% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
-    var(--bg-2);
+  background: var(--bg-2);
   border: 1px solid var(--line);
 }
 .wfx-pattern-shape .wf-mini { width: 100%; height: 62px; display: block; }
 /* The thumbnail is the headline here, not a footnote on a saved card, so the
-   topology is tinted up until it reads from across the grid. */
-.wfx-pattern-shape .wf-mini-edge { stroke: color-mix(in srgb, var(--accent) 34%, var(--line-3)); }
+   topology draws at the strong hairline and its nodes carry the muted
+   foreground. */
+.wfx-pattern-shape .wf-mini-edge { stroke: var(--line-3); }
 .wfx-pattern-shape .wf-mini-node {
   fill: var(--bg-4);
-  stroke: color-mix(in srgb, var(--accent) 48%, var(--line-3));
+  stroke: var(--text-3);
   transition: stroke var(--motion-base) var(--ease), fill var(--motion-base) var(--ease);
 }
-.wfx-pattern:hover .wf-mini-node { stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 16%, var(--bg-4)); }
+.wfx-pattern:hover .wf-mini-node { stroke: var(--text-2); fill: var(--bg-3); }
 .wfx-pattern-body { font-size: var(--fs-micro); line-height: var(--lh-base); color: var(--text-2); flex: 1; }
 .wfx-pattern-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -10863,7 +10870,7 @@ kbd {
 .wfx-pattern-use {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; gap: 5px;
-  color: var(--accent); font-weight: 600;
+  color: var(--text); font-weight: 600;
   opacity: 0; transform: translateX(-4px);
   transition: opacity var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
@@ -10889,7 +10896,7 @@ kbd {
 .wfx-concept-num {
   font-family: var(--font-mono);
   font-size: var(--fs-nano); font-weight: 700; letter-spacing: 0.1em;
-  color: color-mix(in srgb, var(--accent) 80%, transparent);
+  color: var(--text-3);
 }
 .wfx-concept-title { font-size: var(--fs-body-lg); font-weight: 650; color: var(--text); }
 .wfx-concept-body { font-size: var(--fs-micro); line-height: var(--lh-base); color: var(--text-2); }
@@ -12627,9 +12634,9 @@ body[data-mode="light"] .wfx-sheet:not([data-state="working"]) > .modal-foot .gh
 .iconbtn-square { padding: 0; width: 32px; display: inline-grid; place-items: center; }
 .iconbtn-square svg { width: 16px; height: 16px; }
 #btn-status-toggle svg rect { transition: fill var(--motion-fast) var(--ease); }
-/* Open: the right pane of the glyph fills, echoing the visible panel. */
+/* Open: the button holds a pressed surface and the glyph's panel fills. */
 body:not([data-status="collapsed"]) #btn-status-toggle { color: var(--text); background: var(--bg-2); border-color: var(--line-2); }
-body:not([data-status="collapsed"]) #btn-status-toggle svg path { stroke: var(--accent); }
+body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg-3); }
 
 /* ── Projects: board + workspace ─────────────────────────────────────────────
    The board is three priority zones (Needs you / Active / Quiet); each active
