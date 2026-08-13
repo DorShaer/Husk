@@ -2093,9 +2093,12 @@
                   <label class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">Command</span>
-                      <span class="pref-desc">The CLI Husk launches, such as claude or copilot.</span>
+                      <span class="pref-desc">The CLI Husk launches. Pick one Husk found on this machine, or name your own.</span>
                     </span>
-                    <input type="text" id="pref-agent" placeholder="claude" />
+                    <span class="pref-field-group">
+                      <select id="pref-agent-pick" aria-label="Command"></select>
+                      <input type="text" id="pref-agent" placeholder="command" hidden />
+                    </span>
                   </label>
                   <label class="pref-row">
                     <span class="pref-row-text">
@@ -2107,7 +2110,7 @@
                       <button class="ghost-btn" id="btn-pref-cwd-pick" type="button">Pick&hellip;</button>
                     </span>
                   </label>
-                  <button class="btn-primary" id="pref-save">Save &amp; Restart Agent</button>
+                  <button class="btn-primary" id="pref-save">Save and restart</button>
                 </section>
               </div><!-- /pref-section agent -->
 
@@ -2174,7 +2177,7 @@
                   <label class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">Enable LifeOS</span>
-                      <span class="pref-desc">Bundles a skills library, agents, hooks, statusline, and the Algorithm flow into <code>~/.claude/</code> (only Claude Code reads it). Off skips the bootstrap and statusline tick and drops the framework nudge; existing files are left untouched. Restart the agent after changing.</span>
+                      <span class="pref-desc">Bundles a skills library, agents, hooks, statusline, and the Algorithm flow into the agent's own config directory, for the agents that read one. Off skips the bootstrap and statusline tick and drops the framework nudge; existing files are left untouched. Restart the agent after changing.</span>
                     </span>
                     <input type="checkbox" id="pref-pai" />
                   </label>

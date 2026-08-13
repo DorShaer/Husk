@@ -7176,8 +7176,9 @@ input[type="checkbox"]:disabled {
   background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--radius-control);
 }
 .pref-row input[type="text"]:focus, .pref-row select:focus { border-color: var(--accent); }
-/* Working directory: field plus its Pick button share the control column. */
-.pref-field-group { flex: 0 0 auto; width: 300px; max-width: 48%; display: inline-flex; gap: 8px; }
+/* A field plus the control that fills it share one column, and stack when both stand. */
+.pref-field-group { flex: 0 0 auto; width: 300px; max-width: 48%; display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.pref-field-group > select { flex: 1 1 100%; width: auto; min-width: 0; max-width: none; }
 .pref-field-group > input[type="text"] {
   flex: 1; min-width: 0;
   font-family: var(--font-mono); font-size: var(--fs-small);

@@ -10222,8 +10222,43 @@ function fxMatchesFilter(relPath) {
 }
 
 // ─── Preferences page ────────────────────────────────────────────────────────────
+
+const PREF_AGENT_CUSTOM = '__custom';
+
+// The command is a choice, not a spelling test: the picker lists what Husk found
+// on this machine and keeps a free-text escape hatch for anything else.
+async function paintAgentCommandPicker() {
+  const pick = $('#pref-agent-pick');
+  const field = $('#pref-agent');
+  if (!pick || !field) return;
+  const current = (cfg.agentCommand || '').trim();
+  let found = [];
+  try {
+    const r = await window.husk.agents.detect();
+    found = ((r && r.agents) || []).filter((a) => a.available);
+  } catch (_) { found = []; }
+  const options = found.map((a) => ({ value: a.command, label: `${a.label} (${a.command})` }));
+  const known = new Set(options.map((o) => o.value));
+  if (current && !known.has(current)) options.unshift({ value: current, label: current });
+  pick.replaceChildren();
+  for (const o of options) {
+    const el = document.createElement('option');
+    el.value = o.value;
+    el.textContent = o.label;
+    pick.appendChild(el);
+  }
+  const custom = document.createElement('option');
+  custom.value = PREF_AGENT_CUSTOM;
+  custom.textContent = 'Custom command…';
+  pick.appendChild(custom);
+  const useCustom = !current || !options.some((o) => o.value === current);
+  pick.value = useCustom ? PREF_AGENT_CUSTOM : current;
+  field.hidden = !useCustom;
+}
+
 function bindPrefs() {
   $('#pref-agent').value = cfg.agentCommand || '';
+  paintAgentCommandPicker();
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
   if ($('#pref-agent-cwd')) $('#pref-agent-cwd').value = cfg.agentCwd || '';
   bindOrchestratorConfig();
