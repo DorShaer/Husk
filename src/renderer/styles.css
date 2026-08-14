@@ -12484,10 +12484,11 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   display: grid;
   grid-template-columns:
     calc(var(--ws-pad-x) - var(--space-4))
-    fit-content(280px) fit-content(360px) fit-content(340px) fit-content(300px) fit-content(140px)
+    minmax(max-content, 1.2fr) minmax(max-content, 2fr) minmax(max-content, 2.2fr)
+    minmax(max-content, 2fr) minmax(max-content, 1fr)
     118px
-    minmax(0, 1fr);
-  column-gap: var(--space-5);
+    calc(var(--ws-pad-x) - var(--space-4));
+  column-gap: var(--space-4);
 }
 .ws-grid > * { grid-column: 1 / -1; }
 .ws-thead, .ws-row {
@@ -12602,8 +12603,9 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .ws-addrow:hover, .ws-addrow:focus-visible { background: var(--bg-2); color: var(--text); outline: none; }
 .ws-fill {
   flex: 1 1 auto; min-height: 0;
-  background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px var(--ws-row-h));
+  overflow: hidden;
 }
+.ws-fill-row { height: var(--ws-row-h); border-top: 1px solid var(--line); }
 @media (max-width: 1020px) {
   .ws-thead { display: none; }
   .ws-row {

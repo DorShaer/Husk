@@ -2590,6 +2590,7 @@ function paintProjectsSurface() {
 const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
 const WS_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
 const WS_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const WS_FILL_ROWS_HTML = '<div class="ws-fill-row"></div>'.repeat(96);
 
 // Git chip for one project, shared by board rows and the workspace header.
 function wsBranchChip(st) {
@@ -2674,7 +2675,7 @@ function paintBoard(filter) {
         ${quiet.length ? groupRow('Quiet', quiet.length) + quiet.map((p) => wsRowHtml(p, false)).join('') : ''}
       </div>
       <button type="button" class="ws-addrow" title="Pin another folder">${WS_PLUS_SVG}Add project</button>
-      <div class="ws-fill" aria-hidden="true"></div>
+      <div class="ws-fill" aria-hidden="true">${WS_FILL_ROWS_HTML}</div>
     </div>`;
   // The add row mirrors the header button so there is one modal and one code
   // path behind both entry points.
