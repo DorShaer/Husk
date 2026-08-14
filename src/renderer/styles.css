@@ -12462,7 +12462,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
    background wash stays behind the table rather than making one row two colours end
    to end. */
 .ws-table {
-  flex: 1 0 auto;
+  flex: 0 0 auto;
   display: flex; flex-direction: column;
   background: linear-gradient(var(--bg-1), var(--bg-1)) var(--bg);
   border: 1px solid var(--line);
@@ -12602,7 +12602,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .ws-addrow svg { width: var(--icon-sm); height: var(--icon-sm); flex: 0 0 auto; }
 .ws-addrow:hover, .ws-addrow:focus-visible { background: var(--bg-2); color: var(--text); outline: none; }
 .ws-fill {
-  flex: 1 1 auto; min-height: 0;
+  flex: 0 0 auto; min-height: 0;
   overflow: hidden;
 }
 .ws-fill-row { height: var(--ws-row-h); border-top: 1px solid var(--line); }
