@@ -2667,10 +2667,12 @@ function paintBoard(filter) {
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   board.innerHTML = `${stateNote}
     <div class="ws-table">
-      <div class="ws-thead"><span>Project</span><span>Path</span><span>Branch</span><span>Status</span><span class="ws-th-right">Activity</span><span></span></div>
-      ${needs.length ? groupRow('Needs you', needs.length) + needs.map((p) => wsRowHtml(p, true)).join('') : ''}
-      ${act.length ? groupRow(projectGroups ? 'Active' : 'Projects', act.length) + act.map((p) => wsRowHtml(p, false)).join('') : ''}
-      ${quiet.length ? groupRow('Quiet', quiet.length) + quiet.map((p) => wsRowHtml(p, false)).join('') : ''}
+      <div class="ws-grid">
+        <div class="ws-thead"><span>Project</span><span>Path</span><span>Branch</span><span>Status</span><span class="ws-th-right">Activity</span><span></span></div>
+        ${needs.length ? groupRow('Needs you', needs.length) + needs.map((p) => wsRowHtml(p, true)).join('') : ''}
+        ${act.length ? groupRow(projectGroups ? 'Active' : 'Projects', act.length) + act.map((p) => wsRowHtml(p, false)).join('') : ''}
+        ${quiet.length ? groupRow('Quiet', quiet.length) + quiet.map((p) => wsRowHtml(p, false)).join('') : ''}
+      </div>
       <button type="button" class="ws-addrow" title="Pin another folder">${WS_PLUS_SVG}Add project</button>
       <div class="ws-fill" aria-hidden="true"></div>
     </div>`;

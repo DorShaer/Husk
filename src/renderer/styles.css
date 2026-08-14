@@ -12477,17 +12477,33 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
    their own. One row-height variable keeps the real rows and the ghost rows below
    them on the same rhythm. */
 .ws-table { --ws-pad-x: var(--space-5); --ws-row-h: var(--row-h); }
+/* The header and every row share one grid, so a track is as wide as the widest
+   value in that column and the columns still line up. The outer tracks are the
+   gutter, so a row's own background still reaches the edges of the card. */
+.ws-grid {
+  display: grid;
+  grid-template-columns:
+    calc(var(--ws-pad-x) - var(--space-4))
+    fit-content(300px) fit-content(420px) fit-content(380px) fit-content(320px)
+    minmax(0, 1fr)
+    fit-content(160px) 118px
+    calc(var(--ws-pad-x) - var(--space-4));
+  column-gap: var(--space-4);
+}
+.ws-grid > * { grid-column: 1 / -1; }
 .ws-thead, .ws-row {
   display: grid;
-  /* The four text tracks carry one weight, so leftover width lands on each in
-     equal measure and the cells read as one grid. */
-  grid-template-columns:
-    minmax(170px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(130px, 1fr) 84px 118px;
-  grid-template-areas: "name path git state time act";
+  grid-template-columns: subgrid;
+  grid-template-areas: ". name path git state . time act .";
   align-items: center;
-  gap: var(--space-4);
-  padding: 0 var(--ws-pad-x);
 }
+/* The head labels carry no classes, so they take their areas by position. */
+.ws-thead > :nth-child(1) { grid-area: name; }
+.ws-thead > :nth-child(2) { grid-area: path; }
+.ws-thead > :nth-child(3) { grid-area: git; }
+.ws-thead > :nth-child(4) { grid-area: state; }
+.ws-thead > :nth-child(5) { grid-area: time; }
+.ws-thead > :nth-child(6) { grid-area: act; }
 .ws-row { min-height: var(--ws-row-h); }
 .ws-thead {
   min-height: var(--row-h);
