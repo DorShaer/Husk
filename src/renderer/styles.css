@@ -5789,7 +5789,9 @@ body[data-mode="light"] .ag-group { background: var(--bg-2); }
   border-bottom: 1px solid var(--line);
 }
 .pr-items {
-  flex: 1; min-height: 0; overflow-y: auto;
+  /* The scroller ends with the rows. The card keeps the rest of the column, so no
+     empty scroll area is left to hold what a shorter list painted. */
+  flex: 0 1 auto; min-height: 0; overflow-y: auto;
   padding: var(--space-2);
   display: flex; flex-direction: column; gap: var(--space-1);
   /* A row cut by the container's floor fades out rather than slicing glyphs. */
@@ -12477,10 +12479,10 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .ws-table { --ws-pad-x: var(--space-5); --ws-row-h: var(--row-h); }
 .ws-thead, .ws-row {
   display: grid;
-  /* Every text track flexes, so leftover width spreads across four columns
-     rather than pooling into one canyon beside a single track. */
+  /* The four text tracks carry one weight, so leftover width lands on each in
+     equal measure and the cells read as one grid. */
   grid-template-columns:
-    minmax(170px, 1fr) minmax(150px, 1.15fr) minmax(150px, 0.85fr) minmax(130px, 0.8fr) 84px 118px;
+    minmax(170px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(130px, 1fr) 84px 118px;
   grid-template-areas: "name path git state time act";
   align-items: center;
   gap: var(--space-4);
