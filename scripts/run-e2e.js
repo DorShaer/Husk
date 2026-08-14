@@ -14,7 +14,9 @@ const CLI = [
   path.join(__dirname, '..', 'node_modules', '@playwright', 'test', 'cli.js'),
   path.join(process.cwd(), 'node_modules', '@playwright', 'test', 'cli.js'),
 ].find((p) => fs.existsSync(p));
-const SCREEN = '-screen 0 1280x800x24';
+// Layout specs zoom the window and assert the panel still grows, so the virtual
+// screen carries a desktop's worth of height.
+const SCREEN = '-screen 0 1920x1200x24';
 
 if (!CLI) {
   console.error('@playwright/test is not installed. Run npm install first.');
