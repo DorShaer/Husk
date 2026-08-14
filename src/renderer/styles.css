@@ -12484,9 +12484,8 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   display: grid;
   grid-template-columns:
     calc(var(--ws-pad-x) - var(--space-4))
-    fit-content(300px) fit-content(420px) fit-content(380px) fit-content(320px)
-    minmax(0, 1fr)
-    fit-content(160px) 118px
+    minmax(0, 2fr) minmax(0, 4.3fr) minmax(0, 2.9fr) minmax(0, 2.5fr) minmax(0, 1.3fr)
+    118px
     calc(var(--ws-pad-x) - var(--space-4));
   column-gap: var(--space-4);
 }
@@ -12494,7 +12493,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .ws-thead, .ws-row {
   display: grid;
   grid-template-columns: subgrid;
-  grid-template-areas: ". name path git state . time act .";
+  grid-template-areas: ". name path git state time act .";
   align-items: center;
 }
 /* The head labels carry no classes, so they take their areas by position. */
