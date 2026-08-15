@@ -21,24 +21,6 @@ function aggregateFileCount(members, representative) {
     .reduce((sum, r) => sum + (Number(r.fileCount) || 0), 0);
 }
 
-// The change mix follows the same rule as the file count: an integrator with a
-// merged diff speaks for the fleet, otherwise the workers are summed.
-function aggregateChanges(members, representative) {
-  const zero = { added: 0, modified: 0, deleted: 0 };
-  const fold = (list) => list.reduce((acc, r) => {
-    const c = (r && r.changes) || zero;
-    return {
-      added: acc.added + (Number(c.added) || 0),
-      modified: acc.modified + (Number(c.modified) || 0),
-      deleted: acc.deleted + (Number(c.deleted) || 0),
-    };
-  }, { ...zero });
-  if (representative && representative.isIntegrator && Number(representative.fileCount) > 0) {
-    return fold([representative]);
-  }
-  return fold((Array.isArray(members) ? members : []).filter((r) => r && !r.isIntegrator));
-}
-
 function groupHistoryRuns(runs) {
   const groups = new Map();
   for (const run of Array.isArray(runs) ? runs : []) {
@@ -62,7 +44,6 @@ function groupHistoryRuns(runs) {
       memberCount: members.length,
       members,
       fileCount,
-      changes: aggregateChanges(members, rep),
       dollars: members.reduce((sum, m) => sum + (Number(m.dollars) || 0), 0),
       tokens: members.reduce((sum, m) => sum + (Number(m.tokens) || 0), 0),
       endedAt: latest.endedAt || rep.endedAt || null,
@@ -74,7 +55,6 @@ function groupHistoryRuns(runs) {
 }
 
 module.exports = {
-  aggregateChanges,
   aggregateFileCount,
   chooseRepresentative,
   groupHistoryRuns,
