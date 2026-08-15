@@ -640,12 +640,20 @@ body {
   color: var(--text-3);
 }
 button.chip, a.chip { cursor: pointer; }
-button.chip:hover, a.chip:hover,
-.chip.is-active {
+button.chip:hover, a.chip:hover {
   color: var(--text);
   border-color: var(--line-3);
   background: var(--surface-raised);
 }
+/* The selected axis carries a weight step as well as the surface lift, so it
+   stays distinct from whatever the pointer happens to be over. */
+.chip.is-active {
+  color: var(--text);
+  border-color: var(--text-3);
+  background: var(--surface-raised);
+  font-weight: 600;
+}
+.chip.is-active .chip-count { color: var(--text-2); }
 .chip[data-state="success"] {
   background: var(--state-success-bg); border-color: var(--state-success-edge); color: var(--state-success-ink);
 }
@@ -1533,39 +1541,6 @@ body[data-page="boot"] .page { display: none !important; }
   line-height: 1.1;
 }
 .page-sub {
-  font-size: var(--fs-small);
-  color: var(--text-2);
-  letter-spacing: var(--tracking-normal);
-  line-height: var(--lh-snug);
-}
-/* The collections share one head: the title at the page step over one muted
-   line, with the actions on the same band. The rail already says which page this
-   is, so the title reports rather than announces and the list gets the height. */
-.page-agents .page-head,
-.page-skills .page-head,
-.page-sessions .page-head,
-.page-prompts .page-head,
-.page-projects .page-head {
-  align-items: center;
-  min-height: 0;
-  margin-bottom: var(--space-4);
-}
-/* The head selector carries the page step past the dark family's own title rule,
-   so all ten themes print the title at one size. */
-.page-agents .page-head .page-title,
-.page-skills .page-head .page-title,
-.page-sessions .page-head .page-title,
-.page-prompts .page-head .page-title,
-.page-projects .page-head .page-title {
-  font-size: var(--fs-page);
-  font-weight: var(--fw-page);
-  color: var(--text-2);
-}
-.page-agents .page-sub,
-.page-skills .page-sub,
-.page-sessions .page-sub,
-.page-prompts .page-sub,
-.page-projects .page-sub {
   font-size: var(--fs-body);
   color: var(--text-3);
   letter-spacing: var(--tracking-normal);
@@ -1710,11 +1685,9 @@ body[data-page="boot"] .page { display: none !important; }
 .page-autopilot::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
 .page-autopilot .page-head-right { display: flex; align-items: center; gap: var(--space-3); }
 /* Unified button sizing inside the Autopilot page. Colour and intent classes
-   (.btn-primary, .btn-stop, .aut-hero-secondary) set palette only; geometry comes
-   from this scope. */
+   (.btn-primary, .btn-stop) set palette only; geometry comes from this scope. */
 .page-autopilot .btn-primary,
-.page-autopilot .btn-stop,
-.page-autopilot .aut-hero-secondary {
+.page-autopilot .btn-stop {
   height: 40px;
   padding: 0 var(--space-4);
   font-size: var(--fs-small);
@@ -1730,21 +1703,8 @@ body[data-page="boot"] .page { display: none !important; }
   min-width: 0;
   transition: transform var(--motion-base) var(--ease), box-shadow var(--motion-base) var(--ease), background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease);
 }
-/* One accent fill per page. On the hub the hero CTA owns the primary action, so the
-   header button steps down to a quiet outline. */
-.page-autopilot:not(.is-live) #aut-page-start {
-  background: transparent;
-  border: 1px solid var(--line-2);
-  color: var(--text-2);
-  box-shadow: none;
-}
-.page-autopilot:not(.is-live) #aut-page-start:hover {
-  transform: none;
-  box-shadow: none;
-  color: var(--text);
-  border-color: var(--line-3);
-  background: var(--bg-2);
-}
+/* Hub-only controls; the live and review states put their own buttons here. */
+.page-autopilot.is-live .aut-hub-only { display: none; }
 .page-autopilot .btn-primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
@@ -1754,10 +1714,8 @@ body[data-page="boot"] .page { display: none !important; }
   box-shadow: 0 4px 12px rgba(255, 107, 126, 0.4);
 }
 .page-autopilot .btn-stop svg,
-.page-autopilot .btn-primary svg,
-.page-autopilot .aut-hero-secondary svg { width: 14px; height: 14px; }
-/* Header buttons sit next to the status pill, so they shrink to the
-   pill's compact scale. Hero + footer CTAs keep the prominent 40px. */
+.page-autopilot .btn-primary svg { width: var(--icon-sm); height: var(--icon-sm); }
+/* Header buttons sit next to the status pill, so they take its compact scale. */
 .page-autopilot .page-head-right .btn-primary,
 .page-autopilot .page-head-right .btn-stop {
   height: var(--control-h);
@@ -1840,14 +1798,14 @@ body[data-page="boot"] .page { display: none !important; }
   flex: 0 0 auto;
 }
 .aut-diff-status[data-status="added"] {
-  background: color-mix(in srgb, #5bd994 14%, transparent);
-  color: #5bd994;
-  border: 1px solid color-mix(in srgb, #5bd994 45%, transparent);
+  background: color-mix(in srgb, var(--emerald) 14%, transparent);
+  color: var(--emerald);
+  border: 1px solid color-mix(in srgb, var(--emerald) 45%, transparent);
 }
 .aut-diff-status[data-status="modified"] {
-  background: color-mix(in srgb, #6fb5ff 14%, transparent);
-  color: #6fb5ff;
-  border: 1px solid color-mix(in srgb, #6fb5ff 45%, transparent);
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  color: var(--info);
+  border: 1px solid color-mix(in srgb, var(--info) 45%, transparent);
 }
 .aut-diff-status[data-status="deleted"] {
   background: color-mix(in srgb, var(--rose) 14%, transparent);
@@ -1872,7 +1830,7 @@ body[data-page="boot"] .page { display: none !important; }
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
-.aut-diff-added-count { color: #5bd994; }
+.aut-diff-added-count { color: var(--emerald); }
 .aut-diff-removed-count { color: var(--rose); }
 .aut-diff-body {
   flex: 1; min-height: 0;
@@ -1934,37 +1892,22 @@ body[data-page="boot"] .page { display: none !important; }
   color: var(--text);
 }
 .aut-diff-line.add {
-  background: color-mix(in srgb, #5bd994 10%, transparent);
+  background: color-mix(in srgb, var(--emerald) 10%, transparent);
 }
-.aut-diff-line.add .aut-diff-sign { color: #5bd994; }
-.aut-diff-line.add .aut-diff-text { color: #d6f5e4; }
-.aut-diff-line.add .aut-diff-ln { background: color-mix(in srgb, #5bd994 18%, transparent); color: #5bd994; }
+.aut-diff-line.add .aut-diff-sign { color: var(--emerald); }
+.aut-diff-line.add .aut-diff-text { color: color-mix(in srgb, var(--emerald) 30%, var(--text)); }
+.aut-diff-line.add .aut-diff-ln { background: color-mix(in srgb, var(--emerald) 18%, transparent); color: var(--emerald); }
 .aut-diff-line.remove {
   background: color-mix(in srgb, var(--rose) 10%, transparent);
 }
 .aut-diff-line.remove .aut-diff-sign { color: var(--rose); }
-.aut-diff-line.remove .aut-diff-text { color: #ffdde3; }
+.aut-diff-line.remove .aut-diff-text { color: color-mix(in srgb, var(--rose) 30%, var(--text)); }
 .aut-diff-line.remove .aut-diff-ln { background: color-mix(in srgb, var(--rose) 18%, transparent); color: var(--rose); }
 .aut-diff-line.context .aut-diff-text { color: var(--text-2); }
 
-/* The diff colours above are tuned for a dark surface, so the light themes restate
-   both the surface and the text against a light background. */
+/* The hues resolve per theme, so the light family only restates the ground the
+   diff sits on. */
 body[data-mode="light"] .aut-diff-content { background: rgba(0, 0, 0, 0.03); }
-body[data-mode="light"] .aut-diff-line.add { background: color-mix(in srgb, #1a7f4b 12%, transparent); }
-body[data-mode="light"] .aut-diff-line.add .aut-diff-text { color: #0b5132; }
-body[data-mode="light"] .aut-diff-line.add .aut-diff-sign { color: #12703f; }
-body[data-mode="light"] .aut-diff-line.add .aut-diff-ln {
-  background: color-mix(in srgb, #1a7f4b 16%, transparent);
-  color: #12703f;
-}
-body[data-mode="light"] .aut-diff-line.remove { background: color-mix(in srgb, #b42318 12%, transparent); }
-body[data-mode="light"] .aut-diff-line.remove .aut-diff-text { color: #7a1c14; }
-body[data-mode="light"] .aut-diff-line.remove .aut-diff-sign { color: #b42318; }
-body[data-mode="light"] .aut-diff-line.remove .aut-diff-ln {
-  background: color-mix(in srgb, #b42318 16%, transparent);
-  color: #b42318;
-}
-body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 .aut-diff-line.hunk-gap {
   background: var(--bg-1);
   border-top: 1px dashed var(--line);
@@ -1981,14 +1924,29 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 .aut-file-row { cursor: pointer; }
 .aut-file-row:hover .aut-file-path { color: var(--accent); }
 
-/* End-of-run conclusion card appended to the feed in review mode. */
+/* End-of-run conclusion card: a quiet surface with an edge in the state it reports. */
 .aut-conclusion {
   margin-top: 10px;
   padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid var(--state-muted-edge);
+  border-left: 3px solid var(--state-muted-ink);
+  border-radius: var(--radius-card);
+  background: var(--state-muted-bg);
+}
+.aut-conclusion[data-state="success"] {
+  border-color: var(--state-success-edge);
+  border-left-color: var(--state-success-ink);
+  background: var(--state-success-bg);
+}
+.aut-conclusion[data-state="warning"] {
+  border-color: var(--state-warning-edge);
+  border-left-color: var(--state-warning-ink);
+  background: var(--state-warning-bg);
+}
+.aut-conclusion[data-state="error"] {
+  border-color: var(--state-error-edge);
+  border-left-color: var(--state-error-ink);
+  background: var(--state-error-bg);
 }
 .aut-conclusion-title { font-weight: 600; font-size: var(--fs-small); color: var(--text); }
 .aut-conclusion-meta {
@@ -2069,136 +2027,11 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   50%      { color: color-mix(in srgb, var(--info) 45%, transparent); opacity: 0.55; }
 }
 
-/* Empty state when no run is active: the landing hub for the whole feature, with
-   hero, preset gallery and recent runs. Calm and explanatory with no run in flight,
-   dense and active with one. */
+/* Hub state when no run is active: preset gallery over the run history. Calm and
+   explanatory with no run in flight, dense and active with one. */
 .aut-page-empty {
   display: flex; flex-direction: column;
   gap: var(--space-5);
-}
-
-/* HERO */
-.aut-hero {
-  position: relative;
-  padding: var(--space-6);
-  border-radius: var(--radius-xl, 12px);
-  background:
-    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),
-    radial-gradient(80% 80% at 100% 100%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
-    var(--bg-1);
-  border: 1px solid var(--line-2);
-  box-shadow: var(--elev-2);
-  overflow: hidden;
-}
-/* The plane is absolutely positioned, so the static hero copy takes an explicit
-   layer above it. */
-.aut-hero-eyebrow,
-.aut-hero-title,
-.aut-hero-body,
-.aut-hero-actions,
-.aut-hero-stats { position: relative; z-index: 1; }
-.aut-hero::before {
-  content: "";
-  position: absolute;
-  top: -120px; right: -80px;
-  width: 360px; height: 360px;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 24%, transparent), transparent 70%);
-  pointer-events: none;
-  filter: blur(8px);
-}
-/* Autopilot hero: the real Kernel flying a little plane. Funny, on-brand,
-   and it uses the actual mascot art instead of a hand-drawn face. */
-.aut-hero-art {
-  position: absolute; right: 3%; top: 50%; z-index: 0;
-  width: 340px; height: 230px; pointer-events: none;
-  transform: translateY(-50%);
-  animation: apk-float 6s ease-in-out infinite;
-}
-@media (max-width: 1080px) { .aut-hero-art { display: none; } }
-.aut-plane { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.42)); }
-/* The fuselage front lip sits ABOVE Kernel so his lower body tucks inside. */
-.aut-plane-front { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 3; pointer-events: none; }
-.aut-p-body { fill: url(#aut-fuse); }
-.aut-p-accent { fill: var(--accent); }
-/* Clouds must read on both skies: white on the dark hero, soft slate on light. */
-.aut-clouds { fill: #ffffff; }
-[data-mode="light"] .aut-clouds { fill: #9db4d4; }
-/* Kernel sits DOWN in the cockpit; the front lip hides his lower half. */
-.aut-kernel-slot { position: absolute; left: 55%; top: 26px; transform: translateX(-50%); z-index: 2; line-height: 0; }
-.aut-kernel-slot .hk { width: 96px; height: auto; cursor: default; }
-/* Pilot cap overlaid on the real Kernel's head. */
-.aut-hat { position: absolute; left: 55%; top: 44px; transform: translateX(-50%); width: 108px; height: auto; z-index: 4; overflow: visible; }
-@keyframes apk-float { 0%, 100% { transform: translateY(-50%) rotate(0deg); } 50% { transform: translateY(-56%) rotate(1.2deg); } }
-@media (prefers-reduced-motion: reduce) { .aut-hero-art { animation: none; } }
-.aut-hero-eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--fs-nano, 11px);
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--accent);
-  font-weight: 600;
-  margin-bottom: var(--space-3);
-}
-/* Flat --text, no gradient text-fill: a 135deg gradient across a two-line headline
-   drops the last words to --text-2 and kills subpixel rendering. */
-.aut-hero-title {
-  font-family: var(--font-display);
-  font-size: var(--fs-page-hero);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 1.05;
-  color: var(--text);
-  margin: 0 0 var(--space-4) 0;
-  max-width: 800px;
-}
-.aut-hero-body {
-  font-size: var(--fs-h3);
-  line-height: 1.6;
-  color: var(--text-2);
-  max-width: 620px;
-  margin: 0 0 var(--space-5) 0;
-}
-.aut-hero-actions {
-  display: flex; gap: var(--space-3); align-items: center;
-  flex-wrap: wrap;
-}
-.aut-hero-secondary {
-  background: transparent;
-  border: 1px solid var(--line-2);
-  color: var(--text);
-  cursor: pointer;
-  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease);
-}
-.aut-hero-secondary:hover {
-  background: var(--bg-2);
-  border-color: var(--line-3);
-}
-/* The strip carries its own top margin so that hiding it (empty history,
-   where every figure is a zero) collapses cleanly with no dangling gap. */
-.aut-hero-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, max-content));
-  gap: var(--space-7);
-  margin-top: var(--space-6);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--line-2);
-}
-.aut-hero-stat-value {
-  font-family: var(--font-display);
-  font-size: var(--fs-h1);
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-  margin-bottom: var(--space-1);
-}
-.aut-hero-stat-label {
-  font-size: var(--fs-micro);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  font-weight: 600;
 }
 
 /* SECTION HEADERS */
@@ -2218,9 +2051,11 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 }
 
 /* PRESETS GRID */
+/* Four to a row at the default width, so the body copy keeps a readable measure
+   and the last row orphans at most one card. */
 .aut-preset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: var(--space-3);
 }
 @media (max-width: 1080px) {
@@ -2254,18 +2089,25 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
   transform: translateY(-2px);
 }
 .aut-preset:active { transform: translateY(0); }
-.aut-preset-icon {
-  width: 32px; height: 32px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-1));
-  color: var(--accent);
+/* The glyph names the preset, it does not report state, so it stays neutral and
+   rides on the title's line. */
+.aut-preset-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0;
 }
-.aut-preset-icon svg { width: 16px; height: 16px; }
+.aut-preset-icon {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-3);
+  transition: color var(--motion-base) var(--ease);
+}
+.aut-preset-icon svg { width: var(--icon-sm); height: var(--icon-sm); }
+.aut-preset:hover .aut-preset-icon { color: var(--text-2); }
 .aut-preset-title {
   font-size: var(--fs-h3); font-weight: 600;
   letter-spacing: -0.005em;
   color: var(--text);
+  min-width: 0;
 }
 .aut-preset-body {
   font-size: var(--fs-micro);
@@ -2290,20 +2132,21 @@ body[data-mode="light"] .aut-diff-added-count { color: #12703f; }
 /* RECENT RUNS LIST */
 .aut-recent {
   display: flex; flex-direction: column;
-  border-radius: var(--radius-xl, 12px);
-  border: 1px solid var(--line-2);
-  box-shadow: var(--elev-2);
-  background: var(--bg-1);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--surface-line);
+  box-shadow: var(--shadow-raised);
+  background: var(--surface);
   overflow: hidden;
-}
-.aut-recent .aut-page-feed-empty {
-  padding: var(--space-6) var(--space-3);
+  /* Rows answer to the list's own width, since the rail and the side panel
+     decide how much room it gets. */
+  container-type: inline-size;
 }
 .aut-recent-row {
   display: grid;
-  /* checkbox · goal/meta · files · status pill · rerun · delete. Exactly one column
-     per child, or the surplus child wraps onto its own grid row. */
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  /* checkbox · goal/meta · metrics · status pill · rerun · delete. Exactly one column
+     per child, or the surplus child wraps onto its own grid row. The metric and
+     pill tracks are fixed so every row's numbers land on the same vertical. */
+  grid-template-columns: auto minmax(0, 1fr) 210px 108px auto auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
@@ -2376,7 +2219,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 }
 .aut-recent-bulkdel:hover { background: color-mix(in srgb, var(--rose) 18%, transparent); }
 .aut-recent-row + .aut-recent-row { border-top: 1px solid var(--line); }
-.aut-recent-row:hover { background: var(--bg-2); }
+.aut-recent-row:hover { background: var(--surface-raised); }
 .aut-recent-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .aut-recent-goal {
   font-size: var(--fs-small); font-weight: 500;
@@ -2390,37 +2233,59 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.aut-recent-files {
+/* Metric strip: how many files the run touched, the mix it left behind, and the
+   lines it added and removed. */
+.aut-recent-metrics {
+  display: flex; align-items: center; gap: var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--fs-nano, 11px);
+  font-size: var(--fs-mono);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-.aut-recent-pill {
-  font-size: var(--fs-pico, 10px);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-pill);
-}
-.aut-recent-pill[data-status="ended"],
-.aut-recent-pill[data-status="natural"] {
-  background: color-mix(in srgb, #5bd994 14%, transparent);
-  color: #5bd994;
-  border: 1px solid color-mix(in srgb, #5bd994 45%, transparent);
-}
-.aut-recent-pill[data-status="halted"],
-.aut-recent-pill[data-status="budget"] {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-}
-.aut-recent-pill[data-status="cancelled"],
-.aut-recent-pill[data-status="user"] {
-  background: var(--bg-1);
+.aut-recent-files {
+  display: inline-flex; align-items: center; gap: 6px;
+  width: 48px;
   color: var(--text-2);
-  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.aut-recent-files svg { width: var(--icon-xs); height: var(--icon-xs); color: var(--text-3); flex: none; }
+.aut-recent-files.is-empty { color: var(--text-3); }
+.aut-changebar {
+  display: flex; gap: 2px;
+  width: 72px; height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--state-muted-bg);
+  overflow: hidden;
+  flex: none;
+}
+.aut-changebar-seg { min-width: 3px; border-radius: var(--radius-pill); }
+.aut-changebar-seg[data-kind="added"] { background: var(--state-success-ink); }
+.aut-changebar-seg[data-kind="modified"] { background: var(--state-running-ink); }
+.aut-changebar-seg[data-kind="deleted"] { background: var(--state-error-ink); }
+.aut-recent-lines {
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 1; min-width: 0;
+  white-space: nowrap;
+}
+.aut-recent-lines .is-ins { color: var(--state-success-ink); }
+.aut-recent-lines .is-del { color: var(--state-error-ink); }
+/* The outcome pill fills its track, so the word sits on the same vertical in
+   every row whatever the run's outcome was. */
+.aut-recent-row > .pill { justify-content: center; }
+/* A list too narrow for one band gives the goal its own line and drops the
+   metrics, outcome and actions onto a second, so nothing is squeezed out. */
+@container (max-width: 720px) {
+  .aut-recent-row {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    row-gap: var(--space-2);
+  }
+  .aut-recent-checkzone { grid-area: 1 / 1 / 3 / 2; }
+  .aut-recent-main { grid-area: 1 / 2 / 2 / 3; }
+  .aut-recent-row > .pill { grid-area: 1 / 3 / 2 / 4; }
+  .aut-recent-del { grid-area: 1 / 4 / 2 / 5; }
+  .aut-recent-metrics { grid-area: 2 / 2 / 3 / 4; }
+  .aut-recent-rerun { grid-area: 2 / 4 / 3 / 5; }
 }
 
 .aut-recent-rerun {
@@ -2458,6 +2323,145 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   border-color: color-mix(in srgb, var(--rose) 40%, var(--line-2));
 }
 .aut-recent-del svg { width: var(--icon-xs); height: var(--icon-xs); }
+
+/* ─── Audit trail ───────────────────────────────────────────────────────── */
+
+.aut-audit {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--surface-line);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+.aut-audit[hidden] { display: none; }
+.aut-audit-head {
+  display: flex; align-items: center; gap: var(--space-3);
+}
+.aut-audit-head .section-label { flex: 1; min-width: 0; }
+.aut-audit-filters {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+}
+/* The table answers to the card it sits in, not to the window, because the rail
+   and the side panel decide how much room the card actually gets. */
+.aut-audit-table {
+  display: flex; flex-direction: column;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--surface-line);
+  overflow: hidden;
+  container-type: inline-size;
+}
+.aut-audit-head-row,
+.aut-audit-row {
+  display: grid;
+  grid-template-columns: 140px minmax(120px, 200px) minmax(0, 1fr) 96px;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+}
+.aut-audit-head-row {
+  font-size: var(--fs-section);
+  font-weight: var(--fw-section);
+  letter-spacing: var(--tracking-section);
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--surface-line);
+}
+.aut-audit-rows {
+  display: flex; flex-direction: column;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.aut-audit-rows::-webkit-scrollbar { width: 8px; }
+.aut-audit-rows::-webkit-scrollbar-thumb {
+  background: var(--state-muted-bg);
+  border-radius: var(--radius-pill);
+}
+.aut-audit-row {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+/* The event pill hugs its own name rather than filling the column. */
+.aut-audit-row > .pill { justify-self: start; }
+.aut-audit-row + .aut-audit-row { border-top: 1px solid var(--line); }
+.aut-audit-row:hover { background: var(--surface-raised); }
+.aut-audit-key,
+.aut-audit-when {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.aut-audit-when { text-align: right; white-space: nowrap; }
+.aut-audit-details {
+  min-width: 0;
+  line-height: var(--lh-base);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.aut-audit-details.is-empty,
+.aut-audit-key.is-empty { color: var(--text-3); opacity: 0.7; }
+.aut-audit-empty {
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  font-size: var(--fs-body);
+  color: var(--text-3);
+}
+.aut-audit-foot {
+  display: flex; align-items: center; justify-content: center; gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.aut-audit-more {
+  height: var(--control-h);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--surface-line);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.aut-audit-more:hover { color: var(--text); border-color: var(--line-3); }
+.aut-audit-more[hidden] { display: none; }
+.aut-audit-showing {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* A card too narrow for four tracks stacks the detail under its own row rather
+   than dropping it, so no event loses the sentence that explains it. */
+@container (max-width: 620px) {
+  .aut-audit-head-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .aut-audit-head-row span:nth-child(2),
+  .aut-audit-head-row span:nth-child(3) { display: none; }
+  .aut-audit-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: var(--space-1);
+  }
+  .aut-audit-row > .pill { grid-area: 1 / 1 / 2 / 2; }
+  .aut-audit-row .aut-audit-key { grid-area: 1 / 2 / 2 / 3; }
+  .aut-audit-row .aut-audit-when { grid-area: 1 / 3 / 2 / 4; }
+  .aut-audit-row .aut-audit-details { grid-area: 2 / 1 / 3 / 4; }
+}
+
+/* The audit trail carries the finished run's events, so the live timeline card
+   stands down and the file list takes the row. */
+.page-autopilot.is-review-mode .aut-card-log-dash { display: none; }
+.page-autopilot.is-review-mode .aut-row-bottom {
+  grid-template-columns: minmax(0, 1fr);
+  height: auto;
+  max-height: 460px;
+}
 
 /* Live layout */
 .aut-page-live {
@@ -2518,7 +2522,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 :root {
   --lane-0: var(--accent);
   --lane-1: #34d399;
-  --lane-2: #fbbf24;
+  --lane-2: var(--amber);
   --lane-3: #a78bfa;
 }
 .aut-dash-wrapper {
@@ -2938,8 +2942,8 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   box-shadow: 0 0 12px color-mix(in srgb, var(--lane-c) 20%, transparent);
   animation: aut-state-pulse 2s ease-in-out infinite;
 }
-.aut-lane-state[data-state="quiet"] { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 40%, transparent); background: color-mix(in srgb, #fbbf24 10%, transparent); animation: none; }
-.aut-lane-state[data-state="done"] { color: #5bd994; border-color: color-mix(in srgb, #5bd994 45%, transparent); background: color-mix(in srgb, #5bd994 10%, transparent); }
+.aut-lane-state[data-state="quiet"] { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); background: color-mix(in srgb, var(--amber) 10%, transparent); animation: none; }
+.aut-lane-state[data-state="done"] { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 45%, transparent); background: color-mix(in srgb, var(--emerald) 10%, transparent); }
 .aut-lane-state[data-state="blocked"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); animation: none; }
 .aut-lane-state[data-state="stopped"] { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 45%, transparent); background: color-mix(in srgb, var(--rose) 10%, transparent); }
 @keyframes aut-state-pulse {
@@ -3081,7 +3085,7 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   opacity: 0.5;
 }
 .aut-eventlog .aut-ev:last-child::before { display: none; }
-.aut-ev-nudge .aut-ev-mark { border-radius: var(--radius-sm); background: #fbbf24; box-shadow: 0 0 12px rgba(251,191,36,0.6); }
+.aut-ev-nudge .aut-ev-mark { border-radius: var(--radius-sm); background: var(--amber); box-shadow: 0 0 12px color-mix(in srgb, var(--amber) 60%, transparent); }
 .aut-ev-stop .aut-ev-mark { background: var(--rose); box-shadow: 0 0 12px rgba(255,107,126,0.6); }
 .aut-ev-done .aut-ev-mark, .aut-ev-end .aut-ev-mark { background: transparent; border: 2px solid var(--lane-c); box-shadow: none; }
 .aut-ev-label {
@@ -3120,8 +3124,8 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   flex-shrink: 0;
 }
 .aut-chip-state[data-state="working"], .aut-chip-state[data-state="tool"] { color: var(--lane-c); }
-.aut-chip-state[data-state="quiet"] { color: #fbbf24; }
-.aut-chip-state[data-state="done"] { color: #5bd994; }
+.aut-chip-state[data-state="quiet"] { color: var(--amber); }
+.aut-chip-state[data-state="done"] { color: var(--emerald); }
 .aut-chip-state[data-state="blocked"] { color: var(--warn); }
 .aut-chip-state[data-state="stopped"] { color: var(--rose); }
 .aut-chip-action {
@@ -3175,15 +3179,8 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   background: var(--line-2); border-radius: var(--radius-sm);
 }
 .aut-page-feed-empty {
-  color: var(--text-3); font-size: var(--fs-small);
-  padding: 40px 16px; text-align: center;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  opacity: 0.8;
-  background: var(--bg-1);
-  border-radius: var(--radius-xl);
-  margin: 12px;
-  border: 1px dashed var(--line-2);
+  color: var(--text-3); font-size: var(--fs-body);
+  padding: var(--space-6) var(--space-4); text-align: center;
 }
 
 /* Activity row (reuses ap-row-in keyframe). */
@@ -3207,9 +3204,9 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   box-shadow: 0 0 6px -1px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 .ap-feed-row .ap-row-text { flex: 1; }
-.ap-feed-row.ap-row-tool .ap-row-glyph { background: #6fb5ff; box-shadow: 0 0 6px -1px #6fb5ff; }
+.ap-feed-row.ap-row-tool .ap-row-glyph { background: var(--info); box-shadow: 0 0 6px -1px var(--info); }
 .ap-feed-row.ap-row-edit .ap-row-glyph { background: var(--accent); box-shadow: 0 0 6px -1px var(--accent); }
-.ap-feed-row.ap-row-result .ap-row-glyph { background: #5bd994; box-shadow: 0 0 6px -1px #5bd994; }
+.ap-feed-row.ap-row-result .ap-row-glyph { background: var(--emerald); box-shadow: 0 0 6px -1px var(--emerald); }
 @keyframes ap-row-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -3251,14 +3248,14 @@ input[type="checkbox"].aut-recent-check:indeterminate {
   border-radius: var(--radius-pill);
 }
 .aut-file-row[data-status="added"] .aut-file-status {
-  background: color-mix(in srgb, #5bd994 14%, transparent);
-  color: #5bd994;
-  border: 1px solid color-mix(in srgb, #5bd994 45%, transparent);
+  background: color-mix(in srgb, var(--emerald) 14%, transparent);
+  color: var(--emerald);
+  border: 1px solid color-mix(in srgb, var(--emerald) 45%, transparent);
 }
 .aut-file-row[data-status="modified"] .aut-file-status {
-  background: color-mix(in srgb, #6fb5ff 14%, transparent);
-  color: #6fb5ff;
-  border: 1px solid color-mix(in srgb, #6fb5ff 45%, transparent);
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  color: var(--info);
+  border: 1px solid color-mix(in srgb, var(--info) 45%, transparent);
 }
 .aut-file-row[data-status="deleted"] .aut-file-status {
   background: color-mix(in srgb, var(--rose) 14%, transparent);
@@ -3296,12 +3293,12 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .aut-fa-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
 }
 .aut-fa-primary:hover {
   background: color-mix(in srgb, var(--accent) 90%, white);
   border-color: color-mix(in srgb, var(--accent) 90%, white);
-  color: #ffffff;
+  color: var(--on-accent);
 }
 .aut-fa-danger {
   color: var(--rose);
@@ -6110,7 +6107,7 @@ textarea.pr-body-edit:focus-visible {
 }
 .card-cta:hover {
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 .card-cta-arrow {
@@ -8549,14 +8546,6 @@ body[data-mode="light"] .ob-aurora i { opacity: 0.32; }
   overflow: visible;
   cursor: pointer;
 }
-/* ── Bare Kernel ─────────────────────────────────────────────────────────
-   The mascot on his own, for pages that want him as illustration rather than as the
-   live boot animation: pod shell, hands, glow and sparks hidden, the seed at rest,
-   every animation and transition off. */
-.hk.is-bare .hk-petal, .hk.is-bare .hk-pit, .hk.is-bare .hk-shadow,
-.hk.is-bare .hk-glow, .hk.is-bare .hk-hands, .hk.is-bare .hk-sparks { display: none; }
-.hk.is-bare .hk-seed { transform: none; opacity: 1; }
-.hk.is-bare, .hk.is-bare * { animation: none !important; transition: none !important; }
 /* Every animated part is positioned in viewBox units, so transform-origin is
    read against the viewBox rather than each element's own tight bounding box. */
 .hk-petal, .hk-seed, .hk-sprout-g, .hk-eyes, .hk-lid,
@@ -10440,51 +10429,15 @@ kbd {
    sections fill in. */
 .wfx { display: flex; flex-direction: column; gap: var(--space-6); }
 
-.wfx-hero {
+/* The lifecycle graph as documentation: it heads "How a run works" rather than
+   selling the page. Bounded by its own aspect ratio so it never takes the fold. */
+.wfx-concept-art {
   position: relative;
-  /* Copy and art are two columns of one grid, and the stats bar is its own
-     full-width row underneath, so the art is bounded by the rows it spans. A
-     container query, not a media query: the status panel and the collapsed rail
-     both change this box without changing the window. */
-  container-type: inline-size;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 52%;
-  column-gap: 32px;
-  align-content: start;
-  padding: var(--space-6) var(--space-6) var(--space-5);
-  border-radius: var(--radius-2xl);
-  /* --bg-1 is translucent in the dark themes, so it is flattened onto an opaque
-     --bg here and the panel's brightness stops tracking its position. */
-  background:
-    radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--text) 6%, transparent), transparent 60%),
-    linear-gradient(var(--bg-1), var(--bg-1)),
-    var(--bg);
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-/* Ambient corner light, kept well under the diagram so it reads as depth
-   rather than as another thing to look at. */
-.wfx-hero::before {
-  content: "";
-  position: absolute;
-  top: -140px; right: -60px;
-  width: 380px; height: 380px;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--text) 7%, transparent), transparent 70%);
+  width: 100%;
+  max-width: 760px;
+  aspect-ratio: 760 / 262;
+  margin: 0 auto var(--space-2);
   pointer-events: none;
-  filter: blur(16px);
-}
-/* A live DAG: start chip, parallel security reviewers, a gate, and a ship/fix
-   branch. The art states the product thesis without competing with the copy. */
-.wfx-hero-art {
-  position: relative;
-  /* Spans the copy's rows and stops there. The box takes its height from the column
-     beside it rather than from its own width, and the SVG letterboxes inside
-     whatever it gets. */
-  grid-column: 2; grid-row: 1 / 5;
-  align-self: stretch;
-  min-height: 0;
-  pointer-events: none; z-index: 0;
   contain: paint;
 }
 .wfx-dag { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -10621,69 +10574,6 @@ kbd {
   .wfx-gate-mark, .wfx-state.is-live { animation: none; opacity: 1; }
 }
 
-.wfx-hero-eyebrow {
-  grid-column: 1; grid-row: 1;
-  font-family: var(--font-mono);
-  font-size: var(--fs-nano); letter-spacing: 0.24em; text-transform: uppercase;
-  /* Pulling the accent toward the theme's text colour keeps this readable at 11px
-     on both near-white and near-black panels, in all ten themes. */
-  color: color-mix(in srgb, var(--accent) 60%, var(--text));
-  font-weight: 600;
-  margin-bottom: var(--space-3);
-}
-.wfx-hero-title {
-  grid-column: 1; grid-row: 2;
-  font-family: var(--font-display);
-  font-size: var(--fs-page-hero); font-weight: 700;
-  letter-spacing: -0.025em; line-height: 1.05;
-  color: var(--text);
-  margin: 0 0 var(--space-4) 0;
-  max-width: 600px;
-}
-.wfx-hero-body {
-  grid-column: 1; grid-row: 3;
-  /* Stated to match .aut-hero-body. The two page heroes are separate CSS
-     blocks that can drift apart, so both scales are written the same. */
-  font-size: var(--fs-h3); line-height: 1.6;
-  color: var(--text-2);
-  max-width: 620px;
-  margin: 0 0 var(--space-5) 0;
-}
-.wfx-hero-actions {
-  grid-column: 1; grid-row: 4;
-  display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap;
-  margin-bottom: var(--space-5);
-}
-.wfx-hero-secondary {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--text);
-  border-radius: var(--radius-md);
-  height: var(--control-h);
-  padding: 0 16px;
-  font-family: inherit; font-size: var(--fs-small); font-weight: 600;
-  cursor: pointer;
-  transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease);
-}
-.wfx-hero-secondary:hover { background: var(--bg-2); border-color: var(--line-2); }
-.wfx-hero-stats {
-  grid-column: 1 / -1; grid-row: 5;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, max-content));
-  gap: var(--space-7);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--line-2);
-}
-.wfx-hero-stat-value {
-  font-family: var(--font-display);
-  font-size: var(--fs-display); font-weight: 700; letter-spacing: -0.015em;
-  color: var(--text); font-variant-numeric: tabular-nums;
-  margin-bottom: var(--space-1);
-}
-.wfx-hero-stat-label {
-  font-size: var(--fs-micro); letter-spacing: var(--tracking-wide); text-transform: uppercase;
-  color: var(--text-3); font-weight: 600;
-}
 @media (max-width: 900px) {
   .wfx-concept-art { display: none; }
 }
@@ -10728,7 +10618,7 @@ kbd {
   display: flex; flex-direction: column; gap: var(--space-3);
   padding: var(--space-4);
   border-radius: var(--radius-2xl);
-  /* Opaque surface: see the note on .wfx-hero. */
+  /* Opaque surface: --bg-1 is a translucent white in the dark themes. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   border: 1px solid var(--line);
   text-align: left; font-family: inherit; color: inherit;
@@ -10805,7 +10695,7 @@ kbd {
 .wfx-concept {
   display: flex; flex-direction: column; gap: var(--space-2);
   padding: var(--space-4);
-  /* Opaque surface: see the note on .wfx-hero. */
+  /* Opaque surface: --bg-1 is a translucent white in the dark themes. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
 }
 .wfx-concept-num {
@@ -10827,7 +10717,7 @@ kbd {
   display: flex; flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius-2xl);
-  /* Opaque surface: see the note on .wfx-hero. */
+  /* Opaque surface: --bg-1 is a translucent white in the dark themes. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   overflow: hidden;
 }
@@ -11174,7 +11064,7 @@ kbd {
 .wfx-fig {
   display: flex; flex-direction: column; gap: var(--space-1);
   padding: var(--space-3);
-  /* Opaque surface: see the note on .wfx-hero. --bg-1 is a white alpha in seven of
+  /* Opaque surface: --bg-1 is a white alpha in seven of
      the ten themes, so a single-layer fill would let the ambient corner pools read
      through and the tile's brightness would track its scroll position. The 1px gap
      over a --line ground is the divider, so there are no border rules to keep in
@@ -11784,9 +11674,9 @@ button.wfx-claim:hover {
    should not trade elevation with the theme.
 
    The panel recipe wins rather than --bg-2, because it is what every other
-   top-level plate in this file uses and because it is opaque; see the note on
-   .wfx-hero. Nested fills stay on --bg-2. Controls are exempt: the source cards and
-   the URL field are pressable and typeable and sit above the plate they are on. */
+   top-level plate in this file uses and because it flattens the translucent --bg-1
+   onto an opaque ground. Nested fills stay on --bg-2. Controls are exempt: the
+   source cards and the URL field are pressable and sit above the plate. */
 .wfx-pf { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-lg); background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg); overflow: hidden; }
 .wfx-pf-h {
   padding: var(--space-2) var(--space-3);
@@ -12145,7 +12035,7 @@ body[data-mode="light"] .wfx-sheet:not([data-state="working"]) > .modal-foot .gh
   display: flex; flex-direction: column; gap: var(--space-3);
   padding: var(--space-4) var(--space-4) var(--space-3);
   border: 1px solid var(--line); border-radius: var(--radius-2xl);
-  /* Opaque surface: see the note on .wfx-hero. Two identical cards have to read
+  /* Opaque surface: --bg-1 is translucent here. Two identical cards have to read
      as the same surface wherever they land in the row. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   box-shadow: var(--elev-2);

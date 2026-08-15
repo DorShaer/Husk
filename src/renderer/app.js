@@ -883,28 +883,6 @@ function latestWhatsNewVersion() {
   };
   return Object.keys(WHATS_NEW).sort(bySemver).pop() || '';
 }
-// Clone Kernel into an empty-state stage. Ids are re-prefixed per mount so
-// clones stay distinct from the onboarding original and from each other.
-let emptyKernelSeq = 0;
-function mountEmptyKernel(slot) {
-  const src = $('#ob-kernel');
-  if (!src || !slot) return null;
-  const prefix = `ek${++emptyKernelSeq}`;
-  const markup = src.outerHTML
-    .replaceAll('id="hk-', `id="${prefix}-`)
-    .replaceAll('url(#hk-', `url(#${prefix}-`)
-    .replace('id="ob-kernel"', '');
-  // eslint-disable-next-line no-unsanitized/property -- own static SVG markup, id-prefixed
-  slot.innerHTML = markup;
-  const hk = slot.querySelector('svg');
-  if (!hk) return null;
-  hk.removeAttribute('style');
-  // Bare, static Kernel: `.is-bare` hides the pod shell and stops the idle
-  // motion, and the viewBox tightens around the seed.
-  hk.className.baseVal = 'hk is-bare';
-  hk.setAttribute('viewBox', '40 -14 120 176');
-  return null;
-}
 // Older entries are a flat list of strings with a bold lead-in. Both shapes
 // render as slides, so replaying an old version still works.
 function wnSlides(entry) {
@@ -4089,29 +4067,23 @@ function paintWorkflowList() {
   wfPaintPatterns();
   wfPaintRecentRuns();
 
-  // Hero figures: what this page is worth at a glance.
+  // The figures report on runs, so they stand only once a run exists.
   const week = wfRunsCache.filter((r) => Date.now() - new Date(r.finishedAt).getTime() < 7 * 864e5);
   const passed = week.filter((r) => r.status === 'done').length;
   const setStat = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
+  const durations = wfRunsCache.map((r) => r.ms || 0).filter(Boolean).sort((a, b) => a - b);
   setStat('#wfx-stat-flows', String(workflowsCache.length));
   setStat('#wfx-stat-runs', String(week.length));
   setStat('#wfx-stat-pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
-  if (wfRunsCache.length) {
-    const durations = wfRunsCache.map((r) => r.ms || 0).filter(Boolean).sort((a, b) => a - b);
-    setStat('#wfx-stat-median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
-  } else {
-    setStat('#wfx-stat-median', 'n/a');
-  }
+  setStat('#wfx-stat-median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
+  const figures = $('#wfx-figures');
+  if (figures) figures.hidden = !wfRunsCache.length;
 
   // Nothing saved yet: the patterns gallery is the call to action, so the
   // "your workflows" section stays out of the way entirely.
   const mine = $('#wfx-mine-section');
   const mineSub = $('#wfx-mine-sub');
   if (mine) mine.hidden = !workflowsCache.length;
-  // The full hero is the pitch for an empty workspace; once flows exist it
-  // drops to a band and hands the fold back to the saved cards.
-  const hero = document.querySelector('.wfx-hero');
-  if (hero) hero.classList.toggle('is-compact', workflowsCache.length > 0);
   if (mineSub) {
     mineSub.textContent = workflowsCache.length === 1
       ? '1 flow saved in this workspace'
@@ -5605,15 +5577,6 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
 
 // Button wiring
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
-$('#wfx-cta-build') && $('#wfx-cta-build').addEventListener('click', () => openWorkflowBuilder(null));
-// The two learn-more CTAs scroll rather than navigate: the answer to both is
-// already further down this page, and a jump keeps the context.
-const wfxScrollTo = (sel) => {
-  const el = $(sel);
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-};
-$('#wfx-cta-patterns') && $('#wfx-cta-patterns').addEventListener('click', () => wfxScrollTo('#wfx-patterns-section'));
-$('#wfx-cta-learn') && $('#wfx-cta-learn').addEventListener('click', () => wfxScrollTo('#wfx-concepts-section'));
 
 // ─── Portable workflows: the install sheet, the record, the publish sheet ────
 //
@@ -10772,6 +10735,18 @@ if ($('#aut-mr-save')) {
     toast('Model routing saved', 'success');
   });
 }
+// Picking a detected command fills the field; Custom hands the field back.
+$('#pref-agent-pick') && $('#pref-agent-pick').addEventListener('change', function () {
+  const field = $('#pref-agent');
+  if (!field) return;
+  if (this.value === PREF_AGENT_CUSTOM) {
+    field.hidden = false;
+    field.focus();
+    return;
+  }
+  field.hidden = true;
+  field.value = this.value;
+});
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
   const cwdInput = $('#pref-agent-cwd');
@@ -15214,9 +15189,6 @@ const AUTOPILOT_PRESETS = [
 ];
 
 function renderAutopilotPage() {
-  // Mount the real Kernel into the hero art once (the slot lives in the hero).
-  const kSlot = document.querySelector('.aut-kernel-slot');
-  if (kSlot && !kSlot.querySelector('svg')) mountEmptyKernel(kSlot);
   // The dollar figure means different things on an API key vs a plan; learn
   // which so the label is honest before any numbers paint.
   refreshAutBilling();
@@ -15230,6 +15202,8 @@ function renderAutopilotPage() {
       card.type = 'button';
       card.className = 'aut-preset';
       card.dataset.preset = p.id;
+      const head = document.createElement('div');
+      head.className = 'aut-preset-head';
       const icon = document.createElement('div');
       icon.className = 'aut-preset-icon';
       // eslint-disable-next-line no-unsanitized/property -- inline SVG from a static constant, no user input
@@ -15237,6 +15211,8 @@ function renderAutopilotPage() {
       const title = document.createElement('div');
       title.className = 'aut-preset-title';
       title.textContent = p.title;
+      head.appendChild(icon);
+      head.appendChild(title);
       const body = document.createElement('div');
       body.className = 'aut-preset-body';
       body.textContent = p.body;
@@ -15250,8 +15226,7 @@ function renderAutopilotPage() {
       caps.appendChild(capLine('time', `${p.caps.minutes}m`));
       caps.appendChild(capLine('tokens', formatTokens(p.caps.tokens)));
       caps.appendChild(capLine('spend', `$${p.caps.dollars}`));
-      card.appendChild(icon);
-      card.appendChild(title);
+      card.appendChild(head);
       card.appendChild(body);
       card.appendChild(caps);
       card.addEventListener('click', () => loadPresetIntoStartModal(p));
@@ -15634,13 +15609,175 @@ function rcSave() {
     toast('Saved husk-race-card.png', 'success');
   }, 'image/png');
 }
+// Line-art glyph for the run rows and the audit table.
+function autIcon(paths) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.75');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of paths) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    el.setAttribute('d', d);
+    svg.appendChild(el);
+  }
+  return svg;
+}
+const AUT_ICON_FILE = ['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v5h5'];
+const AUT_ICON_CHECK = ['M20 6 9 17l-5-5'];
+const AUT_ICON_ALERT = ['M12 8v5', 'M12 17h.01', 'M12 3 2 20h20z'];
+const AUT_ICON_STOP = ['M6 6h12v12H6z'];
+const AUT_ICON_HELP = ['M12 17h.01', 'M9.5 9a2.5 2.5 0 1 1 3.2 2.4c-.7.3-1.2 1-1.2 1.8v.3'];
+
+// How a finished run reads: the state the pill takes, the word beside it, and
+// the glyph that carries the same meaning without colour.
+function autRunOutcome(run) {
+  const key = String((run && (run.haltReason || run.status)) || 'ended');
+  if (key === 'natural' || key === 'ended') return { state: 'success', label: 'completed', icon: AUT_ICON_CHECK };
+  if (key === 'user' || key === 'cancelled') return { state: 'muted', label: 'stopped', icon: AUT_ICON_STOP };
+  if (key === 'unknown') return { state: 'muted', label: 'unknown', icon: AUT_ICON_HELP };
+  if (key === 'budget') return { state: 'warning', label: 'capped', icon: AUT_ICON_ALERT };
+  return { state: 'warning', label: key, icon: AUT_ICON_ALERT };
+}
+
+// Relative stamp for run rows and audit rows: seconds through years, with a
+// forward form for anything stamped ahead of now.
+function fmtRelWhen(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const t = (typeof value === 'number' || /^\d{10,}$/.test(raw)) ? Number(value) : Date.parse(raw);
+  if (!isFinite(t)) return '';
+  const delta = Date.now() - t;
+  const ahead = delta < 0;
+  const secs = Math.floor(Math.abs(delta) / 1000);
+  const say = (n, unit) => (ahead ? `in ${n}${unit}` : `${n}${unit} ago`);
+  if (secs < 10) return ahead ? 'in a moment' : 'just now';
+  if (secs < 60) return say(secs, 's');
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return say(mins, 'm');
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return say(hours, 'h');
+  const days = Math.floor(hours / 24);
+  if (days < 7) return say(days, 'd');
+  if (days < 35) return say(Math.floor(days / 7), 'w');
+  if (days < 365) return say(Math.floor(days / 30), 'mo');
+  return say(Math.floor(days / 365), 'y');
+}
+// The exact stamp behind a relative one, for the hover title.
+function fmtAbsWhen(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const t = (typeof value === 'number' || /^\d{10,}$/.test(raw)) ? Number(value) : Date.parse(raw);
+  if (!isFinite(t)) return '';
+  return new Date(t).toLocaleString();
+}
+
+// Proportional bar over the mix a run left behind: files added, modified and
+// removed, each segment weighted by its own count.
+function buildChangeBar(mix) {
+  const parts = [
+    ['added', Number(mix && mix.added) || 0],
+    ['modified', Number(mix && mix.modified) || 0],
+    ['deleted', Number(mix && mix.deleted) || 0],
+  ].filter(([, n]) => n > 0);
+  if (!parts.length) return null;
+  const bar = document.createElement('span');
+  bar.className = 'aut-changebar';
+  for (const [kind, n] of parts) {
+    const seg = document.createElement('span');
+    seg.className = 'aut-changebar-seg';
+    seg.dataset.kind = kind;
+    seg.style.flex = String(n);
+    bar.appendChild(seg);
+  }
+  bar.title = parts.map(([kind, n]) => `${n} ${kind}`).join(', ');
+  return bar;
+}
+
+// One run's metrics: how many files it touched, the mix, and the lines it added
+// and removed once those land.
+function buildRunMetrics(run, sessionIds) {
+  const wrap = document.createElement('div');
+  wrap.className = 'aut-recent-metrics';
+  const count = Number(run && run.fileCount) || 0;
+  const files = document.createElement('span');
+  files.className = 'aut-recent-files';
+  files.appendChild(autIcon(AUT_ICON_FILE));
+  const num = document.createElement('span');
+  num.textContent = count > 0 ? String(count) : 'none';
+  files.appendChild(num);
+  if (!count) files.classList.add('is-empty');
+  files.title = count === 1 ? '1 file touched' : `${count} files touched`;
+  wrap.appendChild(files);
+  const bar = buildChangeBar(run && run.changes);
+  if (bar) wrap.appendChild(bar);
+  const lines = document.createElement('span');
+  lines.className = 'aut-recent-lines';
+  lines.dataset.sessions = (sessionIds || []).join(' ');
+  wrap.appendChild(lines);
+  return wrap;
+}
+
+// Line counts come from the run's own snapshot against the workspace it ran in,
+// so they land after the list paints and only for runs that still have one.
+const autopilotRunStats = new Map();
+const AUT_STATS_BATCH = 12;
+async function fillRunLineStats(runs) {
+  const wanted = [];
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!(Number(run.fileCount) > 0)) continue;
+    const ids = Array.isArray(run.sessionIds) && run.sessionIds.length ? run.sessionIds : [run.sessionId];
+    for (const sid of ids) if (sid && !autopilotRunStats.has(sid)) wanted.push(sid);
+  }
+  for (let i = 0; i < wanted.length; i += AUT_STATS_BATCH) {
+    const batch = wanted.slice(i, i + AUT_STATS_BATCH);
+    try {
+      const res = await window.husk.autopilot.runStats({ sessionIds: batch });
+      if (res && res.ok && res.stats) {
+        for (const [sid, stat] of Object.entries(res.stats)) autopilotRunStats.set(sid, stat);
+      } else {
+        for (const sid of batch) autopilotRunStats.set(sid, null);
+      }
+    } catch (_) {
+      for (const sid of batch) autopilotRunStats.set(sid, null);
+    }
+    paintRunLineStats();
+  }
+  paintRunLineStats();
+}
+function paintRunLineStats() {
+  document.querySelectorAll('#aut-recent .aut-recent-lines').forEach((el) => {
+    const ids = String(el.dataset.sessions || '').split(' ').filter(Boolean);
+    let insertions = 0;
+    let deletions = 0;
+    let known = false;
+    for (const sid of ids) {
+      const stat = autopilotRunStats.get(sid);
+      if (!stat) continue;
+      known = true;
+      insertions += Number(stat.insertions) || 0;
+      deletions += Number(stat.deletions) || 0;
+    }
+    while (el.firstChild) el.removeChild(el.firstChild);
+    if (!known || (!insertions && !deletions)) { el.removeAttribute('title'); return; }
+    const ins = document.createElement('span');
+    ins.className = 'is-ins';
+    ins.textContent = `+${insertions}`;
+    const del = document.createElement('span');
+    del.className = 'is-del';
+    del.textContent = `−${deletions}`;
+    el.appendChild(ins);
+    el.appendChild(del);
+    el.title = `${insertions} lines added, ${deletions} lines removed`;
+  });
+}
+
 async function refreshAutopilotHistory() {
   const list = $('#aut-recent');
   const meta = $('#aut-recent-meta');
-  const heroRuns = $('#aut-hero-runs');
-  const heroFiles = $('#aut-hero-files');
-  const heroSpend = $('#aut-hero-spend');
-  const heroStats = $('#aut-hero-stats');
   if (!list) return;
   const active = projectsCache.find((p) => p && p.id === activeProjectId);
   const workspaceRoot = active && active.path ? active.path : null;
@@ -15653,26 +15790,21 @@ async function refreshAutopilotHistory() {
     empty.className = 'aut-page-feed-empty';
     empty.textContent = 'Could not load history.';
     list.appendChild(empty);
-    if (heroStats) heroStats.hidden = true;
     return;
   }
   const runs = r.runs || [];
   while (list.firstChild) list.removeChild(list.firstChild);
+  // Bulk selection needs rows to act on, and the section states the fact once.
+  const tools = $('#aut-recent-tools');
+  if (tools) tools.hidden = !runs.length;
+  if (meta) meta.textContent = '';
   if (!runs.length) {
     const empty = document.createElement('div');
     empty.className = 'aut-page-feed-empty';
-    empty.textContent = 'No prior runs in this project.';
+    empty.textContent = 'No runs in this workspace yet. Start one from a preset above.';
     list.appendChild(empty);
-    if (meta) meta.textContent = 'no runs yet';
-    // A row of three zeros is a 128px band of nothing. The strip only earns
-    // its space once there is a number worth reading.
-    if (heroStats) heroStats.hidden = true;
-    if (heroRuns) heroRuns.textContent = '0';
-    if (heroFiles) heroFiles.textContent = '0';
-    if (heroSpend) heroSpend.textContent = '$0';
     return;
   }
-  if (heroStats) heroStats.hidden = false;
   // Selection survives a refresh only for sessions that still exist.
   const present = new Set(runs.flatMap((r) => Array.isArray(r.sessionIds) ? r.sessionIds : [r.sessionId]));
   for (const sid of [...selectedRunSessions]) if (!present.has(sid)) selectedRunSessions.delete(sid);
@@ -15712,16 +15844,19 @@ async function refreshAutopilotHistory() {
     m2.className = 'aut-recent-meta';
     const when = run.endedAt || run.capturedAt;
     const memberText = run.memberCount && run.memberCount > 1 ? `${run.memberCount} agents · ` : '';
-    m2.textContent = `${fmtRelTime(when)} · ${memberText}${run.sessionId.slice(5, 17)}`;
+    m2.textContent = `${fmtRelWhen(when) || 'no end time'} · ${memberText}${run.sessionId.slice(5, 17)}`;
+    m2.title = fmtAbsWhen(when);
     main.appendChild(goal);
     main.appendChild(m2);
-    const files = document.createElement('div');
-    files.className = 'aut-recent-files';
-    files.textContent = run.fileCount > 0 ? `${run.fileCount} files` : 'no changes';
+    const files = buildRunMetrics(run, rowSessionIds);
+    const outcome = autRunOutcome(run);
     const pill = document.createElement('div');
-    pill.className = 'aut-recent-pill';
-    pill.dataset.status = run.haltReason || run.status || 'ended';
-    pill.textContent = run.haltReason || run.status || 'ended';
+    pill.className = 'pill';
+    pill.dataset.state = outcome.state;
+    pill.appendChild(autIcon(outcome.icon));
+    const pillLabel = document.createElement('span');
+    pillLabel.textContent = outcome.label;
+    pill.appendChild(pillLabel);
     const rerun = document.createElement('button');
     rerun.type = 'button';
     rerun.className = 'aut-recent-rerun';
@@ -15773,11 +15908,13 @@ async function refreshAutopilotHistory() {
     row.addEventListener('click', () => openAutopilotHistoryRun(run));
     list.appendChild(row);
   }
-  if (meta) meta.textContent = `${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`;
-  if (heroRuns) heroRuns.textContent = String(runs.length);
-  if (heroFiles) heroFiles.textContent = String(totalFiles);
-  if (heroSpend) heroSpend.textContent = formatDollars(totalSpend);
+  // Totals ride the section's own line, and a zero figure is left off it.
+  const metaParts = [`${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`];
+  if (totalFiles) metaParts.push(`${totalFiles} ${totalFiles === 1 ? 'file' : 'files'} changed`);
+  if (totalSpend) metaParts.push(`${formatDollars(totalSpend)} spent`);
+  if (meta) meta.textContent = metaParts.join(' · ');
   updateBulkDeleteUi();
+  fillRunLineStats(runs);
 }
 // ── Bulk run management ─────────────────────────────────────────────────
 const selectedRunSessions = new Set();
@@ -16362,11 +16499,190 @@ window.addEventListener('keydown', (e) => {
     if (globalForward()) e.preventDefault();
   }
 });
+// ── Audit trail ─────────────────────────────────────────────────────────
+// Every row the run appended to its hash-chained log, filtered by event type
+// and paged newest first.
+const AUT_AUDIT_PAGE = 50;
+const AUT_AUDIT_MAX = 200;
+const autopilotAudit = { sessionId: null, kind: null, limit: AUT_AUDIT_PAGE };
+
+// The state an event type reads as, from what the name means rather than from a
+// fixed list, so a kind added later still lands somewhere sensible.
+function autAuditState(kind) {
+  const k = String(kind || '').toLowerCase();
+  if (k === 'halt_user' || k.startsWith('cancel')) return 'muted';
+  if (/error|fail|blocked|denied|broken/.test(k)) return 'error';
+  if (/^halt|warn|cap|stall|idle|nudge/.test(k)) return 'warning';
+  if (/summary|end_run|complete|done/.test(k)) return 'success';
+  // Streamed output is the bulk of any log, so it stays quiet and the events
+  // worth reading keep the colour.
+  if (/output|chunk|token/.test(k)) return 'muted';
+  if (/start|identity|status|tool|run_|agent_/.test(k)) return 'running';
+  return 'muted';
+}
+
+function renderAuditFilters(kinds) {
+  const wrap = $('#aut-audit-filters');
+  if (!wrap) return;
+  while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+  const total = (Array.isArray(kinds) ? kinds : []).reduce((sum, k) => sum + (Number(k.count) || 0), 0);
+  const make = (kind, label, count) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    if ((autopilotAudit.kind || null) === kind) chip.classList.add('is-active');
+    chip.setAttribute('aria-pressed', String((autopilotAudit.kind || null) === kind));
+    const text = document.createElement('span');
+    text.textContent = label;
+    chip.appendChild(text);
+    const n = document.createElement('span');
+    n.className = 'chip-count';
+    n.textContent = String(count);
+    chip.appendChild(n);
+    chip.addEventListener('click', () => {
+      autopilotAudit.kind = kind;
+      autopilotAudit.limit = AUT_AUDIT_PAGE;
+      loadAuditTrail(autopilotAudit.sessionId);
+    });
+    return chip;
+  };
+  wrap.appendChild(make(null, 'All', total));
+  for (const entry of Array.isArray(kinds) ? kinds : []) {
+    wrap.appendChild(make(entry.kind, entry.kind, entry.count));
+  }
+}
+
+function renderAuditRows(events) {
+  const rows = $('#aut-audit-rows');
+  if (!rows) return;
+  while (rows.firstChild) rows.removeChild(rows.firstChild);
+  if (!Array.isArray(events) || !events.length) {
+    const empty = document.createElement('div');
+    empty.className = 'aut-audit-empty';
+    empty.textContent = autopilotAudit.kind
+      ? `No ${autopilotAudit.kind} events in this run.`
+      : 'This run recorded no events.';
+    rows.appendChild(empty);
+    return;
+  }
+  for (const ev of events) {
+    const row = document.createElement('div');
+    row.className = 'aut-audit-row';
+    const pill = document.createElement('span');
+    pill.className = 'pill is-mono';
+    pill.dataset.state = autAuditState(ev.kind);
+    pill.textContent = ev.kind;
+    row.appendChild(pill);
+    const key = document.createElement('span');
+    key.className = 'aut-audit-key';
+    key.textContent = ev.key || 'no key';
+    if (!ev.key) key.classList.add('is-empty');
+    row.appendChild(key);
+    const details = document.createElement('span');
+    details.className = 'aut-audit-details';
+    details.textContent = ev.details
+      || (ev.spilled ? 'payload stored outside the log' : 'no details recorded');
+    if (!ev.details) details.classList.add('is-empty');
+    if (ev.details) details.title = ev.details;
+    row.appendChild(details);
+    const when = document.createElement('span');
+    when.className = 'aut-audit-when';
+    when.textContent = fmtRelWhen(ev.ts) || 'no stamp';
+    when.title = fmtAbsWhen(ev.ts);
+    row.appendChild(when);
+    rows.appendChild(row);
+  }
+}
+
+function renderAuditChain(chain) {
+  const el = $('#aut-audit-chain');
+  if (!el) return;
+  if (!chain) { el.hidden = true; return; }
+  el.hidden = false;
+  el.dataset.state = chain.valid ? 'success' : 'error';
+  while (el.firstChild) el.removeChild(el.firstChild);
+  el.appendChild(autIcon(chain.valid ? AUT_ICON_CHECK : AUT_ICON_ALERT));
+  const label = document.createElement('span');
+  label.textContent = chain.valid ? 'chain verified' : 'chain broken';
+  el.appendChild(label);
+  el.title = chain.valid
+    ? 'Every row hashes over the one before it, so the log is tamper evident.'
+    : `The hash chain breaks at row ${chain.brokenAtIndex}.`;
+}
+
+function renderAuditFoot(shown, filtered) {
+  const more = $('#aut-audit-more');
+  const showing = $('#aut-audit-showing');
+  const noun = filtered === 1 ? 'event' : 'events';
+  // The page stops at a ceiling, so the count says the newest ones are what is
+  // on screen instead of implying the rest are one more click away.
+  const capped = shown >= AUT_AUDIT_MAX && shown < filtered;
+  if (showing) {
+    showing.textContent = !filtered ? 'No events to show'
+      : capped ? `Showing the newest ${shown} of ${filtered} ${noun}`
+      : `Showing ${shown} of ${filtered} ${noun}`;
+  }
+  if (more) more.hidden = shown >= filtered || shown >= AUT_AUDIT_MAX;
+}
+
+function hideAuditTrail() {
+  const section = $('#aut-audit');
+  if (section) section.hidden = true;
+  autopilotAudit.sessionId = null;
+  autopilotAudit.kind = null;
+  autopilotAudit.limit = AUT_AUDIT_PAGE;
+}
+
+async function loadAuditTrail(sessionId, opts = {}) {
+  const section = $('#aut-audit');
+  if (!section) return;
+  if (!sessionId) { hideAuditTrail(); return; }
+  if (opts.reset) {
+    autopilotAudit.kind = null;
+    autopilotAudit.limit = AUT_AUDIT_PAGE;
+  }
+  autopilotAudit.sessionId = sessionId;
+  section.hidden = false;
+  let res;
+  try {
+    res = await window.husk.autopilot.auditEvents({
+      sessionId,
+      kind: autopilotAudit.kind || undefined,
+      limit: autopilotAudit.limit,
+    });
+  } catch (_) { res = null; }
+  // A second run opened while this read was in flight owns the section now.
+  if (autopilotAudit.sessionId !== sessionId) return;
+  const totalEl = $('#aut-audit-total');
+  if (!res || !res.ok) {
+    renderAuditFilters([]);
+    renderAuditChain(null);
+    renderAuditRows([]);
+    renderAuditFoot(0, 0);
+    if (totalEl) totalEl.textContent = '';
+    const rows = $('#aut-audit-rows');
+    if (rows && rows.firstChild) rows.firstChild.textContent = 'Could not read this run\'s audit log.';
+    return;
+  }
+  if (totalEl) totalEl.textContent = String(res.total || 0);
+  renderAuditFilters(res.kinds);
+  renderAuditChain(res.chain);
+  renderAuditRows(res.events);
+  renderAuditFoot((res.events || []).length, Number(res.filtered) || 0);
+}
+
+$('#aut-audit-more') && $('#aut-audit-more').addEventListener('click', () => {
+  autopilotAudit.limit = Math.min(autopilotAudit.limit + AUT_AUDIT_PAGE, AUT_AUDIT_MAX);
+  loadAuditTrail(autopilotAudit.sessionId);
+});
+
 function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, runId = null, members = null }) {
   // Remember the hub scroll position so back returns to the same spot
   // in the runs list.
   const pageEl0 = document.querySelector('.page-autopilot');
   if (pageEl0 && !autopilotReview) autopilotHubScroll = pageEl0.scrollTop;
+  // A review opens at its own top, so the run reads from the first card down.
+  if (pageEl0) pageEl0.scrollTop = 0;
   autopilotActive = false;
   autopilotReview = true;
   autopilotReviewData = { sessionId, workspaceRoot, summary, retained, runId };
@@ -16418,8 +16734,21 @@ function enterReviewMode({ sessionId, workspaceRoot, summary, retained = false, 
   if (summary && summary.chain && summary.chain.valid) lines.push('Audit chain verified (tamper-evident).');
   pushActivity(lines, '_review');
   renderRunConclusion(summary);
+  paintReviewLaneState(summary);
   renderTimeline();
   paintAutopilotBanner();
+  loadAuditTrail(sessionId || (summary && summary.sessionId) || null, { reset: true });
+}
+// The replay lane holds a recording, so its badge reports how the run finished
+// rather than the starting state a live lane opens on.
+function paintReviewLaneState(sum) {
+  const el = document.querySelector('.aut-lane[data-key="_review"] .aut-lane-state');
+  if (!el) return;
+  const reason = summaryEndReason(sum);
+  const stopped = reason === 'user' || reason === 'cancelled';
+  const ok = summaryCompletedSuccessfully(sum);
+  el.dataset.state = ok ? 'done' : stopped ? 'stopped' : 'blocked';
+  el.textContent = ok ? 'completed' : stopped ? 'stopped' : 'incomplete';
 }
 // Conclusion card appended to the feed when a run is reviewed: why it ended,
 // the final numbers, and the agent's last narration as its report. A summary
@@ -16435,6 +16764,12 @@ function renderRunConclusion(sum) {
   const reason = sum.endReason || '';
   const card = document.createElement('div');
   card.className = 'aut-conclusion';
+  card.dataset.state =
+    reason === 'agent_complete' ? 'success'
+    : (reason === 'agent_failed' || reason === 'agent_blocked') ? 'error'
+    : (reason === 'user' || halt === 'user') ? 'muted'
+    : (halt === 'natural' && !reason) ? 'success'
+    : 'warning';
   const title = document.createElement('div');
   title.className = 'aut-conclusion-title';
   title.textContent =
@@ -16518,7 +16853,7 @@ function renderFleetReceipt(receipt) {
   const noOp = receipt.outcome === 'no-op';
   const card = document.createElement('div');
   card.className = 'aut-conclusion aut-receipt';
-  card.style.borderLeft = `2px solid ${incomplete ? 'var(--warn, #f59e0b)' : 'var(--accent, #67e8f9)'}`;
+  card.dataset.state = incomplete ? 'warning' : (noOp ? 'muted' : 'success');
 
   const label = document.createElement('div');
   label.className = 'aut-conclusion-label';
@@ -17542,6 +17877,7 @@ function stopLiveDiffPoll() {
   if (autopilotState.diffPollId) { clearInterval(autopilotState.diffPollId); autopilotState.diffPollId = null; }
 }
 function resetAutopilotPanel() {
+  hideAuditTrail();
   autopilotState.feed = [];
   autopilotState.eventCount = 0;
   autopilotState.budget = null;
@@ -17945,15 +18281,10 @@ try {
   }
 } catch (_) {}
 
-// Dedicated Autopilot page buttons. The header Start and the empty-state
-// CTA both open the existing start-run modal. The Stop button cancels
-// the active run (SIGINT into the PTY via the IPC handler).
+// Dedicated Autopilot page buttons. Start opens the start-run modal; Stop
+// cancels the active run (SIGINT into the PTY via the IPC handler).
 $('#aut-page-start') && $('#aut-page-start').addEventListener('click', () => {
   if (autopilotActive) { toast('A run is already active', 'info'); return; }
-  openAutopilotStart();
-});
-$('#aut-page-start-2') && $('#aut-page-start-2').addEventListener('click', () => {
-  if (autopilotActive) return;
   openAutopilotStart();
 });
 $('#aut-page-stop-top') && $('#aut-page-stop-top').addEventListener('click', () => cancelAutopilot());
@@ -17964,6 +18295,9 @@ $('#aut-page-goal-text') && $('#aut-page-goal-text').addEventListener('click', f
 $('#aut-jump-presets') && $('#aut-jump-presets').addEventListener('click', () => {
   const el = $('#aut-presets-section');
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Land on the gallery itself so the keyboard carries on from the first card.
+  const first = el && el.querySelector('.aut-preset');
+  if (first) first.focus();
 });
 $('#aut-diff-close') && $('#aut-diff-close').addEventListener('click', closeFileDiffModal);
 $('#aut-diff-modal') && $('#aut-diff-modal').addEventListener('click', (e) => { if (e.target === $('#aut-diff-modal')) closeFileDiffModal(); });
