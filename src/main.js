@@ -1673,8 +1673,6 @@ const AutopilotStatus = require('./lib/autopilot-status');
 const AutopilotQuestion = require('./lib/autopilot-question');
 const { applyWorkerChangesToIntegrator, applyWorkersWhenIntegratorEmpty } = require('./lib/autopilot-integrate');
 const { groupHistoryRuns } = require('./lib/autopilot-history');
-const AuditView = require('./lib/autonomy/audit-view');
-const LineStats = require('./lib/autopilot-linestats');
 const electronApp = require('electron');
 const { execFileSync } = require('child_process');
 
@@ -3707,7 +3705,6 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
       let status = 'unknown';
       let haltReason = null;
       let fileCount = 0;
-      let changes = { added: 0, modified: 0, deleted: 0 };
       let endedAt = null;
       let startedAt = null;
       let dollars = 0;
@@ -3754,15 +3751,6 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
               status = row.payload.status || status;
               haltReason = row.payload.haltReason || haltReason;
               fileCount = Array.isArray(row.payload.diff) ? row.payload.diff.length : 0;
-              // The recorded diff is the stable one: it describes the workspace
-              // as the run left it, so the row's change mix survives later edits.
-              changes = { added: 0, modified: 0, deleted: 0 };
-              for (const change of (Array.isArray(row.payload.diff) ? row.payload.diff : [])) {
-                const kind = change && change.status;
-                if (kind === 'added') changes.added += 1;
-                else if (kind === 'deleted') changes.deleted += 1;
-                else changes.modified += 1;
-              }
               endedAt = row.payload.endedAt || endedAt;
               if (row.payload.meter && typeof row.payload.meter.dollars === 'number') dollars = row.payload.meter.dollars;
               if (row.payload.meter && typeof row.payload.meter.totalTokens === 'number') tokens = row.payload.meter.totalTokens;
@@ -3785,7 +3773,6 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
         status,
         haltReason,
         fileCount,
-        changes,
         dollars,
         tokens,
         groupId,
@@ -3973,110 +3960,6 @@ ipcMain.handle('autopilot:summary', async (_e, payload = {}) => {
     storageRoot: autopilotStorageRoot(),
     decrypt,
   });
-});
-
-// Read-only page of the hash-chained audit log for one session, projected into
-// the four columns the audit table paints. The whole log is parsed to tally the
-// filter chips, and only the requested page crosses the bridge, newest first.
-const AUDIT_PAGE_MAX = 200;
-ipcMain.handle('autopilot:auditEvents', async (_e, payload = {}) => {
-  const sessionId = String(payload && payload.sessionId || '').trim();
-  if (!sessionId) return { ok: false, error: 'sessionId required' };
-  if (!isSafeAutopilotSessionId(sessionId)) return { ok: false, error: 'invalid sessionId' };
-  const storageRoot = autopilotStorageRoot();
-  const { decrypt } = autopilotCrypto();
-  const read = Autopilot.audit.readAuditLog(storageRoot, sessionId, { decrypt });
-  if (!read.ok) return { ok: false, error: read.error };
-  const records = Array.isArray(read.records) ? read.records : [];
-  const kinds = AuditView.auditKindCounts(records);
-  const wantKind = String(payload && payload.kind || '').trim();
-  const matching = wantKind ? records.filter((r) => r && r.kind === wantKind) : records;
-  const limit = Math.min(Math.max(Math.floor(Number(payload && payload.limit) || 50), 1), AUDIT_PAGE_MAX);
-  const events = matching
-    .slice(Math.max(0, matching.length - limit))
-    .reverse()
-    .map((r) => AuditView.projectAuditRow(r));
-  const chain = Autopilot.audit.verifyAuditChain(storageRoot, sessionId);
-  return {
-    ok: true,
-    events,
-    total: records.length,
-    filtered: matching.length,
-    kinds,
-    chain: { valid: !!chain.valid, brokenAtIndex: chain.brokenAtIndex },
-  };
-});
-
-// Read-only line-count deltas for finished runs, one entry per session the
-// caller names. A session whose recorded workspace is gone reports null, so a
-// row shows the counts it can stand behind and nothing else.
-const RUN_STATS_MAX_SESSIONS = 12;
-const RUN_STATS_MAX_FILES = 200;
-const RUN_STATS_MAX_BYTES = 512 * 1024;
-ipcMain.handle('autopilot:runStats', async (_e, payload = {}) => {
-  const ids = (Array.isArray(payload && payload.sessionIds) ? payload.sessionIds : [])
-    .map((id) => String(id || '').trim())
-    .filter((id) => id && isSafeAutopilotSessionId(id))
-    .slice(0, RUN_STATS_MAX_SESSIONS);
-  if (!ids.length) return { ok: false, error: 'sessionIds required' };
-  const storageRoot = autopilotStorageRoot();
-  const { decrypt } = autopilotCrypto();
-  const stats = {};
-  for (const sessionId of ids) {
-    stats[sessionId] = null;
-    const workspaceRoot = manifestWorkspaceRoot(sessionId);
-    if (!workspaceRoot) continue;
-    try {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- workspaceRoot comes from the session record
-      if (!fs.existsSync(workspaceRoot)) continue;
-    } catch (_) { continue; }
-    let manifest = null;
-    try {
-      const manifestPath = path.join(storageRoot, 'sessions', sessionId, 'snapshot.json');
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to the storage root
-      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    } catch (_) { manifest = null; }
-    let changes = [];
-    try {
-      const diff = await Autopilot.snapshot.diffWorkspaceAsync(workspaceRoot, storageRoot, sessionId);
-      changes = (diff && diff.ok && Array.isArray(diff.changes)) ? diff.changes : [];
-    } catch (_) { changes = []; }
-    const out = LineStats.emptyRunStats();
-    if (changes.length > RUN_STATS_MAX_FILES) out.truncated = true;
-    const safeWorkspace = path.resolve(workspaceRoot);
-    for (const change of changes.slice(0, RUN_STATS_MAX_FILES)) {
-      const rel = change && typeof change.path === 'string' ? change.path : '';
-      if (!rel) continue;
-      const abs = path.resolve(safeWorkspace, rel);
-      if (!(abs === safeWorkspace || abs.startsWith(safeWorkspace + path.sep))) continue;
-      let before = '';
-      let after = '';
-      let skipped = false;
-      const entry = manifest && manifest.entries && manifest.entries[rel];
-      if (entry && entry.type === 'file' && /^[a-f0-9]{64}$/.test(entry.sha || '')) {
-        try {
-          const blobPath = path.join(storageRoot, 'sessions', sessionId, 'blobs', entry.sha);
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- bounded to the storage root
-          let buf = await fs.promises.readFile(blobPath);
-          if (typeof decrypt === 'function') { try { buf = decrypt(buf); } catch (_) {} }
-          if (buf.length > RUN_STATS_MAX_BYTES) skipped = true;
-          else before = buf.toString('utf8');
-        } catch (_) { skipped = true; }
-      }
-      if (change.status !== 'deleted') {
-        try {
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- confined to the workspace above
-          const buf = await fs.promises.readFile(abs);
-          if (buf.length > RUN_STATS_MAX_BYTES) skipped = true;
-          else after = buf.toString('utf8');
-        } catch (_) { skipped = true; }
-      }
-      if (skipped) { out.truncated = true; continue; }
-      LineStats.addFileDelta(out, change.status, LineStats.lineDelta(before, after));
-    }
-    stats[sessionId] = out;
-  }
-  return { ok: true, stats };
 });
 
 // Read back the transcript written during a run. Bounded by the caller so a
