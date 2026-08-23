@@ -8406,8 +8406,14 @@ body[data-mode="light"] .sx {
 .btn-primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
 /* A control that cannot run reads as off and stops answering the pointer. Matches
    the ghost buttons, so one disabled treatment reads the same everywhere. */
+/* A disabled primary drops the fill rather than fading it. Fading a gradient
+   leaves the CTA silhouette at an unreadable contrast, which reads as a broken
+   control instead of one that is not ready. */
 .btn-primary:disabled {
-  opacity: 0.45;
+  opacity: 1;
+  background: var(--bg-2);
+  color: var(--text-3);
+  border: 1px solid var(--line);
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -10253,6 +10259,16 @@ kbd {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
   letter-spacing: -0.005em;
   transition: box-shadow var(--motion-base) var(--ease);
+}
+/* Beats the (0,2,0) dark fill above, which sits later in the file than the
+   shared .btn-primary:disabled rule and would otherwise repaint the gradient
+   back under a disabled control. */
+[data-mode="dark"] .btn-primary:disabled,
+[data-mode="dark"] .iconbtn-primary:disabled {
+  background: var(--bg-2);
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  box-shadow: none;
 }
 [data-mode="dark"] .btn-primary:hover,
 [data-mode="dark"] .iconbtn-primary:hover {
@@ -14919,15 +14935,19 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   flex: 1; min-height: 0;
   /* The index column carries a path plus a +N/-M tail, so it takes more width
      than a plain file list needs. */
-  display: grid; grid-template-columns: clamp(300px, 30%, 460px) minmax(0, 1fr);
-  gap: var(--space-3);
+  display: grid; grid-template-columns: clamp(280px, 26%, 380px) minmax(0, 1fr);
+  gap: var(--space-4);
 }
 .sc-nav, .sc-main {
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
   /* Composite the translucent surface token over the opaque page background, so
      the ambient radial stops modulating the pane interior. */
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
-  border: 1px solid var(--line); border-radius: var(--radius-xl);
+  /* Lifted rather than outlined. A hairline at 8% white on this ground is a box
+     tax for a line the eye cannot resolve, and it is what made an empty region
+     read as a failed panel instead of as page ground. */
+  border-radius: var(--radius-xl);
+  box-shadow: var(--elev-1);
   overflow: hidden;
 }
 
@@ -14991,12 +15011,16 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-band.is-open > .sc-band-head .sc-band-chevron { transform: rotate(90deg); }
 .sc-band:not(.is-open) > .sc-row { display: none; }
 /* Bulk actions belong to the band the pointer is on, so they arrive with it. */
+/* Hidden, not merely transparent. At opacity 0 these still hit-test, and they
+   sit at the end of the band head, which is itself the collapse target: a reach
+   to fold a band could stage or discard the whole band instead. */
 .sc-band-acts {
   margin-left: auto; display: flex; align-items: center; gap: 2px;
-  opacity: 0; transition: opacity var(--motion-fast) var(--ease);
+  visibility: hidden; opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
 }
 .sc-band-head:hover .sc-band-acts,
-.sc-band-head:focus-within .sc-band-acts { opacity: 1; }
+.sc-band-head:focus-within .sc-band-acts { visibility: visible; opacity: 1; }
 .sc-band-acts button {
   flex: none; width: 20px; height: 20px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -15017,13 +15041,21 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-row-check {
   flex: none; width: var(--sc-check-w); height: var(--sc-check-w); padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+  background: var(--bg-2); border: 1px solid var(--line-3); border-radius: var(--radius-sm);
   color: transparent; cursor: pointer;
   transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 .sc-row-check svg { width: 11px; height: 11px; }
-.sc-row:hover .sc-row-check { border-color: var(--line-3); }
+.sc-row:hover .sc-row-check { border-color: var(--accent); }
 .sc-row.is-staged .sc-row-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent, white); }
+/* In flight. The click has been taken and git has not answered yet, so the row
+   shows the state it is moving to at a weight that says "not settled". Cleared
+   by the read that answers, never by a timer. */
+.sc-row.is-pending { opacity: 0.7; }
+.sc-row.is-pending .sc-row-check {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-color: var(--accent);
+}
 .sc-row-badge { flex: none; width: 15px; text-align: center; font-weight: 700; font-size: var(--fs-nano); }
 .sc-row-base { flex: none; max-width: 58%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 /* The directory reads from its tail, so the ellipsis eats the head and the
@@ -15092,10 +15124,13 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 
 /* Composer. It is docked, so it is capped: the list keeps the height it needs
    and a long body scrolls inside the dock rather than pushing the list away. */
+/* Docked under the tabs rather than at the pane floor. Floored, a short change
+   list left the box that commits it stranded 350px below the files it commits,
+   with pane fill on both sides of the gap. */
 .sc-composer {
   flex: none; max-height: 40%; overflow-y: auto;
   display: flex; flex-direction: column; gap: var(--space-2);
-  padding: var(--space-3); border-top: 1px solid var(--line);
+  padding: var(--space-3); border-bottom: 1px solid var(--line);
 }
 .sc-subject, .sc-body {
   width: 100%; box-sizing: border-box;
@@ -15309,8 +15344,8 @@ body[data-mode="light"][data-theme="sepia"] .sc {
    same box: one scroller, one inset, one rhythm. */
 .sc-ov, .sc-commit-detail {
   flex: 1; min-height: 0; overflow-y: auto;
-  display: flex; flex-direction: column; gap: var(--space-4);
-  padding: var(--space-5);
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-3);
 }
 .sc-ov-stats { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .sc-ov-stat {
@@ -15328,21 +15363,19 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 /* A card takes the height its rows need, so a repo with no runs is one short
    panel rather than a column of nothing. */
 .sc-ov-card {
-  display: flex; flex-direction: column; max-height: 340px; overflow: hidden;
+  display: flex; flex-direction: column;
   background: var(--bg-2); border-radius: var(--radius-lg);
 }
-/* The one card that takes the height the others leave, so the pane ends in a
-   panel rather than in blank ground. */
-#sc-ov-recent { display: flex; flex-direction: column; flex: 1; min-height: 180px; }
-.sc-ov-card.is-grow { flex: 1; min-height: 0; max-height: none; }
+#sc-ov-recent { display: flex; flex-direction: column; }
 .sc-ov-card-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   padding: var(--space-3) var(--space-3) var(--space-2);
 }
+/* No scroller of its own: .sc-ov is the one scroll region in this pane, so a
+   card cannot trap a wheel that the pane should have taken. */
 .sc-ov-rows {
-  flex: 1; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column;
-  padding: var(--space-1) var(--space-2) var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-2);
 }
 .sc-ov-rows::-webkit-scrollbar { width: 7px; }
 .sc-ov-rows::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }

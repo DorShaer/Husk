@@ -2263,8 +2263,6 @@
                 <button class="fx-tab" id="sc-tab-history" type="button" data-sctab="history" aria-pressed="false"><span>History</span></button>
               </div>
 
-              <div class="sc-list" id="sc-list" tabindex="-1"></div>
-
               <div class="sc-composer" id="sc-composer">
                 <input type="text" class="sc-subject" id="sc-subject" placeholder="Summary" spellcheck="false" autocomplete="off" aria-label="Commit summary" />
                 <span class="sc-subject-count" id="sc-subject-count" aria-live="polite" hidden>0</span>
@@ -2281,16 +2279,16 @@
                   <span aria-hidden="true"><kbd class="kbd-cap">Ctrl</kbd><kbd class="kbd-cap">Enter</kbd></span>
                 </div>
               </div>
+
+              <div class="sc-list" id="sc-list" tabindex="-1"></div>
+
             </aside>
 
             <!-- one of three: the resting overview, a file diff, a commit -->
             <section class="sc-main" id="sc-main">
 
               <div class="sc-ov" id="sc-ov">
-                <section class="sc-ov-card">
-                  <div class="sc-ov-card-head"><span class="section-label">Working tree</span></div>
-                  <div class="sc-ov-stats" id="sc-ov-stats"></div>
-                </section>
+                <div class="sc-ov-stats" id="sc-ov-stats" hidden></div>
                 <div id="sc-ov-runs" hidden></div>
                 <div id="sc-ov-branch"></div>
                 <div id="sc-ov-recent" hidden></div>

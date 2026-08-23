@@ -174,6 +174,9 @@
   const ui = {
     wired: false,
     opened: false,
+    // The HEAD the loaded history belongs to, so a poll re-reads the log only
+    // when the thing it describes can have moved.
+    historyAt: '',
     home: '',
     projects: [],
     runs: [],
@@ -327,10 +330,15 @@
       // The status read names its own cap, so the page states that the list
       // stops rather than printing the cap as the answer.
       ui.truncated = !!status.truncated;
-      // The resting overview carries recent commits, so history rides the same
-      // read the counts come from and both sides of the page describe one
-      // snapshot.
-      await loadHistory();
+      // History changes only when HEAD or the branch does, so it is keyed to
+      // them rather than re-read on every three-second tick. The tick used to
+      // drag a fifty-commit log along with it for a card that no longer exists,
+      // which is the dead interval between a stage click and anything moving.
+      const headKey = String((state.repo && state.repo.headSha) || '') + ':' + String((state.repo && state.repo.branch) || '');
+      if (headKey !== ui.historyAt || !ui.history.length) {
+        await loadHistory();
+        ui.historyAt = headKey;
+      }
       landed = true;
     } finally {
       if (landed) ui.readFailed = false;
@@ -453,6 +461,10 @@
   function stagedRows() {
     return state.entries.filter((r) => r.band === 'staged');
   }
+
+  // Forces the next readOnce to re-read the log whatever HEAD says. Used where
+  // the history is the thing that changed rather than a side effect of it.
+  function invalidateHistory() { ui.historyAt = ''; }
 
   async function loadHistory() {
     const api = git();
@@ -815,41 +827,43 @@
     if (commit) commit.hidden = which !== 'commit';
   }
 
+  // The pane at rest opens on the first change rather than on a summary of it.
+  //
+  // A review desk exists to show a diff, and a page whose largest surface holds
+  // three restatements of its own header is a page that has not started. Opening
+  // the first change makes the resting state the same object the pane shows once
+  // a file is picked, so arriving and choosing differ only in which file.
+  //
+  // Only ever fires with nothing selected and nothing open, so it cannot pull
+  // the pane off a file the reader chose, and never while a mutation is in
+  // flight, so it cannot race a stage.
+  function autoOpenFirstChange() {
+    if (state.diffModel || ui.commit || ui.mutating) return false;
+    if (state.selected && state.selected.length) return false;
+    const first = flatRows()[0];
+    if (!first) return false;
+    // Fire and forget: loadDiff repaints when it lands, and a failed read leaves
+    // the overview showing rather than a half-painted pane.
+    loadDiff(first, {}).catch(() => {});
+    return true;
+  }
+
   function paintMain() {
     paintActs();
     if (state.diffModel) { showPane('detail'); paintDetail(); return; }
     if (ui.commit) { showPane('commit'); paintCommitDetail(); return; }
     showPane('ov');
     paintOverview();
+    autoOpenFirstChange();
   }
 
   function paintOverview() {
     const repo = state.repo;
+    // The file, added and removed counts this card used to carry are already in
+    // the page subtitle and on every row of the list beside it, so the card was
+    // three tiles of restatement taking the top of the pane.
     const stats = byId('sc-ov-stats');
-    if (stats) {
-      stats.replaceChildren();
-      const adds = state.entries.reduce((n, r) => n + (r.adds || 0), 0);
-      const dels = state.entries.reduce((n, r) => n + (r.dels || 0), 0);
-      const files = changedFiles();
-      // Three tiles counted off the same read, so a read that stopped at its cap
-      // says so on all three.
-      const capped = ui.truncated ? 'this read stopped at its cap, so more files are not counted' : '';
-      for (const tile of [
-        Dom.statTileEl(files, plural(files, 'file', 'files')),
-        Dom.statTileEl(adds, 'added', 'add'),
-        Dom.statTileEl(dels, 'removed', 'del'),
-      ]) {
-        if (capped) tile.title = capped;
-        stats.appendChild(tile);
-      }
-      if (repo && typeof repo.ahead === 'number') {
-        const tile = Dom.statTileEl(repo.ahead, 'ahead');
-        tile.title = repo.hasFetched && repo.fetchedAtMs
-          ? 'measured ' + Dom.ago(repo.fetchedAtMs)
-          : 'never fetched';
-        stats.appendChild(tile);
-      }
-    }
+    if (stats) stats.replaceChildren();
 
     const runsHost = byId('sc-ov-runs');
     if (runsHost) {
@@ -878,9 +892,8 @@
       if (repo && repo.isRepo === true) branchHost.appendChild(branchCard(repo));
     }
 
-    // Recent history, which every repository with a commit can fill. It takes
-    // the space the other cards leave, so the pane reads as a panel rather than
-    // as two cards above an empty half.
+    // Recent history, shown only when the working tree is clean and the pane has
+    // no diff to carry. With changes present the pane opens on the first of them.
     const recentHost = byId('sc-ov-recent');
     if (recentHost) {
       recentHost.replaceChildren();
@@ -892,12 +905,12 @@
           Object.assign({}, c, { refs: refsLine(c) }),
           { onOpen: () => openCommit(c) },
         ));
-        const card = Dom.ovCardEl('Recent', rows, {
+        // Sized by what it holds. Stretching it to fill the pane was how the
+        // page hid the fact that it had nothing else to put there.
+        recentHost.appendChild(Dom.ovCardEl('Recent', rows, {
           label: 'Show all',
           onClick: () => setTab('history'),
-        });
-        card.classList.add('is-grow');
-        recentHost.appendChild(card);
+        }));
       }
     }
   }
@@ -1125,16 +1138,19 @@
     if (amend) amend.disabled = !state.repo || state.repo.unborn === true;
 
     if (btn) {
-      const hasSubject = !!subject && subject.value.trim().length > 0;
+      // Disabled only when the label already gives the reason. A missing summary
+      // does not disable: commit() answers that with a toast and puts the caret
+      // in the subject, which says what to do, where a dead button whose label
+      // reads "Commit 1 staged file" says only that something is wrong.
       if (isAmend) {
         btn.textContent = 'Amend ' + ((state.repo && state.repo.headShortSha) || '');
-        btn.disabled = !hasSubject;
+        btn.disabled = false;
       } else if (!staged.length) {
         btn.textContent = 'Stage something to commit';
         btn.disabled = true;
       } else {
         btn.textContent = 'Commit ' + count(staged.length, 'staged file', 'staged files');
-        btn.disabled = !hasSubject;
+        btn.disabled = false;
       }
     }
 
@@ -1171,6 +1187,17 @@
     }
   }
 
+  // Rows whose state is in flight. Held outside `state` because it describes a
+  // request rather than the repository, and cleared by the read that answers it.
+  function markPending(paths) {
+    const host = byId('sc-list');
+    if (!host) return;
+    const want = new Set(paths);
+    for (const node of host.querySelectorAll('.sc-row')) {
+      if (want.has(node.dataset.path)) node.classList.add('is-pending');
+    }
+  }
+
   function refuse(res, fallback) {
     const msg = res && res.error ? res.error : fallback;
     say(msg, 'error');
@@ -1179,6 +1206,11 @@
   async function stagePaths(paths, on) {
     const api = git();
     if (!api || !paths.length || !canMutate()) return;
+    // A transport marker on the rows being moved, so the click acknowledges
+    // itself before git answers. Without it the natural response to the silence
+    // is a second click, which mutate() drops on the floor. The next true
+    // snapshot repaints these rows and clears it.
+    markPending(paths);
     await mutate(async () => {
       const res = on ? await api.stage(state.root, paths) : await api.unstage(state.root, paths);
       if (!res || res.ok !== true) refuse(res, on ? 'could not stage those files' : 'could not unstage those files');
@@ -1329,6 +1361,7 @@
   }
 
   async function commit(opts) {
+    invalidateHistory();
     const api = git();
     const subject = byId('sc-subject');
     const body = byId('sc-body');
@@ -1454,6 +1487,7 @@
   }
 
   async function switchBranch(name) {
+    invalidateHistory();
     const api = git();
     if (!api || !canMutate()) return;
     closePop();
@@ -1757,7 +1791,7 @@
     state.diffModel = null;
     ui.commit = null;
     state.cursor = { pane: 'list', index: -1 };
-    if (tab === 'history' && !ui.history.length) { loadHistory().then(paintAll); return; }
+    if (tab === 'history') { invalidateHistory(); loadHistory().then(paintAll); return; }
     paintAll();
   }
 

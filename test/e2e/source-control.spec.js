@@ -200,7 +200,6 @@ test('the page paints its bands from a real repository, with the counts git repo
   // A file that is both staged and changed would be two rows and one change, so
   // the tab pill counts paths where the bands count sides.
   expect(view.pill).toBe('2');
-  expect(view.tiles.map((t) => t.n + ' ' + t.label)).toEqual(['2 files', '7 added', '3 removed']);
   expect(view.commitLabel).toBe('Commit 1 staged file');
 
   // No retained run and no live session, so provenance renders nothing at all
@@ -386,9 +385,13 @@ test('discard asks first, leaves the file alone when it is cancelled, and stays 
 
 // The resting overview ends in a card that takes the height the others leave,
 // so a repository with history never shows a half-empty pane.
-test('the resting overview carries recent commits and grows to fill the pane', async () => {
+test('the resting overview carries recent commits, sized by what it holds', async () => {
   test.setTimeout(90_000);
   const repo = fixture('husk-sc-recent');
+  // The overview is the resting state, and rest means nothing to review. With
+  // changes present the pane opens on the first of them instead.
+  repo.git('add', '-A');
+  repo.git('commit', '-qm', 'chore(fixture): settle the tree');
   const app = await launch(seed(repo.dir));
   const win = await ready(app);
   await openSource(win, repo.dir);
@@ -419,19 +422,63 @@ test('the resting overview carries recent commits and grows to fill the pane', a
   });
 
   expect(view.hidden).toBe(false);
-  expect(view.grows).toBe(true);
+  // Sized by its rows. Stretching it to the pane floor was how the page hid
+  // having nothing else to put there.
+  expect(view.grows).toBe(false);
   expect(view.act).toBe('Show all');
   // Newest first, and every row carries the sha it opens.
-  expect(view.subjects[0]).toBe('feat(lib): add the slug helper');
+  expect(view.subjects[0]).toBe('chore(fixture): settle the tree');
+  expect(view.subjects).toContain('feat(lib): add the slug helper');
   expect(view.subjects).toContain('chore(fixture): add the first two files');
   expect(view.shas).toBe(view.subjects.length);
-  // Comfortably taller than its rows, not taller by a rounding error.
-  expect(view.slack).toBeGreaterThan(40);
+  // No leftover height inside the card: it ends where its rows end.
+  expect(view.slack).toBeLessThan(24);
 
   // Show all is the History tab, so the card is a way in rather than a dead end.
   await win.locator('#sc-ov-recent .sc-ov-card-head .ghost-btn').click();
   await expect.poll(() => win.evaluate(() => (window.Sc ? window.Sc.state.tab : '')), { timeout: 15_000 })
     .toBe('history');
+  await app.close();
+});
+
+// The pane at rest is the same object it is once a file is picked. A review desk
+// exists to show a diff, so arriving at one with changes waiting shows the first
+// of them rather than a summary of how many there are.
+test('with changes waiting the pane opens on the first of them, not on a summary', async () => {
+  const { dir } = fixture('husk-sc-autoopen');
+  const app = await launch(seed(dir));
+  const win = await ready(app);
+  await openSource(win, dir);
+
+  await expect.poll(() => win.evaluate(() => (window.Sc && window.Sc.state.diffModel ? window.Sc.state.diffModel.rel : null)), { timeout: 15_000 })
+    .toBe('src/lib/util.js');
+
+  const view = await win.evaluate(() => ({
+    detailShown: !document.getElementById('sc-detail').hidden,
+    overviewShown: !document.getElementById('sc-ov').hidden,
+    lines: document.querySelectorAll('#sc-detail .sc-dl').length,
+  }));
+  expect(view.detailShown).toBe(true);
+  expect(view.overviewShown).toBe(false);
+  expect(view.lines).toBeGreaterThan(0);
+  await app.close();
+});
+
+// Opening on the first change must never pull the pane off a file the reader
+// chose, so it only ever fires from a resting pane.
+test('opening on the first change does not override a file the reader picked', async () => {
+  const { dir } = fixture('husk-sc-autoopen-respect');
+  const app = await launch(seed(dir));
+  const win = await ready(app);
+  await openSource(win, dir);
+  await expect.poll(() => win.evaluate(() => (window.Sc && window.Sc.state.diffModel ? 1 : 0)), { timeout: 15_000 }).toBe(1);
+
+  await win.locator('.sc-row[data-path="src/app.js"]').click();
+  await expect.poll(() => win.evaluate(() => window.Sc.state.diffModel.rel), { timeout: 15_000 }).toBe('src/app.js');
+
+  // Several poll cycles later it is still the file that was clicked.
+  await win.waitForTimeout(4000);
+  expect(await win.evaluate(() => window.Sc.state.diffModel.rel)).toBe('src/app.js');
   await app.close();
 });
 
@@ -519,9 +566,6 @@ test('a repository that has never been fetched prints no behind count and stamps
   // never been measured is suppressed rather than printed as zero.
   expect(view.sub).toMatch(/\d+ ahead[^·]*(measured|never fetched)/);
   expect(view.pageText).not.toMatch(/\d+\s+behind/);
-  const ahead = view.tiles.find((t) => t.label === 'ahead');
-  expect(ahead.n).toBe('2');
-  expect(ahead.title).toBe('never fetched');
   expect(view.pageText).toContain('A behind count is not shown until a fetch has run.');
   await app.close();
 });
