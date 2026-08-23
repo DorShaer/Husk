@@ -372,6 +372,9 @@
   --icon-lg: 28px;
   /* Wider ramp, for headlines and the surfaces that sit above the five steps. */
   --fs-hero: 46px;
+  /* The headline both page heroes are set at. Held here rather than written
+     twice, so the Workflows and Autopilot heroes cannot drift apart. */
+  --fs-page-hero: 38px;
   --fs-display: 32px;
   --fs-h1: 22px;
   --fs-h2: 18px;
@@ -14814,54 +14817,54 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
    A list of promises about when something runs, each saying the same sentence
    the form said when it was made. */
 .sc { display: flex; flex-direction: column; gap: var(--space-3); }
-.sc-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.sc-row {
+.sch-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.sch-row {
   display: flex; align-items: center; gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--line); border-radius: var(--radius-xl);
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
 }
-.sc-row.is-paused { opacity: 0.62; }
-.sc-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.sc-row-head { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
-.sc-name { color: var(--text); font-size: var(--fs-body-lg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sc-next { color: var(--accent); font-size: var(--fs-nano); font-weight: 600; white-space: nowrap; }
-.sc-row-meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.sc-recur { color: var(--text-2); font-size: var(--fs-body); }
-.sc-meta { color: var(--text-3); font-size: var(--fs-nano); }
-.sc-warn { color: var(--warn); font-size: var(--fs-nano); }
-.sc-cwd { color: var(--text-3); font-size: var(--fs-nano); font-family: var(--font-mono); }
-.sc-row-acts { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.sch-row.is-paused { opacity: 0.62; }
+.sch-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.sch-row-head { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.sch-name { color: var(--text); font-size: var(--fs-body-lg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-next { color: var(--accent); font-size: var(--fs-nano); font-weight: 600; white-space: nowrap; }
+.sch-row-meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.sch-recur { color: var(--text-2); font-size: var(--fs-body); }
+.sch-meta { color: var(--text-3); font-size: var(--fs-nano); }
+.sch-warn { color: var(--warn); font-size: var(--fs-nano); }
+.sch-cwd { color: var(--text-3); font-size: var(--fs-nano); font-family: var(--font-mono); }
+.sch-row-acts { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
 
-.sc-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
-.sc-input {
+.sch-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.sch-input {
   width: 100%; box-sizing: border-box;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-1); color: var(--text);
   border: 1px solid var(--line); border-radius: var(--radius-lg);
   font-size: var(--fs-body); font-family: inherit;
 }
-.sc-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); outline: 0; }
-.sc-num { width: auto; min-width: 110px; }
-.sc-inline { display: flex; align-items: center; gap: var(--space-2); }
-.sc-unit { color: var(--text-3); font-size: var(--fs-body); }
-.sc-row-days, .sc-row { }
-.sc-days { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.sc-day {
+.sch-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); outline: 0; }
+.sch-num { width: auto; min-width: 110px; }
+.sch-inline { display: flex; align-items: center; gap: var(--space-2); }
+.sch-unit { color: var(--text-3); font-size: var(--fs-body); }
+.sch-row-days, .sch-row { }
+.sch-days { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.sch-day {
   padding: 4px 10px; border-radius: 999px;
   background: transparent; color: var(--text-3);
   border: 1px solid var(--line); cursor: pointer;
   font-size: var(--fs-nano); font-family: inherit;
 }
-.sc-day:hover { color: var(--text-2); border-color: var(--line-2); }
-.sc-day.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.sch-day:hover { color: var(--text-2); border-color: var(--line-2); }
+.sch-day.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* The sentence the row will carry, shown before the schedule exists. */
-.sc-preview {
+.sch-preview {
   padding: var(--space-3);
   background: var(--bg-2); border-radius: var(--radius-lg);
   color: var(--text-2); font-size: var(--fs-body);
 }
-.sc-error { color: var(--rose); font-size: var(--fs-body); }
-.sc-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
-.sc-state:empty { display: none; }
+.sch-error { color: var(--rose); font-size: var(--fs-body); }
+.sch-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.sch-state:empty { display: none; }
