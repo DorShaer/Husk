@@ -238,7 +238,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins']);
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -295,9 +295,15 @@ const initialRouteState = readStoredState(RELOAD_STATE_KEY, false) || readStored
 let currentPage = normalizePageName((initialRouteState && initialRouteState.page) || 'chat');
 let chatHasInput = false;
 
+// The context pane speaks about a chat session: its folder, its working tree,
+// the files handed to it. Only the chat has one, so every other page takes that
+// width for its own content.
+const CONTEXT_PANE_PAGES = new Set(['chat']);
+
 function applyPageShell(name) {
   const page = normalizePageName(name);
   document.body.dataset.page = page;
+  document.body.dataset.contextPane = CONTEXT_PANE_PAGES.has(page) ? 'on' : 'off';
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== page; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === page));
 }
@@ -365,6 +371,11 @@ function createTab(idOverride) {
   const tab = {
     id, term: t, fitAddon: fa, el,
     mouseOn: false, chatHasInput: false, restarting: false,
+    // exited flips when this tab's agent process ends, and back when one starts
+    // in its place. command is the line that started it, which is where a
+    // pinned model is named.
+    exited: false,
+    command: null,
     // title is the auto-derived name (agent session title, else this default).
     // customTitle, when set, is the user's rename and wins over title.
     // agentId links this tab to its claude session once resolved.
@@ -581,7 +592,7 @@ document.addEventListener('mousemove', (e) => {
 // own palette (e.g. OSC 11;#0D1117), which painted the canvas dark-on-light
 // until the next reload dropped the scrollback. The canvas colours belong to
 // the Husk theme, so colour sets are swallowed while pure `?` queries fall
-// through to xterm, whose answer carries the theme's real colours — that
+// through to xterm, whose answer carries the theme's real colours, and that
 // answer is how the agent detects light or dark.
 function guardTermColors(t) {
   const queryOnly = (data) => String(data).split(';').every((p) => p.trim() === '?');
@@ -685,6 +696,30 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.11.3': {
+    items: [
+      {
+        title: 'A new look across the app',
+        body: 'Every page now draws from one design system: a search that reaches anything from the title bar, a status bar along the bottom that reports the tool, model and connection, and a quieter sidebar that saves the accent for the action you came to take.',
+      },
+      {
+        title: 'The chat page, rebuilt around the thread',
+        body: 'The conversation sits beside a tabbed context pane, so the files you shared, the session status and what the agent is working from are one click away instead of stacked down the rail.',
+      },
+      {
+        title: 'Sessions reads as a roster',
+        body: 'Chats land in one list with their project, state and how long they ran, and the detail pane opens beside the list instead of taking you off the page. Search matches on the way through.',
+      },
+      {
+        title: 'Agents that run inside a chat',
+        body: 'The agents a chat starts in its own process now appear in the fleet like any other, with their own state, elapsed time and conversation, both on the graph and in the list.',
+      },
+      {
+        title: 'Preferences is a page',
+        body: 'Settings are grouped under their own nav, and an About entry names the version you are running and checks for a newer one from the same place.',
+      },
+    ],
+  },
   '2.11.1': {
     items: [
       {
@@ -1103,16 +1138,9 @@ async function saveAppearancePreview() {
   pendingAppearance = null;
   try {
     cfg = await window.husk.config.set(patch);
-    // Same refresh semantics as refreshFromShortcut: the chat page restarts
-    // the agent, every other page gets a full renderer reload.
-    if (currentPage === 'chat') {
-      bindPrefs();
-      syncAppearanceActionsBar();
-      closePrefsModal();
-      await restartPty();
-    } else {
-      reloadRendererPreservingPlace();
-    }
+    // A theme reaches every surface, so the saved appearance lands with a full
+    // renderer reload that returns to the page it was saved from.
+    reloadRendererPreservingPlace();
     return;
   } catch (err) {
     restoreAppearanceSnapshot(appearanceSnapshot());
@@ -1175,11 +1203,7 @@ async function closeRejectedResumeTab(tab) {
   const agent = tab.resumeAttempt.agent || 'session';
   const id = tab.resumeAttempt.id ? ` ${String(tab.resumeAttempt.id).slice(0, 8)}` : '';
   const header = tab.resumeAttempt.previousHeader || null;
-  if (header) {
-    if (Object.prototype.hasOwnProperty.call(header, 'chatSub') && $('#chat-sub')) $('#chat-sub').textContent = header.chatSub;
-    if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
-    if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
-  }
+  if (header && Object.prototype.hasOwnProperty.call(header, 'subBase')) setChatSubBase(header.subBase);
   toast(`${agent}${id} is not resumable yet; refreshed sessions`, 'error');
   await closeTab(tab.id);
   try { await refreshRecentList(); } catch (err) { console.warn('recent refresh after rejected resume failed', err); }
@@ -1199,11 +1223,7 @@ async function closeHeldResumeTab(tab) {
   tab.writeBuf = '';
   const d = { id: tab.resumeAttempt.id, project: tab.resumeAttempt.cwd || '', owner: tab.resumeAttempt.agent };
   const header = tab.resumeAttempt.previousHeader || null;
-  if (header) {
-    if (Object.prototype.hasOwnProperty.call(header, 'chatSub') && $('#chat-sub')) $('#chat-sub').textContent = header.chatSub;
-    if (Object.prototype.hasOwnProperty.call(header, 'spAgent') && $('#sp-agent')) $('#sp-agent').textContent = header.spAgent;
-    if (Object.prototype.hasOwnProperty.call(header, 'spSessionId') && $('#sp-session-id')) $('#sp-session-id').textContent = header.spSessionId;
-  }
+  if (header && Object.prototype.hasOwnProperty.call(header, 'subBase')) setChatSubBase(header.subBase);
   await closeTab(tab.id);
   if (typeof toastAction === 'function') {
     toastAction('An agent is running that session', 'Attach to it',
@@ -1247,6 +1267,8 @@ window.husk.pty.onExit((sessionId, code) => {
   const tab = TABS.get(sessionId);
   // Skip the exit notice while this tab's PTY is being torn down on purpose.
   if (!tab || tab.restarting) return;
+  tab.exited = true;
+  refreshShellStatusBar();
   if (code === 127) {
     // 127 = shell could not find the agent binary; route the user to setup.
     const cmd = (cfg && cfg.agentCommand || 'the agent').split(/\s+/)[0];
@@ -1332,7 +1354,10 @@ async function startPty() {
   // Launch always opens a fresh chat rather than resuming the last discussion.
   // Reopening a specific past conversation is an explicit action from the
   // Sessions list, not something the app does automatically on startup.
+  tab.command = (cfg && cfg.agentCommand) || null;
+  tab.exited = false;
   await window.husk.pty.start({ cols, rows, sessionId: tab.id, resumeLast: false });
+  refreshShellStatusBar();
   term.focus();
   maybeShowTrustBanner();
   // Inject ai-suggested workflow context so the AI knows what workflows exist
@@ -1350,7 +1375,7 @@ async function startPty() {
 }
 
 // Open a brand-new chat in its own tab, leaving every existing tab's agent
-// running. Backs the "+ New Chat" action.
+// running. Backs the "+ New chat" action.
 async function openNewChatTab(opts = {}) {
   const tab = createTab();
   if (opts.resumeAttempt) {
@@ -1372,7 +1397,10 @@ async function openNewChatTab(opts = {}) {
   chatHasInput = false;
   resetSpeechState();
   clearSessionContext();
+  tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+  tab.exited = false;
   await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
+  refreshShellStatusBar();
   tab.term.focus();
   maybeShowTrustBanner();
   // skipWelcome: the caller is about to write into this chat, so painting the
@@ -1404,6 +1432,8 @@ async function restartPty(opts = {}) {
   clearSessionContext();
   // First wipe so any earlier scrollback is gone before kill output starts.
   try { tab.term.reset(); } catch (_) { try { tab.term.clear(); } catch (_) {} }
+  tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+  tab.exited = false;
   await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   // Quiet window that lets the closing PTY drain its tail notice into the
   // suppressed handlers before output is re-enabled.
@@ -1411,6 +1441,7 @@ async function restartPty(opts = {}) {
   // Second wipe, so the new PTY's banner starts on a clean canvas.
   try { tab.term.reset(); } catch (_) {}
   tab.restarting = false;
+  refreshShellStatusBar();
   // Respect the "Don't show this on next launch" toggle on restart too.
   if (!(cfg && cfg.skipWelcome)) $('#chat-empty').classList.add('show');
   tab.term.focus();
@@ -1560,8 +1591,9 @@ async function confirmCloseTab(id) {
 
 // SVG glyphs for the tab controls. Block-level SVGs (not emoji) so they sit on
 // the same line as the label and align consistently across platforms.
-const TAB_EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
-const TAB_CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const TAB_EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+const TAB_CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const TAB_NEW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
 
 // Render the tab strip. One pill per chat, always visible so every chat (even
 // the first) has a clickable label, a hover rename icon, and a close button.
@@ -1602,7 +1634,20 @@ function renderTabStrip() {
     btn.appendChild(x);
     strip.appendChild(btn);
   }
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'chat-tab-new';
+  add.title = 'New chat';
+  add.setAttribute('aria-label', 'New chat');
+  // eslint-disable-next-line no-unsanitized/property -- static SVG markup
+  add.innerHTML = TAB_NEW_SVG;
+  add.addEventListener('click', () => { openNewChatTab(); });
+  strip.appendChild(add);
   strip.classList.toggle('multi', tabs.length >= 1);
+  // The strip scrolls once the tabs outrun the head, so the focused chat is
+  // brought back into view after every render.
+  const active = strip.querySelector('.chat-tab.active');
+  if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 // Link each tab to the agent session it spawned, so a saved custom name can be
@@ -1736,14 +1781,17 @@ function applyAccent(accent) {
 // passes _nav so it does not re-record itself.
 let pageHistory = [];
 let pageForwardStack = [];
-// The palette badge shows the chord this platform actually uses.
+// The search field shows the chord this platform actually uses.
 {
-  const pal = document.getElementById('btn-palette');
-  if (pal && !/mac/i.test(navigator.platform)) pal.textContent = 'Ctrl+K';
+  const key = document.getElementById('btn-palette-key');
+  if (key && !/mac/i.test(navigator.platform)) key.textContent = 'Ctrl K';
 }
 
 function setPage(name, opts = {}) {
   name = normalizePageName(name);
+  // An uncommitted appearance preview belongs to Preferences, so leaving the
+  // page puts the saved theme, accent and rail back.
+  if (currentPage === 'prefs' && name !== 'prefs') revertAppearancePreview();
   if (!opts._nav && currentPage && currentPage !== name) {
     pageHistory.push(currentPage);
     if (pageHistory.length > 64) pageHistory.shift();
@@ -1769,10 +1817,10 @@ function setPage(name, opts = {}) {
   }
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
+  if (name === 'prefs') { bindPrefs(); paintPrefsVersion(); }
 }
 
-// Only rail items that name a page navigate; the Preferences gear (no
-// data-page) opens its modal over whatever page is currently shown.
+// Every rail item names the page it opens.
 $$('.rail-item').forEach((b) => b.addEventListener('click', () => { if (b.dataset.page) setPage(b.dataset.page); }));
 // Sidebar collapse/expand toggle: switches between the labeled rail (names) and
 // the icon-only rail. Persists the choice and refits the terminal.
@@ -1820,9 +1868,9 @@ function syncRailToggleTitle() {
   t.title = document.body.dataset.rail === 'expanded' ? 'Collapse sidebar' : 'Expand sidebar';
 }
 function syncStatusToggleTitle() {
-  const t = $('#sp-toggle');
+  const t = $('#btn-status-toggle');
   if (!t) return;
-  t.title = document.body.dataset.status === 'collapsed' ? 'Expand status panel' : 'Collapse status panel';
+  t.title = document.body.dataset.status === 'collapsed' ? 'Expand the side panel' : 'Collapse the side panel';
 }
 // Rail is permanently icon-only.
 
@@ -1833,10 +1881,8 @@ async function toggleStatusPanel() {
   cfg = await window.husk.config.set({ statusCollapsed: !collapsed });
   setTimeout(fitNow, 200);
 }
-// The in-panel chevron collapses; the top-bar button collapses too and is the
-// way back once the panel is hidden entirely.
-const spToggle = $('#sp-toggle');
-if (spToggle) spToggle.addEventListener('click', toggleStatusPanel);
+// One control owns the side panel, in the top bar, so it is in the same place
+// whether the panel is showing or hidden.
 const topStatusToggle = $('#btn-status-toggle');
 if (topStatusToggle) topStatusToggle.addEventListener('click', toggleStatusPanel);
 
@@ -1848,12 +1894,6 @@ async function refreshStats() {
     // The Skills subtitle is owned by applyPromptsLabels so labels stay
     // agent-aware while the count remains current.
     applyPromptsLabels();
-    // Sessions subheader is a hint until renderSessions reads the active
-    // agent's sessions and takes ownership of the line.
-    if (!sessionsSubOwned) {
-      const agentNow = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0];
-      $('#sessions-sub').textContent = `${agentNow} sessions · click to preview, Resume to continue`;
-    }
   } catch (err) { console.warn('stats error', err); }
 }
 
@@ -1927,17 +1967,15 @@ function sparkHTML(values, timestamps) {
 // No-op: retained so existing call sites stay valid.
 function spInfo(_tip) { return ''; }
 
-// ─── PAI-style context meter ───────────────────────────────────────────────────
-// Port of statusline-command.sh get_bucket_color: a 4-stop linear gradient
-// green(74,222,128) -> yellow(250,204,21) -> orange(251,146,60) -> red(239,68,68).
-// `pos` is a 0-100 position ALONG the bar, so the bar itself reads green->red.
+// ─── Context meter ─────────────────────────────────────────────────────────────
+// Bucket colour ramp across the bar: the theme's own emerald, through its amber,
+// to its rose. `pos` is a 0-100 position ALONG the bar, so the bar reads calm on
+// the left and alarming on the right.
 function ctxBucketColor(pos) {
   const p = Math.max(0, Math.min(100, pos));
-  let r, g, b;
-  if (p <= 33) { r = 74 + (250 - 74) * p / 33; g = 222 + (204 - 222) * p / 33; b = 128 + (21 - 128) * p / 33; }
-  else if (p <= 66) { const t = p - 33; r = 250 + (251 - 250) * t / 33; g = 204 + (146 - 204) * t / 33; b = 21 + (60 - 21) * t / 33; }
-  else { const t = p - 66; r = 251 + (239 - 251) * t / 34; g = 146 + (68 - 146) * t / 34; b = 60 + (68 - 60) * t / 34; }
-  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+  return p <= 50
+    ? `color-mix(in srgb, var(--amber) ${Math.round(p * 2)}%, var(--emerald))`
+    : `color-mix(in srgb, var(--rose) ${Math.round((p - 50) * 2)}%, var(--amber))`;
 }
 // Friendly model name for the status readout, derived from the model id.
 // Strips the tier suffix and vendor prefix, then splits the rest into family
@@ -1977,12 +2015,89 @@ function ctxBarHTML(pct, buckets = 26) {
 function ctxPctColor(pct) {
   const p = Number(pct) || 0;
   if (p >= 80) return 'var(--rose)';
-  if (p >= 60) return 'rgb(251,146,60)';
-  if (p >= 40) return 'rgb(251,191,36)';
+  if (p >= 60) return 'var(--amber)';
+  if (p >= 40) return 'var(--warn)';
   return 'var(--emerald)';
 }
 
+// ─── Shell status bar ────────────────────────────────────────────────────────
+// One line under every page: the active tool, the folder it runs in, the model
+// this chat runs, and whether its agent is still there. Reads the same stats
+// poll the status panel reads, and falls back to the configured tool and folder
+// before the first poll lands.
+
+// The model a launch command pins, for the CLIs that take one as a flag.
+function modelFromCommand(cmd) {
+  const m = String(cmd || '').match(/--model[=\s]+("[^"]+"|'[^']+'|[^\s-]\S*)/);
+  return m ? m[1].replace(/^["']|["']$/g, '') : '';
+}
+
+// Paths read home-relative, the way a shell writes them.
+function homeRelativePath(p) {
+  const full = String(p || '');
+  const home = String(huskHome || '');
+  if (!home || home === '~' || !full.startsWith(home)) return full;
+  const rest = full.slice(home.length);
+  if (!rest) return '~';
+  return (rest.startsWith('/') || rest.startsWith('\\')) ? '~' + rest : full;
+}
+
+// Whether the chat this window is pointed at still has an agent behind it.
+function shellSessionState() {
+  const tab = TABS.get(activeTabId);
+  if (!tab) return { key: 'none', word: 'no session', title: 'No chat is open' };
+  if (tab.exited) return { key: 'exited', word: 'agent exited', title: 'The agent for this chat has exited; Restart starts a new one' };
+  return { key: 'live', word: 'connected', title: 'Husk is attached to the agent running this chat' };
+}
+
+function refreshShellStatusBar() {
+  const agentEl = $('#sb-agent');
+  if (!agentEl) return;
+  const s = lastStats || {};
+  const u = s.usage || {};
+  const project = projectsCache.find((p) => p.id === activeProjectId);
+  const tab = TABS.get(activeTabId);
+
+  const tool = (chatSubBase && chatSubBase.tool)
+    || s.agent
+    || ((cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'agent');
+  const dir = (chatSubBase && chatSubBase.dir)
+    || (project ? project.path : null)
+    || ((s.workspace && s.workspace.cwd) || (cfg && cfg.agentCwd) || huskHome || '~');
+  // The session's own reading first, then the model the command that started
+  // this chat named. Neither knows one, so neither does the bar.
+  const model = (u.session && u.session.modelLabel)
+    || prettyModelLabel((u.session && u.session.model) || '')
+    || modelFromCommand((tab && tab.command) || (cfg && cfg.agentCommand) || '');
+
+  // The rail names the configured tool a row above, so the bar carries it only
+  // when this chat is running something else.
+  const configured = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : '';
+  const showTool = !!tool && tool !== configured;
+  agentEl.textContent = tool;
+  const agentItem = $('#sb-agent-item');
+  if (agentItem) agentItem.hidden = !showTool;
+  const agentSep = $('#sb-agent-sep');
+  if (agentSep) agentSep.hidden = !showTool;
+  const cwdEl = $('#sb-cwd');
+  if (cwdEl) { cwdEl.textContent = homeRelativePath(dir); cwdEl.title = dir; }
+  const modelEl = $('#sb-model');
+  if (modelEl) modelEl.textContent = model;
+  const modelItem = $('#sb-model-item');
+  if (modelItem) modelItem.hidden = !model;
+  const modelSep = $('#sb-model-sep');
+  if (modelSep) modelSep.hidden = !model;
+
+  const state = shellSessionState();
+  const stateEl = $('#sb-state');
+  if (stateEl) stateEl.textContent = state.word;
+  const stateItem = $('#sb-state-item');
+  if (stateItem) { stateItem.dataset.state = state.key; stateItem.title = state.title; }
+}
+
 async function refreshStatusline() {
+  refreshShellStatusBar();
+  refreshArtifactPane();
   if (!lastStats) return;
   const s = lastStats;
   const here = (s.location && s.location.city) || '';
@@ -2208,6 +2323,200 @@ function fitStatusContent() {
 const spFitObserver = new ResizeObserver(() => fitStatusContent());
 if ($('#sp-content')) spFitObserver.observe($('#sp-content'));
 
+// ─── Context pane ────────────────────────────────────────────────────────────
+// The right column is a tabbed pane. Context holds what the session is pointed
+// at: the folder, its working tree, and the files handed to the agent. Status
+// holds the app readout. Panes keep their layout box while inactive, so their
+// content is measured and fitted before it is shown.
+let spPane = 'work';
+// Last working tree read, keyed by folder. Re-read only when the dirty count
+// moves, so the poll costs one process spawn per actual change.
+let workTree = { root: null, isRepo: false, files: [], dirty: -1 };
+const WORK_TREE_MAX = 12;
+const WORK_CONTEXT_MAX = 8;
+
+// Badge hue per working-tree state, drawn from the shared state tokens.
+const WORK_STATE = {
+  added: 'success',
+  untracked: 'success',
+  modified: 'warning',
+  'type-changed': 'warning',
+  renamed: 'running',
+  copied: 'running',
+  deleted: 'error',
+  conflicted: 'error',
+};
+
+// Trim a path to its last three segments so a deep one still ends in the part
+// that names it.
+const WORK_PATH_SEGMENTS = 3;
+function shortPath(p) {
+  const parts = String(p || '').split('/').filter(Boolean);
+  if (parts.length <= WORK_PATH_SEGMENTS) return String(p || '');
+  return '…/' + parts.slice(-WORK_PATH_SEGMENTS).join('/');
+}
+
+function setStatusPane(name) {
+  spPane = name === 'status' ? 'status' : 'work';
+  $$('.sp-tab').forEach((t) => {
+    const on = t.dataset.pane === spPane;
+    t.classList.toggle('is-active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  $$('.sp-pane').forEach((p) => p.classList.toggle('is-active', p.dataset.pane === spPane));
+  if (spPane === 'work') refreshWorkPane(true);
+  else fitStatusContent();
+  try { window.husk.config.set({ statusPane: spPane }); } catch (_) {}
+}
+$$('.sp-tab').forEach((t) => t.addEventListener('click', () => setStatusPane(t.dataset.pane)));
+
+// The names pinned to this chat, as one phrase.
+function pinnedAgentLabel() {
+  const active = getActiveProfileIds()
+    .map((id) => profilesCache.find((p) => p.id === id))
+    .filter(Boolean);
+  if (!active.length) return '';
+  if (active.length === 1) return active[0].name;
+  if (active.length === 2) return `${active[0].name}, ${active[1].name}`;
+  // Past two names, the count stands in for them.
+  return `${active.length} agents pinned`;
+}
+
+// The folder this session works in, and its display name.
+function workRoot() {
+  const project = projectsCache.find((p) => p.id === activeProjectId);
+  const ws = (lastStats && lastStats.workspace) || {};
+  const path = (chatSubBase && chatSubBase.dir) || (project ? project.path : '') || ws.cwd || (cfg && cfg.agentCwd) || huskHome || '';
+  const name = (project && project.name) || ws.name || (path ? path.split('/').filter(Boolean).pop() : '');
+  return { path, name };
+}
+
+async function readWorkTree(root, dirty) {
+  if (!root) { workTree = { root: null, isRepo: false, files: [], dirty: -1 }; return; }
+  try {
+    const r = await window.husk.fs.gitStatus(root);
+    if (!r || !r.ok) { workTree = { root, isRepo: false, files: [], dirty }; return; }
+    const files = r.isRepo ? window.husk.text.parseGitStatus(r.porcelain) : [];
+    workTree = { root, isRepo: !!r.isRepo, files: files.filter((f) => f.status !== 'ignored'), dirty };
+  } catch (_) {
+    workTree = { root, isRepo: false, files: [], dirty };
+  }
+}
+
+const FILE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+const FOLDER_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
+const DROP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+function workPaneHTML() {
+  const { path, name } = workRoot();
+  const ws = (lastStats && lastStats.workspace) || {};
+  const g = ws.git || {};
+  const pinned = pinnedAgentLabel();
+  const ahead = [];
+  if (g.ahead) ahead.push(`↑${g.ahead}`);
+  if (g.behind) ahead.push(`↓${g.behind}`);
+  const branch = g.isRepo ? `${g.branch || 'detached'}${ahead.length ? ' ' + ahead.join(' ') : ''}` : '';
+
+  const meta = [
+    name ? (branch
+      ? `<span class="pill is-mono" data-state="muted">${escapeHtml(branch)}</span>`
+      : '<span class="pill" data-state="muted">Not a repository</span>') : '',
+    pinned ? `<span class="pill" data-state="running">${escapeHtml(pinned)}</span>` : '',
+  ].filter(Boolean).join('');
+  const project = (name
+    ? `<div class="sp-work-name">${FOLDER_ICON_SVG}<span title="${escapeAttr(path)}">${escapeHtml(name)}</span></div>
+       ${path ? `<div class="sp-work-path" title="${escapeAttr(path)}">${escapeHtml(path)}</div>` : ''}`
+    : `<div class="sp-work-empty">${FOLDER_ICON_SVG}No folder open yet</div>`)
+    + (meta ? `<div class="sp-work-meta">${meta}</div>` : '');
+
+  const changed = workTree.files.slice(0, WORK_TREE_MAX);
+  const changes = !workTree.isRepo
+    ? `<div class="sp-work-empty">${FILE_ICON_SVG}Not a repository, so no changes are tracked</div>`
+    : (changed.length
+      ? changed.map((f) => `
+        <div class="sp-work-row is-clickable" data-change="${escapeAttr(f.path)}" title="${escapeAttr(f.path)} · ${escapeAttr(f.status)} · click to hand it to the agent">
+          <span class="sp-work-badge" data-state="${escapeAttr(WORK_STATE[f.status] || 'muted')}">${escapeHtml(window.husk.text.gitBadge(f.status))}</span>
+          <span class="sp-work-file is-path">${escapeHtml(shortPath(f.path))}</span>
+        </div>`).join('')
+        + (workTree.files.length > changed.length
+          ? `<div class="sp-work-more">${workTree.files.length - changed.length} more not shown</div>` : '')
+      : `<div class="sp-work-empty">${FILE_ICON_SVG}Working tree clean</div>`);
+
+  const shared = sessionContext.slice(0, WORK_CONTEXT_MAX);
+  const context = shared.length
+    ? shared.map((f) => `
+      <div class="sp-work-row is-clickable" data-share="${escapeAttr(f.path)}" data-name="${escapeAttr(f.name)}" title="${escapeAttr(f.name)}, click to share it again">
+        ${FILE_ICON_SVG}
+        <span class="sp-work-file">${escapeHtml(f.name)}</span>
+        <button class="sp-work-drop" data-drop="${escapeAttr(f.path)}" type="button" title="Remove from this session" aria-label="Remove from this session">${DROP_ICON_SVG}</button>
+      </div>`).join('')
+      + (sessionContext.length > shared.length
+        ? `<div class="sp-work-more">${sessionContext.length - shared.length} more not shown</div>` : '')
+    : `<div class="sp-work-empty">${FILE_ICON_SVG}No files shared yet</div>`;
+
+  return `
+    <div class="sp-work">
+      <section class="sp-work-group">
+        <div class="section-label sp-work-head"><span>Project</span></div>
+        ${project}
+      </section>
+      <section class="sp-work-group">
+        <div class="section-label sp-work-head"><span>Changes</span>${workTree.isRepo ? `<span class="section-label-count">${workTree.files.length}</span>` : ''}</div>
+        ${changes}
+      </section>
+      <section class="sp-work-group">
+        <div class="section-label sp-work-head"><span>In context</span><span class="section-label-count">${sessionContext.length}</span></div>
+        ${context}
+      </section>
+    </div>`;
+}
+
+function paintWorkPane() {
+  const pane = $('#sp-pane-work');
+  if (!pane) return;
+  // eslint-disable-next-line no-unsanitized/property -- Every interpolated field is escaped or static markup.
+  pane.innerHTML = workPaneHTML();
+  pane.querySelectorAll('[data-share]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      const drop = e.target.closest('[data-drop]');
+      if (drop) {
+        removeFromSessionContext(drop.dataset.drop);
+        window.husk.context.remove(drop.dataset.drop).catch(() => {});
+        toast(`Removed: ${el.dataset.name}`, 'success');
+        return;
+      }
+      attachFileToChat(el.dataset.share);
+    });
+  });
+  pane.querySelectorAll('[data-change]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (!workTree.root) return;
+      attachFileToChat(`${workTree.root}/${el.dataset.change}`);
+    });
+  });
+}
+
+// Repaint the Context pane. The working tree is re-read only when the dirty
+// count reported by the poll moves, or when the pane is opened.
+async function refreshWorkPane(force = false) {
+  if (!$('#sp-pane-work')) return;
+  const { path } = workRoot();
+  const ws = (lastStats && lastStats.workspace) || {};
+  const dirty = (ws.git && typeof ws.git.dirty === 'number') ? ws.git.dirty : -1;
+  // The tree costs a round trip, so it is re-read for the pane that is showing.
+  // The rest is local state, and painting it keeps the hidden pane true to the
+  // session for the moment it is opened.
+  if (spPane === 'work' && (force || path !== workTree.root || dirty !== workTree.dirty)) {
+    await readWorkTree(path, dirty);
+  }
+  paintWorkPane();
+}
+
+// Both panes read the same poll, so one call keeps whichever is open current.
+function refreshArtifactPane() {
+  refreshWorkPane().catch(() => {});
+}
+
 // ─── Projects page ─────────────────────────────────────────────────────────────
 let projectsCache = [];
 let activeProjectId = null;
@@ -2319,9 +2628,11 @@ function paintProjectsSurface() {
   paintBoard(search ? search.value || '' : '');
 }
 
-const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
+const WS_BRANCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6c0 4-4.5 3.4-9 5"/></svg>';
 const WS_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
-const WS_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const WS_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const WS_FILL_ROWS = 18;
+const WS_FILL_ROWS_HTML = '<div class="ws-fill-row"></div>'.repeat(WS_FILL_ROWS);
 
 // Git chip for one project, shared by board rows and the workspace header.
 function wsBranchChip(st) {
@@ -2372,7 +2683,9 @@ function paintBoard(filter) {
   const match = (p) => !q || (p.name + ' ' + p.path).toLowerCase().includes(q);
   if (!projectsCache.length) {
     // eslint-disable-next-line no-unsanitized/property -- Static markup.
-    board.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-title">No projects yet</div><div class="es-msg">Pin a folder so the agent can launch into it with one click, and this board can tell you what is going on inside it.</div></div>`;
+    board.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></div><div class="es-title">No projects yet</div><div class="es-msg">Pin a folder so the agent can launch into it with one click, and this board can tell you what is going on inside it.</div><button type="button" class="ghost-btn" id="projects-empty-add">Add project</button></div>`;
+    const addBtn = $('#projects-empty-add');
+    if (addBtn) addBtn.addEventListener('click', () => { const b = $('#btn-projects-new'); if (b) b.click(); });
     return;
   }
   const groups = projectGroups || { needsYou: [], active: projectsCache.map((p) => p.id), quiet: [] };
@@ -2397,12 +2710,14 @@ function paintBoard(filter) {
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml.
   board.innerHTML = `${stateNote}
     <div class="ws-table">
-      <div class="ws-thead"><span>Project</span><span>Path</span><span>Branch</span><span>Status</span><span class="ws-th-right">Activity</span><span></span></div>
-      ${needs.length ? groupRow('Needs you', needs.length) + needs.map((p) => wsRowHtml(p, true)).join('') : ''}
-      ${act.length ? groupRow(projectGroups ? 'Active' : 'Projects', act.length) + act.map((p) => wsRowHtml(p, false)).join('') : ''}
-      ${quiet.length ? groupRow('Quiet', quiet.length) + quiet.map((p) => wsRowHtml(p, false)).join('') : ''}
+      <div class="ws-grid">
+        <div class="ws-thead"><span>Project</span><span>Path</span><span>Branch</span><span>Status</span><span class="ws-th-right">Activity</span><span></span></div>
+        ${needs.length ? groupRow('Needs you', needs.length) + needs.map((p) => wsRowHtml(p, true)).join('') : ''}
+        ${act.length ? groupRow(projectGroups ? 'Active' : 'Projects', act.length) + act.map((p) => wsRowHtml(p, false)).join('') : ''}
+        ${quiet.length ? groupRow('Quiet', quiet.length) + quiet.map((p) => wsRowHtml(p, false)).join('') : ''}
+      </div>
       <button type="button" class="ws-addrow" title="Pin another folder">${WS_PLUS_SVG}Add project</button>
-      <div class="ws-fill" aria-hidden="true"></div>
+      <div class="ws-fill" aria-hidden="true">${WS_FILL_ROWS_HTML}</div>
     </div>`;
   // The add row mirrors the header button so there is one modal and one code
   // path behind both entry points.
@@ -2450,7 +2765,7 @@ function paintWorkspace(id) {
   }
   const loopsPanel = loops.length ? `
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>Open loops</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>Open loops</div>
           ${loops.join('')}
         </section>` : '';
 
@@ -2472,7 +2787,7 @@ function paintWorkspace(id) {
       </div>
       <div class="ws-title-actions">
         ${isActive ? '<button class="ghost-btn" id="ws-leave" title="Close this project; the agent runs in your home folder">Exit project</button>' : ''}
-        ${(missing || isActive) ? '' : `<button class="btn-primary" id="ws-launch">Launch<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
+        ${(missing || isActive) ? '' : `<button class="btn-primary" id="ws-launch">Launch<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>`}
       </div>
     </div>
     <div class="ws-tiles">
@@ -2485,7 +2800,7 @@ function paintWorkspace(id) {
         </div>
       </div>
       <div class="ws-tile${loops.length ? ' is-attn' : ''}">
-        <span class="ws-tile-ic${loops.length ? ' is-warn-ic' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></span>
+        <span class="ws-tile-ic${loops.length ? ' is-warn-ic' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Open loops</div>
           <div class="ws-tile-value">${loops.length}</div>
@@ -2493,7 +2808,7 @@ function paintWorkspace(id) {
         </div>
       </div>
       <div class="ws-tile">
-        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg></span>
+        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Sessions</div>
           <div class="ws-tile-value" id="ws-tile-sessions">&hellip;</div>
@@ -2501,7 +2816,7 @@ function paintWorkspace(id) {
         </div>
       </div>
       <div class="ws-tile">
-        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg></span>
+        <span class="ws-tile-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg></span>
         <div class="ws-tile-body">
           <div class="ws-tile-label">Last activity</div>
           <div class="ws-tile-value" id="ws-tile-activity">${escapeHtml(fmtRelTime(wsActivityMs(p)))}</div>
@@ -2511,25 +2826,25 @@ function paintWorkspace(id) {
     <div class="ws-cols">
       <div class="ws-col-l">${loopsPanel}
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg>Recent sessions</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 1 1-3.1-6.3"/><path d="M21 4v5h-5"/><path d="M12 8v4l3 2"/></svg>Recent sessions</div>
           <div id="ws-sessions-list"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
       </div>
       <div class="ws-col-r">
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>Details</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>Details</div>
           <div class="ws-details">${details}<div class="ws-detail" id="ws-commit-row" hidden><span class="ws-detail-k">Last commit</span><span class="ws-detail-v" id="ws-commit-v"></span></div></div>
         </section>
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg>Autopilot runs</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3l-8 10h6l-2 8 8-10h-6z"/></svg>Autopilot runs</div>
           <div id="ws-runs"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg>MCP servers in this folder</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4M7 13l10 4"/></svg>MCP servers in this folder</div>
           <div id="ws-mcp"><div class="ws-empty">Loading&hellip;</div></div>
         </section>
         <section class="ws-panel">
-          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>Danger zone</div>
+          <div class="ws-panel-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>Danger zone</div>
           <div class="ws-danger"><span class="ws-danger-hint">Removes it from Husk; the folder itself is not touched.</span><button class="ghost-btn ghost-btn-danger" id="ws-delete">${WS_TRASH_SVG} Delete project</button></div>
         </section>
       </div>
@@ -2630,7 +2945,7 @@ async function wsFillInspect(p) {
 // must not block the workspace opening.
 async function wsFillSessions(p) {
   let res = null;
-  try { res = await window.husk.sessions.list(); } catch (_) {}
+  try { res = await sessionsFetch(); } catch (_) {}
   // The user may have navigated away while the list loaded.
   if (wsOpenId !== p.id) return;
   const list = $('#ws-sessions-list');
@@ -2664,7 +2979,7 @@ async function wsFillSessions(p) {
         <div class="ws-sess-title" title="${escapeHtml(s.title || '')}">${escapeHtml(s.title || '(untitled)')}</div>
         <div class="ws-sess-meta">${escapeHtml(fmtRelTime(s.mtime || s.startedMs))}</div>
       </div>
-      <span class="ws-link-btn" aria-hidden="true">Resume<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
+      <span class="ws-link-btn" aria-hidden="true">Resume<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
     </div>`).join('');
   list.querySelectorAll('.ws-sess').forEach((row, i) => {
     const go = () => resumeSessionInChat({ id: rows[i].id, project: p.path, owner: rows[i].owner });
@@ -2707,7 +3022,7 @@ async function refreshProjectsState() {
   activeProjectId = res.activeProjectId || null;
   updateActiveProjectChip();
   if (currentPage === 'projects') paintProjectsSurface();
-  // Refresh chat-sub since the agent cwd may have changed.
+  // Reread config since the agent cwd may have changed.
   try { cfg = await window.husk.config.get(); } catch (_) {}
   // The workspace moved, so Files moves with it.
   if (activeProjectId !== prevActiveId) fxSyncToWorkspace();
@@ -3265,7 +3580,7 @@ function wfMiniLabelled(nodes, edges, statuses, names, surface) {
 }
 
 // The unlabelled drawing, built out of elements. Coordinates are the authored
-// ones normalised into the box, so the arrangement is kept exactly as drawn —
+// ones normalised into the box, so the arrangement is kept exactly as drawn,
 // but only while it draws readably. When pills at those positions would sit on
 // top of one another (a big graph in a small frame) the drawing falls back to
 // the graph's own columns, the same layering Arrange writes, scaled to fit:
@@ -3571,12 +3886,12 @@ function wfPatternGraph(spec) {
 }
 
 const WF_ICONS = {
-  chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/><path d="M14.5 9.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7"/></svg>',
-  fan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="20" cy="19" r="2"/><path d="M6 12h12M6 11l12-5M6 13l12 5"/></svg>',
-  route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h5l4-6h9"/><path d="M12 18h9"/><path d="M8 12l4 6"/><path d="M18 3l3 3-3 3"/><path d="M18 15l3 3-3 3"/></svg>',
-  grade: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><path d="M8 12l3 3 9-9"/></svg>',
-  vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.3 5.5 6 .5-4.6 3.9 1.4 5.8L12 15.6 6.9 18.7l1.4-5.8L3.7 9l6-.5z"/></svg>',
-  ship: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>',
+  chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/><path d="M14.5 9.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7"/></svg>',
+  fan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="20" cy="19" r="2"/><path d="M6 12h12M6 11l12-5M6 13l12 5"/></svg>',
+  route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h5l4-6h9"/><path d="M12 18h9"/><path d="M8 12l4 6"/><path d="M18 3l3 3-3 3"/><path d="M18 15l3 3-3 3"/></svg>',
+  grade: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><path d="M8 12l3 3 9-9"/></svg>',
+  vote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.3 5.5 6 .5-4.6 3.9 1.4 5.8L12 15.6 6.9 18.7l1.4-5.8L3.7 9l6-.5z"/></svg>',
+  ship: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>',
 };
 
 const WF_PATTERNS = [
@@ -3738,7 +4053,7 @@ function wfPaintPatterns() {
       <div class="wfx-pattern-body">${escapeHtml(p.blurb)}</div>
       <div class="wfx-pattern-foot">
         <span>${escapeHtml(p.trait)}</span>
-        <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
+        <span class="wfx-pattern-use">Use this<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
       </div>`;
     // The thumbnail is appended as elements, since the builder returns them and
     // puts step names in as text. The card goes into the grid first so the
@@ -3796,15 +4111,20 @@ function paintWorkflowList() {
   // Hero figures: what this page is worth at a glance.
   const week = wfRunsCache.filter((r) => Date.now() - new Date(r.finishedAt).getTime() < 7 * 864e5);
   const passed = week.filter((r) => r.status === 'done').length;
-  const setStat = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
-  setStat('#wfx-stat-flows', String(workflowsCache.length));
-  setStat('#wfx-stat-runs', String(week.length));
-  setStat('#wfx-stat-pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
+  // The same four figures are written twice: once on the head strip that rides
+  // above a run, once in the hero. Both carry the number, so whichever is on
+  // screen is the one a reader can trust.
+  const setStat = (name, text) => {
+    for (const el of document.querySelectorAll(`#wfx-stat-${name}, #wfx-hero-${name}`)) el.textContent = text;
+  };
+  setStat('flows', String(workflowsCache.length));
+  setStat('runs', String(week.length));
+  setStat('pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
   if (wfRunsCache.length) {
     const durations = wfRunsCache.map((r) => r.ms || 0).filter(Boolean).sort((a, b) => a - b);
-    setStat('#wfx-stat-median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
+    setStat('median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
   } else {
-    setStat('#wfx-stat-median', 'n/a');
+    setStat('median', 'n/a');
   }
 
   // Nothing saved yet: the patterns gallery is the call to action, so the
@@ -3853,7 +4173,7 @@ function paintWorkflowList() {
         <div class="wf-card-actions">
           <button class="ghost-link wf-edit-btn" data-id="${escapeAttr(w.id)}">Edit</button>
           ${runs.length ? `<button class="ghost-link wf-last-btn" data-open-run="${escapeAttr(w.id)}">Last run</button>` : ''}
-          <button class="card-cta wf-run-btn" data-id="${escapeAttr(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+          <button class="card-cta wf-run-btn" data-id="${escapeAttr(w.id)}">Run<svg class="card-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
         </div>
       </div>`;
   // The trailing tracks of the row would otherwise be empty background, so the
@@ -3861,7 +4181,7 @@ function paintWorkflowList() {
   // .wf-card click handler opens the builder on a blank graph.
   }).join('') + `
       <button type="button" class="wf-card wf-ghost-card">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         <span>New workflow</span>
         <small>start from a blank graph</small>
       </button>`;
@@ -4639,7 +4959,7 @@ function wfBuildRunCanvas(workflow) {
           <span class="wf-rn-dot"></span>
           <span class="wf-rn-live" data-live="${escapeAttr(n.id)}">Pending</span>
           <span class="wf-rn-open" title="Open this step's terminal">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
           </span>
         </div>
       </div>`;
@@ -4717,7 +5037,7 @@ function wfFitEditor(editor, hostSel, graph) {
 }
 
 // Semantic zoom. Below the threshold a step card drops its agent line and
-// badge and shows one bold centred name — the same call the grid thumbnails
+// badge and shows one bold centred name, the same call the grid thumbnails
 // made at 250px: at this size the arrangement carries the information and
 // small text is noise. The tier rides on the canvas container so the run
 // canvas shares it.
@@ -5817,11 +6137,11 @@ const AG_FACET_LABEL = {
   pinned: 'Pinned',
 };
 // Shared stroke attributes for the row glyphs.
-const AG_STROKE = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+const AG_STROKE = 'fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 const AG_EDIT_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`;
 const AG_VIEW_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const AG_TRASH_SVG = `<svg viewBox="0 0 24 24" ${AG_STROKE}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
-const AG_PIN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.3V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.7a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`;
+const AG_PIN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.3V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.7a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`;
 
 // The single mount test. It reads the DOM rather than a page variable, so it
 // stays true no matter which route put the page on screen.
@@ -5950,13 +6270,21 @@ function agFacetHtml(axis, key, n, active) {
 const AG_ORIGIN_LABEL = { custom: 'Custom', builtin: 'Built-in', repo: 'From a repo' };
 
 // One property cell. The label carries the field, the value carries the state,
-// so the pane says what the row has no column for.
-function agMetaHtml(label, value, cls) {
-  // Only the path can outrun its cell, so only the path carries a tooltip.
-  const wide = cls === 'ag-dt-cell-wide';
+// so the pane says what the row has no column for. A field with nothing behind
+// it prints the sentence that names the absence, so the set of properties is
+// the same on every record.
+function agMetaHtml(label, value, cls, opts) {
+  const o = opts || {};
+  const empty = !value;
+  const text = empty ? String(o.none || 'None') : String(value);
+  const dd = [];
+  if (o.mono && !empty) dd.push('ag-dt-path');
+  if (empty) dd.push('is-empty');
+  // Only a path can outrun its cell, so only a path carries a tooltip.
+  const attr = (dd.length ? ` class="${dd.join(' ')}"` : '') + (o.mono && !empty ? ` title="${escapeAttr(text)}"` : '');
   return `<div class="ag-dt-cell${cls ? ` ${cls}` : ''}">`
     + `<dt>${escapeHtml(label)}</dt>`
-    + `<dd${wide ? ` class="ag-dt-path" title="${escapeAttr(value)}"` : ''}>${escapeHtml(value)}</dd>`
+    + `<dd${attr}>${escapeHtml(text)}</dd>`
     + '</div>';
 }
 
@@ -5999,16 +6327,16 @@ function agPaintDetail() {
   const acts = `<button type="button" class="ag-pin" data-ag-dt-act="pin" aria-pressed="${pinned ? 'true' : 'false'}" aria-label="${pinned ? 'Unpin' : 'Pin'} ${escapeAttr(name)}" title="${escapeAttr(agPinTitle(pinned))}">${AG_PIN_SVG}</button>`
     + `<button type="button" class="ag-act-btn" data-ag-dt-act="edit" aria-label="${escapeAttr(openLabel)}" title="${escapeAttr(openTitle)}">${builtin ? AG_VIEW_SVG : AG_EDIT_SVG}</button>`
     + (builtin ? '' : `<button type="button" class="ag-act-btn is-danger" data-ag-dt-act="del" aria-label="Delete ${escapeAttr(name)}" title="Delete · ${escapeAttr(AG_MOD)} Backspace">${AG_TRASH_SVG}</button>`);
+  // Source names a repository, so it stands only for a record that came from one.
   const meta = agMetaHtml('Origin', AG_ORIGIN_LABEL[agOriginOf(p)] || 'Custom')
     + agMetaHtml('Auto-select', p.autoSelect ? 'On' : 'Off')
-    + (p.repoRoot ? agMetaHtml('Source', agShortPath(p.repoRoot), 'ag-dt-cell-wide') : '');
-  // The pane carries the description only for a row whose column cut it off,
-  // which is exactly the rows that gained a title attribute.
-  const row = agRowEl(p.id);
-  const desc = row && row.querySelector('.ag-desc[title]') ? agDesc(p) : '';
+    + (p.repoRoot ? agMetaHtml('Source', agShortPath(p.repoRoot), 'ag-dt-cell-wide', { mono: true }) : '');
+  // The sentence about the agent is the pane's lede, whatever the row managed to
+  // show. A record with no sentence at all says so rather than leaving the slot out.
+  const full = agDesc(p);
   // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
   el.innerHTML = `<div class="ag-dt-head"><h2 class="ag-dt-name" title="${escapeAttr(name)}">${escapeHtml(name)}</h2><span class="ag-dt-acts">${acts}</span></div>`
-    + (desc ? `<p class="ag-dt-desc">${escapeHtml(desc)}</p>` : '')
+    + (full ? `<p class="ag-dt-desc">${escapeHtml(full)}</p>` : '<p class="ag-dt-desc is-empty">No description</p>')
     + `<dl class="ag-dt-meta">${meta}</dl>`
     + '<p class="ag-dt-label">System prompt</p>'
     + (prompt
@@ -6048,6 +6376,9 @@ function agPaintStateFacet() {
     el.textContent = '';
   }
   if (sep) sep.hidden = !show;
+  // The head names an axis, so it stands only while the axis has chips under it.
+  const group = $('#ag-state-group');
+  if (group) group.hidden = !show;
   agSyncFacetTabs(el);
 }
 
@@ -6202,7 +6533,14 @@ function paintAgents() {
     const keys = present.length > 1 ? ['all', ...present] : [];
     // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml / escapeAttr
     originEl.innerHTML = keys.map((k) => agFacetHtml('origin', k, agRows(k, agState).length, agOrigin)).join('');
+    // The head counts the origins the roster actually holds, not the chips,
+    // since All is a view of the axis rather than a member of it.
+    const originN = $('#ag-origin-n');
+    if (originN) originN.textContent = String(present.length);
   }
+  // The head names an axis, so it stands only while the axis has chips under it.
+  const originGroup = $('#ag-origin-group');
+  if (originGroup && originEl) originGroup.hidden = !originEl.children.length;
   if (!loading) agPaintStateFacet();
   // An axis with nothing selected still owes the keyboard one way in.
   agSyncFacetTabs(originEl);
@@ -6225,7 +6563,7 @@ function paintAgents() {
     const chips = (loading || rows.length) ? onRows : wayBack;
     // eslint-disable-next-line no-unsanitized/property -- every interpolation goes through escapeHtml
     keysEl.innerHTML = chips.map(([keys, v]) => '<span class="ag-key"><span class="ag-key-caps">'
-      + keys.map((k) => `<kbd class="ag-kbd">${escapeHtml(k)}</kbd>`).join('')
+      + keys.map((k) => `<kbd class="kbd-cap">${escapeHtml(k)}</kbd>`).join('')
       + `</span><span class="ag-key-word">${escapeHtml(v)}</span></span>`).join('');
   }
 
@@ -6478,9 +6816,9 @@ async function deactivateAllProfiles() {
   updateActiveChatProfile();
 }
 
-// The chat header names the tool, the folder and the pinned agents. A resumed
-// session hands its own tool and folder over here, and they hold until
-// preferences or the active project moves. One writer owns the line.
+// The tool and the folder this chat runs in. A resumed session hands its own
+// pair over here, and they hold until preferences or the active project moves.
+// The status bar and the Context pane both read from it.
 let chatSubBase = null;
 function setChatSubBase(base) {
   chatSubBase = base || null;
@@ -6488,22 +6826,8 @@ function setChatSubBase(base) {
 }
 
 function updateActiveChatProfile() {
-  const sub = $('#chat-sub');
-  if (!sub) return;
-  const active = getActiveProfileIds()
-    .map((id) => profilesCache.find((p) => p.id === id))
-    .filter(Boolean);
-  const project = projectsCache.find((p) => p.id === activeProjectId);
-  const toolName = (chatSubBase && chatSubBase.tool)
-    || ((cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'agent');
-  const dir = (chatSubBase && chatSubBase.dir)
-    || (project ? project.path : ((cfg && cfg.agentCwd) || huskHome));
-  let tag = '';
-  if (active.length === 1) tag = active[0].name;
-  else if (active.length === 2) tag = `${active[0].name}, ${active[1].name}`;
-  // Past two names, the count stands in for them.
-  else if (active.length > 2) tag = `${active.length} agents pinned`;
-  sub.textContent = tag ? `${toolName} · ${dir} · ${tag}` : `${toolName} · ${dir}`;
+  refreshShellStatusBar();
+  refreshArtifactPane();
 }
 
 // ── Delete, duplicate ───────────────────────────────────────────────────────
@@ -6928,7 +7252,7 @@ async function openAgentsImportModal() {
     listEl.innerHTML = `<div class="ai-empty">No agents found on this machine.</div>`;
     return;
   }
-  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
   listEl.innerHTML = res.agents.map((a) => {
     if (a.alreadyImported) {
@@ -7103,7 +7427,7 @@ async function scanRepoRoot(root) {
     listEl.innerHTML = `<div class="ai-empty">No <code>agents/*.md</code> files in that folder.</div>`;
     return;
   }
-  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const checkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
   // eslint-disable-next-line no-unsanitized/property -- every interpolation escaped
   listEl.innerHTML = res.agents.map((a) => {
     const pill = a.alreadyImported
@@ -7544,8 +7868,8 @@ const promptBodyCache = new Map();
 
 const PR_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
 const PR_PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
-const PR_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
-const PR_ARROW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>';
+const PR_PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const PR_ARROW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>';
 
 async function renderPrompts() {
   const pane = $('#prompts-pane');
@@ -7748,7 +8072,7 @@ function paintPrompts(items, filter) {
     return `<div class="pr-item${isActive ? ' is-active' : ''}${p.disabled ? ' is-disabled' : ''}" data-md="${escapeAttr(p.mdPath)}" role="button" aria-current="${isActive}" tabindex="0">
       <div class="pr-item-top">
         <span class="pr-item-name">${escapeHtml(p.name)}</span>
-        ${p.disabled ? '<span class="pr-pill">off</span>' : ''}
+        ${p.disabled ? '<span class="pill" data-state="muted">off</span>' : ''}
       </div>
       ${p.description ? `<span class="pr-item-desc">${escapeHtml(p.description)}</span>` : ''}
     </div>`;
@@ -7757,7 +8081,7 @@ function paintPrompts(items, filter) {
   const count = q ? `${filtered.length} of ${items.length}` : `${items.length} prompt${items.length === 1 ? '' : 's'}`;
   // eslint-disable-next-line no-unsanitized/property -- Every interpolation goes through escapeHtml/escapeAttr above.
   pane.innerHTML = `<div class="pr-list">
-      <div class="pr-list-head"><span>Library</span><span>${escapeHtml(count)}</span></div>
+      <div class="pr-list-head section-label"><span>Library</span><span class="section-label-count">${escapeHtml(count)}</span></div>
       <div class="pr-items" aria-label="Prompts">
         ${rows}
         <button class="pr-new" type="button">${PR_PLUS_SVG}New prompt</button>
@@ -7766,7 +8090,7 @@ function paintPrompts(items, filter) {
     <div class="pr-detail${editing ? ' is-editing' : ''}">
       <div class="pr-detail-head">
         <div class="pr-detail-heading">
-          <div class="pr-eyebrow">${editing ? 'Editing' : 'Prompt'}${active.disabled ? '<span class="pr-pill">off</span>' : ''}</div>
+          <div class="pr-eyebrow">${editing ? 'Editing' : 'Prompt'}${active.disabled ? '<span class="pill" data-state="muted">off</span>' : ''}</div>
           ${editing ? `
             <input class="pr-edit-field pr-edit-name" id="pr-edit-name" type="text" value="${escapeAttr(active.name)}"
                    spellcheck="false" autocomplete="off" aria-label="Prompt name" />
@@ -8019,8 +8343,8 @@ function applyPromptsLabels() {
     const n = skillsCache.length || ((lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null);
     const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
     skillsSub.textContent = count + (agentKindCache === 'claude'
-      ? 'an enabled skill is called automatically whenever the agent decides it fits'
-      : 'switch off anything this agent should not see');
+      ? 'An enabled skill is called automatically whenever the agent decides it fits'
+      : 'Switch off anything this agent should not see');
   }
 }
 async function injectPromptToChat(content) {
@@ -8104,6 +8428,17 @@ function skMatches(sk, q, counts) {
   return (sk.name + ' ' + (sk.description || '')).toLowerCase().includes(q);
 }
 
+// A skill's frontmatter is written for the model: the sentence is followed by
+// routing clauses the reader has no use for. The row prints what comes first.
+function skBlurb(desc) {
+  const text = String(desc || '').trim();
+  if (!text) return '';
+  const cut = text.search(/\b(USE WHEN|NOT FOR|USE_WHEN|NOT_FOR|Triggers on)\b/);
+  if (cut <= 0) return text;
+  const head = text.slice(0, cut).trim().replace(/[·|,;\s]+$/, '');
+  return head || text;
+}
+
 function paintSkills(list, query) {
   const q = (query || '').toLowerCase().trim();
   const counts = skPrefixCounts(list);
@@ -8130,6 +8465,18 @@ function paintSkills(list, query) {
       <span class="sk-source-name">${escapeHtml(label)}</span>
       <span class="sk-source-n">${n}</span>
     </button>`).join('');
+  // The rows carry their own counts, so the header names the axis and nothing else.
+  const sourcesN = $('#skills-sources-n');
+  if (sourcesN) sourcesN.textContent = '';
+
+  // Each state names its own size, so choosing one costs no guess about what
+  // is behind it.
+  const stateTally = { all: list.length, on: 0, off: 0 };
+  for (const sk of list) stateTally[sk.disabled ? 'off' : 'on'] += 1;
+  for (const key of ['all', 'on', 'off']) {
+    const el = $(`#skills-state-n-${key}`);
+    if (el) el.textContent = String(stateTally[key]);
+  }
 
   // Newest first under Recent, where the order is the whole point; alphabetical
   // everywhere else.
@@ -8178,7 +8525,7 @@ function paintSkills(list, query) {
     return `
     <div class="sk-row${on ? '' : ' disabled'}" data-id="${escapeAttr(sk.id)}" data-source="${escapeAttr(sk.source)}" data-dirname="${escapeAttr(sk.dirName || sk.id)}" data-mdpath="${escapeAttr(sk.mdPath)}" data-path="${escapeAttr(sk.path)}" data-name="${escapeAttr(sk.name)}">
       <div class="sk-row-label" title="${escapeAttr(sk.name)}">${escapeHtml(skShortName(sk, key))}</div>
-      <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(sk.description || 'No description.')}</div>
+      <div class="sk-row-desc" title="${escapeAttr(sk.description || '')}">${escapeHtml(skBlurb(sk.description) || 'No description.')}</div>
       <button class="toggle ${on ? 'on' : ''}" data-toggle="1" title="${on ? 'Disable' : 'Enable'} skill"></button>
     </div>`;
   }).join('');
@@ -8232,6 +8579,18 @@ $('#skills-sources').addEventListener('click', (e) => {
   if (!btn) return;
   skSource = btn.dataset.sourceKey;
   paintSkills(skillsCache, $('#skills-search').value);
+});
+// A filter section folds away when its axis is settled, so a long list of
+// filters never costs the reader the axis below it. Delegated from the document,
+// so every page that mounts a filter group gets the behaviour.
+document.addEventListener('click', (e) => {
+  const head = e.target.closest && e.target.closest('.filter-group-head');
+  if (!head) return;
+  const group = head.closest('.filter-group');
+  if (!group) return;
+  const open = group.dataset.open !== 'false';
+  group.dataset.open = open ? 'false' : 'true';
+  head.setAttribute('aria-expanded', open ? 'false' : 'true');
 });
 $('#skills-state').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-state]');
@@ -8353,406 +8712,1845 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
   });
 }
 
-// ─── Sessions page ───────────────────────────────────────────────────────────────
-let sessionsCache = [];
-// Set once renderSessions has written the detailed subheader, so the periodic
-// stats pass stops replacing it with the placeholder.
-let sessionsSubOwned = false;
-let sessionsAgent = 'claude';
-let sessionsDir = '';
-let sessionsSelectMode = false;
-const sessionsSelected = new Set();
+// ─── Sessions page: the Roster ───────────────────────────────────────────────
+// A grouped roster beside a live detail pane. The roster is a flat ARIA tree
+// reconciled by key, so scroll, cursor, selection and expansion survive every
+// repaint. The view model (filtering, threading, grouping, labels) is the pure
+// module behind window.husk.sessionView; this file only paints what it returns.
 
-// One shape for every state that leaves the list without rows: real icon,
-// headline, one support line, then the actions that state offers. Callers
-// escape their own interpolations; everything else here is static.
-function sessionsEmptyCard({ title, msg, actions = '', hints = '' }) {
-  return `<div class="empty-state">
-    <div class="es-icon">${ICONS.sessions}</div>
-    <div class="se-title">${title}</div>
-    <div class="es-msg">${msg}</div>
-    ${actions}
-    ${hints}
-  </div>`;
+const SX_CAP = 300;          // the list handler caps one tool at 300; the others return everything
+const SX_MIN_Q = 2;          // a one-glyph subsequence matches nearly every title
+const SX_PEEK_MAX = 40;      // transcript tails kept in memory
+const SX_SKELETONS = 6;
+
+const sx = {
+  cache: [],
+  agent: '',
+  dir: '',
+  currentCwd: '',
+  hiddenAutopilot: 0,
+  supported: true,
+  loaded: false,
+  error: '',
+  listable: 0,
+  names: {},
+  now: 0,
+
+  agents: {
+    ok: true, error: '', supported: true, controllable: false,
+    bySession: new Map(),
+    byParent: new Map(),
+    chatIds: new Set(),
+  },
+
+  groupBy: 'project',
+  chips: { project: true, live: false, needs: false, work: false },
+  query: '',
+  hits: new Map(),
+  flat: false,
+
+  expandedAgents: new Set(),
+  expandedThreads: new Set(),
+  collapsed: new Set(),
+  olderOpen: false,
+  // Set once the drawer is opened or closed by hand, which retires the
+  // auto-open below so the button cannot be undone in its own frame.
+  olderPinned: false,
+
+  picking: false,
+  picked: new Set(),
+  anchorKey: '',
+  cursorKey: '',
+  detailId: '',
+  detailTab: 'activity',
+
+  feed: { id: '', entries: [], model: '', state: 'idle', error: '' },
+  peekCache: new Map(),
+
+  nodes: new Map(),
+  models: new Map(),
+  order: [],
+  loadSeq: 0,
+  peekSeq: 0,
+  poll: 0,
+  peekTimer: 0,
+};
+
+const SV = () => window.husk.sessionView;
+
+// ─── Shared list fetch ───────────────────────────────────────────────────────
+// One list per cycle for the page, the rail's Recent, the chat sidebar and the
+// workspace picker.
+let sxFetchInflight = null;
+let sxFetchRes = null;
+let sxFetchAt = 0;
+let sxFetchEpoch = 0;
+let sxPollPaused = false;
+let sxDeleting = false;
+
+function sessionsFetch({ maxAgeMs = 1500 } = {}) {
+  if (sxFetchInflight) return sxFetchInflight;
+  if (sxFetchRes && Date.now() - sxFetchAt < maxAgeMs) return Promise.resolve(sxFetchRes);
+  const epoch = sxFetchEpoch;
+  sxFetchInflight = window.husk.sessions.list().then((r) => {
+    // A result issued before an invalidation is delivered but never cached.
+    if (epoch === sxFetchEpoch) { sxFetchRes = r; sxFetchAt = Date.now(); }
+    return r;
+  }).finally(() => { sxFetchInflight = null; });
+  return sxFetchInflight;
+}
+function sessionsFetchInvalidate() { sxFetchEpoch += 1; sxFetchRes = null; sxFetchAt = 0; }
+function sxPausePoll(on) { sxPollPaused = !!on; }
+
+// The only writer of the query. Setting an input's value from script fires no
+// input event, so the field, its clear button and the paint move together here
+// or they drift apart.
+function sxSetQuery(value) {
+  const q = $('#sx-q');
+  sx.query = String(value || '');
+  if (q && q.value !== sx.query) q.value = sx.query;
+  sxShow($('#sx-search-clear'), !!sx.query);
+  sxPaint();
+  sxSub();
 }
 
-// The card is rebuilt on every paint, so its buttons are bound on every paint.
-function wireSessionsEmpty(host) {
-  const start = host.querySelector('#se-start-chat');
-  if (start) start.addEventListener('click', () => setPage('chat'));
-  const open = host.querySelector('#se-open-folder');
-  if (open) open.addEventListener('click', openSessionsFolder);
-  const retry = host.querySelector('#se-retry');
-  if (retry) retry.addEventListener('click', renderSessions);
-  const clear = host.querySelector('#se-clear-filter');
-  if (clear) {
-    clear.addEventListener('click', () => {
-      const search = $('#sessions-search');
-      search.value = '';
-      paintSessions(sessionsCache, '');
-      search.focus();
-    });
+// ─── DOM helpers ─────────────────────────────────────────────────────────────
+
+function sxClone(id) {
+  const tpl = document.getElementById(id);
+  return tpl ? tpl.content.firstElementChild.cloneNode(true) : null;
+}
+function sxText(node, sel, value) {
+  const el = sel ? node.querySelector(sel) : node;
+  if (el && el.textContent !== value) el.textContent = value;
+  return el;
+}
+// Toggles the attribute rather than the property: `hidden` is an HTMLElement
+// property, so assigning it to an SVG node sets an expando and leaves the
+// attribute in place.
+function sxShow(el, on) { if (el) el.toggleAttribute('hidden', !on); }
+
+// A short label for a machine value that has to fit a fixed cell.
+function sxClip(s, max) {
+  const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+async function sxCopy(value, label) {
+  try { await navigator.clipboard.writeText(String(value || '')); toast(`${label} copied`, 'success'); }
+  catch (_) { toast('Could not copy', 'error'); }
+}
+
+// ─── Load ────────────────────────────────────────────────────────────────────
+
+async function renderSessions() { return sxLoad({ firstPaint: !sx.loaded }); }
+
+// Returns the registry rather than assigning it, so a load that loses the race
+// cannot overwrite a newer one's agents on its way out.
+async function sxLoadAgents() {
+  const next = {
+    ok: true, error: '', supported: true, controllable: false,
+    bySession: new Map(), byParent: new Map(), chatIds: new Set(),
+  };
+  let res = null;
+  try { res = await window.husk.bgAgents.list({ all: true }); }
+  catch (err) { next.ok = false; next.error = (err && err.message) || 'could not list agents'; return next; }
+  if (!res || res.ok === false) {
+    next.ok = false;
+    next.error = String((res && res.error) || 'could not list agents');
+    next.supported = !(res && res.supported === false);
+    return next;
+  }
+  next.supported = res.supported !== false;
+  next.controllable = res.controllable === true;
+  for (const a of Array.isArray(res.agents) ? res.agents : []) {
+    if (!a || !a.sessionId) continue;
+    next.bySession.set(a.sessionId, a);
+    if (!a.parentSessionId) continue;
+    if (!next.byParent.has(a.parentSessionId)) next.byParent.set(a.parentSessionId, []);
+    next.byParent.get(a.parentSessionId).push(a);
+  }
+  for (const arr of next.byParent.values()) arr.sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0));
+  // Which sessions a tool is holding open right now, here or in another window.
+  for (const c of Array.isArray(res.chats) ? res.chats : []) {
+    if (c && c.sessionId) next.chatIds.add(c.sessionId);
+  }
+  return next;
+}
+
+async function sxLoad(opts = {}) {
+  const seq = ++sx.loadSeq;
+  if (opts.firstPaint) sxSkeletons();
+  let res = null;
+  let agents = null;
+  try {
+    [res, agents] = await Promise.all([sessionsFetch(), sxLoadAgents()]);
+  } catch (err) {
+    if (seq !== sx.loadSeq) return;
+    sx.error = (err && err.message) || String(err || 'unknown error');
+    sx.loaded = true;
+    sxSub(); sxPaint(); sxSyncPicking();
+    return;
+  }
+  if (seq !== sx.loadSeq) return;
+  sx.error = '';
+  if (agents) sx.agents = agents;
+  // The list handler names one tool on a catch path, so the eyebrow reads the
+  // value only when there is one.
+  sx.agent = String((res && res.agent) || '');
+  sx.supported = !!(res && res.supported);
+  sx.dir = String((res && res.sessionsDir) || '');
+  sx.currentCwd = String((res && res.currentCwd) || '');
+  sx.hiddenAutopilot = Number((res && res.hiddenAutopilotSessions) || 0);
+  sx.cache = Array.isArray(res && res.sessions) ? res.sessions.slice(0, SX_CAP) : [];
+  sx.names = (cfg && cfg.sessionNames) || {};
+  sx.listable = sxListable();
+  sx.loaded = true;
+  if (!sx.supported) sxExitPicking();
+  const live = new Set(sx.cache.map((s) => s.path));
+  for (const p of [...sx.picked]) if (!live.has(p)) sx.picked.delete(p);
+  sxAutoSelect();
+  sxPaint();
+  sxSub();
+  sxSyncPicking();
+  sxDetailPaint();
+  refreshRecentList();
+}
+
+// ─── Sub-header ──────────────────────────────────────────────────────────────
+
+// How many sessions the roster can ever show: an agent's transcript belongs to
+// the chat that started it, so it is not a session of its own.
+function sxListable() {
+  const ids = new Set(sx.cache.map((s) => s.id));
+  return sx.cache.filter((s) => {
+    const a = sx.agents.bySession.get(s.id);
+    return !(a && a.parentSessionId && ids.has(a.parentSessionId));
+  }).length;
+}
+
+function sxSub() {
+  const el = $('#sessions-sub');
+  if (!el) return;
+  el.replaceChildren();
+  if (!sx.supported) {
+    el.append(document.createTextNode('Session history is not available for this tool yet'));
+    return;
+  }
+  if (sx.hiddenAutopilot > 0) {
+    const note = document.createElement('span');
+    note.className = 'sx-note';
+    note.textContent = sx.hiddenAutopilot === 1
+      ? '1 Autopilot session is kept under Autopilot'
+      : `${sx.hiddenAutopilot} Autopilot sessions are kept under Autopilot`;
+    el.append(note);
   }
 }
 
-function openSessionsFolder() {
-  const dir = sessionsDir || (lastStats && lastStats.sessionsDir);
+// ─── View and keys ───────────────────────────────────────────────────────────
+
+let sxLastView = null;
+
+function sxView() {
+  sx.now = Date.now();
+  const q = sx.query.trim();
+  const ctx = {
+    now: sx.now,
+    query: q.length >= SX_MIN_Q ? q : '',
+    chips: sx.chips,
+    currentCwd: sx.currentCwd,
+    groupBy: sx.groupBy,
+    olderOpen: sx.olderOpen,
+    picking: sx.picking,
+    names: sx.names,
+    bySession: sx.agents.bySession,
+    byParent: sx.agents.byParent,
+    fuzzyMatch: window.husk.text.fuzzyMatch,
+  };
+  let view = SV().buildView(sx.cache, ctx);
+  // Everything cold: the roster would otherwise be an empty pane above a button.
+  if (!sx.olderPinned && !sx.olderOpen && view.olderCount > 0 && !view.groups.some((g) => g.rows.length)) {
+    sx.olderOpen = true;
+    view = SV().buildView(sx.cache, { ...ctx, olderOpen: true });
+  }
+  sx.flat = view.flat;
+  sx.hits = view.hits;
+  sxLastView = view;
+  return view;
+}
+
+// The paint order, and the model behind every key, derived in one walk.
+function sxKeys(view) {
+  const keys = [];
+  sx.models = new Map();
+  if (!sx.agents.ok) {
+    keys.push('notice:agents');
+    sx.models.set('notice:agents', { kind: 'notice' });
+  }
+  for (const g of view.groups) {
+    const gk = `g:${g.id}`;
+    keys.push(gk);
+    sx.models.set(gk, { kind: 'group', group: g });
+    if (sx.collapsed.has(g.id)) continue;
+    if (!g.rows.length) {
+      if (g.ghost) { keys.push('ghost'); sx.models.set('ghost', { kind: 'ghost' }); }
+      continue;
+    }
+    g.rows.forEach((e, i) => {
+      const rk = `s:${e.s.id}`;
+      keys.push(rk);
+      sx.models.set(rk, {
+        kind: 'row', session: e.s, runs: e.runs, threadKey: e.key,
+        group: g, level: 2, posinset: i + 1, setsize: g.rows.length,
+      });
+      if (e.key && e.runs > 1 && sx.expandedThreads.has(e.key)) {
+        e.sibs.forEach((sib, j) => {
+          const tk = `t:${sib.id}`;
+          keys.push(tk);
+          sx.models.set(tk, {
+            kind: 'row', session: sib, runs: 1, threadKey: '', group: g,
+            level: 3, child: true, posinset: j + 1, setsize: e.sibs.length,
+          });
+        });
+      }
+      const kids = sx.agents.byParent.get(e.s.id) || [];
+      if (kids.length && sx.expandedAgents.has(e.s.id)) {
+        kids.forEach((a, j) => {
+          const ak = `a:${a.sessionId}`;
+          keys.push(ak);
+          sx.models.set(ak, { kind: 'agent', agent: a, level: 3, posinset: j + 1, setsize: kids.length });
+        });
+      }
+    });
+  }
+  return keys;
+}
+
+// ─── Paint ───────────────────────────────────────────────────────────────────
+
+function sxSkeletons() {
+  const list = $('#sx-list');
+  if (!list) return;
+  list.replaceChildren();
+  sx.nodes = new Map();
+  for (let i = 0; i < SX_SKELETONS; i++) {
+    const n = sxClone('sx-skel-tpl');
+    if (n) list.append(n);
+  }
+}
+
+function sxPaint() {
+  const list = $('#sx-list');
+  if (!list) return;
+  if (!sx.loaded) return;
+
+  // The rowless paths still own the counts, or the roster keeps reporting the
+  // last tool's totals under a card that says it has none.
+  if (sx.error) { sxRenderEmptyOnly(sxErrorCard()); sxChipsPaint(); sxCountPaint(null); sxOlderPaint(null); return; }
+  if (!sx.supported) { sxRenderEmptyOnly(sxUnsupportedCard()); sxChipsPaint(); sxCountPaint(null); sxOlderPaint(null); return; }
+
+  const view = sxView();
+  const keys = sxKeys(view);
+  const hasRows = keys.some((k) => k.startsWith('s:'));
+
+  if (!hasRows && !view.groups.some((g) => g.ghost)) {
+    sxRenderEmptyOnly(sxRowlessCard(view));
+    sxChipsPaint();
+    sxCountPaint(view);
+    sxOlderPaint(view);
+    return;
+  }
+
+  sxReconcile(keys);
+  sxChipsPaint();
+  sxCountPaint(view);
+  sxOlderPaint(view);
+  sxCursorSync(keys);
+  list.classList.toggle('is-picking', sx.picking);
+}
+
+// One rowless card replaces the whole list, and the reconciler's map is dropped
+// with it so the next paint rebuilds cleanly.
+function sxRenderEmptyOnly(card) {
+  const list = $('#sx-list');
+  if (!list) return;
+  list.replaceChildren(card);
+  sx.nodes = new Map();
+  sx.order = [];
+}
+
+function sxNodeFor(key) {
+  if (key.startsWith('g:')) return sxClone('sx-group-tpl');
+  if (key === 'ghost') return sxClone('sx-ghost-tpl');
+  if (key === 'notice:agents') return sxClone('sx-notice-tpl');
+  return sxClone('sx-row-tpl');
+}
+
+function sxReconcile(keys) {
+  const list = $('#sx-list');
+  // Nodes the reconciler did not create: skeletons, empty cards, stray clones.
+  for (const n of [...list.children]) if (!n.dataset.key) n.remove();
+  const want = new Set(keys);
+  for (const [k, node] of sx.nodes) {
+    if (!want.has(k)) { node.remove(); sx.nodes.delete(k); }
+  }
+  let anchor = list.firstChild;
+  for (const key of keys) {
+    let node = sx.nodes.get(key);
+    if (!node) {
+      node = sxNodeFor(key);
+      if (!node) continue;
+      node.dataset.key = key;
+      sx.nodes.set(key, node);
+    }
+    if (node !== anchor) list.insertBefore(node, anchor);
+    else anchor = anchor.nextSibling;
+    sxUpdateFor(key, node, sx.models.get(key));
+  }
+  sx.order = keys;
+}
+
+function sxUpdateFor(key, node, model) {
+  if (!model) return;
+  if (model.kind === 'group') return sxGroupUpdate(node, model);
+  if (model.kind === 'agent') return sxAgentRowUpdate(node, model);
+  if (model.kind === 'row') return sxRowUpdate(node, model);
+  if (model.kind === 'notice') return sxNoticeUpdate(node);
+  return undefined;
+}
+
+function sxGroupUpdate(node, model) {
+  const g = model.group;
+  const open = !sx.collapsed.has(g.id);
+  node.id = `sx-g-${sxSlug(g.id)}`;
+  node.setAttribute('aria-expanded', open ? 'true' : 'false');
+  node.setAttribute('aria-label', `${g.name}, ${g.rows.length} session${g.rows.length === 1 ? '' : 's'}`);
+  node.classList.toggle('is-current', !!g.current);
+  sxText(node, '.sx-g-name', g.name);
+  sxText(node, '.sx-g-note', g.note || '');
+  sxText(node, '.sx-g-n', g.rows.length ? String(g.rows.length) : '');
+}
+
+function sxNoticeUpdate(node) {
+  sxText(node, '.sx-notice-msg', 'Agent status is unavailable right now.');
+  node.title = sx.agents.error || '';
+}
+
+// The trailing prose. The library's chain stops before the clock, so the last
+// resort is supplied here.
+// A row earns its second line only when it has something to say. The start time
+// would restate the time column an inch to its right, and an apology for a
+// missing one says less than the blank it replaces.
+function sxCont(s, sig) {
+  return SV().scent(s, sig, sx.names);
+}
+
+function sxRowUpdate(node, model) {
+  const s = model.session;
+  const sig = SV().signal(s, sx.agents);
+  const when = SV().formatWhen(s.mtime, sx.now);
+  const rawTitle = SV().titleOf(s, sx.names);
+  const untitled = !rawTitle || rawTitle === '(empty)';
+  const title = untitled ? 'Untitled session' : rawTitle;
+  const hits = untitled ? [] : (sx.hits.get(s.id) || []);
+  const cont = sxCont(s, sig);
+  const kids = sx.agents.byParent.get(s.id) || [];
+  const expandedKids = sx.expandedAgents.has(s.id);
+  const isCurrent = sx.detailId === s.id;
+  const isOpen = !!tabForSession(s.id);
+  const isElsewhere = !isOpen && sx.agents.chatIds.has(s.id);
+  const deletable = SV().isDeletable(s);
+  const picked = sx.picked.has(s.path);
+  const runs = model.runs > 1 ? `x${model.runs}` : '';
+  // A row with children but nothing live still says how many it has.
+  const tok = sig ? sig.tok : (kids.length ? `${kids.length} agent${kids.length === 1 ? '' : 's'}` : '');
+
+  // The second line exists only when a signal or a scent fills it, which is
+  // what gives the list its density gradient: live work is tall, history is not.
+  const hasState = !!(tok || cont);
+
+  const sig2 = [
+    title, hits.join(','), sig ? sig.kind : '', tok, cont, when.label, runs, hasState ? '1' : '0',
+    kids.length, expandedKids ? '1' : '0', isCurrent ? '1' : '0',
+    isOpen ? '1' : '0', isElsewhere ? '1' : '0', deletable ? '1' : '0',
+    picked ? '1' : '0', s.named ? '1' : '0', model.level, model.posinset, model.setsize,
+  ].join(' ');
+  if (node._sxSig === sig2) return;
+  node._sxSig = sig2;
+
+  node.id = `sx-r-${sxSlug(s.id)}`;
+  node.setAttribute('aria-level', String(model.level));
+  node.setAttribute('aria-posinset', String(model.posinset));
+  node.setAttribute('aria-setsize', String(model.setsize));
+  node.setAttribute('aria-selected', picked ? 'true' : 'false');
+  node.classList.toggle('is-child', !!model.child);
+  node.classList.toggle('is-current', isCurrent);
+  node.classList.toggle('is-open', isOpen);
+  node.classList.toggle('is-elsewhere', isElsewhere);
+  node.classList.toggle('is-undeletable', !deletable);
+  node.classList.toggle('is-unnamed', !s.named && !untitled);
+  node.classList.toggle('is-untitled', untitled);
+  node.classList.toggle('has-state', hasState);
+  if (sig) node.dataset.state = sig.kind; else node.removeAttribute('data-state');
+  if (kids.length) node.setAttribute('aria-expanded', expandedKids ? 'true' : 'false');
+  else node.removeAttribute('aria-expanded');
+
+  const titleEl = node.querySelector('.sx-title');
+  titleEl.replaceChildren(sxTitleFrag(title, hits));
+  titleEl.title = title;
+
+  const runsEl = node.querySelector('.sx-runs');
+  sxText(runsEl, null, runs);
+  sxShow(runsEl, !!runs);
+  if (runs) runsEl.title = `${model.runs} runs of this task`;
+
+  const timeEl = node.querySelector('.sx-time');
+  sxText(timeEl, null, when.label);
+  timeEl.title = when.title;
+  if (s.mtime) timeEl.setAttribute('datetime', new Date(s.mtime).toISOString());
+
+  const tokEl = node.querySelector('.sx-tok');
+  sxText(tokEl, null, tok);
+  sxShow(tokEl, !!tok);
+  sxShow(node.querySelector('.sx-sep'), !!(tok && cont));
+  sxText(node, '.sx-cont', cont);
+  sxShow(node.querySelector('.sx-kids-caret'), kids.length > 0);
+
+  const check = node.querySelector('.sx-check');
+  if (check) check.title = deletable ? '' : 'Husk cannot delete this session file';
+
+  node.setAttribute('aria-label',
+    `${title}, ${sig ? `${sig.tok}, ` : ''}${when.title || 'no recorded date'}`);
+}
+
+function sxAgentRowUpdate(node, model) {
+  const a = model.agent;
+  const word = agentStateWord(a);
+  const when = SV().formatWhen(a.updatedAt || a.startedAt || 0, sx.now);
+  const title = a.name || agentShortId(a) || 'Agent';
+  const cont = agentSubtitle(a);
+  const tokens = a.tokens ? amFmtTokens(a.tokens) : '';
+  const state = window.husk.agents.state(a.state, { started: !!a.hasTranscript });
+
+  const sig2 = [title, word, cont, when.label, tokens, state, model.posinset, model.setsize].join(' ');
+  if (node._sxSig === sig2) return;
+  node._sxSig = sig2;
+
+  node.id = `sx-r-${sxSlug(a.sessionId)}`;
+  // An agent always states what it is doing, so its row always has two lines.
+  node.classList.add('is-child', 'is-agent', 'has-state');
+  node.setAttribute('aria-level', String(model.level));
+  node.setAttribute('aria-posinset', String(model.posinset));
+  node.setAttribute('aria-setsize', String(model.setsize));
+  node.setAttribute('aria-selected', 'false');
+  node.removeAttribute('aria-expanded');
+  node.dataset.state = state === 'done' ? 'done' : state;
+
+  const titleEl = node.querySelector('.sx-title');
+  titleEl.replaceChildren(document.createTextNode(title));
+  titleEl.title = title;
+
+  const runsEl = node.querySelector('.sx-runs');
+  sxText(runsEl, null, tokens);
+  sxShow(runsEl, !!tokens);
+
+  const timeEl = node.querySelector('.sx-time');
+  sxText(timeEl, null, when.label);
+  timeEl.title = when.title;
+
+  const tokEl = node.querySelector('.sx-tok');
+  sxText(tokEl, null, word);
+  sxShow(tokEl, true);
+  sxShow(node.querySelector('.sx-sep'), !!cont);
+  sxText(node, '.sx-cont', cont);
+  sxShow(node.querySelector('.sx-kids-caret'), false);
+  node.setAttribute('aria-label', `${title}, ${word}, ${when.title || 'no recorded date'}`);
+}
+
+// Matched glyphs are marked, never injected: the fragment is text nodes and
+// spans. Positions index the lowercased title, so they are clamped.
+function sxTitleFrag(title, positions) {
+  const frag = document.createDocumentFragment();
+  if (!positions || !positions.length) {
+    frag.append(document.createTextNode(title));
+    return frag;
+  }
+  const marks = new Set(positions.filter((p) => Number.isInteger(p) && p >= 0 && p < title.length));
+  if (!marks.size) {
+    frag.append(document.createTextNode(title));
+    return frag;
+  }
+  let run = '';
+  let marked = false;
+  let i = 0;
+  const flush = () => {
+    if (!run) return;
+    if (marked) {
+      const span = document.createElement('span');
+      span.className = 'sx-match';
+      span.textContent = run;
+      frag.append(span);
+    } else {
+      frag.append(document.createTextNode(run));
+    }
+    run = '';
+  };
+  // Walk by code point so a surrogate pair is never split.
+  for (const ch of title) {
+    const on = marks.has(i);
+    if (on !== marked) { flush(); marked = on; }
+    run += ch;
+    i += ch.length;
+  }
+  flush();
+  return frag;
+}
+
+function sxSlug(v) { return String(v || '').replace(/[^a-zA-Z0-9_-]/g, '-'); }
+
+// ─── Chips, count, older drawer ──────────────────────────────────────────────
+
+function sxChipsPaint() {
+  const counts = {
+    project: sx.currentCwd ? sx.cache.filter((s) => SV().inCurrentProject(s, sx.currentCwd)).length : 0,
+    live: 0, needs: 0,
+    work: sx.cache.filter((s) => !!(s.prdSlug || s.prdPath)).length,
+  };
+  for (const s of sx.cache) {
+    const sig = SV().signal(s, sx.agents);
+    if (!sig) continue;
+    if (sig.kind === 'running' || sig.kind === 'blocked') counts.live += 1;
+    if (sig.kind === 'blocked') counts.needs += 1;
+  }
+  const agentAware = sx.agents.supported !== false;
+  for (const btn of $$('#sx-chips .chip')) {
+    const key = btn.dataset.chip;
+    const n = counts[key] || 0;
+    // A permanently dead chip is worse than no chip. Scoping to the current
+    // project means nothing until a chat names one, and a pressed chip that
+    // filters nothing is a lie about what the list is showing.
+    const hide = !sx.supported
+      || ((key === 'live' || key === 'needs') && !agentAware)
+      || (key === 'project' && !sx.currentCwd);
+    btn.hidden = hide;
+    btn.setAttribute('aria-pressed', sx.chips[key] ? 'true' : 'false');
+    btn.disabled = !sx.chips[key] && n === 0;
+    const c = btn.querySelector('.chip-count');
+    if (c) c.textContent = String(n);
+  }
+  sxChipsRowSync();
+}
+
+// One owner for the filter row. It goes in select mode, and it goes when its
+// last chip does, since an empty row is a band and a rule around nothing.
+function sxChipsRowSync() {
+  const chips = $('#sx-chips');
+  if (!chips) return;
+  chips.hidden = sx.picking || !$$('#sx-chips .chip').some((b) => !b.hidden);
+}
+
+function sxCountPaint(view) {
+  const el = $('#sx-count-n');
+  if (!el) return;
+  const q = sx.query.trim();
+  if (q.length === 1) { el.textContent = 'Keep typing to search'; return; }
+  // Sessions parked behind the closed drawer are not on screen, and the drawer
+  // below states its own count, so the two lines add up to the total.
+  const hidden = view && !sx.olderOpen ? view.olderCount : 0;
+  const shown = view ? Math.max(0, view.shown - hidden) : 0;
+  const total = sx.listable;
+  el.textContent = `Showing ${shown} of ${total} session${total === 1 ? '' : 's'}`;
+}
+
+function sxOlderPaint(view) {
+  const btn = $('#sx-older');
+  if (!btn) return;
+  const n = view ? view.olderCount : 0;
+  btn.hidden = !(n > 0) || sx.flat;
+  btn.setAttribute('aria-expanded', sx.olderOpen ? 'true' : 'false');
+  sxText(btn, '.sx-older-n', String(n));
+}
+
+// ─── Rowless cards ───────────────────────────────────────────────────────────
+
+function sxEmptyCard({ title, msg, err = '', actions = [], hints = [] }) {
+  const card = document.createElement('div');
+  card.className = 'sx-empty';
+  card.dataset.key = 'empty';
+  const icon = sxClone('sx-empty-icon-tpl');
+  if (icon) card.append(icon);
+  const h = document.createElement('div');
+  h.className = 'sx-empty-title';
+  h.textContent = title;
+  const m = document.createElement('div');
+  m.className = 'sx-empty-msg';
+  m.textContent = msg;
+  card.append(h, m);
+  if (err) {
+    const e = document.createElement('div');
+    e.className = 'sx-empty-err';
+    e.textContent = err;
+    card.append(e);
+  }
+  if (actions.length) {
+    const bar = document.createElement('div');
+    bar.className = 'sx-empty-acts';
+    for (const a of actions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = a.primary ? 'btn-primary' : 'ghost-btn';
+      b.textContent = a.label;
+      b.dataset.act = a.act;
+      bar.append(b);
+    }
+    card.append(bar);
+  }
+  if (hints.length) {
+    const box = document.createElement('div');
+    box.className = 'sx-hints';
+    hints.forEach((text, i) => {
+      const row = document.createElement('div');
+      row.className = 'sx-hint';
+      const n = document.createElement('span');
+      n.className = 'sx-hint-n';
+      n.textContent = String(i + 1);
+      const t = document.createElement('span');
+      if (Array.isArray(text)) {
+        const [before, strong, after] = text;
+        const b = document.createElement('b');
+        b.textContent = strong;
+        t.append(document.createTextNode(before), b, document.createTextNode(after));
+      } else {
+        t.textContent = text;
+      }
+      row.append(n, t);
+      box.append(row);
+    });
+    card.append(box);
+  }
+  return card;
+}
+
+function sxErrorCard() {
+  return sxEmptyCard({
+    title: 'Could not read sessions',
+    msg: 'Husk could not read the session files on disk.',
+    err: sx.error,
+    actions: [{ label: 'Try again', act: 'retry', primary: true }, { label: 'Open folder', act: 'open-folder' }],
+  });
+}
+
+function sxUnsupportedCard() {
+  return sxEmptyCard({
+    title: 'Session history is not available for this tool yet',
+    msg: 'Husk does not read this tool’s session history. Switch the active tool in Preferences to browse sessions.',
+    actions: [{ label: 'Open Preferences', act: 'open-prefs', primary: true }],
+  });
+}
+
+function sxRowlessCard(view) {
+  const total = sx.listable;
+  const q = sx.query.trim();
+  if (!total) {
+    return sxEmptyCard({
+      title: 'No sessions yet',
+      msg: 'Your chats are saved here.',
+      actions: [{ label: 'Start a chat', act: 'new-chat', primary: true }, { label: 'Open folder', act: 'open-folder' }],
+      hints: [
+        ['Start a chat. ', 'Husk saves it for you', ' while you work.'],
+        ['It shows up in this list. ', 'Click a row', ' to read what happened.'],
+        ['Press ', 'Resume', ' to reopen that session in a new chat tab.'],
+      ],
+    });
+  }
+  if (q.length >= SX_MIN_Q) {
+    const actions = [{ label: 'Clear search', act: 'clear-search', primary: true }];
+    // Only offered when widening the scope would actually find something.
+    if (sx.chips.project && sx.currentCwd) {
+      const wide = SV().buildView(sx.cache, {
+        now: sx.now, query: q, chips: { ...sx.chips, project: false },
+        currentCwd: sx.currentCwd, groupBy: sx.groupBy, olderOpen: true, names: sx.names,
+        bySession: sx.agents.bySession, byParent: sx.agents.byParent,
+        fuzzyMatch: window.husk.text.fuzzyMatch,
+      });
+      if (wide.shown > 0) actions.push({ label: `Search all projects (${wide.shown})`, act: 'widen' });
+    }
+    return sxEmptyCard({
+      title: 'No matching sessions',
+      msg: `Nothing in ${total} session${total === 1 ? '' : 's'} matches "${q}".`,
+      actions,
+    });
+  }
+  const hidden = total - (view ? view.shown : 0);
+  return sxEmptyCard({
+    title: 'No sessions match these filters',
+    msg: `${hidden} session${hidden === 1 ? ' is' : 's are'} hidden by the filters above.`,
+    actions: [{ label: 'Clear filters', act: 'clear-filters', primary: true }],
+  });
+}
+
+// ─── Cursor ──────────────────────────────────────────────────────────────────
+
+function sxCursorSync(keys) {
+  if (!keys.length) { sx.cursorKey = ''; return; }
+  if (!sx.cursorKey || !keys.includes(sx.cursorKey)) {
+    const prev = sx.order.indexOf(sx.cursorKey);
+    // Snap to the nearest surviving key at or before the old index.
+    let next = keys[0];
+    if (prev >= 0) {
+      next = keys[Math.min(prev, keys.length - 1)];
+    }
+    sx.cursorKey = next;
+  }
+  sxCursorPaint();
+}
+
+function sxCursorPaint() {
+  const list = $('#sx-list');
+  if (!list) return;
+  for (const [k, n] of sx.nodes) n.classList.toggle('is-cursor', k === sx.cursorKey);
+  const node = sx.nodes.get(sx.cursorKey);
+  if (node && node.id) list.setAttribute('aria-activedescendant', node.id);
+  else list.removeAttribute('aria-activedescendant');
+}
+
+function sxSetCursor(key, { scroll = true } = {}) {
+  if (!key || !sx.nodes.has(key)) return;
+  sx.cursorKey = key;
+  sxCursorPaint();
+  if (scroll) {
+    const node = sx.nodes.get(key);
+    if (node) node.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function sxMove(delta) {
+  if (!sx.order.length) return;
+  const i = sx.order.indexOf(sx.cursorKey);
+  const next = Math.max(0, Math.min(sx.order.length - 1, (i < 0 ? 0 : i) + delta));
+  sxSetCursor(sx.order[next]);
+}
+
+function sxCursorSession() {
+  const m = sx.models.get(sx.cursorKey);
+  return m && m.kind === 'row' ? m.session : null;
+}
+
+// ─── Selection ───────────────────────────────────────────────────────────────
+
+function sxEnterPicking() {
+  if (sx.picking) return;
+  sx.picking = true;
+  sxPaint();
+  sxSyncPicking();
+}
+function sxExitPicking() {
+  if (!sx.picking && !sx.picked.size) return;
+  sx.picking = false;
+  sx.picked.clear();
+  sx.anchorKey = '';
+  sxPaint();
+  sxSyncPicking();
+}
+
+// One node, no repaint: selection is the hottest interaction on the page.
+function sxPick(key, { range = false } = {}) {
+  const m = sx.models.get(key);
+  if (!m || m.kind !== 'row') return;
+  if (!SV().isDeletable(m.session)) return;
+  if (range && sx.anchorKey) {
+    const a = sx.order.indexOf(sx.anchorKey);
+    const b = sx.order.indexOf(key);
+    if (a >= 0 && b >= 0) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      for (let i = lo; i <= hi; i++) {
+        const mm = sx.models.get(sx.order[i]);
+        if (mm && mm.kind === 'row' && SV().isDeletable(mm.session)) {
+          sx.picked.add(mm.session.path);
+          const n = sx.nodes.get(sx.order[i]);
+          if (n) n.setAttribute('aria-selected', 'true');
+        }
+      }
+      sxSyncPicking();
+      return;
+    }
+  }
+  const p = m.session.path;
+  const on = !sx.picked.has(p);
+  if (on) sx.picked.add(p); else sx.picked.delete(p);
+  const node = sx.nodes.get(key);
+  if (node) node.setAttribute('aria-selected', on ? 'true' : 'false');
+  sx.anchorKey = key;
+  sxSyncPicking();
+}
+
+function sxPickAll() {
+  for (const [k, m] of sx.models) {
+    if (m.kind !== 'row' || !SV().isDeletable(m.session)) continue;
+    sx.picked.add(m.session.path);
+    const n = sx.nodes.get(k);
+    if (n) n.setAttribute('aria-selected', 'true');
+  }
+  sxSyncPicking();
+}
+function sxPickNone() {
+  sx.picked.clear();
+  for (const n of sx.nodes.values()) if (n.hasAttribute('aria-selected')) n.setAttribute('aria-selected', 'false');
+  sxSyncPicking();
+}
+
+function sxSyncPicking() {
+  const bar = $('#sx-selbar');
+  if (!bar) return;
+  bar.hidden = !sx.picking;
+  sxChipsRowSync();
+  const n = sx.picked.size;
+  sxText(bar, '#sx-selbar-n', `${n} selected`);
+  const del = $('#sx-delete');
+  if (del) { del.textContent = `Delete (${n})`; del.disabled = n === 0; }
+  const list = $('#sx-list');
+  if (list) list.classList.toggle('is-picking', sx.picking);
+}
+
+// Answers whether anything was actually removed, so a caller that borrowed
+// select mode for the confirm knows whether to put it back. Re-entrant calls
+// are refused: two native confirms over one list would each resume against a
+// roster the other had already changed.
+async function sxDelete() {
+  const paths = [...sx.picked];
+  if (!paths.length || sxDeleting) return false;
+  sxDeleting = true;
+  sxPausePoll(true);
+  try {
+    const res = await window.husk.sessions.delete(paths);
+    if (res && res.cancelled) return false;
+    if (!res || (!res.ok && !res.deleted)) { toast((res && res.error) || 'Delete failed', 'error'); return false; }
+    toast(`Deleted ${res.deleted} session${res.deleted === 1 ? '' : 's'}`, 'success');
+    if (res.failed && res.failed.length) toast(`${res.failed.length} failed`, 'error');
+    sx.picking = false;
+    sx.picked.clear();
+    return true;
+  } finally {
+    sxDeleting = false;
+    sxPausePoll(false);
+    // The native modal runs in main while the timers here keep going, so the
+    // cache is dropped after the call resolves, never before.
+    sessionsFetchInvalidate();
+    await sxLoad({ firstPaint: false });
+  }
+}
+
+// ─── Detail pane ─────────────────────────────────────────────────────────────
+
+function sxSessionById(id) { return sx.cache.find((s) => s.id === id) || null; }
+
+// Opens on the row that most needs a person, chosen from what the roster is
+// actually showing: a pane loaded with a session no visible row matches leaves
+// the reader nothing to navigate back to.
+function sxAutoSelect() {
+  if (sx.detailId && sxSessionById(sx.detailId)) return;
+  const visible = [];
+  for (const g of sxView().groups) for (const e of g.rows) visible.push(e.s);
+  const pick = (kind) => visible.find((s) => {
+    const sig = SV().signal(s, sx.agents);
+    return sig && sig.kind === kind;
+  });
+  const next = pick('blocked') || pick('running') || visible[0] || null;
+  sx.detailId = next ? next.id : '';
+  if (next) sxPeek(next.id, {});
+}
+
+function sxSelect(id, { peek = true, open = false } = {}) {
+  if (!id) return;
+  // Narrow widths give the pane the whole page, so opening it is a separate
+  // act from loading it: the cursor walks the roster without covering it, and
+  // choosing a row brings the pane over.
+  if (open) sxOpenDetail();
+  if (sx.detailId === id) return;
+  sx.detailId = id;
+  sx.detailTab = 'activity';
+  for (const [k, n] of sx.nodes) n.classList.toggle('is-current', k === `s:${id}`);
+  sxDetailPaint();
+  if (peek) sxPeek(id, {});
+}
+
+// Only the narrow layout reads this; at full width both panes are always up.
+function sxOpenDetail() {
+  const host = $('#sx');
+  if (!host || host.dataset.detail === 'open') return;
+  host.dataset.detail = 'open';
+  const title = $('#sx-d-title');
+  if (title) title.focus();
+}
+
+function sxDetailPaint() {
+  const full = $('#sx-d-full');
+  const empty = $('#sx-d-empty');
+  if (!full || !empty) return;
+  const t = $('#sx-d-title');
+  // Never destroy work in progress. Everything else in the pane repaints while
+  // focused, so a poll keeps the clock and the tabs current under the cursor;
+  // focus is put back afterwards when the element it was on still exists.
+  if (t && t.isContentEditable) return;
+  const detail = $('#sx-detail');
+  const focusedId = detail && detail.contains(document.activeElement) && document.activeElement !== detail
+    ? document.activeElement.id
+    : '';
+
+  const s = sxSessionById(sx.detailId);
+  if (!s) {
+    full.hidden = true;
+    empty.hidden = false;
+    sxDetailEmptyPaint(empty);
+    return;
+  }
+  empty.hidden = true;
+  full.hidden = false;
+
+  const sig = SV().signal(s, sx.agents);
+  const holder = sx.agents.bySession.get(s.id) || null;
+  const rawTitle = SV().titleOf(s, sx.names);
+  const untitled = !rawTitle || rawTitle === '(empty)';
+  const title = untitled ? 'Untitled session' : rawTitle;
+
+  const eyebrow = [sx.agent ? `${sx.agent} session` : 'session', sig ? sig.tok : '']
+    .filter(Boolean).join(' · ');
+  sxText(full, '#sx-d-eyebrow', eyebrow);
+
+  if (t) {
+    sxText(t, null, title);
+    t.title = title;
+    t.classList.toggle('is-untitled', untitled);
+  }
+  sxText(full, '#sx-d-id', s.id);
+  sxText(full, '#sx-d-path', s.projectPath || '');
+
+  // Status clauses, in the order a reader needs them.
+  const clauses = [];
+  if (sig) clauses.push(sig.tok);
+  if (sig && sig.kind === 'blocked') {
+    const blocked = (sx.agents.byParent.get(s.id) || []).find((a) => a.running && agentStateWord(a) === 'needs you')
+      || (holder && holder.running ? holder : null);
+    const since = blocked && (blocked.updatedAt || blocked.startedAt);
+    if (since) clauses.push(`waiting ${SV().formatWhen(since, sx.now).label}`);
+  }
+  if (holder && holder.held) clauses.push(`held by agent ${agentShortId(holder)}`);
+  if (tabForSession(s.id)) clauses.push('open in a tab');
+  if (holder && holder.tokens) clauses.push(`${amFmtTokens(holder.tokens)} tokens`);
+  if (!clauses.length && s.startedMs) clauses.push(`started ${new Date(s.startedMs).toLocaleString()}`);
+  sxText(full, '#sx-d-status', clauses.join(' · '));
+
+  sxFactsPaint(s, holder);
+  sxActionsPaint(s, holder);
+  sxTabsPaint(s);
+
+  // The action bar and the tab strip are rebuilt above, so a control that had
+  // focus is a new node; hand focus back to its replacement.
+  if (focusedId && document.activeElement === document.body) {
+    const back = document.getElementById(focusedId);
+    if (back) back.focus();
+  }
+}
+
+function sxDetailEmptyPaint(host) {
+  // The pane restates whichever state the roster is in, so the two halves never
+  // disagree about whether a chat started now would ever appear here.
+  const state = sx.supported ? 'empty' : 'unsupported';
+  if (host.dataset.built === state) return;
+  host.dataset.built = state;
+  const eyebrow = document.createElement('div');
+  eyebrow.className = 'sx-d-empty-eyebrow';
+  eyebrow.textContent = 'SESSIONS';
+  const title = document.createElement('div');
+  title.className = 'sx-d-empty-title';
+  title.textContent = sx.supported ? 'Nothing saved yet' : 'No session history here';
+  const msg = document.createElement('div');
+  msg.className = 'sx-d-empty-msg';
+  msg.textContent = sx.supported
+    ? 'Start a chat and it lands here.'
+    : 'Switch the active tool in Preferences to browse sessions.';
+  const keys = document.createElement('div');
+  keys.className = 'sx-keys';
+  const legend = [
+    [['↑', '↓'], 'move'],
+    [['Enter'], 'open'],
+    [['Shift', 'Enter'], 'resume'],
+    [['/'], 'search'],
+    [['Space'], 'select'],
+  ];
+  for (const [caps, label] of legend) {
+    const span = document.createElement('span');
+    for (const c of caps) {
+      const kbd = document.createElement('span');
+      kbd.className = 'kbd-cap';
+      kbd.textContent = c;
+      span.append(kbd);
+    }
+    span.append(document.createTextNode(` ${label}`));
+    keys.append(span);
+  }
+  // Keys that walk a list mean nothing where there will never be one.
+  if (sx.supported) host.replaceChildren(eyebrow, title, msg, keys);
+  else host.replaceChildren(eyebrow, title, msg);
+}
+
+function sxFactsPaint(s, holder) {
+  const dl = $('#sx-d-facts');
+  if (!dl) return;
+  const rows = [];
+  const add = (k, v, opts = {}) => { if (v) rows.push([k, v, opts]); };
+  if (s.mtime) add('last activity', new Date(s.mtime).toLocaleString());
+  add('ran for', SV().formatDuration(s.startedMs, s.mtime));
+  if (sx.feed.id === s.id && sx.feed.entries.length) {
+    const turns = sx.feed.entries.filter((e) => e.kind === 'user').length;
+    add('turns', turns >= 24 ? '24+' : String(turns));
+  }
+  if (s.startedISO) add('started', new Date(s.startedISO).toLocaleString());
+  if (sx.feed.id === s.id && sx.feed.model) add('model', sx.feed.model, { mono: true });
+  add('work item', s.prdSlug, { open: s.prdPath });
+  add('phase', String(s.prdPhase || '').toLowerCase());
+  add('progress', s.prdProgress, { mono: true });
+  if (holder) add('held by', `agent ${agentShortId(holder)} · ${agentStateWord(holder)}`);
+  add('transcript', SV().formatSize(s.sizeBytes), { mono: true });
+
+  const nodes = [];
+  for (const [k, v, opts] of rows) {
+    const dt = document.createElement('dt');
+    dt.textContent = k;
+    const dd = document.createElement('dd');
+    if (opts.mono) dd.classList.add('sx-mono');
+    if (opts.copy) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sx-copy';
+      // The label rides its own span: that is what carries the ellipsis.
+      const label = document.createElement('span');
+      label.textContent = v;
+      b.append(label);
+      b.dataset.act = 'copy-value';
+      b.dataset.value = opts.copy;
+      b.dataset.label = opts.label || 'Value';
+      dd.append(b);
+    } else if (opts.open) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sx-link sx-fact-link';
+      b.textContent = v;
+      b.dataset.act = 'open-path';
+      b.dataset.path = opts.open;
+      dd.append(b);
+    } else {
+      dd.textContent = v;
+    }
+    dd.title = String(v);
+    const pair = document.createElement('div');
+    pair.className = 'sx-fact';
+    pair.append(dt, dd);
+    nodes.push(pair);
+  }
+  dl.replaceChildren(...nodes);
+}
+
+function sxActionsPaint(s, holder) {
+  const bar = $('#sx-d-acts');
+  if (!bar) return;
+  const held = !!(holder && holder.held);
+  const open = !!tabForSession(s.id);
+  const acts = [];
+  if (held) {
+    acts.push({ label: 'Attach to the running agent', act: 'attach', primary: true });
+    acts.push({ label: 'Open a copy', act: 'fork' });
+  } else if (open) {
+    acts.push({ label: 'Focus the open chat', act: 'focus', primary: true });
+  } else {
+    acts.push({ label: 'Resume this session', act: 'resume', primary: true });
+  }
+  const nodes = acts.map((a) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = a.primary ? 'btn-primary' : 'ghost-btn';
+    b.textContent = a.label;
+    b.dataset.act = a.act;
+    return b;
+  });
+  bar.replaceChildren(...nodes);
+}
+
+function sxTabsPaint(s) {
+  const tabs = $('#sx-d-tabs');
+  const body = $('#sx-d-body');
+  if (!tabs || !body) return;
+  const kids = sx.agents.byParent.get(s.id) || [];
+  const available = [];
+  // The transcript reader resolves one tool's directory, so the tab is only
+  // offered where it can answer.
+  if (sx.agents.supported !== false) available.push(['activity', 'Activity']);
+  if (s.prdPath) available.push(['work', 'Work item']);
+  if (kids.length) available.push(['agents', `Agents (${kids.length})`]);
+  if (!available.some(([k]) => k === sx.detailTab)) sx.detailTab = available.length ? available[0][0] : '';
+
+  const nodes = available.map(([key, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sx-d-tab';
+    b.id = `sx-d-tab-${key}`;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', sx.detailTab === key ? 'true' : 'false');
+    b.setAttribute('aria-controls', 'sx-d-body');
+    b.dataset.act = 'tab';
+    b.dataset.tab = key;
+    b.textContent = label;
+    return b;
+  });
+  tabs.replaceChildren(...nodes);
+  tabs.hidden = available.length < 2;
+  const active = available.find(([k]) => k === sx.detailTab);
+  if (active) body.setAttribute('aria-labelledby', `sx-d-tab-${active[0]}`);
+
+  if (!available.length) { sxNote(body, 'Husk does not read this tool’s transcripts yet.'); return; }
+  if (sx.detailTab === 'activity') sxFeedPaint(s);
+  else if (sx.detailTab === 'work') sxWorkPaint(s);
+  else if (sx.detailTab === 'agents') sxAgentsTabPaint(s, kids);
+}
+
+function sxNote(host, text, err) {
+  const note = document.createElement('div');
+  note.className = 'sx-d-note';
+  note.textContent = text;
+  const kids = [note];
+  if (err) {
+    const e = document.createElement('div');
+    e.className = 'sx-d-err';
+    e.textContent = err;
+    kids.push(e);
+  }
+  host.replaceChildren(...kids);
+}
+
+function sxFeedPaint(s) {
+  const body = $('#sx-d-body');
+  if (!body) return;
+  const f = sx.feed;
+  if (f.id !== s.id || f.state === 'loading') {
+    const wrap = document.createElement('div');
+    wrap.className = 'sx-d-feed';
+    for (let i = 0; i < 3; i++) {
+      const line = document.createElement('div');
+      line.className = 'sx-skel sx-skel-title';
+      wrap.append(line);
+    }
+    body.replaceChildren(wrap);
+    return;
+  }
+  if (f.state === 'error') { sxNote(body, 'The transcript could not be read.', f.error); return; }
+  if (!f.entries.length) {
+    const note = document.createElement('div');
+    note.className = 'sx-d-note';
+    note.textContent = 'No transcript is stored for this session.';
+    const kids = [note];
+    if (s.firstMessage) {
+      const q = document.createElement('div');
+      q.className = 'sx-d-quote';
+      q.textContent = s.firstMessage;
+      kids.push(q);
+    }
+    body.replaceChildren(...kids);
+    return;
+  }
+  // Only pin to the bottom when the reader is already there.
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+  const ul = document.createElement('ul');
+  ul.className = 'sx-d-feed';
+  // A timestamp is printed only where it changes. A whole column repeating one
+  // value is a column of dead ink down the tallest object on the page.
+  let lastStamp = '';
+  const now = sx.now || Date.now();
+  for (const e of f.entries) {
+    const li = document.createElement('li');
+    li.className = `k-${e.kind}`;
+    const kind = document.createElement('span');
+    kind.className = 'fk';
+    kind.textContent = e.kind === 'user' ? 'you' : (e.kind === 'tool' ? (e.tool || 'tool') : 'agent');
+    const text = document.createElement('span');
+    text.className = 'ft';
+    text.textContent = e.text || '';
+    const stamp = e.ts ? SV().formatWhen(e.ts, now).label : '';
+    const time = document.createElement('span');
+    time.className = 'ftime';
+    if (stamp && stamp !== lastStamp) { time.textContent = stamp; lastStamp = stamp; }
+    li.append(kind, text, time);
+    ul.append(li);
+  }
+  body.replaceChildren(ul);
+  if (atBottom) body.scrollTop = body.scrollHeight;
+}
+
+async function sxWorkPaint(s) {
+  const body = $('#sx-d-body');
+  if (!body || !s.prdPath) return;
+  let res = null;
+  try { res = await window.husk.sessions.read(s.prdPath); } catch (err) { res = { ok: false, error: (err && err.message) || '' }; }
+  if (sx.detailId !== s.id || sx.detailTab !== 'work') return;
+  if (!res || !res.ok) { sxNote(body, 'The work item could not be read.', (res && res.error) || ''); return; }
+  const pre = document.createElement('pre');
+  pre.className = 'sx-d-doc';
+  pre.textContent = String(res.content || '').replace(/^---[\s\S]*?---\n*/, '');
+  body.replaceChildren(pre);
+}
+
+function sxAgentsTabPaint(s, kids) {
+  const body = $('#sx-d-body');
+  if (!body) return;
+  const nodes = kids.map((a) => {
+    const row = document.createElement('div');
+    row.className = `sx-agent ${agentStateClass(a)}`;
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.className = 'sx-agent-name';
+    name.textContent = a.name || agentShortId(a);
+    name.dataset.act = 'open-agent';
+    name.dataset.agent = a.sessionId;
+    const sub = document.createElement('span');
+    sub.className = 'sx-agent-sub';
+    const bits = [agentStateWord(a), agentSubtitle(a)];
+    if (a.tokens) bits.push(amFmtTokens(a.tokens));
+    const age = SV().formatWhen(a.updatedAt || a.startedAt || 0, sx.now || Date.now()).label;
+    if (age) bits.push(age);
+    if (a.cwd && a.cwd !== s.projectPath) bits.push(SV().basename(a.cwd));
+    sub.textContent = bits.filter(Boolean).join(' · ');
+    row.append(name, sub);
+    // Control is gated on the capability, not on the error it would return.
+    if (sx.agents.controllable) {
+      const ctl = document.createElement('span');
+      ctl.className = 'sx-agent-ctl';
+      for (const [label, action] of [['Stop', 'stop'], ['Dismiss', 'remove']]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sx-link';
+        b.textContent = label;
+        b.dataset.act = 'agent-ctl';
+        b.dataset.action = action;
+        b.dataset.agentId = a.id || '';
+        ctl.append(b);
+      }
+      row.append(ctl);
+    }
+    return row;
+  });
+  body.replaceChildren(...nodes);
+}
+
+// ─── Transcript peek ─────────────────────────────────────────────────────────
+
+function sxPeekKey(s) { return `${s.id}:${s.mtime}`; }
+
+async function sxPeek(id, { force = false } = {}) {
+  const s = sxSessionById(id);
+  if (!s) return;
+  if (sx.agents.supported === false) return;
+  const key = sxPeekKey(s);
+  if (!force && sx.peekCache.has(key)) {
+    const hit = sx.peekCache.get(key);
+    sx.feed = { id, entries: hit.entries, model: hit.model, state: 'ready', error: '' };
+    if (sx.detailId === id && sx.detailTab === 'activity') { sxFeedPaint(s); sxFactsPaint(s, sx.agents.bySession.get(id) || null); }
+    return;
+  }
+  const seq = ++sx.peekSeq;
+  if (sx.feed.id !== id) {
+    sx.feed = { id, entries: [], model: '', state: 'loading', error: '' };
+    if (sx.detailId === id && sx.detailTab === 'activity') sxFeedPaint(s);
+  }
+  let res = null;
+  try { res = await window.husk.bgAgents.peek({ sessionId: id, cwd: s.projectPath || '' }); }
+  catch (err) { res = { ok: false, error: (err && err.message) || 'could not read the transcript' }; }
+  if (seq !== sx.peekSeq || sx.detailId !== id) return;
+  if (!res || res.ok === false) {
+    sx.feed = { id, entries: [], model: '', state: 'error', error: String((res && res.error) || '') };
+  } else {
+    const entries = Array.isArray(res.entries) ? res.entries : [];
+    sx.feed = { id, entries, model: String(res.model || ''), state: 'ready', error: '' };
+    sx.peekCache.set(key, { entries, model: sx.feed.model });
+    if (sx.peekCache.size > SX_PEEK_MAX) sx.peekCache.delete(sx.peekCache.keys().next().value);
+  }
+  if (sx.detailTab === 'activity') sxFeedPaint(s);
+  sxFactsPaint(s, sx.agents.bySession.get(id) || null);
+}
+
+// ─── Rename ──────────────────────────────────────────────────────────────────
+
+function sxBeginRename() {
+  const t = $('#sx-d-title');
+  const s = sxSessionById(sx.detailId);
+  if (!t || !s) return;
+  t.contentEditable = 'plaintext-only';
+  t.classList.add('is-editing');
+  t.textContent = SV().titleOf(s, sx.names) || '';
+  t.focus();
+  const range = document.createRange();
+  range.selectNodeContents(t);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+async function sxCommitRename() {
+  const t = $('#sx-d-title');
+  const s = sxSessionById(sx.detailId);
+  if (!t || !s) return;
+  const name = t.textContent.trim();
+  t.contentEditable = 'false';
+  t.classList.remove('is-editing');
+  try {
+    // An empty name clears the custom one, and the stored name is whatever the
+    // handler kept, which is clamped, so the row shows what survives a restart.
+    const res = await window.husk.sessions.rename({ agentId: s.id, name });
+    if (res && res.ok === false) {
+      toast(res.error || 'Rename failed', 'error');
+    } else {
+      const saved = res && typeof res.name === 'string' ? res.name : name;
+      const names = { ...sx.names };
+      if (saved) names[s.id] = saved; else delete names[s.id];
+      sx.names = names;
+      if (cfg) cfg.sessionNames = names;
+    }
+  } catch (_) { toast('Rename failed', 'error'); }
+  sxPaint();
+  sxDetailPaint();
+}
+
+function sxCancelRename() {
+  const t = $('#sx-d-title');
+  if (!t) return;
+  t.contentEditable = 'false';
+  t.classList.remove('is-editing');
+  sxDetailPaint();
+  $('#sx-list').focus();
+}
+
+// ─── Actions ─────────────────────────────────────────────────────────────────
+
+function sxOpenFolder() {
+  const dir = sx.dir || (lastStats && lastStats.sessionsDir);
   if (dir) window.husk.fs.open(dir);
 }
 
-async function renderSessions() {
-  const list = $('#sessions-list');
-  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
-  list.innerHTML = sessionsEmptyCard({
-    title: 'Loading sessions',
-    msg: 'Reading the session files on disk.',
-  });
-  const res = await window.husk.sessions.list();
-  if (!res.ok) {
-    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
-    list.innerHTML = sessionsEmptyCard({
-      title: 'Could not read sessions',
-      msg: escapeHtml(res.error || 'Unknown error'),
-      actions: '<div class="se-actions"><button class="btn-primary" id="se-retry" type="button">Try again</button><button class="ghost-btn" id="se-open-folder" type="button">Open folder</button></div>',
-    });
-    wireSessionsEmpty(list);
-    return;
-  }
-  sessionsCache = res.sessions;
-  sessionsAgent = res.agent || 'claude';
-  sessionsDir = res.sessionsDir || '';
-  await loadSessionAgents();
-  // Reflect which agent's sessions are shown, and where they live.
-  const subEl = $('#sessions-sub');
-  if (subEl) {
-    const hidden = Number(res.hiddenAutopilotSessions) || 0;
-    const hiddenHTML = hidden
-      ? `<span class="ss-note">${hidden} Autopilot ${hidden === 1 ? 'session is' : 'sessions are'} hidden here and kept under Autopilot Recent runs</span>`
-      : '';
-    if (res.supported === false) {
-      subEl.textContent = `Session history for ${sessionsAgent} is not available yet`;
-    } else {
-      // The hint reads as prose; the agent and its directory sit in a mono chip
-      // that truncates, so a deep project path cannot widen the head.
-      const where = `${sessionsAgent} sessions at ${sessionsDir || ''}`;
-      // eslint-disable-next-line no-unsanitized/property -- Agent and path are escaped here.
-      subEl.innerHTML = '<span>Click a session to preview, Resume to continue</span>'
-        + (sessionsDir ? `<span class="ss-path" title="${escapeAttr(where)}">${escapeHtml(where)}</span>` : '')
-        + hiddenHTML;
-    }
-    sessionsSubOwned = true;
-  }
-  if (res.supported === false) {
-    // eslint-disable-next-line no-unsanitized/property -- Static, agent name escaped.
-    $('#sessions-list').innerHTML = sessionsEmptyCard({
-      title: 'Not available for this agent',
-      msg: `Husk does not read ${escapeHtml(sessionsAgent)} sessions yet. Switch the active agent to claude or copilot to browse sessions.`,
-    });
-    return;
-  }
-  // Drop selections that no longer exist (e.g. after delete + refresh).
-  const live = new Set(sessionsCache.map((s) => s.path));
-  for (const p of sessionsSelected) if (!live.has(p)) sessionsSelected.delete(p);
-  paintSessions(sessionsCache, $('#sessions-search').value);
-  syncSelectModeUI();
-  // Keep the rail's Recent list in sync with the full Sessions page.
-  refreshRecentList();
-}
-function timeAgo(ms) {
-  const diff = Date.now() - ms;
-  const min = Math.round(diff / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.round(hr / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(ms).toLocaleDateString();
-}
-function fmtSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+function sxPrimary(s) {
+  if (!s) return;
+  const holder = sx.agents.bySession.get(s.id) || null;
+  const owned = { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath };
+  if (holder && holder.held) { resumeSessionInChat(owned); return; }
+  if (focusOpenSession(s.id)) return;
+  resumeSessionInChat(owned);
 }
 
-// Which listed sessions are agents a chat started, keyed by session id, plus
-// the parent each one belongs to. An agent is a fork of its chat and inherits
-// its title, so this comes from the tool's own agent listing rather than from
-// the transcripts.
-let sessionAgents = { bySession: new Map(), byParent: new Map() };
-let sessionAgentsExpanded = new Set();
-
-async function loadSessionAgents() {
-  sessionAgents = { bySession: new Map(), byParent: new Map() };
-  let res = null;
-  try { res = await window.husk.bgAgents.list({ all: true }); } catch (_) { return; }
-  if (!res || !res.ok || !Array.isArray(res.agents)) return;
-  for (const a of res.agents) {
-    if (!a || !a.sessionId) continue;
-    sessionAgents.bySession.set(a.sessionId, a);
-    if (!a.parentSessionId) continue;
-    if (!sessionAgents.byParent.has(a.parentSessionId)) sessionAgents.byParent.set(a.parentSessionId, []);
-    sessionAgents.byParent.get(a.parentSessionId).push(a);
-  }
-  for (const arr of sessionAgents.byParent.values()) arr.sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0));
-}
-
-function agentChildRowsHTML(parentId) {
-  const kids = sessionAgents.byParent.get(parentId) || [];
-  if (!kids.length || !sessionAgentsExpanded.has(parentId)) return '';
-  // The chat these belong to is the row directly above, so a child carries only
-  // what its siblings do not: its id, what it is doing, how it stands, how old.
-  // Fields run state then age here and in the switcher, in one age format.
-  const rows = kids.map((a) => `
-      <button class="agent-row ${agentStateClass(a)}" type="button" data-agent="${escapeAttr(a.sessionId)}">
-        <span class="agent-dot" aria-hidden="true"></span>
-        <code class="agent-id">${escapeHtml(agentShortId(a))}</code>
-        <span class="agent-live">${escapeHtml(agentSubtitle(a))}</span>
-        <span class="agent-state">${escapeHtml(agentStateWord(a))}</span>
-        <span class="agent-age">${escapeHtml(agentAgeLabel(a.startedAt))}</span>
-      </button>`).join('');
-  return `<div class="agent-group">${rows}</div>`;
-}
-
-function agentChipHTML(parentId) {
-  const kids = sessionAgents.byParent.get(parentId) || [];
-  if (!kids.length) return '';
-  const live = kids.filter((a) => a.running).length;
-  const blocked = kids.filter((a) => a.running && a.state === 'blocked').length;
-  const open = sessionAgentsExpanded.has(parentId);
-  // One tail note, and the waiting count outranks the running one: a chat with
-  // an agent stuck on a question needs the collapsed row to say so.
-  const tail = blocked
-    ? `<span class="sa-live">${blocked} needs you</span>`
-    : (live ? `<span class="sa-live">${live} running</span>` : '');
-  return `<span class="session-agents${blocked ? ' has-blocked' : ''}" role="button" tabindex="0" data-agents-for="${escapeAttr(parentId)}" aria-expanded="${open ? 'true' : 'false'}">
-      <svg class="sa-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-      <span class="sa-count">${kids.length} agent${kids.length === 1 ? '' : 's'}</span>${tail}
-    </span>`;
-}
-
-function paintSessions(list, query) {
-  const ul = $('#sessions-list');
-  const q = (query || '').toLowerCase().trim();
-  const matched = q ? list.filter((s) =>
-    (s.title + ' ' + s.id + ' ' + s.projectPath + ' ' + (s.prdPhase || '')).toLowerCase().includes(q)
-  ) : list;
-  // An agent carries its chat's title, so it is shown under the chat that
-  // started it, and only while that chat is itself in view.
-  const present = new Set(matched.map((s) => s.id));
-  const filtered = matched.filter((s) => {
-    const a = sessionAgents.bySession.get(s.id);
-    return !(a && a.parentSessionId && present.has(a.parentSessionId));
-  });
-  if (!filtered.length) {
-    const card = list.length
-      ? sessionsEmptyCard({
-        title: 'No matching sessions',
-        msg: `Nothing in ${list.length} session${list.length === 1 ? '' : 's'} matches "${escapeHtml(query)}".`,
-        actions: '<div class="se-actions"><button class="ghost-btn" id="se-clear-filter" type="button">Clear filter</button></div>',
-      })
-      : sessionsEmptyCard({
-        title: 'No sessions yet',
-        msg: 'Every chat you start is written to disk, so you can come back later, read what happened and pick the thread up again.',
-        actions: '<div class="se-actions"><button class="btn-primary" id="se-start-chat" type="button">Start a chat</button><button class="ghost-btn" id="se-open-folder" type="button">Open folder</button></div>',
-        hints: `<div class="se-hints">
-            <div class="se-hint"><span class="se-hint-n">1</span><span>Start a chat. <b>Husk saves it for you</b> while you work.</span></div>
-            <div class="se-hint"><span class="se-hint-n">2</span><span>It shows up in this list. <b>Click a row</b> to preview the transcript.</span></div>
-            <div class="se-hint"><span class="se-hint-n">3</span><span>Press <b>Resume</b> to reopen that session in a new chat tab.</span></div>
-          </div>`,
-      });
-    // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
-    ul.innerHTML = card;
-    wireSessionsEmpty(ul);
-    return;
-  }
-  ul.classList.toggle('select-mode', sessionsSelectMode);
-  // eslint-disable-next-line no-unsanitized/property -- Session fields are escaped via escapeHtml/escapeAttr.
-  ul.innerHTML = filtered.map((s) => {
-    // No badge for the default: a filled pill reading "chat" on every chat is
-    // the loudest thing in the card and the only one carrying no information.
-    const phaseHTML = s.prdPhase
-      ? `<span class="session-phase ${escapeAttr(s.prdPhase)}">${escapeHtml(s.prdPhase)}</span>`
-      : '';
-    const progressHTML = s.prdProgress ? `<span class="session-progress">${escapeHtml(s.prdProgress)}</span>` : '';
-    const checked = sessionsSelected.has(s.path) ? 'checked' : '';
-    const checkboxHTML = sessionsSelectMode
-      ? `<label class="session-check"><input class="ai-check" type="checkbox" tabindex="-1" ${checked} data-path="${escapeAttr(s.path)}" /><span class="ai-check-box"></span></label>`
-      : '';
-    const rowHTML = `
-      <button class="session-row${sessionsSelected.has(s.path) ? ' selected' : ''}${phaseHTML ? '' : ' no-phase'}" data-id="${escapeAttr(s.id)}" data-title="${escapeAttr(s.title)}" data-project="${escapeAttr(s.projectPath)}" data-path="${escapeAttr(s.path)}" data-prdpath="${escapeAttr(s.prdPath)}" data-started="${escapeAttr(s.startedISO)}" data-mtime="${s.mtime}" data-size="${s.sizeBytes}" data-phase="${escapeAttr(s.prdPhase || '')}" data-progress="${escapeAttr(s.prdProgress || '')}">
-        ${checkboxHTML}
-        <div class="session-task">
-          <strong>${escapeHtml(s.title)}</strong>
-          <span class="session-slug">${escapeHtml(s.projectPath)} · ${escapeHtml(s.id.slice(0, 8))}</span>
-        </div>
-        <span class="session-effort">${escapeHtml(timeAgo(s.mtime))}</span>
-        ${progressHTML || `<span class="session-progress">${escapeHtml(fmtSize(s.sizeBytes))}</span>`}
-        ${phaseHTML}
-      </button>`;
-    // A chat and its agents are one card: the chat keeps the card's surface
-    // and the agents hang off it.
-    if (!(sessionAgents.byParent.get(s.id) || []).length) return rowHTML;
-    return `<div class="session-block">${rowHTML}${agentChipHTML(s.id)}${agentChildRowsHTML(s.id)}</div>`;
-  }).join('');
-  ul.querySelectorAll('.session-row').forEach((r) =>
-    r.addEventListener('click', (e) => {
-      if (sessionsSelectMode) {
-        e.preventDefault();
-        toggleSessionSelection(r.dataset.path);
-      } else {
-        openSessionDetail(r.dataset);
+function sxAct(act, el) {
+  const s = sxSessionById(sx.detailId);
+  const owned = s ? { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
+  switch (act) {
+    case 'retry': sessionsFetchInvalidate(); sxLoad({ firstPaint: true }); break;
+    case 'open-folder': sxOpenFolder(); break;
+    case 'open-prefs': setPage('prefs'); break;
+    case 'new-chat': setPage('chat'); openNewChatTab({}); break;
+    case 'clear-search': sxSetQuery(''); $('#sx-q').focus(); break;
+    case 'clear-filters': sx.chips = { project: false, live: false, needs: false, work: false }; sxPaint(); sxSub(); break;
+    case 'widen': sx.chips = { ...sx.chips, project: false }; sxPaint(); sxSub(); break;
+    case 'attach': if (owned) resumeSessionInChat(owned); break;
+    case 'fork': if (owned) resumeSessionInChat(owned, { fork: true }); break;
+    case 'focus': if (s) focusOpenSession(s.id); break;
+    case 'resume': if (owned) resumeSessionInChat(owned); break;
+    case 'copy-id': if (s) sxCopy(s.id, 'Session id'); break;
+    case 'copy-path': if (s) sxCopy(s.projectPath, 'Project path'); break;
+    case 'copy-value': sxCopy(el.dataset.value, el.dataset.label || 'Value'); break;
+    case 'open-path': if (el.dataset.path) window.husk.fs.open(el.dataset.path); break;
+    case 'open-work': if (s && s.prdPath) window.husk.fs.open(s.prdPath); break;
+    case 'open-file': if (s) window.husk.fs.open(s.path); break;
+    case 'rename': sxBeginRename(); break;
+    case 'delete-one':
+      // Deleting one session borrows select mode to run the confirm. Turning the
+      // confirm down puts the page back where it was rather than leaving the
+      // user in a mode they never asked for.
+      if (s) {
+        const priorPicking = sx.picking;
+        const priorPicked = new Set(sx.picked);
+        sx.picking = true;
+        sx.picked = new Set([s.path]);
+        sxPaint(); sxSyncPicking();
+        sxDelete().then((done) => {
+          if (done) return;
+          sx.picking = priorPicking;
+          sx.picked = priorPicked;
+          sxPaint(); sxSyncPicking();
+        });
       }
-    })
-  );
-  const toggleAgents = (parentId) => {
-    if (sessionAgentsExpanded.has(parentId)) sessionAgentsExpanded.delete(parentId);
-    else sessionAgentsExpanded.add(parentId);
-    const top = ul.scrollTop;
-    paintSessions(list, query);
-    ul.scrollTop = top;
-    // The repaint replaces the chip that was just pressed, so hand focus to its
-    // replacement or the next key lands on the page body.
-    for (const chip of ul.querySelectorAll('.session-agents')) {
-      if (chip.dataset.agentsFor === parentId) { chip.focus(); break; }
-    }
-  };
-  ul.querySelectorAll('.session-agents').forEach((chip) => {
-    chip.addEventListener('click', () => toggleAgents(chip.dataset.agentsFor));
-    chip.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAgents(chip.dataset.agentsFor); }
-    });
-  });
-  ul.querySelectorAll('.agent-row').forEach((row) =>
-    row.addEventListener('click', () => {
-      const a = sessionAgents.bySession.get(row.dataset.agent);
+      break;
+    case 'tab':
+      sx.detailTab = el.dataset.tab;
+      if (s) sxTabsPaint(s);
+      break;
+    case 'open-agent': {
+      const a = sx.agents.bySession.get(el.dataset.agent);
       if (a) openBgAgent(a);
-    })
-  );
-}
-
-function toggleSessionSelection(p) {
-  if (!p) return;
-  const wasSelected = sessionsSelected.has(p);
-  if (wasSelected) sessionsSelected.delete(p);
-  else sessionsSelected.add(p);
-  // Update only the affected row in place: repainting the whole list on every
-  // checkbox click costs an O(n) DOM teardown and listener rebind.
-  const ul = $('#sessions-list');
-  if (ul) {
-    for (const row of ul.querySelectorAll('.session-row')) {
-      if (row.dataset.path === p) {
-        row.classList.toggle('selected', !wasSelected);
-        const cb = row.querySelector('input[type="checkbox"]');
-        if (cb) cb.checked = !wasSelected;
-        break;
-      }
+      break;
     }
+    case 'agent-ctl': sxAgentControl(el.dataset.action, el.dataset.agentId); break;
+    case 'retry-agents': sxLoad({ firstPaint: false }); break;
+    default: break;
   }
-  syncSelectModeUI();
 }
 
-function syncSelectModeUI() {
-  const selectBtn = $('#btn-sessions-select');
-  const deleteBtn = $('#btn-sessions-delete');
-  const cancelBtn = $('#btn-sessions-cancel');
-  if (!selectBtn) return;
-  selectBtn.hidden = sessionsSelectMode;
-  deleteBtn.hidden = !sessionsSelectMode;
-  cancelBtn.hidden = !sessionsSelectMode;
-  const n = sessionsSelected.size;
-  deleteBtn.textContent = `Delete (${n})`;
-  deleteBtn.disabled = n === 0;
+async function sxAgentControl(action, id) {
+  if (!id) return;
+  const stopping = action === 'stop';
+  // The reason the call refused is the useful half. A tool that cannot do this
+  // at all is only one of the ways it fails.
+  const fallback = stopping ? 'The agent did not stop' : 'The agent was not dismissed';
+  try {
+    const res = await window.husk.bgAgents[stopping ? 'stop' : 'remove'](id);
+    if (!res || res.ok === false) { toast((res && res.error) || fallback, 'error'); return; }
+    toast(stopping ? 'Agent stopped' : 'Agent dismissed', 'success');
+  } catch (err) { toast((err && err.message) || fallback, 'error'); }
+  sxLoad({ firstPaint: false });
 }
 
-function enterSelectMode() {
-  sessionsSelectMode = true;
-  paintSessions(sessionsCache, $('#sessions-search').value);
-  syncSelectModeUI();
-}
-function exitSelectMode() {
-  sessionsSelectMode = false;
-  sessionsSelected.clear();
-  paintSessions(sessionsCache, $('#sessions-search').value);
-  syncSelectModeUI();
+// ─── Popovers ────────────────────────────────────────────────────────────────
+
+let sxOpenMenu = null;
+
+function sxMenuOpen(menu, anchor) {
+  sxMenuClose();
+  const page = $('.page-sessions').getBoundingClientRect();
+  const a = anchor.getBoundingClientRect();
+  menu.hidden = false;
+  const m = menu.getBoundingClientRect();
+  let left = a.left - page.left;
+  let top = a.bottom - page.top + 4;
+  if (left + m.width > page.width - 8) left = page.width - m.width - 8;
+  if (top + m.height > page.height - 8) top = a.top - page.top - m.height - 4;
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+  anchor.setAttribute('aria-expanded', 'true');
+  sxOpenMenu = { menu, anchor };
 }
 
-async function deleteSelectedSessions() {
-  const paths = [...sessionsSelected];
-  if (!paths.length) return;
-  const res = await window.husk.sessions.delete(paths);
-  if (res.cancelled) return;
-  if (!res.ok && !res.deleted) {
-    toast(res.error || 'Delete failed', 'error');
+function sxMenuClose() {
+  if (!sxOpenMenu) return;
+  sxOpenMenu.menu.hidden = true;
+  sxOpenMenu.anchor.setAttribute('aria-expanded', 'false');
+  sxOpenMenu = null;
+}
+
+function sxDetailMenuItems() {
+  const s = sxSessionById(sx.detailId);
+  const menu = $('#sx-d-menu');
+  if (!menu || !s) return;
+  const items = [];
+  if (s.prdPath) items.push(['Open work item', 'open-work', '']);
+  items.push(['Open file', 'open-file', '']);
+  items.push(['Copy id', 'copy-id', '']);
+  items.push(['Copy path', 'copy-path', '']);
+  items.push(['Rename', 'rename', '']);
+  if (SV().isDeletable(s)) items.push(['Delete session', 'delete-one', 'is-danger']);
+  menu.replaceChildren(...items.map(([label, act, cls]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `sx-menu-item ${cls}`.trim();
+    b.setAttribute('role', 'menuitem');
+    b.dataset.act = act;
+    b.textContent = label;
+    return b;
+  }));
+}
+
+// ─── Keyboard ────────────────────────────────────────────────────────────────
+
+function sxTreeKey(e) {
+  const key = e.key;
+  const m = sx.models.get(sx.cursorKey);
+  if (key === 'ArrowDown') { e.preventDefault(); sxMove(1); return; }
+  if (key === 'ArrowUp') { e.preventDefault(); sxMove(-1); return; }
+  if (key === 'Home') { e.preventDefault(); if (sx.order.length) sxSetCursor(sx.order[0]); return; }
+  if (key === 'End') { e.preventDefault(); if (sx.order.length) sxSetCursor(sx.order[sx.order.length - 1]); return; }
+  if (key === 'ArrowRight') {
+    e.preventDefault();
+    if (!m) return;
+    if (m.kind === 'group') {
+      if (sx.collapsed.has(m.group.id)) { sx.collapsed.delete(m.group.id); sxPaint(); }
+      else sxMove(1);
+      return;
+    }
+    if (m.kind === 'row') {
+      const kids = sx.agents.byParent.get(m.session.id) || [];
+      if (kids.length && !sx.expandedAgents.has(m.session.id)) { sx.expandedAgents.add(m.session.id); sxPaint(); return; }
+      if (m.threadKey && m.runs > 1 && !sx.expandedThreads.has(m.threadKey)) { sx.expandedThreads.add(m.threadKey); sxPaint(); return; }
+      if (kids.length || (m.threadKey && m.runs > 1)) { sxMove(1); return; }
+      const primary = $('#sx-d-acts .btn-primary');
+      if (primary) primary.focus();
+    }
     return;
   }
-  toast(`Deleted ${res.deleted} session${res.deleted === 1 ? '' : 's'}`, 'success');
-  if (res.failed?.length) toast(`${res.failed.length} failed`, 'error');
-  sessionsSelectMode = false;
-  sessionsSelected.clear();
-  await renderSessions();
+  if (key === 'ArrowLeft') {
+    e.preventDefault();
+    if (!m) return;
+    if (m.kind === 'group') { sx.collapsed.add(m.group.id); sxPaint(); return; }
+    if (m.kind === 'row' && sx.expandedAgents.has(m.session.id)) { sx.expandedAgents.delete(m.session.id); sxPaint(); return; }
+    if (m.kind === 'row' && m.threadKey && sx.expandedThreads.has(m.threadKey)) { sx.expandedThreads.delete(m.threadKey); sxPaint(); return; }
+    // Step out to the owning header, or to the row that owns this child.
+    const i = sx.order.indexOf(sx.cursorKey);
+    for (let j = i - 1; j >= 0; j--) {
+      const mm = sx.models.get(sx.order[j]);
+      if (!mm) continue;
+      if (m.kind === 'agent' || m.child) { if (mm.kind === 'row' && !mm.child) { sxSetCursor(sx.order[j]); return; } }
+      else if (mm.kind === 'group') { sxSetCursor(sx.order[j]); return; }
+    }
+    return;
+  }
+  if (key === 'Enter') {
+    e.preventDefault();
+    if (!m) return;
+    if (m.kind === 'group') { sxToggleGroup(m.group.id); return; }
+    if (sx.picking && m.kind === 'row') { sxPick(sx.cursorKey); return; }
+    if (m.kind === 'agent') { if (!sx.picking) openBgAgent(m.agent); return; }
+    if (m.kind === 'row') {
+      if (e.shiftKey) sxPrimary(m.session);
+      else sxSelect(m.session.id, { open: true });
+    }
+    return;
+  }
+  if (key === ' ' || key === 'Spacebar') {
+    e.preventDefault();
+    if (!m || m.kind !== 'row') return;
+    if (!sx.picking) sxEnterPicking();
+    sxPick(sx.cursorKey);
+    return;
+  }
+  if (e.shiftKey && (key === 'ArrowDown' || key === 'ArrowUp')) return;
+  if (key === 'c' && !e.metaKey && !e.ctrlKey) {
+    const s = sxCursorSession();
+    if (s) { e.preventDefault(); sxCopy(s.id, 'Session id'); }
+    return;
+  }
+  if (key === 'F2') {
+    const s = sxCursorSession();
+    if (s) { e.preventDefault(); sxSelect(s.id); sxBeginRename(); }
+  }
 }
 
-$('#sessions-search').addEventListener('input', debounce((e) => paintSessions(sessionsCache, e.target.value), 120));
-$('#btn-sessions-refresh').addEventListener('click', renderSessions);
-$('#btn-sessions-open').addEventListener('click', openSessionsFolder);
-$('#btn-sessions-select').addEventListener('click', enterSelectMode);
-$('#btn-sessions-cancel').addEventListener('click', exitSelectMode);
-$('#btn-sessions-delete').addEventListener('click', deleteSelectedSessions);
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && sessionsSelectMode && document.querySelector('.page-sessions:not([hidden])')) {
-    exitSelectMode();
+// One ordered chain. A step that fires consumes the key; if none applies the
+// event travels on so the palette and the rest of the app still see it.
+function sxEscape(e) {
+  const q = $('#sx-q');
+  const detail = $('#sx-detail');
+  if (document.activeElement === q) {
+    if (q.value) { sxSetQuery(''); return true; }
+    $('#sx-list').focus();
+    return true;
   }
-});
-
-async function openSessionDetail(d) {
-  // Read PRD body if matched, else show first message preview
-  let body = '';
-  if (d.prdpath) {
-    const res = await window.husk.sessions.read(d.prdpath);
-    if (res.ok) body = res.content.replace(/^---[\s\S]*?---\n*/, '');
+  if ($('#sx').dataset.detail === 'open') {
+    $('#sx').dataset.detail = 'closed';
+    $('#sx-list').focus();
+    return true;
   }
-  if (!body) body = '(no PRD attached. This is a raw chat session. Resume to continue the conversation.)';
+  if (sx.picking) { sxExitPicking(); return true; }
+  if (detail && detail.contains(document.activeElement)) { $('#sx-list').focus(); return true; }
+  const chipsDirty = !sx.chips.project || sx.chips.live || sx.chips.needs || sx.chips.work;
+  if (chipsDirty || sx.groupBy !== 'project') {
+    sx.chips = { project: true, live: false, needs: false, work: false };
+    sx.groupBy = 'project';
+    sxGroupLabel();
+    sxPaint();
+    sxSub();
+    return true;
+  }
+  void e;
+  return false;
+}
 
-  const meta = [
-    ['Session ID', d.id],
-    ['Project', d.project],
-    ['Started', new Date(d.started).toLocaleString()],
-    ['Updated', new Date(parseInt(d.mtime, 10)).toLocaleString()],
-    ['Size', fmtSize(parseInt(d.size, 10))],
-  ];
-  if (d.phase) meta.push(['PRD phase', d.phase]);
-  if (d.progress) meta.push(['PRD progress', d.progress]);
-  if (d.prdpath) meta.push(['PRD', d.prdpath]);
+// ─── Toggles ─────────────────────────────────────────────────────────────────
 
-  // A session an agent is holding cannot be resumed, so it is not offered. The
-  // two things that do work are named for what they are: joining the work that
-  // is running, and taking a copy that stops following it.
-  //
-  // held, not attachable. An agent that has finished its turn still owns the
-  // transcript until its process exits, and offering Resume there hands over a
-  // command the CLI refuses.
-  const holder = sessionAgents.bySession.get(d.id);
-  const busy = !!(holder && holder.held);
-  const owned = { ...d, owner: d.owner || sessionsAgent };
-  if (busy) meta.push(['Held by', `agent ${agentShortId(holder)} · ${agentStateWord(holder)}`]);
+function sxToggleGroup(id) {
+  if (sx.collapsed.has(id)) sx.collapsed.delete(id); else sx.collapsed.add(id);
+  sxPaint();
+}
+function sxToggleAgents(id) {
+  if (sx.expandedAgents.has(id)) sx.expandedAgents.delete(id); else sx.expandedAgents.add(id);
+  sxPaint();
+}
+function sxToggleThread(key) {
+  if (sx.expandedThreads.has(key)) sx.expandedThreads.delete(key); else sx.expandedThreads.add(key);
+  sxPaint();
+}
+function sxGroupLabel() {
+  for (const b of $$('#sx-menu [data-group]')) {
+    b.setAttribute('aria-checked', b.dataset.group === sx.groupBy ? 'true' : 'false');
+  }
+}
 
-  showDetail({
-    eyebrow: `${sessionsAgent} session`,
-    title: d.title,
-    sub: d.id,
-    meta,
-    body,
-    actions: [
-      busy
-        ? { label: '⇥ Attach to the running agent', kind: 'primary', onClick: () => resumeSessionInChat(owned) }
-        : { label: '↻ Resume this session', kind: 'primary', onClick: () => resumeSessionInChat(owned) },
-      busy ? { label: 'Open a copy', kind: 'ghost', onClick: () => resumeSessionInChat(owned, { fork: true }) } : null,
-      d.prdpath ? { label: 'Open PRD', kind: 'ghost', onClick: () => window.husk.fs.open(d.prdpath) } : null,
-      { label: 'Open files', kind: 'ghost', onClick: () => window.husk.fs.open(d.path) },
-    ].filter(Boolean),
+// ─── Wiring ──────────────────────────────────────────────────────────────────
+
+(function sxWire() {
+  const list = $('#sx-list');
+  if (!list) return;
+
+  list.addEventListener('click', (e) => {
+    const notice = e.target.closest('.sx-notice-act');
+    if (notice) { sxAct('retry-agents', notice); return; }
+    const emptyAct = e.target.closest('.sx-empty [data-act]');
+    if (emptyAct) { sxAct(emptyAct.dataset.act, emptyAct); return; }
+    if (e.target.closest('.sx-ghost')) { setPage('chat'); openNewChatTab({}); return; }
+    const group = e.target.closest('.sx-group');
+    if (group) {
+      const m = sx.models.get(group.dataset.key);
+      if (m) { sxSetCursor(group.dataset.key, { scroll: false }); sxToggleGroup(m.group.id); }
+      return;
+    }
+    const row = e.target.closest('.sx-row');
+    if (!row || !row.dataset.key) return;
+    const m = sx.models.get(row.dataset.key);
+    if (!m) return;
+    sxSetCursor(row.dataset.key, { scroll: false });
+    if (e.target.closest('.sx-kids-caret') && m.kind === 'row') { sxToggleAgents(m.session.id); return; }
+    if (e.target.closest('.sx-runs') && m.kind === 'row' && m.threadKey) { sxToggleThread(m.threadKey); return; }
+    // Select mode acts on session files, so an agent row is inert rather than a
+    // way out of the page.
+    if (sx.picking) { sxPick(row.dataset.key, { range: e.shiftKey }); return; }
+    if (m.kind === 'agent') { openBgAgent(m.agent); return; }
+    sxSelect(m.session.id, { open: true });
   });
-}
+
+  list.addEventListener('keydown', sxTreeKey);
+
+  // The page handler lives on document: after setPage nothing here has focus,
+  // and body is an ancestor of the page rather than a descendant.
+  document.addEventListener('keydown', (e) => {
+    if (currentPage !== 'sessions') return;
+    const page = $('.page-sessions');
+    if (!page || page.hidden) return;
+    if (e.key === 'Escape') { if (sxEscape(e)) { e.preventDefault(); e.stopPropagation(); } return; }
+    const t = e.target;
+    if (t && (/^(INPUT|TEXTAREA)$/.test(t.tagName) || t.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '/') { e.preventDefault(); const q = $('#sx-q'); q.focus(); q.select(); return; }
+    if (e.key === 'r') { e.preventDefault(); sessionsFetchInvalidate(); sxLoad({ firstPaint: false }); }
+  });
+
+  const q = $('#sx-q');
+  q.addEventListener('input', debounce((e) => { sxSetQuery(e.target.value); }, 120));
+  q.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter') {
+      e.preventDefault();
+      list.focus();
+      const first = sx.order.find((k) => k.startsWith('s:'));
+      if (first) sxSetCursor(first);
+    }
+  });
+  $('#sx-search-clear').addEventListener('click', () => sxAct('clear-search'));
+
+  $('#sx-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const key = chip.dataset.chip;
+    sx.chips = { ...sx.chips, [key]: !sx.chips[key] };
+    sxPaint();
+    sxSub();
+  });
+
+  $('#sx-new').addEventListener('click', () => { setPage('chat'); openNewChatTab({}); });
+
+  $('#sx-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = $('#sx-menu');
+    if (sxOpenMenu && sxOpenMenu.menu === menu) { sxMenuClose(); return; }
+    const folder = $('#sx-menu-folder');
+    if (folder) folder.title = sx.dir ? `Open ${sx.dir} in your file manager` : 'Open in your file manager';
+    sxMenuOpen(menu, $('#sx-menu-btn'));
+  });
+  $('#sx-menu').addEventListener('click', (e) => {
+    const item = e.target.closest('.sx-menu-item');
+    if (!item) return;
+    sxMenuClose();
+    if (item.dataset.group) {
+      sx.groupBy = item.dataset.group === 'day' ? 'day' : 'project';
+      sxGroupLabel();
+      sxPaint();
+      return;
+    }
+    const act = item.dataset.act;
+    if (act === 'refresh') { sessionsFetchInvalidate(); sxLoad({ firstPaint: false }); }
+    else if (act === 'select') sxEnterPicking();
+    else if (act === 'open-folder') sxOpenFolder();
+    else if (act === 'open-autopilot') setPage('autopilot');
+  });
+
+  $('#sx-older').addEventListener('click', () => { sx.olderOpen = !sx.olderOpen; sx.olderPinned = true; sxPaint(); });
+
+  $('#sx-select-all').addEventListener('click', sxPickAll);
+  $('#sx-select-none').addEventListener('click', sxPickNone);
+  $('#sx-select-cancel').addEventListener('click', sxExitPicking);
+  $('#sx-delete').addEventListener('click', sxDelete);
+
+  const detail = $('#sx-detail');
+  detail.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]');
+    if (act) { sxAct(act.dataset.act, act); return; }
+    if (e.target.closest('#sx-d-copy-id')) { sxAct('copy-id'); return; }
+    if (e.target.closest('#sx-d-copy-path')) { sxAct('copy-path'); return; }
+    if (e.target.closest('#sx-d-back')) { $('#sx').dataset.detail = 'closed'; $('#sx-list').focus(); }
+  });
+  detail.addEventListener('dblclick', (e) => { if (e.target.closest('#sx-d-title')) sxBeginRename(); });
+  detail.addEventListener('keydown', (e) => {
+    const t = $('#sx-d-title');
+    if (t && t.isContentEditable) {
+      if (e.key === 'Enter') { e.preventDefault(); sxCommitRename(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); sxCancelRename(); }
+      return;
+    }
+  });
+  $('#sx-d-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = $('#sx-d-menu');
+    if (sxOpenMenu && sxOpenMenu.menu === menu) { sxMenuClose(); return; }
+    sxDetailMenuItems();
+    sxMenuOpen(menu, $('#sx-d-menu-btn'));
+  });
+  $('#sx-d-menu').addEventListener('click', (e) => {
+    const item = e.target.closest('.sx-menu-item');
+    if (!item) return;
+    sxMenuClose();
+    sxAct(item.dataset.act, item);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!sxOpenMenu) return;
+    if (sxOpenMenu.menu.contains(e.target) || sxOpenMenu.anchor.contains(e.target)) return;
+    sxMenuClose();
+  });
+
+  // The roster keeps its own hint visible only while it has focus.
+
+  // Both intervals are created once, so navigating in and out cannot stack them.
+  sx.poll = setInterval(() => {
+    if (sxPollPaused) return;
+    if (currentPage !== 'sessions' || document.visibilityState !== 'visible') return;
+    const page = $('.page-sessions');
+    if (!page || page.hidden) return;
+    sxLoad({ firstPaint: false });
+  }, 15000);
+
+  sx.peekTimer = setInterval(() => {
+    if (sxPollPaused) return;
+    if (currentPage !== 'sessions' || document.visibilityState !== 'visible') return;
+    if (!sx.detailId || sx.detailTab !== 'activity') return;
+    const s = sxSessionById(sx.detailId);
+    const sig = s && SV().signal(s, sx.agents);
+    if (!sig || (sig.kind !== 'running' && sig.kind !== 'blocked')) return;
+    // The cache key only moves on the list poll, so a live tail has to be forced.
+    sxPeek(sx.detailId, { force: true });
+  }, 4000);
+
+  sxGroupLabel();
+})();
+
+// ─── Resume ──────────────────────────────────────────────────────────────────
 
 // A short, display-only rendering of the resume command for the agent that owns
 // the session, or null when that agent has no resume form. The command that is
@@ -8761,6 +10559,16 @@ function resumeCommandLabel(agent, id) {
   if (agent === 'claude') return `claude --resume ${id}`;
   if (agent === 'copilot') return `copilot --resume=${id}`;
   if (agent === 'gemini') return `gemini --resume ${id}`;
+  return null;
+}
+// The same contract for the two other ways into a session: joining a running
+// agent, and taking a copy that stops following it.
+function resumeAttachLabel(agent, agentId) {
+  if (agent === 'claude') return `claude attach ${agentId}`;
+  return null;
+}
+function resumeForkLabel(agent, id) {
+  if (agent === 'claude') return `claude --resume ${id} --fork-session`;
   return null;
 }
 
@@ -8799,17 +10607,14 @@ async function resumeSessionInChat(d, opts) {
   const attaching = plan && plan.mode === 'attach' && !options.fork;
   const forking = !!(options.fork || (plan && plan.mode === 'fork'));
   if (options.fork && plan && plan.forkCommand) cmd = plan.forkCommand;
-  closeDetail();
   setPage('chat');
-  const previousHeader = {
-    chatSub: $('#chat-sub') ? $('#chat-sub').textContent : '',
-    spAgent: $('#sp-agent') ? $('#sp-agent').textContent : '',
-    spSessionId: $('#sp-session-id') ? $('#sp-session-id').textContent : '',
-  };
-  const cmdShort = attaching
-    ? `claude attach ${plan.agentId}`
-    : (forking ? `claude --resume ${d.id.slice(0, 8)} --fork-session`
-      : (resumeCommandLabel(agent, d.id.slice(0, 8)) || cmd));
+  // The tool and folder the chat named before the resume, restored if the agent
+  // turns the session down.
+  const previousHeader = { subBase: chatSubBase };
+  const cmdShort = (attaching
+    ? resumeAttachLabel(agent, plan.agentId)
+    : (forking ? resumeForkLabel(agent, d.id.slice(0, 8))
+      : resumeCommandLabel(agent, d.id.slice(0, 8)))) || cmd;
   // The attach runs where the agent is working, and so does a copy of it; only
   // a plain resume is free to open in the directory the list row named.
   const cwd = ((attaching || forking) && plan && plan.cwd) ? plan.cwd : (d.project || null);
@@ -8820,7 +10625,7 @@ async function resumeSessionInChat(d, opts) {
     toast(`Opening a copy of ${d.id.slice(0, 8)}…`, 'success');
   } else if (forking) {
     // The only way in: a chat open in another window has no id to attach to.
-    toast(`That session is open elsewhere; opening a copy`, 'success');
+    toast('That session is open elsewhere; opening a copy', 'success');
   } else {
     toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
   }
@@ -8925,7 +10730,12 @@ async function fxLoad(root) {
   fx.loaded = false;
   fx.selected = null;
   fx.diffOpen = false;
-  const sub = $('#files-sub'); if (sub) sub.textContent = root || '';
+  // The head reads as a sentence; the folder itself is named on the button that
+  // changes it and on the overview below.
+  const sub = $('#files-sub');
+  if (sub) sub.textContent = root ? 'Read, edit and search the files in this workspace' : 'No folder open';
+  const openBtn = $('#btn-files-open');
+  if (openBtn) openBtn.title = root || 'Choose the folder to browse';
   if (!root) { fxRenderList([]); fxShowEmptyPreview('Set a root folder to browse.'); return; }
   // Git status first so the index can decorate rows.
   fx.gitByPath = new Map();
@@ -9936,8 +11746,43 @@ function fxMatchesFilter(relPath) {
 }
 
 // ─── Preferences page ────────────────────────────────────────────────────────────
+
+const PREF_AGENT_CUSTOM = '__custom';
+
+// The command is a choice, not a spelling test: the picker lists what Husk found
+// on this machine and keeps a free-text escape hatch for anything else.
+async function paintAgentCommandPicker() {
+  const pick = $('#pref-agent-pick');
+  const field = $('#pref-agent');
+  if (!pick || !field) return;
+  const current = (cfg.agentCommand || '').trim();
+  let found = [];
+  try {
+    const r = await window.husk.agents.detect();
+    found = ((r && r.agents) || []).filter((a) => a.available);
+  } catch (_) { found = []; }
+  const options = found.map((a) => ({ value: a.command, label: `${a.label} (${a.command})` }));
+  const known = new Set(options.map((o) => o.value));
+  if (current && !known.has(current)) options.unshift({ value: current, label: current });
+  pick.replaceChildren();
+  for (const o of options) {
+    const el = document.createElement('option');
+    el.value = o.value;
+    el.textContent = o.label;
+    pick.appendChild(el);
+  }
+  const custom = document.createElement('option');
+  custom.value = PREF_AGENT_CUSTOM;
+  custom.textContent = 'Custom command…';
+  pick.appendChild(custom);
+  const useCustom = !current || !options.some((o) => o.value === current);
+  pick.value = useCustom ? PREF_AGENT_CUSTOM : current;
+  field.hidden = !useCustom;
+}
+
 function bindPrefs() {
   $('#pref-agent').value = cfg.agentCommand || '';
+  paintAgentCommandPicker();
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
   if ($('#pref-agent-cwd')) $('#pref-agent-cwd').value = cfg.agentCwd || '';
   bindOrchestratorConfig();
@@ -10143,55 +11988,22 @@ async function flushRecap() {
   recapArmed = false;
   speak(text);
 }
-// Preferences modal: open/close + nav switching
-function openPrefsModal() {
-  const modal = $('#prefs-modal');
-  const backdrop = $('#prefs-backdrop');
-  if (!modal) return;
-  modal.hidden = false;
-  backdrop.hidden = false;
-  bindPrefs(); // refresh form values each open
+// Preferences is a page, and every entry point into it routes through here.
+function openPrefs(section) {
+  setPage('prefs');
+  if (section) showPrefsSection(section);
 }
-function closePrefsModal() {
-  const modal = $('#prefs-modal');
-  const backdrop = $('#prefs-backdrop');
-  if (!modal) return;
-  modal.hidden = true;
-  backdrop.hidden = true;
-  // Closing Preferences abandons any unsaved appearance preview, so the UI
-  // never keeps wearing a theme that was not committed.
-  revertAppearancePreview();
+function showPrefsSection(section) {
+  $$('.prefs-nav-item').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
+  $$('.pref-section').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
 }
-(function wirePrefsModal() {
-  // Gear icon in rail opens modal
-  const btnOpen = $('#btn-open-prefs');
-  if (btnOpen) btnOpen.addEventListener('click', openPrefsModal);
-
-  // Close button inside modal
-  const btnClose = $('#prefs-close');
-  if (btnClose) btnClose.addEventListener('click', closePrefsModal);
-
-  // Backdrop click closes
-  const backdrop = $('#prefs-backdrop');
-  if (backdrop) backdrop.addEventListener('click', closePrefsModal);
-
-  // ESC key closes
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#prefs-modal')?.hidden) closePrefsModal();
-  });
-
-  // Nav switching. Items without a section (Release Notes) act as commands
-  // and leave the active panel untouched.
+(function wirePrefs() {
   const nav = $('#prefs-nav');
   if (nav) {
     nav.addEventListener('click', (e) => {
       const item = e.target.closest('.prefs-nav-item');
       if (!item) return;
-      const section = item.dataset.prefsSection;
-      if (!section) return;
-      $$('.prefs-nav-item').forEach((el) => el.classList.remove('active'));
-      item.classList.add('active');
-      $$('.pref-section').forEach((el) => el.classList.toggle('active', el.dataset.prefsSection === section));
+      showPrefsSection(item.dataset.prefsSection);
     });
   }
   $('#prefs-release-notes')?.addEventListener('click', async () => {
@@ -10199,6 +12011,24 @@ function closePrefsModal() {
     try { ver = ((await window.husk.updates.get()) || {}).current || ''; } catch (_) {}
     if (!whatsNewFor(ver)) ver = latestWhatsNewVersion();
     if (ver) showWhatsNew(ver);
+  });
+  // Nothing pending is one click to recheck; anything pending opens the card
+  // that carries the install, the manual steps and the release notes.
+  $('#btn-pref-update-check')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (updateNeedsDetail(updateState || {})) {
+      const pop = $('#update-pop');
+      if (!pop) return;
+      if (pop.hidden) openUpdatePop(); else pop.hidden = true;
+      return;
+    }
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try { await window.husk.updates.check(); } catch (_) {}
+    btn.disabled = false;
+  });
+  $('#btn-pref-repo')?.addEventListener('click', () => {
+    try { window.husk.urls.openExternal('https://github.com/DorShaer/Husk'); } catch (_) {}
   });
 })();
 
@@ -10476,41 +12306,62 @@ $('#pref-pai') && $('#pref-pai').addEventListener('change', async (e) => {
   toast(msg, 'success');
 });
 
-// ─── Update pill (topbar) ───────────────────────────────────────────────────────
-// One element drives every state: idle, checking, up-to-date, available,
-// downloading (n%), ready (restart to install), error. The dot pulses only
-// when there's something for the user to do.
+// ─── Updates (Preferences > About) ──────────────────────────────────────────────
+// The version and its update action live on the About row: idle, checking,
+// up-to-date, available, downloading (n%), ready (restart to install), error.
+// The dot pulses only when there's something for the user to do.
 let updateState = { status: 'idle', current: 'v?' };
-function paintUpdatePill() {
-  const btn = $('#btn-update');
-  const text = $('#tv-text');
-  const dot = btn ? btn.querySelector('.tv-dot') : null;
-  if (!btn) return;
+
+// States that carry more than a one-word action, so the button opens the card
+// that explains them instead of firing another check.
+function updateNeedsDetail(s) {
+  if (s.dev) return true;
+  if (s.status === 'available' || s.status === 'downloading' || s.status === 'ready') return true;
+  return s.status === 'error' && s.phase === 'install';
+}
+
+// The Preferences nav stamp and its About row read the same update state.
+function paintPrefsVersion() {
   const s = updateState || { status: 'idle' };
   const cur = s.current ? (s.current.startsWith('v') ? s.current : 'v' + s.current) : '';
+  const stamp = $('#prefs-version');
+  if (stamp) stamp.textContent = cur ? `Husk ${cur}` : 'Husk';
   const next = s.version ? ('v' + s.version) : '';
-  const baseLabel = cur ? `Husk ${cur}` : 'Husk';
-  let label;
-  let title;
+  const el = $('#pref-about-version');
+  if (el) {
+    let label = cur || 'version unknown';
+    if (s.status === 'checking') label = 'checking…';
+    else if (s.status === 'available' && next) label = `${next} available`;
+    else if (s.status === 'downloading') label = `downloading ${s.percent || 0}%`;
+    else if (s.status === 'ready') label = 'restart to update';
+    el.textContent = label;
+    el.className = s.status === 'error' ? 'pref-status err' : 'pref-status';
+  }
+  const btn = $('#btn-pref-update-check');
+  if (!btn) return;
+  const text = $('#tv-text');
+  const dot = btn.querySelector('.tv-dot');
+  let label = 'Check now';
+  let title = 'Look for a new version';
   let showDot = false;
   switch (s.status) {
     case 'checking':
-      label = `${baseLabel} · checking…`; title = 'Looking for a new version'; break;
+      label = 'Checking…'; title = 'Looking for a new version'; break;
     case 'available':
-      label = `${next} available →`; title = `Update from ${cur} to ${next}`; showDot = true; break;
+      label = 'Install update'; title = `Update from ${cur} to ${next}`; showDot = true; break;
     case 'downloading':
-      label = `downloading ${s.percent || 0}%`; title = 'Downloading update'; break;
+      label = `Downloading ${s.percent || 0}%`; title = 'Downloading update'; break;
     case 'ready':
-      label = 'restart to update'; title = `${next} ready, click to install and relaunch`; showDot = true; break;
+      label = 'Restart and install'; title = `${next} ready, click to install and relaunch`; showDot = true; break;
     case 'up-to-date':
-      label = `${baseLabel} · check for updates ↻`; title = `You're up to date (${cur}) · click to recheck`; break;
+      title = `You're up to date (${cur}), click to recheck`; break;
     case 'error':
-      label = `${baseLabel} · check for updates ↻`; title = `Update check failed: ${s.error || 'unknown'}`; break;
-    case 'idle':
+      title = `Update check failed: ${s.error || 'unknown'}`; break;
     default:
-      label = `${baseLabel} · check for updates ↻`; title = 'Click to check for updates';
+      break;
   }
-  text.textContent = label;
+  if (s.dev) { label = 'Releases'; title = 'Auto-update only runs in packaged builds'; }
+  if (text) text.textContent = label;
   btn.title = title;
   btn.dataset.state = s.status;
   if (dot) dot.hidden = !showDot;
@@ -10634,33 +12485,24 @@ function openUpdatePop() {
   pop.hidden = false;
 }
 {
-  const btn = $('#btn-update');
-  if (btn) {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const pop = $('#update-pop');
-      if (!pop) return;
-      if (pop.hidden) openUpdatePop(); else pop.hidden = true;
-    });
-  }
   const close = $('#up-close');
   if (close) close.addEventListener('click', () => { const p = $('#update-pop'); if (p) p.hidden = true; });
   window.addEventListener('click', (e) => {
     const pop = $('#update-pop');
     if (!pop || pop.hidden) return;
-    if (e.target.closest('#update-pop') || e.target.closest('#btn-update')) return;
+    if (e.target.closest('#update-pop') || e.target.closest('#btn-pref-update-check')) return;
     pop.hidden = true;
   });
 }
 window.husk.updates.onStatus((s) => {
   updateState = s;
-  paintUpdatePill();
+  paintPrefsVersion();
   const pop = $('#update-pop');
   if (pop && !pop.hidden) openUpdatePop();
 });
 (async () => {
   try { updateState = (await window.husk.updates.get()) || updateState; } catch (_) {}
-  paintUpdatePill();
+  paintPrefsVersion();
 })();
 
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
@@ -10699,10 +12541,10 @@ async function attachFileToChat(filePath) {
   }, 60);
 }
 
-// ─── Rail "In context" list ─────────────────────────────────────────────────────
+// ─── "In context" list ──────────────────────────────────────────────────────────
 // Tracks files the user shared with the agent during this Husk session only.
-// The context directory on disk is never enumerated, so the sidebar reflects
-// what was shared with this agent now rather than everything ever written.
+// The context directory on disk is never enumerated, so the pane reflects what
+// was shared with this agent now rather than everything ever written.
 const sessionContext = [];
 function addToSessionContext({ name, path }) {
   if (!path) return;
@@ -10721,34 +12563,9 @@ function clearSessionContext() {
   sessionContext.length = 0;
   refreshContextList();
 }
+// Every share, drop and removal lands in the context pane's In context section.
 function refreshContextList() {
-  const wrap = $('#rail-context-list');
-  if (!wrap) return;
-  if (!sessionContext.length) {
-    wrap.innerHTML = '<div class="rail-sub-empty">Drop a file or click +</div>';
-    return;
-  }
-  // eslint-disable-next-line no-unsanitized/property -- Session context fields are escaped via escapeHtml/escapeAttr.
-  wrap.innerHTML = sessionContext.map((it) => `
-    <div class="rail-sub-item" data-path="${escapeAttr(it.path)}" data-name="${escapeAttr(it.name)}" title="${escapeAttr(it.name)}, click to re-share with the agent">
-      <span class="rsi-dot"></span>
-      <span class="rsi-name">${escapeHtml(it.name)}</span>
-      <button class="rsi-remove" data-remove="1" title="Remove from this session"></button>
-    </div>
-  `).join('');
-  wrap.querySelectorAll('.rail-sub-item').forEach((el) => {
-    el.addEventListener('click', async (e) => {
-      if (e.target.closest('[data-remove]')) {
-        // Remove from sidebar AND delete the copy in CONTEXT/. The original
-        // source file on the user's disk is not touched.
-        removeFromSessionContext(el.dataset.path);
-        try { await window.husk.context.remove(el.dataset.path); } catch (_) {}
-        toast(`Removed: ${el.dataset.name}`, 'success');
-        return;
-      }
-      attachFileToChat(el.dataset.path);
-    });
-  });
+  refreshArtifactPane();
 }
 async function attachContextSource(sourcePath, name, successLabel = 'Attached') {
   const result = await window.husk.fs.dropFile({ sourcePath, kind: 'context' });
@@ -10777,7 +12594,7 @@ async function refreshRecentList() {
   const wrap = $('#rail-recent-list');
   const section = $('#rail-recent');
   if (!wrap || !section) return;
-  const r = await window.husk.sessions.list();
+  const r = await sessionsFetch();
   if (!r.ok || !r.sessions || !r.sessions.length) {
     section.hidden = true;
     return;
@@ -10800,7 +12617,7 @@ async function refreshRecentList() {
   wrap.innerHTML = top.map((s) => `
     <div class="rail-recent-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath)}" data-owner="${escapeAttr(r.agent || '')}" title="${escapeAttr(s.title)}\n${escapeAttr(s.projectPath)}">
       <span class="rri-title">${escapeHtml(s.title)}</span>
-      <span class="rri-meta">${escapeHtml(timeAgo(s.mtime))}</span>
+      <span class="rri-meta">${escapeHtml(window.husk.sessionView.formatWhen(s.mtime, Date.now()).label)}</span>
     </div>
   `).join('');
   wrap.querySelectorAll('.rail-recent-item').forEach((el) => {
@@ -10845,7 +12662,7 @@ $('#btn-recent-all').addEventListener('click', () => setPage('sessions'));
 async function renderChatsPanelSessions() {
   const container = $('#cp-sessions');
   if (!container) return;
-  const r = await window.husk.sessions.list();
+  const r = await sessionsFetch();
   if (!r.ok || !r.sessions || !r.sessions.length) {
     container.innerHTML = '<div class="cp-empty">No sessions yet.<br/>Start a chat to see history here.</div>';
     return;
@@ -10855,7 +12672,7 @@ async function renderChatsPanelSessions() {
   container.innerHTML = top.map((s) => `
     <div class="cp-session-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath || '')}" data-owner="${escapeAttr(r.agent || '')}">
       <span class="cp-si-title">${escapeHtml(s.title || 'Untitled chat')}</span>
-      <span class="cp-si-meta">${escapeHtml(timeAgo(s.mtime))}</span>
+      <span class="cp-si-meta">${escapeHtml(window.husk.sessionView.formatWhen(s.mtime, Date.now()).label)}</span>
     </div>
   `).join('');
   container.querySelectorAll('.cp-session-item').forEach((el) => {
@@ -12067,7 +13884,7 @@ function paintAgentMenu() {
     });
   });
   const cfgBtn = menu.querySelector('#rai-config');
-  if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefsModal(); });
+  if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefs('agent'); });
 }
 function openAgentMenu() {
   // Paint instantly from cache, then re-detect so an agent installed since
@@ -12163,7 +13980,30 @@ overlay.addEventListener('dragleave', () => {
 });
 
 // ─── Welcome screen actions ─────────────────────────────────────────────────────
-$('#ce-launch').addEventListener('click', () => launchAgent());
+// The composer starts the agent, with whatever it holds as the first message. An
+// empty composer starts it with nothing, which is the plain launch.
+// A newline at a live prompt submits it, so the field arrives as a single line
+// and every control character is stripped on the way, as for any other text
+// Husk hands to a running agent.
+function launchFromComposer() {
+  const box = $('#ce-prompt');
+  const text = window.husk.text.stripControls(box ? box.value : '').replace(/\s+/g, ' ').trim();
+  if (box) { box.value = ''; box.style.height = ''; }
+  launchAgent(text ? { initialPrompt: text } : {});
+}
+$('#ce-composer')?.addEventListener('submit', (e) => { e.preventDefault(); launchFromComposer(); });
+$('#ce-composer-attach')?.addEventListener('click', () => shareFilesViaPicker());
+// The field grows with its content up to the max height the stylesheet sets.
+$('#ce-prompt')?.addEventListener('input', (e) => {
+  const el = e.currentTarget;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+});
+$('#ce-prompt')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  e.preventDefault();
+  launchFromComposer();
+});
 $$('.ce-chip').forEach((c) => {
   c.addEventListener('click', () => {
     const text = c.dataset.prompt;
@@ -12216,7 +14056,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
   { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins') },
-  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => openPrefsModal(), shortcut: 'Alt 6' },
+  { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('prefs'),       shortcut: 'Alt 6' },
   { icon: ICONS.restart,     label: 'Restart Agent',                  run: restartPty },
   { icon: ICONS.plus,        label: 'New chat session',               run: () => openNewChatTab() },
   { icon: ICONS.plus,        label: 'Add custom MCP server',          run: () => openMcpCustomModal() },
@@ -12316,14 +14156,16 @@ function closeAgentSwitch() {
   if (term) term.focus();
 }
 
-// The topbar carries a standing count as the visible way into the switcher. It
-// stands down only when there are no agents at all, so a finished agent still
-// keeps the entry point on screen.
+// The topbar carries a count of what is working right now, which is the number
+// a person acts on. It stands down whenever nothing is running: a corner that
+// only lights up for live work is worth glancing at.
 // Ids the pill has already accounted for. A new one means an agent appeared
 // while the user was looking somewhere else, which is the moment worth pointing
 // at. Seeded on the first poll so opening the app is not an arrival.
 let topbarAgentIds = null;
 let topbarAgentFlash = null;
+let topbarAgentsLive = false;
+let topbarAgentTimer = null;
 
 function markTopbarAgentsSeen() {
   const el = $('#topbar-agents');
@@ -12338,7 +14180,8 @@ function paintTopbarAgents(res) {
   const agents = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
   const live = agents.filter((a) => a && a.running);
   const blocked = live.filter((a) => a.state === 'blocked').length;
-  const ids = new Set(agents.map((a) => a && a.id).filter(Boolean));
+  topbarAgentsLive = live.length > 0;
+  const ids = new Set(live.map((a) => a && a.id).filter(Boolean));
   if (topbarAgentIds === null) topbarAgentIds = ids;
   else {
     const arrived = [...ids].filter((id) => !topbarAgentIds.has(id));
@@ -12351,21 +14194,19 @@ function paintTopbarAgents(res) {
       topbarAgentFlash = setTimeout(() => el.classList.remove('is-new'), 12000);
     }
   }
-  if (!agents.length) { el.hidden = true; return; }
+  if (!live.length) { el.hidden = true; return; }
   el.hidden = false;
-  // Live agents when there are any, otherwise the size of the fleet. Both are
-  // numbers the center repeats, so the pill never advertises its own total.
-  const n = live.length || agents.length;
+  // Only what is running. The center holds everything else, so the pill never
+  // advertises a total nobody can act on.
+  const n = live.length;
   $('#topbar-agents-count').textContent = String(n);
   $('#topbar-agents-word').textContent = n === 1 ? 'agent' : 'agents';
   const needs = $('#topbar-agents-needs');
   needs.hidden = !blocked;
   needs.textContent = blocked ? `${blocked} needs you` : '';
   el.classList.toggle('is-blocked', !!blocked);
-  el.classList.toggle('is-running', !!live.length && !blocked);
-  el.classList.toggle('is-idle', !live.length);
-  if (!live.length) el.title = `${n} finished agent${n === 1 ? '' : 's'} (Alt+A)`;
-  else if (blocked) el.title = `${blocked} of ${n} running agent${n === 1 ? '' : 's'} is waiting on you (Alt+A)`;
+  el.classList.toggle('is-running', !blocked);
+  if (blocked) el.title = `${blocked} of ${n} running agent${n === 1 ? '' : 's'} is waiting on you (Alt+A)`;
   else el.title = `${n} agent${n === 1 ? '' : 's'} running (Alt+A)`;
 }
 
@@ -12374,6 +14215,20 @@ async function refreshTopbarAgents() {
   let res = null;
   try { res = await window.husk.bgAgents.list({ all: true, allProjects: true }); } catch (_) { res = null; }
   paintTopbarAgents(res);
+}
+
+// Polling follows the fleet. A fan-out of agents that each last under a minute
+// needs a count that keeps up, and a machine with nothing running has nothing
+// to say for minutes at a time.
+const TOPBAR_AGENTS_BUSY_MS = 4000;
+const TOPBAR_AGENTS_IDLE_MS = 20000;
+
+function scheduleTopbarAgents(ms) {
+  if (topbarAgentTimer) clearTimeout(topbarAgentTimer);
+  topbarAgentTimer = setTimeout(async () => {
+    if (!document.hidden) await refreshTopbarAgents();
+    scheduleTopbarAgents(topbarAgentsLive ? TOPBAR_AGENTS_BUSY_MS : TOPBAR_AGENTS_IDLE_MS);
+  }, ms);
 }
 
 function agentSwitchMatches(query) {
@@ -12390,7 +14245,7 @@ function agentSwitchMatches(query) {
 // card is centred and iconed rather than one orphaned line at the row indent.
 function agentSwitchEmptyHTML(title, hint) {
   return `<li class="as-empty" role="presentation">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6"/></svg>
       <strong>${escapeHtml(title)}</strong><span>${escapeHtml(hint)}</span>
     </li>`;
 }
@@ -12484,15 +14339,20 @@ async function openAgentFromSwitch(idx) {
 
 async function openBgAgent(a) {
   if (agentOpening) return;                    // the tab takes a round trip to appear, so one press is one tab
+  // An agent running inside a chat is opened by opening that chat: it is a turn
+  // in that conversation, and the CLI has nothing to attach to.
+  const target = a && a.kind === 'subagent'
+    ? { ...a, id: '', sessionId: a.parentSessionId || '', attachable: false }
+    : a;
   // Same rule as the session lists: an agent already on screen is focused
   // rather than opened beside itself.
-  if (focusOpenSession(a && a.sessionId)) return;
+  if (focusOpenSession(target && target.sessionId)) return;
   agentOpening = true;
   try {
     let res = null;
     try {
       res = await window.husk.bgAgents.openCommand({
-        id: a.id, sessionId: a.sessionId, attach: !!a.attachable, cwd: a.cwd || '',
+        id: target.id, sessionId: target.sessionId, attach: !!target.attachable, cwd: target.cwd || '',
       });
     } catch (err) { res = { ok: false, error: (err && err.message) || 'could not open that agent' }; }
     if (!res || !res.ok) {
@@ -12504,16 +14364,18 @@ async function openBgAgent(a) {
       command: res.command,
       // The transcript's own directory, resolved by main: resuming anywhere
       // else makes the CLI deny the session exists.
-      cwd: res.cwd || a.cwd || null,
+      cwd: res.cwd || target.cwd || null,
       skipContext: true,
       skipWelcome: true,
     });
     if (tab) {
-      tab.customTitle = a.name || a.id;
-      tab.agentId = a.sessionId || '';
+      // The tab is the chat, so an agent that lives inside one keeps the chat's
+      // own title rather than borrowing the name of one turn in it.
+      if (a.kind !== 'subagent') tab.customTitle = a.name || a.id;
+      tab.agentId = target.sessionId || '';
       renderTabStrip();
     }
-    toast(`Opened ${a.name || a.id}`, 'success');
+    toast(a.kind === 'subagent' ? `Opened the chat running ${a.name}` : `Opened ${a.name || a.id}`, 'success');
   } finally { agentOpening = false; }
 }
 
@@ -12898,6 +14760,10 @@ const AM_NODE_BOT_LG = 124;
 const AM_NODE_W = AM_CELL_W;
 const AM_NODE_H = AM_NODE_BOT_LG;
 const AM_ROOT_GAP = 44;
+// A name trimmed to this fits one line in a card, and a row of them closes up
+// by the line it no longer holds.
+const AM_ONE_LINE_MAX = 16;
+const AM_ONE_LINE_TRIM = 22;
 const AM_FIT_PAD = 44;
 const AM_ZOOM_MIN = 0.35;
 const AM_ZOOM_MAX = 1.8;
@@ -12945,7 +14811,7 @@ function amChatNode(chat) {
     sessionId: chat.sessionId,
     name: chat.name || 'Chat',
     cwd: chat.cwd || '',
-    kind: 'chat',
+    holder: 'chat',
     running: chat.status !== 'done',
     state: chat.status === 'busy' ? 'working' : '',
     startedAt: chat.startedAt || 0,
@@ -12958,7 +14824,7 @@ function amProjectNode(cwd) {
     sessionId: '',
     name: amProjectName(cwd) || 'Elsewhere',
     cwd,
-    kind: 'project',
+    holder: 'project',
     running: false,
     state: 'done',
     startedAt: 0,
@@ -13036,11 +14902,18 @@ function amLayout(tree, aspect = 1.9) {
       const perRow = Math.max(1, Math.round(Math.sqrt(leaves.length * aspect * (AM_CELL_H / AM_CELL_W))) || 1);
       const startX = cursor;
       const grid = [];
+      // Names the block has already stripped down to a word or two need one line
+      // rather than two, and the rows they sit on close up to match.
+      const shared = amSharedPhrase(leaves.map((c) => c.name || c.id || ''));
+      const oneLine = !!shared && shared.short.every((t) => t.length <= AM_ONE_LINE_MAX);
+      const pitch = oneLine ? AM_CELL_H - AM_ONE_LINE_TRIM : AM_CELL_H;
       leaves.forEach((c, i) => {
         const r = walk(c, depth + 1, node);
         if (!r) return;
         r.x = startX + (i % perRow) * AM_CELL_W;
-        r.y = (depth + 1 + Math.floor(i / perRow)) * AM_CELL_H;
+        r.y = (depth + 1) * AM_CELL_H + Math.floor(i / perRow) * pitch;
+        if (shared) r.short = shared.short[i];
+        r.oneLine = oneLine;
         grid.push(r);
         laid.push(r);
       });
@@ -13058,7 +14931,15 @@ function amLayout(tree, aspect = 1.9) {
           x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x);
           y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y);
         }
-        node.block = { x: x0, y: y0, w: (x1 - x0) + AM_CELL_W, h: (y1 - y0) + AM_NODE_BOT };
+        const bot = oneLine ? AM_NODE_BOT - AM_ONE_LINE_TRIM : AM_NODE_BOT;
+        node.block = { x: x0, y: y0, w: (x1 - x0) + AM_CELL_W, h: (y1 - y0) + bot };
+        if (shared) {
+          node.block.caption = shared.phrase;
+          // The caption band is drawn above the first row, so the block drops by
+          // its height and the words never land on the parent's own card.
+          node.block.y += AM_BLOCK_CAP;
+          for (const r of grid) r.y += AM_BLOCK_CAP;
+        }
       }
     }
     if (laid.length) {
@@ -13111,12 +14992,24 @@ function amCardMetrics() {
   }
   return m;
 }
-// Breathing room between a block's region and the cards inside it.
+// Breathing room between a block's region and the cards inside it, plus the
+// band across the top where the words its members share are written.
 const AM_BLOCK_PAD = 14;
+const AM_BLOCK_CAP = 24;
+
+function amBlockRect(n) {
+  const top = AM_BLOCK_PAD + (n.block.caption ? AM_BLOCK_CAP : 0);
+  return {
+    x: n.block.x - AM_BLOCK_PAD,
+    y: n.block.y - top,
+    w: n.block.w + AM_BLOCK_PAD * 2,
+    h: n.block.h + top + AM_BLOCK_PAD,
+  };
+}
 
 function amEdgePath(p, c) {
   const m = agentMap.card || amCardMetrics();
-  const holder = !!p.a.kind;
+  const holder = !!p.a.holder;
   const x1 = p.x + AM_CELL_W / 2;
   const x2 = c.x + AM_CELL_W / 2;
   const y2 = c.y;
@@ -13140,8 +15033,8 @@ function amEdgePath(p, c) {
 
 function amPolishSparseLayout(layout) {
   if (layout.length > 3) return false;
-  const root = layout.find((n) => n.a.kind);
-  const child = layout.find((n) => !n.a.kind);
+  const root = layout.find((n) => n.a.holder);
+  const child = layout.find((n) => !n.a.holder);
   if (!root || !child) return true;
   root.x -= 10;
   child.x += 10;
@@ -13252,7 +15145,7 @@ function amNodeEl(a) {
   el.dataset.amId = a.id;
   // eslint-disable-next-line no-unsanitized/property -- Static shell; every value lands via textContent in amPaintNode.
   el.innerHTML = '<span class="am-node-glyph">'
-    + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
+    + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
     + '<b class="am-node-kids"></b></span>'
     + '<span class="am-node-plate">'
     + '<span class="am-node-label"></span>'
@@ -13271,6 +15164,30 @@ const AM_MARKS = {
   project: 'M3.75 7.7a2 2 0 0 1 2-2h3.4l2 2h7.1a2 2 0 0 1 2 2v6.6a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2z',
 };
 
+// A fan-out names its agents from one template, so every card in a block ends
+// up carrying the same words. The words they share are lifted onto the block
+// itself and each card keeps only what makes it itself.
+function amSharedPhrase(names) {
+  const parts = names.map((s) => String(s || '').trim().split(/\s+/).filter(Boolean));
+  if (parts.length < 3 || parts.some((w) => !w.length)) return null;
+  const same = (i, j) => parts.every((w) => (w[i < 0 ? w.length + i : i] || '').toLowerCase()
+    === (parts[0][j < 0 ? parts[0].length + j : j] || '').toLowerCase());
+  // Never eat a whole name: every card has to keep at least one word of its own.
+  const room = (n) => parts.every((w) => w.length > n);
+  let lead = 0;
+  while (room(lead + 1) && same(lead, lead)) lead += 1;
+  let trail = 0;
+  while (room(lead + trail + 1) && same(-1 - trail, -1 - trail)) trail += 1;
+  if (lead + trail < 2) return null;
+  const kept = parts.map((w) => w.slice(lead, w.length - trail).join(' '));
+  // A card left holding only an index is not named at all, so a set that differs
+  // by number alone keeps the words it was given.
+  if (kept.some((t) => !/[a-z]/i.test(t))) return null;
+  const head = parts[0].slice(0, lead).join(' ');
+  const tail = trail ? parts[0].slice(parts[0].length - trail).join(' ') : '';
+  return { phrase: [head, tail].filter(Boolean).join(' … '), short: kept };
+}
+
 function amCanvasLabel(s) {
   const raw = String(s || 'agent').trim() || 'agent';
   if (raw.length <= 30) return raw;
@@ -13287,26 +15204,28 @@ function amCanvasLabel(s) {
 function amPaintNode(el, n) {
   const a = n.a;
   const st = amStateOf(a);
-  el.classList.toggle('is-holder', !!a.kind);
-  el.classList.toggle('is-chat', a.kind === 'chat');
-  el.classList.toggle('is-project', a.kind === 'project');
+  el.classList.toggle('is-holder', !!a.holder);
+  el.classList.toggle('is-chat', a.holder === 'chat');
+  el.classList.toggle('is-project', a.holder === 'project');
   el.classList.toggle('is-running', st === 'running');
   el.classList.toggle('is-blocked', st === 'blocked');
   el.classList.toggle('is-failed', st === 'failed');
   el.classList.toggle('is-done', st === 'done');
   el.classList.toggle('is-selected', agentMap.selected === a.id);
   el.classList.toggle('is-root', n.depth === 0);
+  el.classList.toggle('is-oneline', !!n.oneLine);
   el.setAttribute('aria-selected', agentMap.selected === a.id ? 'true' : 'false');
   el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0)`;
   const mark = el.querySelector('.am-node-mark');
   mark.replaceChildren();
   const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  p.setAttribute('d', a.kind ? AM_MARKS[a.kind] : AM_MARKS[st]);
+  p.setAttribute('d', a.holder ? AM_MARKS[a.holder] : AM_MARKS[st]);
   mark.appendChild(p);
   const rawName = a.name || a.id || 'agent';
-  el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? rawName : amCanvasLabel(rawName);
+  const shown = n.short || rawName;
+  el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? shown : amCanvasLabel(shown);
   const time = el.querySelector('.am-node-time');
-  if (a.kind) {
+  if (a.holder) {
     time.textContent = n.kids === 1 ? '1 agent' : `${n.kids} agents`;
     time.dataset.amLive = '0';
     time.dataset.amTs = '0';
@@ -13316,7 +15235,7 @@ function amPaintNode(el, n) {
     time.dataset.amLive = st === 'done' ? '0' : '1';
   }
   const kids = el.querySelector('.am-node-kids');
-  const badge = a.kind ? 0 : n.kids;
+  const badge = a.holder ? 0 : n.kids;
   kids.textContent = badge ? String(badge) : '';
   kids.hidden = !badge;
   // The whole card is the tooltip: the name in full plus what it is doing.
@@ -13339,7 +15258,7 @@ function amPaintCanvas() {
   $('#am-cv-stage')?.classList.toggle('is-sparse', sparse);
   // The arrows walk the tree the way it is read: a parent, then its descendants.
   // Holders are scenery, not destinations, so they stay out of the walk.
-  agentMap.view = layout.filter((n) => !n.a.kind).map((n) => n.a.id);
+  agentMap.view = layout.filter((n) => !n.a.holder).map((n) => n.a.id);
 
   let maxX = 0;
   let maxY = 0;
@@ -13386,14 +15305,26 @@ function amPaintCanvas() {
   }
   const blocks = layout.filter((n) => n.block);
   blockLayer.replaceChildren(...blocks.map((n) => {
+    const box = amBlockRect(n);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     r.setAttribute('class', `am-block${n.live ? ' is-live' : ''}`);
-    r.setAttribute('x', String(n.block.x - AM_BLOCK_PAD));
-    r.setAttribute('y', String(n.block.y - AM_BLOCK_PAD));
-    r.setAttribute('width', String(n.block.w + AM_BLOCK_PAD * 2));
-    r.setAttribute('height', String(n.block.h + AM_BLOCK_PAD * 2));
-    r.setAttribute('rx', '16');
-    return r;
+    r.setAttribute('x', String(box.x));
+    r.setAttribute('y', String(box.y));
+    r.setAttribute('width', String(box.w));
+    r.setAttribute('height', String(box.h));
+    r.setAttribute('rx', '18');
+    g.appendChild(r);
+    if (n.block.caption) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('class', `am-block-cap${n.live ? ' is-live' : ''}`);
+      t.setAttribute('x', String(box.x + box.w / 2));
+      t.setAttribute('y', String(box.y + 17));
+      t.setAttribute('text-anchor', 'middle');
+      t.textContent = n.block.caption;
+      g.appendChild(t);
+    }
+    return g;
   }));
 
   agentMap.card = amCardMetrics();
@@ -13428,7 +15359,8 @@ function amPaintCanvas() {
       path.setAttribute('pathLength', '1');
       agentMap.edgeEls.set(key, path);
     }
-    const target = { x: n.block.x + n.block.w / 2 - AM_CELL_W / 2, y: n.block.y - AM_BLOCK_PAD, a: {} };
+    const box = amBlockRect(n);
+    const target = { x: box.x + box.w / 2 - AM_CELL_W / 2, y: box.y, a: {} };
     path.setAttribute('d', amEdgePath(n, target));
     path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}`);
     if (brandNew) svg.appendChild(path);
@@ -13556,15 +15488,22 @@ function amPaintFeed() {
 }
 
 async function amFetchFeed(a) {
-  if (!a || !a.sessionId) return;
+  // An agent that runs inside a chat owns no session, so its conversation is
+  // read by the file it writes. Either one identifies the feed on screen.
+  const key = a ? (a.sessionId || a.transcript || '') : '';
+  if (!key) return;
   const f = agentMap.feed;
   if (f.busy) return;
   f.busy = true;
-  if (f.sessionId !== a.sessionId) { f.sessionId = a.sessionId; f.entries = []; f.model = ''; const feed = $('#am-d-feed'); if (feed) feed.dataset.last = ''; amPaintFeed(); }
+  if (f.sessionId !== key) { f.sessionId = key; f.entries = []; f.model = ''; const feed = $('#am-d-feed'); if (feed) feed.dataset.last = ''; amPaintFeed(); }
   let res = null;
-  try { res = await window.husk.bgAgents.peek({ sessionId: a.sessionId, cwd: a.cwd || '' }); } catch (_) { res = null; }
+  try {
+    res = await window.husk.bgAgents.peek(a.sessionId
+      ? { sessionId: a.sessionId, cwd: a.cwd || '' }
+      : { transcript: a.transcript });
+  } catch (_) { res = null; }
   f.busy = false;
-  if (!res || res.ok === false || f.sessionId !== a.sessionId) { amPaintFeed(); return; }
+  if (!res || res.ok === false || f.sessionId !== key) { amPaintFeed(); return; }
   f.entries = Array.isArray(res.entries) ? res.entries : [];
   if (res.model) f.model = res.model;
   amPaintFeed();
@@ -13572,9 +15511,13 @@ async function amFetchFeed(a) {
 }
 
 function amPaintFacts(a) {
+  const feedKey = a.sessionId || a.transcript || '';
   const facts = [
     amProjectName(a.cwd) ? ['project', amProjectName(a.cwd)] : null,
-    agentMap.feed.sessionId === a.sessionId && agentMap.feed.model ? ['model', agentMap.feed.model] : null,
+    // The run tells the reader which fan-out this one belongs to, which is what
+    // sets it apart from its siblings.
+    a.runId ? ['run', a.runId] : null,
+    agentMap.feed.sessionId === feedKey && agentMap.feed.model ? ['model', agentMap.feed.model] : null,
     a.tokens ? ['tokens', amFmtTokens(a.tokens)] : null,
   ].filter(Boolean);
   const nodes = facts.flatMap(([k, v]) => {
@@ -13585,15 +15528,15 @@ function amPaintFacts(a) {
     return [dt, dd];
   });
   // The id is a control: one click copies the whole thing.
-  const full = String(a.sessionId || a.id || '');
+  const full = String(a.sessionId || a.agentId || a.id || '');
   if (full) {
-    const dt = document.createElement('dt'); dt.textContent = 'session';
+    const dt = document.createElement('dt'); dt.textContent = a.sessionId ? 'session' : 'agent';
     const dd = document.createElement('dd');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'am-d-copyid';
     btn.title = `Copy ${full}`;
-    btn.setAttribute('aria-label', 'Copy session id');
+    btn.setAttribute('aria-label', a.sessionId ? 'Copy session id' : 'Copy agent id');
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -13639,21 +15582,34 @@ function amPaintDetail() {
   intentEl.hidden = !intent;
   amPaintFacts(a);
   amTick();
+  // An agent running inside a chat is reached through that chat: it has no
+  // session to attach to and nothing of its own to stop.
+  const inProcess = a.kind === 'subagent';
   const open = $('#am-d-open');
-  const openable = a.attachable || a.hasTranscript;
+  const openable = inProcess ? !!a.parentSessionId : (a.attachable || a.hasTranscript);
   open.disabled = !openable;
   // The one urgent case borrows the amber and the verb changes with it: a
   // blocked agent is answered, not merely opened.
   open.classList.toggle('is-blocked', st === 'blocked');
-  open.textContent = st === 'blocked' ? 'Respond' : 'Open session';
-  open.title = openable
-    ? (a.attachable ? 'Attach to the live agent' : 'Resume this session in a chat tab')
-    : 'This agent left no transcript to open';
+  if (inProcess) open.textContent = 'Open chat';
+  else open.textContent = st === 'blocked' ? 'Respond' : 'Open session';
+  if (inProcess) {
+    open.title = openable
+      ? 'Open the chat this agent is running in'
+      : 'The chat this agent ran in is no longer listed';
+  } else {
+    open.title = openable
+      ? (a.attachable ? 'Attach to the live agent' : 'Resume this session in a chat tab')
+      : 'This agent left no transcript to open';
+  }
   open.onclick = () => { if (openable) { closeAgentMap(); openBgAgent(a); } };
 
-  // A live agent is stopped; one that has already ended is removed.
+  // A live agent is stopped; one that has already ended is removed. Neither is
+  // possible for an agent whose life belongs to a chat's turn.
   const end = $('#am-d-end');
   if (!end) return;
+  end.hidden = inProcess;
+  if (inProcess) return;
   const live = st === 'running' || st === 'blocked';
   end.textContent = live ? 'Stop' : 'Delete';
   end.title = live
@@ -14010,9 +15966,8 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
-    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '7': 'agents' };
+    const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '6': 'prefs', '7': 'agents' };
     if (map[e.key]) { e.preventDefault(); setPage(map[e.key]); }
-    if (e.key === '6') { e.preventDefault(); openPrefsModal(); }
     // Alt-keyed like the rest of the chrome so it never eats terminal input.
     if (String(e.key || '').toLowerCase() === 'a') {
       e.preventDefault();
@@ -14487,6 +16442,7 @@ async function boot() {
   // however long that spawn takes.
   refreshTopbarAgents();
   await refreshStats();
+  setStatusPane(cfg.statusPane === 'work' ? 'work' : 'status');
   refreshStatusline();
   refreshVoiceStatus();
   refreshContextList();
@@ -14508,10 +16464,7 @@ async function boot() {
     if (document.hidden) return;
     refreshRecentList();
   }, 30000);
-  setInterval(() => {
-    if (document.hidden) return;
-    refreshTopbarAgents();
-  }, 20000);
+  scheduleTopbarAgents(TOPBAR_AGENTS_IDLE_MS);
 
   // With skipWelcome on, boot goes straight to a chat, so the welcome screen
   // stays out of the paint entirely.
@@ -14772,77 +16725,77 @@ const AUTOPILOT_PRESETS = [
     title: 'Security audit pass',
     body: 'Walk the codebase for obvious security issues: auth bypass, missing input validation, secrets in source, unsafe deserialization. Report findings inline.',
     caps: { minutes: 60, tokens: 250000, dollars: 6 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>',
   },
   {
     id: 'cleanup-todos',
     title: 'Cleanup TODOs',
     body: 'Find every TODO and FIXME comment in source. Group by area, propose a fix for each, do not push.',
     caps: { minutes: 30, tokens: 120000, dollars: 3 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
   },
   {
     id: 'docs-pass',
     title: 'Documentation pass',
     body: 'Generate or improve docstrings, comments, and README sections for public APIs. Match the existing tone.',
     caps: { minutes: 45, tokens: 180000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   },
   {
     id: 'add-tests',
     title: 'Add missing tests',
     body: 'Identify functions and modules with no test coverage. Write unit tests using the existing test framework. Do not modify production code.',
     caps: { minutes: 60, tokens: 220000, dollars: 5 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg>',
   },
   {
     id: 'refactor-types',
     title: 'Tighten types',
     body: 'Find loosely typed code (any, unknown, missing return types) and add precise types. Run the type checker after each change.',
     caps: { minutes: 45, tokens: 200000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/><path d="M9 21h6"/><path d="M12 3v18"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/><path d="M9 21h6"/><path d="M12 3v18"/></svg>',
   },
   {
     id: 'dep-bump',
     title: 'Bump dependencies',
     body: 'Review outdated dependencies. Bump patch and minor versions where safe. Run the test suite after each batch. Do not bump major versions without explicit confirmation.',
     caps: { minutes: 30, tokens: 100000, dollars: 2 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
   },
   {
     id: 'fix-failing-tests',
     title: 'Fix failing tests',
     body: 'Run the test suite. Diagnose each failure and fix the code or the test, whichever is wrong. Re-run after each fix until green. Do not delete or skip tests.',
     caps: { minutes: 60, tokens: 250000, dollars: 6 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4L3 18v3h3l5.3-5.3a4.5 4.5 0 0 0 6.4-6.4z"/><path d="M15 9l6-6"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4L3 18v3h3l5.3-5.3a4.5 4.5 0 0 0 6.4-6.4z"/><path d="M15 9l6-6"/></svg>',
   },
   {
     id: 'remove-dead-code',
     title: 'Remove dead code',
     body: 'Find unused functions, exports, files, and dependencies. Confirm each is unreferenced before deleting. Run the test suite after removal.',
     caps: { minutes: 45, tokens: 180000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
   },
   {
     id: 'harden-errors',
     title: 'Harden error handling',
     body: 'Find swallowed errors, empty catch blocks, and unchecked async results. Add proper handling with clear messages. Do not change behavior on the happy path.',
     caps: { minutes: 45, tokens: 200000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
   },
   {
     id: 'accessibility-pass',
     title: 'Accessibility pass',
     body: 'Review UI markup for accessibility: missing labels, keyboard navigation, focus states, contrast. Fix low-risk issues directly, report the rest inline.',
     caps: { minutes: 45, tokens: 180000, dollars: 4 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M7 10.5l4 1v3l-1.5 4M17 10.5l-4 1v3l1.5 4"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M7 10.5l4 1v3l-1.5 4M17 10.5l-4 1v3l1.5 4"/></svg>',
   },
   {
     id: 'release-notes',
     title: 'Draft release notes',
     body: 'Read the commits since the last tag. Draft release notes grouped by features, fixes, and breaking changes. Write to a file, do not tag or push.',
     caps: { minutes: 20, tokens: 80000, dollars: 2 },
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L11 3H4v7l9.6 10.4a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8z"/><circle cx="8" cy="7" r="1.5"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L11 3H4v7l9.6 10.4a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8z"/><circle cx="8" cy="7" r="1.5"/></svg>',
   },
 ];
 

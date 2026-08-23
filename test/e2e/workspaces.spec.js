@@ -87,6 +87,35 @@ test('the board groups a dirty repo as Active and an idle folder as Quiet', asyn
   await app.close();
 });
 
+test('the board filler keeps the same row height as project rows', async () => {
+  const { app, win } = await launchApp();
+  await openBoard(win);
+  const info = await win.evaluate(() => {
+    const row = document.querySelector('#projects-board .ws-row');
+    const add = document.querySelector('#projects-board .ws-addrow');
+    const fill = document.querySelector('#projects-board .ws-fill');
+    const fillRows = [...document.querySelectorAll('#projects-board .ws-fill-row')].slice(0, 8);
+    const height = (el) => el.getBoundingClientRect().height;
+    const top = (el) => el.getBoundingClientRect().top;
+    return {
+      rowHeight: height(row),
+      addHeight: height(add),
+      fillBackground: getComputedStyle(fill).backgroundImage,
+      fillHeights: fillRows.map(height),
+      fillTops: fillRows.map(top),
+    };
+  });
+  expect(info.fillBackground).toBe('none');
+  expect(Math.abs(info.addHeight - info.rowHeight)).toBeLessThanOrEqual(0.75);
+  for (const h of info.fillHeights) {
+    expect(Math.abs(h - info.rowHeight)).toBeLessThanOrEqual(0.75);
+  }
+  for (let i = 1; i < info.fillTops.length; i++) {
+    expect(Math.abs((info.fillTops[i] - info.fillTops[i - 1]) - info.rowHeight)).toBeLessThanOrEqual(0.75);
+  }
+  await app.close();
+});
+
 test('clicking a row opens the workspace in place; launching stays a button', async () => {
   const { app, win } = await launchApp();
   await openBoard(win);

@@ -291,7 +291,7 @@ test('appearance changes preview live and persist only on save', async () => {
   // Changing the theme previews instantly: no dialog, nothing persisted, and
   // the unsaved-changes bar appears.
   await win.evaluate(() => {
-    openPrefsModal();
+    openPrefs();
     const sel = document.getElementById('pref-theme');
     sel.value = 'light';
     sel.dispatchEvent(new Event('change', { bubbles: true }));
@@ -407,7 +407,7 @@ test('adding a context file types its path and nothing else', async () => {
     return r && r.dest ? r.dest : '';
   }, sourcePath);
   expect(dest).toContain('cert.der');
-  await win.waitForFunction(() => document.querySelector('#rail-context-list')?.textContent.includes('cert.der'));
+  await win.waitForFunction(() => document.querySelector('#sp-pane-work')?.textContent.includes('cert.der'));
   // The terminal wraps at its own width, so compare with whitespace stripped:
   // a path split across two rows is still the path that was typed.
   const flatten = (s) => String(s || '').replace(/\s+/g, '');
@@ -416,10 +416,10 @@ test('adding a context file types its path and nothing else', async () => {
     flatten(dest)
   );
   const state = await win.evaluate(() => ({
-    rail: document.querySelector('#rail-context-list')?.textContent || '',
+    pane: document.querySelector('#sp-pane-work')?.textContent || '',
     terminal: window.__termText(),
   }));
-  expect(state.rail).toContain('cert.der');
+  expect(state.pane).toContain('cert.der');
   // The path is the whole message: the user writes the request around it, and
   // nothing is submitted on their behalf.
   expect(flatten(state.terminal)).toContain(flatten(dest));
@@ -642,11 +642,11 @@ test('Files opens on the pinned project, not the saved tree root', async () => {
   await win.waitForFunction(() => typeof projectsCache !== 'undefined' && projectsCache.length > 0); // eslint-disable-line no-undef
   await win.evaluate(() => setPage('files')); // eslint-disable-line no-undef
   await win.waitForFunction(
-    (p) => (document.querySelector('#files-sub')?.textContent || '') === p,
+    (p) => (document.querySelector('#btn-files-open')?.title || '') === p,
     projectDir
   );
   const state = await win.evaluate(() => ({
-    sub: document.querySelector('#files-sub')?.textContent || '',
+    sub: document.querySelector('#btn-files-open')?.title || '',
     label: document.querySelector('#fx-open-folder-label')?.textContent || '',
     rows: document.querySelector('#fx-list')?.innerText || '',
   }));
@@ -673,9 +673,9 @@ test('leaving the project drops Files back to the configured tree root', async (
   const win = await ready(app);
   await win.waitForFunction(() => typeof projectsCache !== 'undefined' && projectsCache.length > 0); // eslint-disable-line no-undef
   await win.evaluate(() => setPage('files')); // eslint-disable-line no-undef
-  await win.waitForFunction((p) => (document.querySelector('#files-sub')?.textContent || '') === p, projectDir);
+  await win.waitForFunction((p) => (document.querySelector('#btn-files-open')?.title || '') === p, projectDir);
   await win.evaluate(async () => { await window.husk.projects.clearActive(); await refreshProjectsState(); }); // eslint-disable-line no-undef
-  await win.waitForFunction((p) => (document.querySelector('#files-sub')?.textContent || '') === p, otherDir);
+  await win.waitForFunction((p) => (document.querySelector('#btn-files-open')?.title || '') === p, otherDir);
   const rows = await win.evaluate(() => document.querySelector('#fx-list')?.innerText || '');
   expect(rows).toContain('outside-project.txt');
   await app.close();

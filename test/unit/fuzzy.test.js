@@ -127,3 +127,13 @@ test('fuzzyFilter: stringifies non-string match targets', () => {
 test('fuzzyFilter: non-array items yields empty result', () => {
   assert.deepEqual(fuzzyFilter('a', null), []);
 });
+
+test('fuzzyMatch: positions index the original string, not a folded copy', () => {
+  // U+0130 lowercases to two code units, so folding the whole string first
+  // would push every later position one glyph out of step with the target.
+  const target = 'Aİbc';
+  const m = fuzzyMatch('bc', target);
+  assert.notEqual(m, null);
+  assert.equal(target[m.positions[0]], 'b');
+  assert.equal(target[m.positions[1]], 'c');
+});

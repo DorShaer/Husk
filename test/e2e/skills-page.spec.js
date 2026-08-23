@@ -294,7 +294,7 @@ test('the switch is the product switch, in both themes', async () => {
         return {
           w: Math.round(r.width), h: Math.round(r.height),
           appearance: cs.appearance, radius: cs.borderRadius,
-          accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+          onInk: getComputedStyle(document.body).getPropertyValue('--switch-on').trim(),
           on: cs.backgroundColor,
         };
       });
@@ -302,12 +302,12 @@ test('the switch is the product switch, in both themes', async () => {
       expect(sw.h).toBe(22);
       expect(sw.appearance).toBe('none');
       expect(sw.radius).toBe('999px');
-      // On means the product's accent, not a colour this page invented.
+      // On means the product's switch ink, not a colour this page invented.
       const probe = await win.evaluate((c) => {
         const d = document.createElement('div');
         d.style.color = c; document.body.appendChild(d);
         const rgb = getComputedStyle(d).color; d.remove(); return rgb;
-      }, sw.accent);
+      }, sw.onInk);
       expect(sw.on).toBe(probe);
     } finally { await app.close(); }
   }

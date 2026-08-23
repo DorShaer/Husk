@@ -1,6 +1,6 @@
 {
   "name": "husk",
-  "version": "2.11.1",
+  "version": "2.11.3",
   "description": "A desktop home for your CLI agent. Wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop context, sessions, voice, and a live status panel.",
   "main": "src/main.js",
   "license": "MIT",
@@ -21,9 +21,9 @@
     "dist:mac": "node scripts/check-build-node.js && electron-builder --mac --publish never",
     "dist:win": "node scripts/check-build-node.js && electron-builder --win --publish never",
     "test": "node --test test/unit/*.test.js",
-    "test:e2e": "playwright test --config test/playwright.config.js",
+    "test:e2e": "node scripts/run-e2e.js test/playwright.config.js",
     "test:all": "npm run test && npm run test:e2e",
-    "test:perf": "playwright test --config test/playwright.perf.config.js",
+    "test:perf": "node scripts/run-e2e.js test/playwright.perf.config.js",
     "test:e2e:changed": "node scripts/select-e2e.js"
   },
   "dependencies": {

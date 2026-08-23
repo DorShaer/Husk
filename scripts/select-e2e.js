@@ -62,11 +62,11 @@ function gitDiff(ref) {
 }
 
 function runPlaywright(specs, extra) {
-  const args = ['playwright', 'test', '--config', 'test/playwright.config.js'];
+  const args = [path.join(REPO, 'scripts', 'run-e2e.js'), 'test/playwright.config.js'];
   for (const s of specs) args.push(`test/e2e/${s}`);
   args.push(...extra);
-  console.log(`\n> npx ${args.join(' ')}\n`);
-  const r = spawnSync('npx', args, { cwd: REPO, stdio: 'inherit' });
+  console.log(`\n> node ${args.join(' ')}\n`);
+  const r = spawnSync(process.execPath, args, { cwd: REPO, stdio: 'inherit' });
   process.exit(r.status == null ? 1 : r.status);
 }
 
@@ -77,9 +77,7 @@ function main() {
   if (has('all')) {
     console.log('Running the full suite (--all).');
     if (has('list')) return;
-    const r = spawnSync('npx', ['playwright', 'test', '--config', 'test/playwright.config.js', ...extra],
-      { cwd: REPO, stdio: 'inherit' });
-    process.exit(r.status == null ? 1 : r.status);
+    return runPlaywright([], extra);
   }
 
   const ref = val('ref', 'HEAD');
@@ -91,9 +89,7 @@ function main() {
     const all = fs.readdirSync(path.join(REPO, 'test', 'e2e')).filter((f) => f.endsWith('.spec.js'));
     console.log(`\nFull suite: ${all.length} spec files.`);
     if (has('list')) return;
-    const r = spawnSync('npx', ['playwright', 'test', '--config', 'test/playwright.config.js', ...extra],
-      { cwd: REPO, stdio: 'inherit' });
-    process.exit(r.status == null ? 1 : r.status);
+    return runPlaywright([], extra);
   }
 
   const total = fs.readdirSync(path.join(REPO, 'test', 'e2e')).filter((f) => f.endsWith('.spec.js')).length;

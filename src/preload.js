@@ -1,7 +1,8 @@
 // Renderer-safe API surface.
 const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 const { extractRecap } = require('./lib/recap-extract');
-const { fuzzyFilter } = require('./lib/fuzzy');
+const { fuzzyFilter, fuzzyMatch } = require('./lib/fuzzy');
+const sessionView = require('./lib/session-view');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
@@ -68,6 +69,9 @@ contextBridge.exposeInMainWorld('husk', {
       try { return fuzzyFilter(query, items, keyName ? (it) => it[keyName] : undefined); }
       catch (_) { return items || []; }
     },
+    // Scores one candidate and reports which glyphs matched, so a list can mark
+    // them. Null means the query is not a subsequence of the target.
+    fuzzyMatch: (query, target) => { try { return fuzzyMatch(query, target); } catch (_) { return null; } },
     highlight: (code, lang) => { try { return highlight(code, lang); } catch (_) { return null; } },
     highlightLines: (code, lang) => { try { return highlightLines(code, lang); } catch (_) { return null; } },
     parseGitStatus: (porcelain) => { try { return parsePorcelain(porcelain); } catch (_) { return []; } },
@@ -78,6 +82,25 @@ contextBridge.exposeInMainWorld('husk', {
     stripControls: (s) => { try { return stripControls(s); } catch (_) { return ''; } },
     hasControls: (s) => { try { return hasControls(s); } catch (_) { return true; } },
     chatFileRef: (p) => { try { return chatFileRef(p); } catch (_) { return ''; } },
+  },
+  // The Sessions roster's view model: filtering, threading, grouping and the
+  // label formats. Pure, run in-process, clock injected by the caller.
+  sessionView: {
+    buildView: (list, ctx) => {
+      try { return sessionView.buildView(list, ctx); }
+      catch (_) { return { groups: [], olderCount: 0, flat: false, hits: new Map(), total: 0, shown: 0 }; }
+    },
+    signal: (s, ctx) => { try { return sessionView.signal(s, ctx); } catch (_) { return null; } },
+    scent: (s, sig, names) => { try { return sessionView.scent(s, sig, names); } catch (_) { return ''; } },
+    titleOf: (s, names) => { try { return sessionView.titleOf(s, names); } catch (_) { return ''; } },
+    sessionCwd: (s) => { try { return sessionView.sessionCwd(s); } catch (_) { return ''; } },
+    basename: (p) => { try { return sessionView.basename(p); } catch (_) { return ''; } },
+    inCurrentProject: (s, cwd) => { try { return sessionView.inCurrentProject(s, cwd); } catch (_) { return false; } },
+    threadKey: (s, names) => { try { return sessionView.threadKey(s, names); } catch (_) { return ''; } },
+    formatWhen: (ms, now) => { try { return sessionView.formatWhen(ms, now); } catch (_) { return { label: '', title: '' }; } },
+    formatDuration: (a, b) => { try { return sessionView.formatDuration(a, b); } catch (_) { return ''; } },
+    formatSize: (n) => { try { return sessionView.formatSize(n); } catch (_) { return ''; } },
+    isDeletable: (s) => { try { return sessionView.isDeletable(s); } catch (_) { return false; } },
   },
   config: {
     get: () => ipcRenderer.invoke('config:get'),

@@ -182,14 +182,15 @@ test('pinning toggles on the same nodes and lands in config', async () => {
   await expect(forge.locator('.ag-pin')).toHaveAttribute('aria-pressed', 'true');
   await expect(forge).toHaveClass(/is-pinned/);
   await expect(win.locator('#ag-state .ag-facet[data-key="pinned"] .ag-facet-n')).toHaveText('1');
-  // Pinning has exactly one visible effect in the product, and it is this.
-  await expect(win.locator('#chat-sub')).toContainText('Forge');
+  // Pinning has exactly one effect in the product, and it is this: the chat's
+  // context pane names who is pinned.
+  await expect(win.locator('#sp-pane-work')).toContainText('Forge');
 
   // A pin repaints counts, never the list, so the row keeps its identity.
   await win.click('.ag-row[data-id="p-anvil"] .ag-pin');
   await expect(win.locator('#ag-state .ag-facet[data-key="pinned"] .ag-facet-n')).toHaveText('2');
-  // The header lists them in the order they were pinned, not alphabetically.
-  await expect(win.locator('#chat-sub')).toContainText('Forge, Anvil');
+  // The context pane lists them in the order they were pinned, not alphabetically.
+  await expect(win.locator('#sp-pane-work')).toContainText('Forge, Anvil');
 
   // The master checkbox is the whole shown scope in one write.
   await win.click('#ag-master');
@@ -338,8 +339,9 @@ test('the reader carries what the row has no column for', async () => {
     ['Auto-select', 'Off'],
     ['Source', '~/packs/agents'],
   ]);
-  // The row prints the sentence in full, so the pane does not print it twice.
-  await expect(win.locator('#ag-detail .ag-dt-desc')).toHaveCount(0);
+  // The sentence about the agent is the pane's lede, whatever the row managed to
+  // show, so a reader who opened the pane never lands on metadata first.
+  await expect(win.locator('#ag-detail .ag-dt-desc')).toHaveText('Installed from a pack.');
 
   // The verbs the row carries are on the record the reader is already reading,
   // and pinning from the pane is a toggle rather than a printed value.
