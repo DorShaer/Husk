@@ -3156,6 +3156,22 @@ function wfShowView(name) {
   $('#wf-list-view').hidden = name !== 'list';
   $('#wf-builder-view').hidden = name !== 'builder';
   $('#wf-run-view').hidden = name !== 'run';
+  const market = $('#wf-market-view');
+  if (market) market.hidden = name !== 'market';
+}
+
+// The marketplace is a view of the Workflows page rather than a page of its
+// own: it is the same noun, reached from the same head, and a rail item for it
+// would put the catalog and the workflows it installs into two places.
+async function wfOpenMarket() {
+  setPage('workflows');
+  // setPage starts the page's own render, and that render ends by choosing a
+  // view. Waiting for it is what keeps the list from landing on top of this.
+  await renderWorkflows();
+  // A run in flight owns the page, and it kept it above.
+  if (activeRunId) return;
+  wfShowView('market');
+  if (window.WfxMarket && typeof window.WfxMarket.open === 'function') window.WfxMarket.open();
 }
 
 async function renderWorkflows() {
@@ -5629,6 +5645,15 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
 
 // Button wiring
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
+$('#btn-wf-market') && $('#btn-wf-market').addEventListener('click', () => { wfOpenMarket(); });
+$('#btn-wfm-back') && $('#btn-wfm-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
+// Publishing is exporting: the sheet that already writes a portable file is the
+// one that puts a workflow somewhere a catalog can point at.
+$('#btn-wfm-publish') && $('#btn-wfm-publish').addEventListener('click', () => {
+  wfShowView('list');
+  paintWorkflowList();
+  toast('Pick a workflow and choose Export from its menu to write a shareable file', 'info');
+});
 $('#wfx-cta-build') && $('#wfx-cta-build').addEventListener('click', () => openWorkflowBuilder(null));
 // The two learn-more CTAs scroll rather than navigate: the answer to both is
 // already further down this page, and a jump keeps the context.
@@ -14048,6 +14073,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.agents,      label: 'Import agent pack',              run: () => { setPage('agents'); openRepoAgentsModal(); } },
   { icon: ICONS.agents,      label: 'Unpin all agents',               run: () => deactivateAllProfiles() },
   { icon: ICONS.workflows,   label: 'Switch to Workflows',            run: () => setPage('workflows') },
+  { icon: ICONS.workflows,   label: 'Browse the workflow marketplace', run: () => wfOpenMarket() },
   { icon: ICONS.autopilot,    label: 'Switch to Autopilot',             run: () => setPage('autopilot') },
   { icon: ICONS.projects,    label: 'Switch to Projects',             run: () => setPage('projects') },
   { icon: ICONS.prompts,     label: 'Switch to Prompts',              run: () => setPage('prompts') },

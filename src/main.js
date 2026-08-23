@@ -5688,6 +5688,7 @@ ipcMain.handle('workflows:activeRun', () => {
 const WorkflowArtifact = require('./lib/workflow-artifact');
 const WorkflowReceipt = require('./lib/workflow-receipt');
 const WorkflowInstall = require('./lib/workflow-install');
+const WorkflowRegistry = require('./lib/workflow-registry');
 
 // One row per workflow that came from a file, keyed on the local workflow id.
 // Deliberately a separate file from workflows.json: see createWorkflowRecord
@@ -5949,7 +5950,51 @@ function wfxReadArtifactAt(absPath) {
 // clone and nothing else. Every read below goes through wfxResolveConfined.
 ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
   const p = (payload && typeof payload === 'object') ? payload : {};
-  const source = p.source === 'file' ? 'file' : 'repo';
+  const source = (p.source === 'file' || p.source === 'registry') ? p.source : 'repo';
+
+  // A file a catalog named. The catalog decided which URL; everything after the
+  // bytes arrive is the path a file off disk takes, through the same validator
+  // and out to the same sheet. A registry buys the reader the URL and nothing
+  // else, which is why this arm ends in parseArtifact like the other two.
+  if (source === 'registry') {
+    const registry = WorkflowRegistry.normalizeRegistryUrl(p.registryUrl);
+    if (!registry.ok) return Object.assign({ stage: 'source' }, registry);
+    const where = WorkflowRegistry.resolveArtifactUrl(p.entry, registry.url);
+    if (!where.ok) return Object.assign({ stage: 'source' }, where);
+
+    const got = await registryFetch(where.url, WorkflowArtifact.MAX_ARTIFACT_BYTES);
+    if (!got.ok) return Object.assign({ stage: 'source' }, got);
+
+    // Whether the bytes are the bytes the catalog named, settled before they
+    // are read as a workflow: a file that is not the listed one is refused
+    // without ever being parsed.
+    const digest = WorkflowRegistry.checkArtifactBytes(got.bytes, p.entry);
+    if (!digest.ok) return Object.assign({ stage: 'source' }, digest);
+
+    const result = WorkflowArtifact.parseArtifact(got.bytes);
+    if (!result.ok) return Object.assign({ stage: 'validate' }, result);
+    return {
+      ok: true,
+      artifact: result.artifact,
+      warnings: result.warnings,
+      chainCheck: result.chainCheck,
+      bytes: got.bytes.length,
+      source: {
+        kind: 'registry',
+        path: null,
+        relPath: null,
+        root: null,
+        url: where.url,
+        registryUrl: registry.url,
+        // Whether the catalog stated a digest at all. The check above already
+        // refused a stated one that did not match, so this is the only
+        // remaining distinction: attested, or listed without one.
+        attested: digest.attested,
+        digest: digest.digest,
+        candidates: [],
+      },
+    };
+  }
 
   if (source === 'file') {
     const raw = typeof p.path === 'string' ? p.path.trim() : '';
@@ -6122,6 +6167,152 @@ ipcMain.handle('workflows:install', (_e, payload = {}) => {
   }
   return { ok: true, workflow, sidecar: row };
 });
+
+// ─── The registry: fetching a catalog somebody else publishes ────────────────
+//
+// workflow-registry.js holds every rule about what an index may say. This is
+// the part it deliberately does not do: the syscalls. One helper makes the
+// request, and it is the only place in Husk that fetches a URL a user supplied.
+//
+// The request is deliberately dull. https on every hop, no credentials, no
+// cookie jar, no request body, a short timeout, a byte ceiling enforced while
+// the body streams rather than after it, and a small cap on redirects. A URL
+// that needs any more than that is not a public catalog.
+//
+// What it does not settle: a redirect target is not known until the hop is
+// taken, so a registry chooses, within https, which hosts this machine asks
+// for. Adding a registry is trusting its author with that much.
+
+const REGISTRY_TIMEOUT_MS = 10000;
+const REGISTRY_MAX_REDIRECTS = 3;
+// The default catalog. Overridable in config, so a fork or an air-gapped
+// install can point somewhere else without patching the binary.
+const DEFAULT_REGISTRY_URL = 'https://raw.githubusercontent.com/DorShaer/husk-workflows/main/index.json';
+
+function registryFetch(rawUrl, maxBytes) {
+  return new Promise((resolve) => {
+    const https = require('https');
+    let hops = 0;
+
+    const go = (target) => {
+      let url;
+      try { url = new URL(target); } catch (_) {
+        return resolve({ ok: false, code: 'bad-registry-url', message: 'that is not a URL', detail: null });
+      }
+      if (url.protocol !== 'https:') {
+        return resolve({ ok: false, code: 'bad-registry-url', message: 'a registry is fetched over https only', detail: url.protocol });
+      }
+
+      const req = https.request({
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: `${url.pathname}${url.search}`,
+        method: 'GET',
+        headers: { 'User-Agent': `Husk/${app.getVersion()}`, Accept: 'application/json' },
+        timeout: REGISTRY_TIMEOUT_MS,
+      }, (res) => {
+        const status = res.statusCode || 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.destroy();
+          if (hops >= REGISTRY_MAX_REDIRECTS) {
+            return resolve({ ok: false, code: 'fetch-failed', message: 'this registry redirects too many times', detail: `${hops} hops` });
+          }
+          hops += 1;
+          let next;
+          try { next = new URL(res.headers.location, url).toString(); } catch (_) {
+            return resolve({ ok: false, code: 'fetch-failed', message: 'this registry redirects somewhere that is not a URL', detail: null });
+          }
+          return go(next);
+        }
+        if (status !== 200) {
+          res.destroy();
+          return resolve({ ok: false, code: 'fetch-failed', message: 'the registry did not answer with a catalog', detail: `HTTP ${status}` });
+        }
+
+        // The ceiling is enforced as the body arrives: a server that keeps
+        // sending is cut off rather than buffered and measured afterwards.
+        const chunks = [];
+        let size = 0;
+        res.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > maxBytes) {
+            res.destroy();
+            return resolve({ ok: false, code: 'too-large', message: `that response is larger than the ${maxBytes} byte limit`, detail: null });
+          }
+          chunks.push(chunk);
+        });
+        res.on('end', () => resolve({ ok: true, bytes: Buffer.concat(chunks), url: url.toString() }));
+        res.on('error', (err) => resolve({ ok: false, code: 'fetch-failed', message: 'the response ended early', detail: err && err.message }));
+      });
+
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, code: 'fetch-failed', message: 'the registry did not answer in time', detail: `${REGISTRY_TIMEOUT_MS}ms` }); });
+      req.on('error', (err) => resolve({ ok: false, code: 'fetch-failed', message: 'the registry could not be reached', detail: err && err.message }));
+      req.end();
+    };
+
+    go(rawUrl);
+  });
+}
+
+// The registries this machine subscribes to, newest last. The default is one of
+// them rather than a special case, so removing it is an ordinary act.
+function registryList() {
+  const stored = Array.isArray(config.workflowRegistries) ? config.workflowRegistries : null;
+  if (!stored) return [{ url: DEFAULT_REGISTRY_URL, addedAt: null, builtin: true }];
+  const out = [];
+  for (const row of stored.slice(0, 16)) {
+    const url = row && typeof row.url === 'string' ? WorkflowRegistry.normalizeRegistryUrl(row.url) : null;
+    if (!url || !url.ok) continue;
+    if (out.some((r) => r.url === url.url)) continue;
+    out.push({
+      url: url.url,
+      addedAt: row && typeof row.addedAt === 'string' ? row.addedAt : null,
+      builtin: url.url === DEFAULT_REGISTRY_URL,
+    });
+  }
+  return out;
+}
+
+ipcMain.handle('registry:list', () => ({ ok: true, registries: registryList(), defaultUrl: DEFAULT_REGISTRY_URL }));
+
+ipcMain.handle('registry:add', (_e, payload = {}) => {
+  const checked = WorkflowRegistry.normalizeRegistryUrl(payload && payload.url);
+  if (!checked.ok) return checked;
+  const current = registryList();
+  if (current.some((r) => r.url === checked.url)) {
+    return { ok: true, registries: current, alreadyAdded: true };
+  }
+  const next = [...current, { url: checked.url, addedAt: new Date().toISOString() }];
+  config = { ...config, workflowRegistries: next.map((r) => ({ url: r.url, addedAt: r.addedAt })) };
+  if (!saveConfig(config)) return { ok: false, code: 'save-failed', message: 'the registry could not be saved', detail: null };
+  return { ok: true, registries: registryList() };
+});
+
+ipcMain.handle('registry:remove', (_e, payload = {}) => {
+  const url = payload && typeof payload.url === 'string' ? payload.url : '';
+  const next = registryList().filter((r) => r.url !== url);
+  config = { ...config, workflowRegistries: next.map((r) => ({ url: r.url, addedAt: r.addedAt })) };
+  if (!saveConfig(config)) return { ok: false, code: 'save-failed', message: 'the change could not be saved', detail: null };
+  return { ok: true, registries: registryList() };
+});
+
+// Fetches one catalog and reads it. The renderer never sees the bytes: it gets
+// the validated index or a refusal, so no unparsed registry text is anywhere a
+// DOM builder could reach it.
+ipcMain.handle('registry:fetch', async (_e, payload = {}) => {
+  const checked = WorkflowRegistry.normalizeRegistryUrl(payload && payload.url);
+  if (!checked.ok) return checked;
+  const got = await registryFetch(checked.url, WorkflowRegistry.MAX_INDEX_BYTES);
+  if (!got.ok) return got;
+  // The index records the URL that was asked for, not the one a redirect
+  // landed on: an entry's artifact is resolved against the host the user
+  // subscribed to.
+  return WorkflowRegistry.parseIndex(got.bytes, { url: checked.url });
+});
+
+// Reading one workflow file a catalog names is not a channel of its own: it is
+// workflows:artifactRead with source 'registry', so the install sheet behind it
+// is the one that already exists.
 
 // ─── IPC: the sidecar ────────────────────────────────────────────────────────
 

@@ -14463,3 +14463,101 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 [data-mode="light"] .am-d-actions {
   background: color-mix(in srgb, var(--bg-2) 88%, transparent);
 }
+
+/* ─── Workflow marketplace ──────────────────────────────────────────────────
+   The catalog view. It borrows the workflow card's surface and shadow so that
+   a card you can install and a card you already have read as the same object
+   at two moments, and differs only where the difference is real: a marketplace
+   card carries claims somebody else made, and says so along its bottom. */
+.wfm { display: flex; flex-direction: column; gap: var(--space-4); }
+
+.wfm-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.wfm-search {
+  flex: 0 1 320px; min-width: 180px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+}
+.wfm-search::placeholder { color: var(--text-3); }
+
+.wfm-tags { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.wfm-tag {
+  padding: 3px 10px;
+  background: transparent; color: var(--text-3);
+  border: 1px solid var(--line); border-radius: 999px;
+  font-size: var(--fs-nano); cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.wfm-tag:hover { color: var(--text-2); border-color: var(--line-2); }
+.wfm-tag.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* Which catalog these rows came from. One line, above the grid, because the
+   answer applies to every card under it and repeating it on each would be
+   noise rather than provenance. */
+.wfm-source-row { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.wfm-source-name { font-size: var(--fs-body); color: var(--text-2); font-weight: 600; }
+.wfm-source-host { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); }
+.wfm-source-count { font-size: var(--fs-nano); color: var(--text-3); }
+.wfm-source-skipped { font-size: var(--fs-nano); color: var(--warn); }
+
+.wfm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
+  gap: var(--space-4);
+  align-content: start;
+}
+.wfm-card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-2xl);
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  box-shadow: var(--elev-2);
+  transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
+}
+.wfm-card:hover { border-color: var(--line-2); box-shadow: var(--elev-3); }
+.wfm-card-head { display: flex; align-items: center; gap: var(--space-2); }
+.wfm-card-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-body-lg); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.wfm-chip {
+  flex: 0 0 auto;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); color: var(--text-3);
+  border: 1px solid var(--line);
+}
+.wfm-card-desc {
+  font-size: var(--fs-body); color: var(--text-2); line-height: 1.45;
+  /* Three lines, then it stops. A description is a stranger's prose and has no
+     length this card can rely on. */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.wfm-card-facts { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.wfm-fact {
+  padding: 2px 8px; border-radius: var(--radius-md);
+  background: var(--surface-raised); color: var(--text-3);
+  font-size: var(--fs-nano);
+}
+.wfm-fact.is-agent { font-family: var(--font-mono); }
+/* The one line on the card that names where every figure above it came from. */
+.wfm-card-foot { margin-top: auto; padding-top: var(--space-2); }
+.wfm-card-by { font-size: var(--fs-nano); color: var(--text-3); }
+.wfm-card-actions { display: flex; justify-content: flex-end; padding-top: var(--space-2); }
+
+.wfm-state:empty { display: none; }
+.wfm-state-detail { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); margin-top: 4px; overflow-wrap: anywhere; }
+
+/* ─── Registry manager ─────────────────────────────────────────────────────── */
+.wfm-reg-list { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-3) 0; }
+.wfm-reg-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.wfm-reg-row.is-on { border-color: var(--accent); }
+.wfm-reg-main { flex: 1 1 auto; min-width: 0; }
+.wfm-reg-host { font-size: var(--fs-body); color: var(--text); }
+.wfm-reg-url { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.wfm-reg-actions { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.wfm-reg-empty { font-size: var(--fs-body); color: var(--text-3); padding: var(--space-3); }
+.wfm-reg-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); }
+.wfm-reg-error { font-size: var(--fs-body); color: var(--rose); }

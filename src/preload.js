@@ -4,6 +4,7 @@ const { extractRecap } = require('./lib/recap-extract');
 const { fuzzyFilter, fuzzyMatch } = require('./lib/fuzzy');
 const sessionView = require('./lib/session-view');
 const paletteSearch = require('./lib/palette-search');
+const workflowRegistry = require('./lib/workflow-registry');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
@@ -191,6 +192,24 @@ contextBridge.exposeInMainWorld('husk', {
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
+  },
+  // The marketplace: catalogs of workflows other people publish. `fetch` hands
+  // back a validated index or a refusal, never the bytes it read, and
+  // `artifact` hands back exactly what picking a file off disk would have, so
+  // the install sheet behind it is the one that already exists.
+  registry: {
+    list: () => ipcRenderer.invoke('registry:list'),
+    add: (url) => ipcRenderer.invoke('registry:add', { url }),
+    remove: (url) => ipcRenderer.invoke('registry:remove', { url }),
+    fetch: (url) => ipcRenderer.invoke('registry:fetch', { url }),
+    // Filtering and tallying a catalog already in hand. Pure, run in-process:
+    // a keystroke in the search box must not be an IPC round trip.
+    search: (entries, query, tag) => {
+      try { return workflowRegistry.searchEntries(entries, query, tag); } catch (_) { return []; }
+    },
+    tags: (entries) => {
+      try { return workflowRegistry.tagCounts(entries); } catch (_) { return []; }
+    },
   },
   workflows: {
     list: () => ipcRenderer.invoke('workflows:list'),

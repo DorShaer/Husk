@@ -114,6 +114,20 @@
         "src/lib/workflow-graph.js"
       ]
     },
+    "market": {
+      "specs": [
+        "workflow-market.spec.js"
+      ],
+      "tokens": [
+        "wfm",
+        "registry",
+        "ipc:registry"
+      ],
+      "paths": [
+        "src/lib/workflow-registry.js",
+        "src/renderer/wfx-market.js"
+      ]
+    },
     "projects": {
       "specs": [
         "workspaces.spec.js"

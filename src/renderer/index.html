@@ -656,6 +656,7 @@
                   <span class="wfx-figure"><b id="wfx-stat-pass">n/a</b> passed</span>
                   <span class="wfx-figure"><b id="wfx-stat-median">n/a</b> median</span>
                 </div>
+                <button class="ghost-btn" id="btn-wf-market" title="Workflows other people publish"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h18l-1.5 10a2 2 0 0 1-2 1.7H6.5a2 2 0 0 1-2-1.7z"/><path d="M3 9l2.2-4.3A2 2 0 0 1 7 3.6h10a2 2 0 0 1 1.8 1.1L21 9"/><path d="M9 13h6"/></svg> Marketplace</button>
                 <button class="btn-primary" id="btn-new-workflow"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New workflow</button>
               </div>
             </div>
@@ -876,6 +877,60 @@
                   <div class="wfx-runs" id="wfx-runs"></div>
                 </section>
 
+              </div>
+            </div>
+          </div>
+
+          <!-- Marketplace sub-view. Everything under #wfm-grid and #wfm-registries
+               is built by wfx-market.js through WfxDom, because every string in
+               it came off somebody else's machine. -->
+          <div id="wf-market-view" hidden>
+            <div class="page-head">
+              <div class="page-head-left">
+                <button class="wf-back-link" id="btn-wfm-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                  Workflows
+                </button>
+                <h1 class="page-title">Marketplace</h1>
+                <span class="page-sub">Workflows other people publish, installed through the same gate as a file</span>
+              </div>
+              <div class="page-head-right">
+                <button class="ghost-btn" id="btn-wfm-registries">Registries</button>
+                <button class="ghost-btn" id="btn-wfm-refresh">Refresh</button>
+                <button class="btn-primary" id="btn-wfm-publish">Publish a workflow</button>
+              </div>
+            </div>
+            <div class="page-body">
+              <div class="wfm">
+                <div class="wfm-bar">
+                  <input type="search" id="wfm-search" class="wfm-search" placeholder="Search the catalog..." autocomplete="off" spellcheck="false" aria-label="Search the catalog" />
+                  <div class="wfm-tags" id="wfm-tags" role="group" aria-label="Filter by tag"></div>
+                </div>
+                <!-- One line of provenance above the grid: which catalog these
+                     rows came from, and when it was read. -->
+                <div class="wfm-source" id="wfm-source" hidden></div>
+                <div class="wfm-grid" id="wfm-grid"></div>
+                <div class="wfm-state" id="wfm-state"></div>
+              </div>
+            </div>
+
+            <!-- Registry manager, opened from the head. -->
+            <div class="modal" id="wfm-registries-modal" hidden>
+              <div class="modal-card modal-card-wide">
+                <div class="modal-head">
+                  <h2 class="modal-title">Registries</h2>
+                  <button class="modal-close" id="wfm-reg-close" aria-label="Close">&times;</button>
+                </div>
+                <div class="modal-body">
+                  <p class="ra-hint">A registry is one https URL to one JSON index. Adding one trusts its author to point at workflow files on that same host. Every file still goes through the same checks as a file you picked yourself.</p>
+                  <div class="wfm-reg-list" id="wfm-reg-list"></div>
+                  <label class="wfm-reg-label" for="wfm-reg-url">Add a registry</label>
+                  <div class="ra-pathrow">
+                    <input type="text" id="wfm-reg-url" class="ra-root" placeholder="https://example.com/index.json" autocomplete="off" spellcheck="false" />
+                    <button class="ghost-btn" id="wfm-reg-add">Add</button>
+                  </div>
+                  <div class="wfm-reg-error" id="wfm-reg-error" hidden></div>
+                </div>
               </div>
             </div>
           </div>
@@ -3536,14 +3591,16 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
       </div>
     </div>
 
-    <!-- Portable workflows, four scripts in dependency order. wfx-dom.js loads
-         first because wfx-artifact-ui.js reads window.WfxDom at load. All four
-         come before app.js, which configures them while it evaluates; they read
-         back lazily and guarded by typeof. -->
+    <!-- Portable workflows, five scripts in dependency order. wfx-dom.js loads
+         first because wfx-artifact-ui.js reads window.WfxDom at load, and
+         wfx-market.js loads after wfx-install.js because it hands a catalog
+         entry to that sheet. All five come before app.js, which configures them
+         while it evaluates; they read back lazily and guarded by typeof. -->
     <script src="wfx-dom.js"></script>
     <script src="wfx-artifact-ui.js"></script>
     <script src="wfx-install.js"></script>
     <script src="wfx-publish.js"></script>
+    <script src="wfx-market.js"></script>
     <script src="app.js"></script>
     <!-- Run log. The transcript lives on disk beside the audit log, so this
          reads a finished run's output back from there. -->
