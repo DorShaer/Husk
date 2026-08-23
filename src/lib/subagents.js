@@ -29,14 +29,17 @@ const TOOL_RESULT = /"tool_use_id":"([A-Za-z0-9_-]+)"/g;
 const IDLE_MS = 120000;
 
 function readJson(file) {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- a file found by walking the session directory
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return null; }
 }
 
 function statOf(file) {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- a file found by walking the session directory
   try { return fs.statSync(file); } catch (_) { return null; }
 }
 
 function listDir(dir) {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- a directory under the session tree
   try { return fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return []; }
 }
 
@@ -58,6 +61,7 @@ function resolvedToolUses(transcript, cache) {
   if (st.size === ent.off) return ent.ids;
   let fd = null;
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the agent's own transcript, named by the scan
     fd = fs.openSync(transcript, 'r');
     const len = st.size - ent.off;
     const buf = Buffer.alloc(len);
@@ -85,6 +89,7 @@ function runProgress(dir) {
   const started = new Set();
   const done = new Set();
   let text = '';
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- the run directory the scan just listed
   try { text = fs.readFileSync(path.join(dir, 'journal.jsonl'), 'utf8'); } catch (_) { return { started, done }; }
   for (const line of text.split('\n')) {
     if (!line) continue;
@@ -278,6 +283,7 @@ function retainLastBatch(rows, { windowMs = HISTORY_WINDOW_MS } = {}) {
 function firstPrompt(transcript, bytes) {
   let fd = null;
   try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the agent's own transcript, named by the scan
     fd = fs.openSync(transcript, 'r');
     const buf = Buffer.alloc(bytes);
     const n = fs.readSync(fd, buf, 0, bytes, 0);
