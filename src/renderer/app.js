@@ -295,7 +295,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'source', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -1872,6 +1872,7 @@ function setPage(name, opts = {}) {
     $('#files-hidden').checked = !!(cfg && cfg.showHidden);
     fxLoad(root);
   }
+  if (name === 'source' && window.Sc) window.Sc.open();
   if (name === 'schedule' && window.Schedule) window.Schedule.open();
   if (name === 'artifacts' && window.Af) window.Af.open();
   if (name === 'github' && window.Gh) window.Gh.open();
@@ -10936,6 +10937,7 @@ function fxCurrentRoot() { return fxRootOverride || fxDefaultRoot(); }
 // the page is on screen, so Files follows the chat.
 function fxSyncToWorkspace() {
   fxRootOverride = null;
+  if (window.Sc) window.Sc.syncToWorkspace();
   if (currentPage !== 'files') return;
   const root = fxCurrentRoot();
   fxSetOpenFolderLabel(root);
@@ -14279,6 +14281,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: 'Alt 2' },
   { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: 'Alt 3' },
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
+  { icon: ICONS.workflows,   label: 'Switch to Source',               run: () => setPage('source') },
   { icon: ICONS.autopilot,   label: 'Switch to Schedule',             run: () => setPage('schedule') },
   { icon: ICONS.workflows,   label: 'Switch to Artifacts',            run: () => setPage('artifacts') },
   { icon: ICONS.github,      label: 'Switch to GitHub',               run: () => setPage('github') },

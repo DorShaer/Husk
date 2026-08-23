@@ -10,6 +10,9 @@ const artifactLedger = require('./lib/artifact-ledger');
 const schedule_ = require('./lib/schedule');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
+const { parseUnifiedDiff } = require('./lib/unified-diff');
+const { parseLogRecords } = require('./lib/git-refs');
+const { attribute } = require('./lib/change-attribution');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
 const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
 
@@ -80,6 +83,11 @@ contextBridge.exposeInMainWorld('husk', {
     highlight: (code, lang) => { try { return highlight(code, lang); } catch (_) { return null; } },
     highlightLines: (code, lang) => { try { return highlightLines(code, lang); } catch (_) { return null; } },
     parseGitStatus: (porcelain) => { try { return parsePorcelain(porcelain); } catch (_) { return []; } },
+    parseDiff: (text) => { try { return parseUnifiedDiff(text); } catch (_) { return { files: [] }; } },
+    parseLog: (text) => { try { return parseLogRecords(text); } catch (_) { return []; } },
+    // Keyed by relative path as a plain object, because a Map does not survive
+    // the bridge.
+    attributeChanges: (input) => { try { return Object.fromEntries(attribute(input)); } catch (_) { return {}; } },
     gitBadge: (status) => { try { return statusBadge(status); } catch (_) { return ''; } },
     // Guards for text on its way to a live agent's terminal. They fail closed:
     // an error strips everything rather than passing the original through,
@@ -184,6 +192,34 @@ contextBridge.exposeInMainWorld('husk', {
     writeFile: (opts) => ipcRenderer.invoke('fs:writeFile', opts || {}),
     gitStatus: (root) => ipcRenderer.invoke('fs:gitStatus', { root }),
     gitDiff: (root, rel) => ipcRenderer.invoke('fs:gitDiff', { root, rel }),
+  },
+  // Source control: one call per git: channel, each carrying an object payload
+  // so main can check every field before it builds argv. Reads hand back raw
+  // git text and the renderer parses it in-process through text.parseDiff and
+  // text.parseGitStatus, so painting a diff costs no second round trip and the
+  // renderer and main share the same parser.
+  git: {
+    repo: (root) => ipcRenderer.invoke('git:repo', { root }),
+    status: (root) => ipcRenderer.invoke('git:status', { root }),
+    diff: (root, opts) => ipcRenderer.invoke('git:diff', Object.assign({ root }, opts || {})),
+    stage: (root, paths) => ipcRenderer.invoke('git:stage', { root, paths }),
+    unstage: (root, paths) => ipcRenderer.invoke('git:unstage', { root, paths }),
+    hunk: (root, opts) => ipcRenderer.invoke('git:hunk', Object.assign({ root }, opts || {})),
+    discard: (root, opts) => ipcRenderer.invoke('git:discard', Object.assign({ root }, opts || {})),
+    stashPop: (root, ref) => ipcRenderer.invoke('git:stashPop', { root, ref }),
+    commit: (root, opts) => ipcRenderer.invoke('git:commit', Object.assign({ root }, opts || {})),
+    branches: (root) => ipcRenderer.invoke('git:branches', { root }),
+    switch: (root, branch) => ipcRenderer.invoke('git:switch', { root, branch }),
+    createBranch: (root, name, from, checkout) => ipcRenderer.invoke('git:createBranch', { root, name, from, checkout }),
+    deleteBranch: (root, opts) => ipcRenderer.invoke('git:deleteBranch', Object.assign({ root }, opts || {})),
+    log: (root, opts) => ipcRenderer.invoke('git:log', Object.assign({ root }, opts || {})),
+    show: (root, sha) => ipcRenderer.invoke('git:show', { root, sha }),
+    fetch: (root, remote) => ipcRenderer.invoke('git:fetch', { root, remote }),
+    openRemote: (root, opts) => ipcRenderer.invoke('git:openRemote', Object.assign({ root }, opts || {})),
+    init: (root, confirm) => ipcRenderer.invoke('git:init', { root, confirm }),
+    watch: (root) => ipcRenderer.invoke('git:watch', { root }),
+    unwatch: (root) => ipcRenderer.invoke('git:unwatch', { root }),
+    onChanged: (cb) => ipcRenderer.on('git:changed', (_e, p) => cb(p)),
   },
   context: {
     list: () => ipcRenderer.invoke('context:list'),

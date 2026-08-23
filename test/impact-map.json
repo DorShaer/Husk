@@ -114,6 +114,26 @@
         "src/lib/workflow-graph.js"
       ]
     },
+    "source": {
+      "specs": [
+        "source-control.spec.js"
+      ],
+      "tokens": [
+        "sc",
+        "source",
+        "page:source",
+        "ipc:git"
+      ],
+      "paths": [
+        "src/renderer/sc-page.js",
+        "src/renderer/sc-dom.js",
+        "src/lib/git-ref.js",
+        "src/lib/git-refs.js",
+        "src/lib/git-remote.js",
+        "src/lib/unified-diff.js",
+        "src/lib/change-attribution.js"
+      ]
+    },
     "schedule": {
       "specs": [
         "schedule-page.spec.js"

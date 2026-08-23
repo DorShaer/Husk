@@ -14868,3 +14868,592 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .sch-error { color: var(--rose); font-size: var(--fs-body); }
 .sch-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .sch-state:empty { display: none; }
+
+/* ─── Source control ────────────────────────────────────────────────────────
+   A review desk built as the structural twin of the Files cockpit: the left
+   column indexes what changed and holds the composer, the right column reads
+   one file at a time. The diff is where the minutes go, so it gets the grid:
+   two number gutters, a sign column, and a wash that says added or removed
+   while the syntax tokens keep saying what the code is.
+
+   Two dark-family checks live in this block. The glass overrides repaint every
+   input and textarea with a black well, so the composer's two fields carry a
+   higher-specificity escape hatch. The action buttons carry a dark-family rule
+   of their own so a ghost-button class in a head cannot repaint them. */
+
+.page-source { display: flex; flex-direction: column; min-height: 0; }
+
+.sc {
+  /* Five characters holds a six-figure line number with room for the padding,
+     which is the widest number a file in this repo can produce. */
+  --sc-no-w: 5ch;
+  --sc-sign-w: 14px;
+  --sc-row-h: 26px;
+  --sc-band-h: 26px;
+  --sc-check-w: 16px;
+  --sc-stat-w: 62px;
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 8%, transparent);
+  --sc-add-ink: var(--emerald);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 8%, transparent);
+  --sc-del-ink: var(--rose);
+  --sc-hunk-bg: color-mix(in srgb, var(--text) 5%, transparent);
+}
+/* An 8% wash sits under the paper on Light and Sepia, so the two diff grounds
+   take the strength the dark family does not need. Every other value is shared,
+   so ten themes are covered by these two declarations. */
+body[data-mode="light"] .sc {
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 14%, transparent);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 14%, transparent);
+}
+/* Sepia's ground is a warm cream and its accents are muted earth tones, so a
+   wash mixed against white keeps little separation on it. The two diff grounds
+   take a stronger mix there, and the hunk band takes more ink so the bands stay
+   readable between them. */
+body[data-mode="light"][data-theme="sepia"] .sc {
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 26%, transparent);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 22%, transparent);
+  --sc-hunk-bg: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.sc {
+  flex: 1; min-height: 0;
+  /* The index column carries a path plus a +N/-M tail, so it takes more width
+     than a plain file list needs. */
+  display: grid; grid-template-columns: clamp(300px, 30%, 460px) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.sc-nav, .sc-main {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  /* Composite the translucent surface token over the opaque page background, so
+     the ambient radial stops modulating the pane interior. */
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  border: 1px solid var(--line); border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+/* Head. A folder whose watcher never attached still re-reads on focus, so the one
+   control that answers for freshness carries the mark rather than a banner. The
+   ink is the shared warn token, which every theme derives from its own amber. */
+#sc-refresh { position: relative; }
+#sc-refresh[data-live="off"]::after {
+  content: '';
+  position: absolute; top: 5px; right: 6px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--warn);
+}
+
+/* Left column: filter, tabs, the banded list, the composer at the floor. */
+.sc-search { position: relative; display: flex; align-items: center; padding: var(--space-3) var(--space-3) var(--space-2); }
+.sc-search-input {
+  flex: 1; min-width: 0;
+  background: var(--bg-2); border: 1px solid transparent; border-radius: var(--radius-md);
+  padding: 7px 34px 7px 12px; color: var(--text);
+  font-family: var(--font-body); font-size: var(--fs-small); outline: none;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+.sc-search-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.sc-search-input::placeholder { color: var(--text-3); }
+.sc-search-input::-webkit-search-cancel-button { display: none; }
+.sc-search-kbd {
+  position: absolute; right: 20px; pointer-events: none;
+  padding: 1px 6px; border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+  background: var(--bg-3); color: var(--text-3);
+  font-family: var(--font-mono); font-size: var(--fs-nano);
+}
+.sc-tabs { display: flex; gap: var(--space-1); padding: 0 var(--space-3) var(--space-2); border-bottom: 1px solid var(--line); }
+
+.sc-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: var(--space-1) var(--space-1) var(--space-3);
+  font-family: var(--font-mono); font-size: var(--fs-small);
+}
+.sc-list::-webkit-scrollbar { width: 7px; }
+.sc-list::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
+
+.sc-band { display: flex; flex-direction: column; }
+.sc-band + .sc-band { margin-top: var(--space-3); }
+/* The band head rides the top of the list while its own rows are on screen, so
+   a long Changed band never loses its label. It repeats the pane fill because a
+   sticky element needs an opaque ground. */
+.sc-band-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: var(--space-2);
+  height: var(--sc-band-h); padding: 0 var(--space-2);
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  border-radius: var(--radius-md); cursor: pointer;
+}
+.sc-band-title { min-width: 0; }
+.sc-band-count { flex: none; }
+.sc-band-chevron {
+  flex: none; width: 11px; text-align: center; color: var(--text-3);
+  font-size: var(--fs-small); transition: transform var(--motion-fast) var(--ease);
+}
+.sc-band.is-open > .sc-band-head .sc-band-chevron { transform: rotate(90deg); }
+.sc-band:not(.is-open) > .sc-row { display: none; }
+/* Bulk actions belong to the band the pointer is on, so they arrive with it. */
+.sc-band-acts {
+  margin-left: auto; display: flex; align-items: center; gap: 2px;
+  opacity: 0; transition: opacity var(--motion-fast) var(--ease);
+}
+.sc-band-head:hover .sc-band-acts,
+.sc-band-head:focus-within .sc-band-acts { opacity: 1; }
+.sc-band-acts button {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer;
+}
+.sc-band-acts button svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sc-band-acts button:hover { color: var(--text); background: var(--bg-2); }
+
+.sc-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  height: var(--sc-row-h); padding: 0 var(--space-2);
+  border-radius: var(--radius-md); cursor: pointer; color: var(--text-2);
+  white-space: nowrap; overflow: hidden;
+}
+.sc-row:hover { background: var(--bg-2); color: var(--text); }
+.sc-row.is-selected { background: var(--bg-3); color: var(--text); }
+.sc-row-check {
+  flex: none; width: var(--sc-check-w); height: var(--sc-check-w); padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+  color: transparent; cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.sc-row-check svg { width: 11px; height: 11px; }
+.sc-row:hover .sc-row-check { border-color: var(--line-3); }
+.sc-row.is-staged .sc-row-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent, white); }
+.sc-row-badge { flex: none; width: 15px; text-align: center; font-weight: 700; font-size: var(--fs-nano); }
+.sc-row-base { flex: none; max-width: 58%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+/* The directory reads from its tail, so the ellipsis eats the head and the
+   folder next to the file stays on screen. */
+.sc-row-dir {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; unicode-bidi: plaintext; text-align: left; color: var(--text-3);
+}
+.sc-row-stat {
+  flex: none; width: var(--sc-stat-w); text-align: right;
+  font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+.sc-row-stat .is-add, .sc-dhead-stat .is-add { color: var(--sc-add-ink); }
+.sc-row-stat .is-del, .sc-dhead-stat .is-del { color: var(--sc-del-ink); }
+
+/* The head's two counts take the inks the diff body uses, so added and removed
+   read the same everywhere on the page. */
+.sc-dstat-n { font-variant-numeric: tabular-nums; }
+.sc-dstat-n + .sc-dstat-n { margin-left: 6px; }
+.sc-dstat-n.is-add { color: var(--sc-add-ink); }
+.sc-dstat-n.is-del { color: var(--sc-del-ink); }
+
+.sc-row-prov { flex: none; display: inline-flex; align-items: center; color: var(--text-3); }
+.sc-row-prov svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sc-row.is-conflict .sc-row-badge, .sc-row.is-conflict .sc-row-base { color: var(--rose); }
+
+.sc-crow {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-md);
+  cursor: pointer; color: var(--text-2); white-space: nowrap; overflow: hidden;
+}
+.sc-crow:hover { background: var(--bg-2); color: var(--text); }
+.sc-crow.is-selected { background: var(--bg-3); color: var(--text); }
+.sc-crow-sha { flex: none; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sc-crow-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.sc-crow-refs { flex: none; font-size: var(--fs-pico); color: var(--accent-2); }
+.sc-crow-meta { flex: none; font-size: var(--fs-nano); color: var(--text-3); }
+
+/* Only the keyboard cursor draws a ring, so a row that took focus by Tab or by
+   a click cancels the generic one. */
+.sc-row:focus, .sc-crow:focus, .sc-hunk:focus,
+.sc-row:focus-visible, .sc-crow:focus-visible, .sc-hunk:focus-visible { outline: none; box-shadow: none; }
+.sc-row.is-active-key, .sc-crow.is-active-key {
+  outline: 1px solid var(--accent); outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  color: var(--text);
+}
+.sc-row.is-selected.is-active-key { background: color-mix(in srgb, var(--accent) 18%, var(--bg-2)); }
+/* A count being re-read dips rather than blanking: the previous number is still
+   the true answer until the new read lands. */
+.sc .is-stale, .page-source .is-stale { opacity: 0.55; transition: opacity var(--motion-fast) var(--ease); }
+
+.sc-new {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  height: var(--sc-row-h); margin-top: var(--space-2); padding: 0 var(--space-2);
+  background: transparent; border: 1px dashed var(--line-2); border-radius: var(--radius-md);
+  color: var(--text-3);
+  font-family: var(--font-body); font-size: var(--fs-micro);
+}
+.sc-empty {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  padding: var(--space-5) var(--space-3); text-align: center;
+  font-family: var(--font-body); font-size: var(--fs-micro);
+  line-height: var(--lh-base); color: var(--text-3);
+}
+
+/* Composer. It is docked, so it is capped: the list keeps the height it needs
+   and a long body scrolls inside the dock rather than pushing the list away. */
+.sc-composer {
+  flex: none; max-height: 40%; overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-top: 1px solid var(--line);
+}
+.sc-subject, .sc-body {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 7px 10px; color: var(--text); resize: none; outline: none;
+  font-family: var(--font-body); font-size: var(--fs-small); line-height: var(--lh-base);
+  transition: border-color var(--motion-fast) var(--ease);
+}
+.sc-body { min-height: 0; max-height: 168px; overflow-y: auto; }
+/* The dark family paints every field with a black well through an !important
+   rule, so the two composer fields take the higher-specificity form the inline
+   editor uses and keep the fill of the pane they sit in. */
+.sc-composer .sc-subject,
+.sc-composer .sc-body {
+  background: var(--bg-2) !important;  /* beats the dark family's field well */
+  border: 1px solid var(--line);
+}
+.sc-composer .sc-subject:focus,
+.sc-composer .sc-body:focus {
+  background: var(--bg-2) !important;  /* beats the dark family's pressed well */
+  border-color: var(--accent);
+  box-shadow: none;
+}
+.sc-subject-count {
+  align-self: flex-end;
+  font-family: var(--font-mono); font-size: var(--fs-nano);
+  font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+.sc-subject-count[data-state="warning"] { color: var(--warn); }
+.sc-composer-flags {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-2);
+}
+.sc-composer-warn {
+  display: flex; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--state-warning-bg); border: 1px solid var(--state-warning-edge);
+  color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-nano); line-height: var(--lh-snug);
+}
+.sc-composer-warn svg { flex: none; width: var(--icon-sm); height: var(--icon-sm); color: var(--warn); }
+.sc-composer-foot { display: flex; align-items: center; gap: var(--space-2); }
+.sc-composer-foot .btn-primary { flex: 1; justify-content: center; }
+
+/* Right column: the file head, then the provenance line, then the diff. Only
+   the diff scrolls, so the pane is a column that fills the main box and takes
+   its own zero floor, and both axes of the overflow stay inside the wrap. */
+.sc-detail {
+  flex: 1; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.sc-dhead {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: 10px var(--space-3); border-bottom: 1px solid var(--line);
+}
+.sc-dhead-path {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; unicode-bidi: plaintext; text-align: left;
+  font-family: var(--font-mono); font-size: var(--fs-small); color: var(--text);
+}
+.sc-dhead-stat {
+  flex: none; font-family: var(--font-mono); font-size: var(--fs-nano);
+  font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+/* The actions take the whole second line of the head, so a long path never
+   pushes Stage off the pane. */
+.sc-dacts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; width: 100%; }
+.sc-act {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: var(--radius-lg); cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-micro); font-weight: 600;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.sc-act svg { width: var(--icon-sm); height: var(--icon-sm); }
+.sc-act:hover:not(:disabled) { color: var(--text); background: var(--bg-3); border-color: var(--line-3); }
+.sc-act:disabled { opacity: 0.5; cursor: default; }
+.sc-act.is-on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+.sc-prov { flex: none; padding: var(--space-3) var(--space-3) 0; }
+.sc-prov-band {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-micro); line-height: var(--lh-snug);
+}
+.sc-prov-band svg { flex: none; width: var(--icon-sm); height: var(--icon-sm); margin-top: 1px; color: var(--text-3); }
+/* Husk wrote the record for a run, so the run band is the one that carries the
+   accent. A band stating time alone stays neutral. */
+.sc-prov-band.is-run {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.sc-prov-band.is-run svg { color: var(--accent); }
+.sc-prov-goal { display: block; margin-top: 2px; color: var(--text-3); }
+
+/* Diff body. The wrap owns both axes so a 400-column line scrolls here and the
+   page never scrolls sideways. */
+.sc-diff-wrap { flex: 1; min-height: 0; overflow: auto; }
+.sc-diff-wrap::-webkit-scrollbar { width: 9px; height: 9px; }
+.sc-diff-wrap::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
+/* max-content makes every row as wide as the widest line, which keeps the washes
+   and the band running the full length of the scroll rather than stopping at the
+   fold. Wrap on gives that width back to the container. */
+.sc-diff {
+  min-width: max-content; padding-bottom: var(--space-4);
+  font-family: var(--font-mono); font-size: var(--fs-small);
+  line-height: 18px; tab-size: 2;
+}
+.sc-diff[data-wrap="on"] { min-width: 0; }
+.sc-dl { display: flex; align-items: flex-start; min-height: 18px; }
+/* Both number columns and the sign stay out of a selection, so dragging across
+   the diff and copying yields source that compiles. */
+.sc-dl-no {
+  flex: none; width: var(--sc-no-w); padding-right: 8px; text-align: right;
+  color: var(--text-3); opacity: 0.62; font-variant-numeric: tabular-nums;
+  user-select: none; -webkit-user-select: none;
+}
+.sc-dl-sign {
+  flex: none; width: var(--sc-sign-w); text-align: center; color: var(--text-3);
+  user-select: none; -webkit-user-select: none;
+}
+.sc-dl-code {
+  flex: 1 1 auto; min-width: 0; padding-right: var(--space-4);
+  white-space: pre; overflow-wrap: normal; color: var(--text);
+}
+.sc-diff[data-wrap="on"] .sc-dl-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The wash says added or removed and the sign says which, so the tokens are left
+   to say what the code is. */
+.sc-dl.is-add { background: var(--sc-add-bg); }
+.sc-dl.is-add .sc-dl-sign { color: var(--sc-add-ink); }
+.sc-dl.is-del { background: var(--sc-del-bg); }
+.sc-dl.is-del .sc-dl-sign { color: var(--sc-del-ink); }
+.sc-dl.is-add .sc-dl-no, .sc-dl.is-del .sc-dl-no { opacity: 0.8; }
+.sc-dl.is-ctx .sc-dl-code { color: var(--text-2); }
+.sc-nonl {
+  padding-left: calc(var(--sc-no-w) * 2 + var(--sc-sign-w));
+  color: var(--text-3); font-size: var(--fs-nano); font-style: italic;
+  user-select: none; -webkit-user-select: none;
+}
+
+/* The hunk band pins to the top of the scroller while its own lines are on
+   screen, so the range and the function stay readable down a long hunk. */
+.sc-hunk {
+  position: sticky; top: 0; z-index: 2;
+  width: max-content; min-width: 100%; box-sizing: border-box;
+  display: flex; align-items: center; gap: var(--space-3);
+  min-height: var(--sc-band-h);
+  padding: 3px var(--space-3) 3px calc(var(--sc-no-w) * 2 + var(--sc-sign-w));
+  background: linear-gradient(var(--sc-hunk-bg), var(--sc-hunk-bg)), linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.sc-hunk:first-child { border-top: 0; }
+.sc-hunk.is-active-key { outline: 1px solid var(--accent); outline-offset: -1px; }
+.sc-hunk-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.sc-hunk-range { flex: none; font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+.sc-hunk-fn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-nano); color: var(--text-3); }
+/* Per-hunk actions arrive with the pointer or the cursor, so a file of forty
+   hunks is not a wall of buttons. */
+.sc-hunk-acts { display: flex; align-items: center; gap: 6px; opacity: 0; transition: opacity var(--motion-fast) var(--ease); }
+.sc-hunk:hover .sc-hunk-acts,
+.sc-hunk:focus-within .sc-hunk-acts,
+.sc-hunk.is-active-key .sc-hunk-acts { opacity: 1; }
+.sc-hunk-acts button {
+  padding: 2px 8px; border-radius: var(--radius-md);
+  background: transparent; border: 1px solid var(--line-2); color: var(--text-3);
+  font-family: var(--font-body); font-size: var(--fs-nano); font-weight: 600; cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.sc-hunk-acts button:hover { color: var(--text); background: var(--bg-2); border-color: var(--line-3); }
+.sc-expand {
+  display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+  width: 100%; min-height: 20px; padding: 0 var(--space-3);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  color: var(--text-3); cursor: pointer;
+  font-family: var(--font-body); font-size: var(--fs-nano);
+}
+.sc-expand:hover { color: var(--text-2); background: color-mix(in srgb, var(--text) 6%, transparent); }
+
+/* The dark family gives every ghost button a glass fill. These sit on a pane or
+   inside a band, so they keep their own quiet ground at a higher specificity. */
+[data-mode="dark"] .sc-dacts .sc-act,
+[data-mode="dark"] .sc-band-head .sc-band-acts button,
+[data-mode="dark"] .sc-hunk .sc-hunk-acts button {
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+[data-mode="dark"] .sc-dacts .sc-act { background: var(--bg-2); border: 1px solid var(--line-2); }
+[data-mode="dark"] .sc-band-head .sc-band-acts button { background: transparent; border: 0; }
+[data-mode="dark"] .sc-hunk .sc-hunk-acts button { background: transparent; border: 1px solid var(--line-2); }
+
+.sc-binary, .sc-toobig {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
+  padding: var(--space-6) var(--space-5); text-align: center;
+  font-family: var(--font-body); font-size: var(--fs-small);
+  line-height: var(--lh-base); color: var(--text-2);
+}
+.sc-binary .sc-dacts, .sc-toobig .sc-dacts { justify-content: center; width: auto; }
+.sc-note {
+  max-width: 56ch;
+  font-family: var(--font-body); font-size: var(--fs-nano);
+  line-height: var(--lh-snug); color: var(--text-3);
+}
+/* Under the diff the note is a line of the pane itself, so it takes the head's
+   inset and holds its height against the scroller above it. */
+.sc-detail > .sc-note { flex: none; padding: var(--space-2) var(--space-3) var(--space-3); }
+
+/* Overview. The resting state of the right pane: what changed, what is waiting,
+   where this branch stands. A commit is the same column of cards, so it takes the
+   same box: one scroller, one inset, one rhythm. */
+.sc-ov, .sc-commit-detail {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-5);
+}
+.sc-ov-stats { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.sc-ov-stat {
+  display: flex; flex-direction: column; gap: var(--space-1); min-width: 96px;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg);
+  background: var(--bg-2); border: 1px solid var(--line);
+}
+.sc-ov-stat-n {
+  font-family: var(--font-display); font-size: var(--fs-h2); font-weight: 700;
+  color: var(--text); font-variant-numeric: tabular-nums;
+}
+.sc-ov-stat.is-add .sc-ov-stat-n { color: var(--sc-add-ink); }
+.sc-ov-stat.is-del .sc-ov-stat-n { color: var(--sc-del-ink); }
+.sc-ov-stat-l { font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-3); }
+/* A card takes the height its rows need, so a repo with no runs is one short
+   panel rather than a column of nothing. */
+.sc-ov-card {
+  display: flex; flex-direction: column; max-height: 340px; overflow: hidden;
+  background: var(--bg-2); border-radius: var(--radius-lg);
+}
+/* The one card that takes the height the others leave, so the pane ends in a
+   panel rather than in blank ground. */
+#sc-ov-recent { display: flex; flex-direction: column; flex: 1; min-height: 180px; }
+.sc-ov-card.is-grow { flex: 1; min-height: 0; max-height: none; }
+.sc-ov-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+}
+.sc-ov-rows {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+.sc-ov-rows::-webkit-scrollbar { width: 7px; }
+.sc-ov-rows::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
+.sc-run-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-2); border-radius: var(--radius-md); color: var(--text-2);
+  font-family: var(--font-mono); font-size: var(--fs-micro);
+}
+.sc-run-row:hover { background: var(--bg-3); }
+.sc-run-goal {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-body); font-size: var(--fs-small); color: var(--text);
+}
+/* The bindings sit at the floor of the pane, under a rule, because they are the
+   last thing read and never the first. */
+.sc-ov-hints {
+  display: flex; flex-wrap: wrap; gap: var(--space-4);
+  margin-top: auto; padding-top: var(--space-3); border-top: 1px solid var(--line);
+  font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-3);
+}
+.sc-ov-hints > * { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+/* Branch popover. It floats over the page, so it takes the opaque overlay ground
+   rather than a translucent surface tint. */
+.sc-pop {
+  position: absolute; z-index: 60;
+  min-width: 280px; max-width: 380px; max-height: 60vh; overflow-y: auto;
+  padding: var(--space-1);
+  background: var(--surface-overlay); border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg); box-shadow: var(--elev-3);
+}
+.sc-pop-row {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: 6px var(--space-2); border: 0; border-radius: var(--radius-md);
+  background: transparent; color: var(--text-2); text-align: left; cursor: pointer;
+  font-family: var(--font-mono); font-size: var(--fs-micro);
+}
+.sc-pop-row:hover:not(.is-held) { background: var(--bg-3); color: var(--text); }
+.sc-pop-row.is-active { color: var(--text); font-weight: 600; }
+/* A branch another worktree is holding cannot be switched to, so it reads as a
+   fact with its reason rather than as a dead control. */
+.sc-pop-row.is-held { color: var(--text-3); cursor: default; }
+.sc-pop-track { margin-left: auto; flex: none; font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-3); }
+.sc-pop-lock { flex: none; font-family: var(--font-body); font-size: var(--fs-nano); color: var(--text-3); }
+
+/* Delete belongs to the row the pointer or the cursor is on, so it arrives with
+   the row and the popover never reads as a column of red. */
+.sc-pop-del {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--rose); cursor: pointer; opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.sc-pop-del svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sc-pop-row:hover .sc-pop-del,
+.sc-pop-row:focus-within .sc-pop-del,
+.sc-pop-del:focus-visible { opacity: 1; }
+.sc-pop-del:hover { background: color-mix(in srgb, var(--rose) 14%, transparent); }
+.sc-pop-del:focus-visible { outline: 1px solid var(--rose); outline-offset: -1px; }
+
+/* Create is the floor of the popover. It keeps the bottom of the card while the
+   branch list scrolls under it, on the overlay ground so rows pass behind rather
+   than through, under a hairline that runs the full width of the card rather than
+   stopping at the list padding. */
+.sc-pop-foot {
+  position: sticky; bottom: 0; z-index: 1;
+  margin: var(--space-1) calc(var(--space-1) * -1) calc(var(--space-1) * -1);
+  background: var(--surface-overlay); border-top: 1px solid var(--line);
+}
+/* A list with no create row carries no hairline. */
+.sc-pop-foot:empty { display: none; }
+.sc-pop-new {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-2);
+}
+.sc-pop-new input {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 5px 8px; color: var(--text); outline: none;
+  font-family: var(--font-mono); font-size: var(--fs-micro);
+}
+/* The dark family paints every field with a black well, so the create field takes
+   the higher-specificity form the composer fields use and keeps the popover fill. */
+.sc-pop-new #sc-branch-new {
+  background: var(--bg-2) !important;  /* beats the dark family's field well */
+  border: 1px solid var(--line);
+}
+.sc-pop-new #sc-branch-new:focus {
+  background: var(--bg-2) !important;  /* beats the dark family's pressed well */
+  border-color: var(--accent);
+  box-shadow: none;
+}
+.sc-pop-new button {
+  flex: none; padding: 4px 10px; border-radius: var(--radius-md);
+  background: transparent; border: 1px solid var(--line-2); color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-nano); font-weight: 600; cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.sc-pop-new button:hover:not(:disabled) { color: var(--text); background: var(--bg-2); border-color: var(--line-3); }
+.sc-pop-new button:disabled { opacity: 0.5; cursor: default; }
+/* A refused name states its reason under the field and turns the field's edge, so
+   the row says what is wrong without resizing the card around it. */
+.sc-pop-msg {
+  display: none; flex-basis: 100%;
+  font-family: var(--font-body); font-size: var(--fs-nano); line-height: var(--lh-snug);
+  color: var(--rose);
+}
+.sc-pop-new.is-invalid .sc-pop-msg { display: block; }
+.sc-pop-new.is-invalid #sc-branch-new { border-color: var(--rose); }
+
+@media (max-width: 900px) {
+  .sc { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 38%) 1fr; }
+}
