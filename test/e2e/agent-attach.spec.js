@@ -276,10 +276,10 @@ test('the pill, the center and the switcher agree about the fleet', async () => 
   }
 });
 
-test('with nothing live the pill reports the same total the center does', async () => {
+test('with nothing live the pill stands down and the center keeps the last work', async () => {
   const env = makeHome();
-  // Every agent finished: the pill has no live count to show and must not
-  // invent one from whichever records the CLI still happens to return.
+  // Every agent finished: the pill counts work in flight, so it has nothing to
+  // say, while the center still holds the stretch of work that just ended.
   const done = JSON.parse(fs.readFileSync(env.agentsFile, 'utf8'))
     .map((a) => ({ ...a, state: 'done', status: 'done', pid: undefined }));
   fs.writeFileSync(env.agentsFile, JSON.stringify(done));
@@ -289,16 +289,15 @@ test('with nothing live the pill reports the same total the center does', async 
     const win = await app.firstWindow({ timeout: 30_000 });
     await win.waitForLoadState('domcontentloaded');
     await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
-    // Finished agents still show a total; wait for that paint the same way.
-    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 20_000 });
-
-    const chip = await chipCount(win);
     await win.evaluate(() => openAgentMap());             // eslint-disable-line no-undef
     await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 20_000 }); // eslint-disable-line no-undef
     const total = await win.evaluate(() => agentMap.rows.length); // eslint-disable-line no-undef
 
-    expect(total).toBe(3);
-    expect(chip.n, 'the pill showed a number the center does not report').toBe(total);
+    expect(await win.evaluate(() => agentMap.rows.some((r) => r.running)),
+      'a fleet with nothing running reported live work').toBe(false);
+    expect(total, 'the center lost the work that just finished').toBe(3);
+    await expect(win.locator('#topbar-agents'),
+      'the pill counted finished agents nobody can act on').toBeHidden();
   } finally {
     await app.close();
   }

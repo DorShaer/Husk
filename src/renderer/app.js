@@ -14127,14 +14127,16 @@ function closeAgentSwitch() {
   if (term) term.focus();
 }
 
-// The topbar carries a standing count as the visible way into the switcher. It
-// stands down only when there are no agents at all, so a finished agent still
-// keeps the entry point on screen.
+// The topbar carries a count of what is working right now, which is the number
+// a person acts on. It stands down whenever nothing is running: a corner that
+// only lights up for live work is worth glancing at.
 // Ids the pill has already accounted for. A new one means an agent appeared
 // while the user was looking somewhere else, which is the moment worth pointing
 // at. Seeded on the first poll so opening the app is not an arrival.
 let topbarAgentIds = null;
 let topbarAgentFlash = null;
+let topbarAgentsLive = false;
+let topbarAgentTimer = null;
 
 function markTopbarAgentsSeen() {
   const el = $('#topbar-agents');
@@ -14149,7 +14151,8 @@ function paintTopbarAgents(res) {
   const agents = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
   const live = agents.filter((a) => a && a.running);
   const blocked = live.filter((a) => a.state === 'blocked').length;
-  const ids = new Set(agents.map((a) => a && a.id).filter(Boolean));
+  topbarAgentsLive = live.length > 0;
+  const ids = new Set(live.map((a) => a && a.id).filter(Boolean));
   if (topbarAgentIds === null) topbarAgentIds = ids;
   else {
     const arrived = [...ids].filter((id) => !topbarAgentIds.has(id));
@@ -14162,21 +14165,19 @@ function paintTopbarAgents(res) {
       topbarAgentFlash = setTimeout(() => el.classList.remove('is-new'), 12000);
     }
   }
-  if (!agents.length) { el.hidden = true; return; }
+  if (!live.length) { el.hidden = true; return; }
   el.hidden = false;
-  // Live agents when there are any, otherwise the size of the fleet. Both are
-  // numbers the center repeats, so the pill never advertises its own total.
-  const n = live.length || agents.length;
+  // Only what is running. The center holds everything else, so the pill never
+  // advertises a total nobody can act on.
+  const n = live.length;
   $('#topbar-agents-count').textContent = String(n);
   $('#topbar-agents-word').textContent = n === 1 ? 'agent' : 'agents';
   const needs = $('#topbar-agents-needs');
   needs.hidden = !blocked;
   needs.textContent = blocked ? `${blocked} needs you` : '';
   el.classList.toggle('is-blocked', !!blocked);
-  el.classList.toggle('is-running', !!live.length && !blocked);
-  el.classList.toggle('is-idle', !live.length);
-  if (!live.length) el.title = `${n} finished agent${n === 1 ? '' : 's'} (Alt+A)`;
-  else if (blocked) el.title = `${blocked} of ${n} running agent${n === 1 ? '' : 's'} is waiting on you (Alt+A)`;
+  el.classList.toggle('is-running', !blocked);
+  if (blocked) el.title = `${blocked} of ${n} running agent${n === 1 ? '' : 's'} is waiting on you (Alt+A)`;
   else el.title = `${n} agent${n === 1 ? '' : 's'} running (Alt+A)`;
 }
 
@@ -14185,6 +14186,20 @@ async function refreshTopbarAgents() {
   let res = null;
   try { res = await window.husk.bgAgents.list({ all: true, allProjects: true }); } catch (_) { res = null; }
   paintTopbarAgents(res);
+}
+
+// Polling follows the fleet. A fan-out of agents that each last under a minute
+// needs a count that keeps up, and a machine with nothing running has nothing
+// to say for minutes at a time.
+const TOPBAR_AGENTS_BUSY_MS = 4000;
+const TOPBAR_AGENTS_IDLE_MS = 20000;
+
+function scheduleTopbarAgents(ms) {
+  if (topbarAgentTimer) clearTimeout(topbarAgentTimer);
+  topbarAgentTimer = setTimeout(async () => {
+    if (!document.hidden) await refreshTopbarAgents();
+    scheduleTopbarAgents(topbarAgentsLive ? TOPBAR_AGENTS_BUSY_MS : TOPBAR_AGENTS_IDLE_MS);
+  }, ms);
 }
 
 function agentSwitchMatches(query) {
@@ -14295,15 +14310,20 @@ async function openAgentFromSwitch(idx) {
 
 async function openBgAgent(a) {
   if (agentOpening) return;                    // the tab takes a round trip to appear, so one press is one tab
+  // An agent running inside a chat is opened by opening that chat: it is a turn
+  // in that conversation, and the CLI has nothing to attach to.
+  const target = a && a.kind === 'subagent'
+    ? { ...a, id: '', sessionId: a.parentSessionId || '', attachable: false }
+    : a;
   // Same rule as the session lists: an agent already on screen is focused
   // rather than opened beside itself.
-  if (focusOpenSession(a && a.sessionId)) return;
+  if (focusOpenSession(target && target.sessionId)) return;
   agentOpening = true;
   try {
     let res = null;
     try {
       res = await window.husk.bgAgents.openCommand({
-        id: a.id, sessionId: a.sessionId, attach: !!a.attachable, cwd: a.cwd || '',
+        id: target.id, sessionId: target.sessionId, attach: !!target.attachable, cwd: target.cwd || '',
       });
     } catch (err) { res = { ok: false, error: (err && err.message) || 'could not open that agent' }; }
     if (!res || !res.ok) {
@@ -14315,16 +14335,18 @@ async function openBgAgent(a) {
       command: res.command,
       // The transcript's own directory, resolved by main: resuming anywhere
       // else makes the CLI deny the session exists.
-      cwd: res.cwd || a.cwd || null,
+      cwd: res.cwd || target.cwd || null,
       skipContext: true,
       skipWelcome: true,
     });
     if (tab) {
-      tab.customTitle = a.name || a.id;
-      tab.agentId = a.sessionId || '';
+      // The tab is the chat, so an agent that lives inside one keeps the chat's
+      // own title rather than borrowing the name of one turn in it.
+      if (a.kind !== 'subagent') tab.customTitle = a.name || a.id;
+      tab.agentId = target.sessionId || '';
       renderTabStrip();
     }
-    toast(`Opened ${a.name || a.id}`, 'success');
+    toast(a.kind === 'subagent' ? `Opened the chat running ${a.name}` : `Opened ${a.name || a.id}`, 'success');
   } finally { agentOpening = false; }
 }
 
@@ -14709,6 +14731,10 @@ const AM_NODE_BOT_LG = 124;
 const AM_NODE_W = AM_CELL_W;
 const AM_NODE_H = AM_NODE_BOT_LG;
 const AM_ROOT_GAP = 44;
+// A name trimmed to this fits one line in a card, and a row of them closes up
+// by the line it no longer holds.
+const AM_ONE_LINE_MAX = 16;
+const AM_ONE_LINE_TRIM = 22;
 const AM_FIT_PAD = 44;
 const AM_ZOOM_MIN = 0.35;
 const AM_ZOOM_MAX = 1.8;
@@ -14756,7 +14782,7 @@ function amChatNode(chat) {
     sessionId: chat.sessionId,
     name: chat.name || 'Chat',
     cwd: chat.cwd || '',
-    kind: 'chat',
+    holder: 'chat',
     running: chat.status !== 'done',
     state: chat.status === 'busy' ? 'working' : '',
     startedAt: chat.startedAt || 0,
@@ -14769,7 +14795,7 @@ function amProjectNode(cwd) {
     sessionId: '',
     name: amProjectName(cwd) || 'Elsewhere',
     cwd,
-    kind: 'project',
+    holder: 'project',
     running: false,
     state: 'done',
     startedAt: 0,
@@ -14847,11 +14873,18 @@ function amLayout(tree, aspect = 1.9) {
       const perRow = Math.max(1, Math.round(Math.sqrt(leaves.length * aspect * (AM_CELL_H / AM_CELL_W))) || 1);
       const startX = cursor;
       const grid = [];
+      // Names the block has already stripped down to a word or two need one line
+      // rather than two, and the rows they sit on close up to match.
+      const shared = amSharedPhrase(leaves.map((c) => c.name || c.id || ''));
+      const oneLine = !!shared && shared.short.every((t) => t.length <= AM_ONE_LINE_MAX);
+      const pitch = oneLine ? AM_CELL_H - AM_ONE_LINE_TRIM : AM_CELL_H;
       leaves.forEach((c, i) => {
         const r = walk(c, depth + 1, node);
         if (!r) return;
         r.x = startX + (i % perRow) * AM_CELL_W;
-        r.y = (depth + 1 + Math.floor(i / perRow)) * AM_CELL_H;
+        r.y = (depth + 1) * AM_CELL_H + Math.floor(i / perRow) * pitch;
+        if (shared) r.short = shared.short[i];
+        r.oneLine = oneLine;
         grid.push(r);
         laid.push(r);
       });
@@ -14869,7 +14902,15 @@ function amLayout(tree, aspect = 1.9) {
           x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x);
           y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y);
         }
-        node.block = { x: x0, y: y0, w: (x1 - x0) + AM_CELL_W, h: (y1 - y0) + AM_NODE_BOT };
+        const bot = oneLine ? AM_NODE_BOT - AM_ONE_LINE_TRIM : AM_NODE_BOT;
+        node.block = { x: x0, y: y0, w: (x1 - x0) + AM_CELL_W, h: (y1 - y0) + bot };
+        if (shared) {
+          node.block.caption = shared.phrase;
+          // The caption band is drawn above the first row, so the block drops by
+          // its height and the words never land on the parent's own card.
+          node.block.y += AM_BLOCK_CAP;
+          for (const r of grid) r.y += AM_BLOCK_CAP;
+        }
       }
     }
     if (laid.length) {
@@ -14922,12 +14963,24 @@ function amCardMetrics() {
   }
   return m;
 }
-// Breathing room between a block's region and the cards inside it.
+// Breathing room between a block's region and the cards inside it, plus the
+// band across the top where the words its members share are written.
 const AM_BLOCK_PAD = 14;
+const AM_BLOCK_CAP = 24;
+
+function amBlockRect(n) {
+  const top = AM_BLOCK_PAD + (n.block.caption ? AM_BLOCK_CAP : 0);
+  return {
+    x: n.block.x - AM_BLOCK_PAD,
+    y: n.block.y - top,
+    w: n.block.w + AM_BLOCK_PAD * 2,
+    h: n.block.h + top + AM_BLOCK_PAD,
+  };
+}
 
 function amEdgePath(p, c) {
   const m = agentMap.card || amCardMetrics();
-  const holder = !!p.a.kind;
+  const holder = !!p.a.holder;
   const x1 = p.x + AM_CELL_W / 2;
   const x2 = c.x + AM_CELL_W / 2;
   const y2 = c.y;
@@ -14951,8 +15004,8 @@ function amEdgePath(p, c) {
 
 function amPolishSparseLayout(layout) {
   if (layout.length > 3) return false;
-  const root = layout.find((n) => n.a.kind);
-  const child = layout.find((n) => !n.a.kind);
+  const root = layout.find((n) => n.a.holder);
+  const child = layout.find((n) => !n.a.holder);
   if (!root || !child) return true;
   root.x -= 10;
   child.x += 10;
@@ -15082,6 +15135,30 @@ const AM_MARKS = {
   project: 'M3.75 7.7a2 2 0 0 1 2-2h3.4l2 2h7.1a2 2 0 0 1 2 2v6.6a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2z',
 };
 
+// A fan-out names its agents from one template, so every card in a block ends
+// up carrying the same words. The words they share are lifted onto the block
+// itself and each card keeps only what makes it itself.
+function amSharedPhrase(names) {
+  const parts = names.map((s) => String(s || '').trim().split(/\s+/).filter(Boolean));
+  if (parts.length < 3 || parts.some((w) => !w.length)) return null;
+  const same = (i, j) => parts.every((w) => (w[i < 0 ? w.length + i : i] || '').toLowerCase()
+    === (parts[0][j < 0 ? parts[0].length + j : j] || '').toLowerCase());
+  // Never eat a whole name: every card has to keep at least one word of its own.
+  const room = (n) => parts.every((w) => w.length > n);
+  let lead = 0;
+  while (room(lead + 1) && same(lead, lead)) lead += 1;
+  let trail = 0;
+  while (room(lead + trail + 1) && same(-1 - trail, -1 - trail)) trail += 1;
+  if (lead + trail < 2) return null;
+  const kept = parts.map((w) => w.slice(lead, w.length - trail).join(' '));
+  // A card left holding only an index is not named at all, so a set that differs
+  // by number alone keeps the words it was given.
+  if (kept.some((t) => !/[a-z]/i.test(t))) return null;
+  const head = parts[0].slice(0, lead).join(' ');
+  const tail = trail ? parts[0].slice(parts[0].length - trail).join(' ') : '';
+  return { phrase: [head, tail].filter(Boolean).join(' … '), short: kept };
+}
+
 function amCanvasLabel(s) {
   const raw = String(s || 'agent').trim() || 'agent';
   if (raw.length <= 30) return raw;
@@ -15098,26 +15175,28 @@ function amCanvasLabel(s) {
 function amPaintNode(el, n) {
   const a = n.a;
   const st = amStateOf(a);
-  el.classList.toggle('is-holder', !!a.kind);
-  el.classList.toggle('is-chat', a.kind === 'chat');
-  el.classList.toggle('is-project', a.kind === 'project');
+  el.classList.toggle('is-holder', !!a.holder);
+  el.classList.toggle('is-chat', a.holder === 'chat');
+  el.classList.toggle('is-project', a.holder === 'project');
   el.classList.toggle('is-running', st === 'running');
   el.classList.toggle('is-blocked', st === 'blocked');
   el.classList.toggle('is-failed', st === 'failed');
   el.classList.toggle('is-done', st === 'done');
   el.classList.toggle('is-selected', agentMap.selected === a.id);
   el.classList.toggle('is-root', n.depth === 0);
+  el.classList.toggle('is-oneline', !!n.oneLine);
   el.setAttribute('aria-selected', agentMap.selected === a.id ? 'true' : 'false');
   el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0)`;
   const mark = el.querySelector('.am-node-mark');
   mark.replaceChildren();
   const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  p.setAttribute('d', a.kind ? AM_MARKS[a.kind] : AM_MARKS[st]);
+  p.setAttribute('d', a.holder ? AM_MARKS[a.holder] : AM_MARKS[st]);
   mark.appendChild(p);
   const rawName = a.name || a.id || 'agent';
-  el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? rawName : amCanvasLabel(rawName);
+  const shown = n.short || rawName;
+  el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? shown : amCanvasLabel(shown);
   const time = el.querySelector('.am-node-time');
-  if (a.kind) {
+  if (a.holder) {
     time.textContent = n.kids === 1 ? '1 agent' : `${n.kids} agents`;
     time.dataset.amLive = '0';
     time.dataset.amTs = '0';
@@ -15127,7 +15206,7 @@ function amPaintNode(el, n) {
     time.dataset.amLive = st === 'done' ? '0' : '1';
   }
   const kids = el.querySelector('.am-node-kids');
-  const badge = a.kind ? 0 : n.kids;
+  const badge = a.holder ? 0 : n.kids;
   kids.textContent = badge ? String(badge) : '';
   kids.hidden = !badge;
   // The whole card is the tooltip: the name in full plus what it is doing.
@@ -15150,7 +15229,7 @@ function amPaintCanvas() {
   $('#am-cv-stage')?.classList.toggle('is-sparse', sparse);
   // The arrows walk the tree the way it is read: a parent, then its descendants.
   // Holders are scenery, not destinations, so they stay out of the walk.
-  agentMap.view = layout.filter((n) => !n.a.kind).map((n) => n.a.id);
+  agentMap.view = layout.filter((n) => !n.a.holder).map((n) => n.a.id);
 
   let maxX = 0;
   let maxY = 0;
@@ -15197,14 +15276,26 @@ function amPaintCanvas() {
   }
   const blocks = layout.filter((n) => n.block);
   blockLayer.replaceChildren(...blocks.map((n) => {
+    const box = amBlockRect(n);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     r.setAttribute('class', `am-block${n.live ? ' is-live' : ''}`);
-    r.setAttribute('x', String(n.block.x - AM_BLOCK_PAD));
-    r.setAttribute('y', String(n.block.y - AM_BLOCK_PAD));
-    r.setAttribute('width', String(n.block.w + AM_BLOCK_PAD * 2));
-    r.setAttribute('height', String(n.block.h + AM_BLOCK_PAD * 2));
-    r.setAttribute('rx', '16');
-    return r;
+    r.setAttribute('x', String(box.x));
+    r.setAttribute('y', String(box.y));
+    r.setAttribute('width', String(box.w));
+    r.setAttribute('height', String(box.h));
+    r.setAttribute('rx', '18');
+    g.appendChild(r);
+    if (n.block.caption) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('class', `am-block-cap${n.live ? ' is-live' : ''}`);
+      t.setAttribute('x', String(box.x + box.w / 2));
+      t.setAttribute('y', String(box.y + 17));
+      t.setAttribute('text-anchor', 'middle');
+      t.textContent = n.block.caption;
+      g.appendChild(t);
+    }
+    return g;
   }));
 
   agentMap.card = amCardMetrics();
@@ -15239,7 +15330,8 @@ function amPaintCanvas() {
       path.setAttribute('pathLength', '1');
       agentMap.edgeEls.set(key, path);
     }
-    const target = { x: n.block.x + n.block.w / 2 - AM_CELL_W / 2, y: n.block.y - AM_BLOCK_PAD, a: {} };
+    const box = amBlockRect(n);
+    const target = { x: box.x + box.w / 2 - AM_CELL_W / 2, y: box.y, a: {} };
     path.setAttribute('d', amEdgePath(n, target));
     path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}`);
     if (brandNew) svg.appendChild(path);
@@ -15367,15 +15459,22 @@ function amPaintFeed() {
 }
 
 async function amFetchFeed(a) {
-  if (!a || !a.sessionId) return;
+  // An agent that runs inside a chat owns no session, so its conversation is
+  // read by the file it writes. Either one identifies the feed on screen.
+  const key = a ? (a.sessionId || a.transcript || '') : '';
+  if (!key) return;
   const f = agentMap.feed;
   if (f.busy) return;
   f.busy = true;
-  if (f.sessionId !== a.sessionId) { f.sessionId = a.sessionId; f.entries = []; f.model = ''; const feed = $('#am-d-feed'); if (feed) feed.dataset.last = ''; amPaintFeed(); }
+  if (f.sessionId !== key) { f.sessionId = key; f.entries = []; f.model = ''; const feed = $('#am-d-feed'); if (feed) feed.dataset.last = ''; amPaintFeed(); }
   let res = null;
-  try { res = await window.husk.bgAgents.peek({ sessionId: a.sessionId, cwd: a.cwd || '' }); } catch (_) { res = null; }
+  try {
+    res = await window.husk.bgAgents.peek(a.sessionId
+      ? { sessionId: a.sessionId, cwd: a.cwd || '' }
+      : { transcript: a.transcript });
+  } catch (_) { res = null; }
   f.busy = false;
-  if (!res || res.ok === false || f.sessionId !== a.sessionId) { amPaintFeed(); return; }
+  if (!res || res.ok === false || f.sessionId !== key) { amPaintFeed(); return; }
   f.entries = Array.isArray(res.entries) ? res.entries : [];
   if (res.model) f.model = res.model;
   amPaintFeed();
@@ -15383,9 +15482,13 @@ async function amFetchFeed(a) {
 }
 
 function amPaintFacts(a) {
+  const feedKey = a.sessionId || a.transcript || '';
   const facts = [
     amProjectName(a.cwd) ? ['project', amProjectName(a.cwd)] : null,
-    agentMap.feed.sessionId === a.sessionId && agentMap.feed.model ? ['model', agentMap.feed.model] : null,
+    // The run tells the reader which fan-out this one belongs to, which is what
+    // sets it apart from its siblings.
+    a.runId ? ['run', a.runId] : null,
+    agentMap.feed.sessionId === feedKey && agentMap.feed.model ? ['model', agentMap.feed.model] : null,
     a.tokens ? ['tokens', amFmtTokens(a.tokens)] : null,
   ].filter(Boolean);
   const nodes = facts.flatMap(([k, v]) => {
@@ -15396,15 +15499,15 @@ function amPaintFacts(a) {
     return [dt, dd];
   });
   // The id is a control: one click copies the whole thing.
-  const full = String(a.sessionId || a.id || '');
+  const full = String(a.sessionId || a.agentId || a.id || '');
   if (full) {
-    const dt = document.createElement('dt'); dt.textContent = 'session';
+    const dt = document.createElement('dt'); dt.textContent = a.sessionId ? 'session' : 'agent';
     const dd = document.createElement('dd');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'am-d-copyid';
     btn.title = `Copy ${full}`;
-    btn.setAttribute('aria-label', 'Copy session id');
+    btn.setAttribute('aria-label', a.sessionId ? 'Copy session id' : 'Copy agent id');
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -15450,21 +15553,34 @@ function amPaintDetail() {
   intentEl.hidden = !intent;
   amPaintFacts(a);
   amTick();
+  // An agent running inside a chat is reached through that chat: it has no
+  // session to attach to and nothing of its own to stop.
+  const inProcess = a.kind === 'subagent';
   const open = $('#am-d-open');
-  const openable = a.attachable || a.hasTranscript;
+  const openable = inProcess ? !!a.parentSessionId : (a.attachable || a.hasTranscript);
   open.disabled = !openable;
   // The one urgent case borrows the amber and the verb changes with it: a
   // blocked agent is answered, not merely opened.
   open.classList.toggle('is-blocked', st === 'blocked');
-  open.textContent = st === 'blocked' ? 'Respond' : 'Open session';
-  open.title = openable
-    ? (a.attachable ? 'Attach to the live agent' : 'Resume this session in a chat tab')
-    : 'This agent left no transcript to open';
+  if (inProcess) open.textContent = 'Open chat';
+  else open.textContent = st === 'blocked' ? 'Respond' : 'Open session';
+  if (inProcess) {
+    open.title = openable
+      ? 'Open the chat this agent is running in'
+      : 'The chat this agent ran in is no longer listed';
+  } else {
+    open.title = openable
+      ? (a.attachable ? 'Attach to the live agent' : 'Resume this session in a chat tab')
+      : 'This agent left no transcript to open';
+  }
   open.onclick = () => { if (openable) { closeAgentMap(); openBgAgent(a); } };
 
-  // A live agent is stopped; one that has already ended is removed.
+  // A live agent is stopped; one that has already ended is removed. Neither is
+  // possible for an agent whose life belongs to a chat's turn.
   const end = $('#am-d-end');
   if (!end) return;
+  end.hidden = inProcess;
+  if (inProcess) return;
   const live = st === 'running' || st === 'blocked';
   end.textContent = live ? 'Stop' : 'Delete';
   end.title = live
@@ -16319,10 +16435,7 @@ async function boot() {
     if (document.hidden) return;
     refreshRecentList();
   }, 30000);
-  setInterval(() => {
-    if (document.hidden) return;
-    refreshTopbarAgents();
-  }, 20000);
+  scheduleTopbarAgents(TOPBAR_AGENTS_IDLE_MS);
 
   // With skipWelcome on, boot goes straight to a chat, so the welcome screen
   // stays out of the paint entirely.

@@ -854,10 +854,6 @@ body:not([data-page="chat"]) #btn-new-session { display: none; }
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--as-mark) 42%, transparent); }
   55%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--as-mark) 0%, transparent); }
 }
-/* Nothing running, but agents to read. It keeps the way in without competing
-   with the live states: smaller marker, count stepped back to secondary. */
-.topbar-agents.is-idle .ta-count { color: var(--text-2); font-weight: 600; }
-.topbar-agents.is-idle .ta-dot { width: 5px; height: 5px; background: var(--text-3); animation: none; }
 @keyframes ta-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
 
 /* An agent appeared while the user was looking elsewhere. The chip says so with
@@ -13951,6 +13947,11 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: normal; word-break: normal; hyphens: none;
 }
+/* A block whose cards are down to a word or two holds them on one line, so the
+   time under them sits where the second line would have been. */
+.am-node.is-oneline .am-node-label {
+  height: 1.35em; -webkit-line-clamp: 1;
+}
 /* A label never grows past its own column: the space either side of it is the
    lane a connector takes down to the next generation. */
 .am-canvas-pane.is-sparse .am-node:not(.is-holder) .am-node-label {
@@ -14010,6 +14011,12 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   fill: color-mix(in srgb, var(--emerald) 4%, transparent);
   stroke: color-mix(in srgb, var(--emerald) 26%, var(--line-2));
 }
+/* What every card in the block has in common, said once. */
+.am-block-cap {
+  fill: color-mix(in srgb, var(--text-3) 92%, var(--text-2));
+  font-size: 11px; font-weight: 650; letter-spacing: -0.005em;
+}
+.am-block-cap.is-live { fill: color-mix(in srgb, var(--emerald) 46%, var(--text-2)); }
 
 .am-node.is-failed .am-node-glyph {
   border-color: color-mix(in srgb, var(--rose) 55%, var(--line-2));

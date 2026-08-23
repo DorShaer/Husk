@@ -539,7 +539,7 @@ async function edgeEndpoints(win) {
       const p = at.get(pid);
       const c = at.get(cid);
       if (!p) { out.push({ key, orphan: true }); continue; }
-      const wantStart = [p.x + 132 / 2, p.y + (p.a.kind ? m.glyphLg : m.glyph)];
+      const wantStart = [p.x + 132 / 2, p.y + (p.a.holder ? m.glyphLg : m.glyph)];
       const got = {
         key,
         start: [Number(head[1]), Number(head[2])],

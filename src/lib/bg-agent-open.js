@@ -6,11 +6,16 @@
 // Agent ids are bare word characters; session ids are hex with dashes.
 const ID = /^[A-Za-z0-9][A-Za-z0-9-]{2,}$/;
 const SESSION = /^[0-9a-fA-F-]{16,}$/;
+// An agent running inside a chat, which the CLI has no command for: it is a
+// turn in its parent's conversation rather than a session anything can hold.
+const IN_PROCESS = /^sa-/;
+const IN_PROCESS_ERROR = 'that agent runs inside its chat, so open the chat instead';
 
 function openCommand({ id = '', sessionId = '', attach = false, transcript = '', cwd = '' } = {}) {
   const shortId = String(id || '').trim();
   const session = String(sessionId || '').trim();
   if (!shortId && !session) return { ok: false, error: 'no agent selected' };
+  if (IN_PROCESS.test(shortId)) return { ok: false, error: IN_PROCESS_ERROR };
 
   if (attach) {
     if (!ID.test(shortId)) return { ok: false, error: 'that agent has no id to attach to' };
@@ -31,6 +36,7 @@ function controlArgs(action, id) {
   const verb = CONTROLS[String(action || '')];
   if (!verb) return { ok: false, error: 'that is not something to do to an agent' };
   const shortId = String(id || '').trim();
+  if (IN_PROCESS.test(shortId)) return { ok: false, error: IN_PROCESS_ERROR };
   if (!ID.test(shortId)) return { ok: false, error: 'that agent has no id to act on' };
   return { ok: true, args: [verb, shortId] };
 }

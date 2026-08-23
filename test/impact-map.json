@@ -45,7 +45,8 @@
         "agent-inject-clis.spec.js",
         "agent-center.spec.js",
         "agent-canvas.spec.js",
-        "agent-attach.spec.js"
+        "agent-attach.spec.js",
+        "agent-inprocess.spec.js"
       ],
       "tokens": [
         "ag",

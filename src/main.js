@@ -14,6 +14,7 @@ const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
+const Subagents = require('./lib/subagents');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
@@ -9532,6 +9533,11 @@ ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
 // in a naive session listing, and the CLI points at its own picker rather than
 // resuming one while it is still running.
 
+// Read offsets into the transcripts in-process agents are matched against. It
+// lives for the process so a five megabyte conversation is scanned once and
+// every later poll reads only what was appended.
+const subagentScanCache = new Map();
+
 // The parent a background agent was forked from. Two records carry it and
 // neither is sufficient alone: the transcript's snake_case `session_id` names
 // the process that wrote the line, so on a forked file it keeps naming the
@@ -9690,16 +9696,16 @@ async function sessionHolder(sessionId) {
 ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
   const agent = activeAgentName();
   // A CLI with no agent concept reports that it has none.
-  if (agent !== 'claude') return { ok: true, supported: false, agents: [] };
+  if (agent !== 'claude') return { ok: true, supported: false, controllable: false, agents: [], chats: [] };
   const cwd = String((payload && payload.cwd) || activePtyCwd || '').trim();
   const listed = await bgAgentRows({
     cwd,
     all: !!(payload && payload.all),
     allProjects: !!(payload && payload.allProjects),
   });
-  if (!listed.ok) return { ok: false, supported: true, agents: [], error: listed.error };
+  if (!listed.ok) return { ok: false, supported: true, controllable: true, agents: [], chats: [], error: listed.error };
   const rows = listed.rows;
-  if (!rows.length) return { ok: true, supported: true, agents: [], chats: [] };
+  if (!rows.length) return { ok: true, supported: true, controllable: true, agents: [], chats: [] };
   // The chats an agent can descend from. They are listed alongside agents but
   // are not agents, so they travel separately and only the graph reads them.
   const chats = rows
@@ -9753,7 +9759,28 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
         transcript,
       };
     });
-  return { ok: true, supported: true, agents, chats };
+  // The agents a chat runs inside its own process. The CLI inventory lists
+  // sessions, and these are not sessions, so they are read off the session
+  // directory of everything that could be running one.
+  const now = Date.now();
+  const fleet = agents.slice();
+  for (const r of rows) {
+    if (!r || !r.sessionId) continue;
+    const t = bgFindTranscript(String(r.sessionId), String(r.cwd || '') || cwd);
+    if (!t) continue;
+    try {
+      fleet.push(...Subagents.scanParent({
+        dir: t.replace(/\.jsonl$/, ''),
+        sessionId: String(r.sessionId),
+        cwd: String(r.cwd || ''),
+        // A parent that has exited cannot still be running anything, whatever
+        // its files were left saying.
+        alive: pidAlive(r.pid),
+        transcript: t,
+      }, { cache: subagentScanCache, now }));
+    } catch (_) {}
+  }
+  return { ok: true, supported: true, controllable: true, agents: Subagents.describe(Subagents.retainLastBatch(fleet)), chats };
 });
 
 // The tail of one agent's conversation, compacted to what a human skims: what
@@ -9763,8 +9790,21 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
 const BG_PEEK_TAIL_BYTES = 192 * 1024;
 ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
   const sessionId = String((payload && payload.sessionId) || '').trim();
-  if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'no session' };
-  const transcript = bgFindTranscript(sessionId, String((payload && payload.cwd) || ''));
+  // An in-process agent has no session to look up, so it names its file. The
+  // path is confined to the projects tree, which is the only place a transcript
+  // this reads can be.
+  const named = String((payload && payload.transcript) || '').trim();
+  let transcript = '';
+  if (named) {
+    const projRoot = path.join(CLAUDE_DIR, 'projects');
+    if (!named.endsWith('.jsonl') || !isInside(projRoot, named) || !realPathInside(named, projRoot)) {
+      return { ok: false, error: 'no transcript' };
+    }
+    transcript = named;
+  } else {
+    if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'no session' };
+    transcript = bgFindTranscript(sessionId, String((payload && payload.cwd) || ''));
+  }
   if (!transcript) return { ok: true, entries: [], model: '', empty: true };
   let text = '';
   let size = 0;
@@ -9842,7 +9882,7 @@ ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
 // gemini already are, so the command opens onto something.
 ipcMain.handle('bgAgents:openCommand', (_e, payload = {}) => {
   const agent = activeAgentName();
-  if (agent !== 'claude') return { ok: false, error: `background agents are not available for ${agent}` };
+  if (agent !== 'claude') return { ok: false, error: 'Background agents are not available for the active tool' };
   const id = String((payload && payload.id) || '').trim();
   const sessionId = String((payload && payload.sessionId) || '').trim();
   // The transcript names the only directory the CLI will resume this session
@@ -9863,7 +9903,7 @@ ipcMain.handle('bgAgents:openCommand', (_e, payload = {}) => {
 // discards the job and its worktree.
 ipcMain.handle('bgAgents:control', async (_e, payload = {}) => {
   const agent = activeAgentName();
-  if (agent !== 'claude') return { ok: false, error: `background agents are not available for ${agent}` };
+  if (agent !== 'claude') return { ok: false, error: 'Background agents are not available for the active tool' };
   const plan = bgControlArgs(payload && payload.action, payload && payload.id);
   if (!plan.ok) return plan;
   const env = buildAgentEnv();
