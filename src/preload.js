@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 const { extractRecap } = require('./lib/recap-extract');
 const { fuzzyFilter, fuzzyMatch } = require('./lib/fuzzy');
 const sessionView = require('./lib/session-view');
+const paletteSearch = require('./lib/palette-search');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
@@ -82,6 +83,14 @@ contextBridge.exposeInMainWorld('husk', {
     stripControls: (s) => { try { return stripControls(s); } catch (_) { return ''; } },
     hasControls: (s) => { try { return hasControls(s); } catch (_) { return true; } },
     chatFileRef: (p) => { try { return chatFileRef(p); } catch (_) { return ''; } },
+  },
+  // The universal search palette's ranking. Pure, run in-process. Takes plain
+  // {section,label,sub} entries and hands back positions into that same array,
+  // so the row's own click handler never has to cross this boundary.
+  paletteSearch: {
+    rank: (query, entries, opts) => {
+      try { return paletteSearch.rank(query, entries, opts); } catch (_) { return []; }
+    },
   },
   // The Sessions roster's view model: filtering, threading, grouping and the
   // label formats. Pure, run in-process, clock injected by the caller.

@@ -128,6 +128,19 @@
         "src/lib/workspace-state.js"
       ]
     },
+    "palette": {
+      "specs": [
+        "palette-search.spec.js"
+      ],
+      "tokens": [
+        "palette",
+        "pi"
+      ],
+      "paths": [
+        "src/lib/palette-search.js",
+        "src/lib/fuzzy.js"
+      ]
+    },
     "prompts": {
       "specs": [
         "prompts-edit.spec.js"

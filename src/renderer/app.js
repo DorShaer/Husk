@@ -14379,53 +14379,245 @@ async function openBgAgent(a) {
   } finally { agentOpening = false; }
 }
 
+// ─── Universal search ───────────────────────────────────────────────────────
+// The palette answers one question, and the question is not always a verb.
+// Someone who knows what they want to do types the action; someone who knows
+// what they want to reach types its name. Both are the same keystroke, so both
+// live in one list: actions alone while the field is empty, everything the app
+// holds once a word is in it.
+//
+// Rows for things are built from the same lists the pages read. A page that has
+// never been opened has no list yet, so opening the palette refreshes all of
+// them behind it and repaints when they land. Nothing here waits on IPC: the
+// list always draws from what is in memory at that moment.
+
+// Sections in their tie-break order, and the cap each one takes. Capping per
+// section is what stops one crowded surface from burying the other six.
+const PALETTE_SECTION_ORDER = ['Sessions', 'Workflows', 'Projects', 'Agents', 'Prompts', 'Skills', 'Actions'];
+const PALETTE_SECTION_MAX = 5;
+// How much of a description a one-line row can carry before it crowds the name.
+const PALETTE_SUB_MAX = 88;
+
+// The palette's own copy of every searchable list, kept apart from the page
+// caches so refreshing here can never repaint a page underneath.
+let paletteIndex = { sessions: [], workflows: [], projects: [], agents: [], prompts: [], skills: [] };
+// The rows currently on screen. Clicks, arrows and Enter all index this, so the
+// row that runs is always the row that was highlighted.
+let paletteMatchCache = [];
+// Rises on every open and close; a refresh whose epoch has moved on stays quiet.
+let paletteEpoch = 0;
+
+// Whatever the pages already hold, taken as-is so the first paint is instant.
+function paletteSeedIndex() {
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  paletteIndex = {
+    sessions: arr(sx && sx.cache),
+    workflows: arr(workflowsCache),
+    projects: arr(projectsCache),
+    agents: arr(profilesCache),
+    prompts: arr(promptsCache),
+    skills: arr(skillsCache),
+  };
+}
+
+// Refreshes every list. Each source settles on its own, so one that cannot
+// answer leaves its previous rows standing rather than emptying its section.
+async function palettePrimeIndex() {
+  const api = window.husk || {};
+  const take = (promise, onOk) => Promise.resolve(promise).then(onOk, () => {});
+  await Promise.all([
+    take(sessionsFetch({ maxAgeMs: 10000 }), (r) => { if (Array.isArray(r && r.sessions)) paletteIndex.sessions = r.sessions; }),
+    take(api.workflows && api.workflows.list(), (r) => { if (Array.isArray(r)) paletteIndex.workflows = r; }),
+    take(api.projects && api.projects.list(), (r) => { if (r && r.ok) paletteIndex.projects = r.projects || []; }),
+    take(api.profiles && api.profiles.list(), (r) => { if (Array.isArray(r)) paletteIndex.agents = r; }),
+    take(api.prompts && api.prompts.list(), (r) => { if (r && r.ok) paletteIndex.prompts = r.prompts || []; }),
+    // Husk's own prompts have a page of their own, exactly as the Skills page
+    // has it, so they are not offered twice under two nouns.
+    take(api.skills && api.skills.list(), (r) => { if (r && r.ok) paletteIndex.skills = (r.skills || []).filter((sk) => sk.source !== 'husk'); }),
+  ]);
+}
+
+// The action list, minus the entries this agent or this machine cannot offer.
+// One function so the list that paints and the list that runs cannot diverge.
+function paletteActionRows() {
+  return PALETTE_ACTIONS
+    .filter((a) => !a.claudeOnly || agentKindCache === 'claude')
+    .filter((a) => typeof a.show !== 'function' || a.show())
+    .map((a) => ({ ...a, section: 'Actions', sub: '', subShown: '' }));
+}
+
+// The last segment of a path, which is what a folder is remembered by.
+function paletteBasename(p) {
+  const s = String(p || '').replace(/[/\\]+$/, '');
+  return s.split(/[/\\]/).pop() || s;
+}
+
+// One row per thing the palette can reach. `sub` is the line under the label
+// and is searched with it: a session is more often remembered by its folder
+// than by its title.
+function paletteThingRows() {
+  const rows = [];
+  // A skill or prompt description can run to a paragraph, and a row is one
+  // line. The full text is what the ranker reads; this is what the row shows.
+  // A sub that only repeats the name says nothing, so it is dropped.
+  const push = (section, icon, label, sub, run) => {
+    const name = String(label == null ? '' : label).trim();
+    if (!name) return;
+    const full = String(sub || '').replace(/\s+/g, ' ').trim();
+    const shown = full === name ? '' : clampWords(full, PALETTE_SUB_MAX);
+    rows.push({ section, icon, label: name, sub: full, subShown: shown, run });
+  };
+
+  const names = (cfg && cfg.sessionNames) || {};
+  for (const s of paletteIndex.sessions) {
+    push('Sessions', ICONS.sessions, names[s.id] || s.title, paletteBasename(s.cwd), async () => {
+      setPage('sessions');
+      await renderSessions();
+      // A filter left on the roster would hide the row this just picked, so the
+      // query is cleared before the selection lands on it.
+      sxSetQuery('');
+      sxSelect(s.id, { peek: true, open: true });
+    });
+  }
+
+  for (const w of paletteIndex.workflows) {
+    const steps = ((w.graph && w.graph.nodes) || []).length;
+    const sub = w.description || (steps ? `${steps} step${steps === 1 ? '' : 's'}` : '');
+    push('Workflows', ICONS.workflows, w.name, sub, async () => {
+      setPage('workflows');
+      await renderWorkflows();
+      // A run in flight owns that page; opening the builder over it would take
+      // the user off the thing they came back to watch.
+      if (!activeRunId) openWorkflowBuilder(w.id);
+    });
+  }
+
+  for (const p of paletteIndex.projects) {
+    // The whole path, not its last segment: a project is usually named after
+    // its folder, so the segment would only repeat the name back.
+    push('Projects', ICONS.projects, p.name, wsShortPath(p.path), async () => {
+      setPage('projects');
+      await renderProjects();
+      openWorkspaceView(p.id);
+    });
+  }
+
+  for (const a of paletteIndex.agents) {
+    push('Agents', ICONS.agents, a.name, a.description, async () => {
+      setPage('agents');
+      await renderAgents();
+      openAgentModal(a.id);
+    });
+  }
+
+  for (const p of paletteIndex.prompts) {
+    push('Prompts', ICONS.prompts, p.name, p.description, async () => {
+      setPage('prompts');
+      const search = $('#prompts-search');
+      if (search) search.value = '';
+      selectedPromptMd = p.mdPath;
+      await renderPrompts();
+    });
+  }
+
+  for (const sk of paletteIndex.skills) {
+    push('Skills', ICONS.skills, sk.name, sk.description, async () => {
+      setPage('skills');
+      await renderSkills();
+      // Keys are lower-case because the page reaches this through a dataset,
+      // and this call has to look identical to that one.
+      openSkillDetail({ dirname: sk.dirName || sk.id, mdpath: sk.mdPath, path: sk.path, name: sk.name });
+    });
+  }
+
+  return rows;
+}
+
+// Every row that answers a query, in the order the ranker put them. The ranker
+// is given the two searchable strings and hands back positions, so the rows
+// themselves, closures and all, never leave this file.
+function paletteMatches(query) {
+  const q = String(query || '').trim();
+  // With nothing typed the palette is the command list it has always been.
+  if (!q) return paletteActionRows();
+
+  const rows = [...paletteThingRows(), ...paletteActionRows()];
+  const ranker = (window.husk && window.husk.paletteSearch) || null;
+  if (!ranker || typeof ranker.rank !== 'function') {
+    // Older preload: plain substring matching still finds the row, unranked.
+    const lower = q.toLowerCase();
+    return rows.filter((r) => `${r.label} ${r.sub}`.toLowerCase().includes(lower));
+  }
+  const entries = rows.map((r) => ({ section: r.section, label: r.label, sub: r.sub }));
+  return ranker
+    .rank(q, entries, { sectionOrder: PALETTE_SECTION_ORDER, sectionMax: PALETTE_SECTION_MAX })
+    .map((hit) => rows[hit.index])
+    .filter(Boolean);
+}
+
 function openPalette() {
   if (!$('#agent-switch').hidden) closeAgentSwitch();
   $('#palette').hidden = false;
   $('#palette-input').value = '';
   paletteSel = 0;
+  paletteSeedIndex();
   renderPalette('');
   $('#palette-input').focus();
+  // A repaint lands only while this is still the palette that asked for it, so
+  // a close and a reopen mid-flight cannot paint the older result over the new.
+  const epoch = ++paletteEpoch;
+  palettePrimeIndex().then(() => {
+    if (epoch !== paletteEpoch || $('#palette').hidden) return;
+    renderPalette($('#palette-input').value);
+  });
 }
-function closePalette() { $('#palette').hidden = true; if (term) term.focus(); }
+function closePalette() { paletteEpoch += 1; $('#palette').hidden = true; if (term) term.focus(); }
 function renderPalette(query) {
-  const q = query.toLowerCase().trim();
-  const matches = PALETTE_ACTIONS
-    .filter((a) => !a.claudeOnly || agentKindCache === 'claude')
-    .filter((a) => typeof a.show !== 'function' || a.show())
-    .filter((a) => !q || a.label.toLowerCase().includes(q));
-  // eslint-disable-next-line no-unsanitized/property -- Palette labels are escaped and icons are trusted constants.
-  $('#palette-list').innerHTML = matches.map((a, i) => `
-    <li class="${i === paletteSel ? 'active' : ''}" data-idx="${i}">
-      <span class="pi-icon">${a.icon}</span>
-      <span>${escapeHtml(a.label)}</span>
-      ${a.shortcut ? `<span class="pi-shortcut">${a.shortcut}</span>` : ''}
-    </li>
-  `).join('');
-  $('#palette-list').querySelectorAll('li').forEach((li, i) =>
-    li.addEventListener('click', () => { paletteSel = i; runPaletteAction(matches); })
-  );
+  const list = $('#palette-list');
+  if (!list) return;
+  const matches = paletteMatches(query);
+  paletteMatchCache = matches;
+  // A refresh can shorten the list under a selection that had arrowed past the
+  // new end, so the cursor is pulled back onto a row that exists.
+  if (paletteSel >= matches.length) paletteSel = Math.max(0, matches.length - 1);
+
+  let section = '';
+  const html = matches.map((row, i) => {
+    const head = row.section === section ? '' : `<li class="palette-section" aria-hidden="true">${escapeHtml(row.section)}</li>`;
+    section = row.section;
+    return `${head}
+    <li class="palette-row${i === paletteSel ? ' active' : ''}" data-idx="${i}">
+      <span class="pi-icon">${row.icon}</span>
+      <span class="pi-label">${escapeHtml(row.label)}</span>
+      ${row.subShown ? `<span class="pi-sub">${escapeHtml(row.subShown)}</span>` : ''}
+      ${row.shortcut ? `<span class="pi-shortcut">${escapeHtml(row.shortcut)}</span>` : ''}
+    </li>`;
+  }).join('');
+  // eslint-disable-next-line no-unsanitized/property -- Labels go through escapeHtml above and icons are trusted constants.
+  list.innerHTML = html || '<li class="palette-empty" aria-hidden="true">No matches</li>';
+  list.querySelectorAll('li.palette-row').forEach((li) => {
+    li.addEventListener('click', () => { paletteSel = Number(li.dataset.idx); runPaletteAction(); });
+  });
   // Keep the highlighted row in view as the user arrows past the visible area.
-  const active = $('#palette-list li.active');
+  const active = list.querySelector('li.palette-row.active');
   if (active) active.scrollIntoView({ block: 'nearest' });
 }
-function runPaletteAction(matches) {
-  const a = matches[paletteSel];
+function runPaletteAction() {
+  const row = paletteMatchCache[paletteSel];
   closePalette();
-  if (a) try { a.run(); } catch (err) { toast(err.message, 'error'); }
+  if (!row) return;
+  // A row that opens a page and then reaches into it finishes a turn later, so
+  // a rejection there is reported the same way a throw here is.
+  const fail = (err) => toast((err && err.message) || String(err), 'error');
+  try { Promise.resolve(row.run()).catch(fail); } catch (err) { fail(err); }
 }
 $('#palette-input').addEventListener('input', (e) => { paletteSel = 0; renderPalette(e.target.value); });
 $('#palette-input').addEventListener('keydown', (e) => {
-  const visible = $$('#palette-list li');
+  const count = paletteMatchCache.length;
   if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
-  else if (e.key === 'ArrowDown') { e.preventDefault(); paletteSel = Math.min(visible.length - 1, paletteSel + 1); renderPalette($('#palette-input').value); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); paletteSel = Math.min(count - 1, paletteSel + 1); renderPalette($('#palette-input').value); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); paletteSel = Math.max(0, paletteSel - 1); renderPalette($('#palette-input').value); }
-  else if (e.key === 'Enter') {
-    e.preventDefault();
-    const q = $('#palette-input').value;
-    const matches = PALETTE_ACTIONS.filter((a) => !q || a.label.toLowerCase().includes(q.toLowerCase().trim()));
-    runPaletteAction(matches);
-  }
+  else if (e.key === 'Enter') { e.preventDefault(); runPaletteAction(); }
 });
 $('#palette').addEventListener('click', (e) => { if (e.target.id === 'palette') closePalette(); });
 

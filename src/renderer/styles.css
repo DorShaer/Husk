@@ -9611,20 +9611,44 @@ body[data-mode="light"] .ob-wordmark span {
   list-style: none; margin: 0; padding: 7px;
   max-height: 400px; overflow-y: auto;
 }
-.palette-list li {
+.palette-list li.palette-row {
   display: flex; align-items: center; gap: 11px;
   padding: 10px 13px; border-radius: var(--radius-lg);
   font-size: var(--fs-body-lg); color: var(--text-2); cursor: pointer;
 }
-.palette-list li:hover { background: var(--surface-raised); color: var(--text); }
+.palette-list li.palette-row:hover { background: var(--surface-raised); color: var(--text); }
 /* The accent marks the row the keyboard is standing on, and nothing else in the list. */
-.palette-list li.active {
+.palette-list li.palette-row.active {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-3)); color: var(--text);
 }
 .palette-list .pi-icon { color: var(--text-3); width: var(--icon-sm); height: var(--icon-sm); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-.palette-list li.active .pi-icon, .palette-list li:hover .pi-icon { color: var(--text-2); }
+.palette-list li.palette-row.active .pi-icon, .palette-list li.palette-row:hover .pi-icon { color: var(--text-2); }
 .palette-list .pi-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
+/* The name takes the room it needs and gives the rest back; the line beside it
+   is context, so it is the one that yields first when the row runs out of width.
+   That order comes from the basis, not from the shrink factor: the sub starts at
+   zero and grows into whatever is left, so it is already the shorter of the two
+   when the row narrows, and the name only gives ground once the sub is gone. */
+.palette-list .pi-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-list .pi-sub {
+  margin-left: auto; padding-left: 12px;
+  flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right;
+  color: var(--text-3); font-size: var(--fs-nano);
+}
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: var(--fs-nano); font-family: var(--font-mono); }
+/* Section headings name the surface each run of rows came from. They are list
+   items so the markup stays one flat list, and they are never selectable. */
+.palette-list li.palette-section {
+  display: block; padding: 13px 13px 5px; cursor: default;
+  color: var(--text-3); font-size: var(--fs-nano);
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.palette-list li.palette-section:first-child { padding-top: 5px; }
+.palette-list li.palette-empty {
+  display: block; padding: 14px 13px; cursor: default;
+  color: var(--text-3); font-size: var(--fs-body-lg);
+}
 
 /* ─── Agent switcher ───────────────────────────────────────────────────────
    The title leads, and the id under it separates two agents born of the same chat.
