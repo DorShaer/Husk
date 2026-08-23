@@ -4111,15 +4111,20 @@ function paintWorkflowList() {
   // Hero figures: what this page is worth at a glance.
   const week = wfRunsCache.filter((r) => Date.now() - new Date(r.finishedAt).getTime() < 7 * 864e5);
   const passed = week.filter((r) => r.status === 'done').length;
-  const setStat = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
-  setStat('#wfx-stat-flows', String(workflowsCache.length));
-  setStat('#wfx-stat-runs', String(week.length));
-  setStat('#wfx-stat-pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
+  // The same four figures are written twice: once on the head strip that rides
+  // above a run, once in the hero. Both carry the number, so whichever is on
+  // screen is the one a reader can trust.
+  const setStat = (name, text) => {
+    for (const el of document.querySelectorAll(`#wfx-stat-${name}, #wfx-hero-${name}`)) el.textContent = text;
+  };
+  setStat('flows', String(workflowsCache.length));
+  setStat('runs', String(week.length));
+  setStat('pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
   if (wfRunsCache.length) {
     const durations = wfRunsCache.map((r) => r.ms || 0).filter(Boolean).sort((a, b) => a - b);
-    setStat('#wfx-stat-median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
+    setStat('median', durations.length ? wfDur(durations[Math.floor(durations.length / 2)]) : 'n/a');
   } else {
-    setStat('#wfx-stat-median', 'n/a');
+    setStat('median', 'n/a');
   }
 
   // Nothing saved yet: the patterns gallery is the call to action, so the
