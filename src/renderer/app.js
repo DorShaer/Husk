@@ -696,6 +696,30 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.11.3': {
+    items: [
+      {
+        title: 'A new look across the app',
+        body: 'Every page now draws from one design system: a search that reaches anything from the title bar, a status bar along the bottom that reports the tool, model and connection, and a quieter sidebar that saves the accent for the action you came to take.',
+      },
+      {
+        title: 'The chat page, rebuilt around the thread',
+        body: 'The conversation sits beside a tabbed context pane, so the files you shared, the session status and what the agent is working from are one click away instead of stacked down the rail.',
+      },
+      {
+        title: 'Sessions reads as a roster',
+        body: 'Chats land in one list with their project, state and how long they ran, and the detail pane opens beside the list instead of taking you off the page. Search matches on the way through.',
+      },
+      {
+        title: 'Agents that run inside a chat',
+        body: 'The agents a chat starts in its own process now appear in the fleet like any other, with their own state, elapsed time and conversation, both on the graph and in the list.',
+      },
+      {
+        title: 'Preferences is a page',
+        body: 'Settings are grouped under their own nav, and an About entry names the version you are running and checks for a newer one from the same place.',
+      },
+    ],
+  },
   '2.11.1': {
     items: [
       {
