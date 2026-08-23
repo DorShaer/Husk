@@ -5,6 +5,7 @@ const { fuzzyFilter, fuzzyMatch } = require('./lib/fuzzy');
 const sessionView = require('./lib/session-view');
 const paletteSearch = require('./lib/palette-search');
 const workflowRegistry = require('./lib/workflow-registry');
+const ghCli = require('./lib/gh-cli');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
@@ -192,6 +193,18 @@ contextBridge.exposeInMainWorld('husk', {
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
+  },
+  // GitHub, read through the gh CLI. Husk stores no credential: gh is already
+  // logged in, and every call borrows that for one command. `filter` and
+  // `labels` are pure and run in-process, so typing in the search box is not a
+  // round trip and never a request to GitHub.
+  github: {
+    available: () => ipcRenderer.invoke('github:available'),
+    repo: (cwd) => ipcRenderer.invoke('github:repo', { cwd }),
+    pulls: (opts) => ipcRenderer.invoke('github:pulls', opts || {}),
+    issues: (opts) => ipcRenderer.invoke('github:issues', opts || {}),
+    filter: (rows, query) => { try { return ghCli.filterRows(rows, query); } catch (_) { return []; } },
+    labels: (rows) => { try { return ghCli.labelCounts(rows); } catch (_) { return []; } },
   },
   // The marketplace: catalogs of workflows other people publish. `fetch` hands
   // back a validated index or a refusal, never the bytes it read, and

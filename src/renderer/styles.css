@@ -14561,3 +14561,126 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .wfm-reg-empty { font-size: var(--fs-body); color: var(--text-3); padding: var(--space-3); }
 .wfm-reg-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); }
 .wfm-reg-error { font-size: var(--fs-body); color: var(--rose); }
+
+/* ─── GitHub ────────────────────────────────────────────────────────────────
+   Two panes, the same shape the Sessions roster uses: a list that stays
+   scannable and a detail beside it that answers the row under the cursor. Every
+   colour is a token, except a label's own, which comes from GitHub and is set
+   as a custom property on the chip. */
+.gh { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; }
+
+.gh-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.gh .seg {
+  display: grid; grid-auto-flow: column;
+  gap: 3px; padding: 3px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.gh .seg-btn {
+  border: 1px solid transparent; background: transparent; color: var(--text-3);
+  font-family: inherit; font-size: var(--fs-small); font-weight: 600;
+  padding: 6px 14px; border-radius: var(--radius-md); cursor: pointer; white-space: nowrap;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.gh .seg-btn:hover { color: var(--text); }
+.gh .seg-btn.is-on {
+  background: var(--bg); color: var(--text); border-color: var(--line-2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.gh-state, .gh-search {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+}
+.gh-search { flex: 1 1 260px; min-width: 160px; }
+.gh-search::placeholder { color: var(--text-3); }
+
+.gh-labels { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.gh-label-chip {
+  padding: 3px 10px; background: transparent; color: var(--text-3);
+  border: 1px solid var(--line); border-radius: 999px;
+  font-size: var(--fs-nano); cursor: pointer;
+}
+.gh-label-chip:hover { color: var(--text-2); border-color: var(--line-2); }
+.gh-label-chip.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.gh-panes { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-4); flex: 1 1 auto; min-height: 0; }
+.gh-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; outline: none; }
+.gh-list:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); border-radius: var(--radius-lg); }
+
+.gh-row {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+.gh-row:hover { background: var(--surface-raised); }
+.gh-row.is-current { background: color-mix(in srgb, var(--accent) 10%, var(--bg-3)); border-color: var(--line-2); }
+.gh-row-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.gh-num { flex: 0 0 auto; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-nano); }
+.gh-row-title {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--text); font-size: var(--fs-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gh-row-meta, .gh-row-labels { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.gh-meta { color: var(--text-3); font-size: var(--fs-nano); }
+.gh-meta.is-diff { font-family: var(--font-mono); }
+.gh-add { color: var(--emerald); font-size: var(--fs-nano); font-family: var(--font-mono); }
+.gh-del { color: var(--rose); font-size: var(--fs-nano); font-family: var(--font-mono); }
+
+.gh-pill {
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); font-weight: 600;
+  border: 1px solid var(--line-2); color: var(--text-2);
+}
+.gh-pill.is-open { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 45%, transparent); }
+.gh-pill.is-merged { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.gh-pill.is-closed { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 45%, transparent); }
+.gh-pill.is-draft { color: var(--text-3); }
+
+.gh-checks { font-size: var(--fs-nano); font-weight: 600; }
+.gh-checks.is-passing { color: var(--emerald); }
+.gh-checks.is-failing { color: var(--rose); }
+.gh-checks.is-pending { color: var(--warn); }
+
+/* A label's colour is GitHub's, narrowed to six hex digits by the reader before
+   it ever reaches a style. Everything else about the chip is a token. */
+.gh-label {
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); color: var(--text-3);
+  border: 1px solid var(--line);
+}
+.gh-label.has-color {
+  color: var(--label-color);
+  border-color: color-mix(in srgb, var(--label-color) 45%, transparent);
+  background: color-mix(in srgb, var(--label-color) 10%, transparent);
+}
+
+.gh-detail { overflow-y: auto; padding-left: var(--space-4); border-left: 1px solid var(--line); }
+.gh-d { display: flex; flex-direction: column; gap: var(--space-3); }
+.gh-d-head { display: flex; flex-direction: column; gap: var(--space-2); }
+.gh-d-title { font-size: var(--fs-h3); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.gh-d-sub { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.gh-field { display: flex; flex-direction: column; gap: 3px; }
+.gh-field-label { font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.gh-field-value { font-size: var(--fs-body); color: var(--text-2); overflow-wrap: anywhere; }
+.gh-field-value code { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text); }
+.gh-arrow { color: var(--text-3); }
+.gh-d-labels { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
+.gh-d-actions { display: flex; justify-content: flex-end; padding-top: var(--space-2); }
+
+.gh-repo { display: inline-flex; align-items: center; gap: var(--space-2); }
+.gh-repo-name { font-size: var(--fs-body); color: var(--text-2); font-family: var(--font-mono); }
+.gh-repo-private { font-size: var(--fs-nano); color: var(--text-3); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+
+.gh-state-msg:empty { display: none; }
+.gh-state-msg:not(:empty) { flex: 1 1 auto; display: grid; place-items: center; min-height: 0; }
+.gh-advice { font-size: var(--fs-body); color: var(--text-2); max-width: 52ch; margin-top: var(--space-2); }
+.gh-detail-line { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); margin-top: var(--space-2); overflow-wrap: anywhere; }
+
+/* The list is the fold on a narrow window; the detail follows underneath. */
+@media (max-width: 1100px) {
+  .gh-panes { grid-template-columns: minmax(0, 1fr); }
+  .gh-detail { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-top: var(--space-3); }
+}

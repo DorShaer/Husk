@@ -6314,6 +6314,115 @@ ipcMain.handle('registry:fetch', async (_e, payload = {}) => {
 // workflows:artifactRead with source 'registry', so the install sheet behind it
 // is the one that already exists.
 
+// ─── GitHub, through the gh CLI ──────────────────────────────────────────────
+//
+// gh-cli.js holds every rule about what to ask and how to read the answer. This
+// is the part it deliberately does not do: the spawn.
+//
+// Husk stores no GitHub credential. gh is already logged in as whoever logged
+// it in, and Husk borrows that for the length of one command. There is nothing
+// here to leak and nothing to revoke but `gh auth logout`.
+//
+// The spawn takes an argv array and no shell, so a branch, a title or a search
+// term is one argument however it is spelled. gh is resolved to an absolute
+// path first, because a GUI-launched Husk inherits a shorter PATH than a
+// terminal does and would otherwise report gh as missing on a machine that has
+// it.
+
+const GhCli = require('./lib/gh-cli');
+
+const GH_TIMEOUT_MS = 20000;
+// A repository with hundreds of open pull requests answers in megabytes. The
+// list surface shows a page, so anything past this is a gh that ignored the
+// limit rather than an answer worth buffering.
+const GH_MAX_STDOUT = 8 * 1024 * 1024;
+
+// Resolved once per run and remembered, since the answer only changes when the
+// user installs gh, and a login-shell probe per keystroke would be absurd.
+let ghExePath;
+function resolveGh() {
+  if (ghExePath === undefined) {
+    const found = resolveAgentExe('gh', process.env.PATH || '');
+    ghExePath = (found && found !== 'gh') ? found : null;
+  }
+  return ghExePath;
+}
+
+function runGh(cwd, args) {
+  return new Promise((resolve) => {
+    const exe = resolveGh();
+    if (!exe) {
+      return resolve({
+        ok: false,
+        code: 'gh-missing',
+        message: GhCli.FAILURE_COPY['gh-missing'],
+        detail: 'Husk looked on your PATH and through a login shell.',
+      });
+    }
+
+    let child;
+    try {
+      child = spawn(exe, args, {
+        cwd: cwd || undefined,
+        // No shell: every element of args stays one argument.
+        shell: false,
+        timeout: GH_TIMEOUT_MS,
+        env: { ...process.env, GH_PAGER: 'cat', GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+      });
+    } catch (err) {
+      return resolve({ ok: false, code: 'gh-failed', message: GhCli.FAILURE_COPY['gh-failed'], detail: err && err.message });
+    }
+
+    let out = '';
+    let err = '';
+    let capped = false;
+    child.stdout.on('data', (d) => {
+      if (capped) return;
+      out += d.toString();
+      if (out.length > GH_MAX_STDOUT) { capped = true; try { child.kill(); } catch (_) {} }
+    });
+    child.stderr.on('data', (d) => { if (err.length < 8192) err += d.toString(); });
+    child.on('error', (e) => resolve({ ok: false, code: 'gh-failed', message: GhCli.FAILURE_COPY['gh-failed'], detail: e && e.message }));
+    child.on('close', (codeNum) => {
+      if (capped) {
+        return resolve({ ok: false, code: 'gh-failed', message: 'that repository answered with more than Husk will read at once', detail: `${GH_MAX_STDOUT} byte limit` });
+      }
+      if (codeNum !== 0) return resolve(GhCli.classifyFailure(codeNum, err));
+      resolve({ ok: true, stdout: out });
+    });
+  });
+}
+
+// The folder every call runs in. A GitHub surface follows the workspace the way
+// Files does: the repository is whichever one the current folder sits in, and
+// gh reads the remote from there rather than from anything Husk stores.
+function ghCwd(payload) {
+  const asked = payload && typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+  if (asked) return path.resolve(asked);
+  const active = _projectsList().find((p) => p && p.id === config.activeProjectId);
+  if (active && typeof active.path === 'string' && active.path) return path.resolve(active.path);
+  return process.cwd();
+}
+
+ipcMain.handle('github:available', () => ({ ok: true, available: !!resolveGh(), path: resolveGh() || '' }));
+
+ipcMain.handle('github:repo', async (_e, payload = {}) => {
+  const res = await runGh(ghCwd(payload), GhCli.repoViewArgs());
+  return res.ok ? GhCli.parseRepoView(res.stdout) : res;
+});
+
+ipcMain.handle('github:pulls', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const res = await runGh(ghCwd(p), GhCli.prListArgs(p));
+  return res.ok ? GhCli.parsePrList(res.stdout) : res;
+});
+
+ipcMain.handle('github:issues', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const res = await runGh(ghCwd(p), GhCli.issueListArgs(p));
+  return res.ok ? GhCli.parseIssueList(res.stdout) : res;
+});
+
 // ─── IPC: the sidecar ────────────────────────────────────────────────────────
 
 // Every row at once, because the workflows grid paints every card in one pass

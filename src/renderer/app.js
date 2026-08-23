@@ -238,7 +238,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins', 'prefs']);
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'github', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -1815,6 +1815,7 @@ function setPage(name, opts = {}) {
     $('#files-hidden').checked = !!(cfg && cfg.showHidden);
     fxLoad(root);
   }
+  if (name === 'github' && window.Gh) window.Gh.open();
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
   if (name === 'prefs') { bindPrefs(); paintPrefsVersion(); }
@@ -14056,6 +14057,7 @@ const ICONS = {
   workflows:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><rect x="17" y="9" width="6" height="6" rx="1.5"/><path d="M7 12h2M15 12h2"/><path d="M4 9V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg>',
   autopilot:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg>',
   projects:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg>',
+  github:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.7A5.2 5.2 0 0 0 20 5.8a4.9 4.9 0 0 0-.1-3.6s-1.1-.3-3.7 1.4a12.7 12.7 0 0 0-6.4 0C7.2 1.9 6.1 2.2 6.1 2.2A4.9 4.9 0 0 0 6 5.8a5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7a3.4 3.4 0 0 0-.9 2.6V22"/></svg>',
   prompts:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M16 4v3h3"/><path d="M8 12h8M8 16h8M8 8h4"/></svg>',
 };
 
@@ -14080,6 +14082,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: 'Alt 2' },
   { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: 'Alt 3' },
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
+  { icon: ICONS.github,      label: 'Switch to GitHub',               run: () => setPage('github') },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
   { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins') },
   { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('prefs'),       shortcut: 'Alt 6' },

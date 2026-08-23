@@ -114,6 +114,21 @@
         "src/lib/workflow-graph.js"
       ]
     },
+    "github": {
+      "specs": [
+        "github-page.spec.js"
+      ],
+      "tokens": [
+        "gh",
+        "github",
+        "page:github",
+        "ipc:github"
+      ],
+      "paths": [
+        "src/lib/gh-cli.js",
+        "src/renderer/gh-page.js"
+      ]
+    },
     "market": {
       "specs": [
         "workflow-market.spec.js"
