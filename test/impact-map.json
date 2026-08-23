@@ -193,7 +193,7 @@
     },
     "sessions": {
       "specs": [
-        "sessions-detail-panel.spec.js"
+        "sessions-page.spec.js"
       ],
       "tokens": [
         "dp",
@@ -205,7 +205,8 @@
       ],
       "paths": [
         "src/lib/claude-session.js",
-        "src/lib/copilot-session-title.js"
+        "src/lib/copilot-session-title.js",
+        "src/lib/session-view.js"
       ]
     },
     "statuspanel": {

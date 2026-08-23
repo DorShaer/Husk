@@ -1870,11 +1870,6 @@ async function refreshStats() {
     // The Skills subtitle is owned by applyPromptsLabels so labels stay
     // agent-aware while the count remains current.
     applyPromptsLabels();
-    // Sessions subheader is a hint until renderSessions reads the active
-    // agent's sessions and takes ownership of the line.
-    if (!sessionsSubOwned) {
-      $('#sessions-sub').textContent = 'Click a session to preview, Resume to continue';
-    }
   } catch (err) { console.warn('stats error', err); }
 }
 
@@ -2926,7 +2921,7 @@ async function wsFillInspect(p) {
 // must not block the workspace opening.
 async function wsFillSessions(p) {
   let res = null;
-  try { res = await window.husk.sessions.list(); } catch (_) {}
+  try { res = await sessionsFetch(); } catch (_) {}
   // The user may have navigated away while the list loaded.
   if (wsOpenId !== p.id) return;
   const list = $('#ws-sessions-list');
@@ -8688,405 +8683,1845 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
   });
 }
 
-// ─── Sessions page ───────────────────────────────────────────────────────────────
-let sessionsCache = [];
-// Set once renderSessions has written the detailed subheader, so the periodic
-// stats pass stops replacing it with the placeholder.
-let sessionsSubOwned = false;
-let sessionsAgent = 'claude';
-let sessionsDir = '';
-let sessionsSelectMode = false;
-const sessionsSelected = new Set();
+// ─── Sessions page: the Roster ───────────────────────────────────────────────
+// A grouped roster beside a live detail pane. The roster is a flat ARIA tree
+// reconciled by key, so scroll, cursor, selection and expansion survive every
+// repaint. The view model (filtering, threading, grouping, labels) is the pure
+// module behind window.husk.sessionView; this file only paints what it returns.
 
-// One shape for every state that leaves the list without rows: real icon,
-// headline, one support line, then the actions that state offers. Callers
-// escape their own interpolations; everything else here is static.
-function sessionsEmptyCard({ title, msg, actions = '', hints = '' }) {
-  return `<div class="empty-state">
-    <div class="es-icon">${ICONS.sessions}</div>
-    <div class="se-title">${title}</div>
-    <div class="es-msg">${msg}</div>
-    ${actions}
-    ${hints}
-  </div>`;
+const SX_CAP = 300;          // the list handler caps one tool at 300; the others return everything
+const SX_MIN_Q = 2;          // a one-glyph subsequence matches nearly every title
+const SX_PEEK_MAX = 40;      // transcript tails kept in memory
+const SX_SKELETONS = 6;
+
+const sx = {
+  cache: [],
+  agent: '',
+  dir: '',
+  currentCwd: '',
+  hiddenAutopilot: 0,
+  supported: true,
+  loaded: false,
+  error: '',
+  listable: 0,
+  names: {},
+  now: 0,
+
+  agents: {
+    ok: true, error: '', supported: true, controllable: false,
+    bySession: new Map(),
+    byParent: new Map(),
+    chatIds: new Set(),
+  },
+
+  groupBy: 'project',
+  chips: { project: true, live: false, needs: false, work: false },
+  query: '',
+  hits: new Map(),
+  flat: false,
+
+  expandedAgents: new Set(),
+  expandedThreads: new Set(),
+  collapsed: new Set(),
+  olderOpen: false,
+  // Set once the drawer is opened or closed by hand, which retires the
+  // auto-open below so the button cannot be undone in its own frame.
+  olderPinned: false,
+
+  picking: false,
+  picked: new Set(),
+  anchorKey: '',
+  cursorKey: '',
+  detailId: '',
+  detailTab: 'activity',
+
+  feed: { id: '', entries: [], model: '', state: 'idle', error: '' },
+  peekCache: new Map(),
+
+  nodes: new Map(),
+  models: new Map(),
+  order: [],
+  loadSeq: 0,
+  peekSeq: 0,
+  poll: 0,
+  peekTimer: 0,
+};
+
+const SV = () => window.husk.sessionView;
+
+// ─── Shared list fetch ───────────────────────────────────────────────────────
+// One list per cycle for the page, the rail's Recent, the chat sidebar and the
+// workspace picker.
+let sxFetchInflight = null;
+let sxFetchRes = null;
+let sxFetchAt = 0;
+let sxFetchEpoch = 0;
+let sxPollPaused = false;
+let sxDeleting = false;
+
+function sessionsFetch({ maxAgeMs = 1500 } = {}) {
+  if (sxFetchInflight) return sxFetchInflight;
+  if (sxFetchRes && Date.now() - sxFetchAt < maxAgeMs) return Promise.resolve(sxFetchRes);
+  const epoch = sxFetchEpoch;
+  sxFetchInflight = window.husk.sessions.list().then((r) => {
+    // A result issued before an invalidation is delivered but never cached.
+    if (epoch === sxFetchEpoch) { sxFetchRes = r; sxFetchAt = Date.now(); }
+    return r;
+  }).finally(() => { sxFetchInflight = null; });
+  return sxFetchInflight;
+}
+function sessionsFetchInvalidate() { sxFetchEpoch += 1; sxFetchRes = null; sxFetchAt = 0; }
+function sxPausePoll(on) { sxPollPaused = !!on; }
+
+// The only writer of the query. Setting an input's value from script fires no
+// input event, so the field, its clear button and the paint move together here
+// or they drift apart.
+function sxSetQuery(value) {
+  const q = $('#sx-q');
+  sx.query = String(value || '');
+  if (q && q.value !== sx.query) q.value = sx.query;
+  sxShow($('#sx-search-clear'), !!sx.query);
+  sxPaint();
+  sxSub();
 }
 
-// The card is rebuilt on every paint, so its buttons are bound on every paint.
-function wireSessionsEmpty(host) {
-  const start = host.querySelector('#se-start-chat');
-  if (start) start.addEventListener('click', () => setPage('chat'));
-  const open = host.querySelector('#se-open-folder');
-  if (open) open.addEventListener('click', openSessionsFolder);
-  const retry = host.querySelector('#se-retry');
-  if (retry) retry.addEventListener('click', renderSessions);
-  const clear = host.querySelector('#se-clear-filter');
-  if (clear) {
-    clear.addEventListener('click', () => {
-      const search = $('#sessions-search');
-      search.value = '';
-      paintSessions(sessionsCache, '');
-      search.focus();
-    });
+// ─── DOM helpers ─────────────────────────────────────────────────────────────
+
+function sxClone(id) {
+  const tpl = document.getElementById(id);
+  return tpl ? tpl.content.firstElementChild.cloneNode(true) : null;
+}
+function sxText(node, sel, value) {
+  const el = sel ? node.querySelector(sel) : node;
+  if (el && el.textContent !== value) el.textContent = value;
+  return el;
+}
+// Toggles the attribute rather than the property: `hidden` is an HTMLElement
+// property, so assigning it to an SVG node sets an expando and leaves the
+// attribute in place.
+function sxShow(el, on) { if (el) el.toggleAttribute('hidden', !on); }
+
+// A short label for a machine value that has to fit a fixed cell.
+function sxClip(s, max) {
+  const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+async function sxCopy(value, label) {
+  try { await navigator.clipboard.writeText(String(value || '')); toast(`${label} copied`, 'success'); }
+  catch (_) { toast('Could not copy', 'error'); }
+}
+
+// ─── Load ────────────────────────────────────────────────────────────────────
+
+async function renderSessions() { return sxLoad({ firstPaint: !sx.loaded }); }
+
+// Returns the registry rather than assigning it, so a load that loses the race
+// cannot overwrite a newer one's agents on its way out.
+async function sxLoadAgents() {
+  const next = {
+    ok: true, error: '', supported: true, controllable: false,
+    bySession: new Map(), byParent: new Map(), chatIds: new Set(),
+  };
+  let res = null;
+  try { res = await window.husk.bgAgents.list({ all: true }); }
+  catch (err) { next.ok = false; next.error = (err && err.message) || 'could not list agents'; return next; }
+  if (!res || res.ok === false) {
+    next.ok = false;
+    next.error = String((res && res.error) || 'could not list agents');
+    next.supported = !(res && res.supported === false);
+    return next;
+  }
+  next.supported = res.supported !== false;
+  next.controllable = res.controllable === true;
+  for (const a of Array.isArray(res.agents) ? res.agents : []) {
+    if (!a || !a.sessionId) continue;
+    next.bySession.set(a.sessionId, a);
+    if (!a.parentSessionId) continue;
+    if (!next.byParent.has(a.parentSessionId)) next.byParent.set(a.parentSessionId, []);
+    next.byParent.get(a.parentSessionId).push(a);
+  }
+  for (const arr of next.byParent.values()) arr.sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0));
+  // Which sessions a tool is holding open right now, here or in another window.
+  for (const c of Array.isArray(res.chats) ? res.chats : []) {
+    if (c && c.sessionId) next.chatIds.add(c.sessionId);
+  }
+  return next;
+}
+
+async function sxLoad(opts = {}) {
+  const seq = ++sx.loadSeq;
+  if (opts.firstPaint) sxSkeletons();
+  let res = null;
+  let agents = null;
+  try {
+    [res, agents] = await Promise.all([sessionsFetch(), sxLoadAgents()]);
+  } catch (err) {
+    if (seq !== sx.loadSeq) return;
+    sx.error = (err && err.message) || String(err || 'unknown error');
+    sx.loaded = true;
+    sxSub(); sxPaint(); sxSyncPicking();
+    return;
+  }
+  if (seq !== sx.loadSeq) return;
+  sx.error = '';
+  if (agents) sx.agents = agents;
+  // The list handler names one tool on a catch path, so the eyebrow reads the
+  // value only when there is one.
+  sx.agent = String((res && res.agent) || '');
+  sx.supported = !!(res && res.supported);
+  sx.dir = String((res && res.sessionsDir) || '');
+  sx.currentCwd = String((res && res.currentCwd) || '');
+  sx.hiddenAutopilot = Number((res && res.hiddenAutopilotSessions) || 0);
+  sx.cache = Array.isArray(res && res.sessions) ? res.sessions.slice(0, SX_CAP) : [];
+  sx.names = (cfg && cfg.sessionNames) || {};
+  sx.listable = sxListable();
+  sx.loaded = true;
+  if (!sx.supported) sxExitPicking();
+  const live = new Set(sx.cache.map((s) => s.path));
+  for (const p of [...sx.picked]) if (!live.has(p)) sx.picked.delete(p);
+  sxAutoSelect();
+  sxPaint();
+  sxSub();
+  sxSyncPicking();
+  sxDetailPaint();
+  refreshRecentList();
+}
+
+// ─── Sub-header ──────────────────────────────────────────────────────────────
+
+// How many sessions the roster can ever show: an agent's transcript belongs to
+// the chat that started it, so it is not a session of its own.
+function sxListable() {
+  const ids = new Set(sx.cache.map((s) => s.id));
+  return sx.cache.filter((s) => {
+    const a = sx.agents.bySession.get(s.id);
+    return !(a && a.parentSessionId && ids.has(a.parentSessionId));
+  }).length;
+}
+
+function sxSub() {
+  const el = $('#sessions-sub');
+  if (!el) return;
+  el.replaceChildren();
+  if (!sx.supported) {
+    el.append(document.createTextNode('Session history is not available for this tool yet'));
+    return;
+  }
+  if (sx.hiddenAutopilot > 0) {
+    const note = document.createElement('span');
+    note.className = 'sx-note';
+    note.textContent = sx.hiddenAutopilot === 1
+      ? '1 Autopilot session is kept under Autopilot'
+      : `${sx.hiddenAutopilot} Autopilot sessions are kept under Autopilot`;
+    el.append(note);
   }
 }
 
-function openSessionsFolder() {
-  const dir = sessionsDir || (lastStats && lastStats.sessionsDir);
+// ─── View and keys ───────────────────────────────────────────────────────────
+
+let sxLastView = null;
+
+function sxView() {
+  sx.now = Date.now();
+  const q = sx.query.trim();
+  const ctx = {
+    now: sx.now,
+    query: q.length >= SX_MIN_Q ? q : '',
+    chips: sx.chips,
+    currentCwd: sx.currentCwd,
+    groupBy: sx.groupBy,
+    olderOpen: sx.olderOpen,
+    picking: sx.picking,
+    names: sx.names,
+    bySession: sx.agents.bySession,
+    byParent: sx.agents.byParent,
+    fuzzyMatch: window.husk.text.fuzzyMatch,
+  };
+  let view = SV().buildView(sx.cache, ctx);
+  // Everything cold: the roster would otherwise be an empty pane above a button.
+  if (!sx.olderPinned && !sx.olderOpen && view.olderCount > 0 && !view.groups.some((g) => g.rows.length)) {
+    sx.olderOpen = true;
+    view = SV().buildView(sx.cache, { ...ctx, olderOpen: true });
+  }
+  sx.flat = view.flat;
+  sx.hits = view.hits;
+  sxLastView = view;
+  return view;
+}
+
+// The paint order, and the model behind every key, derived in one walk.
+function sxKeys(view) {
+  const keys = [];
+  sx.models = new Map();
+  if (!sx.agents.ok) {
+    keys.push('notice:agents');
+    sx.models.set('notice:agents', { kind: 'notice' });
+  }
+  for (const g of view.groups) {
+    const gk = `g:${g.id}`;
+    keys.push(gk);
+    sx.models.set(gk, { kind: 'group', group: g });
+    if (sx.collapsed.has(g.id)) continue;
+    if (!g.rows.length) {
+      if (g.ghost) { keys.push('ghost'); sx.models.set('ghost', { kind: 'ghost' }); }
+      continue;
+    }
+    g.rows.forEach((e, i) => {
+      const rk = `s:${e.s.id}`;
+      keys.push(rk);
+      sx.models.set(rk, {
+        kind: 'row', session: e.s, runs: e.runs, threadKey: e.key,
+        group: g, level: 2, posinset: i + 1, setsize: g.rows.length,
+      });
+      if (e.key && e.runs > 1 && sx.expandedThreads.has(e.key)) {
+        e.sibs.forEach((sib, j) => {
+          const tk = `t:${sib.id}`;
+          keys.push(tk);
+          sx.models.set(tk, {
+            kind: 'row', session: sib, runs: 1, threadKey: '', group: g,
+            level: 3, child: true, posinset: j + 1, setsize: e.sibs.length,
+          });
+        });
+      }
+      const kids = sx.agents.byParent.get(e.s.id) || [];
+      if (kids.length && sx.expandedAgents.has(e.s.id)) {
+        kids.forEach((a, j) => {
+          const ak = `a:${a.sessionId}`;
+          keys.push(ak);
+          sx.models.set(ak, { kind: 'agent', agent: a, level: 3, posinset: j + 1, setsize: kids.length });
+        });
+      }
+    });
+  }
+  return keys;
+}
+
+// ─── Paint ───────────────────────────────────────────────────────────────────
+
+function sxSkeletons() {
+  const list = $('#sx-list');
+  if (!list) return;
+  list.replaceChildren();
+  sx.nodes = new Map();
+  for (let i = 0; i < SX_SKELETONS; i++) {
+    const n = sxClone('sx-skel-tpl');
+    if (n) list.append(n);
+  }
+}
+
+function sxPaint() {
+  const list = $('#sx-list');
+  if (!list) return;
+  if (!sx.loaded) return;
+
+  // The rowless paths still own the counts, or the roster keeps reporting the
+  // last tool's totals under a card that says it has none.
+  if (sx.error) { sxRenderEmptyOnly(sxErrorCard()); sxChipsPaint(); sxCountPaint(null); sxOlderPaint(null); return; }
+  if (!sx.supported) { sxRenderEmptyOnly(sxUnsupportedCard()); sxChipsPaint(); sxCountPaint(null); sxOlderPaint(null); return; }
+
+  const view = sxView();
+  const keys = sxKeys(view);
+  const hasRows = keys.some((k) => k.startsWith('s:'));
+
+  if (!hasRows && !view.groups.some((g) => g.ghost)) {
+    sxRenderEmptyOnly(sxRowlessCard(view));
+    sxChipsPaint();
+    sxCountPaint(view);
+    sxOlderPaint(view);
+    return;
+  }
+
+  sxReconcile(keys);
+  sxChipsPaint();
+  sxCountPaint(view);
+  sxOlderPaint(view);
+  sxCursorSync(keys);
+  list.classList.toggle('is-picking', sx.picking);
+}
+
+// One rowless card replaces the whole list, and the reconciler's map is dropped
+// with it so the next paint rebuilds cleanly.
+function sxRenderEmptyOnly(card) {
+  const list = $('#sx-list');
+  if (!list) return;
+  list.replaceChildren(card);
+  sx.nodes = new Map();
+  sx.order = [];
+}
+
+function sxNodeFor(key) {
+  if (key.startsWith('g:')) return sxClone('sx-group-tpl');
+  if (key === 'ghost') return sxClone('sx-ghost-tpl');
+  if (key === 'notice:agents') return sxClone('sx-notice-tpl');
+  return sxClone('sx-row-tpl');
+}
+
+function sxReconcile(keys) {
+  const list = $('#sx-list');
+  // Nodes the reconciler did not create: skeletons, empty cards, stray clones.
+  for (const n of [...list.children]) if (!n.dataset.key) n.remove();
+  const want = new Set(keys);
+  for (const [k, node] of sx.nodes) {
+    if (!want.has(k)) { node.remove(); sx.nodes.delete(k); }
+  }
+  let anchor = list.firstChild;
+  for (const key of keys) {
+    let node = sx.nodes.get(key);
+    if (!node) {
+      node = sxNodeFor(key);
+      if (!node) continue;
+      node.dataset.key = key;
+      sx.nodes.set(key, node);
+    }
+    if (node !== anchor) list.insertBefore(node, anchor);
+    else anchor = anchor.nextSibling;
+    sxUpdateFor(key, node, sx.models.get(key));
+  }
+  sx.order = keys;
+}
+
+function sxUpdateFor(key, node, model) {
+  if (!model) return;
+  if (model.kind === 'group') return sxGroupUpdate(node, model);
+  if (model.kind === 'agent') return sxAgentRowUpdate(node, model);
+  if (model.kind === 'row') return sxRowUpdate(node, model);
+  if (model.kind === 'notice') return sxNoticeUpdate(node);
+  return undefined;
+}
+
+function sxGroupUpdate(node, model) {
+  const g = model.group;
+  const open = !sx.collapsed.has(g.id);
+  node.id = `sx-g-${sxSlug(g.id)}`;
+  node.setAttribute('aria-expanded', open ? 'true' : 'false');
+  node.setAttribute('aria-label', `${g.name}, ${g.rows.length} session${g.rows.length === 1 ? '' : 's'}`);
+  node.classList.toggle('is-current', !!g.current);
+  sxText(node, '.sx-g-name', g.name);
+  sxText(node, '.sx-g-note', g.note || '');
+  sxText(node, '.sx-g-n', g.rows.length ? String(g.rows.length) : '');
+}
+
+function sxNoticeUpdate(node) {
+  sxText(node, '.sx-notice-msg', 'Agent status is unavailable right now.');
+  node.title = sx.agents.error || '';
+}
+
+// The trailing prose. The library's chain stops before the clock, so the last
+// resort is supplied here.
+// A row earns its second line only when it has something to say. The start time
+// would restate the time column an inch to its right, and an apology for a
+// missing one says less than the blank it replaces.
+function sxCont(s, sig) {
+  return SV().scent(s, sig, sx.names);
+}
+
+function sxRowUpdate(node, model) {
+  const s = model.session;
+  const sig = SV().signal(s, sx.agents);
+  const when = SV().formatWhen(s.mtime, sx.now);
+  const rawTitle = SV().titleOf(s, sx.names);
+  const untitled = !rawTitle || rawTitle === '(empty)';
+  const title = untitled ? 'Untitled session' : rawTitle;
+  const hits = untitled ? [] : (sx.hits.get(s.id) || []);
+  const cont = sxCont(s, sig);
+  const kids = sx.agents.byParent.get(s.id) || [];
+  const expandedKids = sx.expandedAgents.has(s.id);
+  const isCurrent = sx.detailId === s.id;
+  const isOpen = !!tabForSession(s.id);
+  const isElsewhere = !isOpen && sx.agents.chatIds.has(s.id);
+  const deletable = SV().isDeletable(s);
+  const picked = sx.picked.has(s.path);
+  const runs = model.runs > 1 ? `x${model.runs}` : '';
+  // A row with children but nothing live still says how many it has.
+  const tok = sig ? sig.tok : (kids.length ? `${kids.length} agent${kids.length === 1 ? '' : 's'}` : '');
+
+  // The second line exists only when a signal or a scent fills it, which is
+  // what gives the list its density gradient: live work is tall, history is not.
+  const hasState = !!(tok || cont);
+
+  const sig2 = [
+    title, hits.join(','), sig ? sig.kind : '', tok, cont, when.label, runs, hasState ? '1' : '0',
+    kids.length, expandedKids ? '1' : '0', isCurrent ? '1' : '0',
+    isOpen ? '1' : '0', isElsewhere ? '1' : '0', deletable ? '1' : '0',
+    picked ? '1' : '0', s.named ? '1' : '0', model.level, model.posinset, model.setsize,
+  ].join(' ');
+  if (node._sxSig === sig2) return;
+  node._sxSig = sig2;
+
+  node.id = `sx-r-${sxSlug(s.id)}`;
+  node.setAttribute('aria-level', String(model.level));
+  node.setAttribute('aria-posinset', String(model.posinset));
+  node.setAttribute('aria-setsize', String(model.setsize));
+  node.setAttribute('aria-selected', picked ? 'true' : 'false');
+  node.classList.toggle('is-child', !!model.child);
+  node.classList.toggle('is-current', isCurrent);
+  node.classList.toggle('is-open', isOpen);
+  node.classList.toggle('is-elsewhere', isElsewhere);
+  node.classList.toggle('is-undeletable', !deletable);
+  node.classList.toggle('is-unnamed', !s.named && !untitled);
+  node.classList.toggle('is-untitled', untitled);
+  node.classList.toggle('has-state', hasState);
+  if (sig) node.dataset.state = sig.kind; else node.removeAttribute('data-state');
+  if (kids.length) node.setAttribute('aria-expanded', expandedKids ? 'true' : 'false');
+  else node.removeAttribute('aria-expanded');
+
+  const titleEl = node.querySelector('.sx-title');
+  titleEl.replaceChildren(sxTitleFrag(title, hits));
+  titleEl.title = title;
+
+  const runsEl = node.querySelector('.sx-runs');
+  sxText(runsEl, null, runs);
+  sxShow(runsEl, !!runs);
+  if (runs) runsEl.title = `${model.runs} runs of this task`;
+
+  const timeEl = node.querySelector('.sx-time');
+  sxText(timeEl, null, when.label);
+  timeEl.title = when.title;
+  if (s.mtime) timeEl.setAttribute('datetime', new Date(s.mtime).toISOString());
+
+  const tokEl = node.querySelector('.sx-tok');
+  sxText(tokEl, null, tok);
+  sxShow(tokEl, !!tok);
+  sxShow(node.querySelector('.sx-sep'), !!(tok && cont));
+  sxText(node, '.sx-cont', cont);
+  sxShow(node.querySelector('.sx-kids-caret'), kids.length > 0);
+
+  const check = node.querySelector('.sx-check');
+  if (check) check.title = deletable ? '' : 'Husk cannot delete this session file';
+
+  node.setAttribute('aria-label',
+    `${title}, ${sig ? `${sig.tok}, ` : ''}${when.title || 'no recorded date'}`);
+}
+
+function sxAgentRowUpdate(node, model) {
+  const a = model.agent;
+  const word = agentStateWord(a);
+  const when = SV().formatWhen(a.updatedAt || a.startedAt || 0, sx.now);
+  const title = a.name || agentShortId(a) || 'Agent';
+  const cont = agentSubtitle(a);
+  const tokens = a.tokens ? amFmtTokens(a.tokens) : '';
+  const state = window.husk.agents.state(a.state, { started: !!a.hasTranscript });
+
+  const sig2 = [title, word, cont, when.label, tokens, state, model.posinset, model.setsize].join(' ');
+  if (node._sxSig === sig2) return;
+  node._sxSig = sig2;
+
+  node.id = `sx-r-${sxSlug(a.sessionId)}`;
+  // An agent always states what it is doing, so its row always has two lines.
+  node.classList.add('is-child', 'is-agent', 'has-state');
+  node.setAttribute('aria-level', String(model.level));
+  node.setAttribute('aria-posinset', String(model.posinset));
+  node.setAttribute('aria-setsize', String(model.setsize));
+  node.setAttribute('aria-selected', 'false');
+  node.removeAttribute('aria-expanded');
+  node.dataset.state = state === 'done' ? 'done' : state;
+
+  const titleEl = node.querySelector('.sx-title');
+  titleEl.replaceChildren(document.createTextNode(title));
+  titleEl.title = title;
+
+  const runsEl = node.querySelector('.sx-runs');
+  sxText(runsEl, null, tokens);
+  sxShow(runsEl, !!tokens);
+
+  const timeEl = node.querySelector('.sx-time');
+  sxText(timeEl, null, when.label);
+  timeEl.title = when.title;
+
+  const tokEl = node.querySelector('.sx-tok');
+  sxText(tokEl, null, word);
+  sxShow(tokEl, true);
+  sxShow(node.querySelector('.sx-sep'), !!cont);
+  sxText(node, '.sx-cont', cont);
+  sxShow(node.querySelector('.sx-kids-caret'), false);
+  node.setAttribute('aria-label', `${title}, ${word}, ${when.title || 'no recorded date'}`);
+}
+
+// Matched glyphs are marked, never injected: the fragment is text nodes and
+// spans. Positions index the lowercased title, so they are clamped.
+function sxTitleFrag(title, positions) {
+  const frag = document.createDocumentFragment();
+  if (!positions || !positions.length) {
+    frag.append(document.createTextNode(title));
+    return frag;
+  }
+  const marks = new Set(positions.filter((p) => Number.isInteger(p) && p >= 0 && p < title.length));
+  if (!marks.size) {
+    frag.append(document.createTextNode(title));
+    return frag;
+  }
+  let run = '';
+  let marked = false;
+  let i = 0;
+  const flush = () => {
+    if (!run) return;
+    if (marked) {
+      const span = document.createElement('span');
+      span.className = 'sx-match';
+      span.textContent = run;
+      frag.append(span);
+    } else {
+      frag.append(document.createTextNode(run));
+    }
+    run = '';
+  };
+  // Walk by code point so a surrogate pair is never split.
+  for (const ch of title) {
+    const on = marks.has(i);
+    if (on !== marked) { flush(); marked = on; }
+    run += ch;
+    i += ch.length;
+  }
+  flush();
+  return frag;
+}
+
+function sxSlug(v) { return String(v || '').replace(/[^a-zA-Z0-9_-]/g, '-'); }
+
+// ─── Chips, count, older drawer ──────────────────────────────────────────────
+
+function sxChipsPaint() {
+  const counts = {
+    project: sx.currentCwd ? sx.cache.filter((s) => SV().inCurrentProject(s, sx.currentCwd)).length : 0,
+    live: 0, needs: 0,
+    work: sx.cache.filter((s) => !!(s.prdSlug || s.prdPath)).length,
+  };
+  for (const s of sx.cache) {
+    const sig = SV().signal(s, sx.agents);
+    if (!sig) continue;
+    if (sig.kind === 'running' || sig.kind === 'blocked') counts.live += 1;
+    if (sig.kind === 'blocked') counts.needs += 1;
+  }
+  const agentAware = sx.agents.supported !== false;
+  for (const btn of $$('#sx-chips .chip')) {
+    const key = btn.dataset.chip;
+    const n = counts[key] || 0;
+    // A permanently dead chip is worse than no chip. Scoping to the current
+    // project means nothing until a chat names one, and a pressed chip that
+    // filters nothing is a lie about what the list is showing.
+    const hide = !sx.supported
+      || ((key === 'live' || key === 'needs') && !agentAware)
+      || (key === 'project' && !sx.currentCwd);
+    btn.hidden = hide;
+    btn.setAttribute('aria-pressed', sx.chips[key] ? 'true' : 'false');
+    btn.disabled = !sx.chips[key] && n === 0;
+    const c = btn.querySelector('.chip-count');
+    if (c) c.textContent = String(n);
+  }
+  sxChipsRowSync();
+}
+
+// One owner for the filter row. It goes in select mode, and it goes when its
+// last chip does, since an empty row is a band and a rule around nothing.
+function sxChipsRowSync() {
+  const chips = $('#sx-chips');
+  if (!chips) return;
+  chips.hidden = sx.picking || !$$('#sx-chips .chip').some((b) => !b.hidden);
+}
+
+function sxCountPaint(view) {
+  const el = $('#sx-count-n');
+  if (!el) return;
+  const q = sx.query.trim();
+  if (q.length === 1) { el.textContent = 'Keep typing to search'; return; }
+  // Sessions parked behind the closed drawer are not on screen, and the drawer
+  // below states its own count, so the two lines add up to the total.
+  const hidden = view && !sx.olderOpen ? view.olderCount : 0;
+  const shown = view ? Math.max(0, view.shown - hidden) : 0;
+  const total = sx.listable;
+  el.textContent = `Showing ${shown} of ${total} session${total === 1 ? '' : 's'}`;
+}
+
+function sxOlderPaint(view) {
+  const btn = $('#sx-older');
+  if (!btn) return;
+  const n = view ? view.olderCount : 0;
+  btn.hidden = !(n > 0) || sx.flat;
+  btn.setAttribute('aria-expanded', sx.olderOpen ? 'true' : 'false');
+  sxText(btn, '.sx-older-n', String(n));
+}
+
+// ─── Rowless cards ───────────────────────────────────────────────────────────
+
+function sxEmptyCard({ title, msg, err = '', actions = [], hints = [] }) {
+  const card = document.createElement('div');
+  card.className = 'sx-empty';
+  card.dataset.key = 'empty';
+  const icon = sxClone('sx-empty-icon-tpl');
+  if (icon) card.append(icon);
+  const h = document.createElement('div');
+  h.className = 'sx-empty-title';
+  h.textContent = title;
+  const m = document.createElement('div');
+  m.className = 'sx-empty-msg';
+  m.textContent = msg;
+  card.append(h, m);
+  if (err) {
+    const e = document.createElement('div');
+    e.className = 'sx-empty-err';
+    e.textContent = err;
+    card.append(e);
+  }
+  if (actions.length) {
+    const bar = document.createElement('div');
+    bar.className = 'sx-empty-acts';
+    for (const a of actions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = a.primary ? 'btn-primary' : 'ghost-btn';
+      b.textContent = a.label;
+      b.dataset.act = a.act;
+      bar.append(b);
+    }
+    card.append(bar);
+  }
+  if (hints.length) {
+    const box = document.createElement('div');
+    box.className = 'sx-hints';
+    hints.forEach((text, i) => {
+      const row = document.createElement('div');
+      row.className = 'sx-hint';
+      const n = document.createElement('span');
+      n.className = 'sx-hint-n';
+      n.textContent = String(i + 1);
+      const t = document.createElement('span');
+      if (Array.isArray(text)) {
+        const [before, strong, after] = text;
+        const b = document.createElement('b');
+        b.textContent = strong;
+        t.append(document.createTextNode(before), b, document.createTextNode(after));
+      } else {
+        t.textContent = text;
+      }
+      row.append(n, t);
+      box.append(row);
+    });
+    card.append(box);
+  }
+  return card;
+}
+
+function sxErrorCard() {
+  return sxEmptyCard({
+    title: 'Could not read sessions',
+    msg: 'Husk could not read the session files on disk.',
+    err: sx.error,
+    actions: [{ label: 'Try again', act: 'retry', primary: true }, { label: 'Open folder', act: 'open-folder' }],
+  });
+}
+
+function sxUnsupportedCard() {
+  return sxEmptyCard({
+    title: 'Session history is not available for this tool yet',
+    msg: 'Husk does not read this tool’s session history. Switch the active tool in Preferences to browse sessions.',
+    actions: [{ label: 'Open Preferences', act: 'open-prefs', primary: true }],
+  });
+}
+
+function sxRowlessCard(view) {
+  const total = sx.listable;
+  const q = sx.query.trim();
+  if (!total) {
+    return sxEmptyCard({
+      title: 'No sessions yet',
+      msg: 'Your chats are saved here.',
+      actions: [{ label: 'Start a chat', act: 'new-chat', primary: true }, { label: 'Open folder', act: 'open-folder' }],
+      hints: [
+        ['Start a chat. ', 'Husk saves it for you', ' while you work.'],
+        ['It shows up in this list. ', 'Click a row', ' to read what happened.'],
+        ['Press ', 'Resume', ' to reopen that session in a new chat tab.'],
+      ],
+    });
+  }
+  if (q.length >= SX_MIN_Q) {
+    const actions = [{ label: 'Clear search', act: 'clear-search', primary: true }];
+    // Only offered when widening the scope would actually find something.
+    if (sx.chips.project && sx.currentCwd) {
+      const wide = SV().buildView(sx.cache, {
+        now: sx.now, query: q, chips: { ...sx.chips, project: false },
+        currentCwd: sx.currentCwd, groupBy: sx.groupBy, olderOpen: true, names: sx.names,
+        bySession: sx.agents.bySession, byParent: sx.agents.byParent,
+        fuzzyMatch: window.husk.text.fuzzyMatch,
+      });
+      if (wide.shown > 0) actions.push({ label: `Search all projects (${wide.shown})`, act: 'widen' });
+    }
+    return sxEmptyCard({
+      title: 'No matching sessions',
+      msg: `Nothing in ${total} session${total === 1 ? '' : 's'} matches "${q}".`,
+      actions,
+    });
+  }
+  const hidden = total - (view ? view.shown : 0);
+  return sxEmptyCard({
+    title: 'No sessions match these filters',
+    msg: `${hidden} session${hidden === 1 ? ' is' : 's are'} hidden by the filters above.`,
+    actions: [{ label: 'Clear filters', act: 'clear-filters', primary: true }],
+  });
+}
+
+// ─── Cursor ──────────────────────────────────────────────────────────────────
+
+function sxCursorSync(keys) {
+  if (!keys.length) { sx.cursorKey = ''; return; }
+  if (!sx.cursorKey || !keys.includes(sx.cursorKey)) {
+    const prev = sx.order.indexOf(sx.cursorKey);
+    // Snap to the nearest surviving key at or before the old index.
+    let next = keys[0];
+    if (prev >= 0) {
+      next = keys[Math.min(prev, keys.length - 1)];
+    }
+    sx.cursorKey = next;
+  }
+  sxCursorPaint();
+}
+
+function sxCursorPaint() {
+  const list = $('#sx-list');
+  if (!list) return;
+  for (const [k, n] of sx.nodes) n.classList.toggle('is-cursor', k === sx.cursorKey);
+  const node = sx.nodes.get(sx.cursorKey);
+  if (node && node.id) list.setAttribute('aria-activedescendant', node.id);
+  else list.removeAttribute('aria-activedescendant');
+}
+
+function sxSetCursor(key, { scroll = true } = {}) {
+  if (!key || !sx.nodes.has(key)) return;
+  sx.cursorKey = key;
+  sxCursorPaint();
+  if (scroll) {
+    const node = sx.nodes.get(key);
+    if (node) node.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function sxMove(delta) {
+  if (!sx.order.length) return;
+  const i = sx.order.indexOf(sx.cursorKey);
+  const next = Math.max(0, Math.min(sx.order.length - 1, (i < 0 ? 0 : i) + delta));
+  sxSetCursor(sx.order[next]);
+}
+
+function sxCursorSession() {
+  const m = sx.models.get(sx.cursorKey);
+  return m && m.kind === 'row' ? m.session : null;
+}
+
+// ─── Selection ───────────────────────────────────────────────────────────────
+
+function sxEnterPicking() {
+  if (sx.picking) return;
+  sx.picking = true;
+  sxPaint();
+  sxSyncPicking();
+}
+function sxExitPicking() {
+  if (!sx.picking && !sx.picked.size) return;
+  sx.picking = false;
+  sx.picked.clear();
+  sx.anchorKey = '';
+  sxPaint();
+  sxSyncPicking();
+}
+
+// One node, no repaint: selection is the hottest interaction on the page.
+function sxPick(key, { range = false } = {}) {
+  const m = sx.models.get(key);
+  if (!m || m.kind !== 'row') return;
+  if (!SV().isDeletable(m.session)) return;
+  if (range && sx.anchorKey) {
+    const a = sx.order.indexOf(sx.anchorKey);
+    const b = sx.order.indexOf(key);
+    if (a >= 0 && b >= 0) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      for (let i = lo; i <= hi; i++) {
+        const mm = sx.models.get(sx.order[i]);
+        if (mm && mm.kind === 'row' && SV().isDeletable(mm.session)) {
+          sx.picked.add(mm.session.path);
+          const n = sx.nodes.get(sx.order[i]);
+          if (n) n.setAttribute('aria-selected', 'true');
+        }
+      }
+      sxSyncPicking();
+      return;
+    }
+  }
+  const p = m.session.path;
+  const on = !sx.picked.has(p);
+  if (on) sx.picked.add(p); else sx.picked.delete(p);
+  const node = sx.nodes.get(key);
+  if (node) node.setAttribute('aria-selected', on ? 'true' : 'false');
+  sx.anchorKey = key;
+  sxSyncPicking();
+}
+
+function sxPickAll() {
+  for (const [k, m] of sx.models) {
+    if (m.kind !== 'row' || !SV().isDeletable(m.session)) continue;
+    sx.picked.add(m.session.path);
+    const n = sx.nodes.get(k);
+    if (n) n.setAttribute('aria-selected', 'true');
+  }
+  sxSyncPicking();
+}
+function sxPickNone() {
+  sx.picked.clear();
+  for (const n of sx.nodes.values()) if (n.hasAttribute('aria-selected')) n.setAttribute('aria-selected', 'false');
+  sxSyncPicking();
+}
+
+function sxSyncPicking() {
+  const bar = $('#sx-selbar');
+  if (!bar) return;
+  bar.hidden = !sx.picking;
+  sxChipsRowSync();
+  const n = sx.picked.size;
+  sxText(bar, '#sx-selbar-n', `${n} selected`);
+  const del = $('#sx-delete');
+  if (del) { del.textContent = `Delete (${n})`; del.disabled = n === 0; }
+  const list = $('#sx-list');
+  if (list) list.classList.toggle('is-picking', sx.picking);
+}
+
+// Answers whether anything was actually removed, so a caller that borrowed
+// select mode for the confirm knows whether to put it back. Re-entrant calls
+// are refused: two native confirms over one list would each resume against a
+// roster the other had already changed.
+async function sxDelete() {
+  const paths = [...sx.picked];
+  if (!paths.length || sxDeleting) return false;
+  sxDeleting = true;
+  sxPausePoll(true);
+  try {
+    const res = await window.husk.sessions.delete(paths);
+    if (res && res.cancelled) return false;
+    if (!res || (!res.ok && !res.deleted)) { toast((res && res.error) || 'Delete failed', 'error'); return false; }
+    toast(`Deleted ${res.deleted} session${res.deleted === 1 ? '' : 's'}`, 'success');
+    if (res.failed && res.failed.length) toast(`${res.failed.length} failed`, 'error');
+    sx.picking = false;
+    sx.picked.clear();
+    return true;
+  } finally {
+    sxDeleting = false;
+    sxPausePoll(false);
+    // The native modal runs in main while the timers here keep going, so the
+    // cache is dropped after the call resolves, never before.
+    sessionsFetchInvalidate();
+    await sxLoad({ firstPaint: false });
+  }
+}
+
+// ─── Detail pane ─────────────────────────────────────────────────────────────
+
+function sxSessionById(id) { return sx.cache.find((s) => s.id === id) || null; }
+
+// Opens on the row that most needs a person, chosen from what the roster is
+// actually showing: a pane loaded with a session no visible row matches leaves
+// the reader nothing to navigate back to.
+function sxAutoSelect() {
+  if (sx.detailId && sxSessionById(sx.detailId)) return;
+  const visible = [];
+  for (const g of sxView().groups) for (const e of g.rows) visible.push(e.s);
+  const pick = (kind) => visible.find((s) => {
+    const sig = SV().signal(s, sx.agents);
+    return sig && sig.kind === kind;
+  });
+  const next = pick('blocked') || pick('running') || visible[0] || null;
+  sx.detailId = next ? next.id : '';
+  if (next) sxPeek(next.id, {});
+}
+
+function sxSelect(id, { peek = true, open = false } = {}) {
+  if (!id) return;
+  // Narrow widths give the pane the whole page, so opening it is a separate
+  // act from loading it: the cursor walks the roster without covering it, and
+  // choosing a row brings the pane over.
+  if (open) sxOpenDetail();
+  if (sx.detailId === id) return;
+  sx.detailId = id;
+  sx.detailTab = 'activity';
+  for (const [k, n] of sx.nodes) n.classList.toggle('is-current', k === `s:${id}`);
+  sxDetailPaint();
+  if (peek) sxPeek(id, {});
+}
+
+// Only the narrow layout reads this; at full width both panes are always up.
+function sxOpenDetail() {
+  const host = $('#sx');
+  if (!host || host.dataset.detail === 'open') return;
+  host.dataset.detail = 'open';
+  const title = $('#sx-d-title');
+  if (title) title.focus();
+}
+
+function sxDetailPaint() {
+  const full = $('#sx-d-full');
+  const empty = $('#sx-d-empty');
+  if (!full || !empty) return;
+  const t = $('#sx-d-title');
+  // Never destroy work in progress. Everything else in the pane repaints while
+  // focused, so a poll keeps the clock and the tabs current under the cursor;
+  // focus is put back afterwards when the element it was on still exists.
+  if (t && t.isContentEditable) return;
+  const detail = $('#sx-detail');
+  const focusedId = detail && detail.contains(document.activeElement) && document.activeElement !== detail
+    ? document.activeElement.id
+    : '';
+
+  const s = sxSessionById(sx.detailId);
+  if (!s) {
+    full.hidden = true;
+    empty.hidden = false;
+    sxDetailEmptyPaint(empty);
+    return;
+  }
+  empty.hidden = true;
+  full.hidden = false;
+
+  const sig = SV().signal(s, sx.agents);
+  const holder = sx.agents.bySession.get(s.id) || null;
+  const rawTitle = SV().titleOf(s, sx.names);
+  const untitled = !rawTitle || rawTitle === '(empty)';
+  const title = untitled ? 'Untitled session' : rawTitle;
+
+  const eyebrow = [sx.agent ? `${sx.agent} session` : 'session', sig ? sig.tok : '']
+    .filter(Boolean).join(' · ');
+  sxText(full, '#sx-d-eyebrow', eyebrow);
+
+  if (t) {
+    sxText(t, null, title);
+    t.title = title;
+    t.classList.toggle('is-untitled', untitled);
+  }
+  sxText(full, '#sx-d-id', s.id);
+  sxText(full, '#sx-d-path', s.projectPath || '');
+
+  // Status clauses, in the order a reader needs them.
+  const clauses = [];
+  if (sig) clauses.push(sig.tok);
+  if (sig && sig.kind === 'blocked') {
+    const blocked = (sx.agents.byParent.get(s.id) || []).find((a) => a.running && agentStateWord(a) === 'needs you')
+      || (holder && holder.running ? holder : null);
+    const since = blocked && (blocked.updatedAt || blocked.startedAt);
+    if (since) clauses.push(`waiting ${SV().formatWhen(since, sx.now).label}`);
+  }
+  if (holder && holder.held) clauses.push(`held by agent ${agentShortId(holder)}`);
+  if (tabForSession(s.id)) clauses.push('open in a tab');
+  if (holder && holder.tokens) clauses.push(`${amFmtTokens(holder.tokens)} tokens`);
+  if (!clauses.length && s.startedMs) clauses.push(`started ${new Date(s.startedMs).toLocaleString()}`);
+  sxText(full, '#sx-d-status', clauses.join(' · '));
+
+  sxFactsPaint(s, holder);
+  sxActionsPaint(s, holder);
+  sxTabsPaint(s);
+
+  // The action bar and the tab strip are rebuilt above, so a control that had
+  // focus is a new node; hand focus back to its replacement.
+  if (focusedId && document.activeElement === document.body) {
+    const back = document.getElementById(focusedId);
+    if (back) back.focus();
+  }
+}
+
+function sxDetailEmptyPaint(host) {
+  // The pane restates whichever state the roster is in, so the two halves never
+  // disagree about whether a chat started now would ever appear here.
+  const state = sx.supported ? 'empty' : 'unsupported';
+  if (host.dataset.built === state) return;
+  host.dataset.built = state;
+  const eyebrow = document.createElement('div');
+  eyebrow.className = 'sx-d-empty-eyebrow';
+  eyebrow.textContent = 'SESSIONS';
+  const title = document.createElement('div');
+  title.className = 'sx-d-empty-title';
+  title.textContent = sx.supported ? 'Nothing saved yet' : 'No session history here';
+  const msg = document.createElement('div');
+  msg.className = 'sx-d-empty-msg';
+  msg.textContent = sx.supported
+    ? 'Start a chat and it lands here.'
+    : 'Switch the active tool in Preferences to browse sessions.';
+  const keys = document.createElement('div');
+  keys.className = 'sx-keys';
+  const legend = [
+    [['↑', '↓'], 'move'],
+    [['Enter'], 'open'],
+    [['Shift', 'Enter'], 'resume'],
+    [['/'], 'search'],
+    [['Space'], 'select'],
+  ];
+  for (const [caps, label] of legend) {
+    const span = document.createElement('span');
+    for (const c of caps) {
+      const kbd = document.createElement('span');
+      kbd.className = 'kbd-cap';
+      kbd.textContent = c;
+      span.append(kbd);
+    }
+    span.append(document.createTextNode(` ${label}`));
+    keys.append(span);
+  }
+  // Keys that walk a list mean nothing where there will never be one.
+  if (sx.supported) host.replaceChildren(eyebrow, title, msg, keys);
+  else host.replaceChildren(eyebrow, title, msg);
+}
+
+function sxFactsPaint(s, holder) {
+  const dl = $('#sx-d-facts');
+  if (!dl) return;
+  const rows = [];
+  const add = (k, v, opts = {}) => { if (v) rows.push([k, v, opts]); };
+  if (s.mtime) add('last activity', new Date(s.mtime).toLocaleString());
+  add('ran for', SV().formatDuration(s.startedMs, s.mtime));
+  if (sx.feed.id === s.id && sx.feed.entries.length) {
+    const turns = sx.feed.entries.filter((e) => e.kind === 'user').length;
+    add('turns', turns >= 24 ? '24+' : String(turns));
+  }
+  if (s.startedISO) add('started', new Date(s.startedISO).toLocaleString());
+  if (sx.feed.id === s.id && sx.feed.model) add('model', sx.feed.model, { mono: true });
+  add('work item', s.prdSlug, { open: s.prdPath });
+  add('phase', String(s.prdPhase || '').toLowerCase());
+  add('progress', s.prdProgress, { mono: true });
+  if (holder) add('held by', `agent ${agentShortId(holder)} · ${agentStateWord(holder)}`);
+  add('transcript', SV().formatSize(s.sizeBytes), { mono: true });
+
+  const nodes = [];
+  for (const [k, v, opts] of rows) {
+    const dt = document.createElement('dt');
+    dt.textContent = k;
+    const dd = document.createElement('dd');
+    if (opts.mono) dd.classList.add('sx-mono');
+    if (opts.copy) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sx-copy';
+      // The label rides its own span: that is what carries the ellipsis.
+      const label = document.createElement('span');
+      label.textContent = v;
+      b.append(label);
+      b.dataset.act = 'copy-value';
+      b.dataset.value = opts.copy;
+      b.dataset.label = opts.label || 'Value';
+      dd.append(b);
+    } else if (opts.open) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sx-link sx-fact-link';
+      b.textContent = v;
+      b.dataset.act = 'open-path';
+      b.dataset.path = opts.open;
+      dd.append(b);
+    } else {
+      dd.textContent = v;
+    }
+    dd.title = String(v);
+    const pair = document.createElement('div');
+    pair.className = 'sx-fact';
+    pair.append(dt, dd);
+    nodes.push(pair);
+  }
+  dl.replaceChildren(...nodes);
+}
+
+function sxActionsPaint(s, holder) {
+  const bar = $('#sx-d-acts');
+  if (!bar) return;
+  const held = !!(holder && holder.held);
+  const open = !!tabForSession(s.id);
+  const acts = [];
+  if (held) {
+    acts.push({ label: 'Attach to the running agent', act: 'attach', primary: true });
+    acts.push({ label: 'Open a copy', act: 'fork' });
+  } else if (open) {
+    acts.push({ label: 'Focus the open chat', act: 'focus', primary: true });
+  } else {
+    acts.push({ label: 'Resume this session', act: 'resume', primary: true });
+  }
+  const nodes = acts.map((a) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = a.primary ? 'btn-primary' : 'ghost-btn';
+    b.textContent = a.label;
+    b.dataset.act = a.act;
+    return b;
+  });
+  bar.replaceChildren(...nodes);
+}
+
+function sxTabsPaint(s) {
+  const tabs = $('#sx-d-tabs');
+  const body = $('#sx-d-body');
+  if (!tabs || !body) return;
+  const kids = sx.agents.byParent.get(s.id) || [];
+  const available = [];
+  // The transcript reader resolves one tool's directory, so the tab is only
+  // offered where it can answer.
+  if (sx.agents.supported !== false) available.push(['activity', 'Activity']);
+  if (s.prdPath) available.push(['work', 'Work item']);
+  if (kids.length) available.push(['agents', `Agents (${kids.length})`]);
+  if (!available.some(([k]) => k === sx.detailTab)) sx.detailTab = available.length ? available[0][0] : '';
+
+  const nodes = available.map(([key, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sx-d-tab';
+    b.id = `sx-d-tab-${key}`;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', sx.detailTab === key ? 'true' : 'false');
+    b.setAttribute('aria-controls', 'sx-d-body');
+    b.dataset.act = 'tab';
+    b.dataset.tab = key;
+    b.textContent = label;
+    return b;
+  });
+  tabs.replaceChildren(...nodes);
+  tabs.hidden = available.length < 2;
+  const active = available.find(([k]) => k === sx.detailTab);
+  if (active) body.setAttribute('aria-labelledby', `sx-d-tab-${active[0]}`);
+
+  if (!available.length) { sxNote(body, 'Husk does not read this tool’s transcripts yet.'); return; }
+  if (sx.detailTab === 'activity') sxFeedPaint(s);
+  else if (sx.detailTab === 'work') sxWorkPaint(s);
+  else if (sx.detailTab === 'agents') sxAgentsTabPaint(s, kids);
+}
+
+function sxNote(host, text, err) {
+  const note = document.createElement('div');
+  note.className = 'sx-d-note';
+  note.textContent = text;
+  const kids = [note];
+  if (err) {
+    const e = document.createElement('div');
+    e.className = 'sx-d-err';
+    e.textContent = err;
+    kids.push(e);
+  }
+  host.replaceChildren(...kids);
+}
+
+function sxFeedPaint(s) {
+  const body = $('#sx-d-body');
+  if (!body) return;
+  const f = sx.feed;
+  if (f.id !== s.id || f.state === 'loading') {
+    const wrap = document.createElement('div');
+    wrap.className = 'sx-d-feed';
+    for (let i = 0; i < 3; i++) {
+      const line = document.createElement('div');
+      line.className = 'sx-skel sx-skel-title';
+      wrap.append(line);
+    }
+    body.replaceChildren(wrap);
+    return;
+  }
+  if (f.state === 'error') { sxNote(body, 'The transcript could not be read.', f.error); return; }
+  if (!f.entries.length) {
+    const note = document.createElement('div');
+    note.className = 'sx-d-note';
+    note.textContent = 'No transcript is stored for this session.';
+    const kids = [note];
+    if (s.firstMessage) {
+      const q = document.createElement('div');
+      q.className = 'sx-d-quote';
+      q.textContent = s.firstMessage;
+      kids.push(q);
+    }
+    body.replaceChildren(...kids);
+    return;
+  }
+  // Only pin to the bottom when the reader is already there.
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+  const ul = document.createElement('ul');
+  ul.className = 'sx-d-feed';
+  // A timestamp is printed only where it changes. A whole column repeating one
+  // value is a column of dead ink down the tallest object on the page.
+  let lastStamp = '';
+  const now = sx.now || Date.now();
+  for (const e of f.entries) {
+    const li = document.createElement('li');
+    li.className = `k-${e.kind}`;
+    const kind = document.createElement('span');
+    kind.className = 'fk';
+    kind.textContent = e.kind === 'user' ? 'you' : (e.kind === 'tool' ? (e.tool || 'tool') : 'agent');
+    const text = document.createElement('span');
+    text.className = 'ft';
+    text.textContent = e.text || '';
+    const stamp = e.ts ? SV().formatWhen(e.ts, now).label : '';
+    const time = document.createElement('span');
+    time.className = 'ftime';
+    if (stamp && stamp !== lastStamp) { time.textContent = stamp; lastStamp = stamp; }
+    li.append(kind, text, time);
+    ul.append(li);
+  }
+  body.replaceChildren(ul);
+  if (atBottom) body.scrollTop = body.scrollHeight;
+}
+
+async function sxWorkPaint(s) {
+  const body = $('#sx-d-body');
+  if (!body || !s.prdPath) return;
+  let res = null;
+  try { res = await window.husk.sessions.read(s.prdPath); } catch (err) { res = { ok: false, error: (err && err.message) || '' }; }
+  if (sx.detailId !== s.id || sx.detailTab !== 'work') return;
+  if (!res || !res.ok) { sxNote(body, 'The work item could not be read.', (res && res.error) || ''); return; }
+  const pre = document.createElement('pre');
+  pre.className = 'sx-d-doc';
+  pre.textContent = String(res.content || '').replace(/^---[\s\S]*?---\n*/, '');
+  body.replaceChildren(pre);
+}
+
+function sxAgentsTabPaint(s, kids) {
+  const body = $('#sx-d-body');
+  if (!body) return;
+  const nodes = kids.map((a) => {
+    const row = document.createElement('div');
+    row.className = `sx-agent ${agentStateClass(a)}`;
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.className = 'sx-agent-name';
+    name.textContent = a.name || agentShortId(a);
+    name.dataset.act = 'open-agent';
+    name.dataset.agent = a.sessionId;
+    const sub = document.createElement('span');
+    sub.className = 'sx-agent-sub';
+    const bits = [agentStateWord(a), agentSubtitle(a)];
+    if (a.tokens) bits.push(amFmtTokens(a.tokens));
+    const age = SV().formatWhen(a.updatedAt || a.startedAt || 0, sx.now || Date.now()).label;
+    if (age) bits.push(age);
+    if (a.cwd && a.cwd !== s.projectPath) bits.push(SV().basename(a.cwd));
+    sub.textContent = bits.filter(Boolean).join(' · ');
+    row.append(name, sub);
+    // Control is gated on the capability, not on the error it would return.
+    if (sx.agents.controllable) {
+      const ctl = document.createElement('span');
+      ctl.className = 'sx-agent-ctl';
+      for (const [label, action] of [['Stop', 'stop'], ['Dismiss', 'remove']]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sx-link';
+        b.textContent = label;
+        b.dataset.act = 'agent-ctl';
+        b.dataset.action = action;
+        b.dataset.agentId = a.id || '';
+        ctl.append(b);
+      }
+      row.append(ctl);
+    }
+    return row;
+  });
+  body.replaceChildren(...nodes);
+}
+
+// ─── Transcript peek ─────────────────────────────────────────────────────────
+
+function sxPeekKey(s) { return `${s.id}:${s.mtime}`; }
+
+async function sxPeek(id, { force = false } = {}) {
+  const s = sxSessionById(id);
+  if (!s) return;
+  if (sx.agents.supported === false) return;
+  const key = sxPeekKey(s);
+  if (!force && sx.peekCache.has(key)) {
+    const hit = sx.peekCache.get(key);
+    sx.feed = { id, entries: hit.entries, model: hit.model, state: 'ready', error: '' };
+    if (sx.detailId === id && sx.detailTab === 'activity') { sxFeedPaint(s); sxFactsPaint(s, sx.agents.bySession.get(id) || null); }
+    return;
+  }
+  const seq = ++sx.peekSeq;
+  if (sx.feed.id !== id) {
+    sx.feed = { id, entries: [], model: '', state: 'loading', error: '' };
+    if (sx.detailId === id && sx.detailTab === 'activity') sxFeedPaint(s);
+  }
+  let res = null;
+  try { res = await window.husk.bgAgents.peek({ sessionId: id, cwd: s.projectPath || '' }); }
+  catch (err) { res = { ok: false, error: (err && err.message) || 'could not read the transcript' }; }
+  if (seq !== sx.peekSeq || sx.detailId !== id) return;
+  if (!res || res.ok === false) {
+    sx.feed = { id, entries: [], model: '', state: 'error', error: String((res && res.error) || '') };
+  } else {
+    const entries = Array.isArray(res.entries) ? res.entries : [];
+    sx.feed = { id, entries, model: String(res.model || ''), state: 'ready', error: '' };
+    sx.peekCache.set(key, { entries, model: sx.feed.model });
+    if (sx.peekCache.size > SX_PEEK_MAX) sx.peekCache.delete(sx.peekCache.keys().next().value);
+  }
+  if (sx.detailTab === 'activity') sxFeedPaint(s);
+  sxFactsPaint(s, sx.agents.bySession.get(id) || null);
+}
+
+// ─── Rename ──────────────────────────────────────────────────────────────────
+
+function sxBeginRename() {
+  const t = $('#sx-d-title');
+  const s = sxSessionById(sx.detailId);
+  if (!t || !s) return;
+  t.contentEditable = 'plaintext-only';
+  t.classList.add('is-editing');
+  t.textContent = SV().titleOf(s, sx.names) || '';
+  t.focus();
+  const range = document.createRange();
+  range.selectNodeContents(t);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+async function sxCommitRename() {
+  const t = $('#sx-d-title');
+  const s = sxSessionById(sx.detailId);
+  if (!t || !s) return;
+  const name = t.textContent.trim();
+  t.contentEditable = 'false';
+  t.classList.remove('is-editing');
+  try {
+    // An empty name clears the custom one, and the stored name is whatever the
+    // handler kept, which is clamped, so the row shows what survives a restart.
+    const res = await window.husk.sessions.rename({ agentId: s.id, name });
+    if (res && res.ok === false) {
+      toast(res.error || 'Rename failed', 'error');
+    } else {
+      const saved = res && typeof res.name === 'string' ? res.name : name;
+      const names = { ...sx.names };
+      if (saved) names[s.id] = saved; else delete names[s.id];
+      sx.names = names;
+      if (cfg) cfg.sessionNames = names;
+    }
+  } catch (_) { toast('Rename failed', 'error'); }
+  sxPaint();
+  sxDetailPaint();
+}
+
+function sxCancelRename() {
+  const t = $('#sx-d-title');
+  if (!t) return;
+  t.contentEditable = 'false';
+  t.classList.remove('is-editing');
+  sxDetailPaint();
+  $('#sx-list').focus();
+}
+
+// ─── Actions ─────────────────────────────────────────────────────────────────
+
+function sxOpenFolder() {
+  const dir = sx.dir || (lastStats && lastStats.sessionsDir);
   if (dir) window.husk.fs.open(dir);
 }
 
-async function renderSessions() {
-  const list = $('#sessions-list');
-  // eslint-disable-next-line no-unsanitized/property -- Static loading template.
-  list.innerHTML = sessionsEmptyCard({
-    title: 'Loading sessions',
-    msg: 'Reading the session files on disk.',
-  });
-  const res = await window.husk.sessions.list();
-  if (!res.ok) {
-    // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
-    list.innerHTML = sessionsEmptyCard({
-      title: 'Could not read sessions',
-      msg: escapeHtml(res.error || 'Unknown error'),
-      actions: '<div class="se-actions"><button class="btn-primary" id="se-retry" type="button">Try again</button><button class="ghost-btn" id="se-open-folder" type="button">Open folder</button></div>',
-    });
-    wireSessionsEmpty(list);
-    return;
-  }
-  sessionsCache = res.sessions;
-  sessionsAgent = res.agent || 'claude';
-  sessionsDir = res.sessionsDir || '';
-  await loadSessionAgents();
-  // Reflect which agent's sessions are shown, and where they live.
-  const subEl = $('#sessions-sub');
-  if (subEl) {
-    const hidden = Number(res.hiddenAutopilotSessions) || 0;
-    const hiddenHTML = hidden
-      ? `<span class="ss-note">${hidden} Autopilot ${hidden === 1 ? 'session is' : 'sessions are'} hidden here and kept under Autopilot Recent runs</span>`
-      : '';
-    if (res.supported === false) {
-      subEl.textContent = 'Session history is not available for this agent yet';
-    } else {
-      // The head reads as prose; where the sessions live rides the button that
-      // opens them, so a deep project path cannot widen the head.
-      // eslint-disable-next-line no-unsanitized/property -- the note is built from a count.
-      subEl.innerHTML = '<span>Click a session to preview, Resume to continue</span>' + hiddenHTML;
-    }
-    sessionsSubOwned = true;
-  }
-  const openBtn = $('#btn-sessions-open');
-  if (openBtn) openBtn.title = sessionsDir ? `Open ${sessionsDir} in your file manager` : 'Open in your file manager';
-  if (res.supported === false) {
-    // eslint-disable-next-line no-unsanitized/property -- Static, agent name escaped.
-    $('#sessions-list').innerHTML = sessionsEmptyCard({
-      title: 'Not available for this agent',
-      msg: 'Husk does not read this agent\'s session history yet. Switch the active agent in Preferences to browse sessions.',
-    });
-    return;
-  }
-  // Drop selections that no longer exist (e.g. after delete + refresh).
-  const live = new Set(sessionsCache.map((s) => s.path));
-  for (const p of sessionsSelected) if (!live.has(p)) sessionsSelected.delete(p);
-  paintSessions(sessionsCache, $('#sessions-search').value);
-  syncSelectModeUI();
-  // Keep the rail's Recent list in sync with the full Sessions page.
-  refreshRecentList();
-}
-function timeAgo(ms) {
-  const diff = Date.now() - ms;
-  const min = Math.round(diff / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.round(hr / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(ms).toLocaleDateString();
-}
-function fmtSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+function sxPrimary(s) {
+  if (!s) return;
+  const holder = sx.agents.bySession.get(s.id) || null;
+  const owned = { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath };
+  if (holder && holder.held) { resumeSessionInChat(owned); return; }
+  if (focusOpenSession(s.id)) return;
+  resumeSessionInChat(owned);
 }
 
-// Which listed sessions are agents a chat started, keyed by session id, plus
-// the parent each one belongs to. An agent is a fork of its chat and inherits
-// its title, so this comes from the tool's own agent listing rather than from
-// the transcripts.
-let sessionAgents = { bySession: new Map(), byParent: new Map() };
-let sessionAgentsExpanded = new Set();
-
-async function loadSessionAgents() {
-  sessionAgents = { bySession: new Map(), byParent: new Map() };
-  let res = null;
-  try { res = await window.husk.bgAgents.list({ all: true }); } catch (_) { return; }
-  if (!res || !res.ok || !Array.isArray(res.agents)) return;
-  for (const a of res.agents) {
-    if (!a || !a.sessionId) continue;
-    sessionAgents.bySession.set(a.sessionId, a);
-    if (!a.parentSessionId) continue;
-    if (!sessionAgents.byParent.has(a.parentSessionId)) sessionAgents.byParent.set(a.parentSessionId, []);
-    sessionAgents.byParent.get(a.parentSessionId).push(a);
-  }
-  for (const arr of sessionAgents.byParent.values()) arr.sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0));
-}
-
-function agentChildRowsHTML(parentId) {
-  const kids = sessionAgents.byParent.get(parentId) || [];
-  if (!kids.length || !sessionAgentsExpanded.has(parentId)) return '';
-  // The chat these belong to is the row directly above, so a child carries only
-  // what its siblings do not: its id, what it is doing, how it stands, how old.
-  // Fields run state then age here and in the switcher, in one age format.
-  const rows = kids.map((a) => `
-      <button class="agent-row ${agentStateClass(a)}" type="button" data-agent="${escapeAttr(a.sessionId)}">
-        <span class="agent-dot" aria-hidden="true"></span>
-        <code class="agent-id">${escapeHtml(agentShortId(a))}</code>
-        <span class="agent-live">${escapeHtml(agentSubtitle(a))}</span>
-        <span class="agent-state">${escapeHtml(agentStateWord(a))}</span>
-        <span class="agent-age">${escapeHtml(agentAgeLabel(a.startedAt))}</span>
-      </button>`).join('');
-  return `<div class="agent-group">${rows}</div>`;
-}
-
-function agentChipHTML(parentId) {
-  const kids = sessionAgents.byParent.get(parentId) || [];
-  if (!kids.length) return '';
-  const live = kids.filter((a) => a.running).length;
-  const blocked = kids.filter((a) => a.running && a.state === 'blocked').length;
-  const open = sessionAgentsExpanded.has(parentId);
-  // One tail note, and the waiting count outranks the running one: a chat with
-  // an agent stuck on a question needs the collapsed row to say so.
-  const tail = blocked
-    ? `<span class="sa-live">${blocked} needs you</span>`
-    : (live ? `<span class="sa-live">${live} running</span>` : '');
-  return `<span class="session-agents${blocked ? ' has-blocked' : ''}" role="button" tabindex="0" data-agents-for="${escapeAttr(parentId)}" aria-expanded="${open ? 'true' : 'false'}">
-      <svg class="sa-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-      <span class="sa-count">${kids.length} agent${kids.length === 1 ? '' : 's'}</span>${tail}
-    </span>`;
-}
-
-function paintSessions(list, query) {
-  const ul = $('#sessions-list');
-  const q = (query || '').toLowerCase().trim();
-  const matched = q ? list.filter((s) =>
-    (s.title + ' ' + s.id + ' ' + s.projectPath + ' ' + (s.prdPhase || '')).toLowerCase().includes(q)
-  ) : list;
-  // An agent carries its chat's title, so it is shown under the chat that
-  // started it, and only while that chat is itself in view.
-  const present = new Set(matched.map((s) => s.id));
-  const filtered = matched.filter((s) => {
-    const a = sessionAgents.bySession.get(s.id);
-    return !(a && a.parentSessionId && present.has(a.parentSessionId));
-  });
-  if (!filtered.length) {
-    const card = list.length
-      ? sessionsEmptyCard({
-        title: 'No matching sessions',
-        msg: `Nothing in ${list.length} session${list.length === 1 ? '' : 's'} matches "${escapeHtml(query)}".`,
-        actions: '<div class="se-actions"><button class="ghost-btn" id="se-clear-filter" type="button">Clear filter</button></div>',
-      })
-      : sessionsEmptyCard({
-        title: 'No sessions yet',
-        msg: 'Every chat you start is written to disk, so you can come back later, read what happened and pick the thread up again.',
-        actions: '<div class="se-actions"><button class="btn-primary" id="se-start-chat" type="button">Start a chat</button><button class="ghost-btn" id="se-open-folder" type="button">Open folder</button></div>',
-        hints: `<div class="se-hints">
-            <div class="se-hint"><span class="se-hint-n">1</span><span>Start a chat. <b>Husk saves it for you</b> while you work.</span></div>
-            <div class="se-hint"><span class="se-hint-n">2</span><span>It shows up in this list. <b>Click a row</b> to preview the transcript.</span></div>
-            <div class="se-hint"><span class="se-hint-n">3</span><span>Press <b>Resume</b> to reopen that session in a new chat tab.</span></div>
-          </div>`,
-      });
-    // eslint-disable-next-line no-unsanitized/property -- Message content is escaped above.
-    ul.innerHTML = card;
-    wireSessionsEmpty(ul);
-    return;
-  }
-  ul.classList.toggle('select-mode', sessionsSelectMode);
-  // eslint-disable-next-line no-unsanitized/property -- Session fields are escaped via escapeHtml/escapeAttr.
-  ul.innerHTML = filtered.map((s) => {
-    // No badge for the default: a filled pill reading "chat" on every chat is
-    // the loudest thing in the card and the only one carrying no information.
-    const phaseHTML = s.prdPhase
-      ? `<span class="session-phase ${escapeAttr(s.prdPhase)}">${escapeHtml(s.prdPhase)}</span>`
-      : '';
-    const progressHTML = s.prdProgress ? `<span class="session-progress">${escapeHtml(s.prdProgress)}</span>` : '';
-    const checked = sessionsSelected.has(s.path) ? 'checked' : '';
-    const checkboxHTML = sessionsSelectMode
-      ? `<label class="session-check"><input class="ai-check" type="checkbox" tabindex="-1" ${checked} data-path="${escapeAttr(s.path)}" /><span class="ai-check-box"></span></label>`
-      : '';
-    const rowHTML = `
-      <button class="session-row${sessionsSelected.has(s.path) ? ' selected' : ''}${phaseHTML ? '' : ' no-phase'}" data-id="${escapeAttr(s.id)}" data-title="${escapeAttr(s.title)}" data-project="${escapeAttr(s.projectPath)}" data-path="${escapeAttr(s.path)}" data-prdpath="${escapeAttr(s.prdPath)}" data-started="${escapeAttr(s.startedISO)}" data-mtime="${s.mtime}" data-size="${s.sizeBytes}" data-phase="${escapeAttr(s.prdPhase || '')}" data-progress="${escapeAttr(s.prdProgress || '')}">
-        ${checkboxHTML}
-        <div class="session-task">
-          <strong>${escapeHtml(s.title)}</strong>
-          <span class="session-slug">${escapeHtml(s.projectPath)} · ${escapeHtml(s.id.slice(0, 8))}</span>
-        </div>
-        <span class="session-effort">${escapeHtml(timeAgo(s.mtime))}</span>
-        ${progressHTML || `<span class="session-progress">${escapeHtml(fmtSize(s.sizeBytes))}</span>`}
-        ${phaseHTML}
-      </button>`;
-    // A chat and its agents are one card: the chat keeps the card's surface
-    // and the agents hang off it.
-    if (!(sessionAgents.byParent.get(s.id) || []).length) return rowHTML;
-    return `<div class="session-block">${rowHTML}${agentChipHTML(s.id)}${agentChildRowsHTML(s.id)}</div>`;
-  }).join('');
-  ul.querySelectorAll('.session-row').forEach((r) =>
-    r.addEventListener('click', (e) => {
-      if (sessionsSelectMode) {
-        e.preventDefault();
-        toggleSessionSelection(r.dataset.path);
-      } else {
-        openSessionDetail(r.dataset);
+function sxAct(act, el) {
+  const s = sxSessionById(sx.detailId);
+  const owned = s ? { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
+  switch (act) {
+    case 'retry': sessionsFetchInvalidate(); sxLoad({ firstPaint: true }); break;
+    case 'open-folder': sxOpenFolder(); break;
+    case 'open-prefs': setPage('prefs'); break;
+    case 'new-chat': setPage('chat'); openNewChatTab({}); break;
+    case 'clear-search': sxSetQuery(''); $('#sx-q').focus(); break;
+    case 'clear-filters': sx.chips = { project: false, live: false, needs: false, work: false }; sxPaint(); sxSub(); break;
+    case 'widen': sx.chips = { ...sx.chips, project: false }; sxPaint(); sxSub(); break;
+    case 'attach': if (owned) resumeSessionInChat(owned); break;
+    case 'fork': if (owned) resumeSessionInChat(owned, { fork: true }); break;
+    case 'focus': if (s) focusOpenSession(s.id); break;
+    case 'resume': if (owned) resumeSessionInChat(owned); break;
+    case 'copy-id': if (s) sxCopy(s.id, 'Session id'); break;
+    case 'copy-path': if (s) sxCopy(s.projectPath, 'Project path'); break;
+    case 'copy-value': sxCopy(el.dataset.value, el.dataset.label || 'Value'); break;
+    case 'open-path': if (el.dataset.path) window.husk.fs.open(el.dataset.path); break;
+    case 'open-work': if (s && s.prdPath) window.husk.fs.open(s.prdPath); break;
+    case 'open-file': if (s) window.husk.fs.open(s.path); break;
+    case 'rename': sxBeginRename(); break;
+    case 'delete-one':
+      // Deleting one session borrows select mode to run the confirm. Turning the
+      // confirm down puts the page back where it was rather than leaving the
+      // user in a mode they never asked for.
+      if (s) {
+        const priorPicking = sx.picking;
+        const priorPicked = new Set(sx.picked);
+        sx.picking = true;
+        sx.picked = new Set([s.path]);
+        sxPaint(); sxSyncPicking();
+        sxDelete().then((done) => {
+          if (done) return;
+          sx.picking = priorPicking;
+          sx.picked = priorPicked;
+          sxPaint(); sxSyncPicking();
+        });
       }
-    })
-  );
-  const toggleAgents = (parentId) => {
-    if (sessionAgentsExpanded.has(parentId)) sessionAgentsExpanded.delete(parentId);
-    else sessionAgentsExpanded.add(parentId);
-    const top = ul.scrollTop;
-    paintSessions(list, query);
-    ul.scrollTop = top;
-    // The repaint replaces the chip that was just pressed, so hand focus to its
-    // replacement or the next key lands on the page body.
-    for (const chip of ul.querySelectorAll('.session-agents')) {
-      if (chip.dataset.agentsFor === parentId) { chip.focus(); break; }
-    }
-  };
-  ul.querySelectorAll('.session-agents').forEach((chip) => {
-    chip.addEventListener('click', () => toggleAgents(chip.dataset.agentsFor));
-    chip.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAgents(chip.dataset.agentsFor); }
-    });
-  });
-  ul.querySelectorAll('.agent-row').forEach((row) =>
-    row.addEventListener('click', () => {
-      const a = sessionAgents.bySession.get(row.dataset.agent);
+      break;
+    case 'tab':
+      sx.detailTab = el.dataset.tab;
+      if (s) sxTabsPaint(s);
+      break;
+    case 'open-agent': {
+      const a = sx.agents.bySession.get(el.dataset.agent);
       if (a) openBgAgent(a);
-    })
-  );
-}
-
-function toggleSessionSelection(p) {
-  if (!p) return;
-  const wasSelected = sessionsSelected.has(p);
-  if (wasSelected) sessionsSelected.delete(p);
-  else sessionsSelected.add(p);
-  // Update only the affected row in place: repainting the whole list on every
-  // checkbox click costs an O(n) DOM teardown and listener rebind.
-  const ul = $('#sessions-list');
-  if (ul) {
-    for (const row of ul.querySelectorAll('.session-row')) {
-      if (row.dataset.path === p) {
-        row.classList.toggle('selected', !wasSelected);
-        const cb = row.querySelector('input[type="checkbox"]');
-        if (cb) cb.checked = !wasSelected;
-        break;
-      }
+      break;
     }
+    case 'agent-ctl': sxAgentControl(el.dataset.action, el.dataset.agentId); break;
+    case 'retry-agents': sxLoad({ firstPaint: false }); break;
+    default: break;
   }
-  syncSelectModeUI();
 }
 
-function syncSelectModeUI() {
-  const selectBtn = $('#btn-sessions-select');
-  const deleteBtn = $('#btn-sessions-delete');
-  const cancelBtn = $('#btn-sessions-cancel');
-  if (!selectBtn) return;
-  selectBtn.hidden = sessionsSelectMode;
-  deleteBtn.hidden = !sessionsSelectMode;
-  cancelBtn.hidden = !sessionsSelectMode;
-  const n = sessionsSelected.size;
-  deleteBtn.textContent = `Delete (${n})`;
-  deleteBtn.disabled = n === 0;
+async function sxAgentControl(action, id) {
+  if (!id) return;
+  const stopping = action === 'stop';
+  // The reason the call refused is the useful half. A tool that cannot do this
+  // at all is only one of the ways it fails.
+  const fallback = stopping ? 'The agent did not stop' : 'The agent was not dismissed';
+  try {
+    const res = await window.husk.bgAgents[stopping ? 'stop' : 'remove'](id);
+    if (!res || res.ok === false) { toast((res && res.error) || fallback, 'error'); return; }
+    toast(stopping ? 'Agent stopped' : 'Agent dismissed', 'success');
+  } catch (err) { toast((err && err.message) || fallback, 'error'); }
+  sxLoad({ firstPaint: false });
 }
 
-function enterSelectMode() {
-  sessionsSelectMode = true;
-  paintSessions(sessionsCache, $('#sessions-search').value);
-  syncSelectModeUI();
-}
-function exitSelectMode() {
-  sessionsSelectMode = false;
-  sessionsSelected.clear();
-  paintSessions(sessionsCache, $('#sessions-search').value);
-  syncSelectModeUI();
+// ─── Popovers ────────────────────────────────────────────────────────────────
+
+let sxOpenMenu = null;
+
+function sxMenuOpen(menu, anchor) {
+  sxMenuClose();
+  const page = $('.page-sessions').getBoundingClientRect();
+  const a = anchor.getBoundingClientRect();
+  menu.hidden = false;
+  const m = menu.getBoundingClientRect();
+  let left = a.left - page.left;
+  let top = a.bottom - page.top + 4;
+  if (left + m.width > page.width - 8) left = page.width - m.width - 8;
+  if (top + m.height > page.height - 8) top = a.top - page.top - m.height - 4;
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+  anchor.setAttribute('aria-expanded', 'true');
+  sxOpenMenu = { menu, anchor };
 }
 
-async function deleteSelectedSessions() {
-  const paths = [...sessionsSelected];
-  if (!paths.length) return;
-  const res = await window.husk.sessions.delete(paths);
-  if (res.cancelled) return;
-  if (!res.ok && !res.deleted) {
-    toast(res.error || 'Delete failed', 'error');
+function sxMenuClose() {
+  if (!sxOpenMenu) return;
+  sxOpenMenu.menu.hidden = true;
+  sxOpenMenu.anchor.setAttribute('aria-expanded', 'false');
+  sxOpenMenu = null;
+}
+
+function sxDetailMenuItems() {
+  const s = sxSessionById(sx.detailId);
+  const menu = $('#sx-d-menu');
+  if (!menu || !s) return;
+  const items = [];
+  if (s.prdPath) items.push(['Open work item', 'open-work', '']);
+  items.push(['Open file', 'open-file', '']);
+  items.push(['Copy id', 'copy-id', '']);
+  items.push(['Copy path', 'copy-path', '']);
+  items.push(['Rename', 'rename', '']);
+  if (SV().isDeletable(s)) items.push(['Delete session', 'delete-one', 'is-danger']);
+  menu.replaceChildren(...items.map(([label, act, cls]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `sx-menu-item ${cls}`.trim();
+    b.setAttribute('role', 'menuitem');
+    b.dataset.act = act;
+    b.textContent = label;
+    return b;
+  }));
+}
+
+// ─── Keyboard ────────────────────────────────────────────────────────────────
+
+function sxTreeKey(e) {
+  const key = e.key;
+  const m = sx.models.get(sx.cursorKey);
+  if (key === 'ArrowDown') { e.preventDefault(); sxMove(1); return; }
+  if (key === 'ArrowUp') { e.preventDefault(); sxMove(-1); return; }
+  if (key === 'Home') { e.preventDefault(); if (sx.order.length) sxSetCursor(sx.order[0]); return; }
+  if (key === 'End') { e.preventDefault(); if (sx.order.length) sxSetCursor(sx.order[sx.order.length - 1]); return; }
+  if (key === 'ArrowRight') {
+    e.preventDefault();
+    if (!m) return;
+    if (m.kind === 'group') {
+      if (sx.collapsed.has(m.group.id)) { sx.collapsed.delete(m.group.id); sxPaint(); }
+      else sxMove(1);
+      return;
+    }
+    if (m.kind === 'row') {
+      const kids = sx.agents.byParent.get(m.session.id) || [];
+      if (kids.length && !sx.expandedAgents.has(m.session.id)) { sx.expandedAgents.add(m.session.id); sxPaint(); return; }
+      if (m.threadKey && m.runs > 1 && !sx.expandedThreads.has(m.threadKey)) { sx.expandedThreads.add(m.threadKey); sxPaint(); return; }
+      if (kids.length || (m.threadKey && m.runs > 1)) { sxMove(1); return; }
+      const primary = $('#sx-d-acts .btn-primary');
+      if (primary) primary.focus();
+    }
     return;
   }
-  toast(`Deleted ${res.deleted} session${res.deleted === 1 ? '' : 's'}`, 'success');
-  if (res.failed?.length) toast(`${res.failed.length} failed`, 'error');
-  sessionsSelectMode = false;
-  sessionsSelected.clear();
-  await renderSessions();
+  if (key === 'ArrowLeft') {
+    e.preventDefault();
+    if (!m) return;
+    if (m.kind === 'group') { sx.collapsed.add(m.group.id); sxPaint(); return; }
+    if (m.kind === 'row' && sx.expandedAgents.has(m.session.id)) { sx.expandedAgents.delete(m.session.id); sxPaint(); return; }
+    if (m.kind === 'row' && m.threadKey && sx.expandedThreads.has(m.threadKey)) { sx.expandedThreads.delete(m.threadKey); sxPaint(); return; }
+    // Step out to the owning header, or to the row that owns this child.
+    const i = sx.order.indexOf(sx.cursorKey);
+    for (let j = i - 1; j >= 0; j--) {
+      const mm = sx.models.get(sx.order[j]);
+      if (!mm) continue;
+      if (m.kind === 'agent' || m.child) { if (mm.kind === 'row' && !mm.child) { sxSetCursor(sx.order[j]); return; } }
+      else if (mm.kind === 'group') { sxSetCursor(sx.order[j]); return; }
+    }
+    return;
+  }
+  if (key === 'Enter') {
+    e.preventDefault();
+    if (!m) return;
+    if (m.kind === 'group') { sxToggleGroup(m.group.id); return; }
+    if (sx.picking && m.kind === 'row') { sxPick(sx.cursorKey); return; }
+    if (m.kind === 'agent') { if (!sx.picking) openBgAgent(m.agent); return; }
+    if (m.kind === 'row') {
+      if (e.shiftKey) sxPrimary(m.session);
+      else sxSelect(m.session.id, { open: true });
+    }
+    return;
+  }
+  if (key === ' ' || key === 'Spacebar') {
+    e.preventDefault();
+    if (!m || m.kind !== 'row') return;
+    if (!sx.picking) sxEnterPicking();
+    sxPick(sx.cursorKey);
+    return;
+  }
+  if (e.shiftKey && (key === 'ArrowDown' || key === 'ArrowUp')) return;
+  if (key === 'c' && !e.metaKey && !e.ctrlKey) {
+    const s = sxCursorSession();
+    if (s) { e.preventDefault(); sxCopy(s.id, 'Session id'); }
+    return;
+  }
+  if (key === 'F2') {
+    const s = sxCursorSession();
+    if (s) { e.preventDefault(); sxSelect(s.id); sxBeginRename(); }
+  }
 }
 
-$('#sessions-search').addEventListener('input', debounce((e) => paintSessions(sessionsCache, e.target.value), 120));
-$('#btn-sessions-refresh').addEventListener('click', renderSessions);
-$('#btn-sessions-open').addEventListener('click', openSessionsFolder);
-$('#btn-sessions-select').addEventListener('click', enterSelectMode);
-$('#btn-sessions-cancel').addEventListener('click', exitSelectMode);
-$('#btn-sessions-delete').addEventListener('click', deleteSelectedSessions);
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && sessionsSelectMode && document.querySelector('.page-sessions:not([hidden])')) {
-    exitSelectMode();
+// One ordered chain. A step that fires consumes the key; if none applies the
+// event travels on so the palette and the rest of the app still see it.
+function sxEscape(e) {
+  const q = $('#sx-q');
+  const detail = $('#sx-detail');
+  if (document.activeElement === q) {
+    if (q.value) { sxSetQuery(''); return true; }
+    $('#sx-list').focus();
+    return true;
   }
-});
-
-async function openSessionDetail(d) {
-  // Read PRD body if matched, else show first message preview
-  let body = '';
-  if (d.prdpath) {
-    const res = await window.husk.sessions.read(d.prdpath);
-    if (res.ok) body = res.content.replace(/^---[\s\S]*?---\n*/, '');
+  if ($('#sx').dataset.detail === 'open') {
+    $('#sx').dataset.detail = 'closed';
+    $('#sx-list').focus();
+    return true;
   }
-  if (!body) body = '(no PRD attached. This is a raw chat session. Resume to continue the conversation.)';
+  if (sx.picking) { sxExitPicking(); return true; }
+  if (detail && detail.contains(document.activeElement)) { $('#sx-list').focus(); return true; }
+  const chipsDirty = !sx.chips.project || sx.chips.live || sx.chips.needs || sx.chips.work;
+  if (chipsDirty || sx.groupBy !== 'project') {
+    sx.chips = { project: true, live: false, needs: false, work: false };
+    sx.groupBy = 'project';
+    sxGroupLabel();
+    sxPaint();
+    sxSub();
+    return true;
+  }
+  void e;
+  return false;
+}
 
-  const meta = [
-    ['Session ID', d.id],
-    ['Project', d.project],
-    ['Started', new Date(d.started).toLocaleString()],
-    ['Updated', new Date(parseInt(d.mtime, 10)).toLocaleString()],
-    ['Size', fmtSize(parseInt(d.size, 10))],
-  ];
-  if (d.phase) meta.push(['PRD phase', d.phase]);
-  if (d.progress) meta.push(['PRD progress', d.progress]);
-  if (d.prdpath) meta.push(['PRD', d.prdpath]);
+// ─── Toggles ─────────────────────────────────────────────────────────────────
 
-  // A session an agent is holding cannot be resumed, so it is not offered. The
-  // two things that do work are named for what they are: joining the work that
-  // is running, and taking a copy that stops following it.
-  //
-  // held, not attachable. An agent that has finished its turn still owns the
-  // transcript until its process exits, and offering Resume there hands over a
-  // command the CLI refuses.
-  const holder = sessionAgents.bySession.get(d.id);
-  const busy = !!(holder && holder.held);
-  const owned = { ...d, owner: d.owner || sessionsAgent };
-  if (busy) meta.push(['Held by', `agent ${agentShortId(holder)} · ${agentStateWord(holder)}`]);
+function sxToggleGroup(id) {
+  if (sx.collapsed.has(id)) sx.collapsed.delete(id); else sx.collapsed.add(id);
+  sxPaint();
+}
+function sxToggleAgents(id) {
+  if (sx.expandedAgents.has(id)) sx.expandedAgents.delete(id); else sx.expandedAgents.add(id);
+  sxPaint();
+}
+function sxToggleThread(key) {
+  if (sx.expandedThreads.has(key)) sx.expandedThreads.delete(key); else sx.expandedThreads.add(key);
+  sxPaint();
+}
+function sxGroupLabel() {
+  for (const b of $$('#sx-menu [data-group]')) {
+    b.setAttribute('aria-checked', b.dataset.group === sx.groupBy ? 'true' : 'false');
+  }
+}
 
-  showDetail({
-    eyebrow: `${sessionsAgent} session`,
-    title: d.title,
-    sub: d.id,
-    meta,
-    body,
-    actions: [
-      busy
-        ? { label: '⇥ Attach to the running agent', kind: 'primary', onClick: () => resumeSessionInChat(owned) }
-        : { label: '↻ Resume this session', kind: 'primary', onClick: () => resumeSessionInChat(owned) },
-      busy ? { label: 'Open a copy', kind: 'ghost', onClick: () => resumeSessionInChat(owned, { fork: true }) } : null,
-      d.prdpath ? { label: 'Open PRD', kind: 'ghost', onClick: () => window.husk.fs.open(d.prdpath) } : null,
-      { label: 'Open files', kind: 'ghost', onClick: () => window.husk.fs.open(d.path) },
-    ].filter(Boolean),
+// ─── Wiring ──────────────────────────────────────────────────────────────────
+
+(function sxWire() {
+  const list = $('#sx-list');
+  if (!list) return;
+
+  list.addEventListener('click', (e) => {
+    const notice = e.target.closest('.sx-notice-act');
+    if (notice) { sxAct('retry-agents', notice); return; }
+    const emptyAct = e.target.closest('.sx-empty [data-act]');
+    if (emptyAct) { sxAct(emptyAct.dataset.act, emptyAct); return; }
+    if (e.target.closest('.sx-ghost')) { setPage('chat'); openNewChatTab({}); return; }
+    const group = e.target.closest('.sx-group');
+    if (group) {
+      const m = sx.models.get(group.dataset.key);
+      if (m) { sxSetCursor(group.dataset.key, { scroll: false }); sxToggleGroup(m.group.id); }
+      return;
+    }
+    const row = e.target.closest('.sx-row');
+    if (!row || !row.dataset.key) return;
+    const m = sx.models.get(row.dataset.key);
+    if (!m) return;
+    sxSetCursor(row.dataset.key, { scroll: false });
+    if (e.target.closest('.sx-kids-caret') && m.kind === 'row') { sxToggleAgents(m.session.id); return; }
+    if (e.target.closest('.sx-runs') && m.kind === 'row' && m.threadKey) { sxToggleThread(m.threadKey); return; }
+    // Select mode acts on session files, so an agent row is inert rather than a
+    // way out of the page.
+    if (sx.picking) { sxPick(row.dataset.key, { range: e.shiftKey }); return; }
+    if (m.kind === 'agent') { openBgAgent(m.agent); return; }
+    sxSelect(m.session.id, { open: true });
   });
-}
+
+  list.addEventListener('keydown', sxTreeKey);
+
+  // The page handler lives on document: after setPage nothing here has focus,
+  // and body is an ancestor of the page rather than a descendant.
+  document.addEventListener('keydown', (e) => {
+    if (currentPage !== 'sessions') return;
+    const page = $('.page-sessions');
+    if (!page || page.hidden) return;
+    if (e.key === 'Escape') { if (sxEscape(e)) { e.preventDefault(); e.stopPropagation(); } return; }
+    const t = e.target;
+    if (t && (/^(INPUT|TEXTAREA)$/.test(t.tagName) || t.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '/') { e.preventDefault(); const q = $('#sx-q'); q.focus(); q.select(); return; }
+    if (e.key === 'r') { e.preventDefault(); sessionsFetchInvalidate(); sxLoad({ firstPaint: false }); }
+  });
+
+  const q = $('#sx-q');
+  q.addEventListener('input', debounce((e) => { sxSetQuery(e.target.value); }, 120));
+  q.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter') {
+      e.preventDefault();
+      list.focus();
+      const first = sx.order.find((k) => k.startsWith('s:'));
+      if (first) sxSetCursor(first);
+    }
+  });
+  $('#sx-search-clear').addEventListener('click', () => sxAct('clear-search'));
+
+  $('#sx-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const key = chip.dataset.chip;
+    sx.chips = { ...sx.chips, [key]: !sx.chips[key] };
+    sxPaint();
+    sxSub();
+  });
+
+  $('#sx-new').addEventListener('click', () => { setPage('chat'); openNewChatTab({}); });
+
+  $('#sx-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = $('#sx-menu');
+    if (sxOpenMenu && sxOpenMenu.menu === menu) { sxMenuClose(); return; }
+    const folder = $('#sx-menu-folder');
+    if (folder) folder.title = sx.dir ? `Open ${sx.dir} in your file manager` : 'Open in your file manager';
+    sxMenuOpen(menu, $('#sx-menu-btn'));
+  });
+  $('#sx-menu').addEventListener('click', (e) => {
+    const item = e.target.closest('.sx-menu-item');
+    if (!item) return;
+    sxMenuClose();
+    if (item.dataset.group) {
+      sx.groupBy = item.dataset.group === 'day' ? 'day' : 'project';
+      sxGroupLabel();
+      sxPaint();
+      return;
+    }
+    const act = item.dataset.act;
+    if (act === 'refresh') { sessionsFetchInvalidate(); sxLoad({ firstPaint: false }); }
+    else if (act === 'select') sxEnterPicking();
+    else if (act === 'open-folder') sxOpenFolder();
+    else if (act === 'open-autopilot') setPage('autopilot');
+  });
+
+  $('#sx-older').addEventListener('click', () => { sx.olderOpen = !sx.olderOpen; sx.olderPinned = true; sxPaint(); });
+
+  $('#sx-select-all').addEventListener('click', sxPickAll);
+  $('#sx-select-none').addEventListener('click', sxPickNone);
+  $('#sx-select-cancel').addEventListener('click', sxExitPicking);
+  $('#sx-delete').addEventListener('click', sxDelete);
+
+  const detail = $('#sx-detail');
+  detail.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]');
+    if (act) { sxAct(act.dataset.act, act); return; }
+    if (e.target.closest('#sx-d-copy-id')) { sxAct('copy-id'); return; }
+    if (e.target.closest('#sx-d-copy-path')) { sxAct('copy-path'); return; }
+    if (e.target.closest('#sx-d-back')) { $('#sx').dataset.detail = 'closed'; $('#sx-list').focus(); }
+  });
+  detail.addEventListener('dblclick', (e) => { if (e.target.closest('#sx-d-title')) sxBeginRename(); });
+  detail.addEventListener('keydown', (e) => {
+    const t = $('#sx-d-title');
+    if (t && t.isContentEditable) {
+      if (e.key === 'Enter') { e.preventDefault(); sxCommitRename(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); sxCancelRename(); }
+      return;
+    }
+  });
+  $('#sx-d-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = $('#sx-d-menu');
+    if (sxOpenMenu && sxOpenMenu.menu === menu) { sxMenuClose(); return; }
+    sxDetailMenuItems();
+    sxMenuOpen(menu, $('#sx-d-menu-btn'));
+  });
+  $('#sx-d-menu').addEventListener('click', (e) => {
+    const item = e.target.closest('.sx-menu-item');
+    if (!item) return;
+    sxMenuClose();
+    sxAct(item.dataset.act, item);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!sxOpenMenu) return;
+    if (sxOpenMenu.menu.contains(e.target) || sxOpenMenu.anchor.contains(e.target)) return;
+    sxMenuClose();
+  });
+
+  // The roster keeps its own hint visible only while it has focus.
+
+  // Both intervals are created once, so navigating in and out cannot stack them.
+  sx.poll = setInterval(() => {
+    if (sxPollPaused) return;
+    if (currentPage !== 'sessions' || document.visibilityState !== 'visible') return;
+    const page = $('.page-sessions');
+    if (!page || page.hidden) return;
+    sxLoad({ firstPaint: false });
+  }, 15000);
+
+  sx.peekTimer = setInterval(() => {
+    if (sxPollPaused) return;
+    if (currentPage !== 'sessions' || document.visibilityState !== 'visible') return;
+    if (!sx.detailId || sx.detailTab !== 'activity') return;
+    const s = sxSessionById(sx.detailId);
+    const sig = s && SV().signal(s, sx.agents);
+    if (!sig || (sig.kind !== 'running' && sig.kind !== 'blocked')) return;
+    // The cache key only moves on the list poll, so a live tail has to be forced.
+    sxPeek(sx.detailId, { force: true });
+  }, 4000);
+
+  sxGroupLabel();
+})();
+
+// ─── Resume ──────────────────────────────────────────────────────────────────
 
 // A short, display-only rendering of the resume command for the agent that owns
 // the session, or null when that agent has no resume form. The command that is
@@ -9095,6 +10530,16 @@ function resumeCommandLabel(agent, id) {
   if (agent === 'claude') return `claude --resume ${id}`;
   if (agent === 'copilot') return `copilot --resume=${id}`;
   if (agent === 'gemini') return `gemini --resume ${id}`;
+  return null;
+}
+// The same contract for the two other ways into a session: joining a running
+// agent, and taking a copy that stops following it.
+function resumeAttachLabel(agent, agentId) {
+  if (agent === 'claude') return `claude attach ${agentId}`;
+  return null;
+}
+function resumeForkLabel(agent, id) {
+  if (agent === 'claude') return `claude --resume ${id} --fork-session`;
   return null;
 }
 
@@ -9133,15 +10578,14 @@ async function resumeSessionInChat(d, opts) {
   const attaching = plan && plan.mode === 'attach' && !options.fork;
   const forking = !!(options.fork || (plan && plan.mode === 'fork'));
   if (options.fork && plan && plan.forkCommand) cmd = plan.forkCommand;
-  closeDetail();
   setPage('chat');
   // The tool and folder the chat named before the resume, restored if the agent
   // turns the session down.
   const previousHeader = { subBase: chatSubBase };
-  const cmdShort = attaching
-    ? `claude attach ${plan.agentId}`
-    : (forking ? `claude --resume ${d.id.slice(0, 8)} --fork-session`
-      : (resumeCommandLabel(agent, d.id.slice(0, 8)) || cmd));
+  const cmdShort = (attaching
+    ? resumeAttachLabel(agent, plan.agentId)
+    : (forking ? resumeForkLabel(agent, d.id.slice(0, 8))
+      : resumeCommandLabel(agent, d.id.slice(0, 8)))) || cmd;
   // The attach runs where the agent is working, and so does a copy of it; only
   // a plain resume is free to open in the directory the list row named.
   const cwd = ((attaching || forking) && plan && plan.cwd) ? plan.cwd : (d.project || null);
@@ -9152,7 +10596,7 @@ async function resumeSessionInChat(d, opts) {
     toast(`Opening a copy of ${d.id.slice(0, 8)}…`, 'success');
   } else if (forking) {
     // The only way in: a chat open in another window has no id to attach to.
-    toast(`That session is open elsewhere; opening a copy`, 'success');
+    toast('That session is open elsewhere; opening a copy', 'success');
   } else {
     toast(`Resuming ${d.id.slice(0, 8)}… (cwd: ${cwd || huskHome})`, 'success');
   }
@@ -11121,7 +12565,7 @@ async function refreshRecentList() {
   const wrap = $('#rail-recent-list');
   const section = $('#rail-recent');
   if (!wrap || !section) return;
-  const r = await window.husk.sessions.list();
+  const r = await sessionsFetch();
   if (!r.ok || !r.sessions || !r.sessions.length) {
     section.hidden = true;
     return;
@@ -11144,7 +12588,7 @@ async function refreshRecentList() {
   wrap.innerHTML = top.map((s) => `
     <div class="rail-recent-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath)}" data-owner="${escapeAttr(r.agent || '')}" title="${escapeAttr(s.title)}\n${escapeAttr(s.projectPath)}">
       <span class="rri-title">${escapeHtml(s.title)}</span>
-      <span class="rri-meta">${escapeHtml(timeAgo(s.mtime))}</span>
+      <span class="rri-meta">${escapeHtml(window.husk.sessionView.formatWhen(s.mtime, Date.now()).label)}</span>
     </div>
   `).join('');
   wrap.querySelectorAll('.rail-recent-item').forEach((el) => {
@@ -11189,7 +12633,7 @@ $('#btn-recent-all').addEventListener('click', () => setPage('sessions'));
 async function renderChatsPanelSessions() {
   const container = $('#cp-sessions');
   if (!container) return;
-  const r = await window.husk.sessions.list();
+  const r = await sessionsFetch();
   if (!r.ok || !r.sessions || !r.sessions.length) {
     container.innerHTML = '<div class="cp-empty">No sessions yet.<br/>Start a chat to see history here.</div>';
     return;
@@ -11199,7 +12643,7 @@ async function renderChatsPanelSessions() {
   container.innerHTML = top.map((s) => `
     <div class="cp-session-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath || '')}" data-owner="${escapeAttr(r.agent || '')}">
       <span class="cp-si-title">${escapeHtml(s.title || 'Untitled chat')}</span>
-      <span class="cp-si-meta">${escapeHtml(timeAgo(s.mtime))}</span>
+      <span class="cp-si-meta">${escapeHtml(window.husk.sessionView.formatWhen(s.mtime, Date.now()).label)}</span>
     </div>
   `).join('');
   container.querySelectorAll('.cp-session-item').forEach((el) => {

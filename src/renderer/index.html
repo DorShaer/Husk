@@ -1799,18 +1799,180 @@
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Sessions</h1>
-              <span class="page-sub" id="sessions-sub">Click a session to preview, Resume to continue</span>
+              <span class="page-sub" id="sessions-sub"></span>
             </div>
             <div class="page-head-right">
-              <input type="search" id="sessions-search" class="ghost-input" placeholder="Filter sessions…" />
-              <button class="ghost-btn" id="btn-sessions-refresh" title="Refresh"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
-              <button class="ghost-btn" id="btn-sessions-open" title="Open in OS">Open folder</button>
-              <button class="ghost-btn" id="btn-sessions-select" title="Select sessions to delete">Select</button>
-              <button class="ghost-btn ghost-btn-danger" id="btn-sessions-delete" title="Delete selected sessions" hidden>Delete (0)</button>
-              <button class="ghost-btn" id="btn-sessions-cancel" title="Exit selection mode" hidden>Cancel</button>
+              <button class="ghost-btn" id="sx-new" type="button">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                New chat
+              </button>
             </div>
           </div>
-          <div class="sessions-list" id="sessions-list"></div>
+
+          <div class="sx" id="sx" data-detail="closed">
+
+            <!-- ── roster ──────────────────────────────────────────────── -->
+            <section class="sx-roster" aria-label="Session list">
+              <div class="sx-band">
+                <div class="sx-search" id="sx-search">
+                  <svg class="sx-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+                  <input type="search" id="sx-q" placeholder="Search sessions" autocomplete="off" spellcheck="false"
+                         aria-label="Search sessions" aria-controls="sx-list" />
+                  <span class="kbd-cap sx-search-kbd" id="sx-search-kbd" aria-hidden="true">/</span>
+                  <button class="sx-iconlet" id="sx-menu-btn" type="button" title="List actions" aria-haspopup="menu" aria-expanded="false" aria-controls="sx-menu">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1.1"/><circle cx="12" cy="12" r="1.1"/><circle cx="12" cy="19" r="1.1"/></svg>
+                  </button>
+                  <button class="sx-iconlet" id="sx-search-clear" type="button" title="Clear search" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+
+                <div class="sx-chips" id="sx-chips" role="group" aria-label="Filters">
+                  <button class="chip" type="button" data-chip="project" aria-pressed="true">This project<span class="chip-count" data-chip-count="project">0</span></button>
+                  <button class="chip" type="button" data-chip="live" aria-pressed="false">Live<span class="chip-count" data-chip-count="live">0</span></button>
+                  <button class="chip" type="button" data-chip="needs" aria-pressed="false">Needs you<span class="chip-count" data-chip-count="needs">0</span></button>
+                  <button class="chip" type="button" data-chip="work" aria-pressed="false">Work item<span class="chip-count" data-chip-count="work">0</span></button>
+                </div>
+
+                <div class="sx-selbar" id="sx-selbar" hidden>
+                  <span class="sx-selbar-n" id="sx-selbar-n" aria-live="polite">0 selected</span>
+                  <button class="sx-link" id="sx-select-all" type="button">Select all</button>
+                  <button class="sx-link" id="sx-select-none" type="button">Clear</button>
+                  <button class="ghost-btn ghost-btn-danger" id="sx-delete" type="button" disabled>Delete (0)</button>
+                  <button class="sx-iconlet" id="sx-select-cancel" type="button" title="Leave select mode">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="sx-list" id="sx-list" role="tree" tabindex="0"
+                   aria-label="Sessions" aria-multiselectable="true"></div>
+
+              <div class="sx-count" id="sx-count">
+                <span class="sx-count-n" id="sx-count-n" role="status" aria-live="polite"></span>
+                <span class="sx-count-keys" aria-hidden="true">
+                  <span class="kbd-cap">&#8593;</span><span class="kbd-cap">&#8595;</span> move
+                  <span class="kbd-cap">Enter</span> open
+                </span>
+              </div>
+
+              <button class="sx-older" id="sx-older" type="button" aria-expanded="false" aria-controls="sx-list" hidden>
+                <svg class="sx-older-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6"/></svg>
+                <svg class="sx-older-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                <span class="sx-older-name">Older</span>
+                <span class="sx-older-n" id="sx-older-n">0</span>
+              </button>
+            </section>
+
+            <!-- ── detail ──────────────────────────────────────────────── -->
+            <section class="sx-detail" id="sx-detail" aria-label="Session detail">
+
+              <div class="sx-d-full" id="sx-d-full" hidden>
+                <header class="sx-d-head">
+                  <div class="sx-d-head-top">
+                    <button class="ghost-btn sx-d-back" id="sx-d-back" type="button">
+                      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+                      Back
+                    </button>
+                    <span class="sx-d-eyebrow" id="sx-d-eyebrow"></span>
+                    <div class="sx-d-acts" id="sx-d-acts"></div>
+                    <button class="iconbtn sx-d-kebab" id="sx-d-menu-btn" type="button" title="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="sx-d-menu">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1.1"/><circle cx="12" cy="12" r="1.1"/><circle cx="12" cy="19" r="1.1"/></svg>
+                    </button>
+                  </div>
+                  <h2 class="sx-d-title" id="sx-d-title" tabindex="-1"></h2>
+                  <div class="sx-d-sub">
+                    <button class="sx-copy" id="sx-d-copy-id" type="button" title="Copy session id"><span id="sx-d-id"></span>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                    </button>
+                    <button class="sx-copy" id="sx-d-copy-path" type="button" title="Copy project path"><span id="sx-d-path"></span>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                    </button>
+                  </div>
+                  <div class="sx-d-status" id="sx-d-status"></div>
+                </header>
+
+                <dl class="sx-d-facts" id="sx-d-facts"></dl>
+
+                <div class="sx-d-tabs" id="sx-d-tabs" role="tablist" aria-label="Session detail sections"></div>
+                <div class="sx-d-body" id="sx-d-body" role="tabpanel" tabindex="0"></div>
+              </div>
+
+              <div class="sx-d-empty" id="sx-d-empty"></div>
+            </section>
+          </div>
+
+          <!-- popovers, CSP-clean, no inline handlers -->
+          <div class="sx-menu" id="sx-menu" role="menu" aria-labelledby="sx-menu-btn" hidden>
+            <button class="sx-menu-item" type="button" role="menuitem" data-act="refresh">Refresh<span class="kbd-cap">R</span></button>
+            <button class="sx-menu-item" type="button" role="menuitem" data-act="select">Select sessions</button>
+            <button class="sx-menu-item" type="button" role="menuitem" data-act="open-folder" id="sx-menu-folder">Open sessions folder</button>
+            <button class="sx-menu-item" type="button" role="menuitem" data-act="open-autopilot">Open Autopilot</button>
+            <div class="sx-menu-sep" role="separator"></div>
+            <button class="sx-menu-item" type="button" role="menuitemradio" data-group="project" aria-checked="true">Group by project</button>
+            <button class="sx-menu-item" type="button" role="menuitemradio" data-group="day" aria-checked="false">Group by day</button>
+          </div>
+          <div class="sx-menu" id="sx-d-menu" role="menu" aria-labelledby="sx-d-menu-btn" hidden></div>
+
+          <!-- clone sources; never rendered directly -->
+          <template id="sx-row-tpl">
+            <div class="sx-row" role="treeitem" tabindex="-1" aria-level="2" aria-selected="false">
+              <span class="sx-gut" aria-hidden="true">
+                <span class="sx-wire"></span>
+                <span class="sx-dot"></span>
+                <span class="sx-check">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                </span>
+              </span>
+              <span class="sx-title"></span>
+              <span class="sx-runs" hidden></span>
+              <time class="sx-time"></time>
+              <span class="sx-state">
+                <span class="sx-tok" hidden></span>
+                <span class="sx-sep" aria-hidden="true" hidden>&#183;</span>
+                <span class="sx-cont"></span>
+                <svg class="sx-kids-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M6 9l6 6 6-6"/></svg>
+              </span>
+            </div>
+          </template>
+
+          <template id="sx-group-tpl">
+            <div class="sx-group" role="treeitem" tabindex="-1" aria-level="1" aria-expanded="true">
+              <svg class="sx-g-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              <svg class="sx-g-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+              <span class="sx-g-name"></span>
+              <span class="sx-g-note"></span>
+              <span class="sx-g-n"></span>
+            </div>
+          </template>
+
+          <template id="sx-ghost-tpl">
+            <button class="sx-ghost" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <span>Nothing here yet. Start a chat</span>
+            </button>
+          </template>
+
+          <template id="sx-empty-icon-tpl">
+            <svg class="es-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          </template>
+
+          <template id="sx-skel-tpl">
+            <div class="sx-row is-skel has-state" aria-hidden="true">
+              <span class="sx-gut"></span>
+              <span class="sx-title"><span class="sx-skel sx-skel-title"></span></span>
+              <time class="sx-time"><span class="sx-skel sx-skel-time"></span></time>
+              <span class="sx-state"><span class="sx-skel sx-skel-state"></span></span>
+            </div>
+          </template>
+
+          <template id="sx-notice-tpl">
+            <div class="sx-notice">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
+              <span class="sx-notice-msg"></span>
+              <button class="sx-link sx-notice-act" type="button" data-act="retry-agents">Retry</button>
+            </div>
+          </template>
         </div>
 
         <!-- MCP PAGE -->

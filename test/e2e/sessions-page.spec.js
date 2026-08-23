@@ -15,7 +15,7 @@ function makeIsolatedHome() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(dir, '.config', 'husk'), { recursive: true });
   // Without firstRunDone, boot() blocks on the welcome wizard (no agent CLI
-  // on CI runners) and its modal intercepts the session-row click.
+  // on CI runners) and its modal intercepts the row click.
   fs.writeFileSync(path.join(dir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   const proj = path.join(dir, '.claude', 'projects', '-home-test-proj');
@@ -30,7 +30,7 @@ function makeIsolatedHome() {
   return dir;
 }
 
-test('session detail panel stays full width when status panel is collapsed', async () => {
+test('the shared detail panel stays full width when the status panel is collapsed', async () => {
   const homeDir = makeIsolatedHome();
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
@@ -44,9 +44,11 @@ test('session detail panel stays full width when status panel is collapsed', asy
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
   // The trigger condition: status panel collapsed.
   await win.evaluate(() => { document.body.dataset.status = 'collapsed'; });
-  await win.evaluate(() => setPage('sessions'));
-  await win.waitForSelector('.session-row', { timeout: 10_000 });
-  await win.click('.session-row');
+  // Skills is the page that opens the shared drawer. Sessions renders its own
+  // pane in place and never sets body.dataset.detail.
+  await win.evaluate(() => setPage('skills'));
+  await win.waitForSelector('.sk-row', { timeout: 10_000 });
+  await win.click('.sk-row');
   await win.waitForTimeout(400); // dp-in animation settles
 
   const info = await win.evaluate(() => {
@@ -123,9 +125,9 @@ test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', 
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
   await win.evaluate(() => setPage('sessions'));
-  await win.waitForSelector('.session-row', { timeout: 10_000 });
+  await win.waitForSelector('.sx-row:not(.is-skel)', { timeout: 10_000 });
 
-  const rows = await win.evaluate(() => Array.from(document.querySelectorAll('.session-row')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+  const rows = await win.evaluate(() => Array.from(document.querySelectorAll('.sx-row:not(.is-skel)')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
   const joined = rows.join(' ');
   expect(joined).toContain('Discuss the widget design');       // typed chat kept
   expect(joined).toContain('OLD chat from before origin tracking'); // fail-open kept
@@ -213,9 +215,9 @@ test('copilot sessions use the first prompt when workspace name is null', async 
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
   await win.evaluate(() => setPage('sessions'));
-  await win.waitForSelector('.session-row', { timeout: 10_000 });
+  await win.waitForSelector('.sx-row:not(.is-skel)', { timeout: 10_000 });
 
-  const rows = await win.evaluate(() => Array.from(document.querySelectorAll('.session-row')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+  const rows = await win.evaluate(() => Array.from(document.querySelectorAll('.sx-row:not(.is-skel)')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
   expect(rows.join(' ')).toContain('Troubleshoot Copilot Plugin Sessions naming bug');
   expect(rows.join(' ')).not.toContain('(unnamed session)');
   expect(rows.join(' ')).not.toContain('Autopilot worker should not show in Sessions');
@@ -301,11 +303,13 @@ setInterval(() => {}, 1000);
   await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size === 1, null, { timeout: 10_000 });
 
   await win.evaluate(() => setPage('sessions'));
-  await win.waitForSelector('.session-row', { timeout: 10_000 });
-  const where = await win.getAttribute('#btn-sessions-open', 'title');
+  await win.waitForSelector('.sx-row:not(.is-skel)', { timeout: 10_000 });
+  await win.click('#sx-menu-btn');
+  const where = await win.getAttribute('#sx-menu-folder', 'title');
+  await win.keyboard.press('Escape');
   expect(where).toContain(path.join(copilotHome, 'session-state'));
-  await win.click('.session-row');
-  await win.click('#dp-foot .btn-primary');
+  await win.click('.sx-row:not(.is-skel)');
+  await win.click('#sx-d-acts .btn-primary');
 
   await expect.poll(() => fs.existsSync(resumeMarker), { timeout: 10_000 }).toBe(true);
   await expect.poll(

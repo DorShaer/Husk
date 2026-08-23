@@ -6415,148 +6415,571 @@ input[type="checkbox"]:disabled {
   cursor: not-allowed;
 }
 
-/* ─── Sessions page ─────────────────────────────────────────────────────── */
+/* ─── Sessions: the Roster ──────────────────────────────────────────────────
+   A two-pane cockpit. The roster indexes; the pane reads. Rows carry no box of
+   their own: one continuous hairline runs down the gutter and the state dots
+   sit on it, so a stack of sessions reads as one history rather than a ladder
+   of cards. Surface means loaded, the left rail means live, the dot means
+   state, the outline means cursor. Four channels, each used once. */
 
-/* The head and the rows share one left/right edge: the list keeps no padding
-   of its own and styles its scrollbar instead of reserving a gutter for one. */
-.sessions-list {
-  flex: 1; min-height: 0; overflow-y: auto;
-  display: flex; flex-direction: column; gap: var(--space-2);
+.page-sessions {
+  container: sx / inline-size;
+  display: flex; flex-direction: column; min-height: 0;
 }
-.sessions-list::-webkit-scrollbar { width: 8px; }
-.sessions-list::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: var(--radius-sm); }
-.sessions-list::-webkit-scrollbar-track { background: transparent; }
-/* Controls in the head sit on the optical centre of the title block rather
-   than on the h1 baseline, which the two-line text column throws off. */
-.session-row {
+
+.sx {
+  /* The roster carries prose, so it takes the width the detail pane does not
+     need: the transcript feed reads worse past a measure, the titles better. */
+  --sx-roster-w: min(480px, 42%);
+  --sx-pad-x: var(--space-3);
+  --sx-gut: 20px;
+  --sx-time-w: 64px;
+  --sx-indent: calc(var(--sx-gut) + var(--space-2));
+  --sx-title-lh: 18px;
+  --sx-state-lh: 16px;
+  --sx-pad-t: 6px;
+  --sx-pad-b: 7px;
+  /* Row heights are minimums, not locks: a title that needs a second line takes
+     it rather than ellipsing, since the title is the one thing being read. */
+  --sx-row-one-h: 31px;
+  --sx-row-h: 48px;
+  --sx-dot-top: 11.5px;
+  --sx-wire: var(--line);
+  --sx-hover: var(--bg-2);
+  --sx-current: var(--bg-4);
+  --sx-meta-fs: var(--fs-nano);
+}
+body[data-mode="light"] .sx {
+  /* The spine is the roster's organising device, so it has to survive a white
+     ground rather than fade into it. */
+  --sx-wire: var(--line-3);
+  --sx-hover: var(--bg-2);
+  --sx-current: var(--bg-4);
+}
+
+.sx {
+  position: relative;                 /* the narrow-width detail overlay anchors here */
+  flex: 1; min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  align-items: center;
-  gap: var(--space-4);
-  min-height: var(--row-h-lg);
-  padding: var(--space-2) var(--space-4);
-  background: var(--bg-1);
+  grid-template-columns: var(--sx-roster-w) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);   /* --bg-1 is translucent in 8 of 10 themes */
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  transition: border-color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
-  color: var(--text);
-  font-family: inherit;
-  text-align: left;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
 }
-.session-row:hover {
-  border-color: var(--line-3);
-  background: var(--bg-2);
-}
-/* Drop the track rather than leave it empty: a zero-width column still pays its
-   column gap, which would pull the meta off the edge every other row sits on. */
-.session-row.no-phase { grid-template-columns: minmax(0, 1fr) auto auto; }
-.sessions-list.select-mode .session-row {
-  grid-template-columns: auto 1fr auto auto auto;
-}
-.sessions-list.select-mode .session-row.no-phase { grid-template-columns: auto 1fr auto auto; }
-.sessions-list.select-mode .session-row:hover { transform: none; }
-.session-row.selected {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2));
-  background: var(--bg-2);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-.session-check {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px;
-  cursor: pointer;
-}
-.session-task { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.session-task strong {
-  font-weight: var(--fw-label); font-size: var(--fs-body);
-  color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* Path and id are machine text, so the sub-line takes the mono step. */
-.session-slug { font-size: var(--fs-mono); color: var(--text-3); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Phase is a state, so it takes the shared pill recipe: a tint of the hue over
-   the card, an edge one step up and ink at full chroma. */
-.session-phase {
-  font-size: var(--fs-section); padding: 3px 8px; border-radius: var(--radius-pill);
-  text-transform: uppercase; letter-spacing: var(--tracking-section); font-weight: var(--fw-section);
-  background: var(--state-muted-bg); color: var(--state-muted-ink); border: 1px solid var(--state-muted-edge);
-}
-.session-phase.complete { background: var(--state-success-bg); color: var(--state-success-ink); border-color: var(--state-success-edge); }
-.session-phase.execute, .session-phase.build { background: var(--state-running-bg); color: var(--state-running-ink); border-color: var(--state-running-edge); }
-.session-phase.observe, .session-phase.think, .session-phase.plan { background: var(--state-muted-bg); color: var(--state-muted-ink); border-color: var(--state-muted-edge); }
-.session-progress { font-size: var(--fs-mono); color: var(--text-3); font-family: var(--font-mono); }
-/* Same grammar as the agent ages nested under it: one time column, one casing. */
-.session-effort { font-size: var(--fs-label); color: var(--text-3); font-weight: var(--fw-label); }
+.sx-roster { display: flex; flex-direction: column; min-height: 0; min-width: 0;
+             border-right: 1px solid var(--line); }
+.sx-detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 
-/* Sub-line: one sentence, with the hidden-run note beside it when there is one. */
-#sessions-sub {
-  display: flex; align-items: center; flex-wrap: wrap;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.ss-note { color: var(--text-3); }
+.sx-band { flex: 0 0 auto; }
 
-/* Sessions empty state: a bounded card anchored near the top of the list, carrying
-   a headline, a primary action and the three-step model of what this page is. */
-.sessions-list > .empty-state {
-  flex: 0 0 auto;
-  justify-content: flex-start;
-  gap: var(--space-3);
-  width: 100%;
-  max-width: 520px;
-  margin: clamp(var(--space-6), 8vh, calc(var(--space-7) * 2)) auto 0;
-  padding: var(--space-6) var(--space-5) var(--space-5);
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+.sx-search {
+  display: flex; align-items: center; gap: var(--space-2);
+  height: 40px; padding: 0 var(--sx-pad-x);
+  border-bottom: 1px solid var(--line);
 }
-.sessions-list > .empty-state .es-icon {
-  opacity: 1;
-  color: var(--text-3);
+.sx-search-icon { width: 15px; height: 15px; flex: none; color: var(--text-3); }
+/* The field is a bare text edge inside the band, so it takes none of the dark
+   family's well, ring or border at any interaction state. */
+.sx-search input[type="search"],
+[data-mode="dark"] .sx-search input[type="search"],
+[data-mode="dark"] .sx-search input[type="search"]:focus,
+[data-mode="dark"] .sx-search input[type="search"]:focus-visible {
+  flex: 1; min-width: 0;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  padding: 0; height: auto;
+  color: var(--text); font-family: var(--font-body); font-size: var(--fs-small);
+  outline: 0;
 }
-.sessions-list > .empty-state .es-msg {
-  color: var(--text-2);
-  line-height: var(--lh-snug);
-}
-.se-title {
-  font-size: var(--fs-h2);
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: var(--tracking-tight);
-  line-height: var(--lh-snug);
-  text-align: center;
-}
-.se-actions {
-  display: flex; flex-wrap: wrap;
-  align-items: center; justify-content: center;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-.se-hints {
-  align-self: stretch;
-  display: flex; flex-direction: column; gap: var(--space-3);
-  margin-top: var(--space-2);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--line);
-  text-align: left;
-}
-.se-hint {
-  display: flex; align-items: center; gap: var(--space-3);
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  line-height: var(--lh-snug);
-}
-.se-hint b { color: var(--text-2); font-weight: 600; }
-.se-hint-n {
-  flex: 0 0 auto;
+.sx-search input[type="search"]::-webkit-search-cancel-button { display: none; }
+.sx-search:focus-within .sx-search-icon { color: var(--text-2); }
+.sx-search-kbd { flex: none; }
+
+.sx-iconlet {
+  flex: none; width: 20px; height: 20px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer;
+}
+.sx-iconlet svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sx-iconlet:hover { color: var(--text); background: var(--bg-2); }
+.sx-iconlet:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+
+.sx-chips, .sx-selbar {
+  display: flex; align-items: center; gap: var(--space-2);
+  height: 32px; padding: 0 var(--sx-pad-x);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: none;
+}
+.sx-selbar .sx-link { margin-left: 0; }
+.sx-chips .chip { flex: none; }
+.sx-chips::-webkit-scrollbar, .sx-selbar::-webkit-scrollbar { height: 0; }
+/* One pressed treatment for every chip. The count beside it is the signal that
+   a filter is doing work. */
+.sx-chips .chip[aria-pressed="true"] { background: var(--bg-3); color: var(--text); border-color: var(--line-2); }
+.sx-chips .chip[aria-pressed="true"] .chip-count { color: inherit; }
+.sx-chips .chip[disabled] { opacity: 0.45; cursor: default; }
+.sx-chips .chip[data-chip="project"][aria-pressed="true"]::before {
+  content: ''; width: 2px; height: 11px; margin-right: 4px;
+  background: var(--accent); border-radius: var(--radius-pill);
+}
+.sx-link {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 4px;
+  background: transparent; border: 0; padding: 0 2px;
+  color: var(--text-3); font-family: inherit; font-size: var(--fs-micro); cursor: pointer;
+}
+.sx-link svg { width: 12px; height: 12px; }
+.sx-link:hover { color: var(--text); }
+.sx-link:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: 1px; box-shadow: none; }
+
+.sx-selbar-n { font-size: var(--fs-micro); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sx-selbar .sx-link { margin-left: 0; }
+.sx-selbar .ghost-btn-danger { margin-left: auto; height: var(--control-h-sm); padding: 0 10px; }
+
+.sx-list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  scrollbar-gutter: stable;
+  display: flex; flex-direction: column;
+  outline: 0;
+}
+.sx-list::-webkit-scrollbar { width: 8px; }
+.sx-list::-webkit-scrollbar-track { background: transparent; }
+.sx-list::-webkit-scrollbar-thumb {
+  background: var(--line-2); border: 2px solid transparent; background-clip: padding-box;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--line-2);
-  background: var(--bg-2);
-  color: var(--text-2);
-  font-size: var(--fs-micro);
-  font-weight: 600;
+}
+.sx-list::-webkit-scrollbar-thumb:hover { background: var(--line-3); background-clip: padding-box; }
+
+/* The group band is the only thing that cuts the gutter line, so it is a label,
+   not content: three steps down from the row title in size, weight and ink. */
+.sx-group {
+  position: sticky; top: 0; z-index: 1;
+  display: grid; grid-template-columns: 13px 13px minmax(0, 1fr) auto auto;
+  align-items: center; column-gap: var(--space-2);
+  height: 30px; padding: 0 var(--sx-pad-x);
+  border-top: 1px solid var(--line);
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  cursor: pointer;
+}
+.sx-group:first-child { border-top: 0; }
+.sx-group:hover { background: linear-gradient(var(--bg-2), var(--bg-2)), var(--bg); }
+.sx-group:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+.sx-g-caret { width: 12px; height: 12px; color: var(--text-3);
+              transition: transform var(--motion-fast) var(--ease); }
+.sx-group[aria-expanded="false"] .sx-g-caret { transform: rotate(-90deg); }
+.sx-g-glyph { width: 13px; height: 13px; color: var(--text-3); }
+.sx-group.is-current .sx-g-glyph { color: var(--accent); }
+.sx-g-name { font-size: var(--fs-section); font-weight: var(--fw-section);
+             letter-spacing: var(--tracking-section); color: var(--text-2);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-g-note { font-size: var(--fs-nano); color: var(--text-3); }
+.sx-g-n    { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text-3);
+             font-variant-numeric: tabular-nums; }
+
+.sx-ghost {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; height: 34px; padding: 0 var(--sx-pad-x) 0 calc(var(--sx-pad-x) + var(--sx-indent));
+  background: transparent; border: 0;
+  color: var(--text-3); font-family: inherit; font-size: var(--fs-body);
+  text-align: left; cursor: pointer;
+}
+.sx-ghost svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sx-ghost:hover { background: var(--sx-hover); color: var(--text-2); }
+.sx-ghost:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+
+.sx-notice {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--sx-pad-x);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-micro); color: var(--text-3);
+}
+.sx-notice svg { width: var(--icon-xs); height: var(--icon-xs); flex: none; color: var(--warn); }
+.sx-notice-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-notice .sx-link { margin-left: 0; }
+
+.sx-count {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  height: 22px; padding: 0 var(--sx-pad-x);
+  font-size: var(--fs-nano); color: var(--text-3);
+  border-top: 1px solid var(--line);
+  overflow: hidden; white-space: nowrap;
+}
+.sx-count-n { overflow: hidden; text-overflow: ellipsis; }
+/* The keymap appears once the list is engaged, so nothing instructs an idle page. */
+.sx-count-keys { flex: none; display: none; align-items: center; gap: 4px; }
+.sx-roster:focus-within .sx-count-keys { display: inline-flex; }
+
+.sx-older {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--space-2);
+  height: 32px; padding: 0 var(--sx-pad-x);
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  border: 0; border-top: 1px solid var(--line);
+  color: var(--text-2); font-family: inherit; font-size: var(--fs-label);
+  text-align: left; cursor: pointer;
+}
+.sx-older-caret { width: 12px; height: 12px; color: var(--text-3);
+                  transition: transform var(--motion-fast) var(--ease); }
+.sx-older[aria-expanded="true"] .sx-older-caret { transform: rotate(180deg); }
+.sx-older-glyph { width: 13px; height: 13px; color: var(--text-3); }
+.sx-older-name { flex: 1; min-width: 0; }
+.sx-older-n { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text-3);
+              font-variant-numeric: tabular-nums; }
+.sx-older:hover { background: linear-gradient(var(--bg-2), var(--bg-2)), var(--bg); color: var(--text); }
+.sx-older:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+
+.sx-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--sx-gut) minmax(0, 1fr) auto var(--sx-time-w);
+  grid-template-areas: "gut title runs time";
+  align-items: baseline;
+  column-gap: var(--space-2);
+  row-gap: 1px;
+  min-height: var(--sx-row-one-h);
+  padding: var(--sx-pad-t) var(--sx-pad-x) var(--sx-pad-b) var(--sx-pad-x);
+  cursor: pointer;
+  scroll-margin: var(--space-4) 0;
+  transition: background var(--motion-fast) var(--ease);
+}
+.sx-row.has-state {
+  grid-template-areas: "gut title runs time" "gut state state state";
+  min-height: var(--sx-row-h);
+}
+.sx-row:not(.has-state) .sx-state { display: none; }
+.sx-row.is-child { padding-left: calc(var(--sx-pad-x) + var(--sx-indent)); }
+
+/* One continuous hairline down the gutter, broken only by the group bands. The
+   dots are nodes on it. */
+.sx-gut  { grid-area: gut; position: relative; align-self: stretch; }
+/* A child keeps its parent's spine running behind it, so expanding a row does
+   not cut the line its whole group hangs from. */
+.sx-row.is-child .sx-gut::before {
+  content: ''; position: absolute; width: 1px; background: var(--sx-wire);
+  left: calc(9px - var(--sx-indent));
+  top: calc(-1 * var(--sx-pad-t)); bottom: calc(-1 * var(--sx-pad-b));
+}
+/* Spans the row's whole box, not the gutter's content box, so consecutive rows
+   meet and the hairline reads as one line rather than a column of ticks. */
+.sx-wire { position: absolute; left: 9px; width: 1px; background: var(--sx-wire);
+           top: calc(-1 * var(--sx-pad-t)); bottom: calc(-1 * var(--sx-pad-b)); }
+.sx-row:first-child .sx-wire { top: 50%; }
+.sx-row:last-child .sx-wire  { bottom: 50%; }
+
+.sx-dot  { position: absolute; left: 6px; top: var(--sx-dot-top);
+           width: 7px; height: 7px; border-radius: var(--radius-pill);
+           background: transparent;
+           box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent); }
+.sx-check { position: absolute; left: 2px; top: 8px;
+            width: 14px; height: 14px; border-radius: var(--radius-sm);
+            border: 1px solid var(--line-2); background: var(--bg-2);
+            display: none; align-items: center; justify-content: center; }
+.sx-check svg { width: 10px; height: 10px; opacity: 0; color: var(--on-accent, var(--bg)); }
+
+.sx-title { grid-area: title;
+            font-size: var(--fs-body-lg); font-weight: var(--fw-label); color: var(--text);
+            line-height: var(--sx-title-lh);
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+            overflow: hidden; overflow-wrap: anywhere; }
+.sx-row.is-unnamed  .sx-title { color: var(--text-2); }
+.sx-row.is-untitled .sx-title { color: var(--text-3); }
+.sx-match { color: var(--accent); font-weight: 700; }
+
+.sx-runs { grid-area: runs; font-family: var(--font-mono); font-size: var(--sx-meta-fs);
+           font-variant-numeric: tabular-nums; color: var(--text-3);
+           line-height: var(--sx-title-lh); cursor: pointer; }
+.sx-runs:hover { color: var(--text-2); }
+
+/* Fills its track and clips inside it rather than sitting flush right at its
+   own width: a label wider than the track would otherwise overflow leftwards
+   into the title and the two would touch. */
+.sx-time { grid-area: time; justify-self: stretch; text-align: right;
+           font-family: var(--font-mono); font-size: var(--sx-meta-fs);
+           font-variant-numeric: tabular-nums; color: var(--text-3);
+           line-height: var(--sx-title-lh); white-space: nowrap; overflow: hidden; }
+
+.sx-state { grid-area: state; display: flex; align-items: baseline; gap: 5px; min-width: 0;
+            font-size: var(--fs-label); font-weight: var(--fw-body); color: var(--text-3);
+            line-height: var(--sx-state-lh); }
+.sx-tok  { flex: none; font-weight: var(--fw-label); color: var(--text-2); }
+.sx-sep  { flex: none; color: var(--text-3); opacity: 0.5; }
+.sx-cont { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-kids-caret { flex: none; width: 12px; height: 12px; color: var(--text-3); align-self: center;
+                 transition: transform var(--motion-fast) var(--ease); }
+.sx-kids-caret:hover { color: var(--text); }
+.sx-row[aria-expanded="true"] .sx-kids-caret { transform: rotate(180deg); }
+
+/* Channel 1: the dot is the state. Amber is reserved for the one state that
+   needs a person; running is the only other filled dot; everything finished is
+   a hollow ring. */
+.sx-row[data-state="running"] .sx-dot { background: var(--state-running-ink); box-shadow: none; }
+.sx-row[data-state="blocked"] .sx-dot { background: var(--warn); box-shadow: none; }
+.sx-row[data-state="held"]    .sx-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--warn); }
+.sx-row[data-state="failed"]  .sx-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+/* A session waiting on a person is the one thing on this page that cannot be
+   deferred, so it gets the loudest object in the roster: a filled pill, not a
+   tint of the same grey ramp everything else uses. */
+.sx-row[data-state="blocked"] .sx-tok {
+  color: var(--bg);
+  background: var(--warn);
+  font-weight: var(--fw-section);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  align-self: center;
+}
+.sx-row[data-state="running"] .sx-tok { color: var(--state-running-ink); }
+
+/* Channel 2: surface = the row loaded in the pane. It has to beat hover
+   outright, or the row being read looks less selected than the one under the
+   pointer. */
+.sx-row:hover:not(.is-current) { background: var(--sx-hover); }
+.sx-row.is-current { background: var(--sx-current); }
+.sx-row.is-current .sx-title { color: var(--text); }
+
+/* Channel 3: the keyboard cursor is a bar in the gutter. A closed rectangle
+   around every row rebuilds the card wall this page exists to remove. */
+.sx-row.is-cursor, .sx-row:focus-visible { outline: none; box-shadow: none; }
+.sx-row.is-cursor::after {
+  content: ''; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--focus-ink);
+}
+
+/* Channel 4: a 2px left rail = this session is open right now. Two weights of
+   one mechanism, never a second hue. */
+.sx-row.is-open::before, .sx-row.is-elsewhere::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+}
+.sx-row.is-open::before      { background: var(--accent); }
+.sx-row.is-elsewhere::before { background: var(--line-3); }
+
+/* Selection lives in the gutter cell the dot vacates, so it costs no layout. */
+.sx-list.is-picking .sx-dot { display: none; }
+.sx-list.is-picking .sx-check { display: inline-flex; }
+.sx-list.is-picking .sx-row[aria-selected="true"] { background: var(--sx-hover); }
+.sx-row[aria-selected="true"] .sx-check { background: var(--accent); border-color: var(--accent); }
+.sx-row[aria-selected="true"] .sx-check svg { opacity: 1; }
+.sx-row.is-undeletable .sx-check { opacity: 0.35; }
+/* An agent row is not a session file, so select mode offers it no checkbox. */
+.sx-list.is-picking .sx-row.is-agent .sx-check { display: none; }
+
+/* skeletons */
+.sx-row.is-skel { cursor: default; }
+.sx-skel {
+  display: block; height: 10px; border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--bg-3) 25%, var(--bg-2) 50%, var(--bg-3) 75%);
+  background-size: 200% 100%;
+  animation: ws-shimmer 1.1s linear infinite;
+}
+.sx-skel-title { width: 62%; height: 11px; }
+.sx-skel-time  { width: 40px; margin-left: auto; }
+.sx-skel-state { width: 46%; height: 9px; }
+
+.sx-d-full { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.sx-d-head { flex: 0 0 auto; padding: 0 var(--space-4) var(--space-3); border-bottom: 1px solid var(--line); }
+.sx-d-head-top { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; }
+/* Only the narrow layout stacks the panes, so only it needs a way back. */
+.sx-d-back { display: none; margin-right: var(--space-2); height: var(--control-h-sm); }
+.sx-d-eyebrow { font-size: var(--fs-micro); color: var(--text-3); text-transform: lowercase;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-d-acts { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+.sx-d-acts .btn-primary, .sx-d-acts .ghost-btn { height: var(--control-h-sm); }
+.page-sessions .page-title { font-size: var(--fs-h3); }
+.sx-d-title { margin: var(--space-1) 0 0; max-width: 68ch;
+              font-family: var(--font-display);
+              font-size: var(--fs-h1); font-weight: var(--fw-section); letter-spacing: var(--tracking-tight);
+              color: var(--text); line-height: var(--lh-snug); outline: 0;
+              display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sx-d-title[contenteditable="plaintext-only"] {
+  -webkit-line-clamp: none; display: block;
+  border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--focus-ink); }
+.sx-d-sub { display: flex; align-items: center; gap: var(--space-2); margin-top: 3px; min-width: 0; }
+.sx-copy {
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+  background: transparent; border: 0; padding: 1px 4px; border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-3); cursor: pointer;
+}
+.sx-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-copy svg { width: 11px; height: 11px; flex: none; opacity: 0; }
+.sx-copy:hover { background: var(--bg-2); color: var(--text-2); }
+.sx-copy:hover svg { opacity: 1; }
+.sx-copy:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+.sx-d-status { margin-top: var(--space-2); max-width: 68ch;
+               font-size: var(--fs-label); color: var(--text-3);
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-d-status .sx-tok { font-weight: var(--fw-label); }
+
+/* Facts are pairs on a wrapping grid, not a twelve-row spec sheet in a
+   scroller: everything the pane knows is above the fold. */
+.sx-d-facts {
+  flex: 0 0 auto; margin: 0; padding: var(--space-3) var(--space-4);
+  max-width: 68ch;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  column-gap: var(--space-4); row-gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.sx-fact { display: grid; grid-template-columns: 84px minmax(0, 1fr);
+           column-gap: var(--space-2); align-items: baseline; min-width: 0; }
+.sx-d-facts dt { font-size: var(--fs-micro); color: var(--text-3); }
+.sx-d-facts dd { margin: 0; font-size: var(--fs-small); color: var(--text-2);
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* A path in a fact cell truncates rather than widening the grid. */
+.sx-fact-link { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+.sx-d-facts dd .sx-copy { max-width: 100%; }
+
+.sx-d-tabs { flex: 0 0 auto; display: flex; gap: var(--space-1);
+             padding: var(--space-2) var(--space-4) 0; border-bottom: 1px solid var(--line); }
+.sx-d-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: var(--space-1) var(--space-3); border-radius: var(--radius-pill);
+  margin-bottom: var(--space-2);
+  background: transparent; border: 1px solid transparent;
+  font-size: var(--fs-micro); font-weight: var(--fw-section); color: var(--text-3);
+  font-family: inherit; cursor: pointer;
+}
+.sx-d-tab:hover { color: var(--text); background: var(--bg-2); }
+.sx-d-tab[aria-selected="true"] { color: var(--text); background: var(--bg-3); border-color: var(--line-2); }
+.sx-d-tab:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+
+.sx-d-body { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+             padding: var(--space-3) var(--space-4); outline: 0; }
+/* One measure for everything that is read, not scanned. */
+.sx-d-body > * { max-width: 68ch; }
+.sx-d-body { transition: opacity var(--motion-fast) var(--ease); }
+.sx-d-body::-webkit-scrollbar { width: 7px; }
+.sx-d-body::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: var(--radius-pill); }
+
+.sx-d-feed { list-style: none; margin: 0; padding: 0; }
+.sx-d-feed li { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto;
+                column-gap: var(--space-3); align-items: baseline;
+                padding: 6px 0; border-top: 1px solid var(--line); }
+.sx-d-feed li:first-child { border-top: 0; }
+.sx-d-feed .fk { font-family: var(--font-mono); font-size: var(--fs-nano);
+                 text-transform: uppercase; letter-spacing: var(--tracking-section); color: var(--text-3); }
+.sx-d-feed .ft { font-size: var(--fs-small); line-height: var(--lh-base); color: var(--text-2);
+                 overflow-wrap: anywhere; }
+.sx-d-feed .ftime { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text-3);
+                    font-variant-numeric: tabular-nums; }
+.sx-d-feed .k-user .ft { color: var(--text); }
+.sx-d-feed .k-tool .ft { font-family: var(--font-mono); font-size: var(--fs-mono); color: var(--text-3); }
+
+.sx-d-doc { margin: 0; font-family: var(--font-mono); font-size: var(--fs-mono);
+            color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sx-d-quote { margin: var(--space-3) 0 0; padding-left: var(--space-3);
+              border-left: 2px solid var(--line-2);
+              font-size: var(--fs-body); color: var(--text-2); line-height: var(--lh-base); }
+.sx-d-note { font-size: var(--fs-body); color: var(--text-3); line-height: var(--lh-base); }
+.sx-d-err  { margin-top: var(--space-2); font-family: var(--font-mono);
+             font-size: var(--fs-nano); color: var(--text-3); overflow-wrap: anywhere; }
+
+/* agents tab rows */
+.sx-agent { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto auto;
+            column-gap: var(--space-2); align-items: baseline;
+            padding: 7px 0; border-top: 1px solid var(--line); width: 100%;
+            background: transparent; border-left: 0; border-right: 0; border-bottom: 0;
+            font-family: inherit; text-align: left; cursor: pointer; }
+.sx-agent:hover { background: var(--bg-2); }
+.sx-agent-name { font-size: var(--fs-body); color: var(--text);
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-agent-sub  { grid-column: 2 / -1; font-size: var(--fs-label); color: var(--text-3);
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-agent-ctl  { display: flex; gap: 6px; }
+
+.sx-empty {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-5) var(--sx-pad-x);
+  text-align: left;
+}
+/* The icon is the svg itself, so it carries its own size. */
+.sx-empty .es-icon { display: block; width: var(--icon-lg); height: var(--icon-lg);
+                     color: var(--text-3); opacity: 0.55; }
+.sx-empty-title { font-size: var(--fs-body-lg); font-weight: var(--fw-section); color: var(--text); }
+.sx-empty-msg   { font-size: var(--fs-small); color: var(--text-2); line-height: var(--lh-base); max-width: 46ch; }
+.sx-empty-err   { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text-3);
+                  overflow-wrap: anywhere; }
+.sx-empty-acts  { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.sx-hints { display: flex; flex-direction: column; gap: var(--space-3);
+            padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.sx-hint  { display: flex; align-items: center; gap: var(--space-3);
+            font-size: var(--fs-micro); color: var(--text-3); line-height: var(--lh-snug); }
+.sx-hint b { color: var(--text-2); font-weight: var(--fw-section); }
+.sx-hint-n { flex: none; display: inline-flex; align-items: center; justify-content: center;
+             width: 20px; height: 20px; border-radius: var(--radius-pill);
+             border: 1px solid var(--line-2); background: var(--bg-2);
+             color: var(--text-2); font-size: var(--fs-micro); font-weight: var(--fw-section); }
+
+.sx-d-empty { flex: 1; min-height: 0; overflow-y: auto;
+              display: flex; flex-direction: column; gap: var(--space-3);
+              padding: var(--space-5); max-width: 68ch; }
+.sx-d-empty-eyebrow { font-size: var(--fs-micro); font-weight: var(--fw-section);
+                      letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--text-3); }
+.sx-d-empty-title { font-family: var(--font-display); font-size: var(--fs-h2);
+                    font-weight: var(--fw-section); letter-spacing: var(--tracking-tight);
+                    color: var(--text); margin: 0; }
+.sx-d-empty-msg { font-size: var(--fs-small); color: var(--text-2); line-height: var(--lh-base); }
+.sx-keys { display: flex; flex-wrap: wrap; gap: var(--space-3);
+           margin-top: var(--space-3); padding-top: var(--space-3);
+           border-top: 1px solid var(--line);
+           font-size: var(--fs-nano); color: var(--text-3); }
+.sx-keys span { display: inline-flex; align-items: center; gap: 4px; }
+
+.sx-menu {
+  position: absolute; z-index: 60; min-width: 208px;
+  padding: var(--space-1);
+  background: var(--notif-bg);
+  border: 1px solid var(--line-2); border-radius: var(--radius-lg);
+  box-shadow: var(--elev-4);
+  display: flex; flex-direction: column;
+}
+.sx-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  height: 30px; padding: 0 var(--space-3); border-radius: var(--radius-md);
+  background: transparent; border: 0;
+  color: var(--text-2); font-family: inherit; font-size: var(--fs-small);
+  text-align: left; cursor: pointer;
+}
+.sx-menu-item:hover { background: var(--bg-2); color: var(--text); }
+.sx-menu-item[aria-checked="true"] { color: var(--text); }
+.sx-menu-item[aria-checked="true"]::after {
+  content: ''; width: 5px; height: 5px; border-radius: var(--radius-pill); background: var(--accent);
+}
+.sx-menu-sep { height: 1px; margin: var(--space-1) 0; background: var(--line); }
+.sx-menu-item.is-danger { color: var(--rose); }
+.sx-menu-item.is-danger:hover { background: color-mix(in srgb, var(--rose) 12%, transparent); }
+.sx-menu-item:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; box-shadow: none; }
+
+@container sx (max-width: 1180px) { .sx { --sx-roster-w: min(392px, 40%); } }
+
+@container sx (max-width: 940px) {
+  .sx { grid-template-columns: minmax(0, 1fr); }
+  .sx-roster { border-right: 0; }
+  .sx-detail {
+    position: absolute; inset: 0; z-index: 2;
+    background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+    display: none;
+  }
+  .sx[data-detail="open"] .sx-detail {
+    display: flex;
+    animation: sx-slide var(--motion-base) var(--ease-out);
+  }
+  .sx-d-back { display: inline-flex; }
+}
+@keyframes sx-slide { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+
+@container sx (max-width: 700px) { .sx { --sx-pad-x: var(--space-2); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sx[data-detail="open"] .sx-detail { animation: none; }
+  .sx-d-body { transition: none; }
+  .sx-g-caret, .sx-older-caret, .sx-kids-caret { transition: none; }
+  .sx-skel { animation: none; background: var(--bg-3); }
 }
 
 .empty-state {
@@ -9206,117 +9629,6 @@ body[data-mode="light"] .ob-wordmark span {
 .palette-list li.active .pi-icon, .palette-list li:hover .pi-icon { color: var(--text-2); }
 .palette-list .pi-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: var(--fs-nano); font-family: var(--font-mono); }
-/* ─── Agents under the chat that started them ──────────────────────────────
-   A chat with agents is one card holding all of them. The card carries the surface;
-   the children sit on it with none of their own, tethered by a rail and indented. A
-   fill on the children cannot work across the families, where the bg steps run
-   opposite ways. */
-.session-block {
-  /* The frame is an inset ring rather than a border, so it costs no layout and the
-     chat row inside starts on the same edge as every ungrouped row. */
-  --sb-inset: calc(var(--space-4) + 1px);
-  /* One arc for the card and the row inside it, declared once so the family
-     that gives its cards a wider one moves both together. */
-  --sb-arc: var(--radius-lg);
-  display: flex; flex-direction: column;
-  background: var(--bg-1);
-  box-shadow: inset 0 0 0 1px var(--line);
-  border-radius: var(--sb-arc);
-  overflow: hidden;
-  transition: box-shadow var(--motion-fast) var(--ease);
-}
-.session-block:hover { box-shadow: inset 0 0 0 1px var(--line-2); }
-/* The block is the card, so the chat row inside gives up the surface and hover lift
-   it carries when it stands alone. Its arc follows the card's top corners. The dark
-   family dresses cards in a later glass pass, which this outranks. */
-.session-block .session-row,
-[data-mode="dark"] .session-block .session-row {
-  background: transparent; border-color: transparent;
-  border-radius: var(--sb-arc) var(--sb-arc) 0 0;
-  backdrop-filter: none; -webkit-backdrop-filter: none;
-}
-.session-block .session-row:hover,
-[data-mode="dark"] .session-block .session-row:hover {
-  background: var(--bg-2); border-color: transparent; transform: none;
-}
-.session-block .session-row.selected { border-color: transparent; }
-/* A control, not a strip: sized to its own label and bordered, so the click target
-   is the thing that looks clickable. Its left edge is the chat title's. */
-.session-agents {
-  display: inline-flex; align-self: flex-start; align-items: center; gap: var(--space-2);
-  margin: var(--space-2) var(--space-4) var(--space-3) var(--sb-inset);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
-  border: 1px solid var(--line); border-radius: var(--radius-pill);
-  background: transparent; color: var(--text-2);
-  font-size: var(--fs-nano);
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
-}
-/* Open, the chip is the head of the group, so the rail starts at its bottom
-   edge rather than floating a gap below it. */
-.session-agents[aria-expanded="true"] { margin-bottom: 0; }
-.session-agents:hover, .session-agents:focus-visible { color: var(--text); background: var(--bg-2); border-color: var(--line-2); }
-.session-agents .sa-caret { width: 12px; height: 12px; flex: 0 0 auto; color: var(--text-3); transition: transform var(--motion-fast) var(--ease); }
-.session-agents[aria-expanded="true"] .sa-caret { transform: rotate(180deg); }
-.sa-live { color: var(--text-2); }
-.sa-live::before { content: "·"; margin: 0 var(--space-2) 0 0; color: var(--text-3); }
-.session-agents.has-blocked .sa-live { color: var(--as-mark); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) { .session-agents .sa-caret { transition: none; } }
-
-/* The rail hangs from the chip and stops on the chat title's left edge, capped to a
-   measure so the state and the age stay near the text they belong to. */
-.agent-group {
-  display: flex; flex-direction: column; gap: 2px;
-  margin: 0 var(--space-4) var(--space-3) var(--sb-inset);
-  max-width: 720px;
-  padding-left: var(--space-3);
-  border-left: 1px solid var(--line-3);
-}
-/* One line: the chat these belong to is the row above, so the only fields left
-   are the ones that differ between siblings. */
-.agent-row {
-  display: grid;
-  grid-template-columns: 14px auto minmax(0, 1fr) auto 44px;
-  align-items: center;
-  column-gap: var(--space-2);
-  min-height: 34px;
-  padding: var(--space-1) var(--space-2);
-  border: 0; border-radius: var(--radius-md);
-  background: transparent; color: var(--text);
-  font-family: inherit; text-align: left; cursor: pointer;
-  transition: background var(--motion-fast) var(--ease);
-}
-.agent-row:hover, .agent-row:focus-visible { background: var(--bg-2); }
-.agent-dot { justify-self: center; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
-/* Siblings share the chat title, so the id is the field that tells them apart. It
-   is a tiebreaker, so the activity outranks it here and in the switcher both. */
-.agent-id {
-  font-family: var(--font-mono);
-  font-size: var(--fs-nano); color: var(--text-3);
-}
-.agent-live {
-  min-width: 0;
-  font-size: var(--fs-small); color: var(--text-2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.agent-state { font-size: var(--fs-nano); color: var(--text-2); }
-.agent-age {
-  font-size: var(--fs-nano); color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-/* Motion means it is moving, and a filled disc against a hollow ring says the same
-   thing standing still. The accent is a user preference, so it never carries a
-   status on its own. */
-.agent-row.is-running .agent-dot { background: var(--text-2); animation: ta-breathe 2s var(--ease-in-out) infinite; }
-.agent-row.is-blocked .agent-dot {
-  background: var(--as-mark); animation: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--as-mark) 24%, transparent);
-}
-.agent-row.is-done .agent-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
-.agent-row.is-done .agent-live { color: var(--text-3); }
-.agent-row.is-done .agent-state { color: var(--text-3); }
-@media (prefers-reduced-motion: reduce) { .agent-row.is-running .agent-dot { animation: none; } }
 
 /* ─── Agent switcher ───────────────────────────────────────────────────────
    The title leads, and the id under it separates two agents born of the same chat.
@@ -9475,8 +9787,7 @@ body[data-mode="light"] .ob-wordmark span {
 /* A badge, not a coloured word. The marker has to clear the page in both families,
    which pins its lightness near the body text's, so the enclosure is what makes it
    a state. */
-#agent-switch-list .as-row.is-blocked .as-state,
-.agent-row.is-blocked .agent-state {
+#agent-switch-list .as-row.is-blocked .as-state {
   color: var(--as-mark); font-weight: 600;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--as-mark) 32%, transparent);
   border-radius: var(--radius-pill);
@@ -9486,11 +9797,6 @@ body[data-mode="light"] .ob-wordmark span {
    tint, so the selection lift cannot slide underneath it. */
 #agent-switch-list .as-row.is-blocked .as-state {
   background: color-mix(in srgb, var(--as-mark) 13%, var(--notif-bg));
-}
-/* Under a chat the badge lands on two different surfaces, the card and its
-   hover lift, so the tint composites instead of naming one of them. */
-.agent-row.is-blocked .agent-state {
-  background: color-mix(in srgb, var(--as-mark) 13%, transparent);
 }
 /* Finished rows recede by stepping each element back rather than by fading the row,
    which would dim the age and the state too and composite muddily against the
@@ -9839,9 +10145,9 @@ kbd {
 
 /* Tabular numerals where it matters. */
 [data-mode="dark"] .sp-mono,
-[data-mode="dark"] .session-effort,
-[data-mode="dark"] .session-progress,
-[data-mode="dark"] .session-slug,
+[data-mode="dark"] .sx-time,
+[data-mode="dark"] .sx-runs,
+[data-mode="dark"] .sx-mono,
 [data-mode="dark"] code,
 [data-mode="dark"] pre {
   font-family: var(--font-mono);
@@ -10038,7 +10344,6 @@ kbd {
 
 /* Cards and catalog tiles inherit the glass treatment through the existing
    var(--bg-1) tokens, plus a touch more blur and a subtle hover lift. */
-[data-mode="dark"] .session-row,
 [data-mode="dark"] .mcp-row,
 [data-mode="dark"] .ai-row,
 [data-mode="dark"] .plugin-row,
@@ -10051,13 +10356,6 @@ kbd {
   border-radius: var(--radius-xl);
   transition: background var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
 }
-/* A chat with agents frames itself with an inset ring, so it takes this pass's blur
-   and its arc without the border. */
-[data-mode="dark"] .session-block {
-  --sb-arc: var(--radius-xl);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-}
-[data-mode="dark"] .session-row:hover,
 [data-mode="dark"] .mcp-row:hover,
 [data-mode="dark"] .ai-row:hover,
 [data-mode="dark"] .plugin-row:hover,
@@ -13017,8 +13315,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .page-body,
 .mcp-body,
 .plugins-body,
-.ws-board,
-.sessions-list {
+.ws-board {
   --page-bar-w: 8px;
   margin-right: calc(-1 * var(--space-6));
   padding-right: calc(var(--space-6) - var(--page-bar-w));
@@ -13027,18 +13324,15 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .page-body::-webkit-scrollbar,
 .mcp-body::-webkit-scrollbar,
 .plugins-body::-webkit-scrollbar,
-.ws-board::-webkit-scrollbar,
-.sessions-list::-webkit-scrollbar { width: var(--page-bar-w); }
+.ws-board::-webkit-scrollbar { width: var(--page-bar-w); }
 .page-body::-webkit-scrollbar-thumb,
 .mcp-body::-webkit-scrollbar-thumb,
 .plugins-body::-webkit-scrollbar-thumb,
-.ws-board::-webkit-scrollbar-thumb,
-.sessions-list::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: var(--radius-sm); }
+.ws-board::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: var(--radius-sm); }
 .page-body::-webkit-scrollbar-track,
 .mcp-body::-webkit-scrollbar-track,
 .plugins-body::-webkit-scrollbar-track,
-.ws-board::-webkit-scrollbar-track,
-.sessions-list::-webkit-scrollbar-track { background: transparent; }
+.ws-board::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Agent command center ───────────────────────────────────────────────────
    Every background agent on this machine: a grouped live list beside a detail

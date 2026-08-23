@@ -41,15 +41,18 @@ function fuzzyMatch(query, target) {
   if (query.length > target.length) return null;
 
   const q = query.toLowerCase();
-  const t = target.toLowerCase();
+  // Folded per character rather than over the whole string, so a glyph whose
+  // lowercase form is a different length cannot shift every later position off
+  // the target it indexes.
+  const lower = (ch) => ch.toLowerCase()[0];
 
   const positions = [];
   let score = 0;
   let qi = 0;
   let prevMatch = -1;
 
-  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] !== q[qi]) continue;
+  for (let ti = 0; ti < target.length && qi < q.length; ti++) {
+    if (lower(target[ti]) !== q[qi]) continue;
 
     positions.push(ti);
     let charScore = SCORE_MATCH;
