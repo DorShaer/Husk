@@ -159,6 +159,58 @@ function runEndBanner(msg, kind = '') {
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
 // Reusable destructive-action confirmation modal that names what is about to
 // be deleted. Resolves true on confirm, false on cancel/escape/backdrop.
+// Asks for one line of text. Resolves to the trimmed value, or '' for a cancel
+// and for a value that was only whitespace: a name nobody typed is not a name,
+// and every caller would otherwise have to re-check the same thing.
+function openTextDialog({ title = 'Name', label = 'Name', value = '', placeholder = '', confirmLabel = 'Save', maxLength = 80 } = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('text-modal');
+    const titleEl = document.getElementById('text-title');
+    const labelEl = document.getElementById('text-label');
+    const input = document.getElementById('text-input');
+    const okBtn = document.getElementById('text-ok');
+    const cancelBtn = document.getElementById('text-cancel');
+    if (!modal || !input || !okBtn || !cancelBtn) {
+      const typed = window.prompt(title, value);
+      resolve(typed === null ? '' : String(typed).trim().slice(0, maxLength));
+      return;
+    }
+    titleEl.textContent = title;
+    labelEl.textContent = label;
+    input.value = value;
+    input.placeholder = placeholder;
+    input.maxLength = maxLength;
+    okBtn.textContent = confirmLabel;
+
+    const prev = document.activeElement;
+    modal.hidden = false;
+    setTimeout(() => { try { input.focus(); input.select(); } catch (_) {} }, 30);
+
+    const cleanup = (result) => {
+      modal.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+        try { prev.focus({ preventScroll: true }); } catch (_) {}
+      }
+      resolve(result);
+    };
+    const onOk = () => cleanup(String(input.value || '').trim().slice(0, maxLength));
+    const onCancel = () => cleanup('');
+    const onBackdrop = (e) => { if (e.target === modal) cleanup(''); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(''); }
+      else if (e.key === 'Enter' && document.activeElement === input) { e.preventDefault(); onOk(); }
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
 function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabel = 'Delete', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
@@ -8771,6 +8823,10 @@ const sx = {
   },
 
   groupBy: 'project',
+  // Folders the user made, and which session sits in which. Both live in
+  // config, so a filing scheme survives a restart the way a session name does.
+  folders: [],
+  folderOf: {},
   chips: { project: true, live: false, needs: false, work: false },
   query: '',
   hits: new Map(),
@@ -8931,6 +8987,8 @@ async function sxLoad(opts = {}) {
   sx.hiddenAutopilot = Number((res && res.hiddenAutopilotSessions) || 0);
   sx.cache = Array.isArray(res && res.sessions) ? res.sessions.slice(0, SX_CAP) : [];
   sx.names = (cfg && cfg.sessionNames) || {};
+  sx.folders = Array.isArray(cfg && cfg.sessionFolders) ? cfg.sessionFolders : [];
+  sx.folderOf = (cfg && cfg.sessionFolderOf) || {};
   sx.listable = sxListable();
   sx.loaded = true;
   if (!sx.supported) sxExitPicking();
@@ -8987,6 +9045,8 @@ function sxView() {
     chips: sx.chips,
     currentCwd: sx.currentCwd,
     groupBy: sx.groupBy,
+    folders: sx.folders,
+    folderOf: sx.folderOf,
     olderOpen: sx.olderOpen,
     picking: sx.picking,
     names: sx.names,
@@ -9156,6 +9216,15 @@ function sxGroupUpdate(node, model) {
   sxText(node, '.sx-g-name', g.name);
   sxText(node, '.sx-g-note', g.note || '');
   sxText(node, '.sx-g-n', g.rows.length ? String(g.rows.length) : '');
+  // Only a folder the user made can be renamed or deleted. Unfiled is a
+  // description of what is left over, so it carries no controls, and neither
+  // does a day or a project heading.
+  const acts = node.querySelector('.sx-g-acts');
+  if (acts) {
+    const own = g.kind === 'folder' && !!g.folderId && !g.older;
+    acts.hidden = !own;
+    if (own) acts.dataset.folder = g.folderId;
+  }
 }
 
 function sxNoticeUpdate(node) {
@@ -10161,6 +10230,99 @@ function sxOpenFolder() {
   if (dir) window.husk.fs.open(dir);
 }
 
+// ─── Folders ─────────────────────────────────────────────────────────────────
+// A folder is the one heading on this page the user writes. Day and project
+// headings are derived and cannot be wrong; a folder can be renamed, emptied
+// and deleted, so all three go through config and the roster repaints from what
+// came back rather than from what was asked for.
+
+const SX_FOLDER_NAME_MAX = 40;
+
+// Ids are minted here rather than from a name, so renaming a folder never
+// orphans the sessions filed under it.
+function sxMintFolderId() {
+  const taken = new Set(sx.folders.map((f) => f && f.id));
+  for (let i = 1; i < 10000; i += 1) {
+    const id = `sf-${i}`;
+    if (!taken.has(id)) return id;
+  }
+  return `sf-${Date.now()}`;
+}
+
+async function sxSaveFolders(folders, folderOf) {
+  try {
+    cfg = await window.husk.config.set({ sessionFolders: folders, sessionFolderOf: folderOf });
+    sx.folders = Array.isArray(cfg && cfg.sessionFolders) ? cfg.sessionFolders : [];
+    sx.folderOf = (cfg && cfg.sessionFolderOf) || {};
+    sxPaint();
+    return true;
+  } catch (err) {
+    toast((err && err.message) || 'the folder could not be saved', 'error');
+    return false;
+  }
+}
+
+async function sxNewFolder() {
+  const name = await openTextDialog({
+    title: 'New folder',
+    label: 'Name',
+    placeholder: 'In review',
+    confirmLabel: 'Create',
+    maxLength: SX_FOLDER_NAME_MAX,
+  });
+  if (!name) return;
+  const folder = { id: sxMintFolderId(), name };
+  if (await sxSaveFolders([...sx.folders, folder], sx.folderOf)) {
+    // Making a folder is a statement about how the page should be read, so the
+    // page starts reading that way rather than waiting to be told twice.
+    sx.groupBy = 'folder';
+    sxGroupLabel();
+    sxPaint();
+  }
+}
+
+async function sxRenameFolder(folderId) {
+  const folder = sx.folders.find((f) => f && f.id === folderId);
+  if (!folder) return;
+  const name = await openTextDialog({
+    title: 'Rename folder',
+    label: 'Name',
+    value: folder.name || '',
+    confirmLabel: 'Rename',
+    maxLength: SX_FOLDER_NAME_MAX,
+  });
+  if (!name) return;
+  await sxSaveFolders(sx.folders.map((f) => (f && f.id === folderId ? { ...f, name } : f)), sx.folderOf);
+}
+
+// Deleting a folder unfiles what was in it and never touches a session on disk.
+// The count is named in the question, because "delete" over a heading is
+// ambiguous about whether the chats go with it.
+async function sxDeleteFolder(folderId) {
+  const folder = sx.folders.find((f) => f && f.id === folderId);
+  if (!folder) return;
+  const held = Object.values(sx.folderOf).filter((id) => id === folderId).length;
+  const ok = await openConfirmDialog({
+    title: 'Delete folder',
+    bodyHtml: held
+      ? `Removes <strong>${escapeHtml(folder.name || 'this folder')}</strong>. The ${held} session${held === 1 ? '' : 's'} in it move to Unfiled; nothing is deleted from disk.`
+      : `Removes <strong>${escapeHtml(folder.name || 'this folder')}</strong>. It is empty.`,
+    confirmLabel: 'Delete folder',
+  });
+  if (!ok) return;
+  const next = {};
+  for (const [sid, id] of Object.entries(sx.folderOf)) if (id !== folderId) next[sid] = id;
+  await sxSaveFolders(sx.folders.filter((f) => f && f.id !== folderId), next);
+}
+
+// Files one session, or unfiles it when folderId is empty.
+async function sxFileSession(sessionId, folderId) {
+  if (!sessionId) return;
+  const next = { ...sx.folderOf };
+  if (folderId) next[sessionId] = folderId; else delete next[sessionId];
+  await sxSaveFolders(sx.folders, next);
+}
+
 function sxPrimary(s) {
   if (!s) return;
   const holder = sx.agents.bySession.get(s.id) || null;
@@ -10173,6 +10335,13 @@ function sxPrimary(s) {
 function sxAct(act, el) {
   const s = sxSessionById(sx.detailId);
   const owned = s ? { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
+  // Filing carries the folder in the action, so one branch answers every
+  // folder rather than the switch growing a case per folder.
+  if (typeof act === 'string' && act.startsWith('file:') && s) {
+    const want = act.slice(5);
+    sxFileSession(s.id, sx.folderOf[s.id] === want ? '' : want);
+    return;
+  }
   switch (act) {
     case 'retry': sessionsFetchInvalidate(); sxLoad({ firstPaint: true }); break;
     case 'open-folder': sxOpenFolder(); break;
@@ -10276,6 +10445,14 @@ function sxDetailMenuItems() {
   items.push(['Copy id', 'copy-id', '']);
   items.push(['Copy path', 'copy-path', '']);
   items.push(['Rename', 'rename', '']);
+  // Where this session is filed. Offered only once there is somewhere to file
+  // it, and the folder it already sits in is offered as the way back out.
+  const here = sx.folderOf[s.id] || '';
+  for (const f of sx.folders) {
+    if (!f || typeof f.id !== 'string' || !f.id) continue;
+    const name = (typeof f.name === 'string' && f.name.trim()) ? f.name.trim() : 'Folder';
+    items.push([f.id === here ? `Remove from ${name}` : `Move to ${name}`, `file:${f.id}`, '']);
+  }
   if (SV().isDeletable(s)) items.push(['Delete session', 'delete-one', 'is-danger']);
   menu.replaceChildren(...items.map(([label, act, cls]) => {
     const b = document.createElement('button');
@@ -10424,6 +10601,17 @@ function sxGroupLabel() {
     const emptyAct = e.target.closest('.sx-empty [data-act]');
     if (emptyAct) { sxAct(emptyAct.dataset.act, emptyAct); return; }
     if (e.target.closest('.sx-ghost')) { setPage('chat'); openNewChatTab({}); return; }
+    // A folder's own controls sit on its heading, so they are claimed before
+    // the heading's collapse.
+    const fact = e.target.closest('[data-fact]');
+    if (fact) {
+      e.stopPropagation();
+      const holder = fact.closest('.sx-g-acts');
+      const folderId = holder && holder.dataset.folder;
+      if (folderId && fact.dataset.fact === 'rename') sxRenameFolder(folderId);
+      else if (folderId && fact.dataset.fact === 'delete') sxDeleteFolder(folderId);
+      return;
+    }
     const group = e.target.closest('.sx-group');
     if (group) {
       const m = sx.models.get(group.dataset.key);
@@ -10496,7 +10684,8 @@ function sxGroupLabel() {
     if (!item) return;
     sxMenuClose();
     if (item.dataset.group) {
-      sx.groupBy = item.dataset.group === 'day' ? 'day' : 'project';
+      const want = item.dataset.group;
+      sx.groupBy = (want === 'day' || want === 'folder') ? want : 'project';
       sxGroupLabel();
       sxPaint();
       return;
@@ -10506,6 +10695,7 @@ function sxGroupLabel() {
     else if (act === 'select') sxEnterPicking();
     else if (act === 'open-folder') sxOpenFolder();
     else if (act === 'open-autopilot') setPage('autopilot');
+    else if (act === 'new-folder') sxNewFolder();
   });
 
   $('#sx-older').addEventListener('click', () => { sx.olderOpen = !sx.olderOpen; sx.olderPinned = true; sxPaint(); });

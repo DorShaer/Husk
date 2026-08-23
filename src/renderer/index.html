@@ -1974,6 +1974,9 @@
             <div class="sx-menu-sep" role="separator"></div>
             <button class="sx-menu-item" type="button" role="menuitemradio" data-group="project" aria-checked="true">Group by project</button>
             <button class="sx-menu-item" type="button" role="menuitemradio" data-group="day" aria-checked="false">Group by day</button>
+            <button class="sx-menu-item" type="button" role="menuitemradio" data-group="folder" aria-checked="false">Group by folder</button>
+            <div class="sx-menu-sep" role="separator"></div>
+            <button class="sx-menu-item" type="button" role="menuitem" data-act="new-folder">New folder</button>
           </div>
           <div class="sx-menu" id="sx-d-menu" role="menu" aria-labelledby="sx-d-menu-btn" hidden></div>
 
@@ -2006,6 +2009,14 @@
               <span class="sx-g-name"></span>
               <span class="sx-g-note"></span>
               <span class="sx-g-n"></span>
+              <span class="sx-g-acts" hidden>
+                <button class="sx-g-act" type="button" data-fact="rename" title="Rename this folder" aria-label="Rename this folder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                </button>
+                <button class="sx-g-act" type="button" data-fact="delete" title="Delete this folder" aria-label="Delete this folder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                </button>
+              </span>
             </div>
           </template>
 
@@ -3661,6 +3672,20 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     </template>
 
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
+    <!-- One line of text, asked for. Same shell as the confirm dialog, with a
+         field where its body is. -->
+    <div id="text-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="text-title" hidden>
+      <div class="modal-card">
+        <div class="confirm-title" id="text-title">Name</div>
+        <label class="tx-label" id="text-label" for="text-input">Name</label>
+        <input class="tx-input" id="text-input" type="text" autocomplete="off" spellcheck="false" />
+        <div class="confirm-actions">
+          <button class="ghost-btn" id="text-cancel">Cancel</button>
+          <button class="btn-primary" id="text-ok">Save</button>
+        </div>
+      </div>
+    </div>
+
     <div id="confirm-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
       <div class="modal-card">
         <div class="confirm-icon">

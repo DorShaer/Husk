@@ -275,6 +275,59 @@ function byProject(entries, ctx) {
   return groups;
 }
 
+// Folders the user made, in the order they made them, plus everything that is
+// in none of them.
+//
+// The other two groupings derive their headings from the sessions: a day exists
+// because something happened on it, a project because something ran there. A
+// folder exists because somebody said so, which is why an empty one still
+// renders. A folder you cannot see is a folder you cannot drop anything into,
+// and a filing scheme that disappears when it is empty cannot be started.
+//
+// The unfiled group is last and is only drawn when it holds something, since
+// "everything else" is a description rather than a place.
+function byFolder(entries, ctx) {
+  const defined = Array.isArray(ctx.folders) ? ctx.folders : [];
+  const assignment = (ctx.folderOf && typeof ctx.folderOf === 'object') ? ctx.folderOf : {};
+
+  const buckets = new Map();
+  for (const f of defined) {
+    if (f && typeof f.id === 'string' && f.id) buckets.set(f.id, []);
+  }
+  const unfiled = [];
+  for (const e of entries) {
+    // A thread stands for several sessions; it is filed where its lead session
+    // is filed, because that is the row the user dragged.
+    const id = assignment[(e.s && e.s.id) || ''];
+    if (typeof id === 'string' && buckets.has(id)) buckets.get(id).push(e);
+    else unfiled.push(e);
+  }
+
+  const groups = defined
+    .filter((f) => f && typeof f.id === 'string' && buckets.has(f.id))
+    .map((f) => {
+      const rows = buckets.get(f.id);
+      return {
+        id: `f:${f.id}`,
+        kind: 'folder',
+        folderId: f.id,
+        name: (typeof f.name === 'string' && f.name.trim()) ? f.name.trim() : 'Folder',
+        note: '',
+        current: false,
+        newest: newestOf(rows),
+        rows,
+      };
+    });
+
+  if (unfiled.length) {
+    groups.push({
+      id: 'f:unfiled', kind: 'folder', folderId: '', name: 'Unfiled',
+      note: '', current: false, newest: newestOf(unfiled), rows: unfiled,
+    });
+  }
+  return groups;
+}
+
 function byDay(entries, ctx) {
   const buckets = new Map();
   const undated = [];
@@ -369,13 +422,19 @@ function groupSessions(entries, ctx) {
   const hot = entries.filter((e) => !isOlder(e.s, c.now));
   const cold = entries.filter((e) => isOlder(e.s, c.now));
 
-  let groups = c.groupBy === 'day' ? byDay(hot, c) : byProject(hot, c);
-  ensureCurrentGroup(groups, c);
+  let groups = c.groupBy === 'folder' ? byFolder(hot, c)
+    : c.groupBy === 'day' ? byDay(hot, c)
+      : byProject(hot, c);
+  // Folders are the user's own headings, so none is invented to stand in for
+  // where they happen to be.
+  if (c.groupBy !== 'folder') ensureCurrentGroup(groups, c);
 
   if (c.olderOpen && cold.length) {
     // The drawer can repeat a project that also has recent work, so the archive
     // copy says which one it is rather than showing the same header twice.
-    const older = (c.groupBy === 'day' ? byMonth(cold, c) : byProject(cold, c)).map((g) => ({
+    const older = (c.groupBy === 'folder' ? byFolder(cold, c)
+      : c.groupBy === 'day' ? byMonth(cold, c)
+        : byProject(cold, c)).map((g) => ({
       ...g, id: `older:${g.id}`, older: true, current: false,
       note: c.groupBy === 'day' ? '' : 'older',
     }));
@@ -465,6 +524,7 @@ module.exports = {
   filterSessions,
   threadKey,
   collapseThreads,
+  byFolder,
   groupSessions,
   buildView,
   formatWhen,

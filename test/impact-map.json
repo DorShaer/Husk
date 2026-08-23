@@ -250,7 +250,8 @@
     },
     "sessions": {
       "specs": [
-        "sessions-page.spec.js"
+        "sessions-page.spec.js",
+        "session-folders.spec.js"
       ],
       "tokens": [
         "dp",

@@ -6555,7 +6555,9 @@ body[data-mode="light"] .sx {
    not content: three steps down from the row title in size, weight and ink. */
 .sx-group {
   position: sticky; top: 0; z-index: 1;
-  display: grid; grid-template-columns: 13px 13px minmax(0, 1fr) auto auto;
+  /* The last track holds a folder's own controls. It collapses to nothing on a
+     day or project heading, which has none. */
+  display: grid; grid-template-columns: 13px 13px minmax(0, 1fr) auto auto auto;
   align-items: center; column-gap: var(--space-2);
   height: 30px; padding: 0 var(--sx-pad-x);
   border-top: 1px solid var(--line);
@@ -14780,3 +14782,30 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   .af-panes { grid-template-columns: minmax(0, 1fr); }
   .af-detail { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-top: var(--space-3); }
 }
+
+/* ─── Session folders ───────────────────────────────────────────────────────
+   A folder heading carries controls the derived headings do not, so they stay
+   out of the way until the heading is under the pointer. */
+.sx-g-acts { display: inline-flex; align-items: center; gap: 2px; opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
+.sx-group:hover .sx-g-acts,
+.sx-group:focus-within .sx-g-acts { opacity: 1; }
+.sx-g-act {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer;
+}
+.sx-g-act:hover { background: var(--surface-raised); color: var(--text); }
+.sx-g-act svg { width: 12px; height: 12px; display: block; }
+
+/* The one-line text dialog, sharing the confirm dialog's card. */
+.tx-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); margin-bottom: 6px; text-align: left; }
+.tx-input {
+  width: 100%; box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+  margin-bottom: var(--space-3);
+}
+.tx-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); outline: 0; }
