@@ -677,6 +677,12 @@
       tabHistory.classList.toggle('is-active', state.tab === 'history');
       tabHistory.setAttribute('aria-pressed', state.tab === 'history' ? 'true' : 'false');
     }
+    // Nothing gated this, so History rendered a commit form above a list of
+    // commits already made.
+    const composer = byId('sc-composer');
+    if (composer) {
+      composer.hidden = state.tab === 'history';
+    }
     const pill = byId('sc-changes-count');
     if (pill) {
       const n = changedFiles();

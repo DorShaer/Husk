@@ -8412,7 +8412,7 @@ body[data-mode="light"] .sx {
 .btn-primary:disabled {
   opacity: 1;
   background: var(--bg-2);
-  color: var(--text-3);
+  color: var(--text-2);
   border: 1px solid var(--line);
   cursor: not-allowed;
   box-shadow: none;
@@ -10266,7 +10266,7 @@ kbd {
 [data-mode="dark"] .btn-primary:disabled,
 [data-mode="dark"] .iconbtn-primary:disabled {
   background: var(--bg-2);
-  color: var(--text-3);
+  color: var(--text-2);
   border: 1px solid var(--line);
   box-shadow: none;
 }
@@ -14907,10 +14907,17 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   --sc-row-h: 26px;
   --sc-band-h: 26px;
   --sc-check-w: 16px;
+  /* One height for every control in this page, so two fields of the same face
+     12px apart cannot differ by four pixels. */
+  --sc-ctl-h: 32px;
   --sc-stat-w: 62px;
-  --sc-add-bg: color-mix(in srgb, var(--emerald) 8%, transparent);
+  /* The diff is the only reason this page exists, so its two grounds carry the
+     page's strongest separation. At 8% they measured 1.04:1 against each other:
+     no luminance channel at all, which is invisible under any red/green
+     deficiency and nearly invisible without one. */
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 18%, transparent);
   --sc-add-ink: var(--emerald);
-  --sc-del-bg: color-mix(in srgb, var(--rose) 8%, transparent);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 16%, transparent);
   --sc-del-ink: var(--rose);
   --sc-hunk-bg: color-mix(in srgb, var(--text) 5%, transparent);
 }
@@ -14964,10 +14971,14 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 
 /* Left column: filter, tabs, the banded list, the composer at the floor. */
 .sc-search { position: relative; display: flex; align-items: center; padding: var(--space-3) var(--space-3) var(--space-2); }
+.sc-search > .btn-icon {
+  position: absolute; left: calc(var(--space-3) + 10px);
+  pointer-events: none; color: var(--text-3);
+}
 .sc-search-input {
-  flex: 1; min-width: 0;
+  flex: 1; min-width: 0; height: var(--sc-ctl-h); box-sizing: border-box;
   background: var(--bg-2); border: 1px solid transparent; border-radius: var(--radius-md);
-  padding: 7px 34px 7px 12px; color: var(--text);
+  padding: 0 34px 0 34px; color: var(--text);
   font-family: var(--font-body); font-size: var(--fs-small); outline: none;
   transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
@@ -15002,7 +15013,22 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   border-radius: var(--radius-md); cursor: pointer;
 }
-.sc-band-title { min-width: 0; }
+/* The band heading and its count are one object, in one face. Uppercase with
+   wide tracking is the rail's treatment; spending it again here, six times in a
+   viewport, marks nothing. */
+.sc-band-title {
+  min-width: 0;
+  font-family: var(--font-body); font-size: var(--fs-label); font-weight: var(--fw-label);
+  letter-spacing: var(--tracking-normal); text-transform: none; color: var(--text-3);
+}
+.sc-band-count {
+  font-family: var(--font-body); font-size: var(--fs-label); font-weight: var(--fw-label);
+  color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+/* Every keycap on the page is one primitive, in one face. */
+.kbd-cap { font-family: var(--font-mono); }
+/* The only SHA on the page that was set in a proportional face. */
+#sc-amend-label { font-family: var(--font-mono); font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
 .sc-band-count { flex: none; }
 .sc-band-chevron {
   flex: none; width: 11px; text-align: center; color: var(--text-3);
@@ -15041,20 +15067,25 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-row-check {
   flex: none; width: var(--sc-check-w); height: var(--sc-check-w); padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--bg-2); border: 1px solid var(--line-3); border-radius: var(--radius-sm);
+  background: var(--bg-2); border: 1px solid var(--text-3); border-radius: var(--radius-sm);
   color: transparent; cursor: pointer;
   transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 .sc-row-check svg { width: 11px; height: 11px; }
 .sc-row:hover .sc-row-check { border-color: var(--accent); }
-.sc-row.is-staged .sc-row-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent, white); }
+/* Emerald, not accent: this box means "will be in the commit", which is what
+   emerald already means everywhere else on the page. Sampling the accent put
+   the same hue on the checkbox, the pending marker and the commit button within
+   60px of each other, so the colour stopped naming anything. */
+.sc-row.is-staged .sc-row-check { background: var(--emerald); border-color: var(--emerald); color: var(--on-accent, white); }
 /* In flight. The click has been taken and git has not answered yet, so the row
    shows the state it is moving to at a weight that says "not settled". Cleared
    by the read that answers, never by a timer. */
-.sc-row.is-pending { opacity: 0.7; }
+/* In flight reads as its own colour rather than as a dimmed row: opacity is
+   already carrying disabled and two other transient states on this page. */
 .sc-row.is-pending .sc-row-check {
-  background: color-mix(in srgb, var(--accent) 35%, transparent);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--info) 40%, transparent);
+  border-color: var(--info);
 }
 .sc-row-badge { flex: none; width: 15px; text-align: center; font-weight: 700; font-size: var(--fs-nano); }
 .sc-row-base { flex: none; max-width: 58%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
@@ -15135,18 +15166,39 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-subject, .sc-body {
   width: 100%; box-sizing: border-box;
   background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
-  padding: 7px 10px; color: var(--text); resize: none; outline: none;
+  padding: 6px var(--space-3); color: var(--text); resize: none; outline: none;
   font-family: var(--font-body); font-size: var(--fs-small); line-height: var(--lh-base);
   transition: border-color var(--motion-fast) var(--ease);
 }
+.sc-subject { height: var(--sc-ctl-h); }
 .sc-body { min-height: 0; max-height: 168px; overflow-y: auto; }
-/* The dark family paints every field with a black well through an !important
-   rule, so the two composer fields take the higher-specificity form the inline
-   editor uses and keep the fill of the pane they sit in. */
-.sc-composer .sc-subject,
-.sc-composer .sc-body {
-  background: var(--bg-2) !important;  /* beats the dark family's field well */
+/* One fill and one focus ring across every field on this page.
+ *
+ * The dark family styles fields by element: `[data-mode="dark"] input[type=...]`
+ * is (0,2,1) and `[data-mode="dark"] textarea` is (0,1,1). A class pair like
+ * `.sc-composer .sc-subject` is (0,2,0), so it lost the input and won the
+ * textarea, which is why two fields 12px apart in one box shipped two different
+ * grounds. The dark focus rule is (0,3,1) and sets `box-shadow: none`, so the
+ * page's own focus ring never painted on the fields it is most needed on.
+ *
+ * Naming the element alongside the class matches that specificity, and these
+ * rules sit later in the sheet, so they win the tie on their own. No !important.
+ */
+.sc-composer input.sc-subject,
+.sc-composer textarea.sc-body,
+.sc-search input.sc-search-input {
+  background: var(--bg-2);
   border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+.sc-search input.sc-search-input { border-color: transparent; }
+.sc-composer input.sc-subject:focus,
+.sc-composer textarea.sc-body:focus,
+.sc-search input.sc-search-input:focus {
+  background: var(--bg-2);
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 .sc-composer .sc-subject:focus,
 .sc-composer .sc-body:focus {
@@ -15188,7 +15240,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   padding: 10px var(--space-3); border-bottom: 1px solid var(--line);
 }
 .sc-dhead-path {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 1 auto; max-width: 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   direction: rtl; unicode-bidi: plaintext; text-align: left;
   font-family: var(--font-mono); font-size: var(--fs-small); color: var(--text);
 }
@@ -15198,12 +15250,13 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 }
 /* The actions take the whole second line of the head, so a long path never
    pushes Stage off the pane. */
-.sc-dacts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; width: 100%; }
+.sc-dacts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-left: auto; }
 .sc-act {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 10px; border-radius: var(--radius-lg); cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--sc-ctl-h); box-sizing: border-box;
+  padding: 0 var(--space-3); border-radius: var(--radius-md); cursor: pointer;
   background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2);
-  font-family: var(--font-body); font-size: var(--fs-micro); font-weight: 600;
+  font-family: var(--font-body); font-size: var(--fs-body); font-weight: var(--fw-label);
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 .sc-act svg { width: var(--icon-sm); height: var(--icon-sm); }
@@ -15237,7 +15290,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
    and the band running the full length of the scroll rather than stopping at the
    fold. Wrap on gives that width back to the container. */
 .sc-diff {
-  min-width: max-content; padding-bottom: var(--space-4);
+  min-width: max-content; padding-left: var(--space-3); padding-bottom: var(--space-4);
   font-family: var(--font-mono); font-size: var(--fs-small);
   line-height: 18px; tab-size: 2;
 }
@@ -15247,7 +15300,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
    the diff and copying yields source that compiles. */
 .sc-dl-no {
   flex: none; width: var(--sc-no-w); padding-right: 8px; text-align: right;
-  color: var(--text-3); opacity: 0.62; font-variant-numeric: tabular-nums;
+  color: var(--text-3); font-variant-numeric: tabular-nums;
   user-select: none; -webkit-user-select: none;
 }
 .sc-dl-sign {
@@ -15261,11 +15314,12 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-diff[data-wrap="on"] .sc-dl-code { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* The wash says added or removed and the sign says which, so the tokens are left
    to say what the code is. */
-.sc-dl.is-add { background: var(--sc-add-bg); }
+/* An edge as well as a wash, so added and removed are told apart by shape and
+   not by hue alone. */
+.sc-dl.is-add { background: var(--sc-add-bg); box-shadow: inset 2px 0 0 var(--sc-add-ink); }
 .sc-dl.is-add .sc-dl-sign { color: var(--sc-add-ink); }
-.sc-dl.is-del { background: var(--sc-del-bg); }
+.sc-dl.is-del { background: var(--sc-del-bg); box-shadow: inset 2px 0 0 var(--sc-del-ink); }
 .sc-dl.is-del .sc-dl-sign { color: var(--sc-del-ink); }
-.sc-dl.is-add .sc-dl-no, .sc-dl.is-del .sc-dl-no { opacity: 0.8; }
 .sc-dl.is-ctx .sc-dl-code { color: var(--text-2); }
 .sc-nonl {
   padding-left: calc(var(--sc-no-w) * 2 + var(--sc-sign-w));
@@ -15280,7 +15334,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   width: max-content; min-width: 100%; box-sizing: border-box;
   display: flex; align-items: center; gap: var(--space-3);
   min-height: var(--sc-band-h);
-  padding: 3px var(--space-3) 3px calc(var(--sc-no-w) * 2 + var(--sc-sign-w));
+  padding: 3px var(--space-3) 3px calc(var(--space-3) + var(--sc-no-w) * 2 + var(--sc-sign-w));
   background: linear-gradient(var(--sc-hunk-bg), var(--sc-hunk-bg)), linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
 }
@@ -15337,7 +15391,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 }
 /* Under the diff the note is a line of the pane itself, so it takes the head's
    inset and holds its height against the scroller above it. */
-.sc-detail > .sc-note { flex: none; padding: var(--space-2) var(--space-3) var(--space-3); }
+.sc-diff-wrap > .sc-note { padding: var(--space-3) var(--space-3) var(--space-4); }
 
 /* Overview. The resting state of the right pane: what changed, what is waiting,
    where this branch stands. A commit is the same column of cards, so it takes the
@@ -15391,12 +15445,18 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 }
 /* The bindings sit at the floor of the pane, under a rule, because they are the
    last thing read and never the first. */
-.sc-ov-hints {
+/* The pane's floor, in every one of its three states. Nested inside the resting
+   overview it was unreachable the moment the page began opening on a diff, so
+   the pane simply trailed off. The rule spans the pane rather than floating
+   inset, the way the composer's does in the column beside it. */
+.sc-hints {
+  flex: none;
   display: flex; flex-wrap: wrap; gap: var(--space-4);
-  margin-top: auto; padding-top: var(--space-3); border-top: 1px solid var(--line);
+  padding: var(--space-3);
+  border-top: 1px solid var(--line);
   font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-3);
 }
-.sc-ov-hints > * { display: inline-flex; align-items: center; gap: var(--space-1); }
+.sc-hints > * { display: inline-flex; align-items: center; gap: var(--space-1); }
 
 /* Branch popover. It floats over the page, so it takes the opaque overlay ground
    rather than a translucent surface tint. */

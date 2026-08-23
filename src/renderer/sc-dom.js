@@ -231,8 +231,10 @@
     if (bag.open !== false) band.classList.add('is-open');
 
     const head = el('div', 'sc-band-head');
-    head.appendChild(el('span', 'sc-band-title section-label', bag.label || bandTitle(kind)));
-    head.appendChild(el('span', 'sc-band-count section-label-count', groupNum(num(count))));
+    // Sentence case, not the rail's uppercase eyebrow. Six identical 11px caps
+    // across two unrelated hierarchies in one viewport separate nothing.
+    head.appendChild(el('span', 'sc-band-title', bag.label || bandTitle(kind)));
+    head.appendChild(el('span', 'sc-band-count', groupNum(num(count))));
     head.appendChild(el('span', 'sc-band-chevron', '›'));
 
     const actBox = el('div', 'sc-band-acts');
