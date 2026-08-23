@@ -7,6 +7,7 @@ const paletteSearch = require('./lib/palette-search');
 const workflowRegistry = require('./lib/workflow-registry');
 const ghCli = require('./lib/gh-cli');
 const artifactLedger = require('./lib/artifact-ledger');
+const schedule_ = require('./lib/schedule');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
@@ -204,6 +205,17 @@ contextBridge.exposeInMainWorld('husk', {
     },
     filter: (rows, opts) => { try { return artifactLedger.filterLedger(rows, opts); } catch (_) { return []; } },
     summarise: (rows) => { try { return artifactLedger.summarise(rows); } catch (_) { return { runs: 0 }; } },
+  },
+  // Recurring runs. The rules about when one fires live in schedule.js and run
+  // in the main process; `describe` is the same wording, computed in-process so
+  // a row and a form never disagree about what a recurrence says.
+  schedules: {
+    list: () => ipcRenderer.invoke('schedules:list'),
+    save: (schedule) => ipcRenderer.invoke('schedules:save', { schedule }),
+    remove: (id) => ipcRenderer.invoke('schedules:remove', { id }),
+    runNow: (id) => ipcRenderer.invoke('schedules:runNow', { id }),
+    describe: (schedule) => { try { return schedule_.describe(schedule); } catch (_) { return ''; } },
+    nextRunAt: (schedule, now) => { try { return schedule_.nextRunAt(schedule, now); } catch (_) { return null; } },
   },
   // GitHub, read through the gh CLI. Husk stores no credential: gh is already
   // logged in, and every call borrows that for one command. `filter` and

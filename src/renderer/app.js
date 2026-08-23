@@ -127,6 +127,10 @@ function updateNotif(card, message, opts) {
 }
 // Back-compatible API used across the renderer.
 function toast(msg, kind = '') { notify(msg, { kind }); }
+// The wfx sheets and the pages loaded beside app.js reach these by name off
+// window, and every one of them guards with a typeof check, so without this
+// they silently do nothing rather than fail loudly.
+if (typeof window !== 'undefined') window.toast = toast;
 // Toast with a single action button. Used when the message alone is a dead
 // end and the next action is explicit (e.g. missing agent binary -> open setup).
 function toastAction(msg, actionLabel, onAction, kind = 'error') {
@@ -211,6 +215,7 @@ function openTextDialog({ title = 'Name', label = 'Name', value = '', placeholde
   });
 }
 
+// Exposed for the same reason as toast above.
 function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabel = 'Delete', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
@@ -290,7 +295,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -1867,6 +1872,7 @@ function setPage(name, opts = {}) {
     $('#files-hidden').checked = !!(cfg && cfg.showHidden);
     fxLoad(root);
   }
+  if (name === 'schedule' && window.Schedule) window.Schedule.open();
   if (name === 'artifacts' && window.Af) window.Af.open();
   if (name === 'github' && window.Gh) window.Gh.open();
   if (name === 'mcp') renderMcp();
@@ -14273,6 +14279,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: 'Alt 2' },
   { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: 'Alt 3' },
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
+  { icon: ICONS.autopilot,   label: 'Switch to Schedule',             run: () => setPage('schedule') },
   { icon: ICONS.workflows,   label: 'Switch to Artifacts',            run: () => setPage('artifacts') },
   { icon: ICONS.github,      label: 'Switch to GitHub',               run: () => setPage('github') },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
@@ -14832,6 +14839,8 @@ function runPaletteAction() {
   const fail = (err) => toast((err && err.message) || String(err), 'error');
   try { Promise.resolve(row.run()).catch(fail); } catch (err) { fail(err); }
 }
+if (typeof window !== 'undefined') window.openConfirmDialog = openConfirmDialog;
+
 $('#palette-input').addEventListener('input', (e) => { paletteSel = 0; renderPalette(e.target.value); });
 $('#palette-input').addEventListener('keydown', (e) => {
   const count = paletteMatchCache.length;

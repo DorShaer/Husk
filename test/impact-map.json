@@ -114,6 +114,22 @@
         "src/lib/workflow-graph.js"
       ]
     },
+    "schedule": {
+      "specs": [
+        "schedule-page.spec.js"
+      ],
+      "tokens": [
+        "sc",
+        "schedule",
+        "schedules",
+        "page:schedule",
+        "ipc:schedules"
+      ],
+      "paths": [
+        "src/lib/schedule.js",
+        "src/renderer/sc-page.js"
+      ]
+    },
     "artifacts": {
       "specs": [
         "artifacts-page.spec.js"

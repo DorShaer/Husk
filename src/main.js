@@ -5527,7 +5527,10 @@ ipcMain.handle('workflows:layout', (_e, payload = {}) => {
 // opts is the second argument and carries the run's working directory. An
 // imported workflow must have one. Locally authored workflows pass opts nothing
 // and keep wfRunStep's own fallback chain.
-ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
+// Starting a run, without an originating event. wfEmit broadcasts to every
+// window and never reads the event it is handed, so a run started by the
+// scheduler reaches the same surfaces a clicked one does.
+function startWorkflowRun(workflowId, opts = {}) {
   const already = [...activeRuns.values()].find((r) => r.status === 'running');
   if (already) {
     return { ok: false, error: 'a workflow is already running', runId: already.id, workflowId: already.workflowId };
@@ -5580,9 +5583,11 @@ ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
     untrusted: workflow.origin === 'imported' || !!(sidecar && sidecar.origin === 'imported'),
   };
   activeRuns.set(runId, runState);
-  executeWorkflow(event, workflow, runState);
+  executeWorkflow(null, workflow, runState);
   return { ok: true, runId, cwd: gate.cwd };
-});
+}
+
+ipcMain.handle('workflows:run', (_e, workflowId, opts = {}) => startWorkflowRun(workflowId, opts));
 
 // Returns a context block to inject at session start for ai-suggested workflows.
 // The AI reads this and knows when to suggest running a workflow.
@@ -6313,6 +6318,148 @@ ipcMain.handle('registry:fetch', async (_e, payload = {}) => {
 // Reading one workflow file a catalog names is not a channel of its own: it is
 // workflows:artifactRead with source 'registry', so the install sheet behind it
 // is the one that already exists.
+
+// ─── Schedules ───────────────────────────────────────────────────────────────
+//
+// schedule.js owns when a schedule is owed a run. This owns the timer, the
+// store, and what starting one means.
+//
+// The tick is a minute, and a schedule that came due while Husk was closed
+// fires once rather than once per window it missed: a laptop that slept over a
+// weekend must not wake up and start sixty runs.
+//
+// A schedule never starts a second copy of itself. If the thing it names is
+// already running, the tick passes and the next one tries again, because two
+// agents in one working directory is a merge conflict rather than throughput.
+
+const Schedule = require('./lib/schedule');
+
+const SCHEDULE_TICK_MS = 60000;
+const MAX_SCHEDULES = 50;
+
+function loadSchedules() {
+  const stored = Array.isArray(config.schedules) ? config.schedules : [];
+  const out = [];
+  for (const raw of stored.slice(0, MAX_SCHEDULES)) {
+    const checked = Schedule.validateSchedule(raw);
+    if (checked.ok) out.push(checked.schedule);
+  }
+  return out;
+}
+
+function saveSchedules(list) {
+  config = { ...config, schedules: list };
+  return saveConfig(config);
+}
+
+function mintScheduleId(list) {
+  const taken = new Set(list.map((s) => s && s.id));
+  for (let i = 1; i <= MAX_SCHEDULES + 1; i += 1) {
+    const id = `sch-${i}`;
+    if (!taken.has(id)) return id;
+  }
+  return `sch-${Date.now()}`;
+}
+
+// Everything a row needs, with the next fire time computed here so the page
+// never has to re-derive it and the two cannot disagree.
+function scheduleRows() {
+  const now = Date.now();
+  return loadSchedules().map((s) => ({
+    ...s,
+    nextRunAt: Schedule.nextRunAt(s, now),
+    describe: Schedule.describe(s),
+  }));
+}
+
+// Starts what one schedule names. Returns why it did not, so the tick can
+// record a reason rather than silently skipping.
+async function runSchedule(s) {
+  if (s.target === 'workflow') {
+    if (!s.targetId) return { ok: false, error: 'this schedule names no workflow' };
+    const already = [...activeRuns.values()].some((r) => r.status === 'running' && r.workflowId === s.targetId);
+    if (already) return { ok: false, error: 'that workflow is already running' };
+    try {
+      return startWorkflowRun(s.targetId, { cwd: s.cwd || undefined });
+    } catch (err) {
+      return { ok: false, error: (err && err.message) || 'the workflow could not be started' };
+    }
+  }
+  return { ok: false, error: 'only workflows can be scheduled yet' };
+}
+
+let scheduleTimer = null;
+async function scheduleTick() {
+  const list = loadSchedules();
+  if (!list.length) return;
+  const due = Schedule.dueSchedules(list, Date.now());
+  if (!due.length) return;
+
+  // The stamp is written whether the start succeeded or not. A schedule whose
+  // target is missing would otherwise be retried every tick forever.
+  const stamped = new Set();
+  for (const s of due) {
+    const res = await runSchedule(s);
+    stamped.add(s.id);
+    if (!res || !res.ok) {
+      log.warn(`[schedule] ${s.name}: ${(res && res.error) || 'did not start'}`);
+    }
+  }
+  const now = new Date().toISOString();
+  saveSchedules(loadSchedules().map((s) => (stamped.has(s.id) ? { ...s, lastRunAt: now } : s)));
+}
+
+function startScheduler() {
+  if (scheduleTimer) return;
+  scheduleTimer = setInterval(() => { scheduleTick().catch(() => {}); }, SCHEDULE_TICK_MS);
+  // Unref so a pending tick never holds the process open at quit.
+  if (typeof scheduleTimer.unref === 'function') scheduleTimer.unref();
+}
+
+function stopScheduler() {
+  if (!scheduleTimer) return;
+  clearInterval(scheduleTimer);
+  scheduleTimer = null;
+}
+
+ipcMain.handle('schedules:list', () => ({ ok: true, schedules: scheduleRows() }));
+
+ipcMain.handle('schedules:save', (_e, payload = {}) => {
+  const checked = Schedule.validateSchedule(payload && payload.schedule);
+  if (!checked.ok) return checked;
+  const list = loadSchedules();
+  const wanted = checked.schedule;
+  const at = list.findIndex((s) => s.id && s.id === wanted.id);
+  if (at === -1) {
+    if (list.length >= MAX_SCHEDULES) {
+      return { ok: false, code: 'too-many', message: `a machine may hold ${MAX_SCHEDULES} schedules` };
+    }
+    list.push({ ...wanted, id: mintScheduleId(list) });
+  } else {
+    // The stamp belongs to the run history, not to the edit, so it survives.
+    list[at] = { ...wanted, id: list[at].id, lastRunAt: list[at].lastRunAt || '' };
+  }
+  if (!saveSchedules(list)) return { ok: false, code: 'save-failed', message: 'the schedule could not be saved' };
+  return { ok: true, schedules: scheduleRows() };
+});
+
+ipcMain.handle('schedules:remove', (_e, payload = {}) => {
+  const id = String((payload && payload.id) || '');
+  if (!saveSchedules(loadSchedules().filter((s) => s.id !== id))) {
+    return { ok: false, code: 'save-failed', message: 'the change could not be saved' };
+  }
+  return { ok: true, schedules: scheduleRows() };
+});
+
+// Starting one by hand does not move its clock: a schedule is a promise about
+// when it runs on its own, and pressing Run is not one of those times.
+ipcMain.handle('schedules:runNow', async (_e, payload = {}) => {
+  const id = String((payload && payload.id) || '');
+  const s = loadSchedules().find((x) => x.id === id);
+  if (!s) return { ok: false, code: 'not-found', message: 'that schedule is gone' };
+  const res = await runSchedule(s);
+  return res && res.ok ? { ok: true } : { ok: false, code: 'run-failed', message: (res && res.error) || 'it could not be started' };
+});
 
 // ─── GitHub, through the gh CLI ──────────────────────────────────────────────
 //
@@ -11128,6 +11275,7 @@ if (!gotLock) {
     syncAgentFiles();
     startStatuslineRefresh();
     startUsageRefresh();
+    startScheduler();
     await startNullVoiceServer();
     // Recover or prune worktrees left behind by a crash before any new run
     // can create one. Guarded so it never blocks the window from opening.
@@ -11136,7 +11284,7 @@ if (!gotLock) {
     setupAutoUpdater();
   });
   app.on('window-all-closed', () => {
-    killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();
+    killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopScheduler(); stopAutoUpdater();
     // Exit hard. app.quit()'s graceful teardown waits for the GPU and renderer
     // processes to exit, which on a real compositor can hang and leave the main
     // process alive with no window. app.exit() terminates immediately.
