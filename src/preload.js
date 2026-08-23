@@ -6,6 +6,7 @@ const sessionView = require('./lib/session-view');
 const paletteSearch = require('./lib/palette-search');
 const workflowRegistry = require('./lib/workflow-registry');
 const ghCli = require('./lib/gh-cli');
+const artifactLedger = require('./lib/artifact-ledger');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
@@ -193,6 +194,16 @@ contextBridge.exposeInMainWorld('husk', {
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
+  },
+  // The artifact ledger: what runs left behind, from the two stores that
+  // already hold it. Pure and in-process; the rows come from workflows:runs and
+  // autopilot:history, so this adds no new way to reach the disk.
+  artifacts: {
+    build: (workflowRuns, autopilotRuns) => {
+      try { return artifactLedger.buildLedger({ workflowRuns, autopilotRuns }); } catch (_) { return []; }
+    },
+    filter: (rows, opts) => { try { return artifactLedger.filterLedger(rows, opts); } catch (_) { return []; } },
+    summarise: (rows) => { try { return artifactLedger.summarise(rows); } catch (_) { return { runs: 0 }; } },
   },
   // GitHub, read through the gh CLI. Husk stores no credential: gh is already
   // logged in, and every call borrows that for one command. `filter` and

@@ -238,7 +238,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'github', 'mcp', 'plugins', 'prefs']);
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -1815,6 +1815,7 @@ function setPage(name, opts = {}) {
     $('#files-hidden').checked = !!(cfg && cfg.showHidden);
     fxLoad(root);
   }
+  if (name === 'artifacts' && window.Af) window.Af.open();
   if (name === 'github' && window.Gh) window.Gh.open();
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
@@ -14082,6 +14083,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: 'Alt 2' },
   { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: 'Alt 3' },
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
+  { icon: ICONS.workflows,   label: 'Switch to Artifacts',            run: () => setPage('artifacts') },
   { icon: ICONS.github,      label: 'Switch to GitHub',               run: () => setPage('github') },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
   { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins') },

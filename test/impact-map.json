@@ -114,6 +114,20 @@
         "src/lib/workflow-graph.js"
       ]
     },
+    "artifacts": {
+      "specs": [
+        "artifacts-page.spec.js"
+      ],
+      "tokens": [
+        "af",
+        "artifacts",
+        "page:artifacts"
+      ],
+      "paths": [
+        "src/lib/artifact-ledger.js",
+        "src/renderer/af-page.js"
+      ]
+    },
     "github": {
       "specs": [
         "github-page.spec.js"

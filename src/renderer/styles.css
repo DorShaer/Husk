@@ -14684,3 +14684,99 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   .gh-panes { grid-template-columns: minmax(0, 1fr); }
   .gh-detail { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-top: var(--space-3); }
 }
+
+/* ─── Artifacts ─────────────────────────────────────────────────────────────
+   The run ledger. Same two-pane shape as GitHub and Sessions, with a figure
+   strip on top. A dash in any figure means the run never recorded it, which is
+   a different thing from zero and is the one mark on this page that says so. */
+.af { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; }
+
+.af-figures { display: flex; align-items: stretch; gap: var(--space-4); flex-wrap: wrap; }
+.af-figure { display: flex; flex-direction: column; gap: 1px; min-width: 96px; }
+.af-figure-value { font-size: var(--fs-h3); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.af-figure-label { font-size: var(--fs-nano); color: var(--text-3); letter-spacing: 0.06em; text-transform: uppercase; }
+.af-figure-note { font-size: var(--fs-nano); color: var(--text-3); }
+
+.af-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.af .seg {
+  display: grid; grid-auto-flow: column; gap: 3px; padding: 3px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.af .seg-btn {
+  border: 1px solid transparent; background: transparent; color: var(--text-3);
+  font-family: inherit; font-size: var(--fs-small); font-weight: 600;
+  padding: 6px 14px; border-radius: var(--radius-md); cursor: pointer; white-space: nowrap;
+}
+.af .seg-btn:hover { color: var(--text); }
+.af .seg-btn.is-on { background: var(--bg); color: var(--text); border-color: var(--line-2); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.af-outcome, .af-search {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+}
+.af-search { flex: 1 1 240px; min-width: 160px; }
+.af-search::placeholder { color: var(--text-3); }
+
+.af-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--space-4); flex: 1 1 auto; min-height: 0; }
+.af-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; outline: none; }
+.af-list:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); border-radius: var(--radius-lg); }
+.af-row {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-lg); cursor: pointer;
+}
+.af-row:hover { background: var(--surface-raised); }
+.af-row.is-current { background: color-mix(in srgb, var(--accent) 10%, var(--bg-3)); border-color: var(--line-2); }
+.af-row-title { color: var(--text); font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.af-row-meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.af-meta { color: var(--text-3); font-size: var(--fs-nano); }
+.af-warn { color: var(--warn); font-size: var(--fs-nano); }
+
+.af-pill {
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); font-weight: 600;
+  border: 1px solid var(--line-2); color: var(--text-2);
+}
+.af-pill.is-done { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 45%, transparent); }
+.af-pill.is-failed { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 45%, transparent); }
+.af-pill.is-halted { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.af-pill.is-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.af-source { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); }
+
+.af-detail { overflow-y: auto; padding-left: var(--space-4); border-left: 1px solid var(--line); }
+.af-d { display: flex; flex-direction: column; gap: var(--space-3); }
+.af-d-head { display: flex; flex-direction: column; gap: var(--space-2); }
+.af-d-title { font-size: var(--fs-h3); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.af-d-sub { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.af-field { display: flex; flex-direction: column; gap: 3px; }
+.af-field-label { font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.af-field-value { font-size: var(--fs-body); color: var(--text-2); overflow-wrap: anywhere; }
+.af-field-value code { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text); }
+.af-d-actions { display: flex; justify-content: flex-end; padding-top: var(--space-2); }
+
+.af-steps { display: flex; flex-direction: column; gap: var(--space-2); }
+.af-step { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3); }
+.af-step-head { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; list-style: none; }
+.af-step-head::-webkit-details-marker { display: none; }
+.af-step-name { flex: 1 1 auto; min-width: 0; color: var(--text-2); font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.af-step-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: 0 0 auto; }
+.af-step-dot.is-done { background: var(--emerald); }
+.af-step-dot.is-failed { background: var(--rose); }
+.af-step-dot.is-skipped { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.af-log {
+  margin: var(--space-2) 0 0; padding: var(--space-2);
+  max-height: 320px; overflow: auto;
+  background: var(--bg-2); border-radius: var(--radius-md);
+  font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.af-log-none { margin-top: var(--space-2); }
+
+.af-state:empty { display: none; }
+.af-state:not(:empty) { flex: 1 1 auto; display: grid; place-items: center; min-height: 0; }
+
+@media (max-width: 1100px) {
+  .af-panes { grid-template-columns: minmax(0, 1fr); }
+  .af-detail { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-top: var(--space-3); }
+}
