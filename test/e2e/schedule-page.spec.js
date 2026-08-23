@@ -48,10 +48,10 @@ async function ready(app) {
 
 const readConfig = (homeDir) => JSON.parse(fs.readFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), 'utf8'));
 
-const rows = (win) => win.evaluate(() => [...document.querySelectorAll('#sc-list .sc-row')].map((r) => ({
+const rows = (win) => win.evaluate(() => [...document.querySelectorAll('#sch-list .sch-row')].map((r) => ({
   id: r.dataset.id,
-  name: r.querySelector('.sc-name').textContent,
-  recur: r.querySelector('.sc-recur').textContent,
+  name: r.querySelector('.sch-name').textContent,
+  recur: r.querySelector('.sch-recur').textContent,
   text: r.textContent,
   paused: r.classList.contains('is-paused'),
 })));
@@ -60,7 +60,7 @@ test('nothing scheduled says so, and says Husk has to be running', async () => {
   const { app: launched } = launch();
   const app = await launched;
   const win = await ready(app);
-  const text = await win.evaluate(() => document.getElementById('sc-state').textContent);
+  const text = await win.evaluate(() => document.getElementById('sch-state').textContent);
   expect(text).toContain('Nothing runs on its own yet');
   expect(text).toContain('Husk has to be running');
   await app.close();
@@ -71,12 +71,12 @@ test('a schedule made in the form reaches config in the shape the timer reads', 
   const app = await launched;
   const win = await ready(app);
 
-  await win.locator('#sc-new').click();
-  await win.locator('#sc-name').fill('Nightly sweep');
-  await win.locator('#sc-target').selectOption('w2');
-  await win.locator('#sc-kind').selectOption('daily');
-  await win.locator('#sc-at').fill('02:00');
-  await win.locator('#sc-save').click();
+  await win.locator('#sch-new').click();
+  await win.locator('#sch-name').fill('Nightly sweep');
+  await win.locator('#sch-target').selectOption('w2');
+  await win.locator('#sch-kind').selectOption('daily');
+  await win.locator('#sch-at').fill('02:00');
+  await win.locator('#sch-save').click();
   await win.waitForTimeout(400);
 
   const stored = readConfig(homeDir).schedules;
@@ -93,15 +93,15 @@ test('the form previews the same sentence the row will carry', async () => {
   const app = await launched;
   const win = await ready(app);
 
-  await win.locator('#sc-new').click();
-  await win.locator('#sc-name').fill('Weekday check');
-  await win.locator('#sc-kind').selectOption('daily');
-  await win.locator('#sc-at').fill('09:00');
-  for (const d of ['1', '2', '3', '4', '5']) await win.locator(`#sc-days [data-day="${d}"]`).click();
-  const preview = await win.locator('#sc-preview').textContent();
+  await win.locator('#sch-new').click();
+  await win.locator('#sch-name').fill('Weekday check');
+  await win.locator('#sch-kind').selectOption('daily');
+  await win.locator('#sch-at').fill('09:00');
+  for (const d of ['1', '2', '3', '4', '5']) await win.locator(`#sch-days [data-day="${d}"]`).click();
+  const preview = await win.locator('#sch-preview').textContent();
   expect(preview).toContain('Mon, Tue, Wed, Thu, Fri at 09:00');
 
-  await win.locator('#sc-save').click();
+  await win.locator('#sch-save').click();
   await win.waitForTimeout(400);
   expect((await rows(win))[0].recur).toBe('Mon, Tue, Wed, Thu, Fri at 09:00');
   await app.close();
@@ -112,16 +112,16 @@ test('a weekly schedule holds one day, so picking another releases the last', as
   const app = await launched;
   const win = await ready(app);
 
-  await win.locator('#sc-new').click();
-  await win.locator('#sc-name').fill('Friday wrap');
-  await win.locator('#sc-kind').selectOption('weekly');
-  await win.locator('#sc-days [data-day="1"]').click();
-  await win.locator('#sc-days [data-day="5"]').click();
+  await win.locator('#sch-new').click();
+  await win.locator('#sch-name').fill('Friday wrap');
+  await win.locator('#sch-kind').selectOption('weekly');
+  await win.locator('#sch-days [data-day="1"]').click();
+  await win.locator('#sch-days [data-day="5"]').click();
   const pressed = await win.evaluate(() =>
-    [...document.querySelectorAll('#sc-days [data-day][aria-pressed="true"]')].map((b) => b.dataset.day));
+    [...document.querySelectorAll('#sch-days [data-day][aria-pressed="true"]')].map((b) => b.dataset.day));
   expect(pressed).toEqual(['5']);
 
-  await win.locator('#sc-save').click();
+  await win.locator('#sch-save').click();
   await win.waitForTimeout(400);
   expect(readConfig(homeDir).schedules[0].days).toEqual([5]);
   await app.close();
@@ -132,18 +132,18 @@ test('a schedule the validator refuses says which field, and saves nothing', asy
   const app = await launched;
   const win = await ready(app);
 
-  await win.locator('#sc-new').click();
+  await win.locator('#sch-new').click();
   // No name.
-  await win.locator('#sc-save').click();
-  await expect(win.locator('#sc-error')).toBeVisible();
-  expect(await win.locator('#sc-error').textContent()).toContain('name');
+  await win.locator('#sch-save').click();
+  await expect(win.locator('#sch-error')).toBeVisible();
+  expect(await win.locator('#sch-error').textContent()).toContain('name');
 
   // An interval below the floor.
-  await win.locator('#sc-name').fill('Too eager');
-  await win.locator('#sc-every').fill('1');
-  await win.locator('#sc-save').click();
-  await expect(win.locator('#sc-error')).toBeVisible();
-  expect(await win.locator('#sc-error').textContent()).toContain('5 minutes');
+  await win.locator('#sch-name').fill('Too eager');
+  await win.locator('#sch-every').fill('1');
+  await win.locator('#sch-save').click();
+  await expect(win.locator('#sch-error')).toBeVisible();
+  expect(await win.locator('#sch-error').textContent()).toContain('5 minutes');
 
   expect(readConfig(homeDir).schedules || []).toEqual([]);
   await app.close();
@@ -156,7 +156,7 @@ test('pausing a schedule keeps it but stops its clock', async () => {
   const app = await launched;
   const win = await ready(app);
 
-  await win.locator('#sc-list .sc-row [data-act="toggle"]').click();
+  await win.locator('#sch-list .sch-row [data-act="toggle"]').click();
   await win.waitForTimeout(400);
   expect(readConfig(homeDir).schedules[0].enabled).toBe(false);
   expect((await rows(win))[0].paused).toBe(true);
@@ -181,9 +181,9 @@ test('editing keeps the id and the run history', async () => {
   const app = await launched;
   const win = await ready(app);
 
-  await win.locator('#sc-list .sc-row [data-act="edit"]').click();
-  await win.locator('#sc-name').fill('New name');
-  await win.locator('#sc-save').click();
+  await win.locator('#sch-list .sch-row [data-act="edit"]').click();
+  await win.locator('#sch-name').fill('New name');
+  await win.locator('#sch-save').click();
   await win.waitForTimeout(400);
 
   const stored = readConfig(homeDir).schedules;
@@ -201,7 +201,7 @@ test('deleting a schedule removes it and leaves the workflow alone', async () =>
   const app = await launched;
   const win = await ready(app);
 
-  await win.locator('#sc-list .sc-row [data-act="delete"]').click();
+  await win.locator('#sch-list .sch-row [data-act="delete"]').click();
   await expect(win.locator('#confirm-modal')).toBeVisible();
   await win.locator('#confirm-ok').click();
   await win.waitForTimeout(400);

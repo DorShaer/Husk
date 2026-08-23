@@ -119,7 +119,7 @@
         "schedule-page.spec.js"
       ],
       "tokens": [
-        "sc",
+        "sch",
         "schedule",
         "schedules",
         "page:schedule",
@@ -127,7 +127,7 @@
       ],
       "paths": [
         "src/lib/schedule.js",
-        "src/renderer/sc-page.js"
+        "src/renderer/sch-page.js"
       ]
     },
     "artifacts": {

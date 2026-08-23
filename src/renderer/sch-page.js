@@ -14,7 +14,7 @@
   const WfxDom = (typeof window !== 'undefined' && window.WfxDom) || null;
   if (!WfxDom) {
     if (typeof console !== 'undefined') {
-      console.error('sc-page: wfx-dom.js must load first; no schedule surface will render');
+      console.error('sch-page: wfx-dom.js must load first; no schedule surface will render');
     }
     return;
   }
@@ -63,17 +63,17 @@
 
   function row(s) {
     const target = workflowName(s.targetId);
-    const facts = [el('span', { class: 'sc-recur' }, s.describe || '')];
+    const facts = [el('span', { class: 'sch-recur' }, s.describe || '')];
     // A schedule pointing at a workflow that is gone would otherwise sit there
     // looking healthy and never start anything.
     facts.push(target
-      ? el('span', { class: 'sc-meta' }, target)
-      : el('span', { class: 'sc-warn' }, 'that workflow no longer exists'));
-    if (s.cwd) facts.push(el('code', { class: 'sc-cwd' }, s.cwd));
+      ? el('span', { class: 'sch-meta' }, target)
+      : el('span', { class: 'sch-warn' }, 'that workflow no longer exists'));
+    if (s.cwd) facts.push(el('code', { class: 'sch-cwd' }, s.cwd));
 
     const when = s.enabled
-      ? el('span', { class: 'sc-next' }, s.nextRunAt ? until(s.nextRunAt) : 'never')
-      : el('span', { class: 'sc-meta' }, 'paused');
+      ? el('span', { class: 'sch-next' }, s.nextRunAt ? until(s.nextRunAt) : 'never')
+      : el('span', { class: 'sch-meta' }, 'paused');
 
     const toggle = el('button', {
       class: s.enabled ? 'toggle on' : 'toggle',
@@ -88,16 +88,16 @@
       return b;
     };
 
-    const node = el('div', { class: s.enabled ? 'sc-row' : 'sc-row is-paused' },
-      el('div', { class: 'sc-row-main' },
-        el('div', { class: 'sc-row-head' },
-          el('span', { class: 'sc-name' }, s.name),
+    const node = el('div', { class: s.enabled ? 'sch-row' : 'sch-row is-paused' },
+      el('div', { class: 'sch-row-main' },
+        el('div', { class: 'sch-row-head' },
+          el('span', { class: 'sch-name' }, s.name),
           when,
         ),
-        el('div', { class: 'sc-row-meta' }, ...facts),
-        el('div', { class: 'sc-row-meta' }, el('span', { class: 'sc-meta' }, ago(s.lastRunAt))),
+        el('div', { class: 'sch-row-meta' }, ...facts),
+        el('div', { class: 'sch-row-meta' }, el('span', { class: 'sch-meta' }, ago(s.lastRunAt))),
       ),
-      el('div', { class: 'sc-row-acts' },
+      el('div', { class: 'sch-row-acts' },
         mk('run', 'Run now'),
         mk('edit', 'Edit'),
         mk('delete', 'Delete', 'ghost-btn ghost-btn-danger'),
@@ -108,12 +108,12 @@
   }
 
   function paint() {
-    const list = byId('sc-list');
+    const list = byId('sch-list');
     if (!list) return;
     list.replaceChildren();
     for (const s of state.rows) list.appendChild(row(s));
 
-    const msg = byId('sc-state');
+    const msg = byId('sch-state');
     if (msg) {
       msg.replaceChildren();
       if (state.status === 'loading') {
@@ -121,10 +121,10 @@
       } else if (!state.rows.length) {
         msg.appendChild(el('div', { class: 'empty-state' },
           el('div', { class: 'es-msg' }, 'Nothing runs on its own yet'),
-          el('div', { class: 'sc-meta' }, 'A schedule starts a workflow at a time you choose. Husk has to be running for it to fire.')));
+          el('div', { class: 'sch-meta' }, 'A schedule starts a workflow at a time you choose. Husk has to be running for it to fire.')));
       }
     }
-    const sub = byId('sc-sub');
+    const sub = byId('sch-sub');
     if (sub) {
       const live = state.rows.filter((s) => s.enabled).length;
       sub.textContent = state.rows.length
@@ -153,62 +153,62 @@
 
   // What the form currently says, in the shape the validator reads.
   function formValue() {
-    const kind = byId('sc-kind').value;
-    const days = [...document.querySelectorAll('#sc-days [data-day][aria-pressed="true"]')]
+    const kind = byId('sch-kind').value;
+    const days = [...document.querySelectorAll('#sch-days [data-day][aria-pressed="true"]')]
       .map((b) => Number(b.dataset.day));
     const out = {
       id: state.editing ? state.editing.id : '',
-      name: byId('sc-name').value,
+      name: byId('sch-name').value,
       kind,
       target: 'workflow',
-      targetId: byId('sc-target').value,
+      targetId: byId('sch-target').value,
       enabled: state.editing ? state.editing.enabled !== false : true,
     };
-    if (kind === 'every') out.everyMinutes = Number(byId('sc-every').value);
-    else { out.at = byId('sc-at').value; out.days = days; }
+    if (kind === 'every') out.everyMinutes = Number(byId('sch-every').value);
+    else { out.at = byId('sch-at').value; out.days = days; }
     return out;
   }
 
   function paintDays() {
-    const host = byId('sc-days');
+    const host = byId('sch-days');
     if (!host) return;
-    const kind = byId('sc-kind').value;
+    const kind = byId('sch-kind').value;
     const chosen = new Set([...host.querySelectorAll('[aria-pressed="true"]')].map((b) => Number(b.dataset.day)));
     host.replaceChildren();
     for (let d = 0; d < 7; d += 1) {
       const on = chosen.has(d);
-      const b = el('button', { class: on ? 'sc-day is-on' : 'sc-day', type: 'button' }, DAY_SHORT[d]);
+      const b = el('button', { class: on ? 'sch-day is-on' : 'sch-day', type: 'button' }, DAY_SHORT[d]);
       b.dataset.day = String(d);
       b.setAttribute('aria-pressed', String(on));
       host.appendChild(b);
     }
     // Weekly means one day; daily means any set, and none of them means all.
     const hint = kind === 'weekly' ? 'pick one day' : 'leave empty for every day';
-    host.appendChild(el('span', { class: 'sc-meta' }, hint));
+    host.appendChild(el('span', { class: 'sch-meta' }, hint));
   }
 
   // The same wording the row will carry, computed from the same function, so a
   // form can never promise something the row then describes differently.
   function paintPreview() {
-    const host = byId('sc-preview');
+    const host = byId('sch-preview');
     if (!host) return;
     host.replaceChildren();
     const words = window.husk.schedules.describe(formValue());
     host.appendChild(el('span', {}, words ? `Runs ${words}.` : 'Fill the fields above to see when this runs.'));
-    if (words) host.appendChild(el('div', { class: 'sc-meta' }, 'Husk has to be running at that time.'));
+    if (words) host.appendChild(el('div', { class: 'sch-meta' }, 'Husk has to be running at that time.'));
   }
 
   function syncKind() {
-    const kind = byId('sc-kind').value;
-    byId('sc-row-every').hidden = kind !== 'every';
-    byId('sc-row-at').hidden = kind === 'every';
-    byId('sc-row-days').hidden = kind === 'every';
+    const kind = byId('sch-kind').value;
+    byId('sch-row-every').hidden = kind !== 'every';
+    byId('sch-row-at').hidden = kind === 'every';
+    byId('sch-row-days').hidden = kind === 'every';
     paintDays();
     paintPreview();
   }
 
   function setError(message) {
-    const host = byId('sc-error');
+    const host = byId('sch-error');
     if (!host) return;
     host.replaceChildren();
     host.hidden = !message;
@@ -217,11 +217,11 @@
 
   function openForm(schedule) {
     state.editing = schedule || null;
-    byId('sc-modal-title').textContent = schedule ? 'Edit schedule' : 'New schedule';
-    byId('sc-name').value = schedule ? schedule.name : '';
-    byId('sc-kind').value = schedule ? schedule.kind : 'every';
-    byId('sc-every').value = schedule && schedule.everyMinutes ? schedule.everyMinutes : 60;
-    byId('sc-at').value = (schedule && schedule.at) || '09:00';
+    byId('sch-modal-title').textContent = schedule ? 'Edit schedule' : 'New schedule';
+    byId('sch-name').value = schedule ? schedule.name : '';
+    byId('sch-kind').value = schedule ? schedule.kind : 'every';
+    byId('sch-every').value = schedule && schedule.everyMinutes ? schedule.everyMinutes : 60;
+    byId('sch-at').value = (schedule && schedule.at) || '09:00';
 
     // An <option> is not in WfxDom's inert-tag allowlist and does not need to
     // be: its text is set as a text node and its value never reaches markup.
@@ -231,7 +231,7 @@
       o.textContent = label;
       return o;
     };
-    const target = byId('sc-target');
+    const target = byId('sch-target');
     target.replaceChildren();
     if (!state.workflows.length) target.appendChild(option('', 'No workflows saved yet'));
     for (const w of state.workflows) target.appendChild(option(w.id, w.name || w.id));
@@ -241,18 +241,18 @@
     // has something to write onto.
     paintDays();
     const want = new Set((schedule && Array.isArray(schedule.days) ? schedule.days : []).map(Number));
-    for (const b of document.querySelectorAll('#sc-days [data-day]')) {
+    for (const b of document.querySelectorAll('#sch-days [data-day]')) {
       const on = want.has(Number(b.dataset.day));
       b.setAttribute('aria-pressed', String(on));
       b.classList.toggle('is-on', on);
     }
     syncKind();
     setError('');
-    byId('sc-modal').hidden = false;
-    setTimeout(() => { try { byId('sc-name').focus(); } catch (_) {} }, 30);
+    byId('sch-modal').hidden = false;
+    setTimeout(() => { try { byId('sch-name').focus(); } catch (_) {} }, 30);
   }
 
-  const closeForm = () => { byId('sc-modal').hidden = true; state.editing = null; };
+  const closeForm = () => { byId('sch-modal').hidden = true; state.editing = null; };
 
   async function save() {
     const res = await window.husk.schedules.save(formValue());
@@ -265,22 +265,22 @@
   // ─── Wiring ───────────────────────────────────────────────────────────────
 
   function wire() {
-    byId('sc-new')?.addEventListener('click', () => openForm(null));
-    byId('sc-close')?.addEventListener('click', closeForm);
-    byId('sc-cancel')?.addEventListener('click', closeForm);
-    byId('sc-save')?.addEventListener('click', save);
-    byId('sc-kind')?.addEventListener('change', syncKind);
-    for (const id of ['sc-name', 'sc-every', 'sc-at', 'sc-target']) {
+    byId('sch-new')?.addEventListener('click', () => openForm(null));
+    byId('sch-close')?.addEventListener('click', closeForm);
+    byId('sch-cancel')?.addEventListener('click', closeForm);
+    byId('sch-save')?.addEventListener('click', save);
+    byId('sch-kind')?.addEventListener('change', syncKind);
+    for (const id of ['sch-name', 'sch-every', 'sch-at', 'sch-target']) {
       byId(id)?.addEventListener('input', paintPreview);
     }
 
-    byId('sc-days')?.addEventListener('click', (e) => {
+    byId('sch-days')?.addEventListener('click', (e) => {
       const b = e.target.closest('[data-day]');
       if (!b) return;
       const on = b.getAttribute('aria-pressed') !== 'true';
       // Weekly holds one day, so choosing another releases the last.
-      if (on && byId('sc-kind').value === 'weekly') {
-        for (const other of document.querySelectorAll('#sc-days [data-day]')) {
+      if (on && byId('sch-kind').value === 'weekly') {
+        for (const other of document.querySelectorAll('#sch-days [data-day]')) {
           other.setAttribute('aria-pressed', 'false');
           other.classList.remove('is-on');
         }
@@ -290,9 +290,9 @@
       paintPreview();
     });
 
-    byId('sc-list')?.addEventListener('click', async (e) => {
+    byId('sch-list')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('[data-act]');
-      const rowEl = e.target.closest('.sc-row');
+      const rowEl = e.target.closest('.sch-row');
       if (!btn || !rowEl) return;
       const id = rowEl.dataset.id;
       const s = state.rows.find((x) => x.id === id);

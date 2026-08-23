@@ -2211,68 +2211,68 @@
         </div>
 
         <!-- FILES PAGE -->
-        <!-- Schedule. Rows are built by sc-page.js through WfxDom: a schedule
+        <!-- Schedule. Rows are built by sch-page.js through WfxDom: a schedule
              name is whatever the user typed. -->
         <div class="page page-schedule" data-page="schedule" hidden>
           <div class="page-head">
             <div class="page-head-left">
               <h1 class="page-title">Schedule</h1>
-              <span class="page-sub" id="sc-sub">Workflows that start on their own</span>
+              <span class="page-sub" id="sch-sub">Workflows that start on their own</span>
             </div>
             <div class="page-head-right">
-              <button class="btn-primary" id="sc-new"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New schedule</button>
+              <button class="btn-primary" id="sch-new"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New schedule</button>
             </div>
           </div>
           <div class="page-body">
             <div class="sc">
-              <div class="sc-list" id="sc-list"></div>
-              <div class="sc-state" id="sc-state"></div>
+              <div class="sch-list" id="sch-list"></div>
+              <div class="sch-state" id="sch-state"></div>
             </div>
           </div>
 
-          <div class="modal" id="sc-modal" hidden>
+          <div class="modal" id="sch-modal" hidden>
             <div class="modal-card modal-card-wide">
               <div class="modal-head">
-                <h2 class="modal-title" id="sc-modal-title">New schedule</h2>
-                <button class="modal-close" id="sc-close" aria-label="Close">&times;</button>
+                <h2 class="modal-title" id="sch-modal-title">New schedule</h2>
+                <button class="modal-close" id="sch-close" aria-label="Close">&times;</button>
               </div>
               <div class="modal-body">
-                <label class="sc-label" for="sc-name">Name</label>
-                <input class="sc-input" id="sc-name" type="text" placeholder="Nightly docs sweep" autocomplete="off" spellcheck="false" />
+                <label class="sch-label" for="sch-name">Name</label>
+                <input class="sch-input" id="sch-name" type="text" placeholder="Nightly docs sweep" autocomplete="off" spellcheck="false" />
 
-                <label class="sc-label" for="sc-target">Workflow to run</label>
-                <select class="sc-input" id="sc-target"></select>
+                <label class="sch-label" for="sch-target">Workflow to run</label>
+                <select class="sch-input" id="sch-target"></select>
 
-                <label class="sc-label" for="sc-kind">Repeats</label>
-                <select class="sc-input" id="sc-kind">
+                <label class="sch-label" for="sch-kind">Repeats</label>
+                <select class="sch-input" id="sch-kind">
                   <option value="every">Every so often</option>
                   <option value="daily">Daily, at a time</option>
                   <option value="weekly">Weekly, on a day</option>
                 </select>
 
-                <div class="sc-row" id="sc-row-every">
-                  <label class="sc-label" for="sc-every">Every</label>
-                  <div class="sc-inline">
-                    <input class="sc-input sc-num" id="sc-every" type="number" min="5" max="10080" step="5" value="60" />
-                    <span class="sc-unit">minutes</span>
+                <div class="sch-row" id="sch-row-every">
+                  <label class="sch-label" for="sch-every">Every</label>
+                  <div class="sch-inline">
+                    <input class="sch-input sch-num" id="sch-every" type="number" min="5" max="10080" step="5" value="60" />
+                    <span class="sch-unit">minutes</span>
                   </div>
                 </div>
 
-                <div class="sc-row" id="sc-row-at" hidden>
-                  <label class="sc-label" for="sc-at">At</label>
-                  <input class="sc-input sc-num" id="sc-at" type="time" value="09:00" />
+                <div class="sch-row" id="sch-row-at" hidden>
+                  <label class="sch-label" for="sch-at">At</label>
+                  <input class="sch-input sch-num" id="sch-at" type="time" value="09:00" />
                 </div>
 
-                <div class="sc-row" id="sc-row-days" hidden>
-                  <label class="sc-label">On</label>
-                  <div class="sc-days" id="sc-days" role="group" aria-label="Days"></div>
+                <div class="sch-row" id="sch-row-days" hidden>
+                  <label class="sch-label">On</label>
+                  <div class="sch-days" id="sch-days" role="group" aria-label="Days"></div>
                 </div>
 
-                <div class="sc-preview" id="sc-preview"></div>
-                <div class="sc-error" id="sc-error" hidden></div>
-                <div class="sc-actions">
-                  <button class="ghost-btn" id="sc-cancel">Cancel</button>
-                  <button class="btn-primary" id="sc-save">Save</button>
+                <div class="sch-preview" id="sch-preview"></div>
+                <div class="sch-error" id="sch-error" hidden></div>
+                <div class="sch-actions">
+                  <button class="ghost-btn" id="sch-cancel">Cancel</button>
+                  <button class="btn-primary" id="sch-save">Save</button>
                 </div>
               </div>
             </div>
@@ -3787,7 +3787,7 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     <script src="wfx-market.js"></script>
     <script src="gh-page.js"></script>
     <script src="af-page.js"></script>
-    <script src="sc-page.js"></script>
+    <script src="sch-page.js"></script>
     <script src="app.js"></script>
     <!-- Run log. The transcript lives on disk beside the audit log, so this
          reads a finished run's output back from there. -->
