@@ -363,6 +363,7 @@
   --fw-body: 400;
   --fs-label: 12px;
   --fw-label: 500;
+  --fw-bold: 700;
   --fs-mono: 12px;
   /* Four glyph steps: inside a control, in rails and rows, in headers, and in an
      empty state. Nothing draws an icon at a size that is not one of these. */
@@ -518,7 +519,7 @@ body {
   --state-error-ink: var(--rose);
   --state-muted-bg: color-mix(in srgb, var(--text) 8%, var(--surface));
   --state-muted-edge: var(--line-2);
-  --state-muted-ink: var(--text-3);
+  --state-muted-ink: var(--text-2);
 
   /* A switch that is on takes the success hue on its track and the page ground on
      its knob, so enabled reads by colour rather than by knob position. Both sides
@@ -14986,7 +14987,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   flex: 1; min-width: 0; height: var(--sc-ctl-h); box-sizing: border-box;
   background: var(--bg-2); border: 1px solid transparent; border-radius: var(--radius-md);
   padding: 0 34px 0 34px; color: var(--text);
-  font-family: var(--font-body); font-size: var(--fs-small); outline: none;
+  font-family: var(--font-body); font-size: var(--fs-body); outline: none;
   transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
 .sc-search-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
@@ -14996,14 +14997,14 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   position: absolute; right: 20px; pointer-events: none;
   padding: 1px 6px; border: 1px solid var(--line-2); border-radius: var(--radius-sm);
   background: var(--bg-3); color: var(--text-3);
-  font-family: var(--font-mono); font-size: var(--fs-nano);
+  font-family: var(--font-mono); font-size: var(--fs-section);
 }
 .sc-tabs { display: flex; gap: var(--space-1); padding: 0 var(--space-3) var(--space-2); border-bottom: 1px solid var(--line); }
 
 .sc-list {
   flex: 1; min-height: 0; overflow-y: auto;
   padding: var(--space-1) var(--space-1) var(--space-3);
-  font-family: var(--font-mono); font-size: var(--fs-small);
+  font-family: var(--font-mono); font-size: var(--fs-body);
 }
 .sc-list::-webkit-scrollbar { width: 7px; }
 .sc-list::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
@@ -15045,7 +15046,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-band-count { flex: none; }
 .sc-band-chevron {
   flex: none; width: 11px; text-align: center; color: var(--text-3);
-  font-size: var(--fs-small); transition: transform var(--motion-fast) var(--ease);
+  font-size: var(--fs-body); transition: transform var(--motion-fast) var(--ease);
 }
 .sc-band.is-open > .sc-band-head .sc-band-chevron { transform: rotate(90deg); }
 .sc-band:not(.is-open) > .sc-row { display: none; }
@@ -15100,7 +15101,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   background: color-mix(in srgb, var(--info) 40%, transparent);
   border-color: var(--info);
 }
-.sc-row-badge { flex: none; width: 15px; text-align: center; font-weight: 700; font-size: var(--fs-nano); }
+.sc-row-badge { flex: none; width: 15px; text-align: center; font-weight: var(--fw-label); font-size: var(--fs-section); }
 .sc-row-base { flex: none; max-width: 58%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 /* The directory reads from its tail, so the ellipsis eats the head and the
    folder next to the file stays on screen. */
@@ -15110,7 +15111,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 }
 .sc-row-stat {
   flex: none; width: var(--sc-stat-w); text-align: right;
-  font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-3);
+  font-size: var(--fs-section); font-variant-numeric: tabular-nums; color: var(--text-3);
 }
 .sc-row-stat .is-add, .sc-dhead-stat .is-add { color: var(--sc-add-ink); }
 .sc-row-stat .is-del, .sc-dhead-stat .is-del { color: var(--sc-del-ink); }
@@ -15135,8 +15136,14 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-crow.is-selected { background: var(--bg-3); color: var(--text); }
 .sc-crow-sha { flex: none; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .sc-crow-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-.sc-crow-refs { flex: none; font-size: var(--fs-pico); color: var(--accent-2); }
-.sc-crow-meta { flex: none; font-size: var(--fs-nano); color: var(--text-3); }
+/* A neutral chip: this names where a commit sits, which is inventory rather
+   than an action, so it does not take the accent or a step of its own. */
+.sc-crow-refs {
+  flex: none; font-size: var(--fs-section); color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--radius-sm); padding: 0 5px;
+}
+.sc-crow-meta { flex: none; font-size: var(--fs-section); color: var(--text-3); }
 
 /* Only the keyboard cursor draws a ring, so a row that took focus by Tab or by
    a click cancels the generic one. */
@@ -15157,12 +15164,12 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   height: var(--sc-row-h); margin-top: var(--space-2); padding: 0 var(--space-2);
   background: transparent; border: 1px dashed var(--line-2); border-radius: var(--radius-md);
   color: var(--text-3);
-  font-family: var(--font-body); font-size: var(--fs-micro);
+  font-family: var(--font-body); font-size: var(--fs-label);
 }
 .sc-empty {
   display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
   padding: var(--space-5) var(--space-3); text-align: center;
-  font-family: var(--font-body); font-size: var(--fs-micro);
+  font-family: var(--font-body); font-size: var(--fs-label);
   line-height: var(--lh-base); color: var(--text-3);
 }
 
@@ -15180,7 +15187,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   width: 100%; box-sizing: border-box;
   background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
   padding: 6px var(--space-3); color: var(--text); resize: none; outline: none;
-  font-family: var(--font-body); font-size: var(--fs-small); line-height: var(--lh-base);
+  font-family: var(--font-body); font-size: var(--fs-body); line-height: var(--lh-base);
   transition: border-color var(--motion-fast) var(--ease);
 }
 .sc-subject { height: var(--sc-ctl-h); }
@@ -15221,20 +15228,20 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 }
 .sc-subject-count {
   align-self: flex-end;
-  font-family: var(--font-mono); font-size: var(--fs-nano);
+  font-family: var(--font-mono); font-size: var(--fs-section);
   font-variant-numeric: tabular-nums; color: var(--text-3);
 }
 .sc-subject-count[data-state="warning"] { color: var(--warn); }
 .sc-composer-flags {
   display: flex; align-items: center; gap: var(--space-2);
-  font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-label); color: var(--text-2);
 }
 .sc-composer-warn {
   display: flex; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
   background: var(--state-warning-bg); border: 1px solid var(--state-warning-edge);
   color: var(--text-2);
-  font-family: var(--font-body); font-size: var(--fs-nano); line-height: var(--lh-snug);
+  font-family: var(--font-body); font-size: var(--fs-section); line-height: var(--lh-snug);
 }
 .sc-composer-warn svg { flex: none; width: var(--icon-sm); height: var(--icon-sm); color: var(--warn); }
 .sc-composer-foot { display: flex; align-items: center; gap: var(--space-2); }
@@ -15255,10 +15262,10 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-dhead-path {
   flex: 0 1 auto; max-width: 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   direction: rtl; unicode-bidi: plaintext; text-align: left;
-  font-family: var(--font-mono); font-size: var(--fs-small); color: var(--text);
+  font-family: var(--font-mono); font-size: var(--fs-body); color: var(--text);
 }
 .sc-dhead-stat {
-  flex: none; font-family: var(--font-mono); font-size: var(--fs-nano);
+  flex: none; font-family: var(--font-mono); font-size: var(--fs-section);
   font-variant-numeric: tabular-nums; color: var(--text-3);
 }
 /* The actions take the whole second line of the head, so a long path never
@@ -15282,7 +15289,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   display: flex; align-items: flex-start; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
   background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2);
-  font-family: var(--font-body); font-size: var(--fs-micro); line-height: var(--lh-snug);
+  font-family: var(--font-body); font-size: var(--fs-label); line-height: var(--lh-snug);
 }
 .sc-prov-band svg { flex: none; width: var(--icon-sm); height: var(--icon-sm); margin-top: 1px; color: var(--text-3); }
 /* Husk wrote the record for a run, so the run band is the one that carries the
@@ -15304,7 +15311,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
    fold. Wrap on gives that width back to the container. */
 .sc-diff {
   min-width: max-content; padding-left: var(--space-3); padding-bottom: var(--space-4);
-  font-family: var(--font-mono); font-size: var(--fs-small);
+  font-family: var(--font-mono); font-size: var(--fs-body);
   line-height: 18px; tab-size: 2;
 }
 .sc-diff[data-wrap="on"] { min-width: 0; }
@@ -15313,7 +15320,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
    the diff and copying yields source that compiles. */
 .sc-dl-no {
   flex: none; width: var(--sc-no-w); padding-right: 8px; text-align: right;
-  color: var(--text-3); font-variant-numeric: tabular-nums;
+  color: var(--text-3); font-size: var(--fs-label); font-variant-numeric: tabular-nums;
   user-select: none; -webkit-user-select: none;
 }
 .sc-dl-sign {
@@ -15322,7 +15329,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 }
 /* The only mark in a diff row that does not depend on hue at all, so it is set
    at a weight that reads without one. */
-.sc-dl.is-add .sc-dl-sign, .sc-dl.is-del .sc-dl-sign { font-weight: 700; }
+.sc-dl.is-add .sc-dl-sign, .sc-dl.is-del .sc-dl-sign { font-weight: var(--fw-bold); }
 .sc-dl-code {
   flex: 1 1 auto; min-width: 0; padding-right: var(--space-4);
   white-space: pre; overflow-wrap: normal; color: var(--text);
@@ -15339,7 +15346,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-dl.is-ctx .sc-dl-code { color: var(--text-2); }
 .sc-nonl {
   padding-left: calc(var(--sc-no-w) * 2 + var(--sc-sign-w));
-  color: var(--text-3); font-size: var(--fs-nano); font-style: italic;
+  color: var(--text-3); font-size: var(--fs-section); font-style: italic;
   user-select: none; -webkit-user-select: none;
 }
 
@@ -15350,15 +15357,15 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   width: max-content; min-width: 100%; box-sizing: border-box;
   display: flex; align-items: center; gap: var(--space-3);
   min-height: var(--sc-band-h);
-  padding: 3px var(--space-3) 3px calc(var(--space-3) + var(--sc-no-w) * 2 + var(--sc-sign-w));
+  padding: 3px var(--space-4);
   background: linear-gradient(var(--sc-hunk-bg), var(--sc-hunk-bg)), linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
 }
 .sc-hunk:first-child { border-top: 0; }
 .sc-hunk.is-active-key { outline: 1px solid var(--accent); outline-offset: -1px; }
 .sc-hunk-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.sc-hunk-range { flex: none; font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
-.sc-hunk-fn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-nano); color: var(--text-3); }
+.sc-hunk-range { flex: none; font-size: var(--fs-section); font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+.sc-hunk-fn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-section); color: var(--text-3); }
 /* Per-hunk actions arrive with the pointer or the cursor, so a file of forty
    hunks is not a wall of buttons. */
 .sc-hunk-acts { display: flex; align-items: center; gap: 6px; opacity: 0; transition: opacity var(--motion-fast) var(--ease); }
@@ -15368,7 +15375,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-hunk-acts button {
   padding: 2px 8px; border-radius: var(--radius-md);
   background: transparent; border: 1px solid var(--line-2); color: var(--text-3);
-  font-family: var(--font-body); font-size: var(--fs-nano); font-weight: 600; cursor: pointer;
+  font-family: var(--font-body); font-size: var(--fs-section); font-weight: var(--fw-section); cursor: pointer;
   transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
 }
 .sc-hunk-acts button:hover { color: var(--text); background: var(--bg-2); border-color: var(--line-3); }
@@ -15378,7 +15385,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   background: color-mix(in srgb, var(--text) 3%, transparent);
   border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
   color: var(--text-3); cursor: pointer;
-  font-family: var(--font-body); font-size: var(--fs-nano);
+  font-family: var(--font-body); font-size: var(--fs-section);
 }
 .sc-expand:hover { color: var(--text-2); background: color-mix(in srgb, var(--text) 6%, transparent); }
 
@@ -15396,13 +15403,13 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-binary, .sc-toobig {
   display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
   padding: var(--space-6) var(--space-5); text-align: center;
-  font-family: var(--font-body); font-size: var(--fs-small);
+  font-family: var(--font-body); font-size: var(--fs-body);
   line-height: var(--lh-base); color: var(--text-2);
 }
 .sc-binary .sc-dacts, .sc-toobig .sc-dacts { justify-content: center; width: auto; }
 .sc-note {
   max-width: 56ch;
-  font-family: var(--font-body); font-size: var(--fs-nano);
+  font-family: var(--font-body); font-size: var(--fs-section);
   line-height: var(--lh-snug); color: var(--text-3);
 }
 /* Under the diff the note is a line of the pane itself, so it takes the head's
@@ -15417,19 +15424,6 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   display: flex; flex-direction: column; gap: var(--space-3);
   padding: var(--space-3);
 }
-.sc-ov-stats { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.sc-ov-stat {
-  display: flex; flex-direction: column; gap: var(--space-1); min-width: 96px;
-  padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg);
-  background: var(--bg-2); border: 1px solid var(--line);
-}
-.sc-ov-stat-n {
-  font-family: var(--font-display); font-size: var(--fs-h2); font-weight: 700;
-  color: var(--text); font-variant-numeric: tabular-nums;
-}
-.sc-ov-stat.is-add .sc-ov-stat-n { color: var(--sc-add-ink); }
-.sc-ov-stat.is-del .sc-ov-stat-n { color: var(--sc-del-ink); }
-.sc-ov-stat-l { font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-3); }
 /* A card takes the height its rows need, so a repo with no runs is one short
    panel rather than a column of nothing. */
 .sc-ov-card {
@@ -15452,12 +15446,12 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-run-row {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
   padding: var(--space-2); border-radius: var(--radius-md); color: var(--text-2);
-  font-family: var(--font-mono); font-size: var(--fs-micro);
+  font-family: var(--font-mono); font-size: var(--fs-label);
 }
 .sc-run-row:hover { background: var(--bg-3); }
 .sc-run-goal {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--font-body); font-size: var(--fs-small); color: var(--text);
+  font-family: var(--font-body); font-size: var(--fs-body); color: var(--text);
 }
 /* The bindings sit at the floor of the pane, under a rule, because they are the
    last thing read and never the first. */
@@ -15470,7 +15464,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   display: flex; flex-wrap: wrap; gap: var(--space-4);
   padding: var(--space-3);
   border-top: 1px solid var(--line);
-  font-family: var(--font-body); font-size: var(--fs-micro); color: var(--text-3);
+  font-family: var(--font-body); font-size: var(--fs-label); color: var(--text-3);
 }
 .sc-hints > * { display: inline-flex; align-items: center; gap: var(--space-1); }
 
@@ -15487,15 +15481,15 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
   padding: 6px var(--space-2); border: 0; border-radius: var(--radius-md);
   background: transparent; color: var(--text-2); text-align: left; cursor: pointer;
-  font-family: var(--font-mono); font-size: var(--fs-micro);
+  font-family: var(--font-mono); font-size: var(--fs-label);
 }
 .sc-pop-row:hover:not(.is-held) { background: var(--bg-3); color: var(--text); }
-.sc-pop-row.is-active { color: var(--text); font-weight: 600; }
+.sc-pop-row.is-active { color: var(--text); font-weight: var(--fw-section); }
 /* A branch another worktree is holding cannot be switched to, so it reads as a
    fact with its reason rather than as a dead control. */
 .sc-pop-row.is-held { color: var(--text-3); cursor: default; }
-.sc-pop-track { margin-left: auto; flex: none; font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-3); }
-.sc-pop-lock { flex: none; font-family: var(--font-body); font-size: var(--fs-nano); color: var(--text-3); }
+.sc-pop-track { margin-left: auto; flex: none; font-size: var(--fs-section); font-variant-numeric: tabular-nums; color: var(--text-3); }
+.sc-pop-lock { flex: none; font-family: var(--font-body); font-size: var(--fs-section); color: var(--text-3); }
 
 /* Delete belongs to the row the pointer or the cursor is on, so it arrives with
    the row and the popover never reads as a column of red. */
@@ -15532,7 +15526,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   flex: 1; min-width: 0; box-sizing: border-box;
   background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
   padding: 5px 8px; color: var(--text); outline: none;
-  font-family: var(--font-mono); font-size: var(--fs-micro);
+  font-family: var(--font-mono); font-size: var(--fs-label);
 }
 /* The dark family paints every field with a black well, so the create field takes
    the higher-specificity form the composer fields use and keeps the popover fill. */
@@ -15548,7 +15542,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-pop-new button {
   flex: none; padding: 4px 10px; border-radius: var(--radius-md);
   background: transparent; border: 1px solid var(--line-2); color: var(--text-2);
-  font-family: var(--font-body); font-size: var(--fs-nano); font-weight: 600; cursor: pointer;
+  font-family: var(--font-body); font-size: var(--fs-section); font-weight: var(--fw-section); cursor: pointer;
   transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
 }
 .sc-pop-new button:hover:not(:disabled) { color: var(--text); background: var(--bg-2); border-color: var(--line-3); }
@@ -15557,7 +15551,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
    the row says what is wrong without resizing the card around it. */
 .sc-pop-msg {
   display: none; flex-basis: 100%;
-  font-family: var(--font-body); font-size: var(--fs-nano); line-height: var(--lh-snug);
+  font-family: var(--font-body); font-size: var(--fs-section); line-height: var(--lh-snug);
   color: var(--rose);
 }
 .sc-pop-new.is-invalid .sc-pop-msg { display: block; }

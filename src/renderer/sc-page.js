@@ -480,9 +480,8 @@
 
   function paintStale() {
     const sub = byId('source-sub');
-    const stats = byId('sc-ov-stats');
     const last = state.readAt ? 'last read ' + Dom.ago(state.readAt) : 'not read yet';
-    for (const el of [sub, stats]) {
+    for (const el of [sub]) {
       if (!el) continue;
       el.classList.toggle('is-stale', state.stale);
       if (ui.readFailed) el.title = 'this read failed, ' + last;
@@ -865,11 +864,6 @@
 
   function paintOverview() {
     const repo = state.repo;
-    // The file, added and removed counts this card used to carry are already in
-    // the page subtitle and on every row of the list beside it, so the card was
-    // three tiles of restatement taking the top of the pane.
-    const stats = byId('sc-ov-stats');
-    if (stats) stats.replaceChildren();
 
     const runsHost = byId('sc-ov-runs');
     if (runsHost) {

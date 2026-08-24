@@ -456,16 +456,6 @@
     return band;
   }
 
-  // One number and its word. Zero is a real answer, so a tile is rendered for
-  // it rather than left out.
-  function statTileEl(n, label, tone) {
-    const cls = tone === 'add' ? 'sc-ov-stat is-add' : (tone === 'del' ? 'sc-ov-stat is-del' : 'sc-ov-stat');
-    const box = el('div', cls);
-    box.appendChild(el('span', 'sc-ov-stat-n', typeof n === 'number' ? groupNum(n) : str(n) || '0'));
-    box.appendChild(el('span', 'sc-ov-stat-l', str(label)));
-    return box;
-  }
-
   // A card on the overview. `act` is a node, a plain count string, or a
   // { label, onClick } button.
   function ovCardEl(title, rows, act) {
@@ -649,7 +639,6 @@
     newFileEl,
     provBandEl,
     statEl,
-    statTileEl,
     ovCardEl,
     runRowEl,
     branchRowEl,
