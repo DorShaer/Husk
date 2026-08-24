@@ -355,7 +355,7 @@
   /* Five roles cover the interface. --fs-page titles a page, --fs-section heads a
      small-caps group, --fs-body carries body copy and list rows, --fs-label names a
      field or a table column, --fs-mono holds ids, paths and counts. */
-  --fs-page: 20px;
+  --fs-page: 30px;
   --fw-page: 600;
   --fs-section: 11px;
   --fw-section: 600;
@@ -1502,7 +1502,7 @@ body[data-page="boot"] .page { display: none !important; }
   gap: 16px;
   min-height: 0;
   flex: none;
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-6);
   flex-wrap: wrap;
 }
 .page-head-left { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -1529,12 +1529,12 @@ body[data-page="boot"] .page { display: none !important; }
   font-weight: var(--fw-page);
   letter-spacing: -0.02em;
   margin: 0;
-  color: var(--text-2);
+  color: var(--text);
   line-height: 1.1;
 }
 .page-sub {
-  font-size: var(--fs-small);
-  color: var(--text-2);
+  font-size: var(--fs-body);
+  color: var(--text-3);
   letter-spacing: var(--tracking-normal);
   line-height: var(--lh-snug);
 }
@@ -14626,7 +14626,12 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .gh-label-chip:hover { color: var(--text-2); border-color: var(--line-2); }
 .gh-label-chip.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
-.gh-panes { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-4); flex: 1 1 auto; min-height: 0; }
+.gh-panes {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-4);
+  flex: 1 1 auto; min-height: 0;
+  padding: var(--space-4);
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-2xl);
+}
 .gh-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; outline: none; }
 .gh-list:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); border-radius: var(--radius-lg); }
 
@@ -14740,7 +14745,12 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .af-search { flex: 1 1 240px; min-width: 160px; }
 .af-search::placeholder { color: var(--text-3); }
 
-.af-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--space-4); flex: 1 1 auto; min-height: 0; }
+.af-panes {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--space-4);
+  flex: 1 1 auto; min-height: 0;
+  padding: var(--space-4);
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-2xl);
+}
 .af-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; outline: none; }
 .af-list:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); border-radius: var(--radius-lg); }
 .af-row {
@@ -14833,13 +14843,28 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 /* ─── Schedule ──────────────────────────────────────────────────────────────
    A list of promises about when something runs, each saying the same sentence
    the form said when it was made. */
-.sch { display: flex; flex-direction: column; gap: var(--space-3); }
+/* One container per page section, the way the reference does it: a large
+   radius, a hairline edge, a lifted ground and room inside it. A bare list on
+   page ground reads as a fragment; a container reads as a surface that was
+   designed to hold something. */
+.sch {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2xl);
+}
+.sch-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3); margin-bottom: var(--space-1);
+}
+.sch-head-title { font-size: var(--fs-h2); font-weight: var(--fw-page); color: var(--text); }
 .sch-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .sch-row {
   display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--line); border-radius: var(--radius-xl);
-  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
 }
 .sch-row.is-paused { opacity: 0.62; }
 .sch-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -14950,21 +14975,19 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   /* The index column carries a path plus a +N/-M tail, so it takes more width
      than a plain file list needs. */
   display: grid; grid-template-columns: clamp(280px, 26%, 380px) minmax(0, 1fr);
-  gap: 0;
+  gap: var(--space-4);
 }
-/* Neither column is a card.
- *
- * A review desk is mostly empty whenever the tree is nearly clean, and a filled,
- * rounded, lifted box around that emptiness reads as a panel that failed to
- * load. Ground is honest: unused height is simply the page, the way it is in
- * every list view worth copying. The two columns are told apart by one rule
- * between them, which is the least mark that does the job. */
+/* One surface per column, sized like the reference: a large radius, a hairline
+   edge and a ground a step above the page. The emptiness a nearly-clean tree
+   leaves then sits inside a panel that was clearly meant to hold it, rather than
+   trailing off into page ground. */
 .sc-nav, .sc-main {
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
-  background: transparent;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2xl);
   overflow: hidden;
 }
-.sc-nav { border-right: 1px solid var(--line); }
 
 /* Head. A folder whose watcher never attached still re-reads on focus, so the one
    control that answers for freshness carries the mark rather than a banner. The
@@ -15018,9 +15041,9 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; gap: var(--space-2);
   height: var(--sc-band-h); padding: 0 var(--space-2);
-  /* Opaque, because rows scroll under it, and the page ground rather than a
-     lifted fill, because there is no card behind it any more. */
-  background: var(--bg);
+  /* Opaque, because rows scroll under it, and the panel's own ground so it
+     disappears into the surface it rides on. */
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
   cursor: pointer;
 }
 /* The band heading and its count are one object, in one face. Uppercase with
