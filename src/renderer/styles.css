@@ -14832,7 +14832,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 /* ─── Schedule ──────────────────────────────────────────────────────────────
    A list of promises about when something runs, each saying the same sentence
    the form said when it was made. */
-.sc { display: flex; flex-direction: column; gap: var(--space-3); }
+.sch { display: flex; flex-direction: column; gap: var(--space-3); }
 .sch-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .sch-row {
   display: flex; align-items: center; gap: var(--space-3);
@@ -14912,14 +14912,20 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   --sc-ctl-h: 32px;
   --sc-stat-w: 62px;
   /* The diff is the only reason this page exists, so its two grounds carry the
-     page's strongest separation. At 8% they measured 1.04:1 against each other:
-     no luminance channel at all, which is invisible under any red/green
-     deficiency and nearly invisible without one. */
-  --sc-add-bg: color-mix(in srgb, var(--emerald) 18%, transparent);
+     page's strongest separation.
+     
+     The mixes are deliberately asymmetric. Emerald and rose sit at nearly the
+     same luminance, so any symmetric pair separates them by hue alone: measured
+     on this ground, 8/8 gives 1.04:1 between the two and even 36/36 only reaches
+     1.23:1. Weighting the added ground far heavier buys a real luminance channel
+     (1.67:1 here), which is what survives a red/green deficiency and a bad
+     panel. It also reads correctly: added lines are the text you are here to
+     read, removed lines are on their way out. */
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 30%, transparent);
   --sc-add-ink: var(--emerald);
-  --sc-del-bg: color-mix(in srgb, var(--rose) 16%, transparent);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 12%, transparent);
   --sc-del-ink: var(--rose);
-  --sc-hunk-bg: color-mix(in srgb, var(--text) 5%, transparent);
+  --sc-hunk-bg: color-mix(in srgb, var(--text) 4%, transparent);
 }
 /* An 8% wash sits under the paper on Light and Sepia, so the two diff grounds
    take the strength the dark family does not need. Every other value is shared,
@@ -14943,20 +14949,21 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   /* The index column carries a path plus a +N/-M tail, so it takes more width
      than a plain file list needs. */
   display: grid; grid-template-columns: clamp(280px, 26%, 380px) minmax(0, 1fr);
-  gap: var(--space-4);
+  gap: 0;
 }
+/* Neither column is a card.
+ *
+ * A review desk is mostly empty whenever the tree is nearly clean, and a filled,
+ * rounded, lifted box around that emptiness reads as a panel that failed to
+ * load. Ground is honest: unused height is simply the page, the way it is in
+ * every list view worth copying. The two columns are told apart by one rule
+ * between them, which is the least mark that does the job. */
 .sc-nav, .sc-main {
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
-  /* Composite the translucent surface token over the opaque page background, so
-     the ambient radial stops modulating the pane interior. */
-  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
-  /* Lifted rather than outlined. A hairline at 8% white on this ground is a box
-     tax for a line the eye cannot resolve, and it is what made an empty region
-     read as a failed panel instead of as page ground. */
-  border-radius: var(--radius-xl);
-  box-shadow: var(--elev-1);
+  background: transparent;
   overflow: hidden;
 }
+.sc-nav { border-right: 1px solid var(--line); }
 
 /* Head. A folder whose watcher never attached still re-reads on focus, so the one
    control that answers for freshness carries the mark rather than a banner. The
@@ -15010,8 +15017,10 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; gap: var(--space-2);
   height: var(--sc-band-h); padding: 0 var(--space-2);
-  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
-  border-radius: var(--radius-md); cursor: pointer;
+  /* Opaque, because rows scroll under it, and the page ground rather than a
+     lifted fill, because there is no card behind it any more. */
+  background: var(--bg);
+  cursor: pointer;
 }
 /* The band heading and its count are one object, in one face. Uppercase with
    wide tracking is the rail's treatment; spending it again here, six times in a
@@ -15019,7 +15028,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-band-title {
   min-width: 0;
   font-family: var(--font-body); font-size: var(--fs-label); font-weight: var(--fw-label);
-  letter-spacing: var(--tracking-normal); text-transform: none; color: var(--text-3);
+  color: var(--text-3);
 }
 .sc-band-count {
   font-family: var(--font-body); font-size: var(--fs-label); font-weight: var(--fw-label);
@@ -15027,8 +15036,12 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 }
 /* Every keycap on the page is one primitive, in one face. */
 .kbd-cap { font-family: var(--font-mono); }
-/* The only SHA on the page that was set in a proportional face. */
-#sc-amend-label { font-family: var(--font-mono); font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
+/* The SHA takes the mono face; the word beside it does not. Setting the family
+   on the whole node put "Amend" in JetBrains Mono next to Inter placeholders. */
+#sc-amend-label .sc-sha {
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums; color: var(--text-2);
+}
 .sc-band-count { flex: none; }
 .sc-band-chevron {
   flex: none; width: 11px; text-align: center; color: var(--text-3);
@@ -15077,7 +15090,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
    emerald already means everywhere else on the page. Sampling the accent put
    the same hue on the checkbox, the pending marker and the commit button within
    60px of each other, so the colour stopped naming anything. */
-.sc-row.is-staged .sc-row-check { background: var(--emerald); border-color: var(--emerald); color: var(--on-accent, white); }
+.sc-row.is-staged .sc-row-check { background: var(--emerald); border-color: var(--emerald); color: var(--bg); }
 /* In flight. The click has been taken and git has not answered yet, so the row
    shows the state it is moving to at a weight that says "not settled". Cleared
    by the read that answers, never by a timer. */
@@ -15237,7 +15250,7 @@ body[data-mode="light"][data-theme="sepia"] .sc {
 .sc-dhead {
   flex: none; display: flex; flex-wrap: wrap; align-items: center;
   gap: var(--space-2) var(--space-3);
-  padding: 10px var(--space-3); border-bottom: 1px solid var(--line);
+  padding: 10px var(--space-4); border-bottom: 1px solid var(--line);
 }
 .sc-dhead-path {
   flex: 0 1 auto; max-width: 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -15307,6 +15320,9 @@ body[data-mode="light"][data-theme="sepia"] .sc {
   flex: none; width: var(--sc-sign-w); text-align: center; color: var(--text-3);
   user-select: none; -webkit-user-select: none;
 }
+/* The only mark in a diff row that does not depend on hue at all, so it is set
+   at a weight that reads without one. */
+.sc-dl.is-add .sc-dl-sign, .sc-dl.is-del .sc-dl-sign { font-weight: 700; }
 .sc-dl-code {
   flex: 1 1 auto; min-width: 0; padding-right: var(--space-4);
   white-space: pre; overflow-wrap: normal; color: var(--text);

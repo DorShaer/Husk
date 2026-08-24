@@ -1137,9 +1137,16 @@
       counter.dataset.state = n > 72 ? 'warning' : '';
     }
     if (amendLabel) {
-      amendLabel.textContent = state.repo && state.repo.headShortSha
-        ? 'Amend ' + state.repo.headShortSha
-        : 'Amend';
+      // Two nodes, because the word and the sha are set in two faces. One text
+      // node would put "Amend" in the mono face alongside the sha.
+      const sha = state.repo && state.repo.headShortSha ? state.repo.headShortSha : '';
+      amendLabel.replaceChildren(document.createTextNode(sha ? 'Amend ' : 'Amend'));
+      if (sha) {
+        const mark = document.createElement('span');
+        mark.className = 'sc-sha';
+        mark.textContent = sha;
+        amendLabel.appendChild(mark);
+      }
     }
     if (amend) amend.disabled = !state.repo || state.repo.unborn === true;
 
