@@ -13894,24 +13894,31 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   --cv-dim:   var(--text-2);
   --cv-off:   var(--text-3);
   --cv-time:  var(--text-3);
+  /* Structure is neutral so that colour on this field means state and nothing
+     else. The accent stays for what a person can act on. */
   --cv-line:   var(--line);
   --cv-line-2: var(--line-2);
-  /* The card an agent is drawn as, and the one step up a source and a badge sit
-     on. Both are the app's own surfaces, so a card on the field and a row in
-     the list are made of the same material. */
-  --cv-card:       var(--bg-2);
-  --cv-card-2:     var(--bg-3);
-  --cv-card-hover: var(--bg-3);
-  --cv-lift:    0 1px 2px -1px color-mix(in srgb, var(--cv-cast) 60%, transparent);
-  --cv-lift-lg: 0 6px 16px -10px var(--cv-cast);
-  --cv-cast: color-mix(in srgb, #000 28%, transparent);
   /* State. Three hues the canvas measures against the field it is drawn on and
-     separates, so no theme can resolve two states to one colour. They land on a
-     14px icon and one small word, which is why they are held to text contrast
-     and not to the weaker floor a large shape would need. */
+     separates, so no theme can resolve two states to one colour. */
   --cv-run:  #12b3a4;
-  --cv-wait: #d98a0b;
+  --cv-wait: #f76808;
   --cv-fail: #e5484d;
+  /* A disc is a chip of the theme's own surface, so it lifts off the field the
+     same way every other raised thing in the app does. */
+  --cv-disc-a: var(--bg-2);
+  --cv-disc-b: var(--bg-2);
+  /* The edge is what a reader takes the disc's shape from, so it carries enough
+     ink to stand clear of the field without reading as a hairline. */
+  --cv-disc-line: var(--cv-line-2);
+  --cv-cast: color-mix(in srgb, #000 30%, transparent);
+  /* What a live disc is worth against the field: a ring of its own colour and
+     the shadow any raised object drops. No bloom. A glow is the one thing that
+     cannot exist on paper, and a state that depends on it has no reading in
+     half the themes this runs in. */
+  --cv-lit-run:  0 2px 6px -3px var(--cv-cast);
+  --cv-lit-wait: 0 2px 8px -3px color-mix(in srgb, var(--cv-wait) 34%, var(--cv-cast));
+  /* Texture. Both layers sit at the edge of sight: the field is ground for the
+     graph, never a pattern competing with it. */
   --cv-dust:     color-mix(in srgb, var(--cv-ink) 9%, transparent);
   --cv-grid-dot: color-mix(in srgb, var(--cv-ink) 13%, transparent);
   --cv-halo:     var(--cv-floor);
@@ -13987,9 +13994,9 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 /* A connector is background structure, not something to act on, so it is drawn
    in ink rather than in the accent a person can click. */
 .am-edge, .am-stem {
-  stroke: var(--cv-line-2);
-  opacity: 1;
-  stroke-width: 1;
+  stroke: color-mix(in srgb, var(--cv-ink) 42%, transparent);
+  opacity: 0.8;
+  stroke-width: 1.15;
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
@@ -13998,9 +14005,9 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 /* A branch is live while anything under it still runs, so the light shows where
    the work is rather than only where a single node sits. */
 .am-edge.is-live, .am-stem.is-live {
-  stroke: color-mix(in srgb, var(--cv-run) 46%, transparent);
-  opacity: 1;
-  stroke-width: 1.2;
+  stroke: color-mix(in srgb, var(--cv-run) 64%, transparent);
+  opacity: 0.95;
+  stroke-width: 1.4;
 }
 .am-edge.is-enter {
   stroke-dasharray: 1 1;
@@ -14012,8 +14019,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 /* The current itself, drawn on top of the line it belongs to. Only live
    branches get one. */
 .am-flow {
-  stroke: var(--cv-run);
-  stroke-width: 1.4;
+  stroke: color-mix(in srgb, var(--cv-run) 92%, var(--cv-ink));
+  stroke-width: 1.7;
   stroke-linecap: round;
   stroke-dasharray: 0.035 0.16;
   animation: am-flow 1.5s linear infinite;
@@ -14021,15 +14028,14 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 @keyframes am-flow { to { stroke-dashoffset: -0.195; } }
 
 /* ── Nodes ──
-   An agent is a card, the way a row in the list is a row: a state icon, the
-   name it was given, and the two facts under that name. Colour lands on the
-   icon and on the word beside it and nowhere else, so twenty agents read as a
-   document with twenty entries rather than as twenty lights. */
+   A node is a lit disc the eye can track across a ring, with its name hung
+   underneath. Small on purpose: a whole generation has to fit in one frame. */
 .am-node {
   position: absolute; top: 0; left: 0;
   box-sizing: border-box;
-  width: 240px;
-  display: flex; justify-content: center;
+  width: 132px;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px;
   cursor: pointer;
   user-select: none;
   transition: transform var(--motion-base) var(--ease-out);
@@ -14038,208 +14044,298 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 .am-node-glyph {
   position: relative;
   z-index: 1;
-  box-sizing: border-box;
-  width: 216px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 9px;
-  padding: 9px 10px 10px;
-  border: 1px solid var(--cv-line);
-  border-radius: var(--radius-lg);
-  background: var(--cv-card);
-  color: var(--cv-off);
-  box-shadow: var(--cv-lift);
-  transition: border-color var(--motion-fast) var(--ease),
-              box-shadow var(--motion-fast) var(--ease),
-              background var(--motion-fast) var(--ease);
-}
-/* The icon takes the state's colour from the card, so one declaration per state
-   moves the icon and the word together and they can never disagree. */
-.am-node-mark {
-  grid-column: 1;
-  width: 14px; height: 14px;
-  margin-top: 2px;
-  overflow: visible;
-  color: var(--cv-state, var(--cv-off));
-}
-.am-node:hover .am-node-glyph {
-  border-color: var(--cv-line-2);
-  background: var(--cv-card-hover);
-}
-
-/* A live agent is the one thing on the field that moves, and it moves as a ring
-   drawn around its own icon rather than as light thrown onto the ground. */
-.am-node-halo, .am-node-ring, .am-node-lock {
-  position: absolute;
+  display: grid; place-items: center;
+  width: 48px; height: 48px;
+  border: 1px solid var(--cv-disc-line);
   border-radius: 50%;
+  background: linear-gradient(180deg, var(--cv-disc-a), var(--cv-disc-b));
+  color: color-mix(in srgb, var(--cv-ink) 78%, transparent);
+  box-shadow: 0 8px 22px -12px var(--cv-cast);
+  transition: border-color var(--motion-base) var(--ease), box-shadow var(--motion-base) var(--ease),
+              color var(--motion-base) var(--ease), background var(--motion-base) var(--ease);
+}
+.am-node-mark { width: 19.5px; height: 19.5px; overflow: visible; position: relative; }
+/* A mark cut out of a solid body is read off the colour around it, so it is
+   drawn heavy enough to survive the camera's own scale. */
+.am-node:is(.is-running, .is-blocked, .is-failed):not(.is-holder) .am-node-mark { stroke-width: 2.3; }
+.am-node:hover .am-node-glyph { border-color: color-mix(in srgb, var(--cv-ink) 34%, transparent); }
+
+/* Two layers of light, both off until a state turns one on: a bloom around the
+   disc, which only live work lights, and the ring that marks what is selected.
+   The ring sits inside the disc's own geometry, so selection can never reach
+   the name under the card. */
+.am-node-halo, .am-node-ring, .am-node-lock {
+  position: absolute; border-radius: 50%;
   pointer-events: none;
   opacity: 0;
 }
-.am-node-halo {
-  left: 10px; top: 11px;
-  width: 14px; height: 14px;
-  border: 1px solid currentColor;
+.am-node-halo { inset: -18px; }
+.am-node-ring { inset: -7px; border: 1px solid transparent; }
+/* Selection is a state of the interface, not a state of the work, so it is
+   drawn in ink and never in a hue that already means something on the field. */
+.am-node-lock {
+  inset: -4px;
+  border: 2px solid color-mix(in srgb, var(--cv-ink) 70%, transparent);
 }
-.am-node-ring { inset: -1px; border-radius: var(--radius-lg); border: 1px solid transparent; }
-.am-node-lock { inset: -1px; border-radius: var(--radius-lg); }
 
-/* How many agents this one started. A count, so it is set in the same figures
-   the roster uses and sits at the end of the row it belongs to. */
+/* Descendant count, parked on the rim where it cannot crowd the mark. It is a
+   number read off real work, so it takes the camera's scale back out the way
+   the name plate does, holding its size on screen from its outer corner where
+   there is field rather than disc to grow into. */
 .am-node-kids {
-  grid-column: 3;
-  align-self: center;
-  min-width: 18px;
-  padding: 1px 6px;
-  border: 1px solid var(--cv-line);
-  border-radius: 999px;
-  background: var(--cv-card-2);
-  color: var(--cv-off);
-  font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
-  text-align: center;
+  position: absolute; right: -8px; bottom: -4px;
+  min-width: 19px; height: 19px; padding: 0 6px;
+  display: grid; place-items: center;
+  border: 1px solid color-mix(in srgb, var(--cv-ink) 16%, transparent);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(180deg, var(--cv-disc-a), var(--cv-disc-b));
+  color: color-mix(in srgb, var(--cv-ink) 82%, transparent);
+  box-shadow: 0 4px 12px -7px var(--cv-cast);
+  font-size: 9.5px; font-weight: 750; font-variant-numeric: tabular-nums;
+  transform: scale(var(--cv-kscale, 1));
+  transform-origin: 100% 100%;
 }
 .am-node-kids[hidden] { display: none; }
+/* Where the camera has outrun the badge as well as the plate, the count leaves
+   rather than being drawn as a smudge a reader cannot take a number from. */
+.am-cv-stage.is-countless .am-node:not(.is-holder) .am-node-kids { display: none; }
 
-/* The type block. It counter-scales with the camera so a name holds its size on
-   screen the way a place name on a map does, and it is anchored at its own top
-   left so the scaling never walks it out of the card. */
-.am-node-plate {
-  grid-column: 2;
-  min-width: 0;
-  display: flex; flex-direction: column; gap: 2px;
-}
-.am-node-label {
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: -0.006em;
-  line-height: 1.25;
-  color: var(--cv-ink);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.am-node.is-oneline .am-node-label { white-space: nowrap; }
-/* The line under the name: what the agent is doing, then how long it has been
-   doing it. Both are small, and only the first of them carries colour. */
-.am-node-meta {
-  display: flex; align-items: baseline; gap: 5px;
-  min-width: 0;
-  font-size: 11px; line-height: 1.3;
-  color: var(--cv-time);
-  white-space: nowrap;
-}
-.am-node-state {
-  color: var(--cv-state, var(--cv-time));
-  font-weight: 550;
-}
-.am-node-state:empty { display: none; }
-.am-node-time { font-variant-numeric: tabular-nums; }
+/* A holder states which chat or project it is and nothing else. */
 .am-node-time:empty { display: none; }
-.am-node-state:not(:empty) + .am-node-time::before {
-  content: '·';
-  margin-right: 5px;
-  color: var(--cv-line-2);
+
+/* The plate is the ground the name is set on. It is painted rather than
+   shadowed, and it sits above the layer the connectors are drawn in, so a
+   stroke stops at the edge of the box and a duration can never read as struck
+   through. It also takes the camera's scale back out, so a name holds its size
+   on screen the way a map holds its place names. */
+.am-node-plate {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 2px 0 3px;
+  border-radius: 5px;
+  background: var(--cv-halo);
+  transform: scale(var(--cv-tscale, 1));
+  transform-origin: 50% 0;
 }
+/* The plate does the separating; this softens the stems against it. */
+.am-node-plate .am-node-label,
+.am-node-plate .am-node-time { text-shadow: 0 1px 2px var(--cv-halo); }
+
+.am-node-label {
+  width: 118px; height: 2.7em;
+  font-size: 13px; font-weight: 650;
+  letter-spacing: -0.012em; line-height: 1.35;
+  color: color-mix(in srgb, var(--cv-ink) 88%, transparent); text-align: center;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: normal; word-break: normal; hyphens: none;
+}
+/* A block whose cards are down to a word or two holds them on one line, so the
+   time under them sits where the second line would have been. */
+.am-node.is-oneline .am-node-label {
+  height: 1.35em; -webkit-line-clamp: 1;
+}
+/* A label never grows past its own column: the space either side of it is the
+   lane a connector takes to the next generation. */
+.am-canvas-pane.is-sparse .am-node:not(.is-holder) .am-node-label {
+  width: 118px; height: auto; max-height: 4.05em;
+  -webkit-line-clamp: 3;
+  font-size: 13px; line-height: 1.35;
+}
+/* One step down from the name in size, weight and tone together, so how long a
+   run has been going never claims the rank of what the run is. */
+.am-node-time {
+  font-size: 10.5px; font-weight: 500;
+  color: var(--cv-time);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+/* Where the camera has outrun the plate, the smallest line goes first and the
+   name goes last, because a name drawn too small to read is worse than a card
+   that only carries its state. */
+.am-cv-stage.is-terse .am-node-time,
 .am-node.is-timeless .am-node-time { display: none; }
+.am-cv-stage.is-mute .am-node-plate,
 .am-node.is-nameless .am-node-plate { display: none; }
 
-/* ── State ──
-   One declaration per state sets the colour the icon and the word both read,
-   and a border tint under it so a card can still be placed at a glance from
-   across the pane. Nothing here fills the card: a solid block of colour is a
-   button, and none of these are. */
+/* State lives in the disc and the ring around it. The name under a node holds
+   one colour and one weight in every state, so a label is a constant the eye
+   can read rather than a sixth copy of a signal the disc already carries. */
 .am-node.is-running:not(.is-holder) .am-node-glyph {
-  --cv-state: var(--cv-run);
-  border-color: color-mix(in srgb, var(--cv-run) 34%, var(--cv-line));
+  border: 1.5px solid color-mix(in srgb, var(--cv-run) 60%, transparent);
+  background: color-mix(in srgb, var(--cv-run) 14%, var(--cv-disc-a));
+  color: var(--cv-run);
+  box-shadow: var(--cv-lit-run);
 }
+/* Motion is the one channel that means live work, so it runs here and on an
+   agent waiting for a person, and nowhere else. */
 .am-node.is-running .am-node-halo {
-  opacity: 1;
+  opacity: 1; inset: -5px;
+  border: 1px solid color-mix(in srgb, var(--cv-run) 52%, transparent);
+  background: none;
   animation: am-breathe 2.6s var(--ease) infinite;
 }
-/* An agent waiting on a person is the only card the field can be asked to act
-   on, so it is the one that carries a wash as well as a border. */
+
+/* An agent waiting on a person is the loudest thing on the field, because it is
+   the only one the field can ask for. */
 .am-node.is-blocked:not(.is-holder) .am-node-glyph {
-  --cv-state: var(--cv-wait);
-  border-color: color-mix(in srgb, var(--cv-wait) 46%, var(--cv-line));
-  background: color-mix(in srgb, var(--cv-wait) 8%, var(--cv-card));
+  border: 1.5px solid color-mix(in srgb, var(--cv-wait) 72%, transparent);
+  background: color-mix(in srgb, var(--cv-wait) 20%, var(--cv-disc-a));
+  color: var(--cv-wait);
+  box-shadow: var(--cv-lit-wait);
 }
 .am-node.is-blocked .am-node-halo {
-  opacity: 1;
+  opacity: 1; inset: -5px;
+  border: 1px solid color-mix(in srgb, var(--cv-wait) 62%, transparent);
+  background: none;
   animation: am-breathe 1.7s var(--ease) infinite;
 }
-.am-node.is-failed:not(.is-holder) .am-node-glyph {
-  --cv-state: var(--cv-fail);
-  border-color: color-mix(in srgb, var(--cv-fail) 38%, var(--cv-line));
-}
-/* Most of a finished fleet is this card, so it is the quietest thing on the
-   field and gives its weight to the three states that are still moving. */
-.am-node.is-done .am-node-glyph { --cv-state: var(--cv-off); }
-.am-node.is-done .am-node-label { color: var(--cv-dim); }
 
-/* ── The source ──
-   Where the work came from. It is the same card as an agent's, one step wider
-   and one step stronger, with a badge in place of a state icon, because it has
-   no state of its own: it is not an agent and it never runs. */
+/* A failure is work that already ended, so it is drawn still and unlit, and it
+   is the rarest thing on the field, so it carries a body of its own rather than
+   the disc every finished agent already uses. No glow: glow means live. */
+.am-node.is-failed:not(.is-holder) .am-node-glyph {
+  border: 2px solid color-mix(in srgb, var(--cv-fail) 64%, transparent);
+  background: color-mix(in srgb, var(--cv-fail) 14%, var(--cv-disc-a));
+  color: var(--cv-fail);
+  box-shadow: none;
+}
+
+/* Nothing is happening here, so nothing here is lit and nothing here moves.
+   Most of a finished fleet is this disc, so its edge carries enough ink to give
+   the circle a shape and its mark enough to be read on its own face, and both
+   stay under the one agent that ended badly. */
+.am-node.is-done .am-node-glyph {
+  border: 1.5px solid var(--cv-disc-line);
+  background: linear-gradient(180deg, var(--cv-disc-a), var(--cv-disc-b));
+  color: color-mix(in srgb, var(--cv-ink) 78%, transparent);
+  box-shadow: none;
+}
+
+@keyframes am-breathe {
+  0%, 100% { transform: scale(0.92); opacity: 0.62; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+
+/* ── The core ──
+   Holders are where work came from, not work itself: a chat that started
+   agents, or the project they ran in when the chat is gone. They are not
+   selectable and they do not compete with state colour, so they carry size and
+   light instead: a lit sphere with the field turning around it. */
 .am-node.is-holder { cursor: default; }
+/* What the sphere encodes is a source: where the work came from, and how much
+   of it ran. It carries no state, so it is drawn in the one hue every theme
+   declares for information rather than for a state, turned across the sphere so
+   the light in it reads as two currents meeting. Nord's frost, gruvbox's aqua
+   and rose pine's iris each land here on their own, and an eleventh theme costs
+   the core nothing. */
+/* The core is the one object on the field that is a source rather than a state,
+   and it is the same object under every theme, so it carries its own two
+   currents instead of borrowing whichever hue the theme happens to declare.
+   Only the shell answers to the theme: it is the ground the sphere is cut out
+   of, which is what makes the sphere sit in the field rather than on top of it. */
+/* ── The source ──
+   Where the work came from. It is the same disc an agent is drawn as, one step
+   larger and carrying the accent, because it is not an agent and it never runs:
+   nothing about it should read as a state. */
 .am-node.is-holder .am-node-glyph {
-  width: 228px;
-  border-color: var(--cv-line-2);
-  background: var(--cv-card-2);
-  box-shadow: var(--cv-lift-lg);
+  width: 66px; height: 66px;
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--cv-disc-a));
+  color: color-mix(in srgb, var(--accent) 76%, var(--cv-ink));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
+              0 3px 10px -5px var(--cv-cast);
 }
-.am-node.is-holder .am-node-mark { display: none; }
+/* One ring inside the rim, in the accent. It is the whole of what separates the
+   source from the agents standing around it. */
 .am-node.is-holder .am-node-glyph::before {
-  content: '';
-  grid-column: 1;
-  width: 16px; height: 16px;
-  margin-top: 1px;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 52%, transparent);
+  content: ''; position: absolute; inset: 7px; border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
 }
+.am-node.is-holder .am-node-glyph::after { display: none; }
+.am-node.is-holder .am-node-ring { opacity: 0; }
+/* Nothing is drawn in the middle of the source: the name under it says what it
+   is, and the count it carries sits on the line under that name. */
+.am-node.is-holder .am-node-mark { display: none; }
+.am-node.is-holder .am-node-halo { display: none; }
 .am-node.is-holder .am-node-label {
-  font-size: 13px;
-  font-weight: 650;
+  color: var(--cv-ink); font-weight: 700; font-size: 12px;
+}
+/* A chat with something still running is the live source of that work, and it
+   is the only reason anything about the core moves. */
+/* A project only stands in for a chat that is gone. It is the same core, turned
+   down: same currents, less light thrown onto the field around it. */
+.am-node.is-project .am-node-glyph {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--core-a) 14%, transparent),
+    inset 0 -12px 22px -14px var(--core-deep);
+}
+.am-node.is-project .am-node-halo { opacity: 0.6; }
+
+/* A workflow run. It is neither work nor the source the work came from: it is
+   the dispatch a fleet was fanned out by, so it reads as its own kind of node,
+   smaller than the core and carrying the accent rather than the core's
+   currents. The ring turns only while something under it is still running. */
+.am-node.is-run .am-node-glyph {
+  width: 52px; height: 52px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 78%, transparent);
+  background:
+    /* the dispatch point itself */
+    radial-gradient(closest-side at 50% 50%,
+      color-mix(in srgb, var(--accent) 92%, var(--cv-ink)) 0%,
+      color-mix(in srgb, var(--accent) 78%, transparent) 15%,
+      transparent 30%),
+    /* the band the fleet left along */
+    radial-gradient(closest-side at 50% 50%,
+      transparent 52%,
+      color-mix(in srgb, var(--accent) 30%, transparent) 62%,
+      color-mix(in srgb, var(--accent) 30%, transparent) 70%,
+      transparent 80%),
+    radial-gradient(100% 100% at 50% 50%,
+      color-mix(in srgb, var(--accent) 16%, var(--cv-disc-a)) 40%,
+      color-mix(in srgb, var(--accent) 8%, var(--cv-disc-b)) 100%);
+  color: var(--cv-ink);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 22px -8px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+/* The core's shells and filaments belong to the core alone. */
+.am-node.is-run .am-node-glyph::before,
+.am-node.is-run .am-node-glyph::after { display: none; }
+.am-node.is-run .am-node-halo { opacity: 0; }
+.am-node.is-run .am-node-ring {
+  opacity: 1; inset: -6px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, transparent);
+  animation: none;
+}
+.am-node.is-run.is-running .am-node-ring { animation: am-spin 9s linear infinite; }
+/* A run is named by what it was called, not shouted like the source is. */
+.am-node.is-run .am-node-label {
+  text-transform: none;
+  font-size: 12px; font-weight: 700; letter-spacing: -0.01em;
   color: var(--cv-ink);
 }
-.am-node.is-holder .am-node-halo { display: none; }
+.am-node.is-run .am-node-time { color: color-mix(in srgb, var(--accent) 62%, var(--cv-time)); }
 
-.am-node.is-project .am-node-glyph::before {
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--cv-ink) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cv-ink) 30%, transparent);
+@media (prefers-reduced-motion: reduce) {
+  .am-node.is-run.is-running .am-node-ring { animation: none; }
 }
 
-/* A run is scenery the way a source is, and it is the one holder that can be
-   opened, so it keeps the accent its own page uses. */
-.am-node.is-run .am-node-glyph {
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--cv-line));
-}
-.am-node.is-run .am-node-glyph::before {
-  background: color-mix(in srgb, var(--accent) 34%, transparent);
-}
-.am-node.is-run .am-node-time { color: color-mix(in srgb, var(--accent) 56%, var(--cv-time)); }
-.am-node.is-run.is-running .am-node-ring {
-  opacity: 1;
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
-}
-
-/* Selection is a border and a ring, the same pair every other surface in the
-   app uses for it, so what a person is looking at never reads as a state the
-   fleet is in. */
-.am-node.is-selected .am-node-glyph {
-  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent), var(--cv-lift);
+/* Selection is ink around the disc and nothing more, so what a person happens
+   to be looking at never reads as a state the fleet is in. */
+.am-node.is-selected .am-node-lock { opacity: 1; }
+.am-node.is-selected:not(.is-holder) .am-node-glyph {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cv-ink) 26%, transparent);
 }
 .am-node.is-selected .am-node-label { color: var(--cv-ink); }
-.am-node:focus-visible { outline: none; }
-.am-node:focus-visible .am-node-glyph { box-shadow: var(--focus-ring), var(--cv-lift); }
 
 /* The region a wrapped set of agents occupies in the tree shape. A fan-out too
    wide for every member to carry its own line is drawn as one region on one
    stem, and that is the only thing a region ever means: the state of the work
-   inside it is on the cards. */
+   inside it is on the discs. */
 .am-block {
   fill: none;
-  stroke: var(--cv-line-2);
+  stroke: color-mix(in srgb, var(--cv-line) 72%, transparent);
   stroke-width: 1;
   /* A boundary and a connector are two different facts, so the region is dashed
      and every line that carries parentage is solid. */
@@ -14256,8 +14352,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 
 /* Entrance rides `scale`, not `transform`: transform carries the node's place
    in the graph and must not be overwritten by the animation. */
-.am-node.is-enter { animation: am-node-in 0.42s var(--ease-out) backwards; }
-@keyframes am-node-in { from { opacity: 0; scale: 0.96; } }
+.am-node.is-enter { animation: am-node-in 0.5s var(--ease-out) backwards; }
+@keyframes am-node-in { from { opacity: 0; scale: 0.72; } }
 
 /* Full screen grows the card to the window. The detail pane stays: at this size
    there is room for both, and the point is to see more, not less. */
@@ -14273,7 +14369,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   height: 36px;
   border: 1px solid color-mix(in srgb, var(--cv-line) 72%, transparent);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--cv-floor) 82%, transparent);
+  background: color-mix(in srgb, var(--cv-void) 78%, transparent);
   backdrop-filter: blur(18px) saturate(1.2);
   box-shadow: 0 18px 40px -26px var(--cv-cast), var(--hl-top);
 }
@@ -14337,11 +14433,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
      is switching off, or the more specific one keeps moving. */
   .am-node-halo, .am-node-ring,
   .am-node.is-running .am-node-halo,
-  .am-node.is-blocked .am-node-halo,
-  .am-node.is-chat.is-running .am-node-halo { animation: none; }
-  .am-node.is-holder .am-node-ring,
-  .am-node.is-holder .am-node-glyph::before,
-  .am-node.is-holder .am-node-glyph::after { animation: none; }
+  .am-node.is-blocked .am-node-halo { animation: none; }
   .am-edge, .am-stem { transition: none; }
   .am-edge.is-enter { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
   .am-flow { animation: none; stroke-dasharray: none; opacity: 0.8; }
