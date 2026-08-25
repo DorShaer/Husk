@@ -9989,6 +9989,8 @@ ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
 // lives for the process so a five megabyte conversation is scanned once and
 // every later poll reads only what was appended.
 const subagentScanCache = new Map();
+// The opening line of each subagent transcript, which never changes once written.
+const subagentHeadCache = new Map();
 
 // The parent a background agent was forked from. Two records carry it and
 // neither is sufficient alone: the transcript's snake_case `session_id` names
@@ -10229,7 +10231,7 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
         // its files were left saying.
         alive: pidAlive(r.pid),
         transcript: t,
-      }, { cache: subagentScanCache, now }));
+      }, { cache: subagentScanCache, now, heads: subagentHeadCache }));
     } catch (_) {}
   }
   return { ok: true, supported: true, controllable: true, agents: Subagents.describe(Subagents.retainLastBatch(fleet)), chats };

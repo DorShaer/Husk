@@ -143,11 +143,23 @@ test('agents running inside a chat are counted and listed like any other', async
     expect(rows.every((r) => r.kind === 'subagent')).toBe(true);
     expect(rows.filter((r) => r.running).map((r) => r.id).sort()).toEqual(['sa-task-live', 'sa-w2']);
 
-    // A workflow names neither its agents nor their work, so the run does.
+    // A workflow writes no description, so an agent is named by the words it was
+    // started with, and it hangs off the run that fanned it out.
     const w2 = rows.find((r) => r.id === 'sa-w2');
     expect(w2.runId).toBe(RUN);
-    expect(w2.name).toMatch(/^sessions-page-redesign w2/);
-    expect(w2.parent).toBe(CHAT);
+    expect(w2.name).toBe('Audit the current page for defects');
+    expect(w2.parent).toBe(`wf:${RUN}`);
+
+    // The run itself is beside the fleet rather than in it, so nothing that
+    // counts agents counts the run.
+    const runs = await win.evaluate(() => agentMap.runs.map((r) => ({   // eslint-disable-line no-undef
+      id: r.id, name: r.name, kind: r.kind, session: r.sessionId, parent: r.parentSessionId,
+    })));
+    expect(runs.length).toBe(1);
+    expect(runs[0].kind).toBe('run');
+    expect(runs[0].name).toBe('sessions-page-redesign');
+    expect(runs[0].session).toBe(`wf:${RUN}`);
+    expect(runs[0].parent).toBe(CHAT);
 
     // Its conversation reads like any other agent's.
     await win.evaluate(() => amSelect('sa-w2'));            // eslint-disable-line no-undef
@@ -174,6 +186,9 @@ test('the graph draws in-process agents as agents, not as what started them', as
     await win.evaluate(() => openAgentMap());
     await win.waitForFunction(() => agentMap.rows.length === 8, null, { timeout: 20_000 }); // eslint-disable-line no-undef
     await win.evaluate(() => amSetView('canvas'));                                          // eslint-disable-line no-undef
+    // Wrapping a fan-out into a block is how the tree shape gives a wide set of
+    // leaves a page to fit on, so this asks for that shape by name.
+    await win.evaluate(() => amSetTopo('tree'));                                            // eslint-disable-line no-undef
     await expect(win.locator('.am-node')).toHaveCount(9, { timeout: 20_000 });
 
     const cards = await win.evaluate(() => Array.from(document.querySelectorAll('.am-node'))
