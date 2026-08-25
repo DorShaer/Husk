@@ -316,9 +316,9 @@ test('the radial shape throws the fleet onto rings around the source', async () 
   // closes the field.
   expect(await win.locator('#am-cv-orbits circle').count()).toBe(3);
   expect(await win.locator('#am-cv-orbits circle.is-rim').count()).toBe(1);
-  // The key names what is on the field, so it carries the generation entry only
-  // while a ring is drawn.
-  await expect(win.locator('.am-cv-k.is-ring')).toBeVisible();
+  // Every card says its own state in the words the roster uses, so the field
+  // needs no key over it to be read.
+  expect(await win.locator('.am-node.is-blocked .am-node-state').first().textContent()).toBe('needs you');
 
   // Current runs only where work is.
   expect(await win.locator('.am-flow').count()).toBe(3);
@@ -343,27 +343,22 @@ test('the source is drawn whole, on a field that is not empty', async () => {
   const app = await launch(env);
   const win = await openCenter(app, { topo: 'radial' });
 
-  // The plate under a name is a backdrop for words, so it never paints over the
-  // disc it belongs to. A plate that covers the source slices it in half.
+  // The source is one card, and its name is inside it. Nothing on the field is
+  // allowed to land on top of that card: a connector crossing the source, or a
+  // neighbour seated over it, is the thing this catches.
   const sliced = await win.evaluate(() => {
     const node = document.querySelector('.am-node.is-holder');
-    const glyph = node.querySelector('.am-node-glyph');
-    const plate = node.querySelector('.am-node-plate');
-    const g = glyph.getBoundingClientRect();
-    const p = plate.getBoundingClientRect();
-    // The light around the disc reaches below the disc's own box, so the pixel
-    // that tells the truth is one inside the plate and still inside that light.
-    const x = Math.round(g.left + g.width / 2);
-    const y = Math.round(p.top + 2);
-    const hit = document.elementFromPoint(x, y);
+    const label = node.querySelector('.am-node-label');
+    const r = label.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
     return {
-      overlaps: p.top < g.bottom + 16,
-      onPlate: !!(hit && hit.closest('.am-node-plate')),
-      tag: hit ? hit.className : '',
+      inCard: !!(label.closest('.am-node-glyph')),
+      own: !!(hit && hit.closest('.am-node') === node),
+      tag: hit ? String(hit.className) : '',
     };
   });
-  expect(sliced.overlaps, 'the plate no longer sits under the disc, so this check proves nothing').toBe(true);
-  expect(sliced.onPlate, `the name plate paints over the source: hit ${sliced.tag}`).toBe(false);
+  expect(sliced.inCard, 'the name is not inside the card it belongs to').toBe(true);
+  expect(sliced.own, `something paints over the source: hit ${sliced.tag}`).toBe(true);
 
   // The field carries its own far dust, so the ground is never a flat void.
   const dust = await win.evaluate(() => {
@@ -399,6 +394,8 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   }, null, { timeout: 10_000 });
 
   const zoomOf = () => win.locator('#am-cv-zoom').textContent();
+  await win.click('#am-cv-fit');
+  await win.waitForTimeout(450);
   const start = await zoomOf();
   await win.click('#am-cv-in');
   expect(await zoomOf()).not.toBe(start);
@@ -619,10 +616,8 @@ test('the graph holds in the light theme', async () => {
     null, { timeout: 20_000, polling: 200 });
   await win.waitForTimeout(600);
 
-  // The page went to paper; the canvas did not. Everything on this field reads
-  // by emitting, and none of that survives a white ground, so the field keeps
-  // its own dark ground and its own ink under every theme the way a terminal
-  // stays dark inside a light editor.
+  // A graph is a view of the work, not an instrument bolted into the window, so
+  // the field is the page it sits on and goes to paper with it.
   const field = await win.evaluate(() => {
     const pane = document.querySelector('#am-canvas-pane');
     const cs = getComputedStyle(pane);
@@ -638,19 +633,15 @@ test('the graph holds in the light theme', async () => {
       floorLum: lum(cs.getPropertyValue('--cv-floor')),
       inkLum: lum(cs.getPropertyValue('--cv-ink')),
       pageLum: lum(getComputedStyle(document.body).getPropertyValue('--bg')),
-      haloOpacity: Number(getComputedStyle(
-        document.querySelector('.am-node.is-running .am-node-halo'),
-      ).opacity),
+      states: ['run', 'wait', 'fail'].map((k) => cs.getPropertyValue(`--cv-${k}`).trim()),
     };
   });
   expect(field.pageLum, 'the page is on paper').toBeGreaterThan(0.6);
-  expect(field.floorLum, 'the field did not follow it there').toBeLessThan(0.05);
-  expect(field.inkLum, 'the ink on that field is light').toBeGreaterThan(0.6);
-  // The bloom is the channel that means work is happening now, and it is the
-  // first thing a paper field has to give up. It stays lit here. The floor is a
-  // half rather than a whole because the bloom breathes, so it is read wherever
-  // the cycle happens to be when the frame is sampled.
-  expect(field.haloOpacity, 'a running agent still blooms').toBeGreaterThan(0.5);
+  expect(field.floorLum, 'the field went to paper with it').toBeGreaterThan(0.6);
+  expect(field.inkLum, 'the ink on that field is dark').toBeLessThan(0.1);
+  // The three states are measured against whatever ground the theme handed the
+  // field, so no theme can resolve two of them to one colour.
+  expect(new Set(field.states).size, 'two states resolved to one colour').toBe(3);
 
   await shoot(win, 'graph-light.png');
   await app.close();
@@ -659,7 +650,7 @@ test('the graph holds in the light theme', async () => {
 // The three states are separated against the field the graph is drawn on. That
 // field no longer moves with the theme, so the separation lands on the same
 // three colours everywhere and a run reads as a run in every one of them.
-test('the states resolve the same under a light theme as a dark one', async () => {
+test('every theme separates the three states on its own field', async () => {
   const readStates = async (theme) => {
     const app = await launch(makeHome({ theme }));
     const win = await openCenter(app);
@@ -674,8 +665,11 @@ test('the states resolve the same under a light theme as a dark one', async () =
   };
   const dark = await readStates('midnight');
   const light = await readStates('light');
-  expect(light, 'the field hands both themes the same three states').toEqual(dark);
-  expect(new Set(dark).size, 'and the three are three').toBe(3);
+  // Each theme separates against its own ground, so the two sets are not the
+  // same colours. What holds across both is that each set is three.
+  expect(new Set(dark).size, 'two states resolved to one colour on a dark field').toBe(3);
+  expect(new Set(light).size, 'two states resolved to one colour on paper').toBe(3);
+  expect(light, 'paper took the dark field\'s colours unchanged').not.toEqual(dark);
 });
 
 // A connector has to meet the circles it joins: one that stops short of them
@@ -692,17 +686,18 @@ async function edgeEndpoints(win) {
       const head = d.match(/^M(-?[\d.]+),(-?[\d.]+)/);
       const tail = d.match(/L(-?[\d.]+),(-?[\d.]+)\s*$/);
       if (!head || !tail) { out.push({ key, unreadable: d }); continue; }
+      const NODE_W = document.querySelector('.am-node').offsetWidth;
       const [pid, cid] = key.split('>');
       const p = at.get(pid);
       const c = at.get(cid);
       if (!p) { out.push({ key, orphan: true }); continue; }
-      const wantStart = [p.x + 132 / 2, p.y + (p.a.holder ? m.glyphLg : m.glyph)];
+      const wantStart = [p.x + NODE_W / 2, p.y + (p.a.holder ? m.glyphLg : m.glyph)];
       const got = {
         key,
         start: [Number(head[1]), Number(head[2])],
         end: [Number(tail[1]), Number(tail[2])],
         wantStart,
-        wantEnd: c ? [c.x + 132 / 2, c.y] : null,
+        wantEnd: c ? [c.x + NODE_W / 2, c.y] : null,
       };
       out.push(got);
     }
@@ -710,7 +705,7 @@ async function edgeEndpoints(win) {
   });
 }
 
-test('every connector meets the circle at each of its ends', async () => {
+test('every connector meets the card at each of its ends', async () => {
   const env = makeHome();
   const now = Date.now();
   const fleet = makeFleet(now, env.cwd);
@@ -727,9 +722,9 @@ test('every connector meets the circle at each of its ends', async () => {
   for (const e of edges) {
     expect(e.unreadable, `edge ${e.key} had no readable path`).toBeUndefined();
     expect(e.orphan, `edge ${e.key} had no parent in the layout`).toBeUndefined();
-    // Leaves the parent exactly on the rim of its circle.
-    expect(Math.abs(e.start[0] - e.wantStart[0]), `${e.key} starts off the circle's centre line`).toBeLessThan(1);
-    expect(Math.abs(e.start[1] - e.wantStart[1]), `${e.key} starts ${Math.round(e.start[1] - e.wantStart[1])}px off the circle`).toBeLessThan(1);
+    // Leaves the parent exactly at the middle of the card's bottom edge.
+    expect(Math.abs(e.start[0] - e.wantStart[0]), `${e.key} starts off the card's centre line`).toBeLessThan(1);
+    expect(Math.abs(e.start[1] - e.wantStart[1]), `${e.key} starts ${Math.round(e.start[1] - e.wantStart[1])}px off the card`).toBeLessThan(1);
     if (e.wantEnd) {
       expect(Math.abs(e.end[0] - e.wantEnd[0]), `${e.key} arrives off the child's centre line`).toBeLessThan(1);
       expect(Math.abs(e.end[1] - e.wantEnd[1]), `${e.key} stops ${Math.round(e.end[1] - e.wantEnd[1])}px short of the child`).toBeLessThan(1);
@@ -758,13 +753,14 @@ test('names stay legible over the connector running behind them', async () => {
     const label = document.querySelector('.am-node-label');
     return {
       order: kids.map((k) => k.id),
-      shadow: label ? getComputedStyle(label).textShadow : '',
+      card: label ? getComputedStyle(label.closest('.am-node-glyph')).backgroundColor : '',
       plated: !!(label && label.closest('.am-node-plate')),
     };
   });
   expect(paint.order, 'the names are not painted over the connectors').toEqual(['am-cv-edges', 'am-cv-nodes']);
   expect(paint.plated, 'the name is not grouped onto its own plate').toBe(true);
-  expect(paint.shadow, 'the name carries no halo to lift it off the connector').not.toBe('none');
+  // The card is opaque, which is what holds a name off a line running behind it.
+  expect(paint.card, 'the card the name sits on is see through').not.toMatch(/, 0\)$|transparent/);
 
   await app.close();
 });

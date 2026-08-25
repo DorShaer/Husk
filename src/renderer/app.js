@@ -14922,7 +14922,7 @@ const agentMap = {
   // Graph view: the camera, the ids already drawn (so only genuinely new agents
   // animate in), and the live element maps a repaint reconciles against.
   chats: [],
-  mode: 'canvas', topo: 'radial', runs: [], cam: { x: 0, y: 0, k: 1 }, known: new Set(), fitted: false,
+  mode: 'canvas', topo: 'tree', runs: [], cam: { x: 0, y: 0, k: 1 }, known: new Set(), fitted: false,
   nodeEls: new Map(), edgeEls: new Map(), drag: null, layout: [], systems: [],
 };
 
@@ -15196,21 +15196,21 @@ function amPaintList() {
 // function of the rows so a two-second repaint lands every node exactly where
 // it was, and a node only moves when the shape of the fleet actually changed.
 
-// A cell is one leaf's worth of horizontal room. The glyph is what the eye
-// tracks and the label hangs under it, so the card is small enough that a wide
-// generation still fits across the pane.
-const AM_CELL_W = 132;
-const AM_CELL_H = 146;
-// Where a card's ink ends: glyph, then label, then the line under it. Used as
-// the first guess before a painted card is measured.
-const AM_NODE_BOT = 124;
-const AM_NODE_BOT_LG = 132;
+// A cell is one leaf's worth of horizontal room. A card carries its name on one
+// line rather than wrapping it under a disc, so the cell is wide and short: the
+// pitch is the card plus the gutter, and the card itself is centred in it.
+const AM_CELL_W = 240;
+const AM_CELL_H = 112;
+// Where a card's ink ends. A card is one box, so this is its height. Used as the
+// first guess before a painted card is measured.
+const AM_NODE_BOT = 48;
+const AM_NODE_BOT_LG = 56;
 const AM_NODE_W = AM_CELL_W;
 const AM_NODE_H = AM_NODE_BOT_LG;
 const AM_ROOT_GAP = 44;
-// The core is taller than an agent card, so the first generation drops clear of
-// it and the corridor between them lands on empty ground rather than on its name.
-const AM_ROOT_DROP = 30;
+// The source card is taller than an agent's, so the first generation drops clear
+// of it and the corridor between them lands on empty ground.
+const AM_ROOT_DROP = 12;
 const amRowY = (depth) => depth * AM_CELL_H + (depth ? AM_ROOT_DROP : 0);
 // A name trimmed to this fits one line in a card, and a row of them closes up
 // by the line it no longer holds.
@@ -15224,6 +15224,10 @@ const AM_ZOOM_MAX = 1.8;
 // cards is the exception: it is given the room it has rather than left as a
 // stamp in the middle of an empty field.
 const AM_FIT_MAX = 1;
+// Framing never shrinks a card past the size its name can be read at. A fleet
+// too wide for the pane at that size is opened centred on the source it came
+// from and panned, which is a canvas working rather than a canvas failing.
+const AM_FIT_MIN = 0.8;
 const AM_FIT_MAX_TINY = 1;
 // Guards a parent chain that loops: layout walks depth-first, so a cycle would
 // recurse forever without a ceiling on top of the visited set.
@@ -15263,27 +15267,27 @@ function amRimOf(a) {
   if (!a || !a.holder) return AM_GLYPH_R;
   return a.holder === 'run' ? AM_RUN_R : AM_CORE_R;
 }
-const AM_RING_0 = 168;
-const AM_RING_STEP = 128;
+const AM_RING_0 = 156;
+const AM_RING_STEP = 108;
 // The arc one agent needs on its ring before its neighbours crowd it. A ring
 // that cannot give every agent on it this much is pushed further out.
-const AM_ARC_MIN = 138;
+const AM_ARC_MIN = 248;
 const AM_SYS_GAP = 150;
 // The pane is close to twice as wide as it is tall, so the rings are drawn as
 // ellipses in that proportion. A generation then spreads across the width the
 // field actually has instead of leaving both flanks empty to keep a circle.
-const AM_RING_AX = 1.55;
-const AM_RING_AY = 0.82;
+const AM_RING_AX = 1.22;
+const AM_RING_AY = 1.0;
 // What a card claims on the field: the disc, then the plate hung under it. A
 // disc never lands inside another card's plate, which is what this box is for.
 // The plate is 112 by 52 at rest and grows as the camera pulls back, so the
 // claim carries the room it takes at the framing the graph is read at.
-const AM_PLATE_W = 118;
-const AM_PLATE_GAP = 8;
-const AM_PLATE_H = 54;
+const AM_PLATE_W = 218;
+const AM_PLATE_GAP = 0;
+const AM_PLATE_H = 0;
 // The room a card claims is the plate at the widest framing a name is still
 // drawn at full size, so a seat cleared once stays clear as the camera moves.
-const AM_TSCALE_BOX = 1.4;
+const AM_TSCALE_BOX = 1;
 // How far a card may be moved off its ring to clear a neighbour. Past this the
 // ring stops reading as a generation, so the line under the card goes instead.
 const AM_NUDGE_MAX = 104;
@@ -15968,30 +15972,25 @@ const AM_EDGE_GAP = 7;
 // full size, so a stroke and a border both land clear of the text.
 function amCardMetrics() {
   const m = {
-    glyph: 48, glyphLg: 68, glyphRun: 52,
+    glyph: AM_NODE_BOT, glyphLg: AM_NODE_BOT_LG, glyphRun: AM_NODE_BOT,
     bottom: AM_NODE_BOT, bottomLg: AM_NODE_BOT_LG, bottomRun: AM_NODE_BOT,
   };
   for (const [, el] of agentMap.nodeEls) {
     const g = el.querySelector('.am-node-glyph');
-    const t = el.querySelector('.am-node-time');
-    const l = el.querySelector('.am-node-label');
-    const plate = el.querySelector('.am-node-plate');
     if (!g) continue;
-    const last = t && t.offsetHeight ? t : l;
-    const flat = last ? last.offsetTop + last.offsetHeight : g.offsetTop + g.offsetHeight;
-    const bottom = plate && plate.offsetHeight
-      ? plate.offsetTop + plate.offsetHeight * AM_TSCALE_BOX
-      : flat;
+    // The card is the whole of a node, so where its ink ends and where a
+    // connector leaves it are the same edge.
+    const bottom = g.offsetTop + g.offsetHeight;
     if (el.classList.contains('is-run')) {
       // A run is scenery like a core is, and a different size, so it is measured
       // on its own rather than pulling the core's height down onto it.
-      m.glyphRun = Math.max(m.glyphRun, g.offsetTop + g.offsetHeight);
+      m.glyphRun = Math.max(m.glyphRun, bottom);
       m.bottomRun = Math.max(m.bottomRun, bottom);
     } else if (el.classList.contains('is-holder')) {
-      m.glyphLg = Math.max(m.glyphLg, g.offsetTop + g.offsetHeight);
+      m.glyphLg = Math.max(m.glyphLg, bottom);
       m.bottomLg = Math.max(m.bottomLg, bottom);
     } else {
-      m.glyph = Math.max(m.glyph, g.offsetTop + g.offsetHeight);
+      m.glyph = Math.max(m.glyph, bottom);
       m.bottom = Math.max(m.bottom, bottom);
     }
   }
@@ -16156,7 +16155,7 @@ function amCullLabels(eff) {
     // plate that would cover one steps aside the same way it does for another
     // plate that got there first.
     const hit = discs.some((d, i) => i !== b.own && amHits(b, d)) || kept.some((o) => amHits(b, o));
-    b.el.classList.toggle('is-nameless', hit);
+    b.el.classList.remove('is-nameless');
     if (!hit) kept.push(b);
   }
 }
@@ -16171,15 +16170,15 @@ function amApplyCam() {
     // can be read at, so the plate takes back exactly as much of the camera's
     // scale as the floor needs and no more. Taking back less than the whole
     // scale is what keeps a name inside the room the layout reserved for it.
-    const ts = Math.min(AM_TSCALE_MAX, Math.max(1, AM_READ_PX / (AM_LABEL_PX * k)));
-    stage.style.setProperty('--cv-tscale', String(ts));
+    const ts = 1;
+    stage.style.setProperty('--cv-tscale', '1');
     // Past the point where the camera outruns the plate, the smallest type on
     // the card goes first and the name goes last, because type drawn under
     // these sizes is not type any more.
     stage.classList.toggle('is-terse', AM_TIME_PX * k * ts < AM_TIME_FLOOR_PX);
     stage.classList.toggle('is-mute', AM_LABEL_PX * k * ts < AM_NAME_FLOOR_PX);
-    const ks = Math.min(AM_KSCALE_MAX, Math.max(1, AM_KIDS_READ_PX / (AM_KIDS_PX * k)));
-    stage.style.setProperty('--cv-kscale', String(ks));
+    const ks = 1;
+    stage.style.setProperty('--cv-kscale', '1');
     stage.classList.toggle('is-countless', AM_KIDS_PX * k * ks < AM_TIME_FLOOR_PX);
     amCullLabels(k * ts);
   }
@@ -16227,12 +16226,27 @@ function amFit(animate) {
   const fitMax = nodes.length <= 2 ? AM_FIT_MAX_TINY : AM_FIT_MAX;
   const k = Math.min(fitMax, (r.width - AM_FIT_PAD * 2) / maxX, (r.height - AM_FIT_PAD * 2) / maxY);
   const cam = agentMap.cam;
-  cam.k = Math.max(AM_ZOOM_MIN, k);
+  cam.k = Math.max(AM_FIT_MIN, k);
+  const held = k < AM_FIT_MIN;
+  const source = held ? (nodes.find((n) => n.a.holder) || nodes[0]) : null;
+  if (source) {
+    // The whole fleet does not fit, so what is framed is where it started: the
+    // source lands a third of the way down the pane with its first generation
+    // under it, and the rest is reached by panning.
+    cam.x = (r.width / 2) - ((source.x + AM_NODE_W / 2) * cam.k);
+    cam.y = (r.height / 3) - ((source.y + cardH / 2) * cam.k);
+    return amApplyCamAfterFit(animate);
+  }
   cam.x = (r.width - maxX * cam.k) / 2;
   const spareY = Math.max(0, r.height - maxY * cam.k);
   cam.y = nodes.length <= 2
     ? spareY / 2 - Math.min(16, spareY * 0.04)
     : spareY / 2 - Math.min(30, spareY * 0.12);
+  return amApplyCamAfterFit(animate);
+}
+
+// The tail of a framing: glide there when asked, then paint.
+function amApplyCamAfterFit(animate) {
   const stage = $('#am-cv-stage');
   if (stage) {
     stage.classList.toggle('is-gliding', !!animate);
@@ -16281,19 +16295,25 @@ function amNodeEl(a) {
   el.dataset.amId = a.id;
   // eslint-disable-next-line no-unsanitized/property -- Static shell; every value lands via textContent in amPaintNode.
   el.innerHTML = '<span class="am-node-glyph">'
-    + '<i class="am-node-halo" aria-hidden="true"></i>'
     + '<i class="am-node-ring" aria-hidden="true"></i>'
     + '<i class="am-node-lock" aria-hidden="true"></i>'
     + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
-    + '<b class="am-node-kids"></b></span>'
+    + '<i class="am-node-halo" aria-hidden="true"></i>'
     + '<span class="am-node-plate">'
     + '<span class="am-node-label"></span>'
-    + '<span class="am-node-time"></span></span>';
+    + '<span class="am-node-meta">'
+    + '<span class="am-node-state"></span>'
+    + '<span class="am-node-time"></span></span></span>'
+    + '<b class="am-node-kids"></b></span>';
   return el;
 }
 
 // The glyph says state without a legend: a check for finished, an exclamation
 // for waiting on a human, a ring for work in flight.
+const AM_STATE_WORD = {
+  running: 'running', blocked: 'needs you', failed: 'failed', done: 'finished',
+};
+
 const AM_MARKS = {
   done: 'M5.2 12.4l4.3 4.25L18.8 7.4',
   blocked: 'M12 6.25v7.25M12 17.8h.01',
@@ -16366,6 +16386,8 @@ function amPaintNode(el, n) {
   const rawName = a.name || a.id || 'agent';
   const shown = n.short || rawName;
   el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? shown : amCanvasLabel(shown);
+  const word = el.querySelector('.am-node-state');
+  word.textContent = a.holder ? '' : (AM_STATE_WORD[st] || '');
   const time = el.querySelector('.am-node-time');
   if (a.holder) {
     // The core says which chat or project it is; the line under it says how far
