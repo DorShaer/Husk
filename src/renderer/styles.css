@@ -103,17 +103,24 @@
    elevations inherit from the dark :root. The light-family theme (Sepia) overrides
    the solid surface and shadow set the way Light does. */
 
-/* Midnight: deep cool blue-black. */
+/* Midnight: deep cool blue-black, and a cool signal set to match it. The ground
+   stands a clear step off the warm black Dark uses, and the three state hues are
+   its own, so the two themes are told apart by their marks and not only by the
+   tint under them. */
 [data-theme="midnight"] {
-  --bg: #0a0e17;
+  --bg: #0f1626;
   --text: #e8ecf4;
   --text-2: rgba(232, 236, 244, 0.70);
   --text-3: rgba(232, 236, 244, 0.54);
-  --notif-bg: #131a29;
+  --rose:    #f2569b;
+  --emerald: #17a08a;
+  --amber:   #ece16b;
+  --info:    #5cc8ff;
+  --notif-bg: #182135;
   --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(99, 140, 255, 0.054), transparent 65%),
     radial-gradient(800px circle at 82% 14%, rgba(120, 90, 255, 0.041), transparent 60%),
     radial-gradient(1000px circle at 60% 95%, rgba(60, 120, 220, 0.036), transparent 65%);
-  --term-bg: #0d1220;
+  --term-bg: #101828;
   --term-fg: #e8ecf4;
 }
 
@@ -206,7 +213,9 @@
 
 /* Catppuccin Mocha: soft pastel dark. */
 [data-theme="catppuccin"] {
-  --bg: #1e1e2e;
+  /* Mocha's own crust, the deepest surface the palette declares, so the field
+     stands apart from every other indigo theme on the shelf. */
+  --bg: #11111b;
   --text: #cdd6f4;
   --text-2: rgba(205, 214, 244, 0.72);
   --text-3: rgba(205, 214, 244, 0.6);
@@ -217,13 +226,15 @@
   --notif-bg: #292c3c;
   --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(203, 166, 247, 0.063), transparent 65%),
     radial-gradient(820px circle at 84% 16%, rgba(137, 180, 250, 0.045), transparent 60%);
-  --term-bg: #1e1e2e;
+  --term-bg: #11111b;
   --term-fg: #cdd6f4;
 }
 
 /* Rose Pine: muted rose, pine and gold on soho black. */
 [data-theme="rose-pine"] {
-  --bg: #191724;
+  /* The palette's own surface, which carries the plum the base only hints at,
+     so the field reads as rose pine rather than as another navy. */
+  --bg: #1f1d2e;
   --text: #e0def4;
   --text-2: rgba(224, 222, 244, 0.72);
   --text-3: rgba(224, 222, 244, 0.56);
@@ -234,7 +245,7 @@
   --notif-bg: #21202e;
   --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(235, 111, 146, 0.054), transparent 65%),
     radial-gradient(820px circle at 84% 16%, rgba(196, 167, 231, 0.045), transparent 60%);
-  --term-bg: #191724;
+  --term-bg: #1f1d2e;
   --term-fg: #e0def4;
 }
 
@@ -9391,8 +9402,8 @@ body[data-mode="light"] .ob-wordmark span {
 .ob-theme-sw[data-mode="dracula"]     { background: #282a36; }
 .ob-theme-sw[data-mode="sepia"]       { background: #f3ead6; }
 .ob-theme-sw[data-mode="tokyo-night"] { background: #1a1b26; }
-.ob-theme-sw[data-mode="catppuccin"]  { background: #1e1e2e; }
-.ob-theme-sw[data-mode="rose-pine"]   { background: #191724; }
+.ob-theme-sw[data-mode="catppuccin"]  { background: #11111b; }
+.ob-theme-sw[data-mode="rose-pine"]   { background: #1f1d2e; }
 .ob-theme-sw[data-mode="gruvbox"]     { background: #282828; }
 .ob-prefs .accent-picker { gap: 10px; flex: 0 0 auto; }
 
