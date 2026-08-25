@@ -378,6 +378,28 @@
               <svg class="am-cv-edges" id="am-cv-edges" aria-hidden="true" focusable="false"></svg>
               <div class="am-cv-nodes" id="am-cv-nodes" role="listbox" aria-label="Agent spawn graph" tabindex="0"></div>
             </div>
+            <!-- Two ways to read the same lineage: rings around the thing that
+                 started the work, or generations down the page. -->
+            <div class="am-cv-topo" id="am-cv-topo" role="tablist" aria-label="Graph shape">
+              <button class="am-cv-tp is-active" data-am-topo="radial" role="tab" aria-selected="true" title="Rings around the source">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><circle cx="12" cy="12" r="8" opacity="0.5"/><circle cx="12" cy="4" r="1.7"/><circle cx="19" cy="16" r="1.7"/><circle cx="5" cy="16" r="1.7"/></svg>
+                Radial
+              </button>
+              <button class="am-cv-tp" data-am-topo="tree" role="tab" aria-selected="false" title="Generations down the page">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="5" r="1.9"/><circle cx="6" cy="18" r="1.9"/><circle cx="12" cy="18" r="1.9"/><circle cx="18" cy="18" r="1.9"/><path d="M12 7v3.5M6 16.1v-2.4h12v2.4M12 13.7v2.4"/></svg>
+                Tree
+              </button>
+            </div>
+            <!-- The colour key. Nothing on the field says which hue is which,
+                 and every hue on it means one of these four. -->
+            <div class="am-cv-key" aria-hidden="true">
+              <span class="am-cv-k is-running"><i></i>Running</span>
+              <span class="am-cv-k is-blocked"><i></i>Needs you</span>
+              <span class="am-cv-k is-failed"><i></i>Failed</span>
+              <span class="am-cv-k is-done"><i></i>Finished</span>
+              <span class="am-cv-k is-flow"><i></i>Live branch</span>
+              <span class="am-cv-k is-ring"><i></i>Generation</span>
+            </div>
             <div class="am-cv-hud">
               <button class="am-cv-btn" id="am-cv-out" type="button" aria-label="Zoom out" title="Zoom out">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>

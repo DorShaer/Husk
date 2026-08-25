@@ -14422,7 +14422,9 @@ function markTopbarAgentsSeen() {
 function paintTopbarAgents(res) {
   const el = $('#topbar-agents');
   if (!el) return;
-  const agents = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
+  const listed = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
+  // A run is where agents came from, not one of them, so the pill never counts it.
+  const agents = listed.filter((a) => a && !a.holder);
   const live = agents.filter((a) => a && a.running);
   const blocked = live.filter((a) => a.state === 'blocked').length;
   topbarAgentsLive = live.length > 0;
@@ -14920,12 +14922,13 @@ const agentMap = {
   // Graph view: the camera, the ids already drawn (so only genuinely new agents
   // animate in), and the live element maps a repaint reconciles against.
   chats: [],
-  mode: 'canvas', cam: { x: 0, y: 0, k: 1 }, known: new Set(), fitted: false,
-  nodeEls: new Map(), edgeEls: new Map(), drag: null, layout: [],
+  mode: 'canvas', topo: 'radial', runs: [], cam: { x: 0, y: 0, k: 1 }, known: new Set(), fitted: false,
+  nodeEls: new Map(), edgeEls: new Map(), drag: null, layout: [], systems: [],
 };
 
 const AM_POLL_MS = 2000;
 const AM_VIEW_KEY = 'husk.agentView';
+const AM_TOPO_KEY = 'husk.agentTopo';
 
 // The four conditions a reader acts on. A state the CLI does not report as
 // live reads as finished, never as running.
@@ -15038,11 +15041,17 @@ function amPaintCounts() {
     else if (agentMap.error) sub.textContent = 'Could not reach the agent list';
     else if (!agentMap.rows.length) sub.textContent = 'Nothing running on this machine';
     else {
+      // This line says what wants a person. Every plain count is already on the
+      // filter rail beside it, so it stays out of here until there is nothing
+      // to raise.
       const bits = [];
-      if (by.running) bits.push(`<span class="am-sub-live">${by.running} running</span>`);
       if (by.blocked) bits.push(`<span class="am-sub-needs">${by.blocked} need${by.blocked === 1 ? 's' : ''} you</span>`);
       if (by.failed) bits.push(`<span class="am-sub-failed">${by.failed} failed</span>`);
-      bits.push(`${by.all} total`);
+      if (!bits.length) {
+        bits.push(by.running
+          ? `<span class="am-sub-live">${by.running} running</span>`
+          : `${by.all} finished`);
+      }
       // eslint-disable-next-line no-unsanitized/property -- Numbers and literals only.
       sub.innerHTML = bits.join(' <span aria-hidden="true">·</span> ');
     }
@@ -15194,11 +15203,15 @@ const AM_CELL_W = 132;
 const AM_CELL_H = 146;
 // Where a card's ink ends: glyph, then label, then the line under it. Used as
 // the first guess before a painted card is measured.
-const AM_NODE_BOT = 102;
-const AM_NODE_BOT_LG = 124;
+const AM_NODE_BOT = 124;
+const AM_NODE_BOT_LG = 132;
 const AM_NODE_W = AM_CELL_W;
 const AM_NODE_H = AM_NODE_BOT_LG;
 const AM_ROOT_GAP = 44;
+// The core is taller than an agent card, so the first generation drops clear of
+// it and the corridor between them lands on empty ground rather than on its name.
+const AM_ROOT_DROP = 30;
+const amRowY = (depth) => depth * AM_CELL_H + (depth ? AM_ROOT_DROP : 0);
 // A name trimmed to this fits one line in a card, and a row of them closes up
 // by the line it no longer holds.
 const AM_ONE_LINE_MAX = 16;
@@ -15206,13 +15219,74 @@ const AM_ONE_LINE_TRIM = 22;
 const AM_FIT_PAD = 44;
 const AM_ZOOM_MIN = 0.35;
 const AM_ZOOM_MAX = 1.8;
-// Framing may magnify a small fleet, which is what makes a bigger window worth
-// asking for, but only so far: past this a handful of agents reads as a poster.
-const AM_FIT_MAX = 1.12;
-const AM_FIT_MAX_TINY = 1.2;
+// Framing never magnifies a fleet that already fits, so 100 percent is the
+// framing rather than a number to zoom back out to. A graph of one or two
+// cards is the exception: it is given the room it has rather than left as a
+// stamp in the middle of an empty field.
+const AM_FIT_MAX = 1;
+const AM_FIT_MAX_TINY = 1;
 // Guards a parent chain that loops: layout walks depth-first, so a cycle would
 // recurse forever without a ceiling on top of the visited set.
 const AM_DEPTH_MAX = 24;
+
+// A name holds its size on screen the way a map holds its place names: the
+// plate takes the camera's scale back out, up to this much. Past it the name
+// shrinks with everything else, which is where the legibility floors below
+// start dropping type rather than drawing it too small to read.
+const AM_TSCALE_MAX = 2.2;
+// Screen sizes the type is drawn at, and the floor a reader can still take a
+// name from. Below the first floor the line under a card goes; below the
+// second the name itself goes and the card is a disc.
+const AM_LABEL_PX = 13;
+const AM_TIME_PX = 10.5;
+const AM_READ_PX = 10.5;
+const AM_TIME_FLOOR_PX = 8;
+const AM_NAME_FLOOR_PX = 9;
+// The count on a card's rim is read off real work, so it holds a size on screen
+// of its own the way a name does. It is a two-glyph pill sitting against a
+// disc, so it takes back less of the camera than a name and leaves the field
+// once it can no longer be read.
+const AM_KIDS_PX = 9.5;
+const AM_KIDS_READ_PX = 8.6;
+const AM_KSCALE_MAX = 1.7;
+
+// Radial geometry. The rim radii are the glyph sizes the stylesheet paints, so
+// a line stops on the edge of the circle it leaves rather than under it; the
+// pair moves together.
+const AM_GLYPH_R = 24;
+const AM_CORE_R = 34;
+const AM_RUN_R = 26;
+
+// Where a line stops on each kind of node: the radius the stylesheet paints it
+// at. The pair moves together.
+function amRimOf(a) {
+  if (!a || !a.holder) return AM_GLYPH_R;
+  return a.holder === 'run' ? AM_RUN_R : AM_CORE_R;
+}
+const AM_RING_0 = 168;
+const AM_RING_STEP = 128;
+// The arc one agent needs on its ring before its neighbours crowd it. A ring
+// that cannot give every agent on it this much is pushed further out.
+const AM_ARC_MIN = 138;
+const AM_SYS_GAP = 150;
+// The pane is close to twice as wide as it is tall, so the rings are drawn as
+// ellipses in that proportion. A generation then spreads across the width the
+// field actually has instead of leaving both flanks empty to keep a circle.
+const AM_RING_AX = 1.55;
+const AM_RING_AY = 0.82;
+// What a card claims on the field: the disc, then the plate hung under it. A
+// disc never lands inside another card's plate, which is what this box is for.
+// The plate is 112 by 52 at rest and grows as the camera pulls back, so the
+// claim carries the room it takes at the framing the graph is read at.
+const AM_PLATE_W = 118;
+const AM_PLATE_GAP = 8;
+const AM_PLATE_H = 54;
+// The room a card claims is the plate at the widest framing a name is still
+// drawn at full size, so a seat cleared once stays clear as the camera moves.
+const AM_TSCALE_BOX = 1.4;
+// How far a card may be moved off its ring to clear a neighbour. Past this the
+// ring stops reading as a generation, so the line under the card goes instead.
+const AM_NUDGE_MAX = 104;
 
 function amSavedView() {
   try {
@@ -15223,6 +15297,16 @@ function amSavedView() {
 
 function amSaveView(mode) {
   try { localStorage.setItem(AM_VIEW_KEY, mode); } catch (_) {}
+}
+
+function amSavedTopo() {
+  try {
+    return localStorage.getItem(AM_TOPO_KEY) === 'tree' ? 'tree' : 'radial';
+  } catch (_) { return 'radial'; }
+}
+
+function amSaveTopo(topo) {
+  try { localStorage.setItem(AM_TOPO_KEY, topo); } catch (_) {}
 }
 
 // True when following an agent's parents leads back to itself. Such a node is
@@ -15270,9 +15354,13 @@ function amProjectNode(cwd) {
   };
 }
 
-function amBuildTree(rows, chats) {
+function amBuildTree(rows, chats, runs) {
   const bySession = new Map();
   for (const a of rows) if (a.sessionId) bySession.set(a.sessionId, a);
+  // A workflow run is where its fleet came from, so it is a parent the same way
+  // a chat is. It carries a key of its own precisely so the agents it fanned out
+  // have something to hang from.
+  for (const r of (runs || [])) if (r && r.sessionId) bySession.set(r.sessionId, r);
   const chatBySession = new Map();
   for (const c of (chats || [])) if (c && c.sessionId) chatBySession.set(c.sessionId, c);
 
@@ -15299,12 +15387,22 @@ function amBuildTree(rows, chats) {
     return node;
   };
 
+  const under = (node) => {
+    const chat = node.parentSessionId ? chatBySession.get(node.parentSessionId) : null;
+    if (chat) { attach(holderFor(amChatNode(chat)).id, node); return; }
+    attach(holderFor(amProjectNode(node.cwd || '')).id, node);
+  };
+
   for (const a of order) {
     const parent = agentParent(a);
     if (parent && !amAncestorLoops(a, agentParent)) { attach(parent.id, a); continue; }
-    const chat = a.parentSessionId ? chatBySession.get(a.parentSessionId) : null;
-    if (chat) { attach(holderFor(amChatNode(chat)).id, a); continue; }
-    attach(holderFor(amProjectNode(a.cwd || '')).id, a);
+    under(a);
+  }
+  // A run is placed last and only if something it started is on screen, so a run
+  // whose fleet the filter hid never draws as an empty node.
+  for (const r of (runs || [])) {
+    if (!kids.has(r.id)) continue;
+    under(r);
   }
   return { roots, kids };
 }
@@ -15321,7 +15419,7 @@ function amLayout(tree, aspect = 1.9) {
     placed.add(a.id);
     const children = depth >= AM_DEPTH_MAX ? [] : (tree.kids.get(a.id) || []);
     const node = {
-      a, depth, parent, x: 0, y: depth * AM_CELL_H,
+      a, depth, parent, x: 0, y: amRowY(depth),
       live: window.husk.agents.isLive(a.state), kids: 0,
     };
     // Pushed before its children, so the array is the tree in reading order:
@@ -15338,7 +15436,17 @@ function amLayout(tree, aspect = 1.9) {
     }
     const leaves = children.filter((c) => !hasKids(c));
     if (leaves.length) {
-      const perRow = Math.max(1, Math.round(Math.sqrt(leaves.length * aspect * (AM_CELL_H / AM_CELL_W))) || 1);
+      // A pair always stands side by side: a column of two would be drawn as a
+      // region, and two cards are a row, not a fan-out.
+      const perRow = Math.max(leaves.length > 1 ? 2 : 1, Math.round(Math.sqrt(
+        leaves.length * aspect * AM_BLOCK_LEAN * (AM_CELL_H / AM_CELL_W),
+      )) || 1);
+      // A wrapped set is drawn as a region, and the region is wider than the
+      // cards inside it, so the gutter is opened before the first card as well
+      // as after the last one. What is outside a region always clears it by
+      // more than its own padding.
+      const wrapped = Math.ceil(leaves.length / perRow) > 1;
+      if (wrapped) cursor += AM_BLOCK_PAD + AM_BLOCK_GAP;
       const startX = cursor;
       const grid = [];
       // Names the block has already stripped down to a word or two need one line
@@ -15350,17 +15458,19 @@ function amLayout(tree, aspect = 1.9) {
         const r = walk(c, depth + 1, node);
         if (!r) return;
         r.x = startX + (i % perRow) * AM_CELL_W;
-        r.y = (depth + 1) * AM_CELL_H + Math.floor(i / perRow) * pitch;
+        r.y = amRowY(depth + 1) + Math.floor(i / perRow) * pitch;
         if (shared) r.short = shared.short[i];
         r.oneLine = oneLine;
         grid.push(r);
         laid.push(r);
       });
-      cursor = startX + Math.min(leaves.length, perRow) * AM_CELL_W;
+      const cols = Math.min(leaves.length, perRow);
+      cursor = startX + cols * AM_CELL_W;
       // A block deeper than one row has no lane a connector could take to its
       // lower rows without running over the row above. The block is drawn as
       // one region on a single stem instead, and its members carry no line.
-      if (grid.length && Math.ceil(grid.length / perRow) > 1) {
+      if (grid.length && wrapped) {
+        cursor += AM_BLOCK_PAD + AM_BLOCK_GAP;
         let x0 = Infinity;
         let x1 = -Infinity;
         let y0 = Infinity;
@@ -15370,7 +15480,10 @@ function amLayout(tree, aspect = 1.9) {
           x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x);
           y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y);
         }
-        const bot = oneLine ? AM_NODE_BOT - AM_ONE_LINE_TRIM : AM_NODE_BOT;
+        // The last row's own ink, measured, so the region's bottom edge closes
+        // below the line under the card rather than across it.
+        const card = (agentMap.card && agentMap.card.bottom) || AM_NODE_BOT;
+        const bot = oneLine ? card - AM_ONE_LINE_TRIM : card;
         node.block = { x: x0, y: y0, w: (x1 - x0) + AM_CELL_W, h: (y1 - y0) + bot };
         if (shared) {
           node.block.caption = shared.phrase;
@@ -15404,6 +15517,445 @@ function amLayout(tree, aspect = 1.9) {
   return out;
 }
 
+// ── State colour, held to a standard ──
+// The three states come from the theme's own --emerald, --amber and --rose, and
+// a palette is free to put two of those on top of each other: gruvbox's green
+// is a yellow sitting beside its amber. Colour is the primary channel on this
+// field, so the canvas measures what the theme handed it and holds the three
+// apart, keeping the theme's own lightness and chroma and moving only what has
+// to move. An eleventh theme is measured the same way.
+const AM_HUE_GAP = 52;
+// Where a state hue lands when the field's own three cannot separate: cyan for
+// work in flight, amber for work waiting on a person, magenta-red for work that
+// ended badly. Degrees on the OKLCH wheel. Run sits on cyan because the source
+// at the middle of the field runs cyan, so a working agent reads as lit by the
+// thing that spawned it.
+const AM_HUE_HOME = { run: 195, wait: 84, fail: 12 };
+// A state carries enough colour to be a state, and enough separation from the
+// field to be seen on it without a glow. Waiting on a person outranks a run
+// that ended, so it is held to the higher of the two.
+const AM_STATE_C_MIN = 0.132;
+// A state never washes out to paper or sinks to ink: past this band a hue stops
+// being a hue, and two states told apart by colour need colour to tell. The
+// band is as wide as that leaves room for, because the three rungs below have
+// to fit inside it on a lifted ground like nord's and on paper alike.
+const AM_STATE_L_MAX = 0.9;
+const AM_STATE_L_MIN = 0.36;
+// Each state is the whole body of its disc, so the mark knocked out of it reads
+// at whatever the state holds against the field, and a bad end is held to the
+// same floor as work in flight rather than to the floor for a shape.
+const AM_STATE_RATIO = { run: 3.5, wait: 4.5, fail: 4 };
+// The three states also stand on a ladder of value, read outward from the
+// field: work that ended sits nearest it, work in flight above that, and work
+// waiting on a person at the top. A pair separated in hue alone is one mark in
+// greyscale, on a projector, and to a reader who cannot tell the two hues
+// apart, so every rung is held clear of the one under it in light as well.
+const AM_STATE_LADDER = ['fail', 'run', 'wait'];
+const AM_STATE_STEP = 1.5;
+const AM_L_STEP = 0.02;
+
+const amToLin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const amToSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * (c ** (1 / 2.4)) - 0.055);
+
+function amParseRgb(str) {
+  const s = String(str || '').trim();
+  const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].replace(/(.)/g, '$1$1') : hex[1];
+    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  }
+  const m = s.match(/^rgba?\(([^)]+)\)$/i);
+  if (!m) return null;
+  const parts = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+  if (parts.length < 3 || parts.some((v) => !Number.isFinite(v))) return null;
+  return parts.slice(0, 3).map((v) => v / 255);
+}
+
+function amRgbToOklch(rgb) {
+  const [r, g, b] = rgb.map(amToLin);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  const a1 = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  const b1 = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  return { L, C: Math.hypot(a1, b1), h: (Math.atan2(b1, a1) * 180) / Math.PI };
+}
+
+function amOklchToRgb({ L, C, h }) {
+  const rad = (h * Math.PI) / 180;
+  const a = Math.cos(rad) * C;
+  const b = Math.sin(rad) * C;
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].map(amToSrgb);
+}
+
+// Pulls chroma down until the colour is one a screen can actually show, so a
+// hue held apart never lands outside the gamut and clips to something else.
+function amFitGamut(c) {
+  let hi = c.C;
+  let lo = 0;
+  let out = amOklchToRgb(c);
+  const inside = (v) => v.every((x) => x >= -0.002 && x <= 1.002);
+  if (inside(out)) return out.map((x) => Math.min(1, Math.max(0, x)));
+  for (let i = 0; i < 18; i += 1) {
+    const mid = (lo + hi) / 2;
+    out = amOklchToRgb({ ...c, C: mid });
+    if (inside(out)) lo = mid; else hi = mid;
+  }
+  return amOklchToRgb({ ...c, C: lo }).map((x) => Math.min(1, Math.max(0, x)));
+}
+
+const amLum = (rgb) => {
+  const [r, g, b] = rgb.map(amToLin);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const amRatio = (a, b) => {
+  const x = amLum(a);
+  const y = amLum(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+const amHex = (rgb) => `#${rgb.map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255)
+  .toString(16).padStart(2, '0')).join('')}`;
+// Shortest way round the wheel, signed.
+const amHueDelta = (a, b) => ((((b - a) % 360) + 540) % 360) - 180;
+
+// Moves a hue toward where its meaning lives, only as far as the gap it is
+// missing, so a theme that already separates its states keeps them exactly.
+function amPullHue(h, home, amount) {
+  const d = amHueDelta(h, home);
+  return h + Math.sign(d) * Math.min(Math.abs(d), amount);
+}
+
+// Lightens or darkens against the field until the state can be seen on it. The
+// direction is the one that moves away from the ground: a colour already
+// lighter than the field goes lighter, and one already darker goes darker.
+function amHoldContrast(c, ground, ratio) {
+  const up = amLum(amFitGamut(c)) > amLum(ground);
+  const out = { ...c };
+  for (let i = 0; i < 40; i += 1) {
+    if (amRatio(amFitGamut(out), ground) >= ratio) break;
+    out.L = Math.min(0.985, Math.max(0.06, out.L + (up ? 0.018 : -0.018)));
+    if (out.L <= 0.06 || out.L >= 0.985) break;
+  }
+  return out;
+}
+
+function amTuneField() {
+  const pane = $('#am-canvas-pane');
+  if (!pane) return;
+  const key = `${document.body.dataset.theme || ''}:${document.body.dataset.mode || ''}`;
+  if (agentMap.tunedFor === key) return;
+  // The pass measures the field the graph is actually drawn on, not the page
+  // behind it. The canvas keeps its own ground under every theme, so the three
+  // states are separated against that ground and start from the field's own
+  // hues rather than from the theme's text colours.
+  //
+  // The written values land on this same element, so they are cleared first:
+  // otherwise a theme switch would measure the last theme's output and the
+  // hues would walk a little further out on every change.
+  for (const k of ['run', 'wait', 'fail']) pane.style.removeProperty(`--cv-${k}`);
+  const cs = getComputedStyle(pane);
+  const read = (name) => amParseRgb(cs.getPropertyValue(name));
+  const ground = read('--cv-floor');
+  const src = { run: read('--cv-run'), wait: read('--cv-wait'), fail: read('--cv-fail') };
+  if (!ground || !src.run || !src.wait || !src.fail) return;
+  const state = {};
+  for (const k of Object.keys(src)) state[k] = amRgbToOklch(src[k]);
+  // Any pair that reads as one hue is opened up, both of them moving toward
+  // where their own meaning sits rather than one of them being pushed onto a
+  // colour the theme never declared.
+  for (let pass = 0; pass < 6; pass += 1) {
+    let tight = false;
+    const keys = ['run', 'wait', 'fail'];
+    for (let i = 0; i < keys.length; i += 1) {
+      for (let j = i + 1; j < keys.length; j += 1) {
+        const a = state[keys[i]];
+        const b = state[keys[j]];
+        const gap = Math.abs(amHueDelta(a.h, b.h));
+        if (gap >= AM_HUE_GAP) continue;
+        tight = true;
+        const step = (AM_HUE_GAP - gap) / 2 + 1;
+        a.h = amPullHue(a.h, AM_HUE_HOME[keys[i]], step);
+        b.h = amPullHue(b.h, AM_HUE_HOME[keys[j]], step);
+      }
+    }
+    if (!tight) break;
+  }
+  for (const k of Object.keys(state)) {
+    state[k].L = Math.min(AM_STATE_L_MAX, Math.max(AM_STATE_L_MIN, state[k].L));
+    state[k].C = Math.max(state[k].C, AM_STATE_C_MIN);
+    state[k] = amHoldContrast(state[k], ground, AM_STATE_RATIO[k]);
+  }
+  // Away from the field is brighter on a dark ground and darker on paper, and
+  // it is the direction that also holds a state against the ground, so walking
+  // the ladder outward never costs a state the contrast it was just given.
+  const away = amLum(ground) > 0.18 ? -AM_L_STEP : AM_L_STEP;
+  const shift = (c, d, floor) => {
+    const L = Math.min(AM_STATE_L_MAX, Math.max(AM_STATE_L_MIN, c.L + d));
+    if (Math.abs(L - c.L) < 1e-6) return false;
+    if (floor && amRatio(amFitGamut({ ...c, L }), ground) < floor) return false;
+    c.L = L;
+    return true;
+  };
+  const rung = AM_STATE_LADDER.map((k) => state[k]);
+  // Measured against the field rather than against each other, so a rung has to
+  // clear the one under it on the side away from the ground: two states that
+  // happen to sit the same distance out on opposite sides are not apart.
+  const vsField = (c) => amRatio(amFitGamut(c), ground);
+  const apart = (i) => vsField(rung[i]) >= vsField(rung[i - 1]) * AM_STATE_STEP;
+  for (let i = 1; i < rung.length; i += 1) {
+    for (let n = 0; n < 60 && !apart(i); n += 1) if (!shift(rung[i], away, 0)) break;
+  }
+  // Where the band runs out at the top, the rungs under it come down to meet
+  // the gap instead, each of them still held against the field.
+  for (let i = rung.length - 2; i >= 0; i -= 1) {
+    for (let n = 0; n < 60 && !apart(i + 1); n += 1) {
+      if (!shift(rung[i], -away, AM_STATE_RATIO[AM_STATE_LADDER[i]])) break;
+    }
+  }
+  for (const k of Object.keys(state)) {
+    pane.style.setProperty(`--cv-${k}`, amHex(amFitGamut(state[k])));
+  }
+  agentMap.tunedFor = key;
+}
+
+// What a card occupies on the field, in one box: the disc plus the plate hung
+// under it. Placement works on this box rather than on the disc, which is what
+// keeps a neighbour's circle out of a name and out of the line under it.
+function amCardBox(n, room = AM_TSCALE_BOX) {
+  const r = n.rimR || AM_GLYPH_R;
+  const w = Math.max(AM_PLATE_W * room, r * 2);
+  return {
+    x: n.cx - w / 2,
+    y: n.cy - r,
+    w,
+    h: (r * 2) + AM_PLATE_GAP + (AM_PLATE_H * room),
+  };
+}
+
+// Rings hand every card a seat, and a wide fan-out can still seat two of them
+// close enough that one disc lands in the other's name. Overlapping cards are
+// slid along the ring they stand on until none of them touch, which clears the
+// pair without taking either of them off its own generation.
+function amSeparateRadial(nodes) {
+  const movable = nodes.filter((n) => !n.a.holder && n.ring);
+  const fixed = nodes.filter((n) => n.a.holder);
+  if (!movable.length) return;
+  const home = movable.map((n) => ({ x: n.cx, y: n.cy }));
+  // A card is moved by turning it about the centre it was thrown from, so it
+  // keeps its distance from that centre exactly and its generation stays a
+  // generation however far it has to travel.
+  const turn = (n, dth) => {
+    const c = Math.cos(dth);
+    const sn = Math.sin(dth);
+    const x = (n.cx * c) - (n.cy * sn);
+    const y = (n.cx * sn) + (n.cy * c);
+    n.cx = x;
+    n.cy = y;
+  };
+  const slide = (n, dx, dy) => {
+    const R = Math.hypot(n.cx, n.cy);
+    if (R < 1) return;
+    turn(n, ((dx * -n.cy) + (dy * n.cx)) / (R * R));
+  };
+  const overlap = (a, b) => {
+    const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    if (ox <= 0 || oy <= 0) return null;
+    // Apart on the axis they overlap least, which is the move that clears the
+    // pair without walking either of them across the field.
+    return ox < oy
+      ? { dx: (a.x < b.x ? -1 : 1) * ox, dy: 0 }
+      : { dx: 0, dy: (a.y < b.y ? -1 : 1) * oy };
+  };
+  const relax = (rounds) => {
+    for (let pass = 0; pass < rounds; pass += 1) {
+      let moved = false;
+      for (let i = 0; i < movable.length; i += 1) {
+        for (let j = i + 1; j < movable.length; j += 1) {
+          const p = overlap(amCardBox(movable[i]), amCardBox(movable[j]));
+          if (!p) continue;
+          moved = true;
+          slide(movable[i], p.dx * 0.52, p.dy * 0.52);
+          slide(movable[j], -p.dx * 0.52, -p.dy * 0.52);
+        }
+      }
+      if (!moved) return;
+    }
+  };
+  // The source holds the centre and does not move, so its own card is a wall
+  // the first generation is cleared against rather than a seat in the crowd.
+  const clearFixed = () => {
+    for (const n of movable) {
+      for (const f of fixed) {
+        const p = overlap(amCardBox(n), amCardBox(f));
+        if (p) slide(n, p.dx, p.dy);
+      }
+    }
+  };
+  // Clearing is quadratic in the size of the fleet, so a big one is given
+  // fewer passes: the seats it starts from are already further apart.
+  const rounds = Math.max(24, Math.round(6000 / movable.length));
+  clearFixed();
+  relax(rounds);
+  clearFixed();
+  // A card that had to travel is walked back toward its seat, so the ring it
+  // belongs to still reads as an order rather than a scatter, and the pairs
+  // that reopens are cleared again from there.
+  for (let i = 0; i < movable.length; i += 1) {
+    const n = movable[i];
+    const R = Math.hypot(n.cx, n.cy);
+    if (R < 1) continue;
+    const was = Math.atan2(home[i].y, home[i].x);
+    const now = Math.atan2(n.cy, n.cx);
+    const d = ((((now - was) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const cap = AM_NUDGE_MAX / R;
+    if (Math.abs(d) > cap) turn(n, Math.sign(d) * (cap - Math.abs(d)));
+  }
+  relax(Math.min(60, rounds));
+  // Where a fleet is dense enough that a seat cannot be cleared, the card keeps
+  // its name and gives up the line under it, which hover and the rail both
+  // still carry.
+  for (const n of movable) n.hideTime = false;
+  for (let i = 0; i < movable.length; i += 1) {
+    for (let j = i + 1; j < movable.length; j += 1) {
+      // Measured against the plate at rest: the room reserved above it is
+      // headroom for the camera, and a card only gives up its line when the
+      // text itself would land on a neighbour.
+      if (!overlap(amCardBox(movable[i], 1), amCardBox(movable[j], 1))) continue;
+      // The plate hangs under the disc, so the card reaching into its
+      // neighbour is the higher of the two.
+      const upper = movable[i].cy < movable[j].cy ? movable[i] : movable[j];
+      upper.hideTime = true;
+    }
+  }
+}
+
+// Radial: the thing that started the work sits at the centre and everything it
+// started is thrown outward, one ring per generation. A fleet is then read the
+// way it actually behaves, as a source and its reach, and a wide fan-out gets
+// the whole circumference to spread across instead of one page-wide row.
+function amLayoutRadial(tree) {
+  const out = [];
+  const placed = new Set();
+  const systems = [];
+
+  // What a subtree needs on its ring: a leaf takes one slot, a branch takes the
+  // sum of its own. Angle is handed out in that proportion, so a fan gets the
+  // arc it needs and a chain stays thin.
+  const weight = (a, depth) => {
+    const kids = depth >= AM_DEPTH_MAX ? [] : (tree.kids.get(a.id) || []);
+    if (!kids.length) return 1;
+    let w = 0;
+    for (const c of kids) w += weight(c, depth + 1);
+    return w;
+  };
+
+  for (const root of tree.roots) {
+    const nodes = [];
+    const perDepth = [];
+    const walk = (a, depth, parent, a0, a1) => {
+      if (placed.has(a.id)) return null;
+      placed.add(a.id);
+      const n = {
+        a, depth, parent, x: 0, y: 0, cx: 0, cy: 0, ox: 0, oy: 0,
+        ang: depth ? (a0 + a1) / 2 : 0,
+        rimR: amRimOf(a),
+        live: window.husk.agents.isLive(a.state), kids: 0,
+      };
+      // Pushed before its children, so the array is the tree in reading order
+      // and the keyboard walk still steps parent, then what it started.
+      nodes.push(n);
+      out.push(n);
+      perDepth[depth] = (perDepth[depth] || 0) + 1;
+      const kids = depth >= AM_DEPTH_MAX ? [] : (tree.kids.get(a.id) || []);
+      const laid = [];
+      if (kids.length) {
+        let total = 0;
+        for (const c of kids) total += weight(c, depth + 1);
+        let cur = a0;
+        for (const c of kids) {
+          const span = ((a1 - a0) * weight(c, depth + 1)) / (total || 1);
+          const r = walk(c, depth + 1, n, cur, cur + span);
+          cur += span;
+          if (r) laid.push(r);
+        }
+      }
+      for (const c of laid) n.kids += 1 + c.kids;
+      // An edge earns its current from the work below it, not from its own node.
+      if (laid.some((c) => c.live)) n.live = true;
+      return n;
+    };
+    // A whole turn, opened at the top, so the first thing a chat started lands
+    // where the eye already is.
+    if (!walk(root, 0, null, -Math.PI / 2, Math.PI * 1.5)) continue;
+
+    const rings = [0];
+    for (let d = 1; d < perDepth.length; d += 1) {
+      // Spacing is measured on the short axis of the ellipse, which is where
+      // two neighbours sit closest together.
+      const need = ((perDepth[d] || 1) * AM_ARC_MIN) / (Math.PI * 2 * AM_RING_AY);
+      rings[d] = Math.max(rings[d - 1] + AM_RING_STEP, AM_RING_0 + (d - 1) * AM_RING_STEP, need);
+    }
+    for (const n of nodes) {
+      const r = rings[n.depth] || 0;
+      n.ring = r;
+      n.cx = Math.cos(n.ang) * r * AM_RING_AX;
+      n.cy = Math.sin(n.ang) * r * AM_RING_AY;
+    }
+    amSeparateRadial(nodes);
+    systems.push({ nodes, rings, perDepth, radius: rings[rings.length - 1] || 0, ox: 0, oy: 0 });
+  }
+
+  // Each root holds its own system, so they sit side by side on one axis with
+  // clear space between them rather than sharing a centre.
+  let tallest = 0;
+  for (const sys of systems) tallest = Math.max(tallest, sys.radius * AM_RING_AY);
+  let cursor = 0;
+  for (const sys of systems) {
+    const halfW = sys.radius * AM_RING_AX;
+    sys.ox = cursor + halfW;
+    sys.oy = tallest;
+    cursor += halfW * 2 + AM_SYS_GAP;
+  }
+
+  // Framing reads the layout as a box that starts at the origin, so the whole
+  // field is shifted until nothing sits at a negative coordinate.
+  let minX = Infinity;
+  let minY = Infinity;
+  for (const sys of systems) {
+    for (const n of sys.nodes) {
+      n.ox = sys.ox;
+      n.oy = sys.oy;
+      n.cx += sys.ox;
+      n.cy += sys.oy;
+      minX = Math.min(minX, n.cx - AM_CELL_W / 2);
+      minY = Math.min(minY, n.cy - n.rimR);
+    }
+  }
+  if (!out.length) return out;
+  const dx = -minX;
+  const dy = -minY;
+  for (const sys of systems) { sys.ox += dx; sys.oy += dy; }
+  for (const n of out) {
+    n.ox += dx;
+    n.oy += dy;
+    n.cx += dx;
+    n.cy += dy;
+    n.x = n.cx - AM_CELL_W / 2;
+    n.y = n.cy - n.rimR;
+  }
+  agentMap.systems = systems;
+  return out;
+}
+
 // From the parent's rim to the top of the child's glyph. Sideways moves happen
 // only on the corridor between two generations, which holds no card.
 const AM_EDGE_R = 14;
@@ -15411,17 +15963,31 @@ const AM_EDGE_R = 14;
 const AM_EDGE_GAP = 7;
 
 // Card height follows the type inside it, which moves with the font scale, so
-// it is measured from a painted card rather than assumed.
+// it is measured from a painted card rather than assumed. A lane or a region
+// reserves the room the plate takes at the widest framing a name is drawn at
+// full size, so a stroke and a border both land clear of the text.
 function amCardMetrics() {
-  const m = { glyph: 44, glyphLg: 54, bottom: AM_NODE_BOT, bottomLg: AM_NODE_BOT_LG };
+  const m = {
+    glyph: 48, glyphLg: 68, glyphRun: 52,
+    bottom: AM_NODE_BOT, bottomLg: AM_NODE_BOT_LG, bottomRun: AM_NODE_BOT,
+  };
   for (const [, el] of agentMap.nodeEls) {
     const g = el.querySelector('.am-node-glyph');
     const t = el.querySelector('.am-node-time');
     const l = el.querySelector('.am-node-label');
+    const plate = el.querySelector('.am-node-plate');
     if (!g) continue;
     const last = t && t.offsetHeight ? t : l;
-    const bottom = last ? last.offsetTop + last.offsetHeight : g.offsetTop + g.offsetHeight;
-    if (el.classList.contains('is-holder')) {
+    const flat = last ? last.offsetTop + last.offsetHeight : g.offsetTop + g.offsetHeight;
+    const bottom = plate && plate.offsetHeight
+      ? plate.offsetTop + plate.offsetHeight * AM_TSCALE_BOX
+      : flat;
+    if (el.classList.contains('is-run')) {
+      // A run is scenery like a core is, and a different size, so it is measured
+      // on its own rather than pulling the core's height down onto it.
+      m.glyphRun = Math.max(m.glyphRun, g.offsetTop + g.offsetHeight);
+      m.bottomRun = Math.max(m.bottomRun, bottom);
+    } else if (el.classList.contains('is-holder')) {
       m.glyphLg = Math.max(m.glyphLg, g.offsetTop + g.offsetHeight);
       m.bottomLg = Math.max(m.bottomLg, bottom);
     } else {
@@ -15432,12 +15998,30 @@ function amCardMetrics() {
   return m;
 }
 // Breathing room between a block's region and the cards inside it, plus the
-// band across the top where the words its members share are written.
-const AM_BLOCK_PAD = 14;
+// band across the top where the words its members share are written. The
+// gutter between two regions is wider than either one's padding, so a region
+// reads as belonging to what is inside it.
+// A block leans taller than the pane it sits in, because the width of the tree
+// is already spent on sibling groups standing side by side and the height is
+// not. Cards then stay wide enough to carry their names.
+const AM_BLOCK_LEAN = 0.5;
+const AM_BLOCK_PAD = 20;
+// The band above the first row, where the bus that feeds it hangs.
+const AM_BLOCK_TOP = 34;
 const AM_BLOCK_CAP = 24;
+const AM_BLOCK_GAP = 32;
+// Parentage inside a region is drawn the same way it is drawn outside one: the
+// branch arrives in a lane of its own above the region's border, drops onto a
+// spine held clear of the first card, and each row hangs off that spine on a
+// bus with a stem into every disc. The border is a dashed boundary and every
+// line carrying parentage is solid, and they sit a clear band apart, so the two
+// facts read as two marks rather than as one doubled edge.
+const AM_BLOCK_LANE = 14;
+const AM_BLOCK_SPINE = 26;
+const AM_BLOCK_STEM = 12;
 
 function amBlockRect(n) {
-  const top = AM_BLOCK_PAD + (n.block.caption ? AM_BLOCK_CAP : 0);
+  const top = AM_BLOCK_TOP + (n.block.caption ? AM_BLOCK_CAP : 0);
   return {
     x: n.block.x - AM_BLOCK_PAD,
     y: n.block.y - top,
@@ -15446,18 +16030,50 @@ function amBlockRect(n) {
   };
 }
 
+// Where a line leaves a circle: the point on the rim facing wherever the line
+// is headed, plus a hair of clear air so the stroke never touches the glyph.
+function amRimPoint(n, tx, ty) {
+  const dx = tx - n.cx;
+  const dy = ty - n.cy;
+  const d = Math.hypot(dx, dy) || 1;
+  const r = (n.rimR || AM_GLYPH_R) + 4;
+  return { x: n.cx + (dx / d) * r, y: n.cy + (dy / d) * r };
+}
+
+// A hop between two rings bows toward the core, so a dense generation reads as
+// a sheaf of curves leaving one place rather than a grid of crossing lines.
+function amRadialEdgePath(p, c) {
+  const ox = p.ox;
+  const oy = p.oy;
+  const r1 = Math.hypot(p.cx - ox, p.cy - oy);
+  const r2 = Math.hypot(c.cx - ox, c.cy - oy);
+  const toChild = Math.atan2(c.cy - oy, c.cx - ox);
+  const a1 = r1 < 0.5 ? toChild : Math.atan2(p.cy - oy, p.cx - ox);
+  let a2 = toChild;
+  while (a2 - a1 > Math.PI) a2 -= Math.PI * 2;
+  while (a1 - a2 > Math.PI) a2 += Math.PI * 2;
+  const mid = (a1 + a2) / 2;
+  const rm = r1 < 0.5 ? r2 * 0.5 : ((r1 + r2) / 2) * 0.9;
+  const qx = ox + Math.cos(mid) * rm;
+  const qy = oy + Math.sin(mid) * rm;
+  const s = amRimPoint(p, qx, qy);
+  const e = amRimPoint(c, qx, qy);
+  return `M${s.x.toFixed(1)},${s.y.toFixed(1)} Q${qx.toFixed(1)},${qy.toFixed(1)} ${e.x.toFixed(1)},${e.y.toFixed(1)}`;
+}
+
 function amEdgePath(p, c) {
+  if (agentMap.topo === 'radial') return amRadialEdgePath(p, c);
   const m = agentMap.card || amCardMetrics();
-  const holder = !!p.a.holder;
+  const kind = p.a.holder === 'run' ? 'Run' : (p.a.holder ? 'Lg' : '');
   const x1 = p.x + AM_CELL_W / 2;
   const x2 = c.x + AM_CELL_W / 2;
   const y2 = c.y;
   // The rim of the circle, so the line reads as leaving the node itself. It
   // passes behind the card's name plate on its way down.
-  const y1 = p.y + (holder ? m.glyphLg : m.glyph);
+  const y1 = p.y + m[`glyph${kind}`];
   // Below the parent's own text, where the row is empty all the way across, so
   // every sideways move happens where no card can be.
-  const lane = p.y + (holder ? m.bottomLg : m.bottom) + AM_EDGE_GAP;
+  const lane = p.y + m[`bottom${kind}`] + AM_EDGE_GAP;
   const corridor = Math.max(y1 + 2, Math.min(lane, y2 - 2));
   if (Math.abs(x2 - x1) < 0.5) return `M${x1},${y1} L${x2},${y2}`;
   const dir = x2 > x1 ? 1 : -1;
@@ -15481,11 +16097,92 @@ function amPolishSparseLayout(layout) {
   return true;
 }
 
+// Which name a map keeps when two of them want the same place. What the reader
+// is looking at wins, then the source, then the states a person can act on,
+// then the card with the most work under it.
+function amLabelRank(n) {
+  if (agentMap.selected === n.a.id) return 900;
+  // Scenery is what the fleet hangs from, so it is named before anything that
+  // hangs from it: an unnamed source or run leaves the tree unreadable.
+  if (n.a.holder) return 800;
+  const st = amStateOf(n.a);
+  const base = st === 'blocked' ? 600 : st === 'failed' ? 500 : st === 'running' ? 400 : 100;
+  return base + Math.min(99, n.kids || 0);
+}
+
+// Names are drawn at a fixed size on screen, so zooming out closes the gaps
+// between them rather than shrinking them into it. Where two names want the
+// same pixels the lower-ranked one steps aside, which is what keeps every name
+// that is drawn readable at every zoom.
+const amHits = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+function amCullLabels(eff) {
+  const layout = agentMap.layout;
+  if (!layout.length) return;
+  const k = agentMap.cam.k;
+  const m = agentMap.card || {};
+  const w = AM_PLATE_W * eff;
+  const h = AM_PLATE_H * eff;
+  const boxes = [];
+  const discs = [];
+  // Each kind of node is measured at its own size, so a plate is placed under
+  // the disc it belongs to rather than under the tallest disc on the field.
+  const glyphOf = (n) => {
+    if (n.a.holder === 'run') return m.glyphRun || 52;
+    return n.a.holder ? (m.glyphLg || 68) : (m.glyph || 48);
+  };
+  for (const n of layout) {
+    const el = agentMap.nodeEls.get(n.a.id);
+    if (!el) continue;
+    const glyph = glyphOf(n);
+    const mid = (n.x + AM_CELL_W / 2) * k;
+    discs.push({ x: mid - (glyph * k) / 2, y: n.y * k, w: glyph * k, h: glyph * k });
+    boxes.push({
+      el,
+      // The disc this plate belongs to, so a name is never judged to be covering
+      // the very card it names.
+      own: discs.length - 1,
+      x: mid - w / 2,
+      y: (n.y + glyph + AM_PLATE_GAP) * k,
+      w,
+      h,
+      rank: amLabelRank(n),
+    });
+  }
+  boxes.sort((a, b) => b.rank - a.rank);
+  const kept = [];
+  for (const b of boxes) {
+    // A disc is the card itself and always outranks a neighbour's name, so a
+    // plate that would cover one steps aside the same way it does for another
+    // plate that got there first.
+    const hit = discs.some((d, i) => i !== b.own && amHits(b, d)) || kept.some((o) => amHits(b, o));
+    b.el.classList.toggle('is-nameless', hit);
+    if (!hit) kept.push(b);
+  }
+}
+
 function amApplyCam() {
   const stage = $('#am-cv-stage');
   const grid = $('#am-cv-grid');
   const { x, y, k } = agentMap.cam;
-  if (stage) stage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+  if (stage) {
+    stage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+    // A name is drawn at its own size and is never allowed below the size it
+    // can be read at, so the plate takes back exactly as much of the camera's
+    // scale as the floor needs and no more. Taking back less than the whole
+    // scale is what keeps a name inside the room the layout reserved for it.
+    const ts = Math.min(AM_TSCALE_MAX, Math.max(1, AM_READ_PX / (AM_LABEL_PX * k)));
+    stage.style.setProperty('--cv-tscale', String(ts));
+    // Past the point where the camera outruns the plate, the smallest type on
+    // the card goes first and the name goes last, because type drawn under
+    // these sizes is not type any more.
+    stage.classList.toggle('is-terse', AM_TIME_PX * k * ts < AM_TIME_FLOOR_PX);
+    stage.classList.toggle('is-mute', AM_LABEL_PX * k * ts < AM_NAME_FLOOR_PX);
+    const ks = Math.min(AM_KSCALE_MAX, Math.max(1, AM_KIDS_READ_PX / (AM_KIDS_PX * k)));
+    stage.style.setProperty('--cv-kscale', String(ks));
+    stage.classList.toggle('is-countless', AM_KIDS_PX * k * ks < AM_TIME_FLOOR_PX);
+    amCullLabels(k * ts);
+  }
   // The grid is painted on the pane rather than the stage, so it scrolls with
   // the camera instead of scaling its own dots into blobs.
   if (grid) {
@@ -15584,6 +16281,9 @@ function amNodeEl(a) {
   el.dataset.amId = a.id;
   // eslint-disable-next-line no-unsanitized/property -- Static shell; every value lands via textContent in amPaintNode.
   el.innerHTML = '<span class="am-node-glyph">'
+    + '<i class="am-node-halo" aria-hidden="true"></i>'
+    + '<i class="am-node-ring" aria-hidden="true"></i>'
+    + '<i class="am-node-lock" aria-hidden="true"></i>'
     + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
     + '<b class="am-node-kids"></b></span>'
     + '<span class="am-node-plate">'
@@ -15599,8 +16299,6 @@ const AM_MARKS = {
   blocked: 'M12 6.25v7.25M12 17.8h.01',
   running: 'M12 5.75a6.25 6.25 0 1 1 0 12.5 6.25 6.25 0 0 1 0-12.5z',
   failed: 'M8.5 8.5l7 7M15.5 8.5l-7 7',
-  chat: 'M4.75 6.75a2 2 0 0 1 2-2h10.5a2 2 0 0 1 2 2v6.65a2 2 0 0 1-2 2H10l-4.15 3.45v-3.45h-.1a2 2 0 0 1-1-2z',
-  project: 'M3.75 7.7a2 2 0 0 1 2-2h3.4l2 2h7.1a2 2 0 0 1 2 2v6.6a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2z',
 };
 
 // A fan-out names its agents from one template, so every card in a block ends
@@ -15646,6 +16344,7 @@ function amPaintNode(el, n) {
   el.classList.toggle('is-holder', !!a.holder);
   el.classList.toggle('is-chat', a.holder === 'chat');
   el.classList.toggle('is-project', a.holder === 'project');
+  el.classList.toggle('is-run', a.holder === 'run');
   el.classList.toggle('is-running', st === 'running');
   el.classList.toggle('is-blocked', st === 'blocked');
   el.classList.toggle('is-failed', st === 'failed');
@@ -15657,14 +16356,20 @@ function amPaintNode(el, n) {
   el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0)`;
   const mark = el.querySelector('.am-node-mark');
   mark.replaceChildren();
-  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  p.setAttribute('d', a.holder ? AM_MARKS[a.holder] : AM_MARKS[st]);
-  mark.appendChild(p);
+  // A holder is light rather than a picture: the name written under it already
+  // says what it is, and a mark in the middle only dims the core.
+  if (!a.holder) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', AM_MARKS[st]);
+    mark.appendChild(p);
+  }
   const rawName = a.name || a.id || 'agent';
   const shown = n.short || rawName;
   el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? shown : amCanvasLabel(shown);
   const time = el.querySelector('.am-node-time');
   if (a.holder) {
+    // The core says which chat or project it is; the line under it says how far
+    // its work reached, so nothing has to sit on the sphere itself.
     time.textContent = n.kids === 1 ? '1 agent' : `${n.kids} agents`;
     time.dataset.amLive = '0';
     time.dataset.amTs = '0';
@@ -15673,7 +16378,14 @@ function amPaintNode(el, n) {
     time.dataset.amTs = String(Number(a.startedAt) || 0);
     time.dataset.amLive = st === 'done' ? '0' : '1';
   }
+  // Where a seat could not be cleared, the line under the card would land on a
+  // neighbour's disc, so the card keeps its name and drops the line.
+  el.classList.toggle('is-timeless', !a.holder && !!n.hideTime);
   const kids = el.querySelector('.am-node-kids');
+  // The core counts the agents that ran under it, the same number the footer
+  // states; an agent counts what it started.
+  // A core carries its count on the line under its name, so the rim badge is an
+  // agent-only mark and never lands on the sphere.
   const badge = a.holder ? 0 : n.kids;
   kids.textContent = badge ? String(badge) : '';
   kids.hidden = !badge;
@@ -15681,18 +16393,71 @@ function amPaintNode(el, n) {
   el.title = `${a.name || a.id || 'agent'}\n${amRowSub(a)}`;
 }
 
+// The rings the generations stand on, drawn as ground. Distance from the core
+// is then readable without counting hops out to a node.
+function amPaintOrbits(svg, radial) {
+  let layer = svg.querySelector('#am-cv-orbits');
+  if (!layer) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    layer.setAttribute('id', 'am-cv-orbits');
+    svg.insertBefore(layer, svg.firstChild);
+  }
+  if (!radial) { layer.replaceChildren(); return; }
+  const marks = [];
+  for (const sys of agentMap.systems) {
+    // The ring is a circle in the system's own space and the group carries the
+    // same stretch the seats were placed with, so a ring runs through the
+    // generation standing on it.
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform',
+      `translate(${sys.ox.toFixed(1)} ${sys.oy.toFixed(1)}) scale(${AM_RING_AX} ${AM_RING_AY})`);
+    const ring = (r, cls) => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('class', cls);
+      c.setAttribute('cx', '0');
+      c.setAttribute('cy', '0');
+      c.setAttribute('r', r.toFixed(1));
+      c.setAttribute('vector-effect', 'non-scaling-stroke');
+      g.appendChild(c);
+    };
+    // A ring is a reading aid for a generation spread around one: with a single
+    // node on it the line from the source already says everything a ring would,
+    // and the ring is left as a shape around nothing.
+    let drawn = 0;
+    for (let d = 1; d < sys.rings.length; d += 1) {
+      if ((sys.perDepth[d] || 0) < 2) continue;
+      ring(sys.rings[d], 'am-orbit');
+      drawn += 1;
+    }
+    // The bezel gives the field an edge, which is only worth having once there
+    // is a field to edge.
+    if (drawn) ring(sys.radius + AM_RING_STEP * 0.42, 'am-orbit is-rim');
+    if (drawn) marks.push(g);
+  }
+  layer.replaceChildren(...marks);
+  // The key names what is on the field. With no ring drawn there is no
+  // generation to explain, so that entry stands down with the rings.
+  const pane = $('#am-canvas-pane');
+  if (pane) pane.classList.toggle('has-rings', marks.length > 0);
+}
+
 function amPaintCanvas() {
   const pane = $('#am-canvas-pane');
   const nodeLayer = $('#am-cv-nodes');
   const svg = $('#am-cv-edges');
   if (!pane || !nodeLayer || !svg) return;
+  amTuneField();
 
   const rows = agentMap.rows.filter(amMatches);
   const box = pane.getBoundingClientRect();
   const aspect = box.height > 0 ? Math.max(0.4, Math.min(6, box.width / box.height)) : 1.9;
-  const layout = amLayout(amBuildTree(rows, agentMap.chats), aspect);
-  const sparse = amPolishSparseLayout(layout);
+  const tree = amBuildTree(rows, agentMap.chats, agentMap.runs);
+  const radial = agentMap.topo === 'radial';
+  agentMap.systems = [];
+  const layout = radial ? amLayoutRadial(tree) : amLayout(tree, aspect);
+  const sparse = !radial && amPolishSparseLayout(layout);
   agentMap.layout = layout;
+  pane.classList.toggle('is-radial', radial);
   pane.classList.toggle('is-sparse', sparse);
   $('#am-cv-stage')?.classList.toggle('is-sparse', sparse);
   // The arrows walk the tree the way it is read: a parent, then its descendants.
@@ -15709,6 +16474,7 @@ function amPaintCanvas() {
   svg.setAttribute('width', String(maxX));
   svg.setAttribute('height', String(maxY));
   svg.setAttribute('viewBox', `0 0 ${maxX} ${maxY}`);
+  amPaintOrbits(svg, radial);
 
   const seenNodes = new Set();
   const fresh = [];
@@ -15743,25 +16509,63 @@ function amPaintCanvas() {
     svg.insertBefore(blockLayer, svg.firstChild);
   }
   const blocks = layout.filter((n) => n.block);
+  // Which cards each region holds, so the rows inside it can be strung onto the
+  // spine their parent's branch arrives on.
+  const inBlock = new Map();
+  for (const n of layout) {
+    if (!n.inBlock || !n.parent) continue;
+    const held = inBlock.get(n.parent.a.id) || [];
+    held.push(n);
+    inBlock.set(n.parent.a.id, held);
+  }
   blockLayer.replaceChildren(...blocks.map((n) => {
     const box = amBlockRect(n);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    r.setAttribute('class', `am-block${n.live ? ' is-live' : ''}`);
+    // The region says these cards are one fan-out and nothing more. Their
+    // state is on the discs inside it.
+    r.setAttribute('class', 'am-block');
     r.setAttribute('x', String(box.x));
     r.setAttribute('y', String(box.y));
     r.setAttribute('width', String(box.w));
     r.setAttribute('height', String(box.h));
-    r.setAttribute('rx', '18');
+    r.setAttribute('rx', '10');
     g.appendChild(r);
     if (n.block.caption) {
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('class', `am-block-cap${n.live ? ' is-live' : ''}`);
+      t.setAttribute('class', 'am-block-cap');
       t.setAttribute('x', String(box.x + box.w / 2));
       t.setAttribute('y', String(box.y + 17));
       t.setAttribute('text-anchor', 'middle');
       t.textContent = n.block.caption;
       g.appendChild(t);
+    }
+    const stem = (d, live) => {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('class', `am-stem${live ? ' is-live' : ''}`);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('d', d);
+      g.appendChild(p);
+    };
+    const rows = new Map();
+    for (const c of inBlock.get(n.a.id) || []) {
+      const row = rows.get(c.y) || [];
+      row.push(c);
+      rows.set(c.y, row);
+    }
+    const ys = [...rows.keys()].sort((a, b) => a - b);
+    if (ys.length) {
+      const sx = box.x + AM_BLOCK_SPINE;
+      stem(`M${sx},${box.y - AM_BLOCK_LANE} L${sx},${ys[ys.length - 1] - AM_BLOCK_STEM}`, n.live);
+      for (const y of ys) {
+        const bus = y - AM_BLOCK_STEM;
+        const row = rows.get(y).sort((a, b) => a.x - b.x);
+        stem(`M${sx},${bus} L${row[row.length - 1].x + AM_CELL_W / 2},${bus}`, row.some((c) => c.live));
+        for (const c of row) {
+          const cx = c.x + AM_CELL_W / 2;
+          stem(`M${cx},${bus} L${cx},${y}`, c.live);
+        }
+      }
     }
     return g;
   }));
@@ -15799,7 +16603,13 @@ function amPaintCanvas() {
       agentMap.edgeEls.set(key, path);
     }
     const box = amBlockRect(n);
-    const target = { x: box.x + box.w / 2 - AM_CELL_W / 2, y: box.y, a: {} };
+    // The branch stops in its own lane above the region and hands over to the
+    // spine inside it, so the border it arrives at is never the line itself.
+    const target = {
+      x: box.x + AM_BLOCK_SPINE - AM_CELL_W / 2,
+      y: box.y - AM_BLOCK_LANE,
+      a: {},
+    };
     path.setAttribute('d', amEdgePath(n, target));
     path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}`);
     if (brandNew) svg.appendChild(path);
@@ -15809,6 +16619,29 @@ function amPaintCanvas() {
     path.remove();
     agentMap.edgeEls.delete(key);
   }
+
+  // Current runs only where work is. A live branch carries a second stroke on
+  // its own line, short and travelling; a finished one carries nothing, so a
+  // still frame means a still fleet.
+  let flowLayer = svg.querySelector('#am-cv-flow');
+  if (!flowLayer) {
+    flowLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    flowLayer.setAttribute('id', 'am-cv-flow');
+  }
+  const sparks = [];
+  for (const [, path] of agentMap.edgeEls) {
+    if (!path.classList.contains('is-live')) continue;
+    const spark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    spark.setAttribute('class', 'am-flow');
+    spark.setAttribute('fill', 'none');
+    spark.setAttribute('pathLength', '1');
+    spark.setAttribute('d', path.getAttribute('d'));
+    sparks.push(spark);
+  }
+  flowLayer.replaceChildren(...sparks);
+  // Last, so the travelling stroke sits over the line it belongs to and over
+  // every edge added since the layer was made.
+  svg.appendChild(flowLayer);
 
   for (const n of layout) agentMap.known.add(n.a.id);
   // The class only exists to start the animation; dropping it afterwards keeps
@@ -15820,6 +16653,21 @@ function amPaintCanvas() {
     agentMap.fitted = true;
     requestAnimationFrame(() => amFit(false));
   }
+}
+
+// Switching topology keeps every card: the cards carry their own place, so a
+// card glides from where the old geometry put it to where the new one does and
+// the fleet is watched crossing over rather than replaced.
+function amSetTopo(topo, { save = true } = {}) {
+  const next = topo === 'tree' ? 'tree' : 'radial';
+  agentMap.topo = next;
+  if (save) amSaveTopo(next);
+  $$('#am-cv-topo .am-cv-tp').forEach((b) => {
+    const on = b.dataset.amTopo === next;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if (agentMap.mode === 'canvas') { amPaint(true); amRefit(); }
 }
 
 function amSetView(mode, { save = true } = {}) {
@@ -15842,8 +16690,9 @@ function amSetView(mode, { save = true } = {}) {
 function amSignature() {
   return JSON.stringify([
     agentMap.filter, agentMap.q, agentMap.selected, agentMap.loading,
-    agentMap.supported, agentMap.error, agentMap.mode,
+    agentMap.supported, agentMap.error, agentMap.mode, agentMap.topo,
     agentMap.rows.map((a) => [a.id, amStateOf(a), a.name, amRowSub(a), a.cwd, a.parentSessionId || '']),
+    agentMap.runs.map((r) => [r.id, r.name, r.running]),
   ]);
 }
 
@@ -16144,7 +16993,11 @@ async function amRefresh() {
   agentMap.loading = false;
   agentMap.supported = !(res && res.supported === false);
   agentMap.error = res && res.ok === false ? (res.error || 'could not list agents') : '';
-  agentMap.rows = (res && res.ok !== false && Array.isArray(res.agents)) ? res.agents.slice() : [];
+  const listed = (res && res.ok !== false && Array.isArray(res.agents)) ? res.agents.slice() : [];
+  // Runs are scenery, not work. They are kept beside the fleet rather than in
+  // it, so nothing that counts agents, lists them or selects one ever sees a run.
+  agentMap.runs = listed.filter((r) => r && r.holder === 'run');
+  agentMap.rows = listed.filter((r) => !r || r.holder !== 'run');
   agentMap.chats = (res && res.ok !== false && Array.isArray(res.chats)) ? res.chats.slice() : [];
   const foot = $('#am-foot');
   if (foot) foot.textContent = agentMap.rows.length ? `Updated ${new Date().toLocaleTimeString()}` : '';
@@ -16187,6 +17040,7 @@ function openAgentMap() {
   for (const p of agentMap.edgeEls.values()) p.remove();
   agentMap.nodeEls.clear();
   agentMap.edgeEls.clear();
+  amSetTopo(amSavedTopo(), { save: false });
   amSetView(amSavedView(), { save: false });
   amRefresh();
   if (agentMap.timer) clearInterval(agentMap.timer);
@@ -16241,11 +17095,16 @@ $('#am-views') && $('#am-views').addEventListener('click', (e) => {
   if (b) amSetView(b.dataset.amView);
 });
 
+$('#am-cv-topo') && $('#am-cv-topo').addEventListener('click', (e) => {
+  const b = e.target.closest('.am-cv-tp');
+  if (b) amSetTopo(b.dataset.amTopo);
+});
+
 // Canvas pointer model: a press on a node selects it, a press on the ground
 // pans. The pan only begins after a few pixels of travel, so a click that
 // wobbles still counts as a click.
 $('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.target.closest('.am-cv-hud')) return;
+  if (e.button !== 0 || e.target.closest('.am-cv-hud') || e.target.closest('.am-cv-topo')) return;
   const node = e.target.closest('.am-node');
   if (node) { if (!node.classList.contains('is-holder')) amSelect(node.dataset.amId); return; }
   const pane = e.currentTarget;

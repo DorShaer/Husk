@@ -129,7 +129,9 @@ test.afterEach(async () => {
   }
 });
 
-async function openCenter(app, { width = 1512, height = 950 } = {}) {
+// The geometry checks below are about the tree shape, so they ask for it. The
+// center itself opens on the radial one, which has its own test.
+async function openCenter(app, { width = 1512, height = 950, topo = 'tree' } = {}) {
   const win = await app.firstWindow({ timeout: 30_000 });
   await app.evaluate(({ BrowserWindow }, size) => {
     BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, ...size });
@@ -137,6 +139,7 @@ async function openCenter(app, { width = 1512, height = 950 } = {}) {
   await win.waitForLoadState('domcontentloaded');
   await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
   await win.evaluate(() => openAgentMap());               // eslint-disable-line no-undef
+  await win.evaluate((t) => amSetTopo(t), topo);          // eslint-disable-line no-undef
   // The center opens on live work; these checks are about the whole fleet.
   await win.click('[data-am-filter="all"]');
   await win.waitForSelector('.am-node', { timeout: 20_000 });
@@ -282,6 +285,104 @@ test('an agent spawned while you watch draws itself in', async () => {
   await expect(win.locator('#am-d-name')).not.toBeEmpty();
   await win.keyboard.press('Enter');
   await expect(win.locator('#agent-map')).toBeHidden({ timeout: 10_000 });
+
+  await app.close();
+});
+
+test('the radial shape throws the fleet onto rings around the source', async () => {
+  const env = makeHome();
+  const app = await launch(env);
+  const win = await openCenter(app, { topo: 'radial' });
+
+  await expect(win.locator('[data-am-topo="radial"]')).toHaveClass(/is-active/);
+
+  const at = await win.evaluate(() => Object.fromEntries(agentMap.layout.map((n) => [n.a.id, {   // eslint-disable-line no-undef
+    depth: n.depth, r: Math.round(Math.hypot(n.cx - n.ox, n.cy - n.oy)),
+  }])));
+  // The chat that started the work holds the centre, and everything it started
+  // is out on a ring, one ring per generation, each further out than the last.
+  expect(at[`chat:${CHAT_SID}`].r).toBe(0);
+  expect(at['root-a'].r).toBe(at['root-b'].r);
+  expect(at['kid-a1'].r).toBeGreaterThan(at['root-a'].r);
+  expect(at['kid-a11'].r).toBeGreaterThan(at['kid-a1'].r);
+  // Siblings share their ring and never share a place on it.
+  expect(at['kid-a1'].r).toBe(at['kid-b1'].r);
+  const seats = Object.values(await win.evaluate(() => Object.fromEntries(agentMap.layout.map((n) => [n.a.id, `${Math.round(n.cx)}:${Math.round(n.cy)}`]))));   // eslint-disable-line no-undef
+  expect(new Set(seats).size).toBe(seats.length);
+
+  // A ring is a reading aid for a generation spread around the source, so it is
+  // drawn only where two or more nodes stand on it. Here that is the two roots
+  // and the four they started; the lone grandchild gets none, and one bezel
+  // closes the field.
+  expect(await win.locator('#am-cv-orbits circle').count()).toBe(3);
+  expect(await win.locator('#am-cv-orbits circle.is-rim').count()).toBe(1);
+  // The key names what is on the field, so it carries the generation entry only
+  // while a ring is drawn.
+  await expect(win.locator('.am-cv-k.is-ring')).toBeVisible();
+
+  // Current runs only where work is.
+  expect(await win.locator('.am-flow').count()).toBe(3);
+
+  await win.waitForTimeout(700);
+  await shoot(win, 'graph-radial.png');
+
+  // Selection reads the same on either shape.
+  await win.locator('.am-node[data-am-id="kid-a11"]').click();
+  await expect(win.locator('.am-node.is-selected')).toHaveAttribute('data-am-id', 'kid-a11');
+
+  // The shape is a preference, so the next open starts where this one left off.
+  await win.click('[data-am-topo="tree"]');
+  await expect(win.locator('#am-cv-orbits circle')).toHaveCount(0);
+  expect(await win.evaluate(() => localStorage.getItem('husk.agentTopo'))).toBe('tree');
+
+  await app.close();
+});
+
+test('the source is drawn whole, on a field that is not empty', async () => {
+  const env = makeHome();
+  const app = await launch(env);
+  const win = await openCenter(app, { topo: 'radial' });
+
+  // The plate under a name is a backdrop for words, so it never paints over the
+  // disc it belongs to. A plate that covers the source slices it in half.
+  const sliced = await win.evaluate(() => {
+    const node = document.querySelector('.am-node.is-holder');
+    const glyph = node.querySelector('.am-node-glyph');
+    const plate = node.querySelector('.am-node-plate');
+    const g = glyph.getBoundingClientRect();
+    const p = plate.getBoundingClientRect();
+    // The light around the disc reaches below the disc's own box, so the pixel
+    // that tells the truth is one inside the plate and still inside that light.
+    const x = Math.round(g.left + g.width / 2);
+    const y = Math.round(p.top + 2);
+    const hit = document.elementFromPoint(x, y);
+    return {
+      overlaps: p.top < g.bottom + 16,
+      onPlate: !!(hit && hit.closest('.am-node-plate')),
+      tag: hit ? hit.className : '',
+    };
+  });
+  expect(sliced.overlaps, 'the plate no longer sits under the disc, so this check proves nothing').toBe(true);
+  expect(sliced.onPlate, `the name plate paints over the source: hit ${sliced.tag}`).toBe(false);
+
+  // The field carries its own far dust, so the ground is never a flat void.
+  const dust = await win.evaluate(() => {
+    const cs = getComputedStyle(document.querySelector('#am-canvas-pane'), '::before');
+    return { opacity: Number(cs.opacity), image: cs.backgroundImage };
+  });
+  expect(dust.opacity).toBeGreaterThan(0);
+  expect(dust.image).toContain('radial-gradient');
+
+  // And the dot grid is what makes it read as a canvas, so it gives way to the
+  // rings without leaving the field.
+  const grid = await win.evaluate(() => {
+    const cs = getComputedStyle(document.querySelector('#am-cv-grid'));
+    return { opacity: Number(cs.opacity), size: cs.backgroundSize, image: cs.backgroundImage };
+  });
+  // Dimmed under the rings, not switched off. A grid the eye cannot find is the
+  // same as no grid, so the floor is high enough to catch that.
+  expect(grid.opacity).toBeGreaterThan(0.5);
+  expect(grid.image).toContain('radial-gradient');
 
   await app.close();
 });
@@ -517,8 +618,64 @@ test('the graph holds in the light theme', async () => {
   await win.waitForFunction(() => getComputedStyle(document.body).getPropertyValue('--text').trim() === '#0a0a0a',
     null, { timeout: 20_000, polling: 200 });
   await win.waitForTimeout(600);
+
+  // The page went to paper; the canvas did not. Everything on this field reads
+  // by emitting, and none of that survives a white ground, so the field keeps
+  // its own dark ground and its own ink under every theme the way a terminal
+  // stays dark inside a light editor.
+  const field = await win.evaluate(() => {
+    const pane = document.querySelector('#am-canvas-pane');
+    const cs = getComputedStyle(pane);
+    const px = (v) => v.trim().replace('#', '');
+    const lum = (hex) => {
+      const n = parseInt(px(hex), 16);
+      const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+        .map((c) => c / 255)
+        .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+    };
+    return {
+      floorLum: lum(cs.getPropertyValue('--cv-floor')),
+      inkLum: lum(cs.getPropertyValue('--cv-ink')),
+      pageLum: lum(getComputedStyle(document.body).getPropertyValue('--bg')),
+      haloOpacity: Number(getComputedStyle(
+        document.querySelector('.am-node.is-running .am-node-halo'),
+      ).opacity),
+    };
+  });
+  expect(field.pageLum, 'the page is on paper').toBeGreaterThan(0.6);
+  expect(field.floorLum, 'the field did not follow it there').toBeLessThan(0.05);
+  expect(field.inkLum, 'the ink on that field is light').toBeGreaterThan(0.6);
+  // The bloom is the channel that means work is happening now, and it is the
+  // first thing a paper field has to give up. It stays lit here. The floor is a
+  // half rather than a whole because the bloom breathes, so it is read wherever
+  // the cycle happens to be when the frame is sampled.
+  expect(field.haloOpacity, 'a running agent still blooms').toBeGreaterThan(0.5);
+
   await shoot(win, 'graph-light.png');
   await app.close();
+});
+
+// The three states are separated against the field the graph is drawn on. That
+// field no longer moves with the theme, so the separation lands on the same
+// three colours everywhere and a run reads as a run in every one of them.
+test('the states resolve the same under a light theme as a dark one', async () => {
+  const readStates = async (theme) => {
+    const app = await launch(makeHome({ theme }));
+    const win = await openCenter(app);
+    await win.waitForSelector('.am-node', { timeout: 20_000 });
+    await win.waitForTimeout(400);
+    const got = await win.evaluate(() => {
+      const cs = getComputedStyle(document.querySelector('#am-canvas-pane'));
+      return ['run', 'wait', 'fail'].map((k) => cs.getPropertyValue(`--cv-${k}`).trim());
+    });
+    await app.close();
+    return got;
+  };
+  const dark = await readStates('midnight');
+  const light = await readStates('light');
+  expect(light, 'the field hands both themes the same three states').toEqual(dark);
+  expect(new Set(dark).size, 'and the three are three').toBe(3);
 });
 
 // A connector has to meet the circles it joins: one that stops short of them
