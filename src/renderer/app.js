@@ -1210,6 +1210,20 @@ async function saveAppearancePreview() {
 // Coalesce a tab's PTY output into one xterm write per animation frame, so a
 // burst of chunks costs a single write, scroll and speech scan. Each tab owns
 // its own buffer.
+// A PTY burst can outrun the frame that drains it, so this buffer carries a
+// ceiling: keep the newest output, resume at a line boundary so no escape
+// sequence arrives cut in half. The main process uses src/lib/pty-buffer.js for
+// the same job; the renderer loads no modules under context isolation.
+const WRITE_BUF_MAX = 4 * 1024 * 1024;
+
+function capWriteBuf(s) {
+  if (s.length <= WRITE_BUF_MAX) return s;
+  const tail = s.slice(-WRITE_BUF_MAX);
+  const nl = tail.indexOf('\n');
+  const body = nl === -1 ? tail : tail.slice(nl + 1);
+  return `\x1b[0m\r\n[husk] ${s.length - body.length} characters of output trimmed\r\n${body}`;
+}
+
 function _flushTabWrite(tab) {
   tab.flushScheduled = false;
   if (!tab.writeBuf) return;
@@ -1317,7 +1331,7 @@ window.husk.pty.onData((sessionId, d) => {
     $('#chat-empty').classList.remove('show');
   }
   tab.chatHasInput = true;
-  tab.writeBuf += d;
+  tab.writeBuf = capWriteBuf(tab.writeBuf + d);
   if (!tab.flushScheduled) { tab.flushScheduled = true; requestAnimationFrame(() => _flushTabWrite(tab)); }
 });
 window.husk.pty.onExit((sessionId, code) => {

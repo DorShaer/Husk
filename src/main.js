@@ -23,6 +23,7 @@ const GitRef = require('./lib/git-ref');
 const GitRefs = require('./lib/git-refs');
 const { webUrlFor } = require('./lib/git-remote');
 const { buildSpawnSpec, withCopilotContextDir } = require('./lib/pty-spawn');
+const { capPtyBuffer } = require('./lib/pty-buffer');
 const AgentInject = require('./lib/agent-inject');
 const { createMouseModeStripper } = require('./lib/term-mouse');
 const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
@@ -1202,7 +1203,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // instead of one IPC send per chunk.
   s.dataDisposable = s.pty.onData((data) => {
     s.lastDataAt = Date.now();
-    s.dataBuf += data;
+    s.dataBuf = capPtyBuffer(s.dataBuf + data);
     // Small rolling tail of raw output, kept so the status panel can read a
     // CLI's own status line (e.g. Copilot's "Session: N AIC used") without a
     // transcript. Capped so it never grows with the session.
@@ -2560,7 +2561,7 @@ function spawnRunPty(runId, cwd) {
     const rs = runs.get(runId);
     if (!rs) return;
     rs.lastPtyDataAt = Date.now();
-    rs.outputBuf += data;
+    rs.outputBuf = capPtyBuffer(rs.outputBuf + data);
     if (!rs.flushTimer) {
       rs.flushTimer = setTimeout(() => flushRunOutput(runId), AUT_OUTPUT_FLUSH_MS);
     }
