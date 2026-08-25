@@ -132,10 +132,10 @@ function getAgentKind() {
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// GPU acceleration safe defaults for desktop Electron 32
+// GPU rasterization and zero-copy upload, subject to Chromium's own checks
+// against the driver in use.
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
 let lastReloadRequestAt = 0;
