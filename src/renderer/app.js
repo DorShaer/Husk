@@ -15256,7 +15256,7 @@ const AM_KSCALE_MAX = 1.7;
 // a line stops on the edge of the circle it leaves rather than under it; the
 // pair moves together.
 const AM_GLYPH_R = 24;
-const AM_CORE_R = 32;
+const AM_CORE_R = 27;
 const AM_RUN_R = 26;
 
 // Where a line stops on each kind of node: the radius the stylesheet paints it
@@ -15562,14 +15562,14 @@ const AM_STATE_L_MIN = 0.5;
 // Each state is the whole body of its disc, so the mark knocked out of it reads
 // at whatever the state holds against the field, and a bad end is held to the
 // same floor as work in flight rather than to the floor for a shape.
-const AM_STATE_RATIO = { run: 3, wait: 3, fail: 3 };
+const AM_STATE_RATIO = { run: 3, wait: 4.5, fail: 4.5 };
 // The three states also stand on a ladder of value, read outward from the
 // field: work that ended sits nearest it, work in flight above that, and work
 // waiting on a person at the top. The rungs are close together, because the
 // mark inside each disc already separates the states for a reader who cannot
 // tell the hues apart, and a wide ladder costs the top rung its colour.
-const AM_STATE_LADDER = ['fail', 'run', 'wait'];
-const AM_STATE_STEP = 1.05;
+const AM_STATE_LADDER = ['run', 'fail', 'wait'];
+const AM_STATE_STEP = 1.18;
 const AM_L_STEP = 0.02;
 
 const amToLin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -16706,14 +16706,7 @@ function amPaintCanvas() {
   // Everything between the selection and the source it came from. Selecting an
   // agent then says where it came from, which is the reason this is a graph
   // rather than a list.
-  const lit = new Set();
-  if (agentMap.selected) {
-    let cur = layout.find((n) => n.a.id === agentMap.selected);
-    while (cur) { lit.add(cur.a.id); cur = cur.parent; }
-  }
-  agentMap.lit = lit;
-  const stage = $('#am-cv-stage');
-  if (stage) stage.classList.toggle('has-selection', agentMap.focused && lit.size > 1);
+  const lit = amLight(agentMap.selected);
 
   const seenEdges = new Set();
   for (const n of layout) {
@@ -17112,10 +17105,31 @@ async function endBgAgent(a, action) {
   refreshTopbarAgents();
 }
 
+// Everything between a node and the source it came from, marked on the nodes
+// and on the connectors between them. Returns the set so a repaint can reuse it
+// for the edges it is about to build.
+function amLight(id) {
+  const lit = new Set();
+  if (id) {
+    let cur = (agentMap.layout || []).find((n) => n.a.id === id);
+    while (cur) { lit.add(cur.a.id); cur = cur.parent; }
+  }
+  agentMap.lit = lit;
+  for (const [nid, el] of agentMap.nodeEls) el.classList.toggle('is-onpath', lit.has(nid));
+  for (const [key, path] of agentMap.edgeEls) {
+    const [pid, cid] = key.split('>');
+    path.classList.toggle('is-onpath', lit.has(pid) && lit.has(cid));
+  }
+  const stage = $('#am-cv-stage');
+  if (stage) stage.classList.toggle('has-selection', !!agentMap.focused && lit.size > 1);
+  return lit;
+}
+
 function amSelect(id, { scroll = false, byUser = false } = {}) {
   if (agentMap.selected === id) return;
   agentMap.selected = id;
   if (byUser) agentMap.focused = true;
+  amLight(id);
   $$('#am-list .am-row').forEach((li) => {
     const on = li.dataset.amId === id;
     li.classList.toggle('is-selected', on);

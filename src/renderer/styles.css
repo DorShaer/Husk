@@ -13943,7 +13943,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   --cv-ink:   var(--text);
   --cv-dim:   var(--text-2);
   --cv-off:   var(--text-3);
-  --cv-time:  var(--text-3);
+  --cv-time:  color-mix(in srgb, var(--cv-ink) 62%, var(--cv-floor));
   /* Structure is neutral so that colour on this field means state and nothing
      else. The accent stays for what a person can act on. */
   --cv-line:   var(--line);
@@ -14035,9 +14035,9 @@ body[data-mode="light"] .am-canvas-pane {
 /* A connector is background structure, not something to act on, so it is drawn
    in ink rather than in the accent a person can click. */
 .am-edge, .am-stem {
-  stroke: color-mix(in srgb, var(--cv-ink) 58%, transparent);
-  opacity: 0.8;
-  stroke-width: 1;
+  stroke: color-mix(in srgb, var(--cv-ink) 72%, transparent);
+  opacity: 1;
+  stroke-width: 1.25;
   vector-effect: non-scaling-stroke;
   stroke-linecap: butt;
   stroke-linejoin: round;
@@ -14047,9 +14047,9 @@ body[data-mode="light"] .am-canvas-pane {
 /* A branch is live while anything under it still runs, so the light shows where
    the work is rather than only where a single node sits. */
 .am-edge.is-live, .am-stem.is-live {
-  stroke: color-mix(in srgb, var(--cv-ink) 70%, transparent);
+  stroke: color-mix(in srgb, var(--cv-run) 70%, transparent);
   opacity: 1;
-  stroke-width: 1.5;
+  stroke-width: 1.75;
 }
 .am-edge.is-enter {
   stroke-dasharray: 1 1;
@@ -14172,19 +14172,14 @@ body[data-mode="light"] .am-canvas-pane {
    running behind a name stays one line. */
 .am-node-plate .am-node-label,
 .am-node-plate .am-node-time {
-  text-shadow:
-    1.5px 0 0 var(--cv-halo), -1.5px 0 0 var(--cv-halo),
-    0 1.5px 0 var(--cv-halo), 0 -1.5px 0 var(--cv-halo),
-    1px 1px 0 var(--cv-halo), -1px 1px 0 var(--cv-halo),
-    1px -1px 0 var(--cv-halo), -1px -1px 0 var(--cv-halo),
-    0 0 6px var(--cv-halo);
+  text-shadow: 0 0 2px var(--cv-halo), 0 0 5px var(--cv-halo);
 }
 
 .am-node-label {
   width: 118px; height: 2.5em;
   font-size: 13px; font-weight: 560;
   letter-spacing: -0.012em; line-height: 1.25;
-  color: color-mix(in srgb, var(--cv-ink) 88%, transparent); text-align: center;
+  color: var(--cv-ink); text-align: center;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: anywhere; hyphens: none;
 }
@@ -14204,7 +14199,7 @@ body[data-mode="light"] .am-canvas-pane {
    run has been going never claims the rank of what the run is. */
 .am-node-time {
   font-size: 11px; font-weight: 500;
-  color: var(--text-2);
+  color: var(--cv-time);
   line-height: 1.2;
 }
 /* Where the camera has outrun the plate, the smallest line goes first and the
@@ -14249,8 +14244,8 @@ body[data-mode="light"] .am-canvas-pane {
    is the rarest thing on the field, so it carries a body of its own rather than
    the disc every finished agent already uses. No glow: glow means live. */
 .am-node.is-failed:not(.is-holder) .am-node-glyph {
-  border: 2px solid var(--cv-fail);
-  background: var(--cv-disc-a);
+  border: 3px solid var(--cv-fail);
+  background: color-mix(in srgb, var(--cv-fail) 12%, var(--cv-disc-a));
   color: var(--cv-fail);
   box-shadow: var(--cv-disc-lift);
 }
@@ -14261,7 +14256,7 @@ body[data-mode="light"] .am-canvas-pane {
    stay under the one agent that ended badly. */
 .am-node.is-done .am-node-glyph {
   border: 1.5px solid var(--cv-disc-line);
-  background: color-mix(in srgb, var(--cv-disc-a) 62%, var(--cv-floor));
+  background: var(--cv-disc-a);
   color: color-mix(in srgb, var(--cv-ink) 80%, transparent);
   box-shadow: none;
 }
@@ -14270,8 +14265,9 @@ body[data-mode="light"] .am-canvas-pane {
    carried on channels a state never writes: the disc rises a little and takes
    its own colour into a ring. */
 .am-node:hover:not(.is-holder) .am-node-glyph {
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--cv-ink) 30%, transparent),
-              0 6px 16px -8px var(--cv-cast);
+  transform: translateY(-1px) scale(1.06);
+  background: color-mix(in srgb, var(--cv-ink) 4%, var(--cv-disc-a));
+  box-shadow: 0 8px 18px -8px var(--cv-cast);
 }
 .am-node:hover .am-node-label { color: var(--cv-ink); }
 
@@ -14302,9 +14298,9 @@ body[data-mode="light"] .am-canvas-pane {
    larger and carrying the accent, because it is not an agent and it never runs:
    nothing about it should read as a state. */
 .am-node.is-holder .am-node-glyph {
-  width: 64px; height: 64px;
+  width: 54px; height: 54px;
   border: none;
-  background: var(--cv-ink);
+  background: color-mix(in srgb, var(--cv-ink) 88%, var(--cv-floor));
   color: var(--bg);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--cv-cast) 34%, transparent),
               0 10px 24px -12px var(--cv-cast);
@@ -14402,10 +14398,13 @@ body[data-mode="light"] .am-canvas-pane {
 /* Selecting an agent lights the line back to what started it and turns
    everything else down. Nothing is hidden: the rest of the fleet stays on the
    field at a weight that keeps it readable as context. */
-.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.52; }
+.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.68; }
+.am-cv-stage.has-selection .am-node:not(.is-onpath):is(.is-blocked, .is-failed) { opacity: 0.9; }
+.am-cv-stage.has-selection .am-node:hover { opacity: 1; }
 .am-cv-stage.has-selection .am-edge:not(.is-onpath),
-.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.28; }
-.am-cv-stage.has-selection .am-flow { opacity: 0.34; }
+.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.55; }
+.am-cv-stage.has-selection .am-flow { opacity: 0.5; }
+.am-cv-stage.has-selection .am-edge.is-onpath { stroke-width: 2; }
 .am-node, .am-edge, .am-stem, .am-flow {
   transition: opacity var(--motion-base) var(--ease);
 }
