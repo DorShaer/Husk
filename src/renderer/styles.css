@@ -14035,8 +14035,8 @@ body[data-mode="light"] .am-canvas-pane {
 /* A connector is background structure, not something to act on, so it is drawn
    in ink rather than in the accent a person can click. */
 .am-edge, .am-stem {
-  stroke: color-mix(in srgb, var(--cv-ink) 42%, transparent);
-  opacity: 0.55;
+  stroke: color-mix(in srgb, var(--cv-ink) 58%, transparent);
+  opacity: 0.8;
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   stroke-linecap: butt;
@@ -14047,7 +14047,7 @@ body[data-mode="light"] .am-canvas-pane {
 /* A branch is live while anything under it still runs, so the light shows where
    the work is rather than only where a single node sits. */
 .am-edge.is-live, .am-stem.is-live {
-  stroke: color-mix(in srgb, var(--cv-ink) 42%, transparent);
+  stroke: color-mix(in srgb, var(--cv-ink) 70%, transparent);
   opacity: 1;
   stroke-width: 1.5;
 }
@@ -14260,9 +14260,9 @@ body[data-mode="light"] .am-canvas-pane {
    the circle a shape and its mark enough to be read on its own face, and both
    stay under the one agent that ended badly. */
 .am-node.is-done .am-node-glyph {
-  border: 1px solid color-mix(in srgb, var(--cv-disc-line) 70%, transparent);
-  background: color-mix(in srgb, var(--cv-disc-a) 40%, var(--cv-floor));
-  color: color-mix(in srgb, var(--cv-ink) 74%, transparent);
+  border: 1.5px solid var(--cv-disc-line);
+  background: color-mix(in srgb, var(--cv-disc-a) 62%, var(--cv-floor));
+  color: color-mix(in srgb, var(--cv-ink) 80%, transparent);
   box-shadow: none;
 }
 
@@ -14402,10 +14402,10 @@ body[data-mode="light"] .am-canvas-pane {
 /* Selecting an agent lights the line back to what started it and turns
    everything else down. Nothing is hidden: the rest of the fleet stays on the
    field at a weight that keeps it readable as context. */
-.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.34; }
+.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.52; }
 .am-cv-stage.has-selection .am-edge:not(.is-onpath),
-.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.14; }
-.am-cv-stage.has-selection .am-flow { opacity: 0.2; }
+.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.28; }
+.am-cv-stage.has-selection .am-flow { opacity: 0.34; }
 .am-node, .am-edge, .am-stem, .am-flow {
   transition: opacity var(--motion-base) var(--ease);
 }

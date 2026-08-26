@@ -16713,7 +16713,7 @@ function amPaintCanvas() {
   }
   agentMap.lit = lit;
   const stage = $('#am-cv-stage');
-  if (stage) stage.classList.toggle('has-selection', lit.size > 1);
+  if (stage) stage.classList.toggle('has-selection', agentMap.focused && lit.size > 1);
 
   const seenEdges = new Set();
   for (const n of layout) {
@@ -17106,14 +17106,16 @@ async function endBgAgent(a, action) {
   if (action === 'remove') {
     agentMap.rows = agentMap.rows.filter((r) => r.id !== a.id);
     agentMap.selected = null;
+    agentMap.focused = false;
   }
   await amRefresh();
   refreshTopbarAgents();
 }
 
-function amSelect(id, { scroll = false } = {}) {
+function amSelect(id, { scroll = false, byUser = false } = {}) {
   if (agentMap.selected === id) return;
   agentMap.selected = id;
+  if (byUser) agentMap.focused = true;
   $$('#am-list .am-row').forEach((li) => {
     const on = li.dataset.amId === id;
     li.classList.toggle('is-selected', on);
@@ -17274,7 +17276,7 @@ $('#am-cv-topo') && $('#am-cv-topo').addEventListener('click', (e) => {
 $('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || e.target.closest('.am-cv-hud') || e.target.closest('.am-cv-topo')) return;
   const node = e.target.closest('.am-node');
-  if (node) { if (!node.classList.contains('is-holder')) amSelect(node.dataset.amId); return; }
+  if (node) { if (!node.classList.contains('is-holder')) amSelect(node.dataset.amId, { byUser: true }); return; }
   const pane = e.currentTarget;
   agentMap.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: agentMap.cam.x, oy: agentMap.cam.y, moved: false };
   pane.setPointerCapture(e.pointerId);
@@ -17364,7 +17366,7 @@ $('#am-cv-expand') && $('#am-cv-expand').addEventListener('click', () => {
 
 $('#am-list') && $('#am-list').addEventListener('click', (e) => {
   const li = e.target.closest('.am-row');
-  if (li) amSelect(li.dataset.amId);
+  if (li) amSelect(li.dataset.amId, { byUser: true });
 });
 $('#am-list') && $('#am-list').addEventListener('dblclick', (e) => {
   const li = e.target.closest('.am-row');
@@ -17390,7 +17392,7 @@ document.addEventListener('keydown', (e) => {
     const i = v.indexOf(agentMap.selected);
     const step = e.key === 'ArrowDown' ? 1 : -1;
     const next = i === -1 ? (step === 1 ? 0 : v.length - 1) : Math.min(v.length - 1, Math.max(0, i + step));
-    amSelect(v[next], { scroll: true });
+    amSelect(v[next], { scroll: true, byUser: true });
     return;
   }
   if (e.key === 'Enter' && !inSearch) {

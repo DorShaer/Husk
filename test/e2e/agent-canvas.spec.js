@@ -342,6 +342,11 @@ test('the source is drawn whole, on a field that is not empty', async () => {
 
   // The plate under a name is a backdrop for words, so it never paints over the
   // disc it belongs to. A plate that covers the source slices it in half.
+  // Cards arrive with an entrance that scales them, so a hit test taken while
+  // one is still running reads a disc that is not yet where it will be. Under a
+  // loaded machine that lands mid-animation, which is what made this flake.
+  await win.waitForFunction(() => !document.querySelector('.am-node.is-enter'), null, { timeout: 10_000 });
+  await win.waitForTimeout(120);
   const sliced = await win.evaluate(() => {
     const node = document.querySelector('.am-node.is-holder');
     const glyph = node.querySelector('.am-node-glyph');
