@@ -16083,7 +16083,9 @@ function amRimPoint(n, tx, ty) {
   const dx = tx - n.cx;
   const dy = ty - n.cy;
   const d = Math.hypot(dx, dy) || 1;
-  const r = n.rimR || AM_GLYPH_R;
+  // A stroke has width, and half of it falls outside the point it is drawn to,
+  // so a line told to stop exactly on the rim finishes under the ring.
+  const r = (n.rimR || AM_GLYPH_R) + (n.a && n.a.holder ? 4 : 3);
   return { x: n.cx + (dx / d) * r, y: n.cy + (dy / d) * r };
 }
 
@@ -16478,6 +16480,7 @@ function amPaintNode(el, n) {
   el.classList.toggle('is-failed', st === 'failed');
   el.classList.toggle('is-done', st === 'done');
   el.classList.toggle('is-selected', agentMap.selected === a.id);
+  el.classList.toggle('is-onpath', !!(agentMap.lit && agentMap.lit.has(a.id)));
   el.classList.toggle('is-root', n.depth === 0);
   el.classList.toggle('is-oneline', !!n.oneLine);
   el.setAttribute('aria-selected', agentMap.selected === a.id ? 'true' : 'false');
@@ -16700,6 +16703,18 @@ function amPaintCanvas() {
 
   agentMap.card = amCardMetrics();
 
+  // Everything between the selection and the source it came from. Selecting an
+  // agent then says where it came from, which is the reason this is a graph
+  // rather than a list.
+  const lit = new Set();
+  if (agentMap.selected) {
+    let cur = layout.find((n) => n.a.id === agentMap.selected);
+    while (cur) { lit.add(cur.a.id); cur = cur.parent; }
+  }
+  agentMap.lit = lit;
+  const stage = $('#am-cv-stage');
+  if (stage) stage.classList.toggle('has-selection', lit.size > 1);
+
   const seenEdges = new Set();
   for (const n of layout) {
     if (!n.parent || n.inBlock) continue;
@@ -16716,7 +16731,8 @@ function amPaintCanvas() {
       agentMap.edgeEls.set(key, path);
     }
     path.setAttribute('d', amEdgePath(n.parent, n));
-    path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}${brandNew && !agentMap.known.has(n.a.id) ? ' is-enter' : ''}`);
+    const onPath = lit.has(n.a.id) && n.parent && lit.has(n.parent.a.id);
+    path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}${onPath ? ' is-onpath' : ''}${brandNew && !agentMap.known.has(n.a.id) ? ' is-enter' : ''}`);
     if (brandNew) svg.appendChild(path);
   }
   for (const n of blocks) {
@@ -16771,7 +16787,6 @@ function amPaintCanvas() {
       spark.setAttribute('fill', 'none');
       agentMap.flowEls.set(key, spark);
       flowLayer.appendChild(spark);
-      spark.dataset.amPhase = '1';
     }
     spark.setAttribute('d', path.getAttribute('d'));
     // Speed is a distance over a time rather than a share of the path, so the
@@ -16782,10 +16797,9 @@ function amPaintCanvas() {
       spark.style.strokeDasharray = `4 ${Math.round(len)}`;
       spark.style.setProperty('--flow-run', `${Math.round(len + 4)}px`);
       spark.style.animationDuration = `${dur.toFixed(2)}s`;
-      if (spark.dataset.amPhase === '1') {
-        spark.style.animationDelay = `${(-(amHash(key) % 100) / 100 * dur).toFixed(2)}s`;
-        spark.dataset.amPhase = '0';
-      }
+      // The phase is a function of the branch, so it is written on every paint:
+      // it never moves for a given branch and no two branches start together.
+      spark.style.animationDelay = `${(-(amHash(key) % 97) / 97 * dur).toFixed(2)}s`;
     }
   }
   for (const [key, spark] of agentMap.flowEls) {

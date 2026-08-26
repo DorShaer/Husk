@@ -13938,7 +13938,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   /* The field is the page it sits on. A graph is a view of the work, not a
      separate instrument bolted into the window, so it takes the theme's ground
      and the theme's ink and stays one surface with everything around it. */
-  --cv-floor: var(--bg-3);
+  --cv-floor: color-mix(in srgb, var(--cv-ink) 7%, var(--bg));
+  --cv-void:  var(--cv-floor);
   --cv-ink:   var(--text);
   --cv-dim:   var(--text-2);
   --cv-off:   var(--text-3);
@@ -13954,8 +13955,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   --cv-fail: #e5484d;
   /* A disc is a chip of the theme's own surface, so it lifts off the field the
      same way every other raised thing in the app does. */
-  --cv-disc-a: var(--bg-1);
-  --cv-disc-b: var(--bg-1);
+  --cv-disc-a: color-mix(in srgb, var(--cv-ink) 18%, var(--bg));
+  --cv-disc-b: var(--cv-disc-a);
   /* The edge is what a reader takes the disc's shape from, so it carries enough
      ink to stand clear of the field without reading as a hairline. */
   --cv-disc-line: var(--cv-line-2);
@@ -13979,6 +13980,13 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   background: var(--cv-floor);
   cursor: grab;
   touch-action: none;
+}
+/* On paper the direction inverts: the field is a step below white and a disc is
+   white, rather than both being a step up from a dark ground. */
+body[data-mode="light"] .am-canvas-pane {
+  --cv-floor: #f2f2f2;
+  --cv-disc-a: #ffffff;
+  --cv-disc-b: #ffffff;
 }
 
 .am-canvas-pane.is-panning { cursor: grabbing; }
@@ -14115,8 +14123,9 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 /* Selection is a state of the interface, not a state of the work, so it is
    drawn in ink and never in a hue that already means something on the field. */
 .am-node-lock {
-  inset: -6px;
-  border: 1.5px solid color-mix(in srgb, var(--accent) 82%, transparent);
+  inset: -7px;
+  border: 2px solid var(--cv-ink);
+  box-shadow: inset 0 0 0 2px var(--cv-floor);
   transition: opacity var(--motion-fast) var(--ease);
 }
 
@@ -14125,14 +14134,14 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
    the name plate does, holding its size on screen from its outer corner where
    there is field rather than disc to grow into. */
 .am-node-kids {
-  position: absolute; right: -8px; bottom: -4px;
+  position: absolute; right: -7px; bottom: -7px;
   min-width: 19px; height: 19px; padding: 0 6px;
   display: grid; place-items: center;
   border: 1px solid color-mix(in srgb, var(--cv-ink) 16%, transparent);
   border-radius: var(--radius-pill);
   background: var(--cv-disc-a);
   color: color-mix(in srgb, var(--cv-ink) 76%, transparent);
-  box-shadow: 0 4px 12px -7px var(--cv-cast);
+  box-shadow: 0 0 0 2px var(--cv-floor), 0 4px 12px -7px var(--cv-cast);
   font-size: 10px; font-weight: 620; font-variant-numeric: tabular-nums;
   transform: scale(var(--cv-kscale, 1));
   transform-origin: 100% 100%;
@@ -14154,6 +14163,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 2px 0 3px;
+  padding: 2px 0 3px;
   background: none;
   transform: scale(var(--cv-tscale, 1));
   transform-origin: 50% 0;
@@ -14162,7 +14172,12 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
    running behind a name stays one line. */
 .am-node-plate .am-node-label,
 .am-node-plate .am-node-time {
-  text-shadow: 0 0 3px var(--cv-halo), 0 0 6px var(--cv-halo), 0 0 10px var(--cv-halo);
+  text-shadow:
+    1.5px 0 0 var(--cv-halo), -1.5px 0 0 var(--cv-halo),
+    0 1.5px 0 var(--cv-halo), 0 -1.5px 0 var(--cv-halo),
+    1px 1px 0 var(--cv-halo), -1px 1px 0 var(--cv-halo),
+    1px -1px 0 var(--cv-halo), -1px -1px 0 var(--cv-halo),
+    0 0 6px var(--cv-halo);
 }
 
 .am-node-label {
@@ -14170,7 +14185,6 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   font-size: 13px; font-weight: 560;
   letter-spacing: -0.012em; line-height: 1.25;
   color: color-mix(in srgb, var(--cv-ink) 88%, transparent); text-align: center;
-  text-wrap: balance;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: anywhere; hyphens: none;
 }
@@ -14205,7 +14219,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
    one colour and one weight in every state, so a label is a constant the eye
    can read rather than a sixth copy of a signal the disc already carries. */
 .am-node.is-running:not(.is-holder) .am-node-glyph {
-  border: 1.5px solid var(--cv-run);
+  border: 2px solid var(--cv-run);
   background: var(--cv-disc-a);
   color: var(--cv-run);
   box-shadow: var(--cv-disc-lift);
@@ -14217,24 +14231,25 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 /* An agent waiting on a person is the loudest thing on the field, because it is
    the only one the field can ask for. */
 .am-node.is-blocked:not(.is-holder) .am-node-glyph {
-  border: 1.5px solid var(--cv-wait);
-  background: color-mix(in srgb, var(--cv-wait) 8%, var(--cv-disc-a));
+  border: 2px solid var(--cv-wait);
+  background: color-mix(in srgb, var(--cv-wait) 10%, var(--cv-disc-a));
   color: var(--cv-wait);
-  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--cv-wait) 18%, transparent),
+  box-shadow: 0 0 0 var(--am-pulse, 4px) color-mix(in srgb, var(--cv-wait) 26%, transparent),
               var(--cv-disc-lift);
+  animation: am-pulse 1.9s var(--ease) infinite;
 }
-.am-node.is-blocked .am-node-halo {
-  opacity: 1; inset: -5px;
-  border: 1px solid color-mix(in srgb, var(--cv-wait) 62%, transparent);
-  background: none;
-  animation: am-breathe 1.7s var(--ease) infinite;
+@property --am-pulse { syntax: '<length>'; inherits: false; initial-value: 4px; }
+@keyframes am-pulse {
+  0%, 100% { --am-pulse: 2px; }
+  50% { --am-pulse: 7px; }
 }
+
 
 /* A failure is work that already ended, so it is drawn still and unlit, and it
    is the rarest thing on the field, so it carries a body of its own rather than
    the disc every finished agent already uses. No glow: glow means live. */
 .am-node.is-failed:not(.is-holder) .am-node-glyph {
-  border: 1.5px solid var(--cv-fail);
+  border: 2px solid var(--cv-fail);
   background: var(--cv-disc-a);
   color: var(--cv-fail);
   box-shadow: var(--cv-disc-lift);
@@ -14245,18 +14260,17 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
    the circle a shape and its mark enough to be read on its own face, and both
    stay under the one agent that ended badly. */
 .am-node.is-done .am-node-glyph {
-  border: 1.5px solid var(--cv-disc-line);
-  background: var(--cv-disc-a);
-  color: color-mix(in srgb, var(--cv-ink) 62%, transparent);
-  box-shadow: var(--cv-disc-lift);
+  border: 1px solid color-mix(in srgb, var(--cv-disc-line) 70%, transparent);
+  background: color-mix(in srgb, var(--cv-disc-a) 40%, var(--cv-floor));
+  color: color-mix(in srgb, var(--cv-ink) 74%, transparent);
+  box-shadow: none;
 }
 
 /* Hover. Declared after every state so it is the last word at equal weight, and
    carried on channels a state never writes: the disc rises a little and takes
    its own colour into a ring. */
 .am-node:hover:not(.is-holder) .am-node-glyph {
-  transform: scale(1.07);
-  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent),
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--cv-ink) 30%, transparent),
               0 6px 16px -8px var(--cv-cast);
 }
 .am-node:hover .am-node-label { color: var(--cv-ink); }
@@ -14291,7 +14305,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   width: 64px; height: 64px;
   border: none;
   background: var(--cv-ink);
-  color: var(--cv-floor);
+  color: var(--bg);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--cv-cast) 34%, transparent),
               0 10px 24px -12px var(--cv-cast);
 }
@@ -14300,6 +14314,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
    another ring: it is the one solid object on a field of outlines. */
 .am-node-mono {
   font-size: 15px; font-weight: 650; letter-spacing: 0.01em;
+  line-height: 1; transform: translateY(0.06em);
   color: inherit; text-transform: uppercase;
   font-variant-numeric: normal;
 }
@@ -14320,20 +14335,15 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 /* The count the source carries is the same badge every agent uses for the work
    it started, so it sits on the rim rather than on a line of its own. */
 .am-node.is-holder .am-node-kids {
-  right: -2px; bottom: -2px;
-  background: var(--cv-ink); color: var(--cv-floor);
-  border-color: transparent;
+  background: var(--cv-floor);
+  color: var(--cv-ink);
 }
-/* A chat with something still running is the live source of that work, and it
-   is the only reason anything about the core moves. */
-/* A project only stands in for a chat that is gone. It is the same core, turned
-   down: same currents, less light thrown onto the field around it. */
+/* A project only stands in for a chat that is gone, so it is the same source
+   disc turned down: it keeps the shape and gives up the weight. */
 .am-node.is-project .am-node-glyph {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--core-a) 14%, transparent),
-    inset 0 -12px 22px -14px var(--core-deep);
+  background: color-mix(in srgb, var(--cv-ink) 62%, var(--cv-floor));
+  box-shadow: 0 0 0 1px var(--cv-disc-line), 0 6px 16px -12px var(--cv-cast);
 }
-.am-node.is-project .am-node-halo { opacity: 0.6; }
 
 /* A workflow run. It is neither work nor the source the work came from: it is
    the dispatch a fleet was fanned out by, so it reads as its own kind of node,
@@ -14388,6 +14398,17 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
    to be looking at never reads as a state the fleet is in. */
 .am-node.is-selected .am-node-lock { opacity: 1; }
 .am-node.is-selected .am-node-halo { opacity: 0; animation: none; }
+
+/* Selecting an agent lights the line back to what started it and turns
+   everything else down. Nothing is hidden: the rest of the fleet stays on the
+   field at a weight that keeps it readable as context. */
+.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.34; }
+.am-cv-stage.has-selection .am-edge:not(.is-onpath),
+.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.14; }
+.am-cv-stage.has-selection .am-flow { opacity: 0.2; }
+.am-node, .am-edge, .am-stem, .am-flow {
+  transition: opacity var(--motion-base) var(--ease);
+}
 .am-node.is-selected .am-node-label { color: var(--cv-ink); }
 
 /* The region a wrapped set of agents occupies in the tree shape. A fan-out too
@@ -14453,8 +14474,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 .am-cv-tp:hover { color: var(--cv-ink); background: color-mix(in srgb, var(--cv-ink) 7%, transparent); }
 .am-cv-tp.is-active {
   color: var(--cv-ink);
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
+  background: var(--cv-disc-a);
+  box-shadow: 0 1px 2px -1px var(--cv-cast), inset 0 0 0 1px var(--cv-line);
 }
 .am-cv-tp:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
