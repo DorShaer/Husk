@@ -15255,9 +15255,9 @@ const AM_KSCALE_MAX = 1.7;
 // Radial geometry. The rim radii are the glyph sizes the stylesheet paints, so
 // a line stops on the edge of the circle it leaves rather than under it; the
 // pair moves together.
-const AM_GLYPH_R = 24;
-const AM_CORE_R = 27;
-const AM_RUN_R = 26;
+const AM_GLYPH_R = 28;
+const AM_CORE_R = 31;
+const AM_RUN_R = 30;
 
 // Where a line stops on each kind of node: the radius the stylesheet paints it
 // at. The pair moves together.
@@ -15269,7 +15269,7 @@ const AM_RING_0 = 168;
 const AM_RING_STEP = 128;
 // The arc one agent needs on its ring before its neighbours crowd it. A ring
 // that cannot give every agent on it this much is pushed further out.
-const AM_ARC_MIN = 138;
+const AM_ARC_MIN = 152;
 const AM_SYS_GAP = 150;
 
 // What a card claims on the field: the disc, then the plate hung under it. A
@@ -15941,7 +15941,11 @@ function amLayoutRadial(tree, box) {
     // Spacing is measured on the short axis of the ellipse, which is where two
     // neighbours sit closest together, and on the busiest system at that depth.
     const need = (Math.max(1, ...pending.map((q) => q.perDepth[d] || 1)) * AM_ARC_MIN) / (Math.PI * 2 * ay);
-    rings[d] = Math.max(rings[d - 1] + AM_RING_STEP, (rFill * d) / outer, need);
+    // A ring grows to fill the frame, but only up to what the generation on it
+    // needs with room to spare. Past that the frame is simply bigger than the
+    // fleet, and six agents on a six hundred pixel circle are six specks.
+    const comfort = Math.max(AM_RING_0 + (d - 1) * AM_RING_STEP, need * 1.5);
+    rings[d] = Math.max(rings[d - 1] + AM_RING_STEP, Math.min((rFill * d) / outer, comfort), need);
   }
   for (const q of pending) {
     for (const n of q.nodes) {
@@ -16427,7 +16431,7 @@ function amMonogram(name) {
 const AM_MARKS = {
   done: 'M5.2 12.4l4.3 4.25L18.8 7.4',
   blocked: 'M12 6.25v7.25M12 17.8h.01',
-  running: 'M18.25 12a6.25 6.25 0 1 0-2.6 5.07',
+  running: 'M14.6 6.29a6.25 6.25 0 1 1-4.45 0.13',
   failed: 'M8.5 8.5l7 7M15.5 8.5l-7 7',
 };
 

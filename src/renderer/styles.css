@@ -13955,7 +13955,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   --cv-fail: #e5484d;
   /* A disc is a chip of the theme's own surface, so it lifts off the field the
      same way every other raised thing in the app does. */
-  --cv-disc-a: color-mix(in srgb, var(--cv-ink) 18%, var(--bg));
+  --cv-disc-a: color-mix(in srgb, var(--cv-ink) 20%, var(--bg));
   --cv-disc-b: var(--cv-disc-a);
   /* The edge is what a reader takes the disc's shape from, so it carries enough
      ink to stand clear of the field without reading as a hairline. */
@@ -14047,9 +14047,9 @@ body[data-mode="light"] .am-canvas-pane {
 /* A branch is live while anything under it still runs, so the light shows where
    the work is rather than only where a single node sits. */
 .am-edge.is-live, .am-stem.is-live {
-  stroke: color-mix(in srgb, var(--cv-run) 70%, transparent);
+  stroke: color-mix(in srgb, var(--cv-run) 46%, var(--cv-line));
   opacity: 1;
-  stroke-width: 1.75;
+  stroke-width: 1.5;
 }
 .am-edge.is-enter {
   stroke-dasharray: 1 1;
@@ -14095,19 +14095,20 @@ body[data-mode="light"] .am-canvas-pane {
   position: relative;
   z-index: 1;
   display: grid; place-items: center;
-  width: 48px; height: 48px;
+  width: 56px; height: 56px;
   border: 1px solid var(--cv-disc-line);
   border-radius: 50%;
   background: var(--cv-disc-a);
   color: color-mix(in srgb, var(--cv-ink) 78%, transparent);
-  box-shadow: var(--cv-disc-lift);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--cv-ink) 12%, transparent),
+              var(--cv-disc-lift);
   transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease),
               color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease-out);
 }
-.am-node-mark { width: 19.5px; height: 19.5px; overflow: visible; position: relative; }
+.am-node-mark { width: 24px; height: 24px; overflow: visible; position: relative; }
 /* A mark cut out of a solid body is read off the colour around it, so it is
    drawn heavy enough to survive the camera's own scale. */
-.am-node:is(.is-running, .is-blocked, .is-failed):not(.is-holder) .am-node-mark { stroke-width: 2.3; }
+.am-node:is(.is-running, .is-blocked, .is-failed):not(.is-holder) .am-node-mark { stroke-width: 2.6; }
 
 /* Two layers of light, both off until a state turns one on: a bloom around the
    disc, which only live work lights, and the ring that marks what is selected.
@@ -14134,15 +14135,15 @@ body[data-mode="light"] .am-canvas-pane {
    the name plate does, holding its size on screen from its outer corner where
    there is field rather than disc to grow into. */
 .am-node-kids {
-  position: absolute; right: -7px; bottom: -7px;
-  min-width: 19px; height: 19px; padding: 0 6px;
+  position: absolute; right: -5px; bottom: -5px;
+  min-width: 20px; height: 20px; padding: 0 6px;
   display: grid; place-items: center;
   border: 1px solid color-mix(in srgb, var(--cv-ink) 16%, transparent);
   border-radius: var(--radius-pill);
   background: var(--cv-disc-a);
   color: color-mix(in srgb, var(--cv-ink) 76%, transparent);
   box-shadow: 0 0 0 2px var(--cv-floor), 0 4px 12px -7px var(--cv-cast);
-  font-size: 10px; font-weight: 620; font-variant-numeric: tabular-nums;
+  font-size: 10.5px; font-weight: 620; font-variant-numeric: tabular-nums;
   transform: scale(var(--cv-kscale, 1));
   transform-origin: 100% 100%;
 }
@@ -14227,7 +14228,7 @@ body[data-mode="light"] .am-canvas-pane {
    the only one the field can ask for. */
 .am-node.is-blocked:not(.is-holder) .am-node-glyph {
   border: 2px solid var(--cv-wait);
-  background: color-mix(in srgb, var(--cv-wait) 10%, var(--cv-disc-a));
+  background: color-mix(in srgb, var(--cv-wait) 14%, var(--cv-disc-a));
   color: var(--cv-wait);
   box-shadow: 0 0 0 var(--am-pulse, 4px) color-mix(in srgb, var(--cv-wait) 26%, transparent),
               var(--cv-disc-lift);
@@ -14298,9 +14299,9 @@ body[data-mode="light"] .am-canvas-pane {
    larger and carrying the accent, because it is not an agent and it never runs:
    nothing about it should read as a state. */
 .am-node.is-holder .am-node-glyph {
-  width: 54px; height: 54px;
+  width: 62px; height: 62px;
   border: none;
-  background: color-mix(in srgb, var(--cv-ink) 88%, var(--cv-floor));
+  background: var(--cv-ink);
   color: var(--bg);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--cv-cast) 34%, transparent),
               0 10px 24px -12px var(--cv-cast);
@@ -14309,7 +14310,7 @@ body[data-mode="light"] .am-canvas-pane {
    agent and it has no state, so it is told apart by weight rather than by
    another ring: it is the one solid object on a field of outlines. */
 .am-node-mono {
-  font-size: 15px; font-weight: 650; letter-spacing: 0.01em;
+  font-size: 17px; font-weight: 650; letter-spacing: 0.01em;
   line-height: 1; transform: translateY(0.06em);
   color: inherit; text-transform: uppercase;
   font-variant-numeric: normal;
