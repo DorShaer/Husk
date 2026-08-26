@@ -16213,10 +16213,27 @@ function amCullLabels(eff) {
   }
 }
 
+// A pan changes where the field is, not how big anything on it is. Everything
+// that depends on scale alone is left alone while the camera is only moving,
+// which is what keeps a drag on the frame instead of behind it.
 function amApplyCam() {
+  // The readout is one number and a person just asked for it, so it is written
+  // now. Everything else waits for the frame.
+  const zl = $('#am-cv-zoom');
+  if (zl) zl.textContent = `${Math.round(agentMap.cam.k * 100)}%`;
+  if (agentMap.camFrame) return;
+  agentMap.camFrame = requestAnimationFrame(() => {
+    agentMap.camFrame = 0;
+    amPaintCam();
+  });
+}
+
+function amPaintCam() {
   const stage = $('#am-cv-stage');
   const grid = $('#am-cv-grid');
   const { x, y, k } = agentMap.cam;
+  const scaled = agentMap.lastK !== k;
+  agentMap.lastK = k;
   if (stage) {
     stage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
     // A name is drawn at its own size and is never allowed below the size it
@@ -16224,6 +16241,7 @@ function amApplyCam() {
     // scale as the floor needs and no more. Taking back less than the whole
     // scale is what keeps a name inside the room the layout reserved for it.
     const ts = Math.min(AM_TSCALE_MAX, Math.max(1, AM_READ_PX / (AM_LABEL_PX * k)));
+    if (scaled) {
     stage.style.setProperty('--cv-tscale', String(ts));
     // Past the point where the camera outruns the plate, the smallest type on
     // the card goes first and the name goes last, because type drawn under
@@ -16234,16 +16252,18 @@ function amApplyCam() {
     stage.style.setProperty('--cv-kscale', String(ks));
     stage.classList.toggle('is-countless', AM_KIDS_PX * k * ks < AM_TIME_FLOOR_PX);
     amCullLabels(k * ts);
+    }
   }
   // The grid is painted on the pane rather than the stage, so it scrolls with
   // the camera instead of scaling its own dots into blobs.
   if (grid) {
-    const s = 26 * k;
-    grid.style.backgroundSize = `${s}px ${s}px`;
+    if (scaled) {
+      const s = 26 * k;
+      grid.style.backgroundSize = `${s}px ${s}px`;
+    }
     grid.style.backgroundPosition = `${x}px ${y}px`;
   }
-  const zl = $('#am-cv-zoom');
-  if (zl) zl.textContent = `${Math.round(k * 100)}%`;
+
 }
 
 function amClampCam() {
