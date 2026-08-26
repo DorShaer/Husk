@@ -15200,7 +15200,7 @@ function amPaintList() {
 // tracks and the label hangs under it, so the card is small enough that a wide
 // generation still fits across the pane.
 const AM_CELL_W = 132;
-const AM_CELL_H = 146;
+const AM_CELL_H = 134;
 // Where a card's ink ends: glyph, then label, then the line under it. Used as
 // the first guess before a painted card is measured.
 const AM_NODE_BOT = 124;
@@ -15217,6 +15217,7 @@ const amRowY = (depth) => depth * AM_CELL_H + (depth ? AM_ROOT_DROP : 0);
 const AM_ONE_LINE_MAX = 16;
 const AM_ONE_LINE_TRIM = 22;
 const AM_FIT_PAD = 44;
+const AM_FIT_INSET = { t: 56, r: 44, b: 64, l: 44 };
 const AM_ZOOM_MIN = 0.35;
 const AM_ZOOM_MAX = 1.8;
 // Framing never magnifies a fleet that already fits, so 100 percent is the
@@ -15224,7 +15225,8 @@ const AM_ZOOM_MAX = 1.8;
 // cards is the exception: it is given the room it has rather than left as a
 // stamp in the middle of an empty field.
 const AM_FIT_MAX = 1;
-const AM_FIT_MAX_TINY = 1;
+const AM_FIT_MAX_TINY = 1.5;
+const AM_FIT_MAX_SMALL = 1.2;
 // Guards a parent chain that loops: layout walks depth-first, so a cycle would
 // recurse forever without a ceiling on top of the visited set.
 const AM_DEPTH_MAX = 24;
@@ -15254,7 +15256,7 @@ const AM_KSCALE_MAX = 1.7;
 // a line stops on the edge of the circle it leaves rather than under it; the
 // pair moves together.
 const AM_GLYPH_R = 24;
-const AM_CORE_R = 34;
+const AM_CORE_R = 32;
 const AM_RUN_R = 26;
 
 // Where a line stops on each kind of node: the radius the stylesheet paints it
@@ -15269,11 +15271,7 @@ const AM_RING_STEP = 128;
 // that cannot give every agent on it this much is pushed further out.
 const AM_ARC_MIN = 138;
 const AM_SYS_GAP = 150;
-// The pane is close to twice as wide as it is tall, so the rings are drawn as
-// ellipses in that proportion. A generation then spreads across the width the
-// field actually has instead of leaving both flanks empty to keep a circle.
-const AM_RING_AX = 1.55;
-const AM_RING_AY = 0.82;
+
 // What a card claims on the field: the disc, then the plate hung under it. A
 // disc never lands inside another card's plate, which is what this box is for.
 // The plate is 112 by 52 at rest and grows as the camera pulls back, so the
@@ -15410,7 +15408,7 @@ function amBuildTree(rows, chats, runs) {
 // Tidy tree, top down: depth sets y, a running cursor lays leaves out across the
 // x axis, and a parent centres over the span of its children. Generations read
 // as rows, which is how a spawn tree is understood.
-function amLayout(tree, aspect = 1.9) {
+function amLayout(tree, aspect = 1.9, paneW = 0) {
   const out = [];
   const placed = new Set();
   let cursor = 0;
@@ -15436,11 +15434,24 @@ function amLayout(tree, aspect = 1.9) {
     }
     const leaves = children.filter((c) => !hasKids(c));
     if (leaves.length) {
-      // A pair always stands side by side: a column of two would be drawn as a
-      // region, and two cards are a row, not a fan-out.
-      const perRow = Math.max(leaves.length > 1 ? 2 : 1, Math.round(Math.sqrt(
-        leaves.length * aspect * AM_BLOCK_LEAN * (AM_CELL_H / AM_CELL_W),
-      )) || 1);
+      // How many cards stand side by side. The pane is wider than it is tall, so
+      // the shape that fills it is the one whose own proportion is closest to
+      // the pane's, and it is found by trying each width rather than guessed
+      // from a square root that leaned tall on purpose. A pair always stands
+      // side by side: a column of two would be drawn as a region, and two cards
+      // are a row, not a fan-out.
+      const perRow = (() => {
+        const roomCols = Math.max(1, Math.floor(((paneW || 900) - AM_FIT_INSET.l - AM_FIT_INSET.r) / AM_CELL_W));
+        const top = Math.min(leaves.length, roomCols);
+        let best = Math.max(leaves.length > 1 ? 2 : 1, 1);
+        let bestOff = Infinity;
+        for (let cols = 1; cols <= top; cols += 1) {
+          const rows = Math.ceil(leaves.length / cols);
+          const off = Math.abs(((cols * AM_CELL_W) / (rows * AM_CELL_H)) - aspect);
+          if (off < bestOff) { bestOff = off; best = cols; }
+        }
+        return Math.max(leaves.length > 1 ? 2 : 1, best);
+      })();
       // A wrapped set is drawn as a region, and the region is wider than the
       // cards inside it, so the gutter is opened before the first card as well
       // as after the last one. What is outside a region always clears it by
@@ -15454,11 +15465,18 @@ function amLayout(tree, aspect = 1.9) {
       const shared = amSharedPhrase(leaves.map((c) => c.name || c.id || ''));
       const oneLine = !!shared && shared.short.every((t) => t.length <= AM_ONE_LINE_MAX);
       const pitch = oneLine ? AM_CELL_H - AM_ONE_LINE_TRIM : AM_CELL_H;
+      // A trailing row that does not fill its width is centred under the rows
+      // above it, so a fan of five is a block rather than a block with a corner
+      // knocked off.
+      const rowsTotal = Math.ceil(leaves.length / perRow);
+      const tail = leaves.length % perRow;
+      const tailShift = tail ? ((perRow - tail) * AM_CELL_W) / 2 : 0;
       leaves.forEach((c, i) => {
         const r = walk(c, depth + 1, node);
         if (!r) return;
-        r.x = startX + (i % perRow) * AM_CELL_W;
-        r.y = amRowY(depth + 1) + Math.floor(i / perRow) * pitch;
+        const row = Math.floor(i / perRow);
+        r.x = startX + (i % perRow) * AM_CELL_W + (row === rowsTotal - 1 ? tailShift : 0);
+        r.y = amRowY(depth + 1) + row * pitch;
         if (shared) r.short = shared.short[i];
         r.oneLine = oneLine;
         grid.push(r);
@@ -15842,10 +15860,11 @@ function amSeparateRadial(nodes) {
 // started is thrown outward, one ring per generation. A fleet is then read the
 // way it actually behaves, as a source and its reach, and a wide fan-out gets
 // the whole circumference to spread across instead of one page-wide row.
-function amLayoutRadial(tree) {
+function amLayoutRadial(tree, box) {
   const out = [];
   const placed = new Set();
   const systems = [];
+  const pending = [];
 
   // What a subtree needs on its ring: a leaf takes one slot, a branch takes the
   // sum of its own. Angle is handed out in that proportion, so a fan gets the
@@ -15866,7 +15885,7 @@ function amLayoutRadial(tree) {
       placed.add(a.id);
       const n = {
         a, depth, parent, x: 0, y: 0, cx: 0, cy: 0, ox: 0, oy: 0,
-        ang: depth ? (a0 + a1) / 2 : 0,
+        ang: depth ? a0 : 0,
         rimR: amRimOf(a),
         live: window.husk.agents.isLive(a.state), kids: 0,
       };
@@ -15897,30 +15916,52 @@ function amLayoutRadial(tree) {
     // where the eye already is.
     if (!walk(root, 0, null, -Math.PI / 2, Math.PI * 1.5)) continue;
 
-    const rings = [0];
-    for (let d = 1; d < perDepth.length; d += 1) {
-      // Spacing is measured on the short axis of the ellipse, which is where
-      // two neighbours sit closest together.
-      const need = ((perDepth[d] || 1) * AM_ARC_MIN) / (Math.PI * 2 * AM_RING_AY);
-      rings[d] = Math.max(rings[d - 1] + AM_RING_STEP, AM_RING_0 + (d - 1) * AM_RING_STEP, need);
-    }
-    for (const n of nodes) {
+    // How much room the frame actually has, once the floating chrome and the
+    // half card that hangs off each edge are taken out of it. The ellipse then
+    // matches the shape of the room rather than a fixed proportion.
+    const INS = AM_FIT_INSET;
+    const roomX = Math.max(120, ((box && box.width ? box.width : 900) - INS.l - INS.r) / 2 - AM_PLATE_W / 2);
+    const roomY = Math.max(90, ((box && box.height ? box.height : 620) - INS.t - INS.b - (AM_NODE_H + AM_GLYPH_R)) / 2);
+    const ay = Math.max(0.62, Math.min(1, roomY / roomX));
+    pending.push({ nodes, perDepth, ay, roomX, roomY });
+  }
+
+  // Rings are shared by every system on the field. A generation means the same
+  // distance from whatever started it, so two sources standing side by side put
+  // their first generation on one circle rather than on two different ones.
+  const depths = Math.max(1, ...pending.map((q) => q.perDepth.length));
+  const ax = 1;
+  const ay = pending.length ? Math.min(...pending.map((q) => q.ay)) : 1;
+  const roomX = pending.length ? Math.min(...pending.map((q) => q.roomX)) : 400;
+  const roomY = pending.length ? Math.min(...pending.map((q) => q.roomY)) : 260;
+  const outer = Math.max(1, depths - 1);
+  const rFill = Math.min(roomX / ax, roomY / ay) / Math.max(1, pending.length);
+  const rings = [0];
+  for (let d = 1; d < depths; d += 1) {
+    // Spacing is measured on the short axis of the ellipse, which is where two
+    // neighbours sit closest together, and on the busiest system at that depth.
+    const need = (Math.max(1, ...pending.map((q) => q.perDepth[d] || 1)) * AM_ARC_MIN) / (Math.PI * 2 * ay);
+    rings[d] = Math.max(rings[d - 1] + AM_RING_STEP, (rFill * d) / outer, need);
+  }
+  for (const q of pending) {
+    for (const n of q.nodes) {
       const r = rings[n.depth] || 0;
       n.ring = r;
-      n.cx = Math.cos(n.ang) * r * AM_RING_AX;
-      n.cy = Math.sin(n.ang) * r * AM_RING_AY;
+      n.cx = Math.cos(n.ang) * r * ax;
+      n.cy = Math.sin(n.ang) * r * ay;
     }
-    amSeparateRadial(nodes);
-    systems.push({ nodes, rings, perDepth, radius: rings[rings.length - 1] || 0, ox: 0, oy: 0 });
+    amSeparateRadial(q.nodes);
+    const radius = rings[Math.max(0, q.perDepth.length - 1)] || 0;
+    systems.push({ nodes: q.nodes, rings, perDepth: q.perDepth, ax, ay, radius, ox: 0, oy: 0 });
   }
 
   // Each root holds its own system, so they sit side by side on one axis with
   // clear space between them rather than sharing a centre.
   let tallest = 0;
-  for (const sys of systems) tallest = Math.max(tallest, sys.radius * AM_RING_AY);
+  for (const sys of systems) tallest = Math.max(tallest, sys.radius * sys.ay);
   let cursor = 0;
   for (const sys of systems) {
-    const halfW = sys.radius * AM_RING_AX;
+    const halfW = sys.radius * sys.ax;
     sys.ox = cursor + halfW;
     sys.oy = tallest;
     cursor += halfW * 2 + AM_SYS_GAP;
@@ -16032,11 +16073,17 @@ function amBlockRect(n) {
 
 // Where a line leaves a circle: the point on the rim facing wherever the line
 // is headed, plus a hair of clear air so the stroke never touches the glyph.
+function amHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
 function amRimPoint(n, tx, ty) {
   const dx = tx - n.cx;
   const dy = ty - n.cy;
   const d = Math.hypot(dx, dy) || 1;
-  const r = (n.rimR || AM_GLYPH_R) + 4;
+  const r = n.rimR || AM_GLYPH_R;
   return { x: n.cx + (dx / d) * r, y: n.cy + (dy / d) * r };
 }
 
@@ -16139,6 +16186,7 @@ function amCullLabels(eff) {
     discs.push({ x: mid - (glyph * k) / 2, y: n.y * k, w: glyph * k, h: glyph * k });
     boxes.push({
       el,
+      holder: !!n.a.holder,
       // The disc this plate belongs to, so a name is never judged to be covering
       // the very card it names.
       own: discs.length - 1,
@@ -16155,7 +16203,11 @@ function amCullLabels(eff) {
     // A disc is the card itself and always outranks a neighbour's name, so a
     // plate that would cover one steps aside the same way it does for another
     // plate that got there first.
-    const hit = discs.some((d, i) => i !== b.own && amHits(b, d)) || kept.some((o) => amHits(b, o));
+    // The source is never given up. It is the one node whose name says what the
+    // whole field is, so a crowded ring costs an agent its name before it costs
+    // the thing that started them all.
+    const hit = !b.holder
+      && (discs.some((d, i) => i !== b.own && amHits(b, d)) || kept.some((o) => amHits(b, o)));
     b.el.classList.toggle('is-nameless', hit);
     if (!hit) kept.push(b);
   }
@@ -16194,6 +16246,34 @@ function amApplyCam() {
   if (zl) zl.textContent = `${Math.round(k * 100)}%`;
 }
 
+function amClampCam() {
+  const pane = $('#am-canvas-pane');
+  const nodes = agentMap.layout;
+  if (!pane || !nodes.length) return;
+  const r = { width: pane.clientWidth, height: pane.clientHeight };
+  if (!r.width || !r.height) return;
+  const cardH = Math.max(AM_NODE_H, (agentMap.card || {}).bottom || 0, (agentMap.card || {}).bottomLg || 0);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + AM_NODE_W);
+    maxY = Math.max(maxY, n.y + cardH);
+  }
+  const cam = agentMap.cam;
+  const keep = 0.25;
+  const w = Math.max(1, (maxX - minX) * cam.k);
+  const h = Math.max(1, (maxY - minY) * cam.k);
+  const left = minX * cam.k;
+  const top = minY * cam.k;
+  cam.x = Math.min(r.width - w * keep - left, Math.max(-left - w * (1 - keep) + r.width * 0, cam.x));
+  cam.x = Math.max(r.width * keep - left - w, Math.min(r.width - w * keep - left, cam.x));
+  cam.y = Math.max(r.height * keep - top - h, Math.min(r.height - h * keep - top, cam.y));
+}
+
 function amZoomTo(k, cx, cy) {
   const pane = $('#am-canvas-pane');
   if (!pane) return;
@@ -16217,22 +16297,42 @@ function amFit(animate) {
   // read mid-entrance carries that scale into the framing.
   const r = { width: pane.clientWidth, height: pane.clientHeight };
   if (!r.width || !r.height) return;
-  let maxX = 0;
-  let maxY = 0;
+  // Both extremes, not just the far ones: a shape that starts at x = 52 is not
+  // a shape that starts at zero, and centring it as though it did walks the
+  // whole graph off the middle of the pane.
   const cardH = Math.max(AM_NODE_H, (agentMap.card || {}).bottom || 0, (agentMap.card || {}).bottomLg || 0);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
   for (const n of nodes) {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
     maxX = Math.max(maxX, n.x + AM_NODE_W);
     maxY = Math.max(maxY, n.y + cardH);
+    if (n.block) {
+      minX = Math.min(minX, n.block.x - AM_BLOCK_PAD);
+      minY = Math.min(minY, n.block.y - AM_BLOCK_TOP);
+      maxX = Math.max(maxX, n.block.x + n.block.w + AM_BLOCK_PAD);
+      maxY = Math.max(maxY, n.block.y + n.block.h + AM_BLOCK_PAD);
+    }
   }
-  const fitMax = nodes.length <= 2 ? AM_FIT_MAX_TINY : AM_FIT_MAX;
-  const k = Math.min(fitMax, (r.width - AM_FIT_PAD * 2) / maxX, (r.height - AM_FIT_PAD * 2) / maxY);
+  const w = Math.max(1, maxX - minX);
+  const h = Math.max(1, maxY - minY);
+  const INS = AM_FIT_INSET;
+  const fw = r.width - INS.l - INS.r;
+  const fh = r.height - INS.t - INS.b;
+  const fitMax = nodes.length <= 2 ? AM_FIT_MAX_TINY
+    : nodes.length <= 6 ? AM_FIT_MAX_SMALL : AM_FIT_MAX;
+  const k = Math.min(fitMax, fw / w, fh / h);
   const cam = agentMap.cam;
   cam.k = Math.max(AM_ZOOM_MIN, k);
-  cam.x = (r.width - maxX * cam.k) / 2;
-  const spareY = Math.max(0, r.height - maxY * cam.k);
-  cam.y = nodes.length <= 2
-    ? spareY / 2 - Math.min(16, spareY * 0.04)
-    : spareY / 2 - Math.min(30, spareY * 0.12);
+  cam.x = INS.l + (fw - w * cam.k) / 2 - minX * cam.k;
+  // The optical lift is a share of the ink rather than a share of the void, so
+  // a graph in a frame it nearly fills is not pushed off centre by the little
+  // room that is left.
+  const spareY = Math.max(0, fh - h * cam.k);
+  cam.y = INS.t + spareY / 2 - Math.min(h * cam.k * 0.035, spareY / 2) - minY * cam.k;
   const stage = $('#am-cv-stage');
   if (stage) {
     stage.classList.toggle('is-gliding', !!animate);
@@ -16285,6 +16385,7 @@ function amNodeEl(a) {
     + '<i class="am-node-ring" aria-hidden="true"></i>'
     + '<i class="am-node-lock" aria-hidden="true"></i>'
     + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
+    + '<b class="am-node-mono"></b>'
     + '<b class="am-node-kids"></b></span>'
     + '<span class="am-node-plate">'
     + '<span class="am-node-label"></span>'
@@ -16294,10 +16395,17 @@ function amNodeEl(a) {
 
 // The glyph says state without a legend: a check for finished, an exclamation
 // for waiting on a human, a ring for work in flight.
+function amMonogram(name) {
+  const words = String(name || '').trim().split(/[\s._/-]+/).filter(Boolean);
+  if (!words.length) return '?';
+  if (words.length === 1) return words[0].slice(0, 1);
+  return (words[0][0] || '') + (words[1][0] || '');
+}
+
 const AM_MARKS = {
   done: 'M5.2 12.4l4.3 4.25L18.8 7.4',
   blocked: 'M12 6.25v7.25M12 17.8h.01',
-  running: 'M12 5.75a6.25 6.25 0 1 1 0 12.5 6.25 6.25 0 0 1 0-12.5z',
+  running: 'M18.25 12a6.25 6.25 0 1 0-2.6 5.07',
   failed: 'M8.5 8.5l7 7M15.5 8.5l-7 7',
 };
 
@@ -16365,12 +16473,14 @@ function amPaintNode(el, n) {
   }
   const rawName = a.name || a.id || 'agent';
   const shown = n.short || rawName;
-  el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? shown : amCanvasLabel(shown);
+  el.querySelector('.am-node-label').textContent = shown;
+  const mono = el.querySelector('.am-node-mono');
+  mono.textContent = a.holder ? amMonogram(rawName) : '';
   const time = el.querySelector('.am-node-time');
   if (a.holder) {
-    // The core says which chat or project it is; the line under it says how far
-    // its work reached, so nothing has to sit on the sphere itself.
-    time.textContent = n.kids === 1 ? '1 agent' : `${n.kids} agents`;
+    // The count the source carries rides the same rim badge every agent uses,
+    // so the source keeps one line of name and nothing hangs under it.
+    time.textContent = '';
     time.dataset.amLive = '0';
     time.dataset.amTs = '0';
   } else {
@@ -16384,9 +16494,7 @@ function amPaintNode(el, n) {
   const kids = el.querySelector('.am-node-kids');
   // The core counts the agents that ran under it, the same number the footer
   // states; an agent counts what it started.
-  // A core carries its count on the line under its name, so the rim badge is an
-  // agent-only mark and never lands on the sphere.
-  const badge = a.holder ? 0 : n.kids;
+  const badge = n.kids;
   kids.textContent = badge ? String(badge) : '';
   kids.hidden = !badge;
   // The whole card is the tooltip: the name in full plus what it is doing.
@@ -16410,7 +16518,7 @@ function amPaintOrbits(svg, radial) {
     // generation standing on it.
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('transform',
-      `translate(${sys.ox.toFixed(1)} ${sys.oy.toFixed(1)}) scale(${AM_RING_AX} ${AM_RING_AY})`);
+      `translate(${sys.ox.toFixed(1)} ${sys.oy.toFixed(1)}) scale(${sys.ax} ${sys.ay})`);
     const ring = (r, cls) => {
       const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       c.setAttribute('class', cls);
@@ -16454,7 +16562,7 @@ function amPaintCanvas() {
   const tree = amBuildTree(rows, agentMap.chats, agentMap.runs);
   const radial = agentMap.topo === 'radial';
   agentMap.systems = [];
-  const layout = radial ? amLayoutRadial(tree) : amLayout(tree, aspect);
+  const layout = radial ? amLayoutRadial(tree, box) : amLayout(tree, aspect, box.width);
   const sparse = !radial && amPolishSparseLayout(layout);
   agentMap.layout = layout;
   pane.classList.toggle('is-radial', radial);
@@ -16628,17 +16736,43 @@ function amPaintCanvas() {
     flowLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     flowLayer.setAttribute('id', 'am-cv-flow');
   }
-  const sparks = [];
-  for (const [, path] of agentMap.edgeEls) {
+  // The pips are kept the way the edges under them are kept. A fresh element
+  // starts its animation at offset zero, so rebuilding the layer on every poll
+  // snapped every pip back to the source at once and locked them all in phase.
+  if (!agentMap.flowEls) agentMap.flowEls = new Map();
+  const liveKeys = new Set();
+  for (const [key, path] of agentMap.edgeEls) {
     if (!path.classList.contains('is-live')) continue;
-    const spark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    spark.setAttribute('class', 'am-flow');
-    spark.setAttribute('fill', 'none');
-    spark.setAttribute('pathLength', '1');
+    liveKeys.add(key);
+    let spark = agentMap.flowEls.get(key);
+    if (!spark) {
+      spark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      spark.setAttribute('class', 'am-flow');
+      spark.setAttribute('fill', 'none');
+      agentMap.flowEls.set(key, spark);
+      flowLayer.appendChild(spark);
+      spark.dataset.amPhase = '1';
+    }
     spark.setAttribute('d', path.getAttribute('d'));
-    sparks.push(spark);
+    // Speed is a distance over a time rather than a share of the path, so the
+    // pip on a short stem and the pip on a long spoke travel at one rate.
+    const len = typeof spark.getTotalLength === 'function' ? spark.getTotalLength() : 0;
+    if (len) {
+      const dur = len / 90;
+      spark.style.strokeDasharray = `4 ${Math.round(len)}`;
+      spark.style.setProperty('--flow-run', `${Math.round(len + 4)}px`);
+      spark.style.animationDuration = `${dur.toFixed(2)}s`;
+      if (spark.dataset.amPhase === '1') {
+        spark.style.animationDelay = `${(-(amHash(key) % 100) / 100 * dur).toFixed(2)}s`;
+        spark.dataset.amPhase = '0';
+      }
+    }
   }
-  flowLayer.replaceChildren(...sparks);
+  for (const [key, spark] of agentMap.flowEls) {
+    if (liveKeys.has(key)) continue;
+    spark.remove();
+    agentMap.flowEls.delete(key);
+  }
   // Last, so the travelling stroke sits over the line it belongs to and over
   // every edge added since the layer was made.
   svg.appendChild(flowLayer);
@@ -17146,13 +17280,18 @@ $('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('dblclick', (e) =>
 // Shift holds it to panning for anyone who wants to slide the frame instead.
 $('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('wheel', (e) => {
   e.preventDefault();
-  if (e.shiftKey) {
-    agentMap.cam.x -= e.deltaX || e.deltaY;
-    agentMap.cam.y -= e.shiftKey && !e.deltaX ? 0 : e.deltaY;
-    amApplyCam();
+  // A bare wheel is a two finger scroll on a trackpad, which every canvas in
+  // this class treats as a pan. A pinch arrives as a wheel with ctrl held, and
+  // a mouse wheel with a modifier is the same gesture on hardware that has no
+  // pinch, so those are the ones that zoom.
+  if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    amZoomTo(agentMap.cam.k * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
     return;
   }
-  amZoomTo(agentMap.cam.k * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
+  agentMap.cam.x -= e.deltaX;
+  agentMap.cam.y -= e.deltaY;
+  amClampCam();
+  amApplyCam();
 }, { passive: false });
 
 $('#am-cv-in') && $('#am-cv-in').addEventListener('click', () => amZoomTo(agentMap.cam.k * 1.25));

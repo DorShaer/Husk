@@ -297,7 +297,7 @@ test('the radial shape throws the fleet onto rings around the source', async () 
   await expect(win.locator('[data-am-topo="radial"]')).toHaveClass(/is-active/);
 
   const at = await win.evaluate(() => Object.fromEntries(agentMap.layout.map((n) => [n.a.id, {   // eslint-disable-line no-undef
-    depth: n.depth, r: Math.round(Math.hypot(n.cx - n.ox, n.cy - n.oy)),
+    depth: n.depth, r: Math.round(n.ring || 0),
   }])));
   // The chat that started the work holds the centre, and everything it started
   // is out on a ring, one ring per generation, each further out than the last.
@@ -362,24 +362,28 @@ test('the source is drawn whole, on a field that is not empty', async () => {
   expect(sliced.clear, 'the name plate overlaps the disc it hangs under').toBe(true);
   expect(sliced.onGlyph, `something paints over the source: hit ${sliced.tag}`).toBe(true);
 
-  // The field carries its own far dust, so the ground is never a flat void.
-  const dust = await win.evaluate(() => {
-    const cs = getComputedStyle(document.querySelector('#am-canvas-pane'), '::before');
-    return { opacity: Number(cs.opacity), image: cs.backgroundImage };
-  });
-  expect(dust.opacity).toBeGreaterThan(0);
-  expect(dust.image).toContain('radial-gradient');
-
-  // And the dot grid is what makes it read as a canvas, so it gives way to the
-  // rings without leaving the field.
-  const grid = await win.evaluate(() => {
+  // One texture on the ground and one only. Layering a second and a third dot
+  // lattice over the grid, each at its own pitch, is what made the field read as
+  // pattern rather than as ground.
+  const ground = await win.evaluate(() => {
+    const dust = getComputedStyle(document.querySelector('#am-canvas-pane'), '::before');
     const cs = getComputedStyle(document.querySelector('#am-cv-grid'));
-    return { opacity: Number(cs.opacity), size: cs.backgroundSize, image: cs.backgroundImage };
+    return {
+      dust: dust.backgroundImage,
+      opacity: Number(cs.opacity),
+      image: cs.backgroundImage,
+      mask: cs.maskImage,
+    };
   });
-  // Dimmed under the rings, not switched off. A grid the eye cannot find is the
-  // same as no grid, so the floor is high enough to catch that.
-  expect(grid.opacity).toBeGreaterThan(0.5);
-  expect(grid.image).toContain('radial-gradient');
+  expect(ground.dust, 'the field carries a second texture over the grid').toBe('none');
+  // The grid is what makes it read as a canvas, so it is never switched off: a
+  // grid the eye cannot find is the same as no grid.
+  expect(ground.opacity).toBeGreaterThan(0.5);
+  expect(ground.image).toContain('radial-gradient');
+  // It runs flat to the edge rather than peaking over empty ground and dying at
+  // the frame, which is a vignette drawn on the one part of the field with
+  // nothing in it.
+  expect(ground.mask, 'the grid is masked into a pool in the middle').toBe('none');
 
   await app.close();
 });
@@ -406,9 +410,20 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   await win.waitForTimeout(450);
   expect(await zoomOf()).toBe(start);
 
-  // A plain wheel zooms, both ways.
+  // A bare wheel is a two finger scroll, so it pans and leaves the scale alone.
   const box = await win.locator('#am-canvas-pane').boundingBox();
   await win.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const camOf = () => win.evaluate(() => `${Math.round(agentMap.cam.x)}:${Math.round(agentMap.cam.y)}`);   // eslint-disable-line no-undef
+  const beforeWheel = await camOf();
+  await win.mouse.wheel(0, 220);
+  await win.waitForTimeout(120);
+  expect(await camOf(), 'a bare wheel did not pan the field').not.toBe(beforeWheel);
+  expect(await zoomOf(), 'a bare wheel changed the scale').toBe(start);
+
+  // A pinch arrives as a wheel with a modifier held, and that is what zooms.
+  await win.click('#am-cv-fit');
+  await win.waitForTimeout(450);
+  await win.keyboard.down('Control');
   await win.mouse.wheel(0, -400);
   await win.waitForTimeout(120);
   const zoomedIn = await zoomOf();
@@ -416,6 +431,7 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   await win.mouse.wheel(0, 800);
   await win.waitForTimeout(120);
   expect(parseInt(await zoomOf(), 10)).toBeLessThan(parseInt(zoomedIn, 10));
+  await win.keyboard.up('Control');
 
   // Full screen grows the card toward the window and keeps the detail pane.
   // Polled rather than paused: the width rides a CSS transition, and a starved
