@@ -433,7 +433,7 @@ function groupSessions(entries, ctx) {
     // The drawer can repeat a project that also has recent work, so the archive
     // copy says which one it is rather than showing the same header twice.
     const older = (c.groupBy === 'folder' ? byFolder(cold, c)
-      : c.groupBy === 'day' ? byMonth(cold, c)
+      : c.groupBy === 'day' ? byMonth(cold)
         : byProject(cold, c)).map((g) => ({
       ...g, id: `older:${g.id}`, older: true, current: false,
       note: c.groupBy === 'day' ? '' : 'older',
