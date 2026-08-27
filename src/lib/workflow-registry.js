@@ -68,8 +68,8 @@ const MAX_AGENTS = 6;
 // any of the three needing an escaping rule of its own. Both ends are
 // alphanumeric, so there is exactly one spelling of any given id and two rows
 // cannot differ by a hyphen nobody can see.
-const ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-const TAG_RE = /^[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?$/;
+const ID_RE = /^[a-z0-9]$|^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
+const TAG_RE = /^[a-z0-9]$|^[a-z0-9][a-z0-9-]{0,22}[a-z0-9]$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 
 // Why an index or an entry was refused. Closed, because the browse surface
