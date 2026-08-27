@@ -114,6 +114,86 @@
         "src/lib/workflow-graph.js"
       ]
     },
+    "source": {
+      "specs": [
+        "source-control.spec.js",
+        "files-git.spec.js"
+      ],
+      "tokens": [
+        "sc",
+        "source",
+        "page:source",
+        "ipc:git"
+      ],
+      "paths": [
+        "src/renderer/sc-page.js",
+        "src/renderer/sc-dom.js",
+        "src/lib/git-ref.js",
+        "src/lib/git-refs.js",
+        "src/lib/git-remote.js",
+        "src/lib/unified-diff.js",
+        "src/lib/change-attribution.js"
+      ]
+    },
+    "schedule": {
+      "specs": [
+        "schedule-page.spec.js"
+      ],
+      "tokens": [
+        "sch",
+        "schedule",
+        "schedules",
+        "page:schedule",
+        "ipc:schedules"
+      ],
+      "paths": [
+        "src/lib/schedule.js",
+        "src/renderer/sch-page.js"
+      ]
+    },
+    "artifacts": {
+      "specs": [
+        "artifacts-page.spec.js"
+      ],
+      "tokens": [
+        "af",
+        "artifacts",
+        "page:artifacts"
+      ],
+      "paths": [
+        "src/lib/artifact-ledger.js",
+        "src/renderer/af-page.js"
+      ]
+    },
+    "github": {
+      "specs": [
+        "github-page.spec.js"
+      ],
+      "tokens": [
+        "gh",
+        "github",
+        "page:github",
+        "ipc:github"
+      ],
+      "paths": [
+        "src/lib/gh-cli.js",
+        "src/renderer/gh-page.js"
+      ]
+    },
+    "market": {
+      "specs": [
+        "workflow-market.spec.js"
+      ],
+      "tokens": [
+        "wfm",
+        "registry",
+        "ipc:registry"
+      ],
+      "paths": [
+        "src/lib/workflow-registry.js",
+        "src/renderer/wfx-market.js"
+      ]
+    },
     "projects": {
       "specs": [
         "workspaces.spec.js"
@@ -126,6 +206,19 @@
       "paths": [
         "src/lib/git-porcelain.js",
         "src/lib/workspace-state.js"
+      ]
+    },
+    "palette": {
+      "specs": [
+        "palette-search.spec.js"
+      ],
+      "tokens": [
+        "palette",
+        "pi"
+      ],
+      "paths": [
+        "src/lib/palette-search.js",
+        "src/lib/fuzzy.js"
       ]
     },
     "prompts": {
@@ -194,7 +287,8 @@
     },
     "sessions": {
       "specs": [
-        "sessions-page.spec.js"
+        "sessions-page.spec.js",
+        "session-folders.spec.js"
       ],
       "tokens": [
         "dp",
@@ -233,6 +327,7 @@
         "recap-voice.spec.js",
         "reload-no-copilot-session.spec.js",
         "reload-repaint.spec.js",
+        "split-screen.spec.js",
         "term-colors.spec.js",
         "wheel-forward.spec.js"
       ],

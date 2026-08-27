@@ -9,6 +9,7 @@ Deeper reading than the project README. Pick a topic.
 | [architecture.md](architecture.md) | Process model, IPC surface, packaging layout, where data lives on disk. |
 | [skills-and-prompts.md](skills-and-prompts.md) | Why skills and prompts are separate pages, the two-pane Skills browser, importing, and the curated default prompts. |
 | [mcp.md](mcp.md) | MCP integration: catalog, custom install (stdio + HTTP/SSE), live health, the JSON paste path. |
+| [workflow-registries.md](workflow-registries.md) | The Marketplace: the registry index format, what a catalog can and cannot say, publishing a workflow, and how a listed digest is read. |
 | [contributing.md](contributing.md) | Repo layout, dev workflow, conventional commits, security CI, how to ship a release. |
 
 Project-level docs that live at the repo root:

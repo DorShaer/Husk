@@ -3,8 +3,16 @@ const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 const { extractRecap } = require('./lib/recap-extract');
 const { fuzzyFilter, fuzzyMatch } = require('./lib/fuzzy');
 const sessionView = require('./lib/session-view');
+const paletteSearch = require('./lib/palette-search');
+const workflowRegistry = require('./lib/workflow-registry');
+const ghCli = require('./lib/gh-cli');
+const artifactLedger = require('./lib/artifact-ledger');
+const schedule_ = require('./lib/schedule');
 const { highlight, highlightLines } = require('./lib/highlight');
 const { parsePorcelain, statusBadge } = require('./lib/git-porcelain');
+const { parseUnifiedDiff } = require('./lib/unified-diff');
+const { parseLogRecords } = require('./lib/git-refs');
+const { attribute } = require('./lib/change-attribution');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
 const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
 
@@ -75,6 +83,11 @@ contextBridge.exposeInMainWorld('husk', {
     highlight: (code, lang) => { try { return highlight(code, lang); } catch (_) { return null; } },
     highlightLines: (code, lang) => { try { return highlightLines(code, lang); } catch (_) { return null; } },
     parseGitStatus: (porcelain) => { try { return parsePorcelain(porcelain); } catch (_) { return []; } },
+    parseDiff: (text) => { try { return parseUnifiedDiff(text); } catch (_) { return { files: [] }; } },
+    parseLog: (text) => { try { return parseLogRecords(text); } catch (_) { return []; } },
+    // Keyed by relative path as a plain object, because a Map does not survive
+    // the bridge.
+    attributeChanges: (input) => { try { return Object.fromEntries(attribute(input)); } catch (_) { return {}; } },
     gitBadge: (status) => { try { return statusBadge(status); } catch (_) { return ''; } },
     // Guards for text on its way to a live agent's terminal. They fail closed:
     // an error strips everything rather than passing the original through,
@@ -82,6 +95,14 @@ contextBridge.exposeInMainWorld('husk', {
     stripControls: (s) => { try { return stripControls(s); } catch (_) { return ''; } },
     hasControls: (s) => { try { return hasControls(s); } catch (_) { return true; } },
     chatFileRef: (p) => { try { return chatFileRef(p); } catch (_) { return ''; } },
+  },
+  // The universal search palette's ranking. Pure, run in-process. Takes plain
+  // {section,label,sub} entries and hands back positions into that same array,
+  // so the row's own click handler never has to cross this boundary.
+  paletteSearch: {
+    rank: (query, entries, opts) => {
+      try { return paletteSearch.rank(query, entries, opts); } catch (_) { return []; }
+    },
   },
   // The Sessions roster's view model: filtering, threading, grouping and the
   // label formats. Pure, run in-process, clock injected by the caller.
@@ -172,6 +193,34 @@ contextBridge.exposeInMainWorld('husk', {
     gitStatus: (root) => ipcRenderer.invoke('fs:gitStatus', { root }),
     gitDiff: (root, rel) => ipcRenderer.invoke('fs:gitDiff', { root, rel }),
   },
+  // Source control: one call per git: channel, each carrying an object payload
+  // so main can check every field before it builds argv. Reads hand back raw
+  // git text and the renderer parses it in-process through text.parseDiff and
+  // text.parseGitStatus, so painting a diff costs no second round trip and the
+  // renderer and main share the same parser.
+  git: {
+    repo: (root) => ipcRenderer.invoke('git:repo', { root }),
+    status: (root) => ipcRenderer.invoke('git:status', { root }),
+    diff: (root, opts) => ipcRenderer.invoke('git:diff', Object.assign({ root }, opts || {})),
+    stage: (root, paths) => ipcRenderer.invoke('git:stage', { root, paths }),
+    unstage: (root, paths) => ipcRenderer.invoke('git:unstage', { root, paths }),
+    hunk: (root, opts) => ipcRenderer.invoke('git:hunk', Object.assign({ root }, opts || {})),
+    discard: (root, opts) => ipcRenderer.invoke('git:discard', Object.assign({ root }, opts || {})),
+    stashPop: (root, ref) => ipcRenderer.invoke('git:stashPop', { root, ref }),
+    commit: (root, opts) => ipcRenderer.invoke('git:commit', Object.assign({ root }, opts || {})),
+    branches: (root) => ipcRenderer.invoke('git:branches', { root }),
+    switch: (root, branch) => ipcRenderer.invoke('git:switch', { root, branch }),
+    createBranch: (root, name, from, checkout) => ipcRenderer.invoke('git:createBranch', { root, name, from, checkout }),
+    deleteBranch: (root, opts) => ipcRenderer.invoke('git:deleteBranch', Object.assign({ root }, opts || {})),
+    log: (root, opts) => ipcRenderer.invoke('git:log', Object.assign({ root }, opts || {})),
+    show: (root, sha) => ipcRenderer.invoke('git:show', { root, sha }),
+    fetch: (root, remote) => ipcRenderer.invoke('git:fetch', { root, remote }),
+    openRemote: (root, opts) => ipcRenderer.invoke('git:openRemote', Object.assign({ root }, opts || {})),
+    init: (root, confirm) => ipcRenderer.invoke('git:init', { root, confirm }),
+    watch: (root) => ipcRenderer.invoke('git:watch', { root }),
+    unwatch: (root) => ipcRenderer.invoke('git:unwatch', { root }),
+    onChanged: (cb) => ipcRenderer.on('git:changed', (_e, p) => cb(p)),
+  },
   context: {
     list: () => ipcRenderer.invoke('context:list'),
     remove: (filePath) => ipcRenderer.invoke('context:remove', filePath),
@@ -182,6 +231,57 @@ contextBridge.exposeInMainWorld('husk', {
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
+  },
+  // The artifact ledger: what runs left behind, from the two stores that
+  // already hold it. Pure and in-process; the rows come from workflows:runs and
+  // autopilot:history, so this adds no new way to reach the disk.
+  artifacts: {
+    build: (workflowRuns, autopilotRuns) => {
+      try { return artifactLedger.buildLedger({ workflowRuns, autopilotRuns }); } catch (_) { return []; }
+    },
+    filter: (rows, opts) => { try { return artifactLedger.filterLedger(rows, opts); } catch (_) { return []; } },
+    summarise: (rows) => { try { return artifactLedger.summarise(rows); } catch (_) { return { runs: 0 }; } },
+  },
+  // Recurring runs. The rules about when one fires live in schedule.js and run
+  // in the main process; `describe` is the same wording, computed in-process so
+  // a row and a form never disagree about what a recurrence says.
+  schedules: {
+    list: () => ipcRenderer.invoke('schedules:list'),
+    save: (schedule) => ipcRenderer.invoke('schedules:save', { schedule }),
+    remove: (id) => ipcRenderer.invoke('schedules:remove', { id }),
+    runNow: (id) => ipcRenderer.invoke('schedules:runNow', { id }),
+    describe: (schedule) => { try { return schedule_.describe(schedule); } catch (_) { return ''; } },
+    nextRunAt: (schedule, now) => { try { return schedule_.nextRunAt(schedule, now); } catch (_) { return null; } },
+  },
+  // GitHub, read through the gh CLI. Husk stores no credential: gh is already
+  // logged in, and every call borrows that for one command. `filter` and
+  // `labels` are pure and run in-process, so typing in the search box is not a
+  // round trip and never a request to GitHub.
+  github: {
+    available: () => ipcRenderer.invoke('github:available'),
+    repo: (cwd) => ipcRenderer.invoke('github:repo', { cwd }),
+    pulls: (opts) => ipcRenderer.invoke('github:pulls', opts || {}),
+    issues: (opts) => ipcRenderer.invoke('github:issues', opts || {}),
+    filter: (rows, query) => { try { return ghCli.filterRows(rows, query); } catch (_) { return []; } },
+    labels: (rows) => { try { return ghCli.labelCounts(rows); } catch (_) { return []; } },
+  },
+  // The marketplace: catalogs of workflows other people publish. `fetch` hands
+  // back a validated index or a refusal, never the bytes it read, and
+  // `artifact` hands back exactly what picking a file off disk would have, so
+  // the install sheet behind it is the one that already exists.
+  registry: {
+    list: () => ipcRenderer.invoke('registry:list'),
+    add: (url) => ipcRenderer.invoke('registry:add', { url }),
+    remove: (url) => ipcRenderer.invoke('registry:remove', { url }),
+    fetch: (url) => ipcRenderer.invoke('registry:fetch', { url }),
+    // Filtering and tallying a catalog already in hand. Pure, run in-process:
+    // a keystroke in the search box must not be an IPC round trip.
+    search: (entries, query, tag) => {
+      try { return workflowRegistry.searchEntries(entries, query, tag); } catch (_) { return []; }
+    },
+    tags: (entries) => {
+      try { return workflowRegistry.tagCounts(entries); } catch (_) { return []; }
+    },
   },
   workflows: {
     list: () => ipcRenderer.invoke('workflows:list'),

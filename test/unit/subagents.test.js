@@ -88,13 +88,97 @@ test('a workflow agent runs until its run journal records a result', () => {
     '',
   ].join('\n'));
 
-  const rows = scan(tree).sort((x, y) => x.agentId.localeCompare(y.agentId));
+  const all = scan(tree);
+  const rows = all.filter((r) => !r.holder).sort((x, y) => x.agentId.localeCompare(y.agentId));
   assert.equal(rows.length, 2);
   assert.equal(rows[0].running, false);
   assert.equal(rows[1].running, true);
   assert.equal(rows[0].runId, 'wf_132126fa');
-  // A workflow names neither the agent nor the task, so the run does both.
-  assert.match(rows[1].name, /^sessions-page-redesign w2/);
+  // A workflow writes no description, so the words the agent was started with
+  // are what it is called.
+  assert.equal(rows[1].name, 'work on w2');
+
+  // The run itself is on the list as the thing its fleet hangs from, named by
+  // the script it was launched from and running while any of its fleet is.
+  const node = all.find((r) => r.holder === 'run');
+  assert.ok(node, 'the run that fanned the fleet out is missing');
+  assert.equal(node.name, 'sessions-page-redesign');
+  assert.equal(node.kind, 'run');
+  assert.equal(node.running, true);
+  assert.equal(node.attachable, false);
+  assert.equal(node.hasTranscript, false);
+  assert.equal(node.parentSessionId, SESSION);
+  // Every agent in the run points at the run, not at the chat.
+  for (const r of rows) assert.equal(r.parentSessionId, node.sessionId);
+});
+
+test('a run with a finished fleet is over, and a run with no fleet is never drawn', () => {
+  const tree = makeTree();
+  const run = path.join(tree.dir, 'subagents', 'workflows', 'wf_ab0011');
+  fs.mkdirSync(run, { recursive: true });
+  writeAgent(run, 'w1', { agentType: 'workflow-subagent' });
+  fs.writeFileSync(path.join(run, 'journal.jsonl'), [
+    JSON.stringify({ type: 'started', agentId: 'w1' }),
+    JSON.stringify({ type: 'result', agentId: 'w1', result: 'ok' }),
+    '',
+  ].join('\n'));
+  // An empty run directory is a run that has written nothing yet.
+  fs.mkdirSync(path.join(tree.dir, 'subagents', 'workflows', 'wf_cd0022'), { recursive: true });
+
+  const all = scan(tree);
+  const runs = all.filter((r) => r.holder === 'run');
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].running, false);
+  assert.equal(runs[0].state, 'done');
+});
+
+test('a workflow agent is named by the first sentence of the job it was given', () => {
+  const tree = makeTree();
+  const run = path.join(tree.dir, 'subagents', 'workflows', 'wf_9f01aa');
+  fs.mkdirSync(run, { recursive: true });
+  const file = path.join(run, 'agent-w1.jsonl');
+  fs.writeFileSync(file, `${JSON.stringify({
+    type: 'user',
+    message: {
+      role: 'user',
+      content: 'Audit the canvas for theme independence. Read every theme block, then report what is hardcoded.',
+    },
+  })}\n`);
+  fs.writeFileSync(path.join(run, 'agent-w1.meta.json'), JSON.stringify({ agentType: 'workflow-subagent' }));
+  fs.writeFileSync(path.join(run, 'journal.jsonl'), `${JSON.stringify({ type: 'started', agentId: 'w1' })}\n`);
+
+  const rows = scan(tree).filter((r) => !r.holder);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'Audit the canvas for theme independence');
+});
+
+test('an agent whose transcript says nothing falls back to the run that started it', () => {
+  const tree = makeTree();
+  const run = path.join(tree.dir, 'subagents', 'workflows', 'wf_44bc02');
+  fs.mkdirSync(run, { recursive: true });
+  fs.mkdirSync(path.join(tree.dir, 'workflows', 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(tree.dir, 'workflows', 'scripts', 'nightly-sweep-wf_44bc02.js'), '');
+  fs.writeFileSync(path.join(run, 'agent-w9.jsonl'), '');
+  fs.writeFileSync(path.join(run, 'agent-w9.meta.json'), JSON.stringify({ agentType: 'workflow-subagent' }));
+  fs.writeFileSync(path.join(run, 'journal.jsonl'), `${JSON.stringify({ type: 'started', agentId: 'w9' })}\n`);
+
+  const rows = scan(tree).filter((r) => !r.holder);
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].name, /^nightly-sweep w9/);
+});
+
+test('a description in the metadata outranks the prompt', () => {
+  const tree = makeTree();
+  writeAgent(path.join(tree.dir, 'subagents'), 'a7', { agentType: 'general-purpose', description: 'Map the files', toolUseId: 'toolu_7' });
+  const rows = scan(tree);
+  assert.equal(rows[0].name, 'Map the files');
+});
+
+test('a title is the first sentence, and a prompt with no sentence break keeps its first line', () => {
+  assert.equal(Subagents.promptTitle('Audit the canvas. Then report.'), 'Audit the canvas');
+  assert.equal(Subagents.promptTitle('  \n  Rebuild the sessions cockpit\nand nothing else'), 'Rebuild the sessions cockpit');
+  assert.equal(Subagents.promptTitle('No. Way'), 'No. Way');
+  assert.equal(Subagents.promptTitle(''), '');
 });
 
 test('a fleet keeps everything live and only the last stretch of finished work', () => {
