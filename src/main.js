@@ -18,7 +18,12 @@ const Subagents = require('./lib/subagents');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
 const wfLib = require('./lib/workflow-graph');
+const UnifiedDiff = require('./lib/unified-diff');
+const GitRef = require('./lib/git-ref');
+const GitRefs = require('./lib/git-refs');
+const { webUrlFor } = require('./lib/git-remote');
 const { buildSpawnSpec, withCopilotContextDir } = require('./lib/pty-spawn');
+const { capPtyBuffer } = require('./lib/pty-buffer');
 const AgentInject = require('./lib/agent-inject');
 const { createMouseModeStripper } = require('./lib/term-mouse');
 const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
@@ -127,10 +132,10 @@ function getAgentKind() {
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// GPU acceleration safe defaults for desktop Electron 32
+// GPU rasterization and zero-copy upload, subject to Chromium's own checks
+// against the driver in use.
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
 let lastReloadRequestAt = 0;
@@ -1198,7 +1203,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // instead of one IPC send per chunk.
   s.dataDisposable = s.pty.onData((data) => {
     s.lastDataAt = Date.now();
-    s.dataBuf += data;
+    s.dataBuf = capPtyBuffer(s.dataBuf + data);
     // Small rolling tail of raw output, kept so the status panel can read a
     // CLI's own status line (e.g. Copilot's "Session: N AIC used") without a
     // transcript. Capped so it never grows with the session.
@@ -2556,7 +2561,7 @@ function spawnRunPty(runId, cwd) {
     const rs = runs.get(runId);
     if (!rs) return;
     rs.lastPtyDataAt = Date.now();
-    rs.outputBuf += data;
+    rs.outputBuf = capPtyBuffer(rs.outputBuf + data);
     if (!rs.flushTimer) {
       rs.flushTimer = setTimeout(() => flushRunOutput(runId), AUT_OUTPUT_FLUSH_MS);
     }
@@ -5527,7 +5532,10 @@ ipcMain.handle('workflows:layout', (_e, payload = {}) => {
 // opts is the second argument and carries the run's working directory. An
 // imported workflow must have one. Locally authored workflows pass opts nothing
 // and keep wfRunStep's own fallback chain.
-ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
+// Starting a run, without an originating event. wfEmit broadcasts to every
+// window and never reads the event it is handed, so a run started by the
+// scheduler reaches the same surfaces a clicked one does.
+function startWorkflowRun(workflowId, opts = {}) {
   const already = [...activeRuns.values()].find((r) => r.status === 'running');
   if (already) {
     return { ok: false, error: 'a workflow is already running', runId: already.id, workflowId: already.workflowId };
@@ -5580,9 +5588,11 @@ ipcMain.handle('workflows:run', (event, workflowId, opts = {}) => {
     untrusted: workflow.origin === 'imported' || !!(sidecar && sidecar.origin === 'imported'),
   };
   activeRuns.set(runId, runState);
-  executeWorkflow(event, workflow, runState);
+  executeWorkflow(null, workflow, runState);
   return { ok: true, runId, cwd: gate.cwd };
-});
+}
+
+ipcMain.handle('workflows:run', (_e, workflowId, opts = {}) => startWorkflowRun(workflowId, opts));
 
 // Returns a context block to inject at session start for ai-suggested workflows.
 // The AI reads this and knows when to suggest running a workflow.
@@ -5688,6 +5698,7 @@ ipcMain.handle('workflows:activeRun', () => {
 const WorkflowArtifact = require('./lib/workflow-artifact');
 const WorkflowReceipt = require('./lib/workflow-receipt');
 const WorkflowInstall = require('./lib/workflow-install');
+const WorkflowRegistry = require('./lib/workflow-registry');
 
 // One row per workflow that came from a file, keyed on the local workflow id.
 // Deliberately a separate file from workflows.json: see createWorkflowRecord
@@ -5949,7 +5960,51 @@ function wfxReadArtifactAt(absPath) {
 // clone and nothing else. Every read below goes through wfxResolveConfined.
 ipcMain.handle('workflows:artifactRead', async (_e, payload = {}) => {
   const p = (payload && typeof payload === 'object') ? payload : {};
-  const source = p.source === 'file' ? 'file' : 'repo';
+  const source = (p.source === 'file' || p.source === 'registry') ? p.source : 'repo';
+
+  // A file a catalog named. The catalog decided which URL; everything after the
+  // bytes arrive is the path a file off disk takes, through the same validator
+  // and out to the same sheet. A registry buys the reader the URL and nothing
+  // else, which is why this arm ends in parseArtifact like the other two.
+  if (source === 'registry') {
+    const registry = WorkflowRegistry.normalizeRegistryUrl(p.registryUrl);
+    if (!registry.ok) return Object.assign({ stage: 'source' }, registry);
+    const where = WorkflowRegistry.resolveArtifactUrl(p.entry, registry.url);
+    if (!where.ok) return Object.assign({ stage: 'source' }, where);
+
+    const got = await registryFetch(where.url, WorkflowArtifact.MAX_ARTIFACT_BYTES);
+    if (!got.ok) return Object.assign({ stage: 'source' }, got);
+
+    // Whether the bytes are the bytes the catalog named, settled before they
+    // are read as a workflow: a file that is not the listed one is refused
+    // without ever being parsed.
+    const digest = WorkflowRegistry.checkArtifactBytes(got.bytes, p.entry);
+    if (!digest.ok) return Object.assign({ stage: 'source' }, digest);
+
+    const result = WorkflowArtifact.parseArtifact(got.bytes);
+    if (!result.ok) return Object.assign({ stage: 'validate' }, result);
+    return {
+      ok: true,
+      artifact: result.artifact,
+      warnings: result.warnings,
+      chainCheck: result.chainCheck,
+      bytes: got.bytes.length,
+      source: {
+        kind: 'registry',
+        path: null,
+        relPath: null,
+        root: null,
+        url: where.url,
+        registryUrl: registry.url,
+        // Whether the catalog stated a digest at all. The check above already
+        // refused a stated one that did not match, so this is the only
+        // remaining distinction: attested, or listed without one.
+        attested: digest.attested,
+        digest: digest.digest,
+        candidates: [],
+      },
+    };
+  }
 
   if (source === 'file') {
     const raw = typeof p.path === 'string' ? p.path.trim() : '';
@@ -6121,6 +6176,403 @@ ipcMain.handle('workflows:install', (_e, payload = {}) => {
       null, 'install');
   }
   return { ok: true, workflow, sidecar: row };
+});
+
+// ─── The registry: fetching a catalog somebody else publishes ────────────────
+//
+// workflow-registry.js holds every rule about what an index may say. This is
+// the part it deliberately does not do: the syscalls. One helper makes the
+// request, and it is the only place in Husk that fetches a URL a user supplied.
+//
+// The request is deliberately dull. https on every hop, no credentials, no
+// cookie jar, no request body, a short timeout, a byte ceiling enforced while
+// the body streams rather than after it, and a small cap on redirects. A URL
+// that needs any more than that is not a public catalog.
+//
+// What it does not settle: a redirect target is not known until the hop is
+// taken, so a registry chooses, within https, which hosts this machine asks
+// for. Adding a registry is trusting its author with that much.
+
+const REGISTRY_TIMEOUT_MS = 10000;
+const REGISTRY_MAX_REDIRECTS = 3;
+// The default catalog. Overridable in config, so a fork or an air-gapped
+// install can point somewhere else without patching the binary.
+const DEFAULT_REGISTRY_URL = 'https://raw.githubusercontent.com/DorShaer/husk-workflows/main/index.json';
+
+function registryFetch(rawUrl, maxBytes) {
+  return new Promise((resolve) => {
+    const https = require('https');
+    let hops = 0;
+
+    const go = (target) => {
+      let url;
+      try { url = new URL(target); } catch (_) {
+        return resolve({ ok: false, code: 'bad-registry-url', message: 'that is not a URL', detail: null });
+      }
+      if (url.protocol !== 'https:') {
+        return resolve({ ok: false, code: 'bad-registry-url', message: 'a registry is fetched over https only', detail: url.protocol });
+      }
+
+      const req = https.request({
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: `${url.pathname}${url.search}`,
+        method: 'GET',
+        headers: { 'User-Agent': `Husk/${app.getVersion()}`, Accept: 'application/json' },
+        timeout: REGISTRY_TIMEOUT_MS,
+      }, (res) => {
+        const status = res.statusCode || 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.destroy();
+          if (hops >= REGISTRY_MAX_REDIRECTS) {
+            return resolve({ ok: false, code: 'fetch-failed', message: 'this registry redirects too many times', detail: `${hops} hops` });
+          }
+          hops += 1;
+          let next;
+          try { next = new URL(res.headers.location, url).toString(); } catch (_) {
+            return resolve({ ok: false, code: 'fetch-failed', message: 'this registry redirects somewhere that is not a URL', detail: null });
+          }
+          return go(next);
+        }
+        if (status !== 200) {
+          res.destroy();
+          return resolve({ ok: false, code: 'fetch-failed', message: 'the registry did not answer with a catalog', detail: `HTTP ${status}` });
+        }
+
+        // The ceiling is enforced as the body arrives: a server that keeps
+        // sending is cut off rather than buffered and measured afterwards.
+        const chunks = [];
+        let size = 0;
+        res.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > maxBytes) {
+            res.destroy();
+            return resolve({ ok: false, code: 'too-large', message: `that response is larger than the ${maxBytes} byte limit`, detail: null });
+          }
+          chunks.push(chunk);
+        });
+        res.on('end', () => resolve({ ok: true, bytes: Buffer.concat(chunks), url: url.toString() }));
+        res.on('error', (err) => resolve({ ok: false, code: 'fetch-failed', message: 'the response ended early', detail: err && err.message }));
+      });
+
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, code: 'fetch-failed', message: 'the registry did not answer in time', detail: `${REGISTRY_TIMEOUT_MS}ms` }); });
+      req.on('error', (err) => resolve({ ok: false, code: 'fetch-failed', message: 'the registry could not be reached', detail: err && err.message }));
+      req.end();
+    };
+
+    go(rawUrl);
+  });
+}
+
+// The registries this machine subscribes to, newest last. The default is one of
+// them rather than a special case, so removing it is an ordinary act.
+function registryList() {
+  const stored = Array.isArray(config.workflowRegistries) ? config.workflowRegistries : null;
+  if (!stored) return [{ url: DEFAULT_REGISTRY_URL, addedAt: null, builtin: true }];
+  const out = [];
+  for (const row of stored.slice(0, 16)) {
+    const url = row && typeof row.url === 'string' ? WorkflowRegistry.normalizeRegistryUrl(row.url) : null;
+    if (!url || !url.ok) continue;
+    if (out.some((r) => r.url === url.url)) continue;
+    out.push({
+      url: url.url,
+      addedAt: row && typeof row.addedAt === 'string' ? row.addedAt : null,
+      builtin: url.url === DEFAULT_REGISTRY_URL,
+    });
+  }
+  return out;
+}
+
+ipcMain.handle('registry:list', () => ({ ok: true, registries: registryList(), defaultUrl: DEFAULT_REGISTRY_URL }));
+
+ipcMain.handle('registry:add', (_e, payload = {}) => {
+  const checked = WorkflowRegistry.normalizeRegistryUrl(payload && payload.url);
+  if (!checked.ok) return checked;
+  const current = registryList();
+  if (current.some((r) => r.url === checked.url)) {
+    return { ok: true, registries: current, alreadyAdded: true };
+  }
+  const next = [...current, { url: checked.url, addedAt: new Date().toISOString() }];
+  config = { ...config, workflowRegistries: next.map((r) => ({ url: r.url, addedAt: r.addedAt })) };
+  if (!saveConfig(config)) return { ok: false, code: 'save-failed', message: 'the registry could not be saved', detail: null };
+  return { ok: true, registries: registryList() };
+});
+
+ipcMain.handle('registry:remove', (_e, payload = {}) => {
+  const url = payload && typeof payload.url === 'string' ? payload.url : '';
+  const next = registryList().filter((r) => r.url !== url);
+  config = { ...config, workflowRegistries: next.map((r) => ({ url: r.url, addedAt: r.addedAt })) };
+  if (!saveConfig(config)) return { ok: false, code: 'save-failed', message: 'the change could not be saved', detail: null };
+  return { ok: true, registries: registryList() };
+});
+
+// Fetches one catalog and reads it. The renderer never sees the bytes: it gets
+// the validated index or a refusal, so no unparsed registry text is anywhere a
+// DOM builder could reach it.
+ipcMain.handle('registry:fetch', async (_e, payload = {}) => {
+  const checked = WorkflowRegistry.normalizeRegistryUrl(payload && payload.url);
+  if (!checked.ok) return checked;
+  const got = await registryFetch(checked.url, WorkflowRegistry.MAX_INDEX_BYTES);
+  if (!got.ok) return got;
+  // The index records the URL that was asked for, not the one a redirect
+  // landed on: an entry's artifact is resolved against the host the user
+  // subscribed to.
+  return WorkflowRegistry.parseIndex(got.bytes, { url: checked.url });
+});
+
+// Reading one workflow file a catalog names is not a channel of its own: it is
+// workflows:artifactRead with source 'registry', so the install sheet behind it
+// is the one that already exists.
+
+// ─── Schedules ───────────────────────────────────────────────────────────────
+//
+// schedule.js owns when a schedule is owed a run. This owns the timer, the
+// store, and what starting one means.
+//
+// The tick is a minute, and a schedule that came due while Husk was closed
+// fires once rather than once per window it missed: a laptop that slept over a
+// weekend must not wake up and start sixty runs.
+//
+// A schedule never starts a second copy of itself. If the thing it names is
+// already running, the tick passes and the next one tries again, because two
+// agents in one working directory is a merge conflict rather than throughput.
+
+const Schedule = require('./lib/schedule');
+
+const SCHEDULE_TICK_MS = 60000;
+const MAX_SCHEDULES = 50;
+
+function loadSchedules() {
+  const stored = Array.isArray(config.schedules) ? config.schedules : [];
+  const out = [];
+  for (const raw of stored.slice(0, MAX_SCHEDULES)) {
+    const checked = Schedule.validateSchedule(raw);
+    if (checked.ok) out.push(checked.schedule);
+  }
+  return out;
+}
+
+function saveSchedules(list) {
+  config = { ...config, schedules: list };
+  return saveConfig(config);
+}
+
+function mintScheduleId(list) {
+  const taken = new Set(list.map((s) => s && s.id));
+  for (let i = 1; i <= MAX_SCHEDULES + 1; i += 1) {
+    const id = `sch-${i}`;
+    if (!taken.has(id)) return id;
+  }
+  return `sch-${Date.now()}`;
+}
+
+// Everything a row needs, with the next fire time computed here so the page
+// never has to re-derive it and the two cannot disagree.
+function scheduleRows() {
+  const now = Date.now();
+  return loadSchedules().map((s) => ({
+    ...s,
+    nextRunAt: Schedule.nextRunAt(s, now),
+    describe: Schedule.describe(s),
+  }));
+}
+
+// Starts what one schedule names. Returns why it did not, so the tick can
+// record a reason rather than silently skipping.
+async function runSchedule(s) {
+  if (s.target === 'workflow') {
+    if (!s.targetId) return { ok: false, error: 'this schedule names no workflow' };
+    const already = [...activeRuns.values()].some((r) => r.status === 'running' && r.workflowId === s.targetId);
+    if (already) return { ok: false, error: 'that workflow is already running' };
+    try {
+      return startWorkflowRun(s.targetId, { cwd: s.cwd || undefined });
+    } catch (err) {
+      return { ok: false, error: (err && err.message) || 'the workflow could not be started' };
+    }
+  }
+  return { ok: false, error: 'only workflows can be scheduled yet' };
+}
+
+let scheduleTimer = null;
+async function scheduleTick() {
+  const list = loadSchedules();
+  if (!list.length) return;
+  const due = Schedule.dueSchedules(list, Date.now());
+  if (!due.length) return;
+
+  // The stamp is written whether the start succeeded or not. A schedule whose
+  // target is missing would otherwise be retried every tick forever.
+  const stamped = new Set();
+  for (const s of due) {
+    const res = await runSchedule(s);
+    stamped.add(s.id);
+    if (!res || !res.ok) {
+      log.warn(`[schedule] ${s.name}: ${(res && res.error) || 'did not start'}`);
+    }
+  }
+  const now = new Date().toISOString();
+  saveSchedules(loadSchedules().map((s) => (stamped.has(s.id) ? { ...s, lastRunAt: now } : s)));
+}
+
+function startScheduler() {
+  if (scheduleTimer) return;
+  scheduleTimer = setInterval(() => { scheduleTick().catch(() => {}); }, SCHEDULE_TICK_MS);
+  // Unref so a pending tick never holds the process open at quit.
+  if (typeof scheduleTimer.unref === 'function') scheduleTimer.unref();
+}
+
+function stopScheduler() {
+  if (!scheduleTimer) return;
+  clearInterval(scheduleTimer);
+  scheduleTimer = null;
+}
+
+ipcMain.handle('schedules:list', () => ({ ok: true, schedules: scheduleRows() }));
+
+ipcMain.handle('schedules:save', (_e, payload = {}) => {
+  const checked = Schedule.validateSchedule(payload && payload.schedule);
+  if (!checked.ok) return checked;
+  const list = loadSchedules();
+  const wanted = checked.schedule;
+  const at = list.findIndex((s) => s.id && s.id === wanted.id);
+  if (at === -1) {
+    if (list.length >= MAX_SCHEDULES) {
+      return { ok: false, code: 'too-many', message: `a machine may hold ${MAX_SCHEDULES} schedules` };
+    }
+    list.push({ ...wanted, id: mintScheduleId(list) });
+  } else {
+    // The stamp belongs to the run history, not to the edit, so it survives.
+    list[at] = { ...wanted, id: list[at].id, lastRunAt: list[at].lastRunAt || '' };
+  }
+  if (!saveSchedules(list)) return { ok: false, code: 'save-failed', message: 'the schedule could not be saved' };
+  return { ok: true, schedules: scheduleRows() };
+});
+
+ipcMain.handle('schedules:remove', (_e, payload = {}) => {
+  const id = String((payload && payload.id) || '');
+  if (!saveSchedules(loadSchedules().filter((s) => s.id !== id))) {
+    return { ok: false, code: 'save-failed', message: 'the change could not be saved' };
+  }
+  return { ok: true, schedules: scheduleRows() };
+});
+
+// Starting one by hand does not move its clock: a schedule is a promise about
+// when it runs on its own, and pressing Run is not one of those times.
+ipcMain.handle('schedules:runNow', async (_e, payload = {}) => {
+  const id = String((payload && payload.id) || '');
+  const s = loadSchedules().find((x) => x.id === id);
+  if (!s) return { ok: false, code: 'not-found', message: 'that schedule is gone' };
+  const res = await runSchedule(s);
+  return res && res.ok ? { ok: true } : { ok: false, code: 'run-failed', message: (res && res.error) || 'it could not be started' };
+});
+
+// ─── GitHub, through the gh CLI ──────────────────────────────────────────────
+//
+// gh-cli.js holds every rule about what to ask and how to read the answer. This
+// is the part it deliberately does not do: the spawn.
+//
+// Husk stores no GitHub credential. gh is already logged in as whoever logged
+// it in, and Husk borrows that for the length of one command. There is nothing
+// here to leak and nothing to revoke but `gh auth logout`.
+//
+// The spawn takes an argv array and no shell, so a branch, a title or a search
+// term is one argument however it is spelled. gh is resolved to an absolute
+// path first, because a GUI-launched Husk inherits a shorter PATH than a
+// terminal does and would otherwise report gh as missing on a machine that has
+// it.
+
+const GhCli = require('./lib/gh-cli');
+
+const GH_TIMEOUT_MS = 20000;
+// A repository with hundreds of open pull requests answers in megabytes. The
+// list surface shows a page, so anything past this is a gh that ignored the
+// limit rather than an answer worth buffering.
+const GH_MAX_STDOUT = 8 * 1024 * 1024;
+
+// Resolved once per run and remembered, since the answer only changes when the
+// user installs gh, and a login-shell probe per keystroke would be absurd.
+let ghExePath;
+function resolveGh() {
+  if (ghExePath === undefined) {
+    const found = resolveAgentExe('gh', process.env.PATH || '');
+    ghExePath = (found && found !== 'gh') ? found : null;
+  }
+  return ghExePath;
+}
+
+function runGh(cwd, args) {
+  return new Promise((resolve) => {
+    const exe = resolveGh();
+    if (!exe) {
+      return resolve({
+        ok: false,
+        code: 'gh-missing',
+        message: GhCli.FAILURE_COPY['gh-missing'],
+        detail: 'Husk looked on your PATH and through a login shell.',
+      });
+    }
+
+    let child;
+    try {
+      child = spawn(exe, args, {
+        cwd: cwd || undefined,
+        // No shell: every element of args stays one argument.
+        shell: false,
+        timeout: GH_TIMEOUT_MS,
+        env: { ...process.env, GH_PAGER: 'cat', GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+      });
+    } catch (err) {
+      return resolve({ ok: false, code: 'gh-failed', message: GhCli.FAILURE_COPY['gh-failed'], detail: err && err.message });
+    }
+
+    let out = '';
+    let err = '';
+    let capped = false;
+    child.stdout.on('data', (d) => {
+      if (capped) return;
+      out += d.toString();
+      if (out.length > GH_MAX_STDOUT) { capped = true; try { child.kill(); } catch (_) {} }
+    });
+    child.stderr.on('data', (d) => { if (err.length < 8192) err += d.toString(); });
+    child.on('error', (e) => resolve({ ok: false, code: 'gh-failed', message: GhCli.FAILURE_COPY['gh-failed'], detail: e && e.message }));
+    child.on('close', (codeNum) => {
+      if (capped) {
+        return resolve({ ok: false, code: 'gh-failed', message: 'that repository answered with more than Husk will read at once', detail: `${GH_MAX_STDOUT} byte limit` });
+      }
+      if (codeNum !== 0) return resolve(GhCli.classifyFailure(codeNum, err));
+      resolve({ ok: true, stdout: out });
+    });
+  });
+}
+
+// The folder every call runs in. A GitHub surface follows the workspace the way
+// Files does: the repository is whichever one the current folder sits in, and
+// gh reads the remote from there rather than from anything Husk stores.
+function ghCwd(payload) {
+  const asked = payload && typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+  if (asked) return path.resolve(asked);
+  const active = _projectsList().find((p) => p && p.id === config.activeProjectId);
+  if (active && typeof active.path === 'string' && active.path) return path.resolve(active.path);
+  return process.cwd();
+}
+
+ipcMain.handle('github:available', () => ({ ok: true, available: !!resolveGh(), path: resolveGh() || '' }));
+
+ipcMain.handle('github:repo', async (_e, payload = {}) => {
+  const res = await runGh(ghCwd(payload), GhCli.repoViewArgs());
+  return res.ok ? GhCli.parseRepoView(res.stdout) : res;
+});
+
+ipcMain.handle('github:pulls', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const res = await runGh(ghCwd(p), GhCli.prListArgs(p));
+  return res.ok ? GhCli.parsePrList(res.stdout) : res;
+});
+
+ipcMain.handle('github:issues', async (_e, payload = {}) => {
+  const p = (payload && typeof payload === 'object') ? payload : {};
+  const res = await runGh(ghCwd(p), GhCli.issueListArgs(p));
+  return res.ok ? GhCli.parseIssueList(res.stdout) : res;
 });
 
 // ─── IPC: the sidecar ────────────────────────────────────────────────────────
@@ -9537,6 +9989,8 @@ ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
 // lives for the process so a five megabyte conversation is scanned once and
 // every later poll reads only what was appended.
 const subagentScanCache = new Map();
+// The opening line of each subagent transcript, which never changes once written.
+const subagentHeadCache = new Map();
 
 // The parent a background agent was forked from. Two records carry it and
 // neither is sufficient alone: the transcript's snake_case `session_id` names
@@ -9777,7 +10231,7 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
         // its files were left saying.
         alive: pidAlive(r.pid),
         transcript: t,
-      }, { cache: subagentScanCache, now }));
+      }, { cache: subagentScanCache, now, heads: subagentHeadCache }));
     } catch (_) {}
   }
   return { ok: true, supported: true, controllable: true, agents: Subagents.describe(Subagents.retainLastBatch(fleet)), chats };
@@ -10273,10 +10727,25 @@ ipcMain.handle('fs:gitStatus', async (_e, { root } = {}) => {
   } catch (_) { return { ok: true, isRepo: false, porcelain: '' }; }
   try {
     const out = execFileSync('git', ['-C', rootAbs, 'status', '--porcelain=v1'],
-      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...GIT_PATH_ENV } });
     return { ok: true, isRepo: true, porcelain: out };
   } catch (err) { return { ok: false, error: err.message }; }
 });
+
+// The environment every git call that takes a path runs under.
+//
+// git matches a pathspec by wildmatch as well as literally, so without
+// GIT_LITERAL_PATHSPECS a file whose own name holds a bracket or a star reaches
+// files beside it. The rest keeps a read from ever blocking: no credential
+// prompt, and no index lock taken for a read.
+const GIT_PATH_ENV = {
+  GIT_TERMINAL_PROMPT: '0',
+  GIT_ASKPASS: '',
+  SSH_ASKPASS: '',
+  GCM_INTERACTIVE: 'never',
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_LITERAL_PATHSPECS: '1',
+};
 
 // Unified git diff for one file (staged + unstaged). Path confined, and passed
 // as a pathspec after `--`.
@@ -10287,9 +10756,9 @@ ipcMain.handle('fs:gitDiff', async (_e, { root, rel } = {}) => {
   try { confinedAbs(root, rel); } catch (_) { return { ok: false, error: 'path outside root' }; }
   try {
     const unstaged = execFileSync('git', ['-C', rootAbs, 'diff', '--', rel],
-      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...GIT_PATH_ENV } });
     const staged = execFileSync('git', ['-C', rootAbs, 'diff', '--cached', '--', rel],
-      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...GIT_PATH_ENV } });
     let diff = (staged ? staged + '\n' : '') + unstaged;
     // An untracked file has no tracked diff. Show its whole content as added by
     // diffing against an empty tree; git diff --no-index exits non-zero when the
@@ -10298,13 +10767,959 @@ ipcMain.handle('fs:gitDiff', async (_e, { root, rel } = {}) => {
       const nullDev = process.platform === 'win32' ? 'NUL' : '/dev/null';
       try {
         execFileSync('git', ['-C', rootAbs, 'diff', '--no-index', '--', nullDev, rel],
-          { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+          { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...GIT_PATH_ENV } });
       } catch (e) {
         if (e && typeof e.stdout === 'string' && e.stdout.trim()) diff = e.stdout;
       }
     }
     return { ok: true, diff };
   } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// ─── Source control IPC ──────────────────────────────────────────────────────
+// Backs the Source page. Reads resolve `root` and leave it unconfined the way
+// fs:gitStatus does; every write runs gitMutateGate first, every renderer
+// string that reaches an argv passes src/lib/git-ref.js, and every operand list
+// follows a '--'. A commit message and a hunk patch travel on stdin, so neither
+// appears in argv.
+
+const SC_MAX_ENTRIES = 5000;              // rows one status read may describe
+const SC_MAX_PATHS = 500;                 // paths one call may name
+const SC_PATH_CHUNK = 200;                // paths per invocation, so argv stays bounded
+const SC_MAX_DIFF_LINES = 20000;          // changed lines past which a diff is refused
+const SC_MAX_PATCH_BYTES = 4 * 1024 * 1024;
+const SC_WATCH_DEBOUNCE_MS = 250;
+const SC_REF_FORMAT = '%(refname:short)%1f%(objectname:short=12)%1f%(upstream:short)%1f'
+  + '%(upstream:track)%1f%(committerdate:unix)%1f%(contents:subject)%1f%(HEAD)%1f%(worktreepath)';
+const SC_LOG_FORMAT = '%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%ct%x1f%D%x1f%s%x1f%b%x1e';
+const SC_DIFF_SIDES = new Set(['worktree', 'index', 'untracked', 'commit']);
+const SC_HUNK_ACTIONS = new Set(['stage', 'unstage', 'discard']);
+
+// Credential helpers stay shut on every call, and GIT_OPTIONAL_LOCKS keeps this
+// page's polling off the index lock while an agent runs git in the terminal.
+// GIT_LITERAL_PATHSPECS makes every operand a plain path, so a name git
+// reported is the only name git acts on.
+// One options bag for every git read here: an explicit timeout, an explicit
+// buffer cap, and stdin ignored.
+function gitOpts(over) {
+  const o = over && typeof over === 'object' ? over : {};
+  return {
+    encoding: 'utf8',
+    timeout: typeof o.timeout === 'number' ? o.timeout : 5000,
+    maxBuffer: typeof o.maxBuffer === 'number' ? o.maxBuffer : 8 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, ...GIT_PATH_ENV },
+  };
+}
+
+// stdout, or null when git exits non-zero. Callers read the null as the failure
+// branch.
+function gitOut(args, over) {
+  try { return execFileSync('git', args, gitOpts(over)); }
+  catch (_) { return null; }
+}
+
+// stdout even on a non-zero exit, which is how `diff --no-index` reports two
+// files that differ.
+function gitOutEither(args, over) {
+  try { return execFileSync('git', args, gitOpts(over)); }
+  catch (err) { return err && typeof err.stdout === 'string' ? err.stdout : null; }
+}
+
+function gitLine(args, over) {
+  const out = gitOut(args, over);
+  return typeof out === 'string' && out.trim() ? out.trim() : null;
+}
+
+// Async git for every write and for fetch, so a slow call cannot block the
+// window. `input` is written to stdin and the stream is closed. Resolves
+// { ok, code, stdout, stderr, timedOut }.
+function gitRun(args, opts) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  return new Promise((resolve) => {
+    const settle = (err, stdout, stderr) => resolve({
+      ok: !err,
+      code: err && typeof err.code === 'number' ? err.code : (err ? 1 : 0),
+      stdout: typeof stdout === 'string' ? stdout : '',
+      stderr: typeof stderr === 'string' ? stderr : '',
+      timedOut: !!(err && (err.killed || err.signal)),
+    });
+    let child = null;
+    try {
+      child = execFile('git', args, {
+        encoding: 'utf8',
+        timeout: typeof o.timeout === 'number' ? o.timeout : 20000,
+        maxBuffer: typeof o.maxBuffer === 'number' ? o.maxBuffer : 8 * 1024 * 1024,
+        env: { ...process.env, ...GIT_PATH_ENV },
+      }, settle);
+    } catch (err) { return settle(err, '', ''); }
+    if (child && child.stdin) {
+      child.stdin.on('error', () => {});
+      try { child.stdin.end(typeof o.input === 'string' ? o.input : ''); } catch (_) {}
+    }
+  });
+}
+
+function scInt(v, lo, hi, dflt) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(hi, Math.max(lo, Math.trunc(n)));
+}
+
+// git stderr names absolute paths, so known exits get a fixed sentence and only
+// a capped fragment ever crosses the bridge.
+function scDetail(text) {
+  const s = typeof text === 'string' ? text.trim() : '';
+  return s ? s.slice(0, 512) : null;
+}
+
+// A repository-relative path is usable only when it passes both the allowlist
+// and the confinement check: one proves the string is a plain path, the other
+// proves it resolves inside root.
+function scRel(root, rel) {
+  const v = GitRef.validatePathspec(rel);
+  if (!v.ok) return { ok: false, error: 'bad path' };
+  try { confinedAbs(root, rel); } catch (_) { return { ok: false, error: 'path outside root' }; }
+  return { ok: true, value: v.value };
+}
+
+// One bad path refuses the whole call rather than acting on part of the list.
+function scPathList(root, paths) {
+  if (!Array.isArray(paths) || !paths.length) return { ok: false, error: 'no paths given' };
+  if (paths.length > SC_MAX_PATHS) return { ok: false, error: 'too many paths in one call' };
+  const list = [];
+  for (const p of paths) {
+    const r = scRel(root, p);
+    if (!r.ok) return { ok: false, error: r.error };
+    list.push(r.value);
+  }
+  return { ok: true, list };
+}
+
+function scChunks(list) {
+  const out = [];
+  for (let i = 0; i < list.length; i += SC_PATH_CHUNK) out.push(list.slice(i, i + SC_PATH_CHUNK));
+  return out;
+}
+
+// The precondition every mutating handler runs first. A write is allowed only
+// in a folder the user registered as a project or in a worktree that project
+// owns, never in the home folder and never inside a run's workspace.
+function gitMutateGate(root) {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  let abs;
+  try { abs = path.resolve(root); } catch (_) { return { ok: false, error: 'bad root' }; }
+  if (abs === path.resolve(HOME)) return { ok: false, error: 'the home folder is not a project' };
+  if (isAutopilotWorkspacePath(abs)) return { ok: false, error: 'a run workspace is read-only here' };
+  const projects = _projectsList().filter((p) => p && typeof p.path === 'string' && p.path);
+  for (const p of projects) {
+    if (path.resolve(p.path) === abs) return { ok: true, root: abs };
+  }
+  for (const p of projects) {
+    const listed = gitOut(['-C', path.resolve(p.path), 'worktree', 'list', '--porcelain']);
+    if (listed === null) continue;
+    for (const w of GitRefs.parseWorktreeList(listed)) {
+      if (w && typeof w.path === 'string' && w.path && path.resolve(w.path) === abs) return { ok: true, root: abs };
+    }
+  }
+  return { ok: false, error: 'this folder is not one of your projects' };
+}
+
+// An in-progress operation is read from the files git leaves in the git
+// directory rather than from parsing git's prose.
+const SC_STATE_FILES = [
+  ['MERGE_HEAD', 'merging'],
+  ['rebase-merge', 'rebasing'],
+  ['rebase-apply', 'rebasing'],
+  ['CHERRY_PICK_HEAD', 'cherry-picking'],
+  ['BISECT_LOG', 'bisecting'],
+];
+
+function scRepoState(gitDir) {
+  if (!gitDir) return 'clean';
+  for (const [name, state] of SC_STATE_FILES) {
+    try { if (fs.existsSync(path.join(gitDir, name))) return state; } catch (_) {}
+  }
+  return 'clean';
+}
+
+function scMtime(abs) {
+  try { return fs.statSync(abs).mtimeMs; } catch (_) { return null; }
+}
+
+// The left count is the upstream side, so it reads as behind, and the right
+// count as ahead.
+function scTrackCounts(rootAbs) {
+  const counts = gitLine(['-C', rootAbs, 'rev-list', '--left-right', '--count', '@{u}...HEAD']);
+  const parts = counts ? counts.split(/\s+/) : [];
+  const behind = parts.length >= 2 ? Number(parts[0]) : NaN;
+  const ahead = parts.length >= 2 ? Number(parts[1]) : NaN;
+  return {
+    ahead: Number.isFinite(ahead) ? ahead : null,
+    behind: Number.isFinite(behind) ? behind : null,
+  };
+}
+
+function scDiffArgv(rootAbs, side, rel, ctx, ignoreWs, sha) {
+  const ws = ignoreWs ? ['-w'] : [];
+  if (side === 'index') {
+    return ['-C', rootAbs, 'diff', '--cached', '--no-color', '--no-ext-diff', '--find-renames', '-U' + ctx, ...ws, '--', rel];
+  }
+  if (side === 'untracked') {
+    const nullDev = process.platform === 'win32' ? 'NUL' : '/dev/null';
+    return ['-C', rootAbs, 'diff', '--no-color', '--no-ext-diff', '--no-index', '-U' + ctx, '--', nullDev, rel];
+  }
+  if (side === 'commit') {
+    return ['-C', rootAbs, 'show', '--no-color', '--no-ext-diff', '--find-renames', '--format=', '-U' + ctx, '--end-of-options', sha, '--', rel];
+  }
+  return ['-C', rootAbs, 'diff', '--no-color', '--no-ext-diff', '--find-renames', '-U' + ctx, ...ws, '--', rel];
+}
+
+// Changed-line count for the same side the read will paint, taken from numstat
+// so the size is known before the diff itself is read. An untracked file is
+// measured against the empty side, which is the comparison its read performs.
+function scGuardArgv(rootAbs, side, rel, sha) {
+  if (side === 'index') return ['-C', rootAbs, 'diff', '--cached', '--numstat', '--', rel];
+  if (side === 'untracked') {
+    const nullDev = process.platform === 'win32' ? 'NUL' : '/dev/null';
+    return ['-C', rootAbs, 'diff', '--numstat', '--no-index', '--', nullDev, rel];
+  }
+  if (side === 'commit') {
+    return ['-C', rootAbs, 'show', '--numstat', '--find-renames', '--format=', '--end-of-options', sha, '--', rel];
+  }
+  return ['-C', rootAbs, 'diff', '--numstat', '--', rel];
+}
+
+function scGuardLines(rootAbs, side, rel, sha) {
+  const argv = scGuardArgv(rootAbs, side, rel, sha);
+  const opts = { timeout: 8000, maxBuffer: 1024 * 1024 };
+  // --no-index exits non-zero whenever the two sides differ, which is the
+  // ordinary answer for an untracked file.
+  const out = side === 'untracked' ? gitOutEither(argv, opts) : gitOut(argv, opts);
+  const rows = GitRefs.parseNumstat(out || '');
+  return rows.reduce((n, f) => n + (f.adds || 0) + (f.dels || 0), 0);
+}
+
+// The basename of any other worktree holding this branch, or null. Answering in
+// main keeps a stale list from turning into a git error naming a data path.
+function scWorktreeHolding(rootAbs, branch) {
+  const list = GitRefs.parseWorktreeList(gitOut(['-C', rootAbs, 'worktree', 'list', '--porcelain']) || '');
+  for (const w of list) {
+    if (!w || w.branch !== branch || !w.path) continue;
+    if (path.resolve(w.path) === rootAbs) continue;
+    return path.basename(w.path);
+  }
+  return null;
+}
+
+// git lists the files it would overwrite one per tab-indented line.
+function scConflictPaths(stderr) {
+  const out = [];
+  for (const line of String(stderr || '').split('\n')) {
+    if (line[0] !== '\t') continue;
+    const p = line.trim();
+    if (p) out.push(p.slice(0, 200));
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+// Repository shape, head, upstream and in-progress state in one snapshot.
+ipcMain.handle('git:repo', async (_e, { root } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  try {
+    if (gitOut(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) return { ok: true, isRepo: false };
+    const gitDir = gitLine(['-C', rootAbs, 'rev-parse', '--absolute-git-dir']) || '';
+    const toplevel = gitLine(['-C', rootAbs, 'rev-parse', '--show-toplevel']) || rootAbs;
+    const branch = gitLine(['-C', rootAbs, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+    const headShortSha = gitLine(['-C', rootAbs, 'rev-parse', '--short=12', 'HEAD']);
+    const unborn = headShortSha === null;
+    const head = unborn
+      ? []
+      : String(gitOut(['-C', rootAbs, 'log', '-1', '--format=%H%x1f%an%x1f%ct%x1f%s']) || '').trim().split('\x1f');
+    const upstream = gitLine(['-C', rootAbs, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    const counts = upstream ? scTrackCounts(rootAbs) : { ahead: null, behind: null };
+    const fetchedAtMs = gitDir ? scMtime(path.join(gitDir, 'FETCH_HEAD')) : null;
+    const hasFetched = fetchedAtMs !== null;
+    const remoteUrl = gitLine(['-C', rootAbs, 'config', '--get', 'remote.origin.url']);
+    const worktrees = GitRefs.parseWorktreeList(gitOut(['-C', rootAbs, 'worktree', 'list', '--porcelain']) || '')
+      .map((w) => ({
+        basename: w.path ? path.basename(w.path) : '',
+        branch: w.branch || null,
+        detached: !!w.detached,
+        managed: isAutopilotWorkspacePath(w.path || ''),
+      }));
+    const stashCount = String(gitOut(['-C', rootAbs, 'stash', 'list', '--format=%gd']) || '')
+      .split('\n').filter((l) => l.trim()).length;
+    const headAt = Number(head[2]);
+    return {
+      ok: true,
+      isRepo: true,
+      toplevel,
+      gitDir,
+      branch: branch || null,
+      detached: !unborn && !branch,
+      unborn,
+      headSha: head[0] || null,
+      headShortSha: headShortSha || null,
+      headSubject: (head[3] || '').slice(0, 200),
+      headAuthor: head[1] || null,
+      headAtMs: Number.isFinite(headAt) && headAt > 0 ? headAt * 1000 : null,
+      upstream: upstream || null,
+      ahead: counts.ahead,
+      // A behind count is withheld until a fetch has run, because the local copy
+      // of the remote ref is what it would be counted against.
+      behind: hasFetched ? counts.behind : null,
+      hasFetched,
+      fetchedAtMs,
+      remoteUrl: remoteUrl || null,
+      webUrl: remoteUrl ? webUrlFor(remoteUrl, { kind: 'repo' }) : null,
+      state: scRepoState(gitDir),
+      worktrees,
+      stashCount,
+      readAt: Date.now(),
+    };
+  } catch (_) { return { ok: false, error: 'could not read the repository' }; }
+});
+
+// Working-tree status as raw porcelain plus the two numstat sides and one mtime
+// per entry. The renderer parses the porcelain with the same unit-tested module.
+ipcMain.handle('git:status', async (_e, { root } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  const readAt = Date.now();
+  const big = { timeout: 6000, maxBuffer: 16 * 1024 * 1024 };
+  try {
+    if (gitOut(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) {
+      return { ok: true, isRepo: false, porcelain: '', numstat: { staged: [], unstaged: [] }, mtimes: {}, truncated: false, readAt };
+    }
+    const raw = gitOut(['-C', rootAbs, 'status', '--porcelain=v1', '--untracked-files=all', '--renames'], big);
+    if (raw === null) return { ok: false, error: 'could not read status' };
+    const lines = raw.split('\n').filter((l) => l.length >= 3);
+    const truncated = lines.length > SC_MAX_ENTRIES;
+    const kept = truncated ? lines.slice(0, SC_MAX_ENTRIES) : lines;
+    const porcelain = kept.length ? kept.join('\n') + '\n' : '';
+    const unstaged = GitRefs.parseNumstat(gitOut(['-C', rootAbs, 'diff', '--numstat', '-z', '--'], big) || '');
+    const staged = GitRefs.parseNumstat(gitOut(['-C', rootAbs, 'diff', '--cached', '--numstat', '-z', '--'], big) || '');
+    // Every path is confined again before it is stat'd. A path that fails keeps
+    // its row with a null mtime, so the count stays honest.
+    const mtimes = {};
+    for (const entry of parsePorcelain(porcelain)) {
+      const rel = entry && typeof entry.path === 'string' ? entry.path : '';
+      if (!rel) continue;
+      let abs = null;
+      try { abs = confinedAbs(rootAbs, rel); } catch (_) { abs = null; }
+      mtimes[rel] = abs ? scMtime(abs) : null;
+    }
+    return { ok: true, isRepo: true, porcelain, numstat: { staged, unstaged }, mtimes, truncated, readAt };
+  } catch (_) { return { ok: false, error: 'could not read status' }; }
+});
+
+// One side of one file's diff. The staged and unstaged sides are separate calls
+// and are never concatenated.
+ipcMain.handle('git:diff', async (_e, { root, rel, side, sha, context, ignoreWs } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  const kind = typeof side === 'string' && SC_DIFF_SIDES.has(side) ? side : 'worktree';
+  const r = scRel(rootAbs, rel);
+  if (!r.ok) return { ok: false, error: r.error };
+  let commitSha = null;
+  if (kind === 'commit') {
+    const v = GitRef.validateSha(sha);
+    if (!v.ok) return { ok: false, error: 'bad commit id' };
+    commitSha = v.value;
+  }
+  const ctx = scInt(context, 0, 2000, 3);
+  try {
+    // The numstat guard answers in milliseconds, so a lock file is refused
+    // before anything tries to read its diff.
+    const changed = scGuardLines(rootAbs, kind, r.value, commitSha);
+    if (changed > SC_MAX_DIFF_LINES) return { ok: false, error: 'diff too large', lines: changed };
+    const argv = scDiffArgv(rootAbs, kind, r.value, ctx, !!ignoreWs, commitSha);
+    const opts = { timeout: 8000, maxBuffer: 32 * 1024 * 1024 };
+    const out = kind === 'untracked' ? gitOutEither(argv, opts) : gitOut(argv, opts);
+    if (out === null) return { ok: false, error: 'could not read the diff' };
+    return { ok: true, diff: out, context: ctx, lines: out ? out.split('\n').length : 0, truncated: false };
+  } catch (_) { return { ok: false, error: 'could not read the diff' }; }
+});
+
+// Stage whole files. No -A and no synthesized directory pathspec: the call
+// stages what it names and nothing else.
+ipcMain.handle('git:stage', async (_e, { root, paths } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  const list = scPathList(rootAbs, paths);
+  if (!list.ok) return { ok: false, error: list.error };
+  try {
+    for (const chunk of scChunks(list.list)) {
+      const r = await gitRun(['-C', rootAbs, 'add', '--', ...chunk], { timeout: 20000 });
+      if (!r.ok) return { ok: false, error: 'could not stage those files', detail: scDetail(r.stderr) };
+    }
+    return { ok: true, staged: list.list.length };
+  } catch (_) { return { ok: false, error: 'could not stage those files' }; }
+});
+
+// Unstage whole files. A repository with no commits yet has no HEAD to restore
+// from, so the first staging in a new project is undone by dropping the index
+// entries instead.
+ipcMain.handle('git:unstage', async (_e, { root, paths } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  const list = scPathList(rootAbs, paths);
+  if (!list.ok) return { ok: false, error: list.error };
+  try {
+    const hasHead = (await gitRun(['-C', rootAbs, 'rev-parse', '--verify', '--quiet', 'HEAD'], { timeout: 10000 })).ok;
+    for (const chunk of scChunks(list.list)) {
+      const argv = hasHead
+        ? ['-C', rootAbs, 'restore', '--staged', '--', ...chunk]
+        : ['-C', rootAbs, 'rm', '--cached', '-r', '--quiet', '--', ...chunk];
+      const r = await gitRun(argv, { timeout: 20000 });
+      if (!r.ok) return { ok: false, error: 'could not unstage those files', detail: scDetail(r.stderr) };
+    }
+    return { ok: true, unstaged: list.list.length };
+  } catch (_) { return { ok: false, error: 'could not unstage those files' }; }
+});
+
+// One hunk, addressed by index. Main re-reads the diff, parses it with the
+// module the renderer paints from, and builds the patch here, so the renderer
+// never authors or transmits one. The patch goes to git on stdin.
+ipcMain.handle('git:hunk', async (_e, { root, rel, side, hunkIndex, action, context, confirm } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return { ok: false, code: 'refused', error: gate.error };
+  const rootAbs = gate.root;
+  const act = typeof action === 'string' && SC_HUNK_ACTIONS.has(action) ? action : null;
+  if (!act) return { ok: false, code: 'refused', error: 'unknown hunk action' };
+  const kind = side === 'index' || side === 'worktree' ? side : null;
+  if (!kind) return { ok: false, code: 'refused', error: 'unknown diff side' };
+  if (act === 'discard' && kind !== 'worktree') return { ok: false, code: 'refused', error: 'only a working tree hunk can be discarded' };
+  if (act === 'discard' && confirm !== true) return { ok: false, code: 'refused', error: 'discarding needs a confirmation' };
+  if (!Number.isInteger(hunkIndex) || hunkIndex < 0) return { ok: false, code: 'refused', error: 'bad hunk index' };
+  const r = scRel(rootAbs, rel);
+  if (!r.ok) return { ok: false, code: 'refused', error: r.error };
+  const ctx = scInt(context, 0, 2000, 3);
+  try {
+    const text = gitOut(scDiffArgv(rootAbs, kind, r.value, ctx, false, null), { timeout: 8000, maxBuffer: 32 * 1024 * 1024 });
+    if (text === null) return { ok: false, code: 'stale-diff', error: 'could not read the diff' };
+    const parsed = UnifiedDiff.parseUnifiedDiff(text);
+    // The patch is built from the file the caller named, found by path rather
+    // than by position, so a read that describes more than one file cannot
+    // point the hunk at a different file.
+    const files = parsed && Array.isArray(parsed.files) ? parsed.files : [];
+    const file = files.find((f) => f && (f.newPath === r.value || f.oldPath === r.value)) || null;
+    if (!file || !Array.isArray(file.hunks) || hunkIndex >= file.hunks.length) {
+      return { ok: false, code: 'stale-diff', error: 'that hunk is no longer there' };
+    }
+    const patch = UnifiedDiff.buildHunkPatch(file, hunkIndex, { reverse: false });
+    if (typeof patch !== 'string' || !patch) return { ok: false, code: 'refused', error: 'that hunk cannot be applied on its own' };
+    if (Buffer.byteLength(patch, 'utf8') > SC_MAX_PATCH_BYTES) return { ok: false, code: 'refused', error: 'that hunk is too large to apply' };
+
+    // The check pass runs first and a failure re-reads the pane instead of
+    // guessing at a merge.
+    const base = ['-C', rootAbs, 'apply', '--cached', '--whitespace=nowarn'];
+    const rev = act === 'unstage' ? ['-R'] : [];
+    const check = await gitRun([...base, '--check', ...rev, '-'], { timeout: 15000, input: patch });
+    if (!check.ok) return { ok: false, code: 'stale-diff', error: 'this diff moved since it was read', detail: scDetail(check.stderr) };
+
+    if (act === 'discard') {
+      // The hunk goes into the index and straight into a stash, so it stays
+      // recoverable. Anything else already staged would travel with it, so the
+      // call refuses instead.
+      const indexClean = await gitRun(['-C', rootAbs, 'diff', '--cached', '--quiet'], { timeout: 15000 });
+      if (!indexClean.ok) return { ok: false, code: 'refused', error: 'commit or unstage the staged changes before discarding a hunk' };
+      const staged = await gitRun([...base, '-'], { timeout: 15000, input: patch });
+      if (!staged.ok) return { ok: false, code: 'apply-failed', error: 'could not apply that hunk', detail: scDetail(staged.stderr) };
+      const stash = await gitRun(['-C', rootAbs, 'stash', 'push', '--staged', '--message', 'husk discard ' + new Date().toISOString()], { timeout: 30000 });
+      if (!stash.ok) {
+        await gitRun([...base, '-R', '-'], { timeout: 15000, input: patch });
+        return { ok: false, code: 'apply-failed', error: 'could not set that hunk aside', detail: scDetail(stash.stderr) };
+      }
+      return { ok: true };
+    }
+
+    const applied = await gitRun([...base, ...rev, '-'], { timeout: 15000, input: patch });
+    if (!applied.ok) return { ok: false, code: 'apply-failed', error: 'could not apply that hunk', detail: scDetail(applied.stderr) };
+    return { ok: true };
+  } catch (_) { return { ok: false, code: 'apply-failed', error: 'could not apply that hunk' }; }
+});
+
+// Discard, in two named modes. Tracked changes go to a stash whose ref comes
+// back so an Undo can restore exactly what was taken; untracked files go to the
+// OS trash. Neither mode runs a verb that removes work outright.
+ipcMain.handle('git:discard', async (_e, { root, paths, mode, confirm } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  if (confirm !== true) return { ok: false, error: 'discarding needs a confirmation' };
+  if (mode !== 'tracked' && mode !== 'untracked') return { ok: false, error: 'unknown discard mode' };
+  const list = scPathList(rootAbs, paths);
+  if (!list.ok) return { ok: false, error: list.error };
+  try {
+    if (mode === 'tracked') {
+      // A stash takes the index side and the working tree side of a path
+      // together. The confirm names the side the reader did not select, and the
+      // stash pop puts both sides back where they were.
+      const before = gitLine(['-C', rootAbs, 'rev-parse', '--short=12', 'refs/stash']);
+      const message = 'husk discard ' + new Date().toISOString();
+      const r = await gitRun(['-C', rootAbs, 'stash', 'push', '--message', message, '--', ...list.list], { timeout: 30000 });
+      if (!r.ok) return { ok: false, error: 'could not set those changes aside', detail: scDetail(r.stderr) };
+      const stashRef = gitLine(['-C', rootAbs, 'rev-parse', '--short=12', 'refs/stash']);
+      if (!stashRef || stashRef === before) return { ok: false, error: 'those files had nothing to discard' };
+      return { ok: true, stashRef, restored: list.list.length, trashed: 0, failed: [] };
+    }
+    const failed = [];
+    let trashed = 0;
+    for (const rel of list.list) {
+      let abs = null;
+      try { abs = confinedAbs(rootAbs, rel); } catch (_) { abs = null; }
+      if (!abs || !realPathInside(abs, rootAbs)) { failed.push({ path: rel, reason: 'path outside root' }); continue; }
+      try {
+        await shell.trashItem(abs);
+        trashed += 1;
+      } catch (_) { failed.push({ path: rel, reason: 'could not move it to the trash' }); }
+    }
+    return { ok: true, stashRef: null, restored: 0, trashed, failed };
+  } catch (_) { return { ok: false, error: 'could not discard those changes' }; }
+});
+
+// Undo for a tracked discard. The ref identifies the stash that was made, so a
+// pop restores what was taken rather than whatever sits on top of the stack.
+ipcMain.handle('git:stashPop', async (_e, { root, ref } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  const v = GitRef.validateStashRef(ref);
+  if (!v.ok) return { ok: false, error: 'that is not a stash reference' };
+  try {
+    let target = v.value;
+    if (target.indexOf('stash@{') !== 0) {
+      // A stash commit id is matched back to its current position, because the
+      // position moves as other stashes are pushed and dropped.
+      target = null;
+      const listed = String(gitOut(['-C', rootAbs, 'stash', 'list', '--format=%gd%x1f%H']) || '');
+      for (const line of listed.split('\n')) {
+        if (!line) continue;
+        const [gd, sha] = line.split('\x1f');
+        if (gd && sha && sha.indexOf(v.value) === 0) { target = gd; break; }
+      }
+      if (!target) return { ok: false, error: 'that stash is gone' };
+    }
+    // --index puts the staged half back on the index and the rest on the
+    // working tree, so a discard of a path holding both sides is undone to the
+    // split it had. git refuses --index without dropping the stash when the
+    // index cannot be reinstated, so a plain pop still restores the content.
+    let r = await gitRun(['-C', rootAbs, 'stash', 'pop', '--index', '--end-of-options', target], { timeout: 20000 });
+    if (r.ok) return { ok: true, index: true };
+    r = await gitRun(['-C', rootAbs, 'stash', 'pop', '--end-of-options', target], { timeout: 20000 });
+    if (r.ok) return { ok: true, index: false };
+    const err = String(r.stderr || '');
+    if (/would be overwritten|already exists|could not restore untracked/i.test(err)) {
+      return { ok: false, error: 'popping would overwrite local changes' };
+    }
+    if (/not a stash|no stash|unknown revision|not a valid reference|bad revision/i.test(err)) {
+      return { ok: false, error: 'that stash is gone' };
+    }
+    return { ok: false, error: 'could not restore that stash', detail: scDetail(err) };
+  } catch (_) { return { ok: false, error: 'could not restore that stash' }; }
+});
+
+// Commit what the index already holds. The message travels on stdin, -a is
+// never passed, and hooks always run. Husk composes the message itself and git
+// is never handed an editor template, so cleanup only trims whitespace and a
+// subject is free to open with a hash.
+ipcMain.handle('git:commit', async (_e, { root, subject, body, amend, confirmedPublished } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  const subj = typeof subject === 'string' ? subject.trim() : '';
+  if (!subj) return { ok: false, error: 'a commit needs a subject' };
+  if (subj.includes('\n') || subj.includes('\r')) return { ok: false, error: 'the subject has to be one line' };
+  if (Buffer.byteLength(subj, 'utf8') > 200) return { ok: false, error: 'the subject is longer than 200 bytes' };
+  const text = typeof body === 'string' ? body : '';
+  if (Buffer.byteLength(text, 'utf8') > 8192) return { ok: false, error: 'the message body is longer than 8192 bytes' };
+  const doAmend = amend === true;
+  try {
+    const hasHead = (await gitRun(['-C', rootAbs, 'rev-parse', '--verify', '--quiet', 'HEAD'], { timeout: 10000 })).ok;
+    if (doAmend && !hasHead) return { ok: false, code: 'amend-unborn', error: 'there is no commit to amend yet' };
+    if (!doAmend) {
+      const probe = await gitRun(['-C', rootAbs, 'diff', '--cached', '--quiet'], { timeout: 10000 });
+      if (probe.ok) return { ok: false, code: 'nothing-staged', error: 'nothing is staged' };
+    }
+    if (doAmend && confirmedPublished !== true) {
+      const published = await gitRun(['-C', rootAbs, 'merge-base', '--is-ancestor', 'HEAD', '@{u}'], { timeout: 10000 });
+      if (published.ok) return { ok: false, code: 'amend-published', error: 'that commit is already on its upstream branch' };
+    }
+    const message = text.trim() ? subj + '\n\n' + text.trim() + '\n' : subj + '\n';
+    const r = await gitRun(['-C', rootAbs, 'commit', '--cleanup=whitespace', '--file', '-', ...(doAmend ? ['--amend'] : [])],
+      { timeout: 30000, input: message });
+    if (!r.ok) {
+      if (r.timedOut) return { ok: false, error: 'the commit timed out, so a hook may still be running' };
+      const err = String(r.stderr || '') + String(r.stdout || '');
+      if (/tell me who you are|unable to auto-detect email|empty ident name/i.test(err)) {
+        return {
+          ok: false,
+          code: 'no-identity',
+          error: 'git does not know who you are yet. Run git config --global user.name "Your Name" and git config --global user.email "you@example.com", then commit again.',
+        };
+      }
+      if (/hook/i.test(err)) return { ok: false, code: 'hook-failed', error: 'a hook in this repository refused the commit', detail: scDetail(err) };
+      return { ok: false, error: 'could not create the commit', detail: scDetail(err) };
+    }
+    // The sha is read back from git, so the toast can only name a commit that
+    // was actually made.
+    const read = String(gitOut(['-C', rootAbs, 'log', '-1', '--format=%H%x1f%h%x1f%s']) || '').trim().split('\x1f');
+    return { ok: true, sha: read[0] || null, shortSha: read[1] || null, subject: (read[2] || '').slice(0, 200) };
+  } catch (_) { return { ok: false, error: 'could not create the commit' }; }
+});
+
+// Local and remote branches with their tracking counts. worktreepath answers
+// which branches another worktree holds, reduced to a basename here.
+function scReadRefs(rootAbs, namespace) {
+  const out = gitOut(['-C', rootAbs, 'for-each-ref', '--sort=-committerdate', '--count=500', '--format=' + SC_REF_FORMAT, namespace],
+    { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+  if (out === null) return null;
+  return GitRefs.parseForEachRef(out).map((b) => ({
+    name: b.name,
+    sha: b.sha,
+    upstream: b.upstream,
+    ahead: b.ahead,
+    behind: b.behind,
+    gone: b.gone,
+    dateMs: b.dateMs,
+    subject: String(b.subject || '').slice(0, 200),
+    isHead: b.isHead,
+    worktreePath: b.worktreePath ? path.basename(b.worktreePath) : null,
+  }));
+}
+
+ipcMain.handle('git:branches', async (_e, { root } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  try {
+    const local = scReadRefs(rootAbs, 'refs/heads');
+    const remote = scReadRefs(rootAbs, 'refs/remotes');
+    if (local === null && remote === null) return { ok: false, error: 'could not read the branches' };
+    const locals = local || [];
+    const remotes = remote || [];
+    return {
+      ok: true,
+      local: locals,
+      remote: remotes,
+      truncated: locals.length >= 500 || remotes.length >= 500,
+      readAt: Date.now(),
+    };
+  } catch (_) { return { ok: false, error: 'could not read the branches' }; }
+});
+
+// Switch branches. `switch` reads its argument as a branch and never as a path,
+// --no-guess keeps a bare name from creating a tracking branch, and --force is
+// never passed, so git's refusal to overwrite local work reaches the user.
+ipcMain.handle('git:switch', async (_e, { root, branch } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  const v = GitRef.validateBranchName(branch);
+  if (!v.ok) return { ok: false, code: 'unknown-ref', error: 'that branch name ' + v.reason };
+  try {
+    const held = scWorktreeHolding(rootAbs, v.value);
+    if (held) return { ok: false, code: 'checked-out-elsewhere', error: 'that branch is open in another worktree', detail: held };
+    if (gitOut(['-C', rootAbs, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/' + v.value]) === null) {
+      return { ok: false, code: 'unknown-ref', error: 'there is no branch by that name here' };
+    }
+    const r = await gitRun(['-C', rootAbs, 'switch', '--no-guess', '--', v.value], { timeout: 20000 });
+    if (r.ok) return { ok: true, branch: v.value };
+    const err = String(r.stderr || '');
+    if (/would be overwritten|local changes|Please commit your changes/i.test(err)) {
+      return {
+        ok: false,
+        code: 'would-overwrite',
+        error: 'switching would overwrite changes in the working tree',
+        detail: scDetail(err),
+        conflicts: scConflictPaths(err),
+      };
+    }
+    return { ok: false, error: 'could not switch branches', detail: scDetail(err) };
+  } catch (_) { return { ok: false, error: 'could not switch branches' }; }
+});
+
+// Create a branch, optionally switching to it.
+ipcMain.handle('git:createBranch', async (_e, { root, name, from, checkout } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  const v = GitRef.validateBranchName(name);
+  if (!v.ok) return { ok: false, error: 'that branch name ' + v.reason };
+  let start = 'HEAD';
+  if (typeof from === 'string' && from && from !== 'HEAD') {
+    const vf = GitRef.validateRef(from);
+    if (!vf.ok) return { ok: false, error: 'that starting point ' + vf.reason };
+    if (gitOut(['-C', rootAbs, 'rev-parse', '--verify', '--quiet', '--end-of-options', vf.value]) === null) {
+      return { ok: false, error: 'that starting point does not exist here' };
+    }
+    start = vf.value;
+  }
+  try {
+    if (gitOut(['-C', rootAbs, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/' + v.value]) !== null) {
+      return { ok: false, code: 'branch-exists', error: v.value + ' already exists' };
+    }
+    // check-ref-format only ever sees a name the allowlist already accepted.
+    if (gitOut(['-C', rootAbs, 'check-ref-format', '--branch', v.value]) === null) {
+      return { ok: false, error: 'git will not accept that branch name' };
+    }
+    const argv = checkout === true
+      ? ['-C', rootAbs, 'switch', '--create', '--end-of-options', v.value, start]
+      : ['-C', rootAbs, 'branch', '--end-of-options', v.value, start];
+    const r = await gitRun(argv, { timeout: 10000 });
+    if (!r.ok) return { ok: false, error: 'could not create that branch', detail: scDetail(r.stderr) };
+    return { ok: true, name: v.value, sha: gitLine(['-C', rootAbs, 'rev-parse', '--short=12', '--end-of-options', 'refs/heads/' + v.value]) };
+  } catch (_) { return { ok: false, error: 'could not create that branch' }; }
+});
+
+// Delete a branch. -d is always tried first and -D is a separate call carrying
+// its own confirmation and the sha the user was shown, so one call can never
+// escalate and a force delete can never land on a branch that moved.
+ipcMain.handle('git:deleteBranch', async (_e, { root, branch, force, expectSha, confirm } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  if (confirm !== true) return { ok: false, error: 'deleting needs a confirmation' };
+  const v = GitRef.validateBranchName(branch);
+  if (!v.ok) return { ok: false, error: 'that branch name ' + v.reason };
+  try {
+    const tip = gitLine(['-C', rootAbs, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/' + v.value]);
+    if (!tip) return { ok: false, error: 'there is no branch by that name here' };
+    const current = gitLine(['-C', rootAbs, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (current === v.value) return { ok: false, code: 'current', error: 'that is the branch you are on' };
+    const held = scWorktreeHolding(rootAbs, v.value);
+    if (held) return { ok: false, code: 'checked-out-elsewhere', error: 'that branch is open in another worktree', detail: held };
+
+    if (force === true) {
+      const ve = GitRef.validateSha(expectSha);
+      if (!ve.ok) return { ok: false, error: 'a force delete needs the sha that was shown' };
+      if (tip.indexOf(ve.value) !== 0 && ve.value.indexOf(tip) !== 0) {
+        return { ok: false, code: 'branch-moved', error: 'that branch moved since it was read' };
+      }
+      const forced = await gitRun(['-C', rootAbs, 'branch', '-D', '--end-of-options', v.value], { timeout: 10000 });
+      if (!forced.ok) return { ok: false, error: 'could not delete that branch', detail: scDetail(forced.stderr) };
+      return { ok: true, branch: v.value, sha: tip };
+    }
+
+    const r = await gitRun(['-C', rootAbs, 'branch', '-d', '--end-of-options', v.value], { timeout: 10000 });
+    if (r.ok) return { ok: true, branch: v.value, sha: tip };
+    const err = String(r.stderr || '');
+    if (/not fully merged/i.test(err)) {
+      // The range is assembled here from two parts git itself confirmed.
+      const listed = String(gitOut(['-C', rootAbs, 'log', '--max-count=20', '--format=%h%x1f%s', '--end-of-options', 'HEAD..' + v.value, '--']) || '');
+      const unmerged = listed.split('\n').filter(Boolean).map((l) => {
+        const [shortSha, subject] = l.split('\x1f');
+        return { shortSha: shortSha || '', subject: String(subject || '').slice(0, 200) };
+      });
+      return { ok: false, code: 'unmerged', error: 'that branch has commits no other branch holds', unmerged };
+    }
+    return { ok: false, error: 'could not delete that branch', detail: scDetail(err) };
+  } catch (_) { return { ok: false, error: 'could not delete that branch' }; }
+});
+
+// Commit records for the History tab, returned raw so the renderer parses them
+// with the same tested module.
+ipcMain.handle('git:log', async (_e, { root, ref, limit, skip, rel } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  const count = Number.isInteger(limit) ? scInt(limit, 1, 200, 50) : 50;
+  const offset = Number.isInteger(skip) ? scInt(skip, 0, 10000, 0) : 0;
+  let refArgs = [];
+  if (typeof ref === 'string' && ref) {
+    const v = GitRef.validateRef(ref);
+    if (!v.ok) return { ok: false, error: 'bad ref' };
+    if (gitOut(['-C', rootAbs, 'rev-parse', '--verify', '--quiet', '--end-of-options', v.value]) === null) {
+      return { ok: false, error: 'that ref does not exist here' };
+    }
+    refArgs = ['--end-of-options', v.value];
+  }
+  let pathArgs = [];
+  if (typeof rel === 'string' && rel) {
+    const r = scRel(rootAbs, rel);
+    if (!r.ok) return { ok: false, error: r.error };
+    pathArgs = [r.value];
+  }
+  try {
+    const out = gitOut(['-C', rootAbs, 'log', '--no-color', '--date-order', '--max-count=' + (count + 1),
+      '--skip=' + offset, '--format=' + SC_LOG_FORMAT, ...refArgs, '--', ...pathArgs],
+    { timeout: 8000, maxBuffer: 16 * 1024 * 1024 });
+    if (out === null) return { ok: false, error: 'could not read the history' };
+    // One more record than asked for is read and dropped, so Load more is only
+    // offered when there is more.
+    const chunks = out.split('\x1e').filter((c) => c.replace(/^[\r\n]+/, '') !== '');
+    const hasMore = chunks.length > count;
+    const kept = chunks.slice(0, count);
+    return { ok: true, records: kept.length ? kept.join('\x1e') + '\x1e' : '', hasMore, readAt: Date.now() };
+  } catch (_) { return { ok: false, error: 'could not read the history' }; }
+});
+
+// One commit: its record and the files it touched.
+ipcMain.handle('git:show', async (_e, { root, sha } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  const v = GitRef.validateSha(sha);
+  if (!v.ok) return { ok: false, error: 'bad commit id' };
+  const opts = { timeout: 8000, maxBuffer: 16 * 1024 * 1024 };
+  try {
+    const record = gitOut(['-C', rootAbs, 'show', '--no-patch', '--format=' + SC_LOG_FORMAT, '--end-of-options', v.value, '--'], opts);
+    if (record === null) return { ok: false, error: 'there is no commit by that id here' };
+    const stat = gitOut(['-C', rootAbs, 'show', '--numstat', '--find-renames', '--format=', '--end-of-options', v.value, '--'], opts) || '';
+    const parsed = GitRefs.parseNumstat(stat);
+    const truncated = parsed.length > SC_MAX_ENTRIES;
+    const files = (truncated ? parsed.slice(0, SC_MAX_ENTRIES) : parsed).map((f) => ({
+      status: f.oldPath ? 'R' : 'M',
+      path: f.path,
+      oldPath: f.oldPath,
+      adds: f.adds,
+      dels: f.dels,
+      binary: f.binary,
+    }));
+    return { ok: true, record, files, truncated };
+  } catch (_) { return { ok: false, error: 'could not read that commit' }; }
+});
+
+// The only call that touches the network. The remote name has to match an entry
+// git itself enumerated, no refspec is accepted, and no credential is collected:
+// an auth-shaped failure hands the command back to the user.
+ipcMain.handle('git:fetch', async (_e, { root, remote } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  try {
+    const names = String(gitOut(['-C', rootAbs, 'remote']) || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    if (!names.length) return { ok: false, error: 'this repository has no remote' };
+    let name = names.includes('origin') ? 'origin' : names[0];
+    if (typeof remote === 'string' && remote) {
+      if (!names.includes(remote)) return { ok: false, error: 'that remote is not configured here' };
+      name = remote;
+    }
+    const r = await gitRun(['-C', rootAbs, 'fetch', '--prune', '--no-tags', '--', name], { timeout: 60000 });
+    if (!r.ok) {
+      if (r.timedOut) return { ok: false, code: 'timeout', error: 'the fetch timed out' };
+      const err = String(r.stderr || '');
+      if (/authentication failed|could not read username|could not read password|permission denied|publickey|terminal prompts disabled|invalid username or password|repository not found/i.test(err)) {
+        return { ok: false, code: 'auth-required', error: 'this remote needs credentials Husk does not hold', detail: scDetail(err) };
+      }
+      return { ok: false, code: 'network', error: 'could not reach ' + name, detail: scDetail(err) };
+    }
+    const counts = scTrackCounts(rootAbs);
+    const gitDir = gitLine(['-C', rootAbs, 'rev-parse', '--absolute-git-dir']);
+    return {
+      ok: true,
+      ahead: counts.ahead,
+      behind: counts.behind,
+      fetchedAtMs: gitDir ? scMtime(path.join(gitDir, 'FETCH_HEAD')) : null,
+    };
+  } catch (_) { return { ok: false, code: 'network', error: 'could not fetch' }; }
+});
+
+// The remote's web address, built by the allowlist converter. The handler
+// returns the URL and opens nothing.
+ipcMain.handle('git:openRemote', async (_e, { root, kind, ref, rel, line, sha } = {}) => {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
+  const rootAbs = path.resolve(root);
+  const want = kind === 'file' || kind === 'commit' ? kind : 'repo';
+  const opts = { kind: want };
+  if (want === 'commit') {
+    const v = GitRef.validateSha(sha);
+    if (!v.ok) return { ok: false, error: 'bad commit id' };
+    opts.sha = v.value;
+  }
+  if (want === 'file') {
+    const vr = GitRef.validateRef(ref);
+    if (!vr.ok) return { ok: false, error: 'bad ref' };
+    const vp = scRel(rootAbs, rel);
+    if (!vp.ok) return { ok: false, error: vp.error };
+    opts.ref = vr.value;
+    opts.path = vp.value;
+    opts.line = scInt(line, 0, 10000000, 0);
+  }
+  try {
+    const remoteUrl = gitLine(['-C', rootAbs, 'config', '--get', 'remote.origin.url']);
+    if (!remoteUrl) return { ok: false, code: 'no-remote', error: 'this repository has no remote' };
+    const url = webUrlFor(remoteUrl, opts);
+    if (!url) return { ok: false, code: 'unknown-host', error: 'Husk cannot turn that remote into a web address' };
+    return { ok: true, url };
+  } catch (_) { return { ok: false, code: 'unknown-host', error: 'Husk cannot turn that remote into a web address' }; }
+});
+
+// The one write reachable from the empty state. The branch name is a literal
+// here, and a folder that already sits inside a repository is refused.
+ipcMain.handle('git:init', async (_e, { root, confirm } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  if (confirm !== true) return { ok: false, error: 'initializing needs a confirmation' };
+  try {
+    if (gitOut(['-C', rootAbs, 'rev-parse', '--show-toplevel']) !== null) {
+      return { ok: false, error: 'this folder is already in a repository' };
+    }
+    const r = await gitRun(['-C', rootAbs, 'init', '-b', 'main'], { timeout: 10000 });
+    if (!r.ok) return { ok: false, error: 'could not initialize a repository here', detail: scDetail(r.stderr) };
+    return { ok: true, toplevel: gitLine(['-C', rootAbs, 'rev-parse', '--show-toplevel']) || rootAbs };
+  } catch (_) { return { ok: false, error: 'could not initialize a repository here' }; }
+});
+
+// One watcher per window, on the resolved git directory only and never on the
+// working tree. Bursts are coalesced into one message. This is an accelerator:
+// the page's own poll is what makes freshness correct.
+let scWatch = null;
+
+function scStopWatch() {
+  if (!scWatch) return;
+  if (scWatch.timer) { try { clearTimeout(scWatch.timer); } catch (_) {} }
+  try { scWatch.watcher.close(); } catch (_) {}
+  scWatch = null;
+}
+
+function scWatchReason(name) {
+  const base = typeof name === 'string' ? name : '';
+  if (base === 'HEAD' || base === 'ORIG_HEAD') return 'head';
+  if (base === 'index' || base.indexOf('index.') === 0) return 'index';
+  if (base === 'FETCH_HEAD') return 'fetch';
+  return 'refs';
+}
+
+ipcMain.handle('git:watch', async (_e, { root } = {}) => {
+  const gate = gitMutateGate(root);
+  if (!gate.ok) return gate;
+  const rootAbs = gate.root;
+  const gitDir = gitLine(['-C', rootAbs, 'rev-parse', '--absolute-git-dir']);
+  if (!gitDir) return { ok: false, error: 'this folder is not a repository' };
+  scStopWatch();
+  try {
+    const watcher = fs.watch(gitDir, { persistent: false }, (_type, name) => {
+      if (!scWatch) return;
+      if (!scWatch.reason) scWatch.reason = scWatchReason(name);
+      if (scWatch.timer) return;
+      scWatch.timer = setTimeout(() => {
+        const reason = scWatch && scWatch.reason ? scWatch.reason : 'refs';
+        if (scWatch) { scWatch.timer = null; scWatch.reason = null; }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('git:changed', { root: rootAbs, reason });
+        }
+      }, SC_WATCH_DEBOUNCE_MS);
+    });
+    watcher.on('error', () => { scStopWatch(); });
+    scWatch = { root: rootAbs, gitDir, watcher, timer: null, reason: null };
+    if (mainWindow) {
+      try { mainWindow.removeListener('closed', scStopWatch); } catch (_) {}
+      mainWindow.once('closed', scStopWatch);
+    }
+    return { ok: true, watching: true };
+  } catch (_) {
+    scStopWatch();
+    return { ok: false, error: 'could not watch this repository' };
+  }
+});
+
+ipcMain.handle('git:unwatch', async () => {
+  scStopWatch();
+  return { ok: true, watching: false };
 });
 
 // ─── Voice (local TTS, no API keys) ─────────────────────────────────────────────
@@ -10828,6 +12243,7 @@ if (!gotLock) {
     syncAgentFiles();
     startStatuslineRefresh();
     startUsageRefresh();
+    startScheduler();
     await startNullVoiceServer();
     // Recover or prune worktrees left behind by a crash before any new run
     // can create one. Guarded so it never blocks the window from opening.
@@ -10836,7 +12252,7 @@ if (!gotLock) {
     setupAutoUpdater();
   });
   app.on('window-all-closed', () => {
-    killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater();
+    killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopScheduler(); stopAutoUpdater();
     // Exit hard. app.quit()'s graceful teardown waits for the GPU and renderer
     // processes to exit, which on a real compositor can hang and leave the main
     // process alive with no window. app.exit() terminates immediately.

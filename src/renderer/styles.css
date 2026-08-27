@@ -103,17 +103,24 @@
    elevations inherit from the dark :root. The light-family theme (Sepia) overrides
    the solid surface and shadow set the way Light does. */
 
-/* Midnight: deep cool blue-black. */
+/* Midnight: deep cool blue-black, and a cool signal set to match it. The ground
+   stands a clear step off the warm black Dark uses, and the three state hues are
+   its own, so the two themes are told apart by their marks and not only by the
+   tint under them. */
 [data-theme="midnight"] {
-  --bg: #0a0e17;
+  --bg: #0f1626;
   --text: #e8ecf4;
   --text-2: rgba(232, 236, 244, 0.70);
   --text-3: rgba(232, 236, 244, 0.54);
-  --notif-bg: #131a29;
+  --rose:    #f2569b;
+  --emerald: #17a08a;
+  --amber:   #ece16b;
+  --info:    #5cc8ff;
+  --notif-bg: #182135;
   --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(99, 140, 255, 0.054), transparent 65%),
     radial-gradient(800px circle at 82% 14%, rgba(120, 90, 255, 0.041), transparent 60%),
     radial-gradient(1000px circle at 60% 95%, rgba(60, 120, 220, 0.036), transparent 65%);
-  --term-bg: #0d1220;
+  --term-bg: #101828;
   --term-fg: #e8ecf4;
 }
 
@@ -206,7 +213,9 @@
 
 /* Catppuccin Mocha: soft pastel dark. */
 [data-theme="catppuccin"] {
-  --bg: #1e1e2e;
+  /* Mocha's own crust, the deepest surface the palette declares, so the field
+     stands apart from every other indigo theme on the shelf. */
+  --bg: #11111b;
   --text: #cdd6f4;
   --text-2: rgba(205, 214, 244, 0.72);
   --text-3: rgba(205, 214, 244, 0.6);
@@ -217,13 +226,15 @@
   --notif-bg: #292c3c;
   --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(203, 166, 247, 0.063), transparent 65%),
     radial-gradient(820px circle at 84% 16%, rgba(137, 180, 250, 0.045), transparent 60%);
-  --term-bg: #1e1e2e;
+  --term-bg: #11111b;
   --term-fg: #cdd6f4;
 }
 
 /* Rose Pine: muted rose, pine and gold on soho black. */
 [data-theme="rose-pine"] {
-  --bg: #191724;
+  /* The palette's own surface, which carries the plum the base only hints at,
+     so the field reads as rose pine rather than as another navy. */
+  --bg: #1f1d2e;
   --text: #e0def4;
   --text-2: rgba(224, 222, 244, 0.72);
   --text-3: rgba(224, 222, 244, 0.56);
@@ -234,7 +245,7 @@
   --notif-bg: #21202e;
   --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(235, 111, 146, 0.054), transparent 65%),
     radial-gradient(820px circle at 84% 16%, rgba(196, 167, 231, 0.045), transparent 60%);
-  --term-bg: #191724;
+  --term-bg: #1f1d2e;
   --term-fg: #e0def4;
 }
 
@@ -303,6 +314,55 @@
   --on-accent: #3f0d16;
 }
 
+/* The same five accents on a light ground. Each palette above is picked to sit
+   on a near-black field, and the light themes inherited them unchanged: the
+   default orange lands at 2.51:1 on #fafafa, which is a tint rather than an
+   accent and cannot carry a control, a rim or a piece of text. Each hue keeps
+   its identity and drops in lightness until it holds against paper, and the
+   ink on top of it flips to white. Declared after the palettes so a light theme
+   and an accent choice resolve in that order. */
+[data-theme="light"], [data-theme="sepia"] {
+  --accent: #cf4600;
+  --accent-2: #e65719;
+  --accent-3: #a33500;
+  --accent-glow: rgba(207, 70, 0, 0.22);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --grad: linear-gradient(135deg, #cf4600 0%, #e65719 100%);
+  --on-accent: #ffffff;
+}
+:is([data-theme="light"], [data-theme="sepia"])[data-accent="cyan"] {
+  --accent: #0e7490;
+  --accent-2: #0891b2;
+  --accent-3: #155e75;
+  --accent-glow: rgba(14, 116, 144, 0.22);
+  --grad: linear-gradient(135deg, #0e7490, #0891b2);
+  --on-accent: #ffffff;
+}
+:is([data-theme="light"], [data-theme="sepia"])[data-accent="indigo"] {
+  --accent: #4f46e5;
+  --accent-2: #6366f1;
+  --accent-3: #3730a3;
+  --accent-glow: rgba(79, 70, 229, 0.22);
+  --grad: linear-gradient(135deg, #4f46e5, #6366f1);
+  --on-accent: #ffffff;
+}
+:is([data-theme="light"], [data-theme="sepia"])[data-accent="emerald"] {
+  --accent: #047857;
+  --accent-2: #059669;
+  --accent-3: #065f46;
+  --accent-glow: rgba(4, 120, 87, 0.22);
+  --grad: linear-gradient(135deg, #047857, #059669);
+  --on-accent: #ffffff;
+}
+:is([data-theme="light"], [data-theme="sepia"])[data-accent="rose"] {
+  --accent: #be123c;
+  --accent-2: #e11d48;
+  --accent-3: #9f1239;
+  --accent-glow: rgba(190, 18, 60, 0.22);
+  --grad: linear-gradient(135deg, #be123c, #e11d48);
+  --on-accent: #ffffff;
+}
+
 /* Cross-theme control, radius and motion tokens. Linear/Vercel-style
    tight radii (6px default), single 32px control height, snappy ease. */
 :root {
@@ -355,7 +415,7 @@
   /* Five roles cover the interface. --fs-page titles a page, --fs-section heads a
      small-caps group, --fs-body carries body copy and list rows, --fs-label names a
      field or a table column, --fs-mono holds ids, paths and counts. */
-  --fs-page: 20px;
+  --fs-page: 30px;
   --fw-page: 600;
   --fs-section: 11px;
   --fw-section: 600;
@@ -363,6 +423,7 @@
   --fw-body: 400;
   --fs-label: 12px;
   --fw-label: 500;
+  --fw-bold: 700;
   --fs-mono: 12px;
   /* Four glyph steps: inside a control, in rails and rows, in headers, and in an
      empty state. Nothing draws an icon at a size that is not one of these. */
@@ -372,6 +433,9 @@
   --icon-lg: 28px;
   /* Wider ramp, for headlines and the surfaces that sit above the five steps. */
   --fs-hero: 46px;
+  /* The headline both page heroes are set at. Held here rather than written
+     twice, so the Workflows and Autopilot heroes cannot drift apart. */
+  --fs-page-hero: 38px;
   --fs-display: 32px;
   --fs-h1: 22px;
   --fs-h2: 18px;
@@ -515,7 +579,7 @@ body {
   --state-error-ink: var(--rose);
   --state-muted-bg: color-mix(in srgb, var(--text) 8%, var(--surface));
   --state-muted-edge: var(--line-2);
-  --state-muted-ink: var(--text-3);
+  --state-muted-ink: var(--text-2);
 
   /* A switch that is on takes the success hue on its track and the page ground on
      its knob, so enabled reads by colour rather than by knob position. Both sides
@@ -1498,7 +1562,7 @@ body[data-page="boot"] .page { display: none !important; }
   gap: 16px;
   min-height: 0;
   flex: none;
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-6);
   flex-wrap: wrap;
 }
 .page-head-left { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -1525,12 +1589,12 @@ body[data-page="boot"] .page { display: none !important; }
   font-weight: var(--fw-page);
   letter-spacing: -0.02em;
   margin: 0;
-  color: var(--text-2);
+  color: var(--text);
   line-height: 1.1;
 }
 .page-sub {
-  font-size: var(--fs-small);
-  color: var(--text-2);
+  font-size: var(--fs-body);
+  color: var(--text-3);
   letter-spacing: var(--tracking-normal);
   line-height: var(--lh-snug);
 }
@@ -4131,6 +4195,48 @@ body[data-page="chat"] #chats-panel { display: flex; }
    reading gutter, so the surface reaches the column edges while the text does not. */
 .term-pane { position: absolute; inset: 0; display: none; }
 .term-pane.show { display: block; }
+/* Split: the pair sits in a row, the left pane at the share the divider was
+   dragged to and the right pane taking the rest. */
+#terminal.is-split { display: flex; flex-direction: row; align-items: stretch; }
+#terminal.is-split .term-pane.show {
+  position: relative; inset: auto;
+  min-width: 0; height: 100%;
+  flex: 1 1 0;
+}
+#terminal.is-split .term-pane.is-a { flex: 0 0 var(--split-a, 50%); }
+.term-divider {
+  flex: 0 0 6px;
+  align-self: stretch;
+  cursor: col-resize;
+  background: var(--surface-line);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.term-divider:hover,
+#terminal.is-resizing .term-divider { background: color-mix(in srgb, var(--accent) 60%, var(--surface-line)); }
+#terminal.is-resizing { user-select: none; }
+#terminal.is-resizing .term-pane { pointer-events: none; }
+/* A single thread has the welcome screen; a split has two live chats. */
+.chat-stage.is-split .chat-empty { display: none; }
+/* Tabs in the pair carry a pane mark; picking dims every other choice. */
+.chat-tab.in-split .chat-tab-label::before {
+  content: '';
+  display: inline-block;
+  width: 9px; height: 9px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  background: linear-gradient(to right, transparent calc(50% - 0.75px), currentColor calc(50% - 0.75px), currentColor calc(50% + 0.75px), transparent calc(50% + 0.75px));
+  opacity: 0.7;
+}
+.tab-strip.is-picking .chat-tab:not(.active) { color: var(--text); background: var(--surface); }
+.tab-strip.is-picking .chat-tab:not(.active):hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+.tab-strip.is-picking .chat-tab.active { opacity: 0.55; }
+/* Picking a partner, the tab is one pick target: its hover pencil and close
+   stand down so a click anywhere on it chooses that chat. */
+.tab-strip.is-picking .chat-tab-edit,
+.tab-strip.is-picking .chat-tab-close { display: none; }
+#btn-split.active { color: var(--text); background: var(--surface); }
 /* The reading gutter belongs to the terminal element, because that is the padding
    the fit addon subtracts when it sizes the buffer to the pane. */
 #terminal .xterm { height: 100%; padding: var(--space-2) var(--space-6); }
@@ -6555,7 +6661,9 @@ body[data-mode="light"] .sx {
    not content: three steps down from the row title in size, weight and ink. */
 .sx-group {
   position: sticky; top: 0; z-index: 1;
-  display: grid; grid-template-columns: 13px 13px minmax(0, 1fr) auto auto;
+  /* The last track holds a folder's own controls. It collapses to nothing on a
+     day or project heading, which has none. */
+  display: grid; grid-template-columns: 13px 13px minmax(0, 1fr) auto auto auto;
   align-items: center; column-gap: var(--space-2);
   height: 30px; padding: 0 var(--sx-pad-x);
   border-top: 1px solid var(--line);
@@ -8401,8 +8509,14 @@ body[data-mode="light"] .sx {
 .btn-primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
 /* A control that cannot run reads as off and stops answering the pointer. Matches
    the ghost buttons, so one disabled treatment reads the same everywhere. */
+/* A disabled primary drops the fill rather than fading it. Fading a gradient
+   leaves the CTA silhouette at an unreadable contrast, which reads as a broken
+   control instead of one that is not ready. */
 .btn-primary:disabled {
-  opacity: 0.45;
+  opacity: 1;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -9379,8 +9493,8 @@ body[data-mode="light"] .ob-wordmark span {
 .ob-theme-sw[data-mode="dracula"]     { background: #282a36; }
 .ob-theme-sw[data-mode="sepia"]       { background: #f3ead6; }
 .ob-theme-sw[data-mode="tokyo-night"] { background: #1a1b26; }
-.ob-theme-sw[data-mode="catppuccin"]  { background: #1e1e2e; }
-.ob-theme-sw[data-mode="rose-pine"]   { background: #191724; }
+.ob-theme-sw[data-mode="catppuccin"]  { background: #11111b; }
+.ob-theme-sw[data-mode="rose-pine"]   { background: #1f1d2e; }
 .ob-theme-sw[data-mode="gruvbox"]     { background: #282828; }
 .ob-prefs .accent-picker { gap: 10px; flex: 0 0 auto; }
 
@@ -9611,20 +9725,44 @@ body[data-mode="light"] .ob-wordmark span {
   list-style: none; margin: 0; padding: 7px;
   max-height: 400px; overflow-y: auto;
 }
-.palette-list li {
+.palette-list li.palette-row {
   display: flex; align-items: center; gap: 11px;
   padding: 10px 13px; border-radius: var(--radius-lg);
   font-size: var(--fs-body-lg); color: var(--text-2); cursor: pointer;
 }
-.palette-list li:hover { background: var(--surface-raised); color: var(--text); }
+.palette-list li.palette-row:hover { background: var(--surface-raised); color: var(--text); }
 /* The accent marks the row the keyboard is standing on, and nothing else in the list. */
-.palette-list li.active {
+.palette-list li.palette-row.active {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-3)); color: var(--text);
 }
 .palette-list .pi-icon { color: var(--text-3); width: var(--icon-sm); height: var(--icon-sm); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-.palette-list li.active .pi-icon, .palette-list li:hover .pi-icon { color: var(--text-2); }
+.palette-list li.palette-row.active .pi-icon, .palette-list li.palette-row:hover .pi-icon { color: var(--text-2); }
 .palette-list .pi-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
+/* The name takes the room it needs and gives the rest back; the line beside it
+   is context, so it is the one that yields first when the row runs out of width.
+   That order comes from the basis, not from the shrink factor: the sub starts at
+   zero and grows into whatever is left, so it is already the shorter of the two
+   when the row narrows, and the name only gives ground once the sub is gone. */
+.palette-list .pi-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-list .pi-sub {
+  margin-left: auto; padding-left: 12px;
+  flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right;
+  color: var(--text-3); font-size: var(--fs-nano);
+}
 .palette-list .pi-shortcut { margin-left: auto; color: var(--text-3); font-size: var(--fs-nano); font-family: var(--font-mono); }
+/* Section headings name the surface each run of rows came from. They are list
+   items so the markup stays one flat list, and they are never selectable. */
+.palette-list li.palette-section {
+  display: block; padding: 13px 13px 5px; cursor: default;
+  color: var(--text-3); font-size: var(--fs-nano);
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.palette-list li.palette-section:first-child { padding-top: 5px; }
+.palette-list li.palette-empty {
+  display: block; padding: 14px 13px; cursor: default;
+  color: var(--text-3); font-size: var(--fs-body-lg);
+}
 
 /* ─── Agent switcher ───────────────────────────────────────────────────────
    The title leads, and the id under it separates two agents born of the same chat.
@@ -10224,6 +10362,16 @@ kbd {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
   letter-spacing: -0.005em;
   transition: box-shadow var(--motion-base) var(--ease);
+}
+/* Beats the (0,2,0) dark fill above, which sits later in the file than the
+   shared .btn-primary:disabled rule and would otherwise repaint the gradient
+   back under a disabled control. */
+[data-mode="dark"] .btn-primary:disabled,
+[data-mode="dark"] .iconbtn-primary:disabled {
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  box-shadow: none;
 }
 [data-mode="dark"] .btn-primary:hover,
 [data-mode="dark"] .iconbtn-primary:hover {
@@ -13331,168 +13479,242 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .ws-board::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Agent command center ───────────────────────────────────────────────────
-   Every background agent on this machine: a grouped live list beside a detail
-   pane that streams what the selected agent is doing. Calm by default: colour
-   is rationed to "waiting on a human" (amber), liveness (green) and the one
-   primary action; everything else stays neutral. */
+   Every background agent on this machine, drawn as a spawn graph or a list
+   beside a rail that streams what the selected agent is doing. One control
+   recipe, one ordered set of surfaces, one type ramp. Colour is spent on state
+   and on the one action a person can take; everything else is ink on ground. */
 #agent-map.modal {
-  background: rgba(0, 0, 0, 0.60);
-  backdrop-filter: blur(10px);
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(8px);
 }
 
 .am-card {
+  /* The recipe every control on the page is drawn from: one height, an outer
+     radius for a group and an inner radius for the segment inside it. */
+  --am-ctl-h: 30px;
+  --am-r-out: 8px;
+  --am-r-in: 6px;
+  --am-ctl-bg: color-mix(in srgb, var(--text) 4%, transparent);
+  --am-ctl-line: var(--line);
+  --am-ctl-on: color-mix(in srgb, var(--text) 9%, transparent);
+  --am-ctl-ink: var(--text-2);
+  --am-ctl-lift: 0 1px 2px rgba(0, 0, 0, 0.18), inset 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent);
+  /* The three state hues. The stage tunes its own copies against its ground;
+     the chrome reads these, so a pill and a disc mean the same amber. */
+  --cv-run:  #12b3a4;
+  --cv-wait: #f76808;
+  --cv-fail: #e5484d;
+  --am-run-ink:  var(--cv-run);
+  --am-wait-ink: var(--cv-wait);
+  --am-fail-ink: var(--cv-fail);
+  --am-rule: var(--line);
+  --am-chrome: var(--notif-bg);
+  /* Type ramp: 11 caption, 12 secondary, 13 body, 15 title, 17 rail name. */
+  --am-fs-1: 11px;
+  --am-fs-2: 12px;
+  --am-fs-3: 13px;
+  --am-fs-4: 15px;
+  --am-fs-5: 17px;
   width: min(1200px, 95vw);
   height: min(740px, 92vh);
   padding: 0;
   display: flex; flex-direction: column;
   text-align: left;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, #fff 3%, transparent), transparent 120px),
-    var(--notif-bg);
+  background: var(--am-chrome);
   border: 1px solid var(--line-2);
-  border-radius: var(--radius-2xl);
+  border-radius: 12px;
   box-shadow: var(--elev-4);
   animation: am-enter 0.18s var(--ease-out);
   transition: width var(--motion-base) var(--ease-out), height var(--motion-base) var(--ease-out);
 }
-@media (prefers-reduced-motion: reduce) { .am-card { transition: none; } }
+/* The card is one opaque surface: the glass the app gives dark modals would
+   put the page behind it into the chrome. */
+#agent-map .am-card {
+  background: var(--am-chrome);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+body[data-mode="light"] .am-card {
+  --am-ctl-bg: color-mix(in srgb, var(--text) 3.5%, transparent);
+  --am-ctl-on: #ffffff;
+  --am-ctl-lift: 0 1px 2px rgba(0, 0, 0, 0.10), 0 0 0 1px var(--line-2);
+  --am-run-ink:  color-mix(in srgb, var(--cv-run) 72%, var(--text));
+  --am-wait-ink: color-mix(in srgb, var(--cv-wait) 78%, var(--text));
+  --am-fail-ink: color-mix(in srgb, var(--cv-fail) 84%, var(--text));
+}
 @keyframes am-enter {
   from { opacity: 0; transform: translateY(6px) scale(0.985); }
   to   { opacity: 1; transform: none; }
 }
-@media (prefers-reduced-motion: reduce) { .am-card { animation: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .am-chip,
-  .am-view,
-  .am-search,
-  .am-card .am-search input[type="text"] {
-    transition: none;
-  }
+  .am-card { animation: none; transition: none; }
+  .am-chip, .am-view, .am-search, .am-card .am-search input[type="text"] { transition: none; }
 }
 
-/* Header: identity and the close, nothing else. */
+/* ── Command bar ──
+   One row: what this is, the state tabs, then the view, the search and the
+   close. The tabs are full height so their rule sits on the bar's own rule. */
 .am-top {
-  display: flex; align-items: flex-start; gap: var(--space-3);
-  padding: 24px var(--space-4) 7px var(--space-5);
+  display: flex; align-items: stretch; gap: var(--space-4);
+  height: 56px; flex: 0 0 auto;
+  padding: 0 var(--space-4) 0 var(--space-5);
+  border-bottom: 1px solid var(--am-rule);
 }
-.am-id { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
+.am-id { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 0 0 auto; }
 .am-title {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 18px; font-weight: 650; letter-spacing: -0.025em;
-  line-height: var(--lh-tight); color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--am-fs-4); font-weight: 600; letter-spacing: -0.01em;
+  line-height: 1; color: var(--text);
 }
+/* What wants a person, said once beside the title. A count that asks for
+   something is a pill in its state's colour; a plain summary is plain text. */
 .am-sub {
-  display: flex; align-items: baseline; gap: 6px;
-  margin: 0; font-size: var(--fs-micro); line-height: var(--lh-snug); color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-.am-sub .am-sub-needs { color: var(--as-mark); font-weight: 600; }
-.am-sub .am-sub-failed { color: var(--rose); font-weight: 600; }
-.am-sub .am-sub-live { color: var(--emerald); font-weight: 600; }
-.am-sub span[aria-hidden="true"] { color: var(--text-3); opacity: 0.58; transform: translateY(-0.5px); }
-
-.am-close {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; flex: 0 0 auto;
-  background: transparent; border: 0; border-radius: var(--radius-md);
-  color: var(--text-3); cursor: pointer;
-  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
-}
-.am-close:hover { color: var(--text); background: var(--bg-3); }
-.am-close:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.am-close svg { width: var(--icon-sm); height: var(--icon-sm); }
-
-/* One rail for narrowing: state chips on the left, search on the right, both
-   the same height, the first chip's label on the title's 24px rail. */
-.am-filters {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-1) var(--space-4) 10px var(--space-5);
-  border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg-1) 58%, transparent));
-}
-.am-chipset { display: flex; align-items: center; gap: var(--space-1); min-width: 0; flex: 1; }
-.am-chipset .am-chip:first-child { margin-left: calc(var(--space-3) * -1); }
-.am-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 28px; padding: 0 var(--space-3);
-  border: 1px solid transparent; border-radius: var(--radius-pill);
-  background: transparent; color: color-mix(in srgb, var(--text) 82%, var(--text-2));
-  font-family: inherit; font-size: var(--fs-micro); font-weight: 520;
+  margin: 0; height: 22px;
+  font-size: var(--am-fs-2); font-weight: 500; line-height: 1; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.am-sub:empty { display: none; }
+.am-sub:has(.am-sub-needs), .am-sub:has(.am-sub-failed), .am-sub:has(.am-sub-live) {
+  padding: 0 9px 0 8px;
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--radius-pill);
+  background: var(--am-ctl-bg);
+}
+.am-sub:has(.am-sub-needs) {
+  color: var(--am-wait-ink);
+  border-color: color-mix(in srgb, var(--cv-wait) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-wait) 9%, transparent);
+}
+.am-sub:has(.am-sub-failed) {
+  color: var(--am-fail-ink);
+  border-color: color-mix(in srgb, var(--cv-fail) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-fail) 9%, transparent);
+}
+.am-sub:has(.am-sub-live) {
+  color: var(--am-run-ink);
+  border-color: color-mix(in srgb, var(--cv-run) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-run) 9%, transparent);
+}
+.am-sub .am-sub-needs, .am-sub .am-sub-failed, .am-sub .am-sub-live { font-weight: 600; }
+.am-sub span[aria-hidden="true"] { color: var(--text-3); }
+.am-sub:has(.am-sub-needs)::before, .am-sub:has(.am-sub-failed)::before, .am-sub:has(.am-sub-live)::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto;
+}
+
+.am-filters { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; }
+.am-chipset { display: flex; align-items: stretch; gap: 2px; min-width: 0; }
+.am-chip {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 10px;
+  border: 0; border-radius: 0;
+  background: transparent; color: var(--text-2);
+  font-family: inherit; font-size: var(--am-fs-3); font-weight: 500; line-height: 1;
   cursor: pointer; white-space: nowrap;
-  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+  transition: color var(--motion-fast) var(--ease);
 }
-.am-chip:hover:not(.is-active) { background: var(--bg-2); border-color: var(--line); color: var(--text); }
-.am-chip.is-active {
-  background: color-mix(in srgb, var(--bg-3) 86%, var(--bg-4));
-  border-color: var(--line-2);
-  color: var(--text);
-  box-shadow: var(--hl-top), inset 0 -1px 0 rgba(0,0,0,0.18);
+.am-chip::after {
+  content: '';
+  position: absolute; left: 10px; right: 10px; bottom: -1px;
+  height: 2px; border-radius: 2px 2px 0 0;
+  background: var(--text);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
 }
-.am-chip:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; }
+.am-chip:hover { color: var(--text); }
+.am-chip.is-active { color: var(--text); }
+.am-chip.is-active::after { opacity: 1; }
+.am-chip:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ink); border-radius: var(--am-r-in); }
 .am-chip-n {
-  display: inline-flex; align-items: baseline;
   min-width: 1ch;
-  transform: translateY(-0.5px);
-  font-size: var(--fs-nano); font-weight: 520; color: color-mix(in srgb, var(--text-2) 78%, var(--text-3));
+  font-size: var(--am-fs-2); font-weight: 500; color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 .am-chip.is-active .am-chip-n { color: var(--text-2); }
 .am-chip-n:empty { display: none; }
-/* Live is the default and the reason to open the center, so its count carries
-   the liveness colour instead of sitting at the same grey as the rest. */
-.am-chip.is-live .am-chip-n { color: var(--emerald); font-weight: 700; }
-.am-chip.is-live.is-active {
-  background: color-mix(in srgb, var(--emerald) 13%, var(--bg-3));
-  border-color: color-mix(in srgb, var(--emerald) 28%, var(--line-2));
+/* The only count on the rail that is asking for something carries a colour. */
+.am-chip.is-blocked .am-chip-n { color: var(--am-wait-ink); font-weight: 600; }
+
+.am-tools { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; margin-left: auto; }
+
+.am-views {
+  display: flex; align-items: center; gap: 2px;
+  height: var(--am-ctl-h); box-sizing: border-box; padding: 2px;
+  background: var(--am-ctl-bg);
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--am-r-out);
 }
+.am-view {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 10px;
+  border: 0; border-radius: var(--am-r-in);
+  background: transparent; color: var(--am-ctl-ink);
+  font-family: inherit; font-size: var(--am-fs-2); font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+.am-view svg { width: 14px; height: 14px; }
+.am-view:hover:not(.is-active) { color: var(--text); }
+.am-view.is-active { background: var(--am-ctl-on); color: var(--text); box-shadow: var(--am-ctl-lift); }
+.am-view:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 .am-search {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  height: 28px; padding: 0 var(--space-2) 0 var(--space-3);
-  border: 1px solid var(--line); border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-1) 86%, transparent);
+  display: inline-flex; align-items: center; gap: 8px;
+  height: var(--am-ctl-h); box-sizing: border-box;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--am-ctl-line); border-radius: var(--am-r-out);
+  background: var(--am-ctl-bg);
   color: var(--text-3);
-  transition: border-color var(--motion-base) var(--ease-out), background var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
+  transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
 }
-.am-search:hover { border-color: var(--line-2); background: var(--bg-1); }
+.am-search:hover { border-color: var(--line-2); }
 .am-search:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--line-3));
-  background: var(--bg-2);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 11%, transparent), var(--hl-top);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.am-search svg { width: var(--icon-xs); height: var(--icon-xs); flex: 0 0 auto; }
-/* Undoes the app-wide modal/glass input chrome: the pill is the field here. */
+.am-search svg { width: 14px; height: 14px; flex: 0 0 auto; }
+/* Undoes the app-wide modal input chrome: the group is the field here. */
 .am-card .am-search input[type="text"] {
-  width: 150px; height: auto;
+  width: 140px; height: auto;
   border: 0; outline: 0; background: transparent; box-shadow: none;
   padding: 0; border-radius: 0;
-  color: var(--text); font-family: inherit; font-size: var(--fs-micro);
+  color: var(--text); font-family: inherit; font-size: var(--am-fs-3);
   transition: width var(--motion-base) var(--ease-out);
 }
-.am-search:focus-within input[type="text"] {
-  width: 210px;
-}
+.am-search:focus-within input[type="text"] { width: 200px; }
 .am-card .am-search input[type="text"]:focus,
 .am-card .am-search input[type="text"]:focus-visible {
   border: 0 !important; background: transparent; box-shadow: none;
 }
-.am-search input::placeholder { color: color-mix(in srgb, var(--text-3) 82%, var(--text-2)); }
+.am-search input::placeholder { color: var(--text-3); }
 .am-search kbd {
-  min-width: 16px;
-  font-family: var(--font-body); font-size: var(--fs-pico); color: color-mix(in srgb, var(--text-3) 86%, var(--text-2));
+  min-width: 18px; height: 18px; box-sizing: border-box;
+  font-family: var(--font-body); font-size: var(--am-fs-1); line-height: 16px; color: var(--text-3);
   text-align: center;
-  border: 1px solid var(--line-2); border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  padding: 0 5px; line-height: 1.45;
-  box-shadow: var(--hl-top);
+  border: 1px solid var(--line-2); border-radius: 4px;
+  background: var(--am-ctl-bg);
+  padding: 0 4px;
 }
 .am-search:focus-within kbd { opacity: 0; }
 
+.am-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--am-ctl-h); height: var(--am-ctl-h); flex: 0 0 auto;
+  background: transparent; border: 0; border-radius: var(--am-r-out);
+  color: var(--text-3); cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.am-close:hover { color: var(--text); background: var(--am-ctl-on); }
+.am-close:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.am-close svg { width: 16px; height: 16px; }
+
 .am-body {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: minmax(0, 1fr) 386px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px;
   grid-template-rows: minmax(0, 1fr);
 }
 /* With nothing to list there is nothing to detail: the empty state owns the
@@ -13503,26 +13725,19 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 /* ── List pane ── */
 .am-list-pane {
   position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column;
-  border-right: 1px solid var(--line);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-1) 82%, transparent), transparent 120px),
-    color-mix(in srgb, var(--bg) 34%, transparent);
+  background: var(--bg);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.35);
 }
-.am-body.is-empty .am-list-pane { border-right: 0; }
+body[data-mode="light"] .am-list-pane {
+  background: color-mix(in srgb, var(--text) 3.5%, var(--bg));
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.05);
+}
 .am-list {
   flex: 1; min-height: 0; overflow-y: auto;
   margin: 0; padding: var(--space-2) var(--space-3) var(--space-4); list-style: none;
   outline: none;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
-/* Quiet rails: 6px, visible only while the pointer is over the pane. */
-.am-list::-webkit-scrollbar, .am-d-feed::-webkit-scrollbar, .am-detail::-webkit-scrollbar { width: 6px; }
-.am-list::-webkit-scrollbar-thumb, .am-d-feed::-webkit-scrollbar-thumb, .am-detail::-webkit-scrollbar-thumb {
-  background: transparent; border-radius: var(--radius-pill); border: 2px solid transparent; background-clip: padding-box;
-}
-.am-list:hover, .am-d-feed:hover, .am-detail:hover { scrollbar-color: var(--line-2) transparent; }
-.am-list:hover::-webkit-scrollbar-thumb, .am-d-feed:hover::-webkit-scrollbar-thumb, .am-detail:hover::-webkit-scrollbar-thumb { background-color: var(--line-2); }
-.am-list::-webkit-scrollbar-track, .am-d-feed::-webkit-scrollbar-track, .am-detail::-webkit-scrollbar-track { background: transparent; }
 
 /* Floating section labels: small caps, generous air above, no chrome. Only the
    human-blocking band takes the amber. */
@@ -13538,8 +13753,8 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   font-weight: 400; letter-spacing: 0; font-variant-numeric: tabular-nums;
   color: var(--text-3); opacity: 0.68;
 }
-.am-sect.is-blocked { color: var(--as-mark); }
-.am-sect.is-failed { color: var(--rose); }
+.am-sect.is-blocked { color: var(--am-wait-ink); }
+.am-sect.is-failed { color: var(--am-fail-ink); }
 
 .am-row {
   position: relative;
@@ -13579,8 +13794,8 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   background: color-mix(in srgb, var(--bg-2) 88%, var(--bg-3));
   box-shadow: var(--hl-top), inset 0 0 0 1px color-mix(in srgb, var(--line-2) 66%, transparent);
 }
-.am-row.is-selected.is-blocked { background: color-mix(in srgb, var(--as-mark) 5%, var(--bg-2)); }
-.am-row.is-selected.is-running { background: color-mix(in srgb, var(--emerald) 4%, var(--bg-2)); }
+.am-row.is-selected.is-blocked { background: color-mix(in srgb, var(--am-wait-ink) 5%, var(--bg-2)); }
+.am-row.is-selected.is-running { background: color-mix(in srgb, var(--am-run-ink) 4%, var(--bg-2)); }
 .am-row.is-selected::before {
   content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
   border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
@@ -13597,9 +13812,9 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   background: var(--line-2);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 18%, transparent);
 }
-.am-row.is-running .am-dot { background: var(--emerald); }
-.am-row.is-blocked .am-dot { background: var(--as-mark); }
-.am-row.is-failed .am-dot { background: var(--rose); }
+.am-row.is-running .am-dot { background: var(--am-run-ink); }
+.am-row.is-blocked .am-dot { background: var(--am-wait-ink); }
+.am-row.is-failed .am-dot { background: var(--am-fail-ink); }
 .am-row.is-done .am-dot { background: color-mix(in srgb, var(--text-3) 34%, var(--line-2)); opacity: 0.72; }
 .am-row.is-running .am-dot::after,
 .am-row.is-blocked .am-dot::after {
@@ -13607,8 +13822,8 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   border: 1px solid currentColor; opacity: 0;
   animation: am-ping 2.4s var(--ease) infinite;
 }
-.am-row.is-running .am-dot::after { color: var(--emerald); }
-.am-row.is-blocked .am-dot::after { color: var(--as-mark); }
+.am-row.is-running .am-dot::after { color: var(--am-run-ink); }
+.am-row.is-blocked .am-dot::after { color: var(--am-wait-ink); }
 @keyframes am-ping {
   0% { transform: scale(0.6); opacity: 0.7; }
   70%, 100% { transform: scale(1.45); opacity: 0; }
@@ -13651,7 +13866,7 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   font-variant-numeric: tabular-nums; line-height: 15px; text-align: right;
   white-space: nowrap;
 }
-.am-row.is-running .am-row-time { color: color-mix(in srgb, var(--emerald) 70%, var(--text-3)); }
+.am-row.is-running .am-row-time { color: color-mix(in srgb, var(--am-run-ink) 70%, var(--text-3)); }
 .am-row-proj {
   max-width: 132px;
   min-height: 16px;
@@ -13780,69 +13995,65 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .am-blank-act { pointer-events: auto; margin-top: var(--space-3); height: 28px; font-size: var(--fs-micro); }
 
 /* ── Spawn graph ────────────────────────────────────────────────────────────
-   The fleet along the axis a list cannot show: who started whom. Cards sit on a
-   dot field, edges curve from parent to child, and the only things that move
-   are the ones that mean something: a node arriving, an edge drawing itself,
-   and a current running out along every branch that still has work under it. */
+   The fleet along the axis a list cannot show: who started whom. Discs sit on
+   a recessed field, edges run from parent to child, and the only things that
+   move are the ones that mean something: a node arriving, an edge drawing
+   itself, work turning inside a running disc, and a ring breathing around an
+   agent that is waiting on a person. */
 
-.am-views {
-  display: flex; align-items: center; gap: 2px;
-  padding: 2px; flex: 0 0 auto;
-  background: color-mix(in srgb, var(--bg-1) 86%, transparent);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
-}
-.am-view {
-  display: inline-flex; align-items: center; gap: 5px;
-  height: 22px; padding: 0 8px;
-  border: 1px solid transparent; border-radius: var(--radius-md);
-  background: transparent; color: var(--text-3);
-  font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
-}
-.am-view svg { width: var(--icon-xs); height: var(--icon-xs); }
-.am-view:hover:not(.is-active) { background: var(--bg-2); color: var(--text-2); }
-.am-view.is-active {
-  background: color-mix(in srgb, var(--bg-3) 88%, var(--bg-4));
-  border-color: var(--line-2);
-  color: var(--text);
-  box-shadow: var(--hl-top), 0 1px 2px rgba(0,0,0,0.22);
-}
-.am-view:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-
+/* ── The field ──
+   A step below the chrome around it, so the graph reads as a view into a
+   space. Every colour resolves from a theme token; state is the only thing
+   carrying a hue of its own. */
 .am-canvas-pane {
+  --cv-ink:   var(--text);
+  --cv-dim:   var(--text-2);
+  --cv-off:   var(--text-3);
+  --cv-floor: var(--bg);
+  --cv-void:  var(--cv-floor);
+  --cv-time:  color-mix(in srgb, var(--cv-ink) 76%, var(--cv-floor));
+  --cv-line:   var(--line);
+  --cv-line-2: var(--line-2);
+  /* A disc is a chip of the theme's own surface, lifted off the field the way
+     every other raised thing in the app is. */
+  --cv-disc-a: color-mix(in srgb, var(--cv-ink) 15%, var(--cv-floor));
+  --cv-disc-b: var(--cv-disc-a);
+  --cv-disc-line: color-mix(in srgb, var(--cv-ink) 34%, transparent);
+  --cv-cast: color-mix(in srgb, #000 40%, transparent);
+  --cv-disc-lift: 0 1px 2px color-mix(in srgb, var(--cv-cast) 30%, transparent),
+                  0 3px 8px -2px color-mix(in srgb, var(--cv-cast) 26%, transparent);
+  --cv-grid-dot: color-mix(in srgb, var(--cv-ink) 13%, transparent);
+  --cv-halo: var(--cv-floor);
+  --cv-recess: inset 0 1px 0 rgba(0, 0, 0, 0.35);
   position: relative;
   min-width: 0; min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--line);
-  background:
-    radial-gradient(78% 66% at 50% 38%, color-mix(in srgb, var(--text) 5.5%, transparent), transparent 68%),
-    radial-gradient(74% 66% at 50% 28%, color-mix(in srgb, var(--accent) 2.5%, transparent), transparent 74%),
-    radial-gradient(130% 118% at 50% 116%, color-mix(in srgb, var(--bg) 68%, transparent), transparent 58%),
-    var(--bg);
+  background: var(--cv-floor);
+  box-shadow: var(--cv-recess);
   cursor: grab;
   touch-action: none;
 }
-.am-canvas-pane::after {
-  content: '';
-  position: absolute; inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--bg) 72%, transparent), transparent 12%, transparent 88%, color-mix(in srgb, var(--bg) 72%, transparent)),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 68%, transparent), transparent 14%, transparent 84%, color-mix(in srgb, var(--bg) 46%, transparent));
+/* On paper the field is a step below white and a disc is white. */
+body[data-mode="light"] .am-canvas-pane {
+  --cv-floor: color-mix(in srgb, var(--text) 3.5%, var(--bg));
+  --cv-disc-a: #ffffff;
+  --cv-disc-b: #ffffff;
+  --cv-disc-line: color-mix(in srgb, var(--cv-ink) 34%, transparent);
+  --cv-cast: color-mix(in srgb, #000 22%, transparent);
+  --cv-grid-dot: color-mix(in srgb, var(--cv-ink) 10%, transparent);
+  --cv-recess: inset 0 1px 0 rgba(0, 0, 0, 0.05);
 }
 .am-canvas-pane.is-panning { cursor: grabbing; }
 .am-canvas-pane[hidden] { display: none; }
 
 .am-cv-grid {
   position: absolute; inset: 0;
-  background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text-3) 48%, transparent) 1px, transparent 0);
+  /* A hair over one pixel, because the display this runs on is not always at a
+     whole device pixel per CSS pixel and a 1px dot rounds away to nothing. */
+  background-image: radial-gradient(circle at 1px 1px, var(--cv-grid-dot) 1.15px, transparent 0);
   background-size: 26px 26px;
-  opacity: 0.24;
   pointer-events: none;
-  mask-image: radial-gradient(ellipse at 50% 44%, #000 42%, transparent 82%);
+  transition: opacity var(--motion-base) var(--ease);
 }
 
 .am-cv-stage {
@@ -13855,22 +14066,35 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .am-cv-edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
 .am-cv-nodes { position: absolute; top: 0; left: 0; outline: none; }
 
-.am-edge {
-  stroke: color-mix(in srgb, var(--text-3) 50%, var(--line-2));
-  stroke-width: 1.35;
-  stroke-linecap: round;
+/* One ring per generation, drawn as ground. */
+.am-orbit {
+  fill: none;
+  stroke: color-mix(in srgb, var(--cv-ink) 10%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 9;
+}
+.am-orbit.is-rim {
+  stroke: color-mix(in srgb, var(--cv-ink) 12%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 1.5 16;
+}
+
+/* A connector is structure, not something to act on, so it is drawn in ink
+   rather than in the accent a person can click. */
+.am-edge, .am-stem {
+  stroke: color-mix(in srgb, var(--cv-ink) 48%, transparent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: butt;
   stroke-linejoin: round;
+  fill: none;
   transition: d var(--motion-base) var(--ease-out), stroke var(--motion-base) var(--ease), stroke-width var(--motion-base) var(--ease);
 }
-/* A branch is live while anything under it still runs, so the current shows
-   where the work is rather than only where a single node sits. */
-.am-edge.is-live {
-  stroke: color-mix(in srgb, var(--emerald) 68%, var(--line-3));
-  stroke-width: 1.65;
-  stroke-dasharray: 0.045 0.09;
-  animation: am-flow 1.3s linear infinite;
+/* A branch is live while anything under it still runs. */
+.am-edge.is-live, .am-stem.is-live {
+  stroke: color-mix(in srgb, var(--cv-run) 72%, var(--cv-ink));
+  stroke-width: 1.5;
 }
-@keyframes am-flow { to { stroke-dashoffset: -0.135; } }
 .am-edge.is-enter {
   stroke-dasharray: 1 1;
   stroke-dashoffset: 1;
@@ -13878,544 +14102,592 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 }
 @keyframes am-draw { to { stroke-dashoffset: 0; } }
 
-/* A node is a glyph the eye can track across a generation, with its name hung
-   underneath. Small on purpose: a wide generation has to fit across the pane. */
+/* The current itself: one pip walking each live branch. Both numbers of the
+   dash pattern are written onto the element, because they are the length of
+   the path the pip is running along. */
+.am-flow {
+  stroke: var(--cv-run);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  animation: am-flow 1.5s linear infinite;
+}
+@keyframes am-flow {
+  from { stroke-dashoffset: var(--flow-run, 0px); }
+  to { stroke-dashoffset: 0px; }
+}
+
+/* ── Nodes ──
+   A disc with a state mark cut into it and its name hung underneath. Small on
+   purpose: a whole generation has to fit in one frame. */
 .am-node {
   position: absolute; top: 0; left: 0;
   box-sizing: border-box;
   width: 132px;
   display: flex; flex-direction: column; align-items: center;
-  gap: 6px;
+  gap: 8px;
   cursor: pointer;
   user-select: none;
   transition: transform var(--motion-base) var(--ease-out);
 }
-
 .am-node-glyph {
   position: relative;
+  z-index: 1;
   display: grid; place-items: center;
-  width: 46px; height: 46px;
-  border: 1px solid color-mix(in srgb, var(--line-2) 86%, var(--text-3));
+  width: 56px; height: 56px;
+  border: 1.5px solid var(--cv-disc-line);
   border-radius: 50%;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--text) 7%, transparent), transparent 42%),
-    radial-gradient(80% 80% at 50% 18%, color-mix(in srgb, var(--bg-4) 64%, transparent), transparent 68%),
-    linear-gradient(180deg, var(--bg-2), var(--bg-1));
-  box-shadow: var(--hl-top), var(--elev-2), inset 0 -10px 18px color-mix(in srgb, #000 12%, transparent);
-  color: var(--text-3);
-  transition: border-color var(--motion-base) var(--ease), box-shadow var(--motion-base) var(--ease),
-              color var(--motion-base) var(--ease), background var(--motion-base) var(--ease);
+  background: var(--cv-disc-a);
+  color: color-mix(in srgb, var(--cv-ink) 74%, transparent);
+  box-shadow: var(--cv-disc-lift);
+  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease),
+              color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease);
 }
-.am-node-mark { width: 19.5px; height: 19.5px; overflow: visible; }
-.am-node:hover .am-node-glyph {
-  border-color: var(--line-3);
-  box-shadow: var(--hl-top), var(--elev-3), inset 0 -10px 18px color-mix(in srgb, #000 12%, transparent);
+.am-node-mark { width: 24px; height: 24px; overflow: visible; position: relative; }
+.am-node:is(.is-running, .is-blocked, .is-failed):not(.is-holder) .am-node-mark { stroke-width: 2.6; }
+
+/* Two rings outside the disc, both off until something turns one on: the
+   attention ring an agent waiting on a person breathes, and the lock that
+   marks what is selected. Both sit inside the disc's own geometry, so neither
+   can reach the name under the card. */
+.am-node-halo, .am-node-ring, .am-node-lock {
+  position: absolute; border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+}
+.am-node-halo { display: none; }
+.am-node-ring { inset: -6px; border: 1px solid transparent; }
+/* Selection is a state of the interface, not a state of the work, so it is
+   drawn in ink and never in a hue that already means something on the field. */
+.am-node-lock {
+  inset: -7px;
+  border: 2px solid color-mix(in srgb, var(--cv-ink) 72%, var(--cv-floor));
+  box-shadow: inset 0 0 0 2px var(--cv-floor);
+  transition: opacity var(--motion-fast) var(--ease);
 }
 
-/* Descendant count, parked on the rim where it cannot crowd the mark. */
-.am-node-kids {
-  position: absolute; right: -7px; bottom: -3px;
-  min-width: 19px; height: 19px; padding: 0 6px;
-  display: grid; place-items: center;
-  border: 1px solid color-mix(in srgb, var(--bg) 86%, var(--line-3)); border-radius: var(--radius-pill);
-  background: linear-gradient(180deg, var(--bg-4), var(--bg-2)); color: var(--text-2);
-  box-shadow: var(--hl-top), 0 4px 10px -7px #000;
-  font-size: 9.5px; font-weight: 750; font-variant-numeric: tabular-nums;
-}
-.am-node-kids[hidden] { display: none; }
-
-/* Narrower than its cell, so neighbouring labels keep a gutter, and a fixed two
-   line box so the times underneath sit on one baseline across a generation. */
-/* The connector to the next generation runs down behind the name. The name
-   carries a halo the width of the stroke rather than a panel, so it stays
-   readable without drawing a box around itself. */
+/* The plate is the ground the name is set on. It takes the camera's scale
+   back out, so a name holds its size on screen the way a map holds its place
+   names. The halo follows the letterforms, so a line running behind a name
+   stays one line. */
 .am-node-plate {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 2px 0 3px;
+  transform: scale(var(--cv-tscale, 1));
+  transform-origin: 50% 0;
 }
 .am-node-plate .am-node-label,
 .am-node-plate .am-node-time {
-  text-shadow:
-    0 0 4px var(--bg), 0 0 4px var(--bg), 0 0 3px var(--bg),
-    1px 0 2px var(--bg), -1px 0 2px var(--bg);
+  text-shadow: 0 0 2px var(--cv-halo), 0 0 5px var(--cv-halo);
 }
-
 .am-node-label {
-  width: 112px; height: 2.7em;
-  font-size: 12px; font-weight: 650;
-  letter-spacing: -0.015em; line-height: 1.35;
-  color: color-mix(in srgb, var(--text) 82%, var(--text-2)); text-align: center;
+  width: 118px; max-height: 2.5em;
+  font-size: 13px; font-weight: 560;
+  letter-spacing: -0.012em; line-height: 1.25;
+  color: var(--cv-ink); text-align: center;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden; overflow-wrap: normal; word-break: normal; hyphens: none;
+  overflow: hidden; overflow-wrap: anywhere; hyphens: none;
 }
-/* A block whose cards are down to a word or two holds them on one line, so the
-   time under them sits where the second line would have been. */
 .am-node.is-oneline .am-node-label {
-  height: 1.35em; -webkit-line-clamp: 1;
+  max-height: 1.25em; -webkit-line-clamp: 1;
 }
-/* A label never grows past its own column: the space either side of it is the
-   lane a connector takes down to the next generation. */
 .am-canvas-pane.is-sparse .am-node:not(.is-holder) .am-node-label {
-  width: 112px; height: auto; max-height: 4.05em;
+  width: 118px; max-height: 3.75em;
   -webkit-line-clamp: 3;
-  font-size: 12px; line-height: 1.35;
 }
+/* One step down from the name in size, weight and tone together. */
 .am-node-time {
-  font-size: 10px; color: color-mix(in srgb, var(--text-3) 86%, var(--text-2));
+  font-size: 11px; font-weight: 500;
+  color: var(--cv-time);
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.005em;
+}
+.am-node-time:empty { display: none; }
+/* Where the camera has outrun the plate, the smallest line goes first and the
+   name goes last. */
+.am-cv-stage.is-terse .am-node-time,
+.am-node.is-timeless .am-node-time { display: none; }
+.am-cv-stage.is-mute .am-node-plate,
+.am-node.is-nameless .am-node-plate { display: none; }
+
+/* State lives in the disc. The name under a node holds one colour and one
+   weight in every state, so a label is a constant the eye can read. */
+
+/* Running: the disc takes the run hue on its rim and its mark, and the mark
+   turns, because work is the one thing on the field that is actually moving. */
+.am-node.is-running:not(.is-holder) .am-node-glyph {
+  border: 2px solid color-mix(in srgb, var(--cv-run) 82%, var(--cv-ink));
+  background: color-mix(in srgb, var(--cv-run) 12%, var(--cv-floor));
+  color: color-mix(in srgb, var(--cv-run) 82%, var(--cv-ink));
+}
+.am-node.is-running .am-node-mark { animation: am-spin 4s linear infinite; }
+@keyframes am-spin { to { transform: rotate(360deg); } }
+
+/* Waiting on a person: the loudest thing on the field, because it is the only
+   thing the field can ask for. A tinted body, an amber rim, and a thin ring
+   outside it that breathes. */
+.am-node.is-blocked:not(.is-holder) .am-node-glyph {
+  border: 2px solid var(--cv-wait);
+  background: color-mix(in srgb, var(--cv-wait) 18%, var(--cv-floor));
+  color: var(--cv-wait);
+}
+.am-node.is-blocked:not(.is-holder) .am-node-ring {
+  border-color: var(--cv-wait);
+  opacity: 0.8;
+  animation: am-breathe 1.8s var(--ease-in-out) infinite;
+}
+@keyframes am-breathe {
+  0%, 100% { opacity: 0.25; transform: scale(0.94); }
+  50% { opacity: 0.85; transform: scale(1); }
 }
 
-.am-node.is-running .am-node-glyph {
-  border-color: color-mix(in srgb, var(--emerald) 55%, var(--line-2));
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--emerald) 10%, var(--bg-2)), var(--bg-1));
-  color: var(--emerald);
-  box-shadow: var(--hl-top), var(--elev-2), 0 3px 9px -7px color-mix(in srgb, var(--emerald) 48%, transparent);
-}
-/* A ring that keeps going is the only thing on a running node that moves, so
-   liveness reads at a glance across a whole generation. */
-.am-node.is-running .am-node-glyph::after {
-  content: ''; position: absolute; inset: -5px; border-radius: 50%;
-  border: 0.75px solid color-mix(in srgb, var(--emerald) 92%, var(--text)); opacity: 0;
-  animation: am-node-ping 1.85s var(--ease-out) infinite;
-}
-.am-node.is-running .am-node-label { color: color-mix(in srgb, var(--text) 96%, var(--emerald)); font-weight: 700; }
-
-.am-node.is-blocked .am-node-glyph {
-  border-color: color-mix(in srgb, var(--as-mark) 82%, var(--line-2));
-  background:
-    radial-gradient(76% 76% at 50% 22%, color-mix(in srgb, var(--as-mark) 18%, transparent), transparent 68%),
-    linear-gradient(180deg, color-mix(in srgb, var(--as-mark) 13%, var(--bg-2)), color-mix(in srgb, var(--as-mark) 5%, var(--bg-1)));
-  color: var(--as-mark);
-  box-shadow: var(--hl-top), var(--elev-3), 0 3px 10px -7px color-mix(in srgb, var(--as-mark) 48%, transparent);
-}
-.am-node.is-blocked .am-node-glyph::after {
-  content: ''; position: absolute; inset: -5px; border-radius: 50%;
-  border: 0.75px solid color-mix(in srgb, var(--as-mark) 92%, var(--text)); opacity: 0;
-  animation: am-node-ping 1.75s var(--ease-out) infinite;
-}
-.am-node.is-blocked .am-node-label { color: color-mix(in srgb, var(--text) 92%, var(--as-mark)); font-weight: 750; }
-@keyframes am-node-ping {
-  0% { transform: scale(0.94); opacity: 0.7; }
-  62%, 100% { transform: scale(1.34); opacity: 0; }
+/* Failed: work that already ended, drawn still. */
+.am-node.is-failed:not(.is-holder) .am-node-glyph {
+  border: 2px solid var(--cv-fail);
+  background: color-mix(in srgb, var(--cv-fail) 12%, var(--cv-disc-a));
+  color: var(--cv-fail);
 }
 
-/* The region a wrapped set of agents occupies. It carries the membership its
-   members have no room for a line to express. */
-.am-block {
-  fill: color-mix(in srgb, var(--text) 3%, transparent);
-  stroke: var(--line-2);
-  stroke-width: 1;
-}
-.am-block.is-live {
-  fill: color-mix(in srgb, var(--emerald) 4%, transparent);
-  stroke: color-mix(in srgb, var(--emerald) 26%, var(--line-2));
-}
-/* What every card in the block has in common, said once. */
-.am-block-cap {
-  fill: color-mix(in srgb, var(--text-3) 92%, var(--text-2));
-  font-size: 11px; font-weight: 650; letter-spacing: -0.005em;
-}
-.am-block-cap.is-live { fill: color-mix(in srgb, var(--emerald) 46%, var(--text-2)); }
-
-.am-node.is-failed .am-node-glyph {
-  border-color: color-mix(in srgb, var(--rose) 55%, var(--line-2));
-  background:
-    radial-gradient(76% 76% at 50% 22%, color-mix(in srgb, var(--rose) 14%, transparent), transparent 68%),
-    linear-gradient(180deg, color-mix(in srgb, var(--rose) 11%, var(--bg-2)), var(--bg-1));
-  color: var(--rose);
-  box-shadow: var(--hl-top), var(--elev-2), 0 5px 20px -8px color-mix(in srgb, var(--rose) 55%, transparent);
-}
-.am-node.is-failed .am-node-label { color: color-mix(in srgb, var(--rose) 75%, var(--text)); font-weight: 600; }
-
+/* Finished: a body with an edge and a check, under everything that is live. */
 .am-node.is-done .am-node-glyph {
-  border-color: color-mix(in srgb, var(--line-2) 70%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 70%, var(--bg)), var(--bg-1));
-  box-shadow: var(--hl-top), var(--elev-1);
-  color: color-mix(in srgb, var(--text-3) 82%, transparent);
+  border: 1.5px solid var(--cv-disc-line);
+  background: var(--cv-disc-a);
+  color: color-mix(in srgb, var(--cv-ink) 66%, transparent);
 }
-.am-node.is-done .am-node-label { color: color-mix(in srgb, var(--text-3) 92%, var(--text-2)); font-weight: 600; }
 
-/* Holders are where work came from, not work itself: a chat that started agents,
-   or the project they ran in when the chat is gone. They are not selectable and
-   they do not compete with state colour, so they carry size and light instead. */
+/* Hover, on channels a state never writes: the disc rises a little. */
+.am-node:hover:not(.is-holder) .am-node-glyph {
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 6px 14px -6px var(--cv-cast), var(--cv-disc-lift);
+}
+.am-node:hover .am-node-label { color: var(--cv-ink); }
+
+/* ── The source ──
+   Where the work came from: a chat that started agents, or the project they
+   ran in when the chat is gone. It never runs and has no state, so it is the
+   one solid object on a field of outlines, one step larger, carrying a
+   monogram and the count of what ran under it. */
 .am-node.is-holder { cursor: default; }
 .am-node.is-holder .am-node-glyph {
   width: 62px; height: 62px;
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--line-2));
-  background:
-    radial-gradient(84% 84% at 50% 25%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 72%),
-    linear-gradient(180deg, color-mix(in srgb, var(--text) 8%, transparent), transparent 40%),
-    linear-gradient(180deg, var(--bg-3), var(--bg-1));
-  color: color-mix(in srgb, var(--accent) 85%, var(--text));
-  box-shadow: var(--hl-top), var(--elev-3), 0 12px 36px -16px color-mix(in srgb, var(--accent) 62%, transparent);
+  border: none;
+  background: color-mix(in srgb, var(--cv-ink) 92%, var(--cv-floor));
+  color: var(--cv-floor);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--cv-cast) 34%, transparent),
+              0 8px 20px -10px var(--cv-cast);
 }
-.am-node.is-holder .am-node-mark { width: 25px; height: 25px; }
-.am-node.is-holder .am-node-label { color: color-mix(in srgb, var(--text) 94%, var(--text-2)); font-weight: 750; letter-spacing: -0.015em; }
-.am-node.is-holder .am-node-time { color: color-mix(in srgb, var(--accent) 70%, var(--text-3)); font-weight: 600; }
-/* A chat with something still running is the live source of that work. */
-.am-node.is-chat.is-running .am-node-glyph::after {
-  content: ''; position: absolute; inset: -7px; border-radius: 50%;
-  border: 0.75px solid color-mix(in srgb, var(--accent) 72%, var(--text)); opacity: 0;
-  animation: am-node-ping 2.2s var(--ease-out) infinite;
+.am-node-mono {
+  font-size: 17px; font-weight: 650; letter-spacing: 0.01em;
+  line-height: 1; transform: translateY(0.06em);
+  color: inherit; text-transform: uppercase;
+  font-variant-numeric: normal;
 }
-/* A project only stands in for a chat that is gone, so it stays quieter. */
+.am-node:not(.is-holder) .am-node-mono { display: none; }
+.am-node.is-holder .am-node-ring { opacity: 0; }
+.am-node.is-holder .am-node-mark { display: none; }
+.am-node.is-holder .am-node-label {
+  width: 168px; height: auto; -webkit-line-clamp: 1;
+  font-size: 14px; font-weight: 620; letter-spacing: -0.014em;
+  color: var(--cv-ink);
+}
+/* A project only stands in for a chat that is gone: same shape, less weight. */
 .am-node.is-project .am-node-glyph {
-  border-color: color-mix(in srgb, var(--line-3) 48%, var(--line-2));
-  background:
-    radial-gradient(82% 82% at 50% 25%, color-mix(in srgb, var(--text) 8%, transparent), transparent 70%),
-    linear-gradient(180deg, var(--bg-2), var(--bg-1));
-  color: var(--text-3);
-  box-shadow: var(--hl-top), var(--elev-2), 0 0 0 6px color-mix(in srgb, var(--text) 2%, transparent);
+  background: color-mix(in srgb, var(--cv-ink) 64%, var(--cv-floor));
 }
-.am-node.is-project .am-node-label { color: color-mix(in srgb, var(--text) 82%, var(--text-2)); font-weight: 700; }
-.am-node.is-project .am-node-time { color: var(--text-3); font-weight: 500; }
 
-/* Selection is the accent, so it never competes with the state colours. */
-.am-node.is-selected .am-node-glyph {
-  border-color: var(--accent);
-  box-shadow: var(--hl-top), var(--elev-3), 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent), 0 10px 30px -14px color-mix(in srgb, var(--accent) 70%, transparent);
+/* A workflow run: the dispatch a fleet was fanned out by. Smaller than the
+   source and carrying the accent. The ring turns only while something under
+   it still runs. */
+.am-node.is-run .am-node-glyph {
+  width: 52px; height: 52px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--cv-disc-a));
+  color: var(--cv-ink);
+  box-shadow: var(--cv-disc-lift);
 }
-.am-node.is-selected .am-node-label { color: var(--text); }
+.am-node.is-run .am-node-ring {
+  opacity: 1; inset: -6px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.am-node.is-run.is-running .am-node-ring { animation: am-spin 9s linear infinite; }
+.am-node.is-run .am-node-label {
+  text-transform: none;
+  font-size: 12px; font-weight: 650; letter-spacing: -0.01em;
+  color: var(--cv-ink);
+}
+.am-node.is-run .am-node-time { color: color-mix(in srgb, var(--accent) 62%, var(--cv-time)); }
+
+/* Selection is one ring of ink around the disc and nothing more: the state
+   ring stands down while the lock is on, so a selected node is never two
+   rings deep. */
+.am-node.is-selected .am-node-lock { opacity: 1; }
+.am-node.is-selected .am-node-ring { opacity: 0; animation: none; }
+.am-node.is-selected .am-node-label { color: var(--cv-ink); }
+
+/* Selecting an agent lights the line back to what started it and turns
+   everything else down. Nothing is hidden. */
+.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.62; }
+.am-cv-stage.has-selection .am-node:not(.is-onpath):is(.is-blocked, .is-failed) { opacity: 0.9; }
+.am-cv-stage.has-selection .am-node:hover { opacity: 1; }
+.am-cv-stage.has-selection .am-edge:not(.is-onpath),
+.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.5; }
+.am-cv-stage.has-selection .am-flow { opacity: 0.5; }
+.am-cv-stage.has-selection .am-edge.is-onpath { stroke-width: 2; }
+.am-node, .am-edge, .am-stem, .am-flow {
+  transition: opacity var(--motion-base) var(--ease);
+}
+
+/* The region a wrapped set of agents occupies in the tree shape: one region on
+   one stem, dashed so a boundary and a connector read as two different facts. */
+.am-block {
+  fill: none;
+  stroke: color-mix(in srgb, var(--cv-ink) 14%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+}
+.am-block-cap {
+  fill: var(--cv-dim);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  stroke: var(--cv-halo); stroke-width: 4px; stroke-linejoin: round;
+  paint-order: stroke fill;
+}
 
 /* Entrance rides `scale`, not `transform`: transform carries the node's place
-   in the tree and must not be overwritten by the animation. */
+   in the graph and must not be overwritten by the animation. */
 .am-node.is-enter { animation: am-node-in 0.5s var(--ease-out) backwards; }
 @keyframes am-node-in { from { opacity: 0; scale: 0.72; } }
 
-/* Full screen grows the card to the window. The detail pane stays: at this size
-   there is room for both, and the point is to see more, not less. */
+/* Full screen grows the card to the window. The rail stays, and the feed
+   takes the room the taller rail gives it. */
 .am-card.is-full { width: 98vw; height: 96vh; }
-.am-cv-btn.is-on { background: var(--bg-3); color: var(--text); }
+.am-card.is-full .am-d-feed { max-height: 480px; }
 
-/* Zoom and framing, parked out of the way of the graph itself. */
-.am-cv-hud {
-  position: absolute; right: var(--space-3); bottom: var(--space-3);
-  display: flex; align-items: center; gap: 1px;
-  padding: 5px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
-  backdrop-filter: blur(18px) saturate(1.25);
-  box-shadow: var(--hl-top), var(--elev-3), 0 14px 36px -20px #000;
+/* ── Stage chrome ──
+   Two instruments over the field, both drawn from the control recipe on the
+   chrome surface, so they read as chrome floating over the stage. */
+.am-cv-topo, .am-cv-hud {
+  position: absolute;
+  display: flex; align-items: center; gap: 2px;
+  height: var(--am-ctl-h); box-sizing: border-box; padding: 2px;
+  background: var(--am-chrome);
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--am-r-out);
+  box-shadow: 0 4px 14px -8px var(--cv-cast);
 }
+.am-cv-topo { left: 12px; top: 12px; }
+.am-cv-tp {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 10px;
+  border: 0; border-radius: var(--am-r-in);
+  background: transparent; color: var(--am-ctl-ink);
+  font-family: inherit; font-size: var(--am-fs-2); font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.am-cv-tp svg { width: 14px; height: 14px; }
+.am-cv-tp:hover { color: var(--text); }
+.am-cv-tp.is-active { color: var(--text); background: var(--am-ctl-on); box-shadow: var(--am-ctl-lift); }
+.am-cv-tp:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.am-cv-hud { right: 12px; bottom: 12px; }
 .am-cv-btn, .am-cv-zoom {
   display: inline-grid; place-items: center;
-  height: 30px; border: 0; border-radius: var(--radius-md);
-  background: transparent; color: color-mix(in srgb, var(--text) 78%, var(--text-2));
+  height: 100%; border: 0; border-radius: var(--am-r-in);
+  background: transparent; color: var(--am-ctl-ink);
+  font-family: inherit;
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
-.am-cv-btn { width: 30px; }
-.am-cv-btn svg { width: var(--icon-sm); height: var(--icon-sm); stroke-width: 1.9; }
+.am-cv-btn { width: 26px; }
+.am-cv-btn svg { width: 14px; height: 14px; stroke-width: 2; }
 .am-cv-zoom {
-  min-width: 52px; padding: 0 7px;
-  font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  min-width: 48px; padding: 0 6px;
+  font-size: var(--am-fs-2); font-weight: 500; font-variant-numeric: tabular-nums;
 }
-.am-cv-btn:hover, .am-cv-zoom:hover { background: color-mix(in srgb, var(--bg-3) 78%, transparent); color: var(--text); box-shadow: var(--hl-top); }
-.am-cv-btn:active, .am-cv-zoom:active { background: var(--bg-4); }
+.am-cv-btn:hover, .am-cv-zoom:hover { background: var(--am-ctl-on); color: var(--text); }
+.am-cv-btn:active, .am-cv-zoom:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
 .am-cv-btn:focus-visible, .am-cv-zoom:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.am-cv-sep { width: 1px; height: 18px; margin: 0 5px; background: color-mix(in srgb, var(--line-2) 82%, transparent); }
+.am-cv-btn.is-on { background: var(--am-ctl-on); color: var(--text); box-shadow: var(--am-ctl-lift); }
+.am-cv-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--am-ctl-line); }
 
 @media (prefers-reduced-motion: reduce) {
-  .am-node, .am-cv-stage.is-gliding { transition: none; }
+  .am-node, .am-cv-stage.is-gliding, .am-cv-grid { transition: none; }
   .am-node.is-enter { animation: none; }
-  .am-node.is-running .am-node-glyph::after,
-  .am-node.is-blocked .am-node-glyph::after,
-  .am-node.is-chat.is-running .am-node-glyph::after { animation: none; }
-  .am-edge { transition: none; }
-  .am-edge.is-live, .am-edge.is-enter { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
+  .am-node.is-running .am-node-mark,
+  .am-node.is-run.is-running .am-node-ring { animation: none; }
+  .am-node.is-blocked:not(.is-holder) .am-node-ring { animation: none; opacity: 0.7; }
+  .am-edge, .am-stem { transition: none; }
+  .am-edge.is-enter { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
+  .am-flow { animation: none; stroke-dasharray: none; opacity: 0.8; }
 }
 
-/* ── Detail pane ── */
+/* ── Inspector rail ──
+   The same surface as the chrome, one rule away from the stage. State and the
+   clock at the top, the name, what it was asked, the live feed, the facts, and
+   the actions pinned under the scroll rather than riding over it. */
 .am-detail-pane {
   min-height: 0;
   display: flex; flex-direction: column;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 44%, transparent), transparent 118px),
-    color-mix(in srgb, var(--bg-1) 92%, var(--bg));
-  border-left: 1px solid color-mix(in srgb, var(--line-2) 58%, transparent);
+  background: var(--am-chrome);
+  border-left: 1px solid var(--am-rule);
 }
 .am-detail-blank {
   margin: auto; padding: var(--space-6) var(--space-5);
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
-  color: var(--text-3); font-size: var(--fs-micro); line-height: var(--lh-base); text-align: center;
-  max-width: 210px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
+  color: var(--text-3); font-size: var(--am-fs-2); line-height: var(--lh-base); text-align: center;
+  max-width: 220px;
 }
 .am-detail-blank svg {
-  width: 34px; height: 34px; padding: 8px;
-  border: 1px solid var(--line); border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-3) 52%, transparent);
+  width: 36px; height: 36px; padding: 9px; box-sizing: border-box;
+  border: 1px solid var(--am-ctl-line); border-radius: var(--am-r-out);
+  background: var(--am-ctl-bg);
   color: var(--text-2);
-  opacity: 0.86;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
 }
 .am-detail-blank p { margin: 0; }
 
 .am-detail {
   flex: 1; min-height: 0;
-  display: flex; flex-direction: column; gap: var(--space-3);
-  padding: 22px var(--space-4) var(--space-3);
-  overflow-y: auto;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
+.am-d-scroll {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: 20px 20px var(--space-4);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.am-d-scroll::-webkit-scrollbar { display: none; }
+.am-d-feed:hover, .am-list:hover { scrollbar-color: var(--line-2) transparent; }
+.am-d-feed::-webkit-scrollbar, .am-list::-webkit-scrollbar { width: 6px; }
+.am-d-feed::-webkit-scrollbar-thumb, .am-list::-webkit-scrollbar-thumb {
+  background-color: transparent; border-radius: 3px;
+}
+.am-d-feed:hover::-webkit-scrollbar-thumb, .am-list:hover::-webkit-scrollbar-thumb { background-color: var(--line-2); }
+.am-d-feed::-webkit-scrollbar-track, .am-list::-webkit-scrollbar-track { background: transparent; }
+
 .am-d-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .am-state {
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 21px;
-  font-size: 9.5px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.11em;
-  padding: 2px 9px 2px 8px; border-radius: var(--radius-pill);
-  border: 1px solid var(--line); color: var(--text-2); background: var(--bg-2);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent);
+  height: 22px; padding: 0 9px 0 8px;
+  font-size: var(--am-fs-1); font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; line-height: 1;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--am-ctl-line); color: var(--text-2); background: var(--am-ctl-bg);
 }
-.am-state::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); }
+.am-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .am-state.is-running {
-  color: var(--emerald);
-  border-color: color-mix(in srgb, var(--emerald) 22%, transparent);
-  background: color-mix(in srgb, var(--emerald) 8%, transparent);
+  color: var(--am-run-ink);
+  border-color: color-mix(in srgb, var(--cv-run) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-run) 9%, transparent);
 }
 .am-state.is-blocked {
-  color: var(--as-mark);
-  border-color: color-mix(in srgb, var(--as-mark) 22%, transparent);
-  background: color-mix(in srgb, var(--as-mark) 8%, transparent);
+  color: var(--am-wait-ink);
+  border-color: color-mix(in srgb, var(--cv-wait) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-wait) 9%, transparent);
 }
 .am-state.is-failed {
-  color: var(--rose);
-  border-color: color-mix(in srgb, var(--rose) 22%, transparent);
-  background: color-mix(in srgb, var(--rose) 8%, transparent);
+  color: var(--am-fail-ink);
+  border-color: color-mix(in srgb, var(--cv-fail) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-fail) 9%, transparent);
 }
 .am-state.is-running::before, .am-state.is-blocked::before { animation: am-state-pulse 1.8s var(--ease-out) infinite; }
 @keyframes am-state-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); opacity: 0.88; }
-  50% { box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 0%, transparent); opacity: 1; }
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .am-state.is-running::before, .am-state.is-blocked::before { animation: none; } }
 .am-d-elapsed {
   margin-left: auto;
-  font-size: var(--fs-nano); color: var(--text-3);
+  font-size: var(--am-fs-2); color: var(--text-2);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 .am-d-name {
-  margin: var(--space-1) 0 0;
-  font-size: 16px; font-weight: 680; letter-spacing: -0.018em;
-  color: color-mix(in srgb, var(--text) 94%, #fff); line-height: 1.22;
+  margin: 2px 0 0;
+  font-size: var(--am-fs-5); font-weight: 650; letter-spacing: -0.015em;
+  color: var(--text); line-height: 1.25;
   overflow-wrap: anywhere;
 }
 .am-d-intent {
-  margin: 0 0 var(--space-1); font-size: 11.5px; color: color-mix(in srgb, var(--text-2) 88%, var(--text-3)); line-height: 1.5;
+  margin: 0; font-size: 12.5px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
+.am-d-intent[hidden] { display: none; }
 
-/* The live feed leads the pane: what the agent is doing, newest at the bottom.
-   Prose reads as prose; tool calls are a neutral pill and the argument's tail. */
-.am-d-feed-wrap { display: flex; flex-direction: column; gap: 9px; margin-top: var(--space-1); flex: 1; min-height: 192px; }
-.am-d-feed-label {
-  font-size: 9.5px; font-weight: 650; letter-spacing: 0.12em;
+.am-d-feed-wrap, .am-d-facts-wrap { display: flex; flex-direction: column; gap: 8px; }
+.am-d-feed-wrap { margin-top: var(--space-2); }
+.am-d-facts-wrap { padding-top: var(--space-3); border-top: 1px solid var(--am-rule); }
+.am-d-feed-label, .am-d-facts-label {
+  font-size: var(--am-fs-1); font-weight: 600; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--text-3);
 }
 .am-d-feed {
-  flex: 1; min-height: 158px;
-  margin: 0; padding: 12px 0 72px; list-style: none;
+  position: relative;
+  margin: 0; padding: 0; list-style: none;
+  max-height: 300px;
   overflow-y: auto;
-  scroll-padding-block: 12px 72px;
-  border: 1px solid color-mix(in srgb, var(--line-2) 64%, transparent);
-  border-radius: 10px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, #fff 3.5%, transparent), transparent 26px),
-    color-mix(in srgb, var(--bg) 64%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent),
-    0 12px 28px color-mix(in srgb, #000 16%, transparent);
+  scroll-padding-block: 12px 12px;
+  scrollbar-width: thin; scrollbar-color: transparent transparent;
+  /* The feed is pinned to its newest line, so the oldest one on screen leaves
+     through a fade rather than being cut at the fold. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22px);
+  mask-image: linear-gradient(to bottom, transparent, #000 22px);
+}
+/* One rule down the chip column, so the entries read as one sequence. */
+.am-d-feed::before {
+  content: '';
+  position: absolute; left: 22px; top: 6px; bottom: 6px;
+  width: 1px;
+  background: var(--am-rule);
 }
 .am-d-feed li {
+  position: relative;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 31px;
+  grid-template-columns: 46px minmax(0, 1fr) 34px;
   gap: 9px;
   align-items: start;
-  padding: 11px 10px 11px 12px;
-  font-size: 12px; line-height: 1.66;
-  color: color-mix(in srgb, var(--text) 72%, var(--text-2));
-}
-.am-d-feed li + li {
-  border-top: 1px solid color-mix(in srgb, #fff 4%, transparent);
+  padding: 8px 0;
+  font-size: 12.5px; line-height: 1.6;
+  color: color-mix(in srgb, var(--text) 82%, var(--text-2));
 }
 .am-d-feed .ftime {
   justify-self: end;
   padding-top: 2px;
-  font-size: 9.5px; line-height: 1.2;
-  color: var(--text-3); opacity: 0.78;
+  font-size: var(--am-fs-1); line-height: 1.2;
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .am-d-feed li.is-new { animation: am-feed-in 0.24s var(--ease-out); }
 @keyframes am-feed-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .am-d-feed li.is-new { animation: none; } }
+/* One neutral pill voice for every role: who said a line never borrows a
+   colour that means an agent is running. Opaque, because it sits on the rule. */
 .am-d-feed .fk {
   justify-self: start;
   box-sizing: border-box;
-  min-width: 30px; max-width: 42px;
+  min-width: 32px; max-width: 46px;
   overflow: hidden; text-overflow: ellipsis;
-  font-size: 9px; font-weight: 650; line-height: 15px; letter-spacing: 0.015em;
-  padding: 0 5px; border-radius: var(--radius-pill);
-  border: 1px solid color-mix(in srgb, var(--line-2) 62%, transparent);
-  background: color-mix(in srgb, var(--bg-3) 52%, transparent);
-  color: color-mix(in srgb, var(--text-3) 88%, var(--text-2));
+  font-size: 10.5px; font-weight: 600; line-height: 16px; letter-spacing: 0;
+  padding: 0 6px; border-radius: var(--radius-pill);
+  border: 1px solid var(--am-ctl-line);
+  background: color-mix(in srgb, var(--text) 7%, var(--am-chrome));
+  color: var(--text-3);
   text-transform: lowercase;
   white-space: nowrap;
   text-align: center;
-}
-/* One neutral pill voice; only the agent's own words drop the pill entirely
-   and only "you" takes a tint, so the column never reads as confetti. */
-.am-d-feed li.k-user .fk {
-  color: color-mix(in srgb, var(--emerald) 75%, var(--text-2));
-  border-color: color-mix(in srgb, var(--emerald) 20%, var(--line));
-  background: color-mix(in srgb, var(--emerald) 7%, transparent);
 }
 .am-d-feed .ft { min-width: 0; overflow-wrap: anywhere; }
 .am-d-feed .ftxt { display: block; }
 .am-d-feed li.k-tool .ft {
   font-family: var(--font-mono);
-  font-size: 11.1px; line-height: 1.6;
-  color: color-mix(in srgb, var(--text-2) 92%, var(--text));
+  font-size: 11.5px; line-height: 1.6;
+  color: var(--text-2);
 }
-.am-d-feed li.k-user .ft { color: color-mix(in srgb, var(--text) 78%, var(--emerald)); }
+.am-d-feed li.k-user .ft { color: var(--text); }
 .am-d-feed-empty {
   display: block;
-  padding: var(--space-5) var(--space-4); color: var(--text-3);
-  font-size: var(--fs-nano); text-align: center;
-  border-top: 0;
+  padding: var(--space-4) 0; color: var(--text-3);
+  font-size: var(--am-fs-2);
 }
 
 .am-d-facts {
-  display: grid; grid-template-columns: 78px minmax(0, 1fr);
-  gap: 3px var(--space-3); margin: 0;
-  font-size: var(--fs-micro);
-  padding-top: 7px; border-top: 1px solid color-mix(in srgb, #fff 4.5%, transparent);
+  display: grid; grid-template-columns: 80px minmax(0, 1fr);
+  gap: 2px var(--space-3); margin: 0;
   align-items: center;
 }
 .am-d-facts dt, .am-d-facts dd {
-  min-height: 22px;
+  min-height: 24px;
   display: flex; align-items: center;
 }
-.am-d-facts dt { color: color-mix(in srgb, var(--text-3) 92%, var(--text-2)); }
+.am-d-facts dt { font-size: var(--am-fs-2); color: var(--text-3); }
 .am-d-facts dd {
-  margin: 0; color: color-mix(in srgb, var(--text) 66%, var(--text-2));
+  margin: 0; font-size: var(--am-fs-3); color: color-mix(in srgb, var(--text) 84%, var(--text-2));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
-.am-d-facts dd.is-mono { font-family: var(--font-mono); font-size: var(--fs-nano); }
+.am-d-facts dd.is-mono { font-family: var(--font-mono); font-size: 11.5px; }
 /* The id is a control: click copies the whole session id. */
 .am-d-copyid {
   display: inline-flex; align-items: center; gap: 6px;
-  max-width: 100%;
-  border: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent); border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-3) 62%, transparent); color: var(--text-2);
-  font-family: var(--font-mono); font-size: var(--fs-nano);
-  padding: 2px 7px; cursor: pointer;
-  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+  max-width: 100%; height: 22px;
+  border: 1px solid var(--am-ctl-line); border-radius: var(--am-r-in);
+  background: var(--am-ctl-bg); color: var(--text-2);
+  font-family: var(--font-mono); font-size: 11.5px;
+  padding: 0 7px; cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
 }
-.am-d-copyid svg { width: var(--icon-xs); height: var(--icon-xs); color: var(--text-3); flex: 0 0 auto; }
-.am-d-copyid:hover { background: var(--bg-4); border-color: var(--line-3); color: var(--text); transform: translateY(-0.5px); }
+.am-d-copyid svg { width: 13px; height: 13px; color: var(--text-3); flex: 0 0 auto; }
+.am-d-copyid:hover { background: var(--am-ctl-on); border-color: var(--line-2); color: var(--text); }
 .am-d-copyid:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
+/* The actions stand under the scroll on their own rule, so nothing the rail
+   says can end up under a button. */
 .am-d-actions {
-  display: flex; gap: var(--space-2);
-  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-3));
-  padding: var(--space-3) var(--space-4) var(--space-3);
-  position: sticky; bottom: 0;
-  border-top: 1px solid color-mix(in srgb, #fff 4.5%, transparent);
-  background: color-mix(in srgb, var(--notif-bg) 84%, transparent);
-  backdrop-filter: blur(14px) saturate(1.12);
-  -webkit-backdrop-filter: blur(14px) saturate(1.12);
+  display: flex; gap: var(--space-2); flex: 0 0 auto;
+  padding: var(--space-3) 20px;
+  border-top: 1px solid var(--am-rule);
+  background: var(--am-chrome);
 }
-/* A quiet primary: tinted at rest, full accent only under the pointer. The
-   whole overlay stays calm and the one urgent case borrows the amber. */
-/* Ending an agent sits beside opening it, quieter: it is the rarer intent and
-   the destructive one. */
-.am-d-actions .am-d-end {
-  height: 30px; padding: 0 12px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line-2);
-  background: var(--bg-2); color: var(--text-2);
-  font-size: var(--fs-nano); font-weight: 600;
+.am-d-actions .am-d-open {
+  flex: 1; height: 32px;
+  border: 0; border-radius: var(--am-r-out);
+  background: var(--accent);
+  color: var(--on-accent, #ffffff);
+  font-family: inherit; font-size: var(--am-fs-3); font-weight: 600;
   cursor: pointer;
-  transition: color var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), background var(--motion-base) var(--ease);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(0, 0, 0, 0.16);
+  transition: filter var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+}
+.am-d-actions .am-d-open:hover:not(:disabled) { filter: brightness(1.06); }
+.am-d-actions .am-d-open:active:not(:disabled) { transform: translateY(1px); }
+.am-d-actions .am-d-open:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.am-d-actions .am-d-open:disabled { opacity: 0.45; cursor: not-allowed; }
+.am-d-actions .am-d-end {
+  height: 32px; padding: 0 12px;
+  border-radius: var(--am-r-out);
+  border: 1px solid var(--line-2);
+  background: var(--am-ctl-bg); color: var(--text-2);
+  font-family: inherit; font-size: var(--am-fs-2); font-weight: 600;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
 }
 .am-d-actions .am-d-end:hover:not(:disabled) {
-  color: var(--rose);
-  border-color: color-mix(in srgb, var(--rose) 45%, var(--line-2));
-  background: color-mix(in srgb, var(--rose) 10%, var(--bg-2));
+  color: var(--am-fail-ink);
+  border-color: color-mix(in srgb, var(--cv-fail) 45%, var(--line-2));
+  background: color-mix(in srgb, var(--cv-fail) 9%, transparent);
 }
 .am-d-actions .am-d-end:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .am-d-actions .am-d-end:disabled { opacity: 0.45; cursor: not-allowed; }
 .am-d-actions .am-d-end[hidden] { display: none; }
 
-.am-d-actions .am-d-open {
-  flex: 1; height: 30px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: color-mix(in srgb, var(--accent) 92%, var(--text));
-  font-family: inherit; font-size: 13px; font-weight: 650;
-  cursor: pointer;
-  box-shadow: none;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
-}
-.am-d-actions .am-d-open:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
-  color: color-mix(in srgb, var(--accent) 94%, var(--text));
-}
-.am-d-actions .am-d-open:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.am-d-actions .am-d-open:active:not(:disabled) { transform: translateY(1px); }
-.am-d-actions .am-d-open:disabled { opacity: 0.5; cursor: not-allowed; }
-.am-d-actions .am-d-open.is-blocked {
-  border-color: color-mix(in srgb, var(--as-mark) 42%, var(--line));
-  background: color-mix(in srgb, var(--as-mark) 8%, transparent);
-  color: color-mix(in srgb, var(--as-mark) 92%, var(--text));
-}
-.am-d-actions .am-d-open.is-blocked:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--as-mark) 12%, transparent);
-  border-color: color-mix(in srgb, var(--as-mark) 56%, var(--line));
-  color: color-mix(in srgb, var(--as-mark) 94%, var(--text));
-}
-
 /* ── Footer ── */
 .am-foot {
   display: flex; align-items: center; gap: var(--space-4);
+  height: 36px; flex: 0 0 auto;
   padding: 0 var(--space-5);
-  border-top: 1px solid var(--line);
-  min-height: 40px;
+  border-top: 1px solid var(--am-rule);
+  font-size: var(--am-fs-2);
+  font-variant-numeric: tabular-nums;
 }
 .am-foot:has(.am-foot-note:empty):has(.am-foot-sum:empty) { display: none; }
 .am-foot-note {
   display: inline-flex; align-items: center; gap: 8px;
-  height: 22px;
-  font-size: var(--fs-micro); font-weight: 500; color: color-mix(in srgb, var(--text) 74%, var(--text-2));
-  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
 }
 .am-foot-note:not(:empty)::before {
   content: "";
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--emerald);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--emerald) 14%, transparent);
+  background: var(--am-run-ink);
   animation: am-foot-live 2.4s var(--ease-in-out) infinite;
 }
-.am-foot-sum {
-  margin-left: auto;
-  font-size: var(--fs-micro); color: color-mix(in srgb, var(--text-2) 82%, var(--text-3));
-  font-variant-numeric: tabular-nums;
-}
+.am-foot-sum { margin-left: auto; color: var(--text-3); }
 @keyframes am-foot-live {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--emerald) 14%, transparent);
-  }
-  50% {
-    opacity: 0.72;
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--emerald) 5%, transparent);
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 @media (prefers-reduced-motion: reduce) {
   .am-foot-note:not(:empty)::before { animation: none; }
@@ -14426,16 +14698,1812 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
   .am-detail-pane { display: none; }
 }
 
-/* Light theme: the pane and feed keep their layering when translucency stops
-   doing the work: a tinted pane, a white card riding on it. */
-[data-mode="light"] .am-detail-pane { background: color-mix(in srgb, var(--bg-2) 60%, var(--bg-1)); }
-[data-mode="light"] .am-d-feed {
-  border-color: color-mix(in srgb, var(--line-2) 78%, transparent);
-  background: #ffffff;
-  box-shadow: var(--shadow-soft);
+/* ── Agent command center polish ───────────────────────────────────────────
+   A more premium Fleet Command composition over the same DOM and keyboard
+   model: Mica-like depth, state-aware light, roomier detail reading surfaces
+   and list rows that feel intentional rather than table-like. */
+#agent-map.modal {
+  background:
+    radial-gradient(920px 540px at 50% 46%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 72%),
+    radial-gradient(720px 520px at 72% 22%, color-mix(in srgb, var(--cv-wait, #ff8a3d) 8%, transparent), transparent 70%),
+    rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
 }
-[data-mode="light"] .am-d-feed li + li { border-top-color: color-mix(in srgb, var(--line) 70%, transparent); }
-[data-mode="light"] .am-d-feed .fk { background: var(--bg-2); }
-[data-mode="light"] .am-d-actions {
-  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
+
+.am-card {
+  position: relative;
+  isolation: isolate;
+  --am-ctl-h: 34px;
+  --am-r-out: 12px;
+  --am-r-in: 9px;
+  --am-ctl-bg: color-mix(in srgb, var(--text) 5%, transparent);
+  --am-ctl-line: color-mix(in srgb, var(--text) 11%, transparent);
+  --am-ctl-on: color-mix(in srgb, var(--text) 11%, transparent);
+  --am-ctl-lift: inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent),
+                  0 1px 2px rgba(0, 0, 0, 0.24);
+  --cv-run:  #20d5bf;
+  --cv-wait: #ff8a3d;
+  --cv-fail: #ff5f6d;
+  --am-run-ink:  var(--cv-run);
+  --am-wait-ink: var(--cv-wait);
+  --am-fail-ink: var(--cv-fail);
+  --am-rule: color-mix(in srgb, var(--text) 10%, transparent);
+  --am-chrome: color-mix(in srgb, var(--notif-bg) 88%, var(--bg));
+  width: min(1320px, 96vw);
+  height: min(820px, 94vh);
+  border-radius: 20px;
+  border-color: color-mix(in srgb, var(--text) 14%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent 24%),
+    var(--am-chrome);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 30px 90px rgba(0, 0, 0, 0.62),
+    0 8px 24px rgba(0, 0, 0, 0.34);
+}
+
+.am-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.am-card::before,
+.am-card::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.am-card::before {
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, #fff 7%, transparent) 20%, transparent 42%),
+    radial-gradient(560px 180px at 22% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 78%);
+  opacity: 0.85;
+  mask-image: linear-gradient(to bottom, #000, transparent 38%);
+}
+
+.am-card::after {
+  left: 22%;
+  right: 20%;
+  bottom: -110px;
+  height: 220px;
+  border-radius: 999px;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%);
+  filter: blur(10px);
+  opacity: 0.65;
+}
+
+.am-card.is-blocked::before {
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, #fff 7%, transparent) 20%, transparent 42%),
+    radial-gradient(600px 190px at 72% 0%, color-mix(in srgb, var(--cv-wait) 16%, transparent), transparent 78%);
+}
+
+.am-card.is-running::before {
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, #fff 7%, transparent) 20%, transparent 42%),
+    radial-gradient(600px 190px at 72% 0%, color-mix(in srgb, var(--cv-run) 14%, transparent), transparent 78%);
+}
+
+body[data-mode="light"] #agent-map.modal {
+  background:
+    radial-gradient(900px 540px at 50% 46%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 72%),
+    rgba(18, 18, 18, 0.26);
+}
+
+body[data-mode="light"] .am-card {
+  --am-ctl-bg: rgba(255, 255, 255, 0.58);
+  --am-ctl-line: color-mix(in srgb, var(--text) 10%, transparent);
+  --am-ctl-on: #ffffff;
+  --am-rule: color-mix(in srgb, var(--text) 9%, transparent);
+  --am-chrome: color-mix(in srgb, #fff 88%, var(--bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 28px 80px rgba(15, 15, 15, 0.16),
+    0 8px 24px rgba(15, 15, 15, 0.08);
+}
+
+.am-top {
+  height: 64px;
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px 0 24px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent),
+    color-mix(in srgb, var(--am-chrome) 96%, transparent);
+  border-bottom-color: var(--am-rule);
+}
+
+.am-id {
+  gap: 12px;
+}
+
+.am-title {
+  font-size: 16px;
+  font-weight: 680;
+  letter-spacing: -0.018em;
+}
+
+.am-sub {
+  height: 24px;
+  font-size: 11.5px;
+}
+
+.am-filters {
+  align-items: center;
+  flex: 1 1 auto;
+}
+
+.am-chipset {
+  height: var(--am-ctl-h);
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--am-r-out);
+  background: var(--am-ctl-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.am-chipset::-webkit-scrollbar { height: 0; }
+
+.am-chip {
+  height: 100%;
+  padding: 0 11px;
+  border-radius: var(--am-r-in);
+  font-size: 12px;
+  transition:
+    color var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease),
+    box-shadow var(--motion-fast) var(--ease);
+}
+
+.am-chip::after { display: none; }
+.am-chip:hover:not(.is-active) { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.am-chip.is-active {
+  background: var(--am-ctl-on);
+  color: var(--text);
+  box-shadow: var(--am-ctl-lift);
+}
+.am-chip.is-blocked.is-active {
+  color: var(--am-wait-ink);
+  background: color-mix(in srgb, var(--cv-wait) 13%, var(--am-ctl-on));
+}
+.am-chip.is-running.is-active {
+  color: var(--am-run-ink);
+  background: color-mix(in srgb, var(--cv-run) 11%, var(--am-ctl-on));
+}
+.am-chip-n { font-size: 11px; }
+
+.am-tools {
+  gap: 8px;
+}
+
+.am-views,
+.am-search {
+  background: var(--am-ctl-bg);
+  border-color: var(--am-ctl-line);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+}
+
+.am-card .am-search input[type="text"] {
+  width: 150px;
+}
+
+.am-search:focus-within input[type="text"] {
+  width: 218px;
+}
+
+.am-close:hover {
+  background: color-mix(in srgb, var(--cv-fail) 10%, var(--am-ctl-on));
+  color: var(--text);
+}
+
+.am-body {
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 430px);
+  background: color-mix(in srgb, var(--bg) 82%, #000);
+}
+
+body[data-mode="light"] .am-body {
+  background: color-mix(in srgb, var(--text) 3%, var(--bg));
+}
+
+.am-canvas-pane,
+.am-list-pane {
+  background:
+    radial-gradient(640px 420px at 50% 38%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 74%),
+    radial-gradient(520px 360px at 22% 76%, color-mix(in srgb, var(--cv-run) 5%, transparent), transparent 76%),
+    color-mix(in srgb, var(--bg) 92%, #000);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    inset -1px 0 0 color-mix(in srgb, #000 38%, transparent);
+}
+
+body[data-mode="light"] .am-canvas-pane,
+body[data-mode="light"] .am-list-pane {
+  background:
+    radial-gradient(640px 420px at 50% 38%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 74%),
+    color-mix(in srgb, var(--text) 3%, var(--bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset -1px 0 0 color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.am-cv-grid {
+  opacity: 0.86;
+  background-image:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--cv-ink) 18%, transparent) 1.05px, transparent 0);
+  background-size: 32px 32px;
+}
+
+.am-edge.is-live,
+.am-stem.is-live {
+  stroke: color-mix(in srgb, var(--cv-run) 78%, var(--cv-ink));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--cv-run) 28%, transparent));
+}
+
+.am-flow {
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--cv-run) 42%, transparent));
+}
+
+.am-cv-topo,
+.am-cv-hud {
+  height: 34px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--am-chrome) 72%, transparent);
+  border-color: color-mix(in srgb, var(--text) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent),
+    0 10px 26px -18px #000;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.am-cv-topo { left: 14px; top: 14px; }
+.am-cv-hud { right: 14px; bottom: 14px; }
+
+.am-node-glyph {
+  width: 54px;
+  height: 54px;
+  border-width: 1px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 5%, transparent), transparent),
+    color-mix(in srgb, var(--cv-floor) 84%, var(--cv-ink) 8%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 1px 2px color-mix(in srgb, var(--cv-cast) 18%, transparent),
+    0 9px 20px -18px var(--cv-cast);
+}
+
+.am-node.is-holder .am-node-glyph {
+  width: 62px;
+  height: 62px;
+  border: 1px solid color-mix(in srgb, var(--cv-ink) 18%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-ink) 7%, transparent), transparent),
+    color-mix(in srgb, var(--cv-floor) 76%, var(--cv-ink) 12%);
+  color: var(--cv-ink);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent),
+    0 8px 18px -16px var(--cv-cast);
+}
+
+body[data-mode="light"] .am-node.is-holder .am-node-glyph {
+  background:
+    linear-gradient(180deg, #fff, color-mix(in srgb, var(--text) 2.5%, var(--bg)));
+  border-color: color-mix(in srgb, var(--text) 16%, transparent);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(15, 15, 15, 0.08),
+    0 10px 22px -19px rgba(15, 15, 15, 0.26);
+}
+
+.am-node.is-blocked:not(.is-holder) .am-node-glyph {
+  width: 54px;
+  height: 54px;
+  border: 1.5px solid color-mix(in srgb, var(--cv-wait) 72%, var(--cv-ink));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-wait) 14%, transparent), transparent),
+    color-mix(in srgb, var(--cv-wait) 10%, var(--cv-floor));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--cv-wait) 7%, transparent),
+    0 10px 22px -18px color-mix(in srgb, var(--cv-wait) 54%, #000);
+}
+
+.am-node.is-blocked:not(.is-holder) .am-node-ring {
+  inset: -6px;
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--cv-wait) 68%, var(--cv-ink));
+}
+
+.am-node.is-running:not(.is-holder) .am-node-glyph {
+  width: 54px;
+  height: 54px;
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--cv-run) 70%, var(--cv-ink));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-run) 13%, transparent), transparent),
+    color-mix(in srgb, var(--cv-run) 8%, var(--cv-floor));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--cv-run) 6%, transparent),
+    0 10px 22px -18px color-mix(in srgb, var(--cv-run) 54%, #000);
+}
+
+.am-node.is-selected .am-node-lock {
+  inset: -7px;
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--cv-ink) 62%, var(--cv-floor));
+  box-shadow:
+    inset 0 0 0 2px var(--cv-floor);
+}
+
+body[data-mode="light"] .am-node-glyph {
+  border-color: color-mix(in srgb, var(--text) 15%, transparent);
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--text) 2.25%, var(--bg)));
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(15, 15, 15, 0.07),
+    0 10px 22px -20px rgba(15, 15, 15, 0.22);
+}
+
+body[data-mode="light"] .am-node.is-blocked:not(.is-holder) .am-node-glyph {
+  border-color: color-mix(in srgb, var(--cv-wait) 72%, var(--text));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-wait) 12%, #fff), color-mix(in srgb, var(--cv-wait) 7%, #fff));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 0 0 3px color-mix(in srgb, var(--cv-wait) 7%, transparent),
+    0 10px 22px -20px color-mix(in srgb, var(--cv-wait) 34%, rgba(15, 15, 15, 0.18));
+}
+
+body[data-mode="light"] .am-node.is-running:not(.is-holder) .am-node-glyph {
+  border-color: color-mix(in srgb, var(--cv-run) 68%, var(--text));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-run) 10%, #fff), color-mix(in srgb, var(--cv-run) 5%, #fff));
+}
+
+.am-node-label {
+  width: 108px;
+  font-weight: 650;
+  letter-spacing: -0.018em;
+}
+
+.am-node.is-holder .am-node-label {
+  width: auto;
+  max-width: 140px;
+}
+
+.am-list {
+  padding: 14px 14px 18px;
+}
+
+.am-sect {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 8px -2px 6px;
+  padding: 8px 10px 5px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 92%, transparent), transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.am-row {
+  grid-template-columns: 20px minmax(0, 1fr) minmax(62px, auto);
+  grid-template-rows: 19px 17px;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin: 3px 0;
+  padding: 10px 12px 11px 10px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-1) 38%, transparent);
+}
+
+.am-row:hover {
+  background: color-mix(in srgb, var(--bg-2) 84%, transparent);
+  border-color: color-mix(in srgb, var(--line-2) 78%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent),
+    0 10px 22px -20px #000;
+}
+
+.am-row.is-selected {
+  border-color: color-mix(in srgb, var(--line-3) 56%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
+    color-mix(in srgb, var(--bg-2) 94%, var(--bg-3));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent),
+    0 12px 26px -22px #000;
+}
+
+.am-row.is-selected::before {
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  background: var(--accent);
+}
+
+.am-row.is-selected.is-blocked::before { background: var(--am-wait-ink); }
+.am-row.is-selected.is-running::before { background: var(--am-run-ink); }
+.am-row.is-selected.is-failed::before { background: var(--am-fail-ink); }
+.am-row.is-selected.is-blocked {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--am-wait-ink) 11%, transparent), transparent 48%),
+    color-mix(in srgb, var(--bg-2) 92%, var(--bg-3));
+}
+.am-row.is-selected.is-running {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--am-run-ink) 9%, transparent), transparent 48%),
+    color-mix(in srgb, var(--bg-2) 92%, var(--bg-3));
+}
+
+.am-dot {
+  width: 8px;
+  height: 8px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent),
+    0 0 0 3px color-mix(in srgb, currentColor 9%, transparent);
+}
+
+.am-row-name {
+  font-size: 13.5px;
+  font-weight: 640;
+  line-height: 19px;
+}
+
+.am-row-sub {
+  font-size: 11.5px;
+  line-height: 17px;
+}
+
+.am-row-time {
+  font-size: 10.5px;
+  line-height: 16px;
+}
+
+.am-detail-pane {
+  position: relative;
+  overflow: hidden;
+  border-left-color: color-mix(in srgb, var(--text) 12%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent 30%),
+    var(--am-chrome);
+  box-shadow: inset 1px 0 0 color-mix(in srgb, #fff 3%, transparent);
+}
+
+.am-detail-pane::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(360px 240px at 50% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 72%);
+  opacity: 0.9;
+}
+
+.am-detail-pane[data-state="blocked"]::before {
+  background: radial-gradient(390px 260px at 50% 0%, color-mix(in srgb, var(--cv-wait) 16%, transparent), transparent 76%);
+}
+
+.am-detail-pane[data-state="running"]::before {
+  background: radial-gradient(390px 260px at 50% 0%, color-mix(in srgb, var(--cv-run) 13%, transparent), transparent 76%);
+}
+
+.am-detail,
+.am-detail-blank {
+  position: relative;
+  z-index: 1;
+}
+
+.am-d-scroll {
+  gap: 16px;
+  padding: 24px 24px 18px;
+}
+
+.am-d-head {
+  align-items: center;
+}
+
+.am-state {
+  height: 24px;
+  padding-inline: 9px 10px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
+}
+
+.am-d-elapsed {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--text-2) 78%, var(--text-3));
+}
+
+.am-d-name {
+  margin-top: -2px;
+  font-size: 20px;
+  font-weight: 720;
+  letter-spacing: -0.028em;
+  line-height: 1.22;
+}
+
+.am-d-intent {
+  display: block;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: initial;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent),
+    color-mix(in srgb, var(--bg-2) 68%, transparent);
+  color: color-mix(in srgb, var(--text) 80%, var(--text-2));
+  line-height: 1.55;
+  overflow: hidden;
+}
+
+.am-d-feed-wrap,
+.am-d-facts-wrap {
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 3.5%, transparent), transparent),
+    color-mix(in srgb, var(--bg-1) 84%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+}
+
+.am-d-feed-wrap {
+  margin-top: 0;
+}
+
+.am-d-facts-wrap {
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent);
+}
+
+.am-d-feed-label,
+.am-d-facts-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: color-mix(in srgb, var(--text-2) 66%, var(--text-3));
+}
+
+.am-d-feed-label::before,
+.am-d-facts-label::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.am-detail-pane[data-state="blocked"] .am-d-feed-label::before { background: var(--am-wait-ink); }
+.am-detail-pane[data-state="running"] .am-d-feed-label::before { background: var(--am-run-ink); }
+
+.am-d-feed {
+  max-height: 235px;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.am-d-feed::before {
+  left: 25px;
+  background: color-mix(in srgb, var(--line-2) 74%, transparent);
+}
+
+.am-d-feed li {
+  grid-template-columns: 50px minmax(0, 1fr) 38px;
+  gap: 10px;
+  padding: 9px 0;
+  font-size: 12.5px;
+}
+
+.am-d-feed .fk {
+  min-width: 36px;
+  max-width: 50px;
+  height: 18px;
+  line-height: 16px;
+  border-color: color-mix(in srgb, var(--line-2) 76%, transparent);
+  background: color-mix(in srgb, var(--text) 7%, var(--am-chrome));
+}
+
+.am-d-feed li.k-tool .fk {
+  color: color-mix(in srgb, var(--text-2) 72%, var(--text-3));
+}
+
+.am-d-feed li.k-user .fk,
+.am-d-feed li.k-agent .fk {
+  color: color-mix(in srgb, var(--text) 74%, var(--text-2));
+}
+
+.am-d-feed .ftxt {
+  color: color-mix(in srgb, var(--text) 86%, var(--text-2));
+}
+
+.am-d-feed li.k-tool .ftxt {
+  color: color-mix(in srgb, var(--text-2) 86%, var(--text-3));
+}
+
+.am-d-facts {
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 4px 14px;
+}
+
+.am-d-facts dt,
+.am-d-facts dd {
+  min-height: 26px;
+}
+
+.am-d-copyid {
+  height: 24px;
+  border-radius: 8px;
+}
+
+.am-d-actions {
+  gap: 10px;
+  padding: 14px 24px 18px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--am-chrome) 78%, transparent), var(--am-chrome)),
+    var(--am-chrome);
+  border-top-color: color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: 0 -18px 34px -28px #000;
+}
+
+.am-d-actions .am-d-open,
+.am-d-actions .am-d-end {
+  height: 38px;
+  border-radius: 12px;
+}
+
+.am-d-actions .am-d-open {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fff 12%, transparent), transparent),
+    linear-gradient(180deg, var(--accent), var(--accent-2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 10px 22px -16px color-mix(in srgb, var(--accent) 72%, #000);
+}
+
+.am-d-actions .am-d-open.is-blocked {
+  color: color-mix(in srgb, #1b0d04 86%, #000);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fff 18%, transparent), transparent),
+    linear-gradient(180deg, #ff9d62, #ff743d);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    0 12px 28px -17px color-mix(in srgb, var(--cv-wait) 80%, #000);
+}
+
+.am-d-actions .am-d-end {
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.am-foot {
+  height: 34px;
+  background: color-mix(in srgb, var(--am-chrome) 94%, transparent);
+  border-top-color: var(--am-rule);
+}
+
+@media (max-width: 1100px) {
+  .am-card .am-search input[type="text"] { width: 116px; }
+  .am-search:focus-within input[type="text"] { width: 160px; }
+  .am-body { grid-template-columns: minmax(0, 1fr) 370px; }
+}
+
+@media (max-width: 960px) {
+  .am-top { gap: 10px; padding-left: 18px; }
+  .am-sub { display: none; }
+  .am-view { padding-inline: 9px; }
+  .am-card .am-search input[type="text"] { width: 96px; }
+}
+
+/* ─── Workflow marketplace ──────────────────────────────────────────────────
+   The catalog view. It borrows the workflow card's surface and shadow so that
+   a card you can install and a card you already have read as the same object
+   at two moments, and differs only where the difference is real: a marketplace
+   card carries claims somebody else made, and says so along its bottom. */
+.wfm { display: flex; flex-direction: column; gap: var(--space-4); }
+
+.wfm-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.wfm-search {
+  flex: 0 1 320px; min-width: 180px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+}
+.wfm-search::placeholder { color: var(--text-3); }
+
+.wfm-tags { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.wfm-tag {
+  padding: 3px 10px;
+  background: transparent; color: var(--text-3);
+  border: 1px solid var(--line); border-radius: 999px;
+  font-size: var(--fs-nano); cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.wfm-tag:hover { color: var(--text-2); border-color: var(--line-2); }
+.wfm-tag.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* Which catalog these rows came from. One line, above the grid, because the
+   answer applies to every card under it and repeating it on each would be
+   noise rather than provenance. */
+.wfm-source-row { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.wfm-source-name { font-size: var(--fs-body); color: var(--text-2); font-weight: 600; }
+.wfm-source-host { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); }
+.wfm-source-count { font-size: var(--fs-nano); color: var(--text-3); }
+.wfm-source-skipped { font-size: var(--fs-nano); color: var(--warn); }
+
+.wfm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
+  gap: var(--space-4);
+  align-content: start;
+}
+.wfm-card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-2xl);
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  box-shadow: var(--elev-2);
+  transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
+}
+.wfm-card:hover { border-color: var(--line-2); box-shadow: var(--elev-3); }
+.wfm-card-head { display: flex; align-items: center; gap: var(--space-2); }
+.wfm-card-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-body-lg); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.wfm-chip {
+  flex: 0 0 auto;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); color: var(--text-3);
+  border: 1px solid var(--line);
+}
+.wfm-card-desc {
+  font-size: var(--fs-body); color: var(--text-2); line-height: 1.45;
+  /* Three lines, then it stops. A description is a stranger's prose and has no
+     length this card can rely on. */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.wfm-card-facts { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.wfm-fact {
+  padding: 2px 8px; border-radius: var(--radius-md);
+  background: var(--surface-raised); color: var(--text-3);
+  font-size: var(--fs-nano);
+}
+.wfm-fact.is-agent { font-family: var(--font-mono); }
+/* The one line on the card that names where every figure above it came from. */
+.wfm-card-foot { margin-top: auto; padding-top: var(--space-2); }
+.wfm-card-by { font-size: var(--fs-nano); color: var(--text-3); }
+.wfm-card-actions { display: flex; justify-content: flex-end; padding-top: var(--space-2); }
+
+.wfm-state:empty { display: none; }
+.wfm-state-detail { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); margin-top: 4px; overflow-wrap: anywhere; }
+
+/* ─── Registry manager ─────────────────────────────────────────────────────── */
+.wfm-reg-list { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-3) 0; }
+.wfm-reg-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.wfm-reg-row.is-on { border-color: var(--accent); }
+.wfm-reg-main { flex: 1 1 auto; min-width: 0; }
+.wfm-reg-host { font-size: var(--fs-body); color: var(--text); }
+.wfm-reg-url { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.wfm-reg-actions { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.wfm-reg-empty { font-size: var(--fs-body); color: var(--text-3); padding: var(--space-3); }
+.wfm-reg-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); }
+.wfm-reg-error { font-size: var(--fs-body); color: var(--rose); }
+
+/* ─── GitHub ────────────────────────────────────────────────────────────────
+   Two panes, the same shape the Sessions roster uses: a list that stays
+   scannable and a detail beside it that answers the row under the cursor. Every
+   colour is a token, except a label's own, which comes from GitHub and is set
+   as a custom property on the chip. */
+.gh { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; }
+
+.gh-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.gh .seg {
+  display: grid; grid-auto-flow: column;
+  gap: 3px; padding: 3px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.gh .seg-btn {
+  border: 1px solid transparent; background: transparent; color: var(--text-3);
+  font-family: inherit; font-size: var(--fs-small); font-weight: 600;
+  padding: 6px 14px; border-radius: var(--radius-md); cursor: pointer; white-space: nowrap;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.gh .seg-btn:hover { color: var(--text); }
+.gh .seg-btn.is-on {
+  background: var(--bg); color: var(--text); border-color: var(--line-2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.gh-state, .gh-search {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+}
+.gh-search { flex: 1 1 260px; min-width: 160px; }
+.gh-search::placeholder { color: var(--text-3); }
+
+.gh-labels { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.gh-label-chip {
+  padding: 3px 10px; background: transparent; color: var(--text-3);
+  border: 1px solid var(--line); border-radius: 999px;
+  font-size: var(--fs-nano); cursor: pointer;
+}
+.gh-label-chip:hover { color: var(--text-2); border-color: var(--line-2); }
+.gh-label-chip.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.gh-panes {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-4);
+  flex: 1 1 auto; min-height: 0;
+  padding: var(--space-4);
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-2xl);
+}
+.gh-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; outline: none; }
+.gh-list:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); border-radius: var(--radius-lg); }
+
+.gh-row {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+.gh-row:hover { background: var(--surface-raised); }
+.gh-row.is-current { background: color-mix(in srgb, var(--accent) 10%, var(--bg-3)); border-color: var(--line-2); }
+.gh-row-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.gh-num { flex: 0 0 auto; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-nano); }
+.gh-row-title {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--text); font-size: var(--fs-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gh-row-meta, .gh-row-labels { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.gh-meta { color: var(--text-3); font-size: var(--fs-nano); }
+.gh-meta.is-diff { font-family: var(--font-mono); }
+.gh-add { color: var(--emerald); font-size: var(--fs-nano); font-family: var(--font-mono); }
+.gh-del { color: var(--rose); font-size: var(--fs-nano); font-family: var(--font-mono); }
+
+.gh-pill {
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); font-weight: 600;
+  border: 1px solid var(--line-2); color: var(--text-2);
+}
+.gh-pill.is-open { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 45%, transparent); }
+.gh-pill.is-merged { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.gh-pill.is-closed { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 45%, transparent); }
+.gh-pill.is-draft { color: var(--text-3); }
+
+.gh-checks { font-size: var(--fs-nano); font-weight: 600; }
+.gh-checks.is-passing { color: var(--emerald); }
+.gh-checks.is-failing { color: var(--rose); }
+.gh-checks.is-pending { color: var(--warn); }
+
+/* A label's colour is GitHub's, narrowed to six hex digits by the reader before
+   it ever reaches a style. Everything else about the chip is a token. */
+.gh-label {
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); color: var(--text-3);
+  border: 1px solid var(--line);
+}
+.gh-label.has-color {
+  color: var(--label-color);
+  border-color: color-mix(in srgb, var(--label-color) 45%, transparent);
+  background: color-mix(in srgb, var(--label-color) 10%, transparent);
+}
+
+.gh-detail { overflow-y: auto; padding-left: var(--space-4); border-left: 1px solid var(--line); }
+.gh-d { display: flex; flex-direction: column; gap: var(--space-3); }
+.gh-d-head { display: flex; flex-direction: column; gap: var(--space-2); }
+.gh-d-title { font-size: var(--fs-h3); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.gh-d-sub { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.gh-field { display: flex; flex-direction: column; gap: 3px; }
+.gh-field-label { font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.gh-field-value { font-size: var(--fs-body); color: var(--text-2); overflow-wrap: anywhere; }
+.gh-field-value code { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text); }
+.gh-arrow { color: var(--text-3); }
+.gh-d-labels { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
+.gh-d-actions { display: flex; justify-content: flex-end; padding-top: var(--space-2); }
+
+.gh-repo { display: inline-flex; align-items: center; gap: var(--space-2); }
+.gh-repo-name { font-size: var(--fs-body); color: var(--text-2); font-family: var(--font-mono); }
+.gh-repo-private { font-size: var(--fs-nano); color: var(--text-3); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+
+.gh-state-msg:empty { display: none; }
+.gh-state-msg:not(:empty) { flex: 1 1 auto; display: grid; place-items: center; min-height: 0; }
+.gh-advice { font-size: var(--fs-body); color: var(--text-2); max-width: 52ch; margin-top: var(--space-2); }
+.gh-detail-line { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); margin-top: var(--space-2); overflow-wrap: anywhere; }
+
+/* The list is the fold on a narrow window; the detail follows underneath. */
+@media (max-width: 1100px) {
+  .gh-panes { grid-template-columns: minmax(0, 1fr); }
+  .gh-detail { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-top: var(--space-3); }
+}
+
+/* ─── Artifacts ─────────────────────────────────────────────────────────────
+   The run ledger. Same two-pane shape as GitHub and Sessions, with a figure
+   strip on top. A dash in any figure means the run never recorded it, which is
+   a different thing from zero and is the one mark on this page that says so. */
+.af { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; }
+
+.af-figures { display: flex; align-items: stretch; gap: var(--space-4); flex-wrap: wrap; }
+.af-figure { display: flex; flex-direction: column; gap: 1px; min-width: 96px; }
+.af-figure-value { font-size: var(--fs-h3); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.af-figure-label { font-size: var(--fs-nano); color: var(--text-3); letter-spacing: 0.06em; text-transform: uppercase; }
+.af-figure-note { font-size: var(--fs-nano); color: var(--text-3); }
+
+.af-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.af .seg {
+  display: grid; grid-auto-flow: column; gap: 3px; padding: 3px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.af .seg-btn {
+  border: 1px solid transparent; background: transparent; color: var(--text-3);
+  font-family: inherit; font-size: var(--fs-small); font-weight: 600;
+  padding: 6px 14px; border-radius: var(--radius-md); cursor: pointer; white-space: nowrap;
+}
+.af .seg-btn:hover { color: var(--text); }
+.af .seg-btn.is-on { background: var(--bg); color: var(--text); border-color: var(--line-2); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.af-outcome, .af-search {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+}
+.af-search { flex: 1 1 240px; min-width: 160px; }
+.af-search::placeholder { color: var(--text-3); }
+
+.af-panes {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--space-4);
+  flex: 1 1 auto; min-height: 0;
+  padding: var(--space-4);
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-2xl);
+}
+.af-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; outline: none; }
+.af-list:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); border-radius: var(--radius-lg); }
+.af-row {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-lg); cursor: pointer;
+}
+.af-row:hover { background: var(--surface-raised); }
+.af-row.is-current { background: color-mix(in srgb, var(--accent) 10%, var(--bg-3)); border-color: var(--line-2); }
+.af-row-title { color: var(--text); font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.af-row-meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.af-meta { color: var(--text-3); font-size: var(--fs-nano); }
+.af-warn { color: var(--warn); font-size: var(--fs-nano); }
+
+.af-pill {
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--fs-nano); font-weight: 600;
+  border: 1px solid var(--line-2); color: var(--text-2);
+}
+.af-pill.is-done { color: var(--emerald); border-color: color-mix(in srgb, var(--emerald) 45%, transparent); }
+.af-pill.is-failed { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 45%, transparent); }
+.af-pill.is-halted { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.af-pill.is-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.af-source { font-size: var(--fs-nano); color: var(--text-3); font-family: var(--font-mono); }
+
+.af-detail { overflow-y: auto; padding-left: var(--space-4); border-left: 1px solid var(--line); }
+.af-d { display: flex; flex-direction: column; gap: var(--space-3); }
+.af-d-head { display: flex; flex-direction: column; gap: var(--space-2); }
+.af-d-title { font-size: var(--fs-h3); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.af-d-sub { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.af-field { display: flex; flex-direction: column; gap: 3px; }
+.af-field-label { font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.af-field-value { font-size: var(--fs-body); color: var(--text-2); overflow-wrap: anywhere; }
+.af-field-value code { font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text); }
+.af-d-actions { display: flex; justify-content: flex-end; padding-top: var(--space-2); }
+
+.af-steps { display: flex; flex-direction: column; gap: var(--space-2); }
+.af-step { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3); }
+.af-step-head { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; list-style: none; }
+.af-step-head::-webkit-details-marker { display: none; }
+.af-step-name { flex: 1 1 auto; min-width: 0; color: var(--text-2); font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.af-step-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: 0 0 auto; }
+.af-step-dot.is-done { background: var(--emerald); }
+.af-step-dot.is-failed { background: var(--rose); }
+.af-step-dot.is-skipped { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.af-log {
+  margin: var(--space-2) 0 0; padding: var(--space-2);
+  max-height: 320px; overflow: auto;
+  background: var(--bg-2); border-radius: var(--radius-md);
+  font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.af-log-none { margin-top: var(--space-2); }
+
+.af-state:empty { display: none; }
+.af-state:not(:empty) { flex: 1 1 auto; display: grid; place-items: center; min-height: 0; }
+
+@media (max-width: 1100px) {
+  .af-panes { grid-template-columns: minmax(0, 1fr); }
+  .af-detail { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-top: var(--space-3); }
+}
+
+/* ─── Session folders ───────────────────────────────────────────────────────
+   A folder heading carries controls the derived headings do not, so they stay
+   out of the way until the heading is under the pointer. */
+.sx-g-acts { display: inline-flex; align-items: center; gap: 2px; opacity: 0; transition: opacity var(--motion-fast) var(--ease-out); }
+.sx-group:hover .sx-g-acts,
+.sx-group:focus-within .sx-g-acts { opacity: 1; }
+.sx-g-act {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer;
+}
+.sx-g-act:hover { background: var(--surface-raised); color: var(--text); }
+.sx-g-act svg { width: 12px; height: 12px; display: block; }
+
+/* The one-line text dialog, sharing the confirm dialog's card. */
+.tx-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); margin-bottom: 6px; text-align: left; }
+.tx-input {
+  width: 100%; box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+  margin-bottom: var(--space-3);
+}
+.tx-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); outline: 0; }
+
+/* ─── Schedule ──────────────────────────────────────────────────────────────
+   A list of promises about when something runs, each saying the same sentence
+   the form said when it was made. */
+/* One container per page section, the way the reference does it: a large
+   radius, a hairline edge, a lifted ground and room inside it. A bare list on
+   page ground reads as a fragment; a container reads as a surface that was
+   designed to hold something. */
+.sch {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2xl);
+}
+.sch-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3); margin-bottom: var(--space-1);
+}
+.sch-head-title { font-size: var(--fs-h2); font-weight: var(--fw-page); color: var(--text); }
+.sch-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.sch-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+}
+.sch-row.is-paused { opacity: 0.62; }
+.sch-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.sch-row-head { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.sch-name { color: var(--text); font-size: var(--fs-body-lg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-next { color: var(--accent); font-size: var(--fs-nano); font-weight: 600; white-space: nowrap; }
+.sch-row-meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.sch-recur { color: var(--text-2); font-size: var(--fs-body); }
+.sch-meta { color: var(--text-3); font-size: var(--fs-nano); }
+.sch-warn { color: var(--warn); font-size: var(--fs-nano); }
+.sch-cwd { color: var(--text-3); font-size: var(--fs-nano); font-family: var(--font-mono); }
+.sch-row-acts { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+
+.sch-label { display: block; font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.sch-input {
+  width: 100%; box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  font-size: var(--fs-body); font-family: inherit;
+}
+.sch-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); outline: 0; }
+.sch-num { width: auto; min-width: 110px; }
+.sch-inline { display: flex; align-items: center; gap: var(--space-2); }
+.sch-unit { color: var(--text-3); font-size: var(--fs-body); }
+.sch-row-days, .sch-row { }
+.sch-days { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.sch-day {
+  padding: 4px 10px; border-radius: 999px;
+  background: transparent; color: var(--text-3);
+  border: 1px solid var(--line); cursor: pointer;
+  font-size: var(--fs-nano); font-family: inherit;
+}
+.sch-day:hover { color: var(--text-2); border-color: var(--line-2); }
+.sch-day.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* The sentence the row will carry, shown before the schedule exists. */
+.sch-preview {
+  padding: var(--space-3);
+  background: var(--bg-2); border-radius: var(--radius-lg);
+  color: var(--text-2); font-size: var(--fs-body);
+}
+.sch-error { color: var(--rose); font-size: var(--fs-body); }
+.sch-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.sch-state:empty { display: none; }
+
+/* ─── Source control ────────────────────────────────────────────────────────
+   A review desk built as the structural twin of the Files cockpit: the left
+   column indexes what changed and holds the composer, the right column reads
+   one file at a time. The diff is where the minutes go, so it gets the grid:
+   two number gutters, a sign column, and a wash that says added or removed
+   while the syntax tokens keep saying what the code is.
+
+   Two dark-family checks live in this block. The glass overrides repaint every
+   input and textarea with a black well, so the composer's two fields carry a
+   higher-specificity escape hatch. The action buttons carry a dark-family rule
+   of their own so a ghost-button class in a head cannot repaint them. */
+
+.page-source { display: flex; flex-direction: column; min-height: 0; }
+
+.sc {
+  /* Five characters holds a six-figure line number with room for the padding,
+     which is the widest number a file in this repo can produce. */
+  --sc-no-w: 5ch;
+  --sc-sign-w: 14px;
+  --sc-row-h: 26px;
+  --sc-band-h: 26px;
+  --sc-check-w: 16px;
+  /* One height for every control in this page, so two fields of the same face
+     12px apart cannot differ by four pixels. */
+  --sc-ctl-h: 32px;
+  --sc-stat-w: 62px;
+  /* The diff is the only reason this page exists, so its two grounds carry the
+     page's strongest separation.
+     
+     The mixes are deliberately asymmetric. Emerald and rose sit at nearly the
+     same luminance, so any symmetric pair separates them by hue alone: measured
+     on this ground, 8/8 gives 1.04:1 between the two and even 36/36 only reaches
+     1.23:1. Weighting the added ground far heavier buys a real luminance channel
+     (1.67:1 here), which is what survives a red/green deficiency and a bad
+     panel. It also reads correctly: added lines are the text you are here to
+     read, removed lines are on their way out. */
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 30%, transparent);
+  --sc-add-ink: var(--emerald);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 12%, transparent);
+  --sc-del-ink: var(--rose);
+  --sc-hunk-bg: color-mix(in srgb, var(--text) 4%, transparent);
+}
+/* An 8% wash sits under the paper on Light and Sepia, so the two diff grounds
+   take the strength the dark family does not need. Every other value is shared,
+   so ten themes are covered by these two declarations. */
+body[data-mode="light"] .sc {
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 14%, transparent);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 14%, transparent);
+}
+/* Sepia's ground is a warm cream and its accents are muted earth tones, so a
+   wash mixed against white keeps little separation on it. The two diff grounds
+   take a stronger mix there, and the hunk band takes more ink so the bands stay
+   readable between them. */
+body[data-mode="light"][data-theme="sepia"] .sc {
+  --sc-add-bg: color-mix(in srgb, var(--emerald) 26%, transparent);
+  --sc-del-bg: color-mix(in srgb, var(--rose) 22%, transparent);
+  --sc-hunk-bg: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.sc {
+  flex: 1; min-height: 0;
+  /* The index column carries a path plus a +N/-M tail, so it takes more width
+     than a plain file list needs. */
+  display: grid; grid-template-columns: clamp(280px, 26%, 380px) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+/* One surface per column, sized like the reference: a large radius, a hairline
+   edge and a ground a step above the page. The emptiness a nearly-clean tree
+   leaves then sits inside a panel that was clearly meant to hold it, rather than
+   trailing off into page ground. */
+.sc-nav, .sc-main {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2xl);
+  overflow: hidden;
+}
+
+/* Head. A folder whose watcher never attached still re-reads on focus, so the one
+   control that answers for freshness carries the mark rather than a banner. The
+   ink is the shared warn token, which every theme derives from its own amber. */
+#sc-refresh { position: relative; }
+#sc-refresh[data-live="off"]::after {
+  content: '';
+  position: absolute; top: 5px; right: 6px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--warn);
+}
+
+/* Left column: filter, tabs, the banded list, the composer at the floor. */
+.sc-search { position: relative; display: flex; align-items: center; padding: var(--space-3) var(--space-3) var(--space-2); }
+.sc-search > .btn-icon {
+  position: absolute; left: calc(var(--space-3) + 10px);
+  pointer-events: none; color: var(--text-3);
+}
+.sc-search-input {
+  flex: 1; min-width: 0; height: var(--sc-ctl-h); box-sizing: border-box;
+  background: var(--bg-2); border: 1px solid transparent; border-radius: var(--radius-md);
+  padding: 0 34px 0 34px; color: var(--text);
+  font-family: var(--font-body); font-size: var(--fs-body); outline: none;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+.sc-search-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.sc-search-input::placeholder { color: var(--text-3); }
+.sc-search-input::-webkit-search-cancel-button { display: none; }
+.sc-search-kbd {
+  position: absolute; right: 20px; pointer-events: none;
+  padding: 1px 6px; border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+  background: var(--bg-3); color: var(--text-3);
+  font-family: var(--font-mono); font-size: var(--fs-section);
+}
+.sc-tabs { display: flex; gap: var(--space-1); padding: 0 var(--space-3) var(--space-2); border-bottom: 1px solid var(--line); }
+
+.sc-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: var(--space-1) var(--space-1) var(--space-3);
+  font-family: var(--font-mono); font-size: var(--fs-body);
+}
+.sc-list::-webkit-scrollbar { width: 7px; }
+.sc-list::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
+
+.sc-band { display: flex; flex-direction: column; }
+.sc-band + .sc-band { margin-top: var(--space-3); }
+/* The band head rides the top of the list while its own rows are on screen, so
+   a long Changed band never loses its label. It repeats the pane fill because a
+   sticky element needs an opaque ground. */
+.sc-band-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: var(--space-2);
+  height: var(--sc-band-h); padding: 0 var(--space-2);
+  /* Opaque, because rows scroll under it, and the panel's own ground so it
+     disappears into the surface it rides on. */
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  cursor: pointer;
+}
+/* The band heading and its count are one object, in one face. Uppercase with
+   wide tracking is the rail's treatment; spending it again here, six times in a
+   viewport, marks nothing. */
+.sc-band-title {
+  min-width: 0;
+  font-family: var(--font-body); font-size: var(--fs-label); font-weight: var(--fw-label);
+  color: var(--text-3);
+}
+.sc-band-count {
+  font-family: var(--font-body); font-size: var(--fs-label); font-weight: var(--fw-label);
+  color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+/* Every keycap on the page is one primitive, in one face. */
+.kbd-cap { font-family: var(--font-mono); }
+/* The SHA takes the mono face; the word beside it does not. Setting the family
+   on the whole node put "Amend" in JetBrains Mono next to Inter placeholders. */
+#sc-amend-label .sc-sha {
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums; color: var(--text-2);
+}
+.sc-band-count { flex: none; }
+.sc-band-chevron {
+  flex: none; width: 11px; text-align: center; color: var(--text-3);
+  font-size: var(--fs-body); transition: transform var(--motion-fast) var(--ease);
+}
+.sc-band.is-open > .sc-band-head .sc-band-chevron { transform: rotate(90deg); }
+.sc-band:not(.is-open) > .sc-row { display: none; }
+/* Bulk actions belong to the band the pointer is on, so they arrive with it. */
+/* Hidden, not merely transparent. At opacity 0 these still hit-test, and they
+   sit at the end of the band head, which is itself the collapse target: a reach
+   to fold a band could stage or discard the whole band instead. */
+.sc-band-acts {
+  margin-left: auto; display: flex; align-items: center; gap: 2px;
+  visibility: hidden; opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
+}
+.sc-band-head:hover .sc-band-acts,
+.sc-band-head:focus-within .sc-band-acts { visibility: visible; opacity: 1; }
+.sc-band-acts button {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer;
+}
+.sc-band-acts button svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sc-band-acts button:hover { color: var(--text); background: var(--bg-2); }
+
+.sc-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  height: var(--sc-row-h); padding: 0 var(--space-2);
+  border-radius: var(--radius-md); cursor: pointer; color: var(--text-2);
+  white-space: nowrap; overflow: hidden;
+}
+.sc-row:hover { background: var(--bg-2); color: var(--text); }
+.sc-row.is-selected { background: var(--bg-3); color: var(--text); }
+.sc-row-check {
+  flex: none; width: var(--sc-check-w); height: var(--sc-check-w); padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-2); border: 1px solid var(--text-3); border-radius: var(--radius-sm);
+  color: transparent; cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.sc-row-check svg { width: 11px; height: 11px; }
+.sc-row:hover .sc-row-check { border-color: var(--accent); }
+/* Emerald, not accent: this box means "will be in the commit", which is what
+   emerald already means everywhere else on the page. Sampling the accent put
+   the same hue on the checkbox, the pending marker and the commit button within
+   60px of each other, so the colour stopped naming anything. */
+.sc-row.is-staged .sc-row-check { background: var(--emerald); border-color: var(--emerald); color: var(--bg); }
+/* In flight. The click has been taken and git has not answered yet, so the row
+   shows the state it is moving to at a weight that says "not settled". Cleared
+   by the read that answers, never by a timer. */
+/* In flight reads as its own colour rather than as a dimmed row: opacity is
+   already carrying disabled and two other transient states on this page. */
+.sc-row.is-pending .sc-row-check {
+  background: color-mix(in srgb, var(--info) 40%, transparent);
+  border-color: var(--info);
+}
+.sc-row-badge { flex: none; width: 15px; text-align: center; font-weight: var(--fw-label); font-size: var(--fs-section); }
+.sc-row-base { flex: none; max-width: 58%; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+/* The directory reads from its tail, so the ellipsis eats the head and the
+   folder next to the file stays on screen. */
+.sc-row-dir {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; unicode-bidi: plaintext; text-align: left; color: var(--text-3);
+}
+.sc-row-stat {
+  flex: none; width: var(--sc-stat-w); text-align: right;
+  font-size: var(--fs-section); font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+.sc-row-stat .is-add, .sc-dhead-stat .is-add { color: var(--sc-add-ink); }
+.sc-row-stat .is-del, .sc-dhead-stat .is-del { color: var(--sc-del-ink); }
+
+/* The head's two counts take the inks the diff body uses, so added and removed
+   read the same everywhere on the page. */
+.sc-dstat-n { font-variant-numeric: tabular-nums; }
+.sc-dstat-n + .sc-dstat-n { margin-left: 6px; }
+.sc-dstat-n.is-add { color: var(--sc-add-ink); }
+.sc-dstat-n.is-del { color: var(--sc-del-ink); }
+
+.sc-row-prov { flex: none; display: inline-flex; align-items: center; color: var(--text-3); }
+.sc-row-prov svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sc-row.is-conflict .sc-row-badge, .sc-row.is-conflict .sc-row-base { color: var(--rose); }
+
+.sc-crow {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-md);
+  cursor: pointer; color: var(--text-2); white-space: nowrap; overflow: hidden;
+}
+.sc-crow:hover { background: var(--bg-2); color: var(--text); }
+.sc-crow.is-selected { background: var(--bg-3); color: var(--text); }
+.sc-crow-sha { flex: none; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sc-crow-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+/* A neutral chip: this names where a commit sits, which is inventory rather
+   than an action, so it does not take the accent or a step of its own. */
+.sc-crow-refs {
+  flex: none; font-size: var(--fs-section); color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--radius-sm); padding: 0 5px;
+}
+.sc-crow-meta { flex: none; font-size: var(--fs-section); color: var(--text-3); }
+
+/* Only the keyboard cursor draws a ring, so a row that took focus by Tab or by
+   a click cancels the generic one. */
+.sc-row:focus, .sc-crow:focus, .sc-hunk:focus,
+.sc-row:focus-visible, .sc-crow:focus-visible, .sc-hunk:focus-visible { outline: none; box-shadow: none; }
+.sc-row.is-active-key, .sc-crow.is-active-key {
+  outline: 1px solid var(--accent); outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  color: var(--text);
+}
+.sc-row.is-selected.is-active-key { background: color-mix(in srgb, var(--accent) 18%, var(--bg-2)); }
+/* A count being re-read dips rather than blanking: the previous number is still
+   the true answer until the new read lands. */
+.sc .is-stale, .page-source .is-stale { opacity: 0.55; transition: opacity var(--motion-fast) var(--ease); }
+
+.sc-new {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  height: var(--sc-row-h); margin-top: var(--space-2); padding: 0 var(--space-2);
+  background: transparent; border: 1px dashed var(--line-2); border-radius: var(--radius-md);
+  color: var(--text-3);
+  font-family: var(--font-body); font-size: var(--fs-label);
+}
+.sc-empty {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  padding: var(--space-5) var(--space-3); text-align: center;
+  font-family: var(--font-body); font-size: var(--fs-label);
+  line-height: var(--lh-base); color: var(--text-3);
+}
+
+/* Composer. It is docked, so it is capped: the list keeps the height it needs
+   and a long body scrolls inside the dock rather than pushing the list away. */
+/* Docked under the tabs rather than at the pane floor. Floored, a short change
+   list left the box that commits it stranded 350px below the files it commits,
+   with pane fill on both sides of the gap. */
+.sc-composer {
+  flex: none; max-height: 40%; overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-bottom: 1px solid var(--line);
+}
+.sc-subject, .sc-body {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 6px var(--space-3); color: var(--text); resize: none; outline: none;
+  font-family: var(--font-body); font-size: var(--fs-body); line-height: var(--lh-base);
+  transition: border-color var(--motion-fast) var(--ease);
+}
+.sc-subject { height: var(--sc-ctl-h); }
+.sc-body { min-height: 0; max-height: 168px; overflow-y: auto; }
+/* One fill and one focus ring across every field on this page.
+ *
+ * The dark family styles fields by element: `[data-mode="dark"] input[type=...]`
+ * is (0,2,1) and `[data-mode="dark"] textarea` is (0,1,1). A class pair like
+ * `.sc-composer .sc-subject` is (0,2,0), so it lost the input and won the
+ * textarea, which is why two fields 12px apart in one box shipped two different
+ * grounds. The dark focus rule is (0,3,1) and sets `box-shadow: none`, so the
+ * page's own focus ring never painted on the fields it is most needed on.
+ *
+ * Naming the element alongside the class matches that specificity, and these
+ * rules sit later in the sheet, so they win the tie on their own. No !important.
+ */
+.sc-composer input.sc-subject,
+.sc-composer textarea.sc-body,
+.sc-search input.sc-search-input {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+.sc-search input.sc-search-input { border-color: transparent; }
+.sc-composer input.sc-subject:focus,
+.sc-composer textarea.sc-body:focus,
+.sc-search input.sc-search-input:focus {
+  background: var(--bg-2);
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+.sc-composer .sc-subject:focus,
+.sc-composer .sc-body:focus {
+  background: var(--bg-2) !important;  /* beats the dark family's pressed well */
+  border-color: var(--accent);
+  box-shadow: none;
+}
+.sc-subject-count {
+  align-self: flex-end;
+  font-family: var(--font-mono); font-size: var(--fs-section);
+  font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+.sc-subject-count[data-state="warning"] { color: var(--warn); }
+.sc-composer-flags {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-family: var(--font-body); font-size: var(--fs-label); color: var(--text-2);
+}
+.sc-composer-warn {
+  display: flex; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--state-warning-bg); border: 1px solid var(--state-warning-edge);
+  color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-section); line-height: var(--lh-snug);
+}
+.sc-composer-warn svg { flex: none; width: var(--icon-sm); height: var(--icon-sm); color: var(--warn); }
+.sc-composer-foot { display: flex; align-items: center; gap: var(--space-2); }
+.sc-composer-foot .btn-primary { flex: 1; justify-content: center; }
+
+/* Right column: the file head, then the provenance line, then the diff. Only
+   the diff scrolls, so the pane is a column that fills the main box and takes
+   its own zero floor, and both axes of the overflow stay inside the wrap. */
+.sc-detail {
+  flex: 1; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.sc-dhead {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: 10px var(--space-4); border-bottom: 1px solid var(--line);
+}
+.sc-dhead-path {
+  flex: 0 1 auto; max-width: 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; unicode-bidi: plaintext; text-align: left;
+  font-family: var(--font-mono); font-size: var(--fs-body); color: var(--text);
+}
+.sc-dhead-stat {
+  flex: none; font-family: var(--font-mono); font-size: var(--fs-section);
+  font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+/* The actions take the whole second line of the head, so a long path never
+   pushes Stage off the pane. */
+.sc-dacts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-left: auto; }
+.sc-act {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--sc-ctl-h); box-sizing: border-box;
+  padding: 0 var(--space-3); border-radius: var(--radius-md); cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-body); font-weight: var(--fw-label);
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.sc-act svg { width: var(--icon-sm); height: var(--icon-sm); }
+.sc-act:hover:not(:disabled) { color: var(--text); background: var(--bg-3); border-color: var(--line-3); }
+.sc-act:disabled { opacity: 0.5; cursor: default; }
+.sc-act.is-on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+.sc-prov { flex: none; padding: var(--space-3) var(--space-3) 0; }
+.sc-prov-band {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-label); line-height: var(--lh-snug);
+}
+.sc-prov-band svg { flex: none; width: var(--icon-sm); height: var(--icon-sm); margin-top: 1px; color: var(--text-3); }
+/* Husk wrote the record for a run, so the run band is the one that carries the
+   accent. A band stating time alone stays neutral. */
+.sc-prov-band.is-run {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.sc-prov-band.is-run svg { color: var(--accent); }
+.sc-prov-goal { display: block; margin-top: 2px; color: var(--text-3); }
+
+/* Diff body. The wrap owns both axes so a 400-column line scrolls here and the
+   page never scrolls sideways. */
+.sc-diff-wrap { flex: 1; min-height: 0; overflow: auto; }
+.sc-diff-wrap::-webkit-scrollbar { width: 9px; height: 9px; }
+.sc-diff-wrap::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
+/* max-content makes every row as wide as the widest line, which keeps the washes
+   and the band running the full length of the scroll rather than stopping at the
+   fold. Wrap on gives that width back to the container. */
+.sc-diff {
+  min-width: max-content; padding-left: var(--space-3); padding-bottom: var(--space-4);
+  font-family: var(--font-mono); font-size: var(--fs-body);
+  line-height: 18px; tab-size: 2;
+}
+.sc-diff[data-wrap="on"] { min-width: 0; }
+.sc-dl { display: flex; align-items: flex-start; min-height: 18px; }
+/* Both number columns and the sign stay out of a selection, so dragging across
+   the diff and copying yields source that compiles. */
+.sc-dl-no {
+  flex: none; width: var(--sc-no-w); padding-right: 8px; text-align: right;
+  color: var(--text-3); font-size: var(--fs-label); font-variant-numeric: tabular-nums;
+  user-select: none; -webkit-user-select: none;
+}
+.sc-dl-sign {
+  flex: none; width: var(--sc-sign-w); text-align: center; color: var(--text-3);
+  user-select: none; -webkit-user-select: none;
+}
+/* The only mark in a diff row that does not depend on hue at all, so it is set
+   at a weight that reads without one. */
+.sc-dl.is-add .sc-dl-sign, .sc-dl.is-del .sc-dl-sign { font-weight: var(--fw-bold); }
+.sc-dl-code {
+  flex: 1 1 auto; min-width: 0; padding-right: var(--space-4);
+  white-space: pre; overflow-wrap: normal; color: var(--text);
+}
+.sc-diff[data-wrap="on"] .sc-dl-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The wash says added or removed and the sign says which, so the tokens are left
+   to say what the code is. */
+/* An edge as well as a wash, so added and removed are told apart by shape and
+   not by hue alone. */
+.sc-dl.is-add { background: var(--sc-add-bg); box-shadow: inset 2px 0 0 var(--sc-add-ink); }
+.sc-dl.is-add .sc-dl-sign { color: var(--sc-add-ink); }
+.sc-dl.is-del { background: var(--sc-del-bg); box-shadow: inset 2px 0 0 var(--sc-del-ink); }
+.sc-dl.is-del .sc-dl-sign { color: var(--sc-del-ink); }
+.sc-dl.is-ctx .sc-dl-code { color: var(--text-2); }
+.sc-nonl {
+  padding-left: calc(var(--sc-no-w) * 2 + var(--sc-sign-w));
+  color: var(--text-3); font-size: var(--fs-section); font-style: italic;
+  user-select: none; -webkit-user-select: none;
+}
+
+/* The hunk band pins to the top of the scroller while its own lines are on
+   screen, so the range and the function stay readable down a long hunk. */
+.sc-hunk {
+  position: sticky; top: 0; z-index: 2;
+  width: max-content; min-width: 100%; box-sizing: border-box;
+  display: flex; align-items: center; gap: var(--space-3);
+  min-height: var(--sc-band-h);
+  padding: 3px var(--space-4);
+  background: linear-gradient(var(--sc-hunk-bg), var(--sc-hunk-bg)), linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.sc-hunk:first-child { border-top: 0; }
+.sc-hunk.is-active-key { outline: 1px solid var(--accent); outline-offset: -1px; }
+.sc-hunk-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.sc-hunk-range { flex: none; font-size: var(--fs-section); font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+.sc-hunk-fn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-section); color: var(--text-3); }
+/* Per-hunk actions arrive with the pointer or the cursor, so a file of forty
+   hunks is not a wall of buttons. */
+.sc-hunk-acts { display: flex; align-items: center; gap: 6px; opacity: 0; transition: opacity var(--motion-fast) var(--ease); }
+.sc-hunk:hover .sc-hunk-acts,
+.sc-hunk:focus-within .sc-hunk-acts,
+.sc-hunk.is-active-key .sc-hunk-acts { opacity: 1; }
+.sc-hunk-acts button {
+  padding: 2px 8px; border-radius: var(--radius-md);
+  background: transparent; border: 1px solid var(--line-2); color: var(--text-3);
+  font-family: var(--font-body); font-size: var(--fs-section); font-weight: var(--fw-section); cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.sc-hunk-acts button:hover { color: var(--text); background: var(--bg-2); border-color: var(--line-3); }
+.sc-expand {
+  display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+  width: 100%; min-height: 20px; padding: 0 var(--space-3);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  color: var(--text-3); cursor: pointer;
+  font-family: var(--font-body); font-size: var(--fs-section);
+}
+.sc-expand:hover { color: var(--text-2); background: color-mix(in srgb, var(--text) 6%, transparent); }
+
+/* The dark family gives every ghost button a glass fill. These sit on a pane or
+   inside a band, so they keep their own quiet ground at a higher specificity. */
+[data-mode="dark"] .sc-dacts .sc-act,
+[data-mode="dark"] .sc-band-head .sc-band-acts button,
+[data-mode="dark"] .sc-hunk .sc-hunk-acts button {
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+[data-mode="dark"] .sc-dacts .sc-act { background: var(--bg-2); border: 1px solid var(--line-2); }
+[data-mode="dark"] .sc-band-head .sc-band-acts button { background: transparent; border: 0; }
+[data-mode="dark"] .sc-hunk .sc-hunk-acts button { background: transparent; border: 1px solid var(--line-2); }
+
+.sc-binary, .sc-toobig {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
+  padding: var(--space-6) var(--space-5); text-align: center;
+  font-family: var(--font-body); font-size: var(--fs-body);
+  line-height: var(--lh-base); color: var(--text-2);
+}
+.sc-binary .sc-dacts, .sc-toobig .sc-dacts { justify-content: center; width: auto; }
+.sc-note {
+  max-width: 56ch;
+  font-family: var(--font-body); font-size: var(--fs-section);
+  line-height: var(--lh-snug); color: var(--text-3);
+}
+/* Under the diff the note is a line of the pane itself, so it takes the head's
+   inset and holds its height against the scroller above it. */
+.sc-diff-wrap > .sc-note { padding: var(--space-3) var(--space-3) var(--space-4); }
+
+/* Overview. The resting state of the right pane: what changed, what is waiting,
+   where this branch stands. A commit is the same column of cards, so it takes the
+   same box: one scroller, one inset, one rhythm. */
+.sc-ov, .sc-commit-detail {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-3);
+}
+/* A card takes the height its rows need, so a repo with no runs is one short
+   panel rather than a column of nothing. */
+.sc-ov-card {
+  display: flex; flex-direction: column;
+  background: var(--bg-2); border-radius: var(--radius-lg);
+}
+#sc-ov-recent { display: flex; flex-direction: column; }
+.sc-ov-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+}
+/* No scroller of its own: .sc-ov is the one scroll region in this pane, so a
+   card cannot trap a wheel that the pane should have taken. */
+.sc-ov-rows {
+  display: flex; flex-direction: column;
+  padding: var(--space-1) var(--space-1) var(--space-2);
+}
+.sc-ov-rows::-webkit-scrollbar { width: 7px; }
+.sc-ov-rows::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: var(--radius-sm); }
+.sc-run-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-2); border-radius: var(--radius-md); color: var(--text-2);
+  font-family: var(--font-mono); font-size: var(--fs-label);
+}
+.sc-run-row:hover { background: var(--bg-3); }
+.sc-run-goal {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-body); font-size: var(--fs-body); color: var(--text);
+}
+/* The bindings sit at the floor of the pane, under a rule, because they are the
+   last thing read and never the first. */
+/* The pane's floor, in every one of its three states. Nested inside the resting
+   overview it was unreachable the moment the page began opening on a diff, so
+   the pane simply trailed off. The rule spans the pane rather than floating
+   inset, the way the composer's does in the column beside it. */
+.sc-hints {
+  flex: none;
+  display: flex; flex-wrap: wrap; gap: var(--space-4);
+  padding: var(--space-3);
+  border-top: 1px solid var(--line);
+  font-family: var(--font-body); font-size: var(--fs-label); color: var(--text-3);
+}
+.sc-hints > * { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+/* Branch popover. It floats over the page, so it takes the opaque overlay ground
+   rather than a translucent surface tint. */
+.sc-pop {
+  position: absolute; z-index: 60;
+  min-width: 280px; max-width: 380px; max-height: 60vh; overflow-y: auto;
+  padding: var(--space-1);
+  background: var(--surface-overlay); border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg); box-shadow: var(--elev-3);
+}
+.sc-pop-row {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: 6px var(--space-2); border: 0; border-radius: var(--radius-md);
+  background: transparent; color: var(--text-2); text-align: left; cursor: pointer;
+  font-family: var(--font-mono); font-size: var(--fs-label);
+}
+.sc-pop-row:hover:not(.is-held) { background: var(--bg-3); color: var(--text); }
+.sc-pop-row.is-active { color: var(--text); font-weight: var(--fw-section); }
+/* A branch another worktree is holding cannot be switched to, so it reads as a
+   fact with its reason rather than as a dead control. */
+.sc-pop-row.is-held { color: var(--text-3); cursor: default; }
+.sc-pop-track { margin-left: auto; flex: none; font-size: var(--fs-section); font-variant-numeric: tabular-nums; color: var(--text-3); }
+.sc-pop-lock { flex: none; font-family: var(--font-body); font-size: var(--fs-section); color: var(--text-3); }
+
+/* Delete belongs to the row the pointer or the cursor is on, so it arrives with
+   the row and the popover never reads as a column of red. */
+.sc-pop-del {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--rose); cursor: pointer; opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.sc-pop-del svg { width: var(--icon-xs); height: var(--icon-xs); }
+.sc-pop-row:hover .sc-pop-del,
+.sc-pop-row:focus-within .sc-pop-del,
+.sc-pop-del:focus-visible { opacity: 1; }
+.sc-pop-del:hover { background: color-mix(in srgb, var(--rose) 14%, transparent); }
+.sc-pop-del:focus-visible { outline: 1px solid var(--rose); outline-offset: -1px; }
+
+/* Create is the floor of the popover. It keeps the bottom of the card while the
+   branch list scrolls under it, on the overlay ground so rows pass behind rather
+   than through, under a hairline that runs the full width of the card rather than
+   stopping at the list padding. */
+.sc-pop-foot {
+  position: sticky; bottom: 0; z-index: 1;
+  margin: var(--space-1) calc(var(--space-1) * -1) calc(var(--space-1) * -1);
+  background: var(--surface-overlay); border-top: 1px solid var(--line);
+}
+/* A list with no create row carries no hairline. */
+.sc-pop-foot:empty { display: none; }
+.sc-pop-new {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-2);
+}
+.sc-pop-new input {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 5px 8px; color: var(--text); outline: none;
+  font-family: var(--font-mono); font-size: var(--fs-label);
+}
+/* The dark family paints every field with a black well, so the create field takes
+   the higher-specificity form the composer fields use and keeps the popover fill. */
+.sc-pop-new #sc-branch-new {
+  background: var(--bg-2) !important;  /* beats the dark family's field well */
+  border: 1px solid var(--line);
+}
+.sc-pop-new #sc-branch-new:focus {
+  background: var(--bg-2) !important;  /* beats the dark family's pressed well */
+  border-color: var(--accent);
+  box-shadow: none;
+}
+.sc-pop-new button {
+  flex: none; padding: 4px 10px; border-radius: var(--radius-md);
+  background: transparent; border: 1px solid var(--line-2); color: var(--text-2);
+  font-family: var(--font-body); font-size: var(--fs-section); font-weight: var(--fw-section); cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.sc-pop-new button:hover:not(:disabled) { color: var(--text); background: var(--bg-2); border-color: var(--line-3); }
+.sc-pop-new button:disabled { opacity: 0.5; cursor: default; }
+/* A refused name states its reason under the field and turns the field's edge, so
+   the row says what is wrong without resizing the card around it. */
+.sc-pop-msg {
+  display: none; flex-basis: 100%;
+  font-family: var(--font-body); font-size: var(--fs-section); line-height: var(--lh-snug);
+  color: var(--rose);
+}
+.sc-pop-new.is-invalid .sc-pop-msg { display: block; }
+.sc-pop-new.is-invalid #sc-branch-new { border-color: var(--rose); }
+
+@media (max-width: 900px) {
+  .sc { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 38%) 1fr; }
 }

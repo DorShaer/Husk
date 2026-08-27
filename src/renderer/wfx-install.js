@@ -90,6 +90,35 @@
         title: 'No workflow file in that repository',
         message: 'The clone worked and there is no .husk.json anywhere inside it. A published workflow is a single file, usually workflow.husk.json at the root or under .husk/workflows. The checkout stays in Husk\'s own data folder and is reused, and fast-forwarded, the next time you fetch that URL; nothing was read out of it and nothing was written to your workflows.',
       },
+      // A catalog named a file on a different host than the catalog itself.
+      // Subscribing to a registry is a decision about one host, so a pointer
+      // that leaves it is refused rather than followed and disclosed.
+      'cross-origin-artifact': {
+        title: 'That catalog points at a different host than itself',
+        message: 'A registry may only name workflow files served from the same host it is served from, so that subscribing to it is a decision about one host rather than about wherever it later chooses to point. Nothing was fetched from the other host.',
+      },
+      // The bytes are not the bytes the catalog listed. Refused rather than
+      // shown with a warning: contradicted evidence is worse than none.
+      'digest-mismatch': {
+        title: 'That file is not the file this catalog lists',
+        message: 'The catalog states a digest for this workflow and the bytes that arrived hash to something else. That means the file changed after the catalog was written, or that what answered is not what the catalog meant. Husk stopped before reading it as a workflow, so nothing was parsed and nothing was written.',
+      },
+      'digest-malformed': {
+        title: 'That catalog states a digest Husk cannot read',
+        message: 'The entry carries a digest that is not a sha256, so there is nothing to check the bytes against. Husk stopped rather than fetching a file it could not have compared.',
+      },
+      'bad-registry-url': {
+        title: 'That is not a registry URL',
+        message: 'A registry is one https URL to one JSON index, with no credentials in it. Nothing was fetched.',
+      },
+      'bad-artifact-url': {
+        title: 'That entry does not say where its file is',
+        message: 'The catalog lists this workflow without a usable https pointer to the file itself, so there is nothing to fetch.',
+      },
+      'fetch-failed': {
+        title: 'Husk could not read that catalog',
+        message: 'The request did not finish. No network, a host that answered with something other than a catalog, and too many redirects all land here. Nothing was read and nothing was written.',
+      },
       'unsafe-path': {
         title: 'That file is reached through a symbolic link',
         message: 'Somewhere between the repository root and the file, a directory or the file itself is a link pointing out of the tree. Following it would read whatever the author of the repository chose rather than what they published, so Husk stopped before opening anything.',
@@ -968,6 +997,19 @@
   // The others are named and are not offered as controls: the repo source in
   // the main process decides which path in a clone is read.
   function sourceNote(source) {
+    // A file a catalog named. Two facts belong in this line and no more: the
+    // host it came from, and whether the catalog stated a digest that the
+    // bytes then matched. A mismatch never reaches here, because the read
+    // refuses it, so "listed without one" is the only other thing it can say.
+    if (source && source.kind === 'registry') {
+      let host = '';
+      try { host = new URL(String(source.url)).host; } catch (_) { host = ''; }
+      const parts = ['Read from ', el('code', {}, host || 'that registry'), '.'];
+      parts.push(source.attested
+        ? ' The catalog stated a digest for this file and the bytes match it, which is not a signature: it says the catalog and the file agree, not who wrote either.'
+        : ' The catalog stated no digest for this file, so nothing here attests to which bytes were meant.');
+      return el('span', {}, ...parts);
+    }
     if (!source || source.kind !== 'repo') return null;
     const rel = (typeof source.relPath === 'string' && source.relPath) ? source.relPath : null;
     if (!rel) return null;
@@ -1343,6 +1385,55 @@
     }
   }
 
+  // The marketplace's way in. The catalog has already decided which file this
+  // is, so the source picker never appears: reset() leaves S.owned false, which
+  // is what keeps those controls put away, and the sheet opens straight onto
+  // the read.
+  //
+  // Everything after the bytes arrive is the block doFetch() runs, because it
+  // is the same read: one validator, one preflight, one gate, one refusal
+  // table. A catalog changes where the file was found and nothing else about
+  // what happens to it.
+  async function openFromRegistry(registryUrl, entry) {
+    const m = modal();
+    if (!m) return;
+    S.restoreFocus = document.activeElement;
+    reset();
+    m.hidden = false;
+
+    const seq = ++S.seq;
+    setState('busy');
+    const name = oneLine((entry && entry.claims && entry.claims.name) || 'that workflow');
+    setStatus(el('span', {}, 'Reading ', el('code', {}, name), ' from the catalog that lists it.'));
+    say('Reading the workflow file this catalog names. Nothing has been installed.');
+
+    let res;
+    try {
+      res = await window.husk.workflows.artifactRead({ source: 'registry', registryUrl, entry });
+    } catch (err) {
+      res = { stage: 'source', code: 'fetch-failed', message: (err && err.message) || '', detail: null };
+    }
+    // A result the reader has already moved on from is discarded whole.
+    if (seq !== S.seq) return;
+
+    if (!res || !res.ok) {
+      refuse(res || { stage: 'source', code: 'unreadable', message: '', detail: null });
+      return;
+    }
+
+    S.read = res;
+    S.artifact = res.artifact;
+    S.preflight = null;
+    setStatus(fetchNote(res.source || null));
+    setState('ready');
+    paintReady();
+    applyGate();
+    const steps = ((res.artifact.graph && res.artifact.graph.nodes) || []).length;
+    say(`Read ${oneLine(res.artifact.name)}: ${steps} steps. Husk recomputed the fingerprint here. Nothing has been installed.`);
+    runPreflight();
+    runNameCheck();
+  }
+
   // The closer MODAL_CLOSERS points at, which is why it does more than hide a
   // card. Bumping the sequence is what makes Escape during a clone mean
   // something: the clone in the main process runs to its own end and its result
@@ -1468,6 +1559,7 @@
   //                                          and needs no registration
   window.WfxInstall = {
     open,
+    openFromRegistry,
     close,
     isOpen,
     configure(next) {

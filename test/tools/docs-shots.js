@@ -275,7 +275,7 @@ async function shoot(win, name, opts = {}) {
   console.log(`  ${name}`);
 }
 
-(async () => {
+async function main() {
   const env = makeHome();
   const app = await launch(env);
   const errors = [];
@@ -327,4 +327,8 @@ async function shoot(win, name, opts = {}) {
   } finally {
     await app.close();
   }
-})();
+}
+
+if (require.main === module) main();
+
+module.exports = { makeHome, launch, AGENT_SHIM, sid, MIN, HOUR };

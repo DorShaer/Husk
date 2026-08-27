@@ -299,11 +299,11 @@
     <!-- Command palette -->
     <div id="palette" class="palette" hidden>
       <div class="palette-card">
-        <input type="text" id="palette-input" placeholder="Search actions..." autocomplete="off" spellcheck="false" />
+        <input type="text" id="palette-input" placeholder="Search for anything…" autocomplete="off" spellcheck="false" />
         <ul id="palette-list" class="palette-list"></ul>
         <div class="palette-foot">
           <span><kbd>↑↓</kbd> navigate</span>
-          <span><kbd>↵</kbd> run</span>
+          <span><kbd>↵</kbd> open</span>
           <span><kbd>Esc</kbd> close</span>
         </div>
       </div>
@@ -337,38 +337,40 @@
         <header class="am-top">
           <div class="am-id">
             <h2 class="am-title" id="am-title">Agents</h2>
-            <p class="am-sub" id="am-sub">&nbsp;</p>
+            <p class="am-sub" id="am-sub"></p>
           </div>
-          <button class="am-close" id="am-close" aria-label="Close" title="Close (Esc)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-          </button>
-        </header>
-        <div class="am-filters" id="am-filters">
           <!-- Live leads and is where the center opens: the reason to look is
                what is happening now. The rest stays one click away. -->
-          <div class="am-chipset" role="tablist" aria-label="Filter agents">
-            <button class="am-chip is-live is-active" data-am-filter="live" role="tab" aria-selected="true">Live <span class="am-chip-n" id="am-n-live"></span></button>
-            <button class="am-chip is-blocked" data-am-filter="blocked" role="tab" aria-selected="false">Needs you <span class="am-chip-n" id="am-n-blocked"></span></button>
-            <button class="am-chip is-running" data-am-filter="running" role="tab" aria-selected="false">Running <span class="am-chip-n" id="am-n-running"></span></button>
-            <button class="am-chip is-done" data-am-filter="done" role="tab" aria-selected="false">Finished <span class="am-chip-n" id="am-n-done"></span></button>
-            <button class="am-chip" data-am-filter="all" role="tab" aria-selected="false">All <span class="am-chip-n" id="am-n-all"></span></button>
+          <div class="am-filters" id="am-filters">
+            <div class="am-chipset" role="tablist" aria-label="Filter agents">
+              <button class="am-chip is-live is-active" data-am-filter="live" role="tab" aria-selected="true">Live <span class="am-chip-n" id="am-n-live"></span></button>
+              <button class="am-chip is-blocked" data-am-filter="blocked" role="tab" aria-selected="false">Needs you <span class="am-chip-n" id="am-n-blocked"></span></button>
+              <button class="am-chip is-running" data-am-filter="running" role="tab" aria-selected="false">Running <span class="am-chip-n" id="am-n-running"></span></button>
+              <button class="am-chip is-done" data-am-filter="done" role="tab" aria-selected="false">Finished <span class="am-chip-n" id="am-n-done"></span></button>
+              <button class="am-chip" data-am-filter="all" role="tab" aria-selected="false">All <span class="am-chip-n" id="am-n-all"></span></button>
+            </div>
           </div>
-          <div class="am-views" id="am-views" role="tablist" aria-label="View">
-            <button class="am-view is-active" data-am-view="canvas" role="tab" aria-selected="true" title="Spawn graph">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.1 10.9 15.9 6.9M7.1 13.1l8.8 4"/></svg>
-              Graph
-            </button>
-            <button class="am-view" data-am-view="list" role="tab" aria-selected="false" title="List">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
-              List
+          <div class="am-tools">
+            <div class="am-views" id="am-views" role="tablist" aria-label="View">
+              <button class="am-view is-active" data-am-view="canvas" role="tab" aria-selected="true" title="Spawn graph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.1 10.9 15.9 6.9M7.1 13.1l8.8 4"/></svg>
+                Graph
+              </button>
+              <button class="am-view" data-am-view="list" role="tab" aria-selected="false" title="List">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+                List
+              </button>
+            </div>
+            <label class="am-search" for="am-search-input">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+              <input type="text" id="am-search-input" placeholder="Search" autocomplete="off" spellcheck="false" />
+              <kbd aria-hidden="true">/</kbd>
+            </label>
+            <button class="am-close" id="am-close" aria-label="Close" title="Close (Esc)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>
           </div>
-          <label class="am-search" for="am-search-input">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
-            <input type="text" id="am-search-input" placeholder="Search" autocomplete="off" spellcheck="false" />
-            <kbd aria-hidden="true">/</kbd>
-          </label>
-        </div>
+        </header>
         <div class="am-body">
           <!-- Spawn graph. One transformed layer holds the dot grid, the edge
                svg and the node layer, so pan and zoom move all three together. -->
@@ -377,6 +379,18 @@
             <div class="am-cv-stage" id="am-cv-stage">
               <svg class="am-cv-edges" id="am-cv-edges" aria-hidden="true" focusable="false"></svg>
               <div class="am-cv-nodes" id="am-cv-nodes" role="listbox" aria-label="Agent spawn graph" tabindex="0"></div>
+            </div>
+            <!-- Two ways to read the same lineage: rings around the thing that
+                 started the work, or generations down the page. -->
+            <div class="am-cv-topo" id="am-cv-topo" role="tablist" aria-label="Graph shape">
+              <button class="am-cv-tp is-active" data-am-topo="radial" role="tab" aria-selected="true" title="Rings around the source">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><circle cx="12" cy="12" r="8" opacity="0.5"/><circle cx="12" cy="4" r="1.7"/><circle cx="19" cy="16" r="1.7"/><circle cx="5" cy="16" r="1.7"/></svg>
+                Radial
+              </button>
+              <button class="am-cv-tp" data-am-topo="tree" role="tab" aria-selected="false" title="Generations down the page">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="5" r="1.9"/><circle cx="6" cy="18" r="1.9"/><circle cx="12" cy="18" r="1.9"/><circle cx="18" cy="18" r="1.9"/><path d="M12 7v3.5M6 16.1v-2.4h12v2.4M12 13.7v2.4"/></svg>
+                Tree
+              </button>
             </div>
             <div class="am-cv-hud">
               <button class="am-cv-btn" id="am-cv-out" type="button" aria-label="Zoom out" title="Zoom out">
@@ -413,17 +427,22 @@
               <p>Select an agent to watch it work</p>
             </div>
             <div class="am-detail" id="am-detail" hidden>
-              <div class="am-d-head">
-                <span class="am-state" id="am-d-state"></span>
-                <span class="am-d-elapsed" id="am-d-elapsed"></span>
+              <div class="am-d-scroll">
+                <div class="am-d-head">
+                  <span class="am-state" id="am-d-state"></span>
+                  <span class="am-d-elapsed" id="am-d-elapsed"></span>
+                </div>
+                <h3 class="am-d-name" id="am-d-name" dir="auto"></h3>
+                <p class="am-d-intent" id="am-d-intent"></p>
+                <div class="am-d-feed-wrap">
+                  <div class="am-d-feed-label">Activity</div>
+                  <ol class="am-d-feed" id="am-d-feed"></ol>
+                </div>
+                <div class="am-d-facts-wrap">
+                  <div class="am-d-facts-label">Details</div>
+                  <dl class="am-d-facts" id="am-d-facts"></dl>
+                </div>
               </div>
-              <h3 class="am-d-name" id="am-d-name" dir="auto"></h3>
-              <p class="am-d-intent" id="am-d-intent"></p>
-              <div class="am-d-feed-wrap">
-                <div class="am-d-feed-label">Activity</div>
-                <ol class="am-d-feed" id="am-d-feed"></ol>
-              </div>
-              <dl class="am-d-facts" id="am-d-facts"></dl>
               <div class="am-d-actions">
                 <button class="am-d-open" id="am-d-open">Open session</button>
                 <button class="am-d-end" id="am-d-end" title="Stop this agent">Stop</button>
@@ -533,9 +552,25 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4"/><path d="M15 3v4"/><path d="M7 7h10a2 2 0 0 1 2 2v4a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6V9a2 2 0 0 1 2-2z"/><path d="M12 19v2"/></svg></span>
               <span class="ri-label">Plugins</span>
             </button>
+            <button class="rail-item" data-page="source" title="Source control">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v3a6 6 0 0 1-6 6h-1"/></svg></span>
+              <span class="ri-label">Source</span>
+            </button>
             <button class="rail-item" data-page="files" title="Files">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
               <span class="ri-label">Files</span>
+            </button>
+            <button class="rail-item" data-page="schedule" title="Schedule">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/><path d="M12 14v3l2 1"/></svg></span>
+              <span class="ri-label">Schedule</span>
+            </button>
+            <button class="rail-item" data-page="artifacts" title="Artifacts">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7 12 3 4 7v10l8 4 8-4z"/><path d="M4 7l8 4 8-4"/><path d="M12 11v10"/></svg></span>
+              <span class="ri-label">Artifacts</span>
+            </button>
+            <button class="rail-item" data-page="github" title="GitHub">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.7A5.2 5.2 0 0 0 20 5.8a4.9 4.9 0 0 0-.1-3.6s-1.1-.3-3.7 1.4a12.7 12.7 0 0 0-6.4 0C7.2 1.9 6.1 2.2 6.1 2.2A4.9 4.9 0 0 0 6 5.8a5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7a3.4 3.4 0 0 0-.9 2.6V22"/></svg></span>
+              <span class="ri-label">GitHub</span>
             </button>
           </nav>
         </div>
@@ -588,6 +623,10 @@
           <div class="page-head">
             <div id="tab-strip" class="tab-strip"></div>
             <div class="page-head-right">
+              <button class="ghost-btn" id="btn-split" title="Show two chats side by side (Ctrl+\)">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
+                <span class="btn-label">Split</span>
+              </button>
               <button class="ghost-btn" id="btn-head-add-context" title="Add a file to the agent's context">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 <span class="btn-label">Add context</span>
@@ -656,6 +695,7 @@
                   <span class="wfx-figure"><b id="wfx-stat-pass">n/a</b> passed</span>
                   <span class="wfx-figure"><b id="wfx-stat-median">n/a</b> median</span>
                 </div>
+                <button class="ghost-btn" id="btn-wf-market" title="Workflows other people publish"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h18l-1.5 10a2 2 0 0 1-2 1.7H6.5a2 2 0 0 1-2-1.7z"/><path d="M3 9l2.2-4.3A2 2 0 0 1 7 3.6h10a2 2 0 0 1 1.8 1.1L21 9"/><path d="M9 13h6"/></svg> Marketplace</button>
                 <button class="btn-primary" id="btn-new-workflow"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New workflow</button>
               </div>
             </div>
@@ -876,6 +916,60 @@
                   <div class="wfx-runs" id="wfx-runs"></div>
                 </section>
 
+              </div>
+            </div>
+          </div>
+
+          <!-- Marketplace sub-view. Everything under #wfm-grid and #wfm-registries
+               is built by wfx-market.js through WfxDom, because every string in
+               it came off somebody else's machine. -->
+          <div id="wf-market-view" hidden>
+            <div class="page-head">
+              <div class="page-head-left">
+                <button class="wf-back-link" id="btn-wfm-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                  Workflows
+                </button>
+                <h1 class="page-title">Marketplace</h1>
+                <span class="page-sub">Workflows other people publish, installed through the same gate as a file</span>
+              </div>
+              <div class="page-head-right">
+                <button class="ghost-btn" id="btn-wfm-registries">Registries</button>
+                <button class="ghost-btn" id="btn-wfm-refresh">Refresh</button>
+                <button class="btn-primary" id="btn-wfm-publish">Publish a workflow</button>
+              </div>
+            </div>
+            <div class="page-body">
+              <div class="wfm">
+                <div class="wfm-bar">
+                  <input type="search" id="wfm-search" class="wfm-search" placeholder="Search the catalog..." autocomplete="off" spellcheck="false" aria-label="Search the catalog" />
+                  <div class="wfm-tags" id="wfm-tags" role="group" aria-label="Filter by tag"></div>
+                </div>
+                <!-- One line of provenance above the grid: which catalog these
+                     rows came from, and when it was read. -->
+                <div class="wfm-source" id="wfm-source" hidden></div>
+                <div class="wfm-grid" id="wfm-grid"></div>
+                <div class="wfm-state" id="wfm-state"></div>
+              </div>
+            </div>
+
+            <!-- Registry manager, opened from the head. -->
+            <div class="modal" id="wfm-registries-modal" hidden>
+              <div class="modal-card modal-card-wide">
+                <div class="modal-head">
+                  <h2 class="modal-title">Registries</h2>
+                  <button class="modal-close" id="wfm-reg-close" aria-label="Close">&times;</button>
+                </div>
+                <div class="modal-body">
+                  <p class="ra-hint">A registry is one https URL to one JSON index. Adding one trusts its author to point at workflow files on that same host. Every file still goes through the same checks as a file you picked yourself.</p>
+                  <div class="wfm-reg-list" id="wfm-reg-list"></div>
+                  <label class="wfm-reg-label" for="wfm-reg-url">Add a registry</label>
+                  <div class="ra-pathrow">
+                    <input type="text" id="wfm-reg-url" class="ra-root" placeholder="https://example.com/index.json" autocomplete="off" spellcheck="false" />
+                    <button class="ghost-btn" id="wfm-reg-add">Add</button>
+                  </div>
+                  <div class="wfm-reg-error" id="wfm-reg-error" hidden></div>
+                </div>
               </div>
             </div>
           </div>
@@ -1911,6 +2005,9 @@
             <div class="sx-menu-sep" role="separator"></div>
             <button class="sx-menu-item" type="button" role="menuitemradio" data-group="project" aria-checked="true">Group by project</button>
             <button class="sx-menu-item" type="button" role="menuitemradio" data-group="day" aria-checked="false">Group by day</button>
+            <button class="sx-menu-item" type="button" role="menuitemradio" data-group="folder" aria-checked="false">Group by folder</button>
+            <div class="sx-menu-sep" role="separator"></div>
+            <button class="sx-menu-item" type="button" role="menuitem" data-act="new-folder">New folder</button>
           </div>
           <div class="sx-menu" id="sx-d-menu" role="menu" aria-labelledby="sx-d-menu-btn" hidden></div>
 
@@ -1943,6 +2040,14 @@
               <span class="sx-g-name"></span>
               <span class="sx-g-note"></span>
               <span class="sx-g-n"></span>
+              <span class="sx-g-acts" hidden>
+                <button class="sx-g-act" type="button" data-fact="rename" title="Rename this folder" aria-label="Rename this folder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                </button>
+                <button class="sx-g-act" type="button" data-fact="delete" title="Delete this folder" aria-label="Delete this folder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                </button>
+              </span>
             </div>
           </template>
 
@@ -2133,6 +2238,269 @@
         </div>
 
         <!-- FILES PAGE -->
+        <!-- SOURCE PAGE -->
+        <div class="page page-source" data-page="source" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Source</h1>
+              <span class="page-sub" id="source-sub"></span>
+            </div>
+            <div class="page-head-right">
+              <button class="ghost-btn" id="sc-scope" type="button" title="Choose what this page reads" aria-haspopup="dialog" aria-expanded="false" aria-controls="sc-branch-pop">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+                <span class="btn-label" id="sc-scope-label">Project</span>
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <button class="ghost-btn" id="sc-branch" type="button" title="Switch branch" aria-haspopup="dialog" aria-expanded="false" aria-controls="sc-branch-pop">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v3a6 6 0 0 1-6 6h-1"/></svg>
+                <span class="btn-label" id="sc-branch-label">Branch</span>
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <button class="ghost-btn" id="sc-fetch" type="button" title="Fetch from the remote">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M7 9l5 5 5-5"/><path d="M5 20h14"/></svg>
+                <span class="btn-label">Fetch</span>
+              </button>
+              <button class="ghost-btn" id="sc-refresh" type="button" title="Re-read this repository">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                <span class="btn-label">Refresh</span>
+              </button>
+              <button class="ghost-btn" id="sc-remote" type="button" title="Open this repository on the web" hidden>
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+                <span class="btn-label">Remote</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="sc" id="sc">
+
+            <!-- change list, filter and the docked composer -->
+            <aside class="sc-nav" aria-label="Changes">
+              <div class="sc-search">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+                <input type="text" id="sc-search" class="sc-search-input" placeholder="Filter changed files" spellcheck="false" autocomplete="off" aria-label="Filter changed files" aria-controls="sc-list" />
+                <span class="kbd-cap sc-search-kbd" id="sc-search-kbd" aria-hidden="true">/</span>
+              </div>
+
+              <div class="sc-tabs" role="group" aria-label="Change list view">
+                <button class="fx-tab is-active" id="sc-tab-changes" type="button" data-sctab="changes" aria-pressed="true"><span>Changes</span><span class="fx-tab-count" id="sc-changes-count" hidden>0</span></button>
+                <button class="fx-tab" id="sc-tab-history" type="button" data-sctab="history" aria-pressed="false"><span>History</span></button>
+              </div>
+
+              <div class="sc-composer" id="sc-composer">
+                <input type="text" class="sc-subject" id="sc-subject" placeholder="Summary" spellcheck="false" autocomplete="off" aria-label="Commit summary" />
+                <span class="sc-subject-count" id="sc-subject-count" aria-live="polite" hidden>0</span>
+                <textarea class="sc-body" id="sc-body" placeholder="Description" spellcheck="false" rows="1" aria-label="Commit description"></textarea>
+                <div class="sc-composer-warn" id="sc-composer-warn" hidden></div>
+                <div class="sc-composer-flags">
+                  <label class="ghost-toggle">
+                    <input type="checkbox" class="husk-switch" id="sc-amend" />
+                    <span id="sc-amend-label">Amend</span>
+                  </label>
+                </div>
+                <div class="sc-composer-foot">
+                  <button class="btn-primary" id="sc-commit" type="button" disabled>Commit</button>
+                  <span aria-hidden="true"><kbd class="kbd-cap">Ctrl</kbd><kbd class="kbd-cap">Enter</kbd></span>
+                </div>
+              </div>
+
+              <div class="sc-list" id="sc-list" tabindex="-1"></div>
+
+            </aside>
+
+            <!-- one of three: the resting overview, a file diff, a commit -->
+            <section class="sc-main" id="sc-main">
+
+              <div class="sc-ov" id="sc-ov">
+                <div id="sc-ov-runs" hidden></div>
+                <div id="sc-ov-branch"></div>
+                <div id="sc-ov-recent" hidden></div>
+              </div>
+
+              <div class="sc-detail" id="sc-detail" hidden>
+                <header class="sc-dhead">
+                  <span class="sc-dhead-path" id="sc-dpath"></span>
+                  <span class="sc-dhead-stat" id="sc-dstat"></span>
+                  <span class="pill" id="sc-dbadge" hidden></span>
+                  <div class="sc-dacts">
+                    <button class="sc-act" id="sc-act-stage" type="button" title="Stage this file" aria-label="Stage this file"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Stage file</button>
+                    <button class="sc-act" id="sc-act-unstage" type="button" title="Unstage this file" aria-label="Unstage this file" hidden><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg>Unstage file</button>
+                    <button class="sc-act" id="sc-act-discard" type="button" title="Discard the changes in this file" aria-label="Discard the changes in this file"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>Discard&hellip;</button>
+                    <button class="sc-act" id="sc-act-files" type="button" title="Open this file in Files" aria-label="Open this file in Files"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>Open in Files</button>
+                    <button class="sc-act" id="sc-act-wrap" type="button" title="Wrap long diff lines" aria-label="Wrap long diff lines" aria-pressed="false"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h13a3 3 0 0 1 0 6h-3"/><path d="M16 15l-2 3 2 3"/><path d="M4 18h5"/></svg>Wrap</button>
+                  </div>
+                </header>
+                <div class="sc-prov" id="sc-prov" hidden></div>
+                <div class="sc-diff-wrap" id="sc-diff-wrap" role="region" aria-label="Diff" tabindex="0">
+                  <div class="sc-diff" id="sc-diff"></div>
+                  <div class="sc-note" id="sc-note" hidden></div>
+                </div>
+              </div>
+
+              <div class="sc-commit-detail" id="sc-commit-detail" hidden></div>
+
+              <footer class="sc-hints" id="sc-ov-hints">
+                <span><kbd class="kbd-cap">&uarr;</kbd><kbd class="kbd-cap">&darr;</kbd> move</span>
+                <span><kbd class="kbd-cap">Space</kbd> stage</span>
+                <span><kbd class="kbd-cap">Enter</kbd> diff</span>
+                <span><kbd class="kbd-cap">D</kbd> discard</span>
+              </footer>
+            </section>
+          </div>
+
+          <!-- branch and scope popover, CSP-clean, no inline handlers -->
+          <!-- the controller relabels this per list and paints the create row into the footer -->
+          <div class="sc-pop" id="sc-branch-pop" role="dialog" aria-label="Branches and scope" hidden>
+            <footer class="sc-pop-foot" id="sc-branch-pop-foot"></footer>
+          </div>
+        </div>
+
+        <!-- Schedule. Rows are built by sch-page.js through WfxDom: a schedule
+             name is whatever the user typed. -->
+        <div class="page page-schedule" data-page="schedule" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Schedule</h1>
+              <span class="page-sub" id="sch-sub">Workflows that start on their own</span>
+            </div>
+            <div class="page-head-right">
+              <button class="btn-primary" id="sch-new"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New schedule</button>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="sch">
+              <div class="sch-list" id="sch-list"></div>
+              <div class="sch-state" id="sch-state"></div>
+            </div>
+          </div>
+
+          <div class="modal" id="sch-modal" hidden>
+            <div class="modal-card modal-card-wide">
+              <div class="modal-head">
+                <h2 class="modal-title" id="sch-modal-title">New schedule</h2>
+                <button class="modal-close" id="sch-close" aria-label="Close">&times;</button>
+              </div>
+              <div class="modal-body">
+                <label class="sch-label" for="sch-name">Name</label>
+                <input class="sch-input" id="sch-name" type="text" placeholder="Nightly docs sweep" autocomplete="off" spellcheck="false" />
+
+                <label class="sch-label" for="sch-target">Workflow to run</label>
+                <select class="sch-input" id="sch-target"></select>
+
+                <label class="sch-label" for="sch-kind">Repeats</label>
+                <select class="sch-input" id="sch-kind">
+                  <option value="every">Every so often</option>
+                  <option value="daily">Daily, at a time</option>
+                  <option value="weekly">Weekly, on a day</option>
+                </select>
+
+                <div class="sch-row" id="sch-row-every">
+                  <label class="sch-label" for="sch-every">Every</label>
+                  <div class="sch-inline">
+                    <input class="sch-input sch-num" id="sch-every" type="number" min="5" max="10080" step="5" value="60" />
+                    <span class="sch-unit">minutes</span>
+                  </div>
+                </div>
+
+                <div class="sch-row" id="sch-row-at" hidden>
+                  <label class="sch-label" for="sch-at">At</label>
+                  <input class="sch-input sch-num" id="sch-at" type="time" value="09:00" />
+                </div>
+
+                <div class="sch-row" id="sch-row-days" hidden>
+                  <label class="sch-label">On</label>
+                  <div class="sch-days" id="sch-days" role="group" aria-label="Days"></div>
+                </div>
+
+                <div class="sch-preview" id="sch-preview"></div>
+                <div class="sch-error" id="sch-error" hidden></div>
+                <div class="sch-actions">
+                  <button class="ghost-btn" id="sch-cancel">Cancel</button>
+                  <button class="btn-primary" id="sch-save">Save</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Artifacts. Rows come from the two run stores and are built by
+             af-page.js through WfxDom: a goal, a workflow name and a step's
+             scrollback are all whatever an agent produced. -->
+        <div class="page page-artifacts" data-page="artifacts" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Artifacts</h1>
+              <span class="page-sub" id="af-sub">What your runs left behind</span>
+            </div>
+            <div class="page-head-right">
+              <button class="ghost-btn" id="af-refresh">Refresh</button>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="af">
+              <div class="af-figures" id="af-figures" hidden></div>
+              <div class="af-bar">
+                <div class="seg" role="tablist" aria-label="Where a run came from">
+                  <button class="seg-btn is-on" id="af-src-all" role="tab" aria-selected="true">All</button>
+                  <button class="seg-btn" id="af-src-workflow" role="tab" aria-selected="false">Workflows</button>
+                  <button class="seg-btn" id="af-src-autopilot" role="tab" aria-selected="false">Autopilot</button>
+                </div>
+                <select class="af-outcome" id="af-outcome" aria-label="Outcome">
+                  <option value="">Any outcome</option>
+                  <option value="done">Done</option>
+                  <option value="failed">Failed</option>
+                  <option value="halted">Halted</option>
+                  <option value="running">Running</option>
+                </select>
+                <input type="search" id="af-search" class="af-search" placeholder="Filter by name, agent or folder" autocomplete="off" spellcheck="false" aria-label="Filter" />
+              </div>
+              <div class="af-panes" id="af-panes">
+                <div class="af-list" id="af-list" role="listbox" aria-label="Runs" tabindex="0"></div>
+                <div class="af-detail" id="af-detail"></div>
+              </div>
+              <div class="af-state" id="af-state"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GitHub. Every row under #gh-list and #gh-detail is built by
+             gh-page.js through WfxDom: a title, a label and a branch name are
+             whatever their author typed. -->
+        <div class="page page-github" data-page="github" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">GitHub</h1>
+              <span class="page-sub" id="gh-sub">Pull requests and issues for the folder you are working in</span>
+            </div>
+            <div class="page-head-right">
+              <span class="gh-repo" id="gh-repo" hidden></span>
+              <button class="ghost-btn" id="gh-refresh">Refresh</button>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="gh">
+              <div class="gh-bar">
+                <div class="seg" role="tablist" aria-label="What to list">
+                  <button class="seg-btn is-on" id="gh-tab-pulls" role="tab" aria-selected="true">Pull requests</button>
+                  <button class="seg-btn" id="gh-tab-issues" role="tab" aria-selected="false">Issues</button>
+                </div>
+                <select class="gh-state" id="gh-state" aria-label="State">
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                  <option value="merged">Merged</option>
+                  <option value="all">All</option>
+                </select>
+                <input type="search" id="gh-search" class="gh-search" placeholder="Filter by title, author, branch, label or #number" autocomplete="off" spellcheck="false" aria-label="Filter" />
+              </div>
+              <div class="gh-labels" id="gh-labels" role="group" aria-label="Filter by label"></div>
+              <div class="gh-panes" id="gh-panes">
+                <div class="gh-list" id="gh-list" role="listbox" aria-label="Results" tabindex="0"></div>
+                <div class="gh-detail" id="gh-detail"></div>
+              </div>
+              <div class="gh-state-msg" id="gh-state-msg"></div>
+            </div>
+          </div>
+        </div>
+
         <div class="page page-files" data-page="files" hidden>
           <div class="page-head">
             <div class="page-head-left">
@@ -3519,6 +3887,20 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     </template>
 
     <!-- Reusable confirm dialog. Populated by openConfirmDialog(). -->
+    <!-- One line of text, asked for. Same shell as the confirm dialog, with a
+         field where its body is. -->
+    <div id="text-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="text-title" hidden>
+      <div class="modal-card">
+        <div class="confirm-title" id="text-title">Name</div>
+        <label class="tx-label" id="text-label" for="text-input">Name</label>
+        <input class="tx-input" id="text-input" type="text" autocomplete="off" spellcheck="false" />
+        <div class="confirm-actions">
+          <button class="ghost-btn" id="text-cancel">Cancel</button>
+          <button class="btn-primary" id="text-ok">Save</button>
+        </div>
+      </div>
+    </div>
+
     <div id="confirm-modal" class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
       <div class="modal-card">
         <div class="confirm-icon">
@@ -3536,14 +3918,22 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
       </div>
     </div>
 
-    <!-- Portable workflows, four scripts in dependency order. wfx-dom.js loads
-         first because wfx-artifact-ui.js reads window.WfxDom at load. All four
-         come before app.js, which configures them while it evaluates; they read
-         back lazily and guarded by typeof. -->
+    <!-- Page scripts, in dependency order. wfx-dom.js loads first because
+         wfx-artifact-ui.js reads window.WfxDom at load, wfx-market.js loads
+         after wfx-install.js because it hands a catalog entry to that sheet,
+         and sc-dom.js loads before sc-page.js because sc-page.js paints
+         through window.ScDom. All of them come before app.js, which configures
+         them while it evaluates; they read back lazily and guarded by typeof. -->
     <script src="wfx-dom.js"></script>
     <script src="wfx-artifact-ui.js"></script>
     <script src="wfx-install.js"></script>
     <script src="wfx-publish.js"></script>
+    <script src="wfx-market.js"></script>
+    <script src="gh-page.js"></script>
+    <script src="af-page.js"></script>
+    <script src="sch-page.js"></script>
+    <script src="sc-dom.js"></script>
+    <script src="sc-page.js"></script>
     <script src="app.js"></script>
     <!-- Run log. The transcript lives on disk beside the audit log, so this
          reads a finished run's output back from there. -->

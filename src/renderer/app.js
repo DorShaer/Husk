@@ -127,6 +127,10 @@ function updateNotif(card, message, opts) {
 }
 // Back-compatible API used across the renderer.
 function toast(msg, kind = '') { notify(msg, { kind }); }
+// The wfx sheets and the pages loaded beside app.js reach these by name off
+// window, and every one of them guards with a typeof check, so without this
+// they silently do nothing rather than fail loudly.
+if (typeof window !== 'undefined') window.toast = toast;
 // Toast with a single action button. Used when the message alone is a dead
 // end and the next action is explicit (e.g. missing agent binary -> open setup).
 function toastAction(msg, actionLabel, onAction, kind = 'error') {
@@ -159,6 +163,59 @@ function runEndBanner(msg, kind = '') {
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
 // Reusable destructive-action confirmation modal that names what is about to
 // be deleted. Resolves true on confirm, false on cancel/escape/backdrop.
+// Asks for one line of text. Resolves to the trimmed value, or '' for a cancel
+// and for a value that was only whitespace: a name nobody typed is not a name,
+// and every caller would otherwise have to re-check the same thing.
+function openTextDialog({ title = 'Name', label = 'Name', value = '', placeholder = '', confirmLabel = 'Save', maxLength = 80 } = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('text-modal');
+    const titleEl = document.getElementById('text-title');
+    const labelEl = document.getElementById('text-label');
+    const input = document.getElementById('text-input');
+    const okBtn = document.getElementById('text-ok');
+    const cancelBtn = document.getElementById('text-cancel');
+    if (!modal || !input || !okBtn || !cancelBtn) {
+      const typed = window.prompt(title, value);
+      resolve(typed === null ? '' : String(typed).trim().slice(0, maxLength));
+      return;
+    }
+    titleEl.textContent = title;
+    labelEl.textContent = label;
+    input.value = value;
+    input.placeholder = placeholder;
+    input.maxLength = maxLength;
+    okBtn.textContent = confirmLabel;
+
+    const prev = document.activeElement;
+    modal.hidden = false;
+    setTimeout(() => { try { input.focus(); input.select(); } catch (_) {} }, 30);
+
+    const cleanup = (result) => {
+      modal.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+        try { prev.focus({ preventScroll: true }); } catch (_) {}
+      }
+      resolve(result);
+    };
+    const onOk = () => cleanup(String(input.value || '').trim().slice(0, maxLength));
+    const onCancel = () => cleanup('');
+    const onBackdrop = (e) => { if (e.target === modal) cleanup(''); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(''); }
+      else if (e.key === 'Enter' && document.activeElement === input) { e.preventDefault(); onOk(); }
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+// Exposed for the same reason as toast above.
 function openConfirmDialog({ title = 'Are you sure?', bodyHtml = '', confirmLabel = 'Delete', cancelLabel = 'Cancel' } = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
@@ -238,7 +295,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins', 'prefs']);
+const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'source', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -319,6 +376,15 @@ let activeTabId = null;
 let tabSeq = 0;
 let term = null;
 let fitAddon = null;
+// Split state: the pair on screen, the last pair (for the close path), the
+// pick handshake, and the left pane's share of the row.
+let SPLIT = null;
+let SPLIT_LAST = { a: null, b: null };
+let splitPicking = false;
+let splitBusy = false;
+const SPLIT_MIN = 0.2;
+const SPLIT_MAX = 0.8;
+let splitShare = 0.5;
 
 // Route URL clicks through the OS browser via shell.openExternal, behind
 // Husk's confirm dialog so the user sees the destination first. Covers both
@@ -408,6 +474,10 @@ function createTab(idOverride) {
       refreshFromShortcut();
       return false;
     }
+    // Split keys are handled once, by the window; xterm only keeps them from
+    // reaching the agent.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === '\\') return false;
+    if (e.key === 'Escape' && splitPicking) return false;
     const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
     if (meta && (e.key === 'c' || e.key === 'C')) {
       if (t.hasSelection()) { copyTerminalSelection(); return false; }
@@ -431,7 +501,8 @@ function activateTab(id) {
   fitAddon = tab.fitAddon;
   agentMouseOn = !!tab.mouseOn;
   chatHasInput = tab.chatHasInput;
-  for (const t of TABS.values()) t.el.classList.toggle('show', t.id === id);
+  for (const t of TABS.values()) t.el.classList.toggle('show', isPaneVisible(t.id));
+  applySplit();
   renderTabStrip();
   fitNow();
   try { term.focus(); } catch (_) {}
@@ -493,9 +564,11 @@ window.husk.pty.onMouseMode((sessionId, on) => {
   if (sessionId === activeTabId) agentMouseOn = !!on;
 });
 $('#terminal').addEventListener('wheel', (e) => {
-  if (!agentMouseOn || !term) return;
-  const tab = TABS.get(activeTabId);
-  const screen = tab && tab.el.querySelector('.xterm-screen');
+  const paneEl = e.target && e.target.closest ? e.target.closest('.term-pane') : null;
+  const tab = TABS.get(paneEl ? paneEl.dataset.sessionId : activeTabId);
+  if (!tab || !tab.mouseOn) return;
+  const term = tab.term;
+  const screen = tab.el.querySelector('.xterm-screen');
   if (!screen) return;
   const rect = screen.getBoundingClientRect();
   const cw = rect.width / term.cols || 1;
@@ -504,7 +577,7 @@ $('#terminal').addEventListener('wheel', (e) => {
   let row = Math.floor((e.clientY - rect.top) / ch) + 1;
   col = Math.min(Math.max(col, 1), term.cols);
   row = Math.min(Math.max(row, 1), term.rows);
-  window.husk.pty.wheel({ deltaY: e.deltaY, deltaMode: e.deltaMode, col, row }, activeTabId);
+  window.husk.pty.wheel({ deltaY: e.deltaY, deltaMode: e.deltaMode, col, row }, tab.id);
   e.preventDefault();
   e.stopPropagation();
 }, { capture: true, passive: false });
@@ -640,24 +713,27 @@ function contrastForXterm() {
   return getComputedStyle(document.body).getPropertyValue('--term-light').trim() === '1' ? 4.5 : 1;
 }
 
+function fitTab(tab) {
+  if (!tab || !tab.el.classList.contains('show')) return;
+  // Skip while the pane is not laid out yet: fitting against a zero-size box
+  // yields a degenerate resize.
+  const host = tab.term.element;
+  if (host && (host.clientWidth === 0 || host.clientHeight === 0)) return;
+  try {
+    tab.fitAddon.fit();
+    const { cols, rows } = tab.term;
+    if (!cols || !rows) return;
+    // Only resize the PTY when the geometry actually changed. A redundant
+    // resize makes the agent's TUI redraw and drop unsent input-line text.
+    if (tab._cols === cols && tab._rows === rows) return;
+    tab._cols = cols; tab._rows = rows;
+    window.husk.pty.resize({ cols, rows }, tab.id);
+  } catch (_) {}
+}
 function fitNow() {
   if (currentPage !== 'chat') return;
   if (!fitAddon || !term) return;
-  // Skip while the terminal is not laid out yet: fitting against a zero-size
-  // box yields a degenerate resize.
-  const host = term.element;
-  if (host && (host.clientWidth === 0 || host.clientHeight === 0)) return;
-  try {
-    fitAddon.fit();
-    const { cols, rows } = term;
-    if (!cols || !rows) return;
-    const tab = TABS.get(activeTabId);
-    // Only resize the PTY when the geometry actually changed. A redundant
-    // resize makes the agent's TUI redraw and drop unsent input-line text.
-    if (tab && tab._cols === cols && tab._rows === rows) return;
-    if (tab) { tab._cols = cols; tab._rows = rows; }
-    window.husk.pty.resize({ cols, rows }, activeTabId);
-  } catch (_) {}
+  for (const t of TABS.values()) fitTab(t);
 }
 // Refit on resize. A trailing debounce coalesces the rapid resize burst
 // from a window drag into one fit so the terminal reflow stays smooth.
@@ -696,6 +772,40 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.12.0': {
+    items: [
+      {
+        title: 'Split the chat in two',
+        body: 'Put two chats side by side in one window and drag the divider to give each the width it needs. Click a pane to type into it, and closing either half puts the thread back to a single view.',
+        media: 'assets/wn-2120-split.png',
+      },
+      {
+        title: 'A command palette for the whole workspace',
+        body: 'One search reaches your chats, projects, workflows, agents, prompts and skills at once. Open it from anywhere, type a few letters, and jump straight to what you meant.',
+        media: 'assets/wn-2120-palette.png',
+      },
+      {
+        title: 'A source control page',
+        body: 'Read the diff, stage a file or a change, and commit without leaving Husk. The page opens on the first change and follows the branch you are on.',
+        media: 'assets/wn-2120-source.png',
+      },
+      {
+        title: 'Pull requests and issues, in the window',
+        body: 'The GitHub page lists the open pull requests and issues for the project you are in, with their checks, labels and review state, and filters them in place as you type.',
+        media: 'assets/wn-2120-github.png',
+      },
+      {
+        title: 'Run a workflow on a schedule',
+        body: 'Set a workflow or an autopilot run to repeat every so often, daily, or on a chosen weekday, and the Schedule page shows when each one next fires and when it last ran.',
+        media: 'assets/wn-2120-schedule.png',
+      },
+      {
+        title: 'One ledger for what your runs left behind',
+        body: 'Every workflow and autopilot run reports its outcome, time, tokens and cost in a single filterable list, with the per step detail one click away.',
+        media: 'assets/wn-2120-artifacts.png',
+      },
+    ],
+  },
   '2.11.3': {
     items: [
       {
@@ -1153,6 +1263,20 @@ async function saveAppearancePreview() {
 // Coalesce a tab's PTY output into one xterm write per animation frame, so a
 // burst of chunks costs a single write, scroll and speech scan. Each tab owns
 // its own buffer.
+// A PTY burst can outrun the frame that drains it, so this buffer carries a
+// ceiling: keep the newest output, resume at a line boundary so no escape
+// sequence arrives cut in half. The main process uses src/lib/pty-buffer.js for
+// the same job; the renderer loads no modules under context isolation.
+const WRITE_BUF_MAX = 4 * 1024 * 1024;
+
+function capWriteBuf(s) {
+  if (s.length <= WRITE_BUF_MAX) return s;
+  const tail = s.slice(-WRITE_BUF_MAX);
+  const nl = tail.indexOf('\n');
+  const body = nl === -1 ? tail : tail.slice(nl + 1);
+  return `\x1b[0m\r\n[husk] ${s.length - body.length} characters of output trimmed\r\n${body}`;
+}
+
 function _flushTabWrite(tab) {
   tab.flushScheduled = false;
   if (!tab.writeBuf) return;
@@ -1260,7 +1384,7 @@ window.husk.pty.onData((sessionId, d) => {
     $('#chat-empty').classList.remove('show');
   }
   tab.chatHasInput = true;
-  tab.writeBuf += d;
+  tab.writeBuf = capWriteBuf(tab.writeBuf + d);
   if (!tab.flushScheduled) { tab.flushScheduled = true; requestAnimationFrame(() => _flushTabWrite(tab)); }
 });
 window.husk.pty.onExit((sessionId, code) => {
@@ -1377,6 +1501,11 @@ async function startPty() {
 // Open a brand-new chat in its own tab, leaving every existing tab's agent
 // running. Backs the "+ New chat" action.
 async function openNewChatTab(opts = {}) {
+  // A new chat is its own single pane, so any active split ends here. Without
+  // this the new tab becomes active while neither half of the split, so its
+  // pane never shows and the keyboard lands in a hidden terminal.
+  SPLIT = null;
+  splitPicking = false;
   const tab = createTab();
   if (opts.resumeAttempt) {
     tab.resumeAttempt = {
@@ -1481,16 +1610,24 @@ if (window.husk.shortcuts && window.husk.shortcuts.onRestartAgent) {
 async function closeTab(id) {
   const tab = TABS.get(id);
   if (!tab) return;
+  splitPicking = false;
+  if (SPLIT && (SPLIT.a === id || SPLIT.b === id)) {
+    SPLIT = null;
+    if (activeTabId === id) {
+      const other = TABS.get(id === SPLIT_LAST.a ? SPLIT_LAST.b : SPLIT_LAST.a);
+      if (other) activeTabId = other.id;
+    }
+  }
   try { await window.husk.pty.close(id); } catch (_) {}
   try { tab.term.dispose(); } catch (_) {}
   try { tab.el.remove(); } catch (_) {}
   TABS.delete(id);
   if (TABS.size === 0) { await openNewChatTab(); return; }
-  if (activeTabId === id) {
+  if (activeTabId === id || !TABS.has(activeTabId)) {
     const next = TABS.keys().next();
     if (!next.done) activateTab(next.value);
   } else {
-    renderTabStrip();
+    activateTab(activeTabId);
   }
 }
 
@@ -1605,7 +1742,8 @@ function renderTabStrip() {
   for (const t of tabs) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '');
+    btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '')
+      + (SPLIT && (SPLIT.a === t.id || SPLIT.b === t.id) ? ' in-split' : '');
     btn.dataset.tab = t.id;
     const name = displayTitle(t);
     btn.title = name;
@@ -1644,6 +1782,16 @@ function renderTabStrip() {
   add.addEventListener('click', () => { openNewChatTab(); });
   strip.appendChild(add);
   strip.classList.toggle('multi', tabs.length >= 1);
+  strip.classList.toggle('is-picking', splitPicking);
+  const splitBtn = $('#btn-split');
+  if (splitBtn) {
+    splitBtn.classList.toggle('active', !!SPLIT || splitPicking);
+    const lbl = splitBtn.querySelector('.btn-label');
+    if (lbl) lbl.textContent = SPLIT ? 'Unsplit' : (splitPicking ? 'Pick a chat' : 'Split');
+    splitBtn.title = SPLIT ? 'Back to one chat (Ctrl+\\)'
+      : (splitPicking ? 'Click a chat in the strip to show it beside this one'
+        : 'Show two chats side by side (Ctrl+\\)');
+  }
   // The strip scrolls once the tabs outrun the head, so the focused chat is
   // brought back into view after every render.
   const active = strip.querySelector('.chat-tab.active');
@@ -1733,6 +1881,16 @@ setInterval(syncTabTitles, 5000);
   const strip = document.getElementById('tab-strip');
   if (strip) {
     strip.addEventListener('click', (e) => {
+      // While picking a split partner the whole tab is one target, so the
+      // hover pencil and close never intercept the pick.
+      if (splitPicking) {
+        const pickEl = e.target.closest('[data-tab]');
+        if (!pickEl) return;
+        splitPicking = false;
+        const pid = pickEl.dataset.tab;
+        if (pid !== activeTabId) splitWith(pid); else renderTabStrip();
+        return;
+      }
       const editEl = e.target.closest('[data-edit]');
       if (editEl) {
         e.stopPropagation();
@@ -1744,10 +1902,134 @@ setInterval(syncTabTitles, 5000);
       const closeEl = e.target.closest('[data-close]');
       if (closeEl) { e.stopPropagation(); confirmCloseTab(closeEl.dataset.close); return; }
       const tabEl = e.target.closest('[data-tab]');
-      if (tabEl && tabEl.dataset.tab !== activeTabId) activateTab(tabEl.dataset.tab);
+      if (!tabEl) return;
+      const id = tabEl.dataset.tab;
+      if (id === activeTabId) return;
+      // While split, a chat outside the pair takes the focused pane's seat.
+      if (SPLIT && SPLIT.a !== id && SPLIT.b !== id) {
+        if (SPLIT.a === activeTabId) SPLIT = { a: id, b: SPLIT.b };
+        else SPLIT = { a: SPLIT.a, b: id };
+        SPLIT_LAST = SPLIT;
+      }
+      activateTab(id);
     });
   }
 }
+
+// ─── Split screen: two chats side by side ───────────────────────────────────
+// A split shows two of the panes that already exist, a on the left and b on
+// the right, each still its own xterm and its own session. The tab strip is
+// the one indicator of which pane is focused; clicking a pane focuses it.
+function isPaneVisible(id) {
+  return SPLIT ? (SPLIT.a === id || SPLIT.b === id) : id === activeTabId;
+}
+
+function splitWith(otherId) {
+  if (!TABS.has(otherId) || otherId === activeTabId) return;
+  SPLIT = { a: activeTabId, b: otherId };
+  SPLIT_LAST = SPLIT;
+  splitShare = 0.5;
+  activateTab(activeTabId);
+}
+
+function unsplit(keepId) {
+  if (!SPLIT) return;
+  SPLIT = null;
+  activateTab(TABS.has(keepId) ? keepId : activeTabId);
+}
+
+// Split, unsplit, or start picking, depending on where the thread is.
+async function toggleSplit() {
+  if (currentPage !== 'chat') return;
+  // A second press while the first is still opening the partner chat would see
+  // the half-built state and wedge pick mode on beside the split.
+  if (splitBusy) return;
+  if (SPLIT) { unsplit(activeTabId); return; }
+  if (splitPicking) { splitPicking = false; renderTabStrip(); return; }
+  if (TABS.size < 2) {
+    splitBusy = true;
+    try {
+      const first = activeTabId;
+      await openNewChatTab({ skipWelcome: true });
+      if (TABS.has(first) && TABS.has(activeTabId) && first !== activeTabId) {
+        SPLIT = { a: first, b: activeTabId };
+        SPLIT_LAST = SPLIT;
+        splitShare = 0.5;
+        activateTab(activeTabId);
+      }
+    } finally { splitBusy = false; }
+    return;
+  }
+  splitPicking = true;
+  renderTabStrip();
+}
+
+function splitDivider() {
+  let bar = $('#term-divider');
+  if (bar) return bar;
+  bar = document.createElement('div');
+  bar.id = 'term-divider';
+  bar.className = 'term-divider';
+  bar.setAttribute('role', 'separator');
+  bar.setAttribute('aria-orientation', 'vertical');
+  bar.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !SPLIT) return;
+    e.preventDefault();
+    const host = $('#terminal');
+    const rect = host.getBoundingClientRect();
+    host.classList.add('is-resizing');
+    const move = (ev) => {
+      const share = (ev.clientX - rect.left) / (rect.width || 1);
+      splitShare = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, share));
+      host.style.setProperty('--split-a', (splitShare * 100).toFixed(2) + '%');
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      host.classList.remove('is-resizing');
+      fitNow();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+  return bar;
+}
+
+// Lays the pair out in a row with the divider between them, or puts the
+// thread back to one pane.
+function applySplit() {
+  const host = $('#terminal');
+  if (!host) return;
+  const stage = host.closest('.chat-stage');
+  host.classList.toggle('is-split', !!SPLIT);
+  if (stage) stage.classList.toggle('is-split', !!SPLIT);
+  const bar = splitDivider();
+  if (!SPLIT) {
+    if (bar.parentNode) bar.remove();
+    for (const t of TABS.values()) { t.el.style.order = ''; t.el.classList.remove('is-a', 'is-b'); }
+    host.style.removeProperty('--split-a');
+    return;
+  }
+  host.style.setProperty('--split-a', (splitShare * 100).toFixed(2) + '%');
+  for (const t of TABS.values()) {
+    t.el.classList.toggle('is-a', t.id === SPLIT.a);
+    t.el.classList.toggle('is-b', t.id === SPLIT.b);
+    t.el.style.order = t.id === SPLIT.a ? '0' : (t.id === SPLIT.b ? '2' : '');
+  }
+  bar.style.order = '1';
+  if (bar.parentNode !== host) host.appendChild(bar);
+}
+
+// A click in the other pane makes it the focused chat.
+$('#terminal').addEventListener('mousedown', (e) => {
+  if (!SPLIT) return;
+  const paneEl = e.target && e.target.closest ? e.target.closest('.term-pane') : null;
+  if (!paneEl) return;
+  const id = paneEl.dataset.sessionId;
+  if (id && id !== activeTabId && TABS.has(id)) activateTab(id);
+}, true);
+
+$('#btn-split') && $('#btn-split').addEventListener('click', () => { toggleSplit(); });
 
 // ─── Theme + accent ─────────────────────────────────────────────────────────────
 function retintAllTabs() {
@@ -1815,6 +2097,10 @@ function setPage(name, opts = {}) {
     $('#files-hidden').checked = !!(cfg && cfg.showHidden);
     fxLoad(root);
   }
+  if (name === 'source' && window.Sc) window.Sc.open();
+  if (name === 'schedule' && window.Schedule) window.Schedule.open();
+  if (name === 'artifacts' && window.Af) window.Af.open();
+  if (name === 'github' && window.Gh) window.Gh.open();
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
   if (name === 'prefs') { bindPrefs(); paintPrefsVersion(); }
@@ -3156,6 +3442,22 @@ function wfShowView(name) {
   $('#wf-list-view').hidden = name !== 'list';
   $('#wf-builder-view').hidden = name !== 'builder';
   $('#wf-run-view').hidden = name !== 'run';
+  const market = $('#wf-market-view');
+  if (market) market.hidden = name !== 'market';
+}
+
+// The marketplace is a view of the Workflows page rather than a page of its
+// own: it is the same noun, reached from the same head, and a rail item for it
+// would put the catalog and the workflows it installs into two places.
+async function wfOpenMarket() {
+  setPage('workflows');
+  // setPage starts the page's own render, and that render ends by choosing a
+  // view. Waiting for it is what keeps the list from landing on top of this.
+  await renderWorkflows();
+  // A run in flight owns the page, and it kept it above.
+  if (activeRunId) return;
+  wfShowView('market');
+  if (window.WfxMarket && typeof window.WfxMarket.open === 'function') window.WfxMarket.open();
 }
 
 async function renderWorkflows() {
@@ -5629,6 +5931,15 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
 
 // Button wiring
 $('#btn-new-workflow') && $('#btn-new-workflow').addEventListener('click', () => openWorkflowBuilder(null));
+$('#btn-wf-market') && $('#btn-wf-market').addEventListener('click', () => { wfOpenMarket(); });
+$('#btn-wfm-back') && $('#btn-wfm-back').addEventListener('click', () => { wfShowView('list'); paintWorkflowList(); });
+// Publishing is exporting: the sheet that already writes a portable file is the
+// one that puts a workflow somewhere a catalog can point at.
+$('#btn-wfm-publish') && $('#btn-wfm-publish').addEventListener('click', () => {
+  wfShowView('list');
+  paintWorkflowList();
+  toast('Pick a workflow and choose Export from its menu to write a shareable file', 'info');
+});
 $('#wfx-cta-build') && $('#wfx-cta-build').addEventListener('click', () => openWorkflowBuilder(null));
 // The two learn-more CTAs scroll rather than navigate: the answer to both is
 // already further down this page, and a jump keeps the context.
@@ -8744,6 +9055,10 @@ const sx = {
   },
 
   groupBy: 'project',
+  // Folders the user made, and which session sits in which. Both live in
+  // config, so a filing scheme survives a restart the way a session name does.
+  folders: [],
+  folderOf: {},
   chips: { project: true, live: false, needs: false, work: false },
   query: '',
   hits: new Map(),
@@ -8904,6 +9219,8 @@ async function sxLoad(opts = {}) {
   sx.hiddenAutopilot = Number((res && res.hiddenAutopilotSessions) || 0);
   sx.cache = Array.isArray(res && res.sessions) ? res.sessions.slice(0, SX_CAP) : [];
   sx.names = (cfg && cfg.sessionNames) || {};
+  sx.folders = Array.isArray(cfg && cfg.sessionFolders) ? cfg.sessionFolders : [];
+  sx.folderOf = (cfg && cfg.sessionFolderOf) || {};
   sx.listable = sxListable();
   sx.loaded = true;
   if (!sx.supported) sxExitPicking();
@@ -8960,6 +9277,8 @@ function sxView() {
     chips: sx.chips,
     currentCwd: sx.currentCwd,
     groupBy: sx.groupBy,
+    folders: sx.folders,
+    folderOf: sx.folderOf,
     olderOpen: sx.olderOpen,
     picking: sx.picking,
     names: sx.names,
@@ -9129,6 +9448,15 @@ function sxGroupUpdate(node, model) {
   sxText(node, '.sx-g-name', g.name);
   sxText(node, '.sx-g-note', g.note || '');
   sxText(node, '.sx-g-n', g.rows.length ? String(g.rows.length) : '');
+  // Only a folder the user made can be renamed or deleted. Unfiled is a
+  // description of what is left over, so it carries no controls, and neither
+  // does a day or a project heading.
+  const acts = node.querySelector('.sx-g-acts');
+  if (acts) {
+    const own = g.kind === 'folder' && !!g.folderId && !g.older;
+    acts.hidden = !own;
+    if (own) acts.dataset.folder = g.folderId;
+  }
 }
 
 function sxNoticeUpdate(node) {
@@ -10134,6 +10462,99 @@ function sxOpenFolder() {
   if (dir) window.husk.fs.open(dir);
 }
 
+// ─── Folders ─────────────────────────────────────────────────────────────────
+// A folder is the one heading on this page the user writes. Day and project
+// headings are derived and cannot be wrong; a folder can be renamed, emptied
+// and deleted, so all three go through config and the roster repaints from what
+// came back rather than from what was asked for.
+
+const SX_FOLDER_NAME_MAX = 40;
+
+// Ids are minted here rather than from a name, so renaming a folder never
+// orphans the sessions filed under it.
+function sxMintFolderId() {
+  const taken = new Set(sx.folders.map((f) => f && f.id));
+  for (let i = 1; i < 10000; i += 1) {
+    const id = `sf-${i}`;
+    if (!taken.has(id)) return id;
+  }
+  return `sf-${Date.now()}`;
+}
+
+async function sxSaveFolders(folders, folderOf) {
+  try {
+    cfg = await window.husk.config.set({ sessionFolders: folders, sessionFolderOf: folderOf });
+    sx.folders = Array.isArray(cfg && cfg.sessionFolders) ? cfg.sessionFolders : [];
+    sx.folderOf = (cfg && cfg.sessionFolderOf) || {};
+    sxPaint();
+    return true;
+  } catch (err) {
+    toast((err && err.message) || 'the folder could not be saved', 'error');
+    return false;
+  }
+}
+
+async function sxNewFolder() {
+  const name = await openTextDialog({
+    title: 'New folder',
+    label: 'Name',
+    placeholder: 'In review',
+    confirmLabel: 'Create',
+    maxLength: SX_FOLDER_NAME_MAX,
+  });
+  if (!name) return;
+  const folder = { id: sxMintFolderId(), name };
+  if (await sxSaveFolders([...sx.folders, folder], sx.folderOf)) {
+    // Making a folder is a statement about how the page should be read, so the
+    // page starts reading that way rather than waiting to be told twice.
+    sx.groupBy = 'folder';
+    sxGroupLabel();
+    sxPaint();
+  }
+}
+
+async function sxRenameFolder(folderId) {
+  const folder = sx.folders.find((f) => f && f.id === folderId);
+  if (!folder) return;
+  const name = await openTextDialog({
+    title: 'Rename folder',
+    label: 'Name',
+    value: folder.name || '',
+    confirmLabel: 'Rename',
+    maxLength: SX_FOLDER_NAME_MAX,
+  });
+  if (!name) return;
+  await sxSaveFolders(sx.folders.map((f) => (f && f.id === folderId ? { ...f, name } : f)), sx.folderOf);
+}
+
+// Deleting a folder unfiles what was in it and never touches a session on disk.
+// The count is named in the question, because "delete" over a heading is
+// ambiguous about whether the chats go with it.
+async function sxDeleteFolder(folderId) {
+  const folder = sx.folders.find((f) => f && f.id === folderId);
+  if (!folder) return;
+  const held = Object.values(sx.folderOf).filter((id) => id === folderId).length;
+  const ok = await openConfirmDialog({
+    title: 'Delete folder',
+    bodyHtml: held
+      ? `Removes <strong>${escapeHtml(folder.name || 'this folder')}</strong>. The ${held} session${held === 1 ? '' : 's'} in it move to Unfiled; nothing is deleted from disk.`
+      : `Removes <strong>${escapeHtml(folder.name || 'this folder')}</strong>. It is empty.`,
+    confirmLabel: 'Delete folder',
+  });
+  if (!ok) return;
+  const next = {};
+  for (const [sid, id] of Object.entries(sx.folderOf)) if (id !== folderId) next[sid] = id;
+  await sxSaveFolders(sx.folders.filter((f) => f && f.id !== folderId), next);
+}
+
+// Files one session, or unfiles it when folderId is empty.
+async function sxFileSession(sessionId, folderId) {
+  if (!sessionId) return;
+  const next = { ...sx.folderOf };
+  if (folderId) next[sessionId] = folderId; else delete next[sessionId];
+  await sxSaveFolders(sx.folders, next);
+}
+
 function sxPrimary(s) {
   if (!s) return;
   const holder = sx.agents.bySession.get(s.id) || null;
@@ -10146,6 +10567,13 @@ function sxPrimary(s) {
 function sxAct(act, el) {
   const s = sxSessionById(sx.detailId);
   const owned = s ? { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
+  // Filing carries the folder in the action, so one branch answers every
+  // folder rather than the switch growing a case per folder.
+  if (typeof act === 'string' && act.startsWith('file:') && s) {
+    const want = act.slice(5);
+    sxFileSession(s.id, sx.folderOf[s.id] === want ? '' : want);
+    return;
+  }
   switch (act) {
     case 'retry': sessionsFetchInvalidate(); sxLoad({ firstPaint: true }); break;
     case 'open-folder': sxOpenFolder(); break;
@@ -10249,6 +10677,14 @@ function sxDetailMenuItems() {
   items.push(['Copy id', 'copy-id', '']);
   items.push(['Copy path', 'copy-path', '']);
   items.push(['Rename', 'rename', '']);
+  // Where this session is filed. Offered only once there is somewhere to file
+  // it, and the folder it already sits in is offered as the way back out.
+  const here = sx.folderOf[s.id] || '';
+  for (const f of sx.folders) {
+    if (!f || typeof f.id !== 'string' || !f.id) continue;
+    const name = (typeof f.name === 'string' && f.name.trim()) ? f.name.trim() : 'Folder';
+    items.push([f.id === here ? `Remove from ${name}` : `Move to ${name}`, `file:${f.id}`, '']);
+  }
   if (SV().isDeletable(s)) items.push(['Delete session', 'delete-one', 'is-danger']);
   menu.replaceChildren(...items.map(([label, act, cls]) => {
     const b = document.createElement('button');
@@ -10397,6 +10833,17 @@ function sxGroupLabel() {
     const emptyAct = e.target.closest('.sx-empty [data-act]');
     if (emptyAct) { sxAct(emptyAct.dataset.act, emptyAct); return; }
     if (e.target.closest('.sx-ghost')) { setPage('chat'); openNewChatTab({}); return; }
+    // A folder's own controls sit on its heading, so they are claimed before
+    // the heading's collapse.
+    const fact = e.target.closest('[data-fact]');
+    if (fact) {
+      e.stopPropagation();
+      const holder = fact.closest('.sx-g-acts');
+      const folderId = holder && holder.dataset.folder;
+      if (folderId && fact.dataset.fact === 'rename') sxRenameFolder(folderId);
+      else if (folderId && fact.dataset.fact === 'delete') sxDeleteFolder(folderId);
+      return;
+    }
     const group = e.target.closest('.sx-group');
     if (group) {
       const m = sx.models.get(group.dataset.key);
@@ -10469,7 +10916,8 @@ function sxGroupLabel() {
     if (!item) return;
     sxMenuClose();
     if (item.dataset.group) {
-      sx.groupBy = item.dataset.group === 'day' ? 'day' : 'project';
+      const want = item.dataset.group;
+      sx.groupBy = (want === 'day' || want === 'folder') ? want : 'project';
       sxGroupLabel();
       sxPaint();
       return;
@@ -10479,6 +10927,7 @@ function sxGroupLabel() {
     else if (act === 'select') sxEnterPicking();
     else if (act === 'open-folder') sxOpenFolder();
     else if (act === 'open-autopilot') setPage('autopilot');
+    else if (act === 'new-folder') sxNewFolder();
   });
 
   $('#sx-older').addEventListener('click', () => { sx.olderOpen = !sx.olderOpen; sx.olderPinned = true; sxPaint(); });
@@ -10713,6 +11162,7 @@ function fxCurrentRoot() { return fxRootOverride || fxDefaultRoot(); }
 // the page is on screen, so Files follows the chat.
 function fxSyncToWorkspace() {
   fxRootOverride = null;
+  if (window.Sc) window.Sc.syncToWorkspace();
   if (currentPage !== 'files') return;
   const root = fxCurrentRoot();
   fxSetOpenFolderLabel(root);
@@ -14031,6 +14481,7 @@ const ICONS = {
   workflows:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/><rect x="17" y="9" width="6" height="6" rx="1.5"/><path d="M7 12h2M15 12h2"/><path d="M4 9V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg>',
   autopilot:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg>',
   projects:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg>',
+  github:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.7A5.2 5.2 0 0 0 20 5.8a4.9 4.9 0 0 0-.1-3.6s-1.1-.3-3.7 1.4a12.7 12.7 0 0 0-6.4 0C7.2 1.9 6.1 2.2 6.1 2.2A4.9 4.9 0 0 0 6 5.8a5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7a3.4 3.4 0 0 0-.9 2.6V22"/></svg>',
   prompts:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M16 4v3h3"/><path d="M8 12h8M8 16h8M8 8h4"/></svg>',
 };
 
@@ -14048,12 +14499,17 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.agents,      label: 'Import agent pack',              run: () => { setPage('agents'); openRepoAgentsModal(); } },
   { icon: ICONS.agents,      label: 'Unpin all agents',               run: () => deactivateAllProfiles() },
   { icon: ICONS.workflows,   label: 'Switch to Workflows',            run: () => setPage('workflows') },
+  { icon: ICONS.workflows,   label: 'Browse the workflow marketplace', run: () => wfOpenMarket() },
   { icon: ICONS.autopilot,    label: 'Switch to Autopilot',             run: () => setPage('autopilot') },
   { icon: ICONS.projects,    label: 'Switch to Projects',             run: () => setPage('projects') },
   { icon: ICONS.prompts,     label: 'Switch to Prompts',              run: () => setPage('prompts') },
   { icon: ICONS.skills,      label: 'Switch to Skills',               run: () => setPage('skills'),      shortcut: 'Alt 2' },
   { icon: ICONS.sessions,    label: 'Switch to Sessions',             run: () => setPage('sessions'),    shortcut: 'Alt 3' },
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
+  { icon: ICONS.workflows,   label: 'Switch to Source',               run: () => setPage('source') },
+  { icon: ICONS.autopilot,   label: 'Switch to Schedule',             run: () => setPage('schedule') },
+  { icon: ICONS.workflows,   label: 'Switch to Artifacts',            run: () => setPage('artifacts') },
+  { icon: ICONS.github,      label: 'Switch to GitHub',               run: () => setPage('github') },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
   { icon: ICONS.plugins,     label: 'Switch to Plugins',              run: () => setPage('plugins') },
   { icon: ICONS.preferences, label: 'Switch to Preferences',          run: () => setPage('prefs'),       shortcut: 'Alt 6' },
@@ -14177,7 +14633,9 @@ function markTopbarAgentsSeen() {
 function paintTopbarAgents(res) {
   const el = $('#topbar-agents');
   if (!el) return;
-  const agents = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
+  const listed = res && res.ok !== false && res.supported !== false && Array.isArray(res.agents) ? res.agents : [];
+  // A run is where agents came from, not one of them, so the pill never counts it.
+  const agents = listed.filter((a) => a && !a.holder);
   const live = agents.filter((a) => a && a.running);
   const blocked = live.filter((a) => a.state === 'blocked').length;
   topbarAgentsLive = live.length > 0;
@@ -14379,53 +14837,247 @@ async function openBgAgent(a) {
   } finally { agentOpening = false; }
 }
 
+// ─── Universal search ───────────────────────────────────────────────────────
+// The palette answers one question, and the question is not always a verb.
+// Someone who knows what they want to do types the action; someone who knows
+// what they want to reach types its name. Both are the same keystroke, so both
+// live in one list: actions alone while the field is empty, everything the app
+// holds once a word is in it.
+//
+// Rows for things are built from the same lists the pages read. A page that has
+// never been opened has no list yet, so opening the palette refreshes all of
+// them behind it and repaints when they land. Nothing here waits on IPC: the
+// list always draws from what is in memory at that moment.
+
+// Sections in their tie-break order, and the cap each one takes. Capping per
+// section is what stops one crowded surface from burying the other six.
+const PALETTE_SECTION_ORDER = ['Sessions', 'Workflows', 'Projects', 'Agents', 'Prompts', 'Skills', 'Actions'];
+const PALETTE_SECTION_MAX = 5;
+// How much of a description a one-line row can carry before it crowds the name.
+const PALETTE_SUB_MAX = 88;
+
+// The palette's own copy of every searchable list, kept apart from the page
+// caches so refreshing here can never repaint a page underneath.
+let paletteIndex = { sessions: [], workflows: [], projects: [], agents: [], prompts: [], skills: [] };
+// The rows currently on screen. Clicks, arrows and Enter all index this, so the
+// row that runs is always the row that was highlighted.
+let paletteMatchCache = [];
+// Rises on every open and close; a refresh whose epoch has moved on stays quiet.
+let paletteEpoch = 0;
+
+// Whatever the pages already hold, taken as-is so the first paint is instant.
+function paletteSeedIndex() {
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  paletteIndex = {
+    sessions: arr(sx && sx.cache),
+    workflows: arr(workflowsCache),
+    projects: arr(projectsCache),
+    agents: arr(profilesCache),
+    prompts: arr(promptsCache),
+    skills: arr(skillsCache),
+  };
+}
+
+// Refreshes every list. Each source settles on its own, so one that cannot
+// answer leaves its previous rows standing rather than emptying its section.
+async function palettePrimeIndex() {
+  const api = window.husk || {};
+  const take = (promise, onOk) => Promise.resolve(promise).then(onOk, () => {});
+  await Promise.all([
+    take(sessionsFetch({ maxAgeMs: 10000 }), (r) => { if (Array.isArray(r && r.sessions)) paletteIndex.sessions = r.sessions; }),
+    take(api.workflows && api.workflows.list(), (r) => { if (Array.isArray(r)) paletteIndex.workflows = r; }),
+    take(api.projects && api.projects.list(), (r) => { if (r && r.ok) paletteIndex.projects = r.projects || []; }),
+    take(api.profiles && api.profiles.list(), (r) => { if (Array.isArray(r)) paletteIndex.agents = r; }),
+    take(api.prompts && api.prompts.list(), (r) => { if (r && r.ok) paletteIndex.prompts = r.prompts || []; }),
+    // Husk's own prompts have a page of their own, exactly as the Skills page
+    // has it, so they are not offered twice under two nouns.
+    take(api.skills && api.skills.list(), (r) => { if (r && r.ok) paletteIndex.skills = (r.skills || []).filter((sk) => sk.source !== 'husk'); }),
+  ]);
+}
+
+// The action list, minus the entries this agent or this machine cannot offer.
+// One function so the list that paints and the list that runs cannot diverge.
+function paletteActionRows() {
+  return PALETTE_ACTIONS
+    .filter((a) => !a.claudeOnly || agentKindCache === 'claude')
+    .filter((a) => typeof a.show !== 'function' || a.show())
+    .map((a) => ({ ...a, section: 'Actions', sub: '', subShown: '' }));
+}
+
+// The last segment of a path, which is what a folder is remembered by.
+function paletteBasename(p) {
+  const s = String(p || '').replace(/[/\\]+$/, '');
+  return s.split(/[/\\]/).pop() || s;
+}
+
+// One row per thing the palette can reach. `sub` is the line under the label
+// and is searched with it: a session is more often remembered by its folder
+// than by its title.
+function paletteThingRows() {
+  const rows = [];
+  // A skill or prompt description can run to a paragraph, and a row is one
+  // line. The full text is what the ranker reads; this is what the row shows.
+  // A sub that only repeats the name says nothing, so it is dropped.
+  const push = (section, icon, label, sub, run) => {
+    const name = String(label == null ? '' : label).trim();
+    if (!name) return;
+    const full = String(sub || '').replace(/\s+/g, ' ').trim();
+    const shown = full === name ? '' : clampWords(full, PALETTE_SUB_MAX);
+    rows.push({ section, icon, label: name, sub: full, subShown: shown, run });
+  };
+
+  const names = (cfg && cfg.sessionNames) || {};
+  for (const s of paletteIndex.sessions) {
+    push('Sessions', ICONS.sessions, names[s.id] || s.title, paletteBasename(s.cwd), async () => {
+      setPage('sessions');
+      await renderSessions();
+      // A filter left on the roster would hide the row this just picked, so the
+      // query is cleared before the selection lands on it.
+      sxSetQuery('');
+      sxSelect(s.id, { peek: true, open: true });
+    });
+  }
+
+  for (const w of paletteIndex.workflows) {
+    const steps = ((w.graph && w.graph.nodes) || []).length;
+    const sub = w.description || (steps ? `${steps} step${steps === 1 ? '' : 's'}` : '');
+    push('Workflows', ICONS.workflows, w.name, sub, async () => {
+      setPage('workflows');
+      await renderWorkflows();
+      // A run in flight owns that page; opening the builder over it would take
+      // the user off the thing they came back to watch.
+      if (!activeRunId) openWorkflowBuilder(w.id);
+    });
+  }
+
+  for (const p of paletteIndex.projects) {
+    // The whole path, not its last segment: a project is usually named after
+    // its folder, so the segment would only repeat the name back.
+    push('Projects', ICONS.projects, p.name, wsShortPath(p.path), async () => {
+      setPage('projects');
+      await renderProjects();
+      openWorkspaceView(p.id);
+    });
+  }
+
+  for (const a of paletteIndex.agents) {
+    push('Agents', ICONS.agents, a.name, a.description, async () => {
+      setPage('agents');
+      await renderAgents();
+      openAgentModal(a.id);
+    });
+  }
+
+  for (const p of paletteIndex.prompts) {
+    push('Prompts', ICONS.prompts, p.name, p.description, async () => {
+      setPage('prompts');
+      const search = $('#prompts-search');
+      if (search) search.value = '';
+      selectedPromptMd = p.mdPath;
+      await renderPrompts();
+    });
+  }
+
+  for (const sk of paletteIndex.skills) {
+    push('Skills', ICONS.skills, sk.name, sk.description, async () => {
+      setPage('skills');
+      await renderSkills();
+      // Keys are lower-case because the page reaches this through a dataset,
+      // and this call has to look identical to that one.
+      openSkillDetail({ dirname: sk.dirName || sk.id, mdpath: sk.mdPath, path: sk.path, name: sk.name });
+    });
+  }
+
+  return rows;
+}
+
+// Every row that answers a query, in the order the ranker put them. The ranker
+// is given the two searchable strings and hands back positions, so the rows
+// themselves, closures and all, never leave this file.
+function paletteMatches(query) {
+  const q = String(query || '').trim();
+  // With nothing typed the palette is the command list it has always been.
+  if (!q) return paletteActionRows();
+
+  const rows = [...paletteThingRows(), ...paletteActionRows()];
+  const ranker = (window.husk && window.husk.paletteSearch) || null;
+  if (!ranker || typeof ranker.rank !== 'function') {
+    // Older preload: plain substring matching still finds the row, unranked.
+    const lower = q.toLowerCase();
+    return rows.filter((r) => `${r.label} ${r.sub}`.toLowerCase().includes(lower));
+  }
+  const entries = rows.map((r) => ({ section: r.section, label: r.label, sub: r.sub }));
+  return ranker
+    .rank(q, entries, { sectionOrder: PALETTE_SECTION_ORDER, sectionMax: PALETTE_SECTION_MAX })
+    .map((hit) => rows[hit.index])
+    .filter(Boolean);
+}
+
 function openPalette() {
   if (!$('#agent-switch').hidden) closeAgentSwitch();
   $('#palette').hidden = false;
   $('#palette-input').value = '';
   paletteSel = 0;
+  paletteSeedIndex();
   renderPalette('');
   $('#palette-input').focus();
+  // A repaint lands only while this is still the palette that asked for it, so
+  // a close and a reopen mid-flight cannot paint the older result over the new.
+  const epoch = ++paletteEpoch;
+  palettePrimeIndex().then(() => {
+    if (epoch !== paletteEpoch || $('#palette').hidden) return;
+    renderPalette($('#palette-input').value);
+  });
 }
-function closePalette() { $('#palette').hidden = true; if (term) term.focus(); }
+function closePalette() { paletteEpoch += 1; $('#palette').hidden = true; if (term) term.focus(); }
 function renderPalette(query) {
-  const q = query.toLowerCase().trim();
-  const matches = PALETTE_ACTIONS
-    .filter((a) => !a.claudeOnly || agentKindCache === 'claude')
-    .filter((a) => typeof a.show !== 'function' || a.show())
-    .filter((a) => !q || a.label.toLowerCase().includes(q));
-  // eslint-disable-next-line no-unsanitized/property -- Palette labels are escaped and icons are trusted constants.
-  $('#palette-list').innerHTML = matches.map((a, i) => `
-    <li class="${i === paletteSel ? 'active' : ''}" data-idx="${i}">
-      <span class="pi-icon">${a.icon}</span>
-      <span>${escapeHtml(a.label)}</span>
-      ${a.shortcut ? `<span class="pi-shortcut">${a.shortcut}</span>` : ''}
-    </li>
-  `).join('');
-  $('#palette-list').querySelectorAll('li').forEach((li, i) =>
-    li.addEventListener('click', () => { paletteSel = i; runPaletteAction(matches); })
-  );
+  const list = $('#palette-list');
+  if (!list) return;
+  const matches = paletteMatches(query);
+  paletteMatchCache = matches;
+  // A refresh can shorten the list under a selection that had arrowed past the
+  // new end, so the cursor is pulled back onto a row that exists.
+  if (paletteSel >= matches.length) paletteSel = Math.max(0, matches.length - 1);
+
+  let section = '';
+  const html = matches.map((row, i) => {
+    const head = row.section === section ? '' : `<li class="palette-section" aria-hidden="true">${escapeHtml(row.section)}</li>`;
+    section = row.section;
+    return `${head}
+    <li class="palette-row${i === paletteSel ? ' active' : ''}" data-idx="${i}">
+      <span class="pi-icon">${row.icon}</span>
+      <span class="pi-label">${escapeHtml(row.label)}</span>
+      ${row.subShown ? `<span class="pi-sub">${escapeHtml(row.subShown)}</span>` : ''}
+      ${row.shortcut ? `<span class="pi-shortcut">${escapeHtml(row.shortcut)}</span>` : ''}
+    </li>`;
+  }).join('');
+  // eslint-disable-next-line no-unsanitized/property -- Labels go through escapeHtml above and icons are trusted constants.
+  list.innerHTML = html || '<li class="palette-empty" aria-hidden="true">No matches</li>';
+  list.querySelectorAll('li.palette-row').forEach((li) => {
+    li.addEventListener('click', () => { paletteSel = Number(li.dataset.idx); runPaletteAction(); });
+  });
   // Keep the highlighted row in view as the user arrows past the visible area.
-  const active = $('#palette-list li.active');
+  const active = list.querySelector('li.palette-row.active');
   if (active) active.scrollIntoView({ block: 'nearest' });
 }
-function runPaletteAction(matches) {
-  const a = matches[paletteSel];
+function runPaletteAction() {
+  const row = paletteMatchCache[paletteSel];
   closePalette();
-  if (a) try { a.run(); } catch (err) { toast(err.message, 'error'); }
+  if (!row) return;
+  // A row that opens a page and then reaches into it finishes a turn later, so
+  // a rejection there is reported the same way a throw here is.
+  const fail = (err) => toast((err && err.message) || String(err), 'error');
+  try { Promise.resolve(row.run()).catch(fail); } catch (err) { fail(err); }
 }
+if (typeof window !== 'undefined') window.openConfirmDialog = openConfirmDialog;
+
 $('#palette-input').addEventListener('input', (e) => { paletteSel = 0; renderPalette(e.target.value); });
 $('#palette-input').addEventListener('keydown', (e) => {
-  const visible = $$('#palette-list li');
+  const count = paletteMatchCache.length;
   if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
-  else if (e.key === 'ArrowDown') { e.preventDefault(); paletteSel = Math.min(visible.length - 1, paletteSel + 1); renderPalette($('#palette-input').value); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); paletteSel = Math.min(count - 1, paletteSel + 1); renderPalette($('#palette-input').value); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); paletteSel = Math.max(0, paletteSel - 1); renderPalette($('#palette-input').value); }
-  else if (e.key === 'Enter') {
-    e.preventDefault();
-    const q = $('#palette-input').value;
-    const matches = PALETTE_ACTIONS.filter((a) => !q || a.label.toLowerCase().includes(q.toLowerCase().trim()));
-    runPaletteAction(matches);
-  }
+  else if (e.key === 'Enter') { e.preventDefault(); runPaletteAction(); }
 });
 $('#palette').addEventListener('click', (e) => { if (e.target.id === 'palette') closePalette(); });
 
@@ -14481,12 +15133,13 @@ const agentMap = {
   // Graph view: the camera, the ids already drawn (so only genuinely new agents
   // animate in), and the live element maps a repaint reconciles against.
   chats: [],
-  mode: 'canvas', cam: { x: 0, y: 0, k: 1 }, known: new Set(), fitted: false,
-  nodeEls: new Map(), edgeEls: new Map(), drag: null, layout: [],
+  mode: 'canvas', topo: 'radial', runs: [], cam: { x: 0, y: 0, k: 1 }, known: new Set(), fitted: false,
+  nodeEls: new Map(), edgeEls: new Map(), drag: null, layout: [], systems: [],
 };
 
 const AM_POLL_MS = 2000;
 const AM_VIEW_KEY = 'husk.agentView';
+const AM_TOPO_KEY = 'husk.agentTopo';
 
 // The four conditions a reader acts on. A state the CLI does not report as
 // live reads as finished, never as running.
@@ -14599,13 +15252,14 @@ function amPaintCounts() {
     else if (agentMap.error) sub.textContent = 'Could not reach the agent list';
     else if (!agentMap.rows.length) sub.textContent = 'Nothing running on this machine';
     else {
-      const bits = [];
-      if (by.running) bits.push(`<span class="am-sub-live">${by.running} running</span>`);
-      if (by.blocked) bits.push(`<span class="am-sub-needs">${by.blocked} need${by.blocked === 1 ? 's' : ''} you</span>`);
-      if (by.failed) bits.push(`<span class="am-sub-failed">${by.failed} failed</span>`);
-      bits.push(`${by.all} total`);
+      // The title raises the highest-priority fleet condition so the center
+      // has a readable heartbeat even before the eye reaches the tabs.
       // eslint-disable-next-line no-unsanitized/property -- Numbers and literals only.
-      sub.innerHTML = bits.join(' <span aria-hidden="true">·</span> ');
+      sub.innerHTML = by.failed
+        ? `<span class="am-sub-failed">${by.failed} failed</span>`
+        : (by.blocked
+          ? `<span class="am-sub-needs">${by.blocked} needs you</span><span aria-hidden="true">·</span><span>${by.running} running</span>`
+          : (by.live ? `<span class="am-sub-live">${by.live} live</span>` : ''));
     }
   }
 }
@@ -14707,7 +15361,7 @@ function amPaintList() {
       const proj = showProj && (a.cwd || '') !== domProj && amProjectName(a.cwd)
         ? `<span class="am-row-proj">${esc(amProjectName(a.cwd))}</span>` : '';
       html += `
-    <li class="am-row is-${st}${sub ? '' : ' is-compact'}${agentMap.selected === a.id ? ' is-selected' : ''}" data-am-id="${esc(a.id)}" role="option" aria-selected="${agentMap.selected === a.id}">
+    <li class="am-row is-${st}${a.kind === 'subagent' ? ' is-subagent' : ''}${sub ? '' : ' is-compact'}${agentMap.selected === a.id ? ' is-selected' : ''}" data-am-id="${esc(a.id)}" role="option" aria-selected="${agentMap.selected === a.id}">
       <span class="am-dot" aria-hidden="true"></span>
       <span class="am-row-name">${esc(a.name || a.id || 'agent')}</span>
       <span class="am-row-sub">${esc(sub)}</span>
@@ -14752,28 +15406,94 @@ function amPaintList() {
 // tracks and the label hangs under it, so the card is small enough that a wide
 // generation still fits across the pane.
 const AM_CELL_W = 132;
-const AM_CELL_H = 146;
+const AM_CELL_H = 134;
 // Where a card's ink ends: glyph, then label, then the line under it. Used as
 // the first guess before a painted card is measured.
-const AM_NODE_BOT = 102;
-const AM_NODE_BOT_LG = 124;
+const AM_NODE_BOT = 124;
+const AM_NODE_BOT_LG = 132;
 const AM_NODE_W = AM_CELL_W;
 const AM_NODE_H = AM_NODE_BOT_LG;
 const AM_ROOT_GAP = 44;
+// The core is taller than an agent card, so the first generation drops clear of
+// it and the corridor between them lands on empty ground rather than on its name.
+const AM_ROOT_DROP = 30;
+const amRowY = (depth) => depth * AM_CELL_H + (depth ? AM_ROOT_DROP : 0);
 // A name trimmed to this fits one line in a card, and a row of them closes up
 // by the line it no longer holds.
 const AM_ONE_LINE_MAX = 16;
 const AM_ONE_LINE_TRIM = 22;
 const AM_FIT_PAD = 44;
+const AM_FIT_INSET = { t: 66, r: 44, b: 64, l: 44 };
 const AM_ZOOM_MIN = 0.35;
 const AM_ZOOM_MAX = 1.8;
-// Framing may magnify a small fleet, which is what makes a bigger window worth
-// asking for, but only so far: past this a handful of agents reads as a poster.
-const AM_FIT_MAX = 1.12;
-const AM_FIT_MAX_TINY = 1.2;
+// Framing never magnifies. A fleet that already fits is shown at 100 percent
+// and a sparse graph sits in space.
+const AM_FIT_MAX = 1;
 // Guards a parent chain that loops: layout walks depth-first, so a cycle would
 // recurse forever without a ceiling on top of the visited set.
 const AM_DEPTH_MAX = 24;
+
+// A name holds its size on screen the way a map holds its place names: the
+// plate takes the camera's scale back out, up to this much. Past it the name
+// shrinks with everything else, which is where the legibility floors below
+// start dropping type rather than drawing it too small to read.
+const AM_TSCALE_MAX = 2.2;
+// Screen sizes the type is drawn at, and the floor a reader can still take a
+// name from. Below the first floor the line under a card goes; below the
+// second the name itself goes and the card is a disc.
+const AM_LABEL_PX = 13;
+const AM_TIME_PX = 10.5;
+const AM_READ_PX = 10.5;
+const AM_TIME_FLOOR_PX = 8;
+const AM_NAME_FLOOR_PX = 9;
+// The count on a card's rim is read off real work, so it holds a size on screen
+// of its own the way a name does. It is a two-glyph pill sitting against a
+// disc, so it takes back less of the camera than a name and leaves the field
+// once it can no longer be read.
+const AM_KIDS_PX = 9.5;
+const AM_KIDS_READ_PX = 8.6;
+const AM_KSCALE_MAX = 1.7;
+
+// Radial geometry. The rim radii are the glyph sizes the stylesheet paints, so
+// a line stops on the edge of the circle it leaves rather than under it; the
+// pair moves together.
+const AM_GLYPH_R = 27;
+const AM_CORE_R = 31;
+const AM_RUN_R = 26;
+
+// Where a line stops on each kind of node: the radius the stylesheet paints it
+// at. The pair moves together.
+function amRimOf(a) {
+  if (!a || !a.holder) return AM_GLYPH_R;
+  return a.holder === 'run' ? AM_RUN_R : AM_CORE_R;
+}
+const AM_RING_0 = 168;
+const AM_RING_STEP = 128;
+// The arc one agent needs on its ring before its neighbours crowd it. A ring
+// that cannot give every agent on it this much is pushed further out.
+const AM_ARC_MIN = 152;
+// How far a ring may be pushed out to clear the generation inside it, and the
+// step it is pushed by. Air is the clear space kept between two card boxes.
+const AM_RING_GROW_MAX = 420;
+const AM_RING_GROW_STEP = 8;
+const AM_RING_AIR = 18;
+const AM_SYS_GAP = 150;
+
+// What a card claims on the field: the disc, then the plate hung under it. A
+// disc never lands inside another card's plate, which is what this box is for.
+// The plate is 112 by 52 at rest and grows as the camera pulls back, so the
+// claim carries the room it takes at the framing the graph is read at.
+const AM_PLATE_W = 118;
+// The source's name runs on one line at the width the stylesheet gives it.
+const AM_PLATE_W_LG = 168;
+const AM_PLATE_GAP = 10;
+const AM_PLATE_H = 62;
+// The room a card claims is the plate at the widest framing a name is still
+// drawn at full size, so a seat cleared once stays clear as the camera moves.
+const AM_TSCALE_BOX = 1.4;
+// How far a card may be moved off its ring to clear a neighbour. Past this the
+// ring stops reading as a generation, so the line under the card goes instead.
+const AM_NUDGE_MAX = 104;
 
 function amSavedView() {
   try {
@@ -14784,6 +15504,16 @@ function amSavedView() {
 
 function amSaveView(mode) {
   try { localStorage.setItem(AM_VIEW_KEY, mode); } catch (_) {}
+}
+
+function amSavedTopo() {
+  try {
+    return localStorage.getItem(AM_TOPO_KEY) === 'tree' ? 'tree' : 'radial';
+  } catch (_) { return 'radial'; }
+}
+
+function amSaveTopo(topo) {
+  try { localStorage.setItem(AM_TOPO_KEY, topo); } catch (_) {}
 }
 
 // True when following an agent's parents leads back to itself. Such a node is
@@ -14831,9 +15561,13 @@ function amProjectNode(cwd) {
   };
 }
 
-function amBuildTree(rows, chats) {
+function amBuildTree(rows, chats, runs) {
   const bySession = new Map();
   for (const a of rows) if (a.sessionId) bySession.set(a.sessionId, a);
+  // A workflow run is where its fleet came from, so it is a parent the same way
+  // a chat is. It carries a key of its own precisely so the agents it fanned out
+  // have something to hang from.
+  for (const r of (runs || [])) if (r && r.sessionId) bySession.set(r.sessionId, r);
   const chatBySession = new Map();
   for (const c of (chats || [])) if (c && c.sessionId) chatBySession.set(c.sessionId, c);
 
@@ -14860,12 +15594,22 @@ function amBuildTree(rows, chats) {
     return node;
   };
 
+  const under = (node) => {
+    const chat = node.parentSessionId ? chatBySession.get(node.parentSessionId) : null;
+    if (chat) { attach(holderFor(amChatNode(chat)).id, node); return; }
+    attach(holderFor(amProjectNode(node.cwd || '')).id, node);
+  };
+
   for (const a of order) {
     const parent = agentParent(a);
     if (parent && !amAncestorLoops(a, agentParent)) { attach(parent.id, a); continue; }
-    const chat = a.parentSessionId ? chatBySession.get(a.parentSessionId) : null;
-    if (chat) { attach(holderFor(amChatNode(chat)).id, a); continue; }
-    attach(holderFor(amProjectNode(a.cwd || '')).id, a);
+    under(a);
+  }
+  // A run is placed last and only if something it started is on screen, so a run
+  // whose fleet the filter hid never draws as an empty node.
+  for (const r of (runs || [])) {
+    if (!kids.has(r.id)) continue;
+    under(r);
   }
   return { roots, kids };
 }
@@ -14873,7 +15617,7 @@ function amBuildTree(rows, chats) {
 // Tidy tree, top down: depth sets y, a running cursor lays leaves out across the
 // x axis, and a parent centres over the span of its children. Generations read
 // as rows, which is how a spawn tree is understood.
-function amLayout(tree, aspect = 1.9) {
+function amLayout(tree, aspect = 1.9, paneW = 0) {
   const out = [];
   const placed = new Set();
   let cursor = 0;
@@ -14882,7 +15626,7 @@ function amLayout(tree, aspect = 1.9) {
     placed.add(a.id);
     const children = depth >= AM_DEPTH_MAX ? [] : (tree.kids.get(a.id) || []);
     const node = {
-      a, depth, parent, x: 0, y: depth * AM_CELL_H,
+      a, depth, parent, x: 0, y: amRowY(depth),
       live: window.husk.agents.isLive(a.state), kids: 0,
     };
     // Pushed before its children, so the array is the tree in reading order:
@@ -14899,7 +15643,30 @@ function amLayout(tree, aspect = 1.9) {
     }
     const leaves = children.filter((c) => !hasKids(c));
     if (leaves.length) {
-      const perRow = Math.max(1, Math.round(Math.sqrt(leaves.length * aspect * (AM_CELL_H / AM_CELL_W))) || 1);
+      // How many cards stand side by side. The pane is wider than it is tall, so
+      // the shape that fills it is the one whose own proportion is closest to
+      // the pane's, and it is found by trying each width rather than guessed
+      // from a square root that leaned tall on purpose. A pair always stands
+      // side by side: a column of two would be drawn as a region, and two cards
+      // are a row, not a fan-out.
+      const perRow = (() => {
+        const roomCols = Math.max(1, Math.floor(((paneW || 900) - AM_FIT_INSET.l - AM_FIT_INSET.r) / AM_CELL_W));
+        const top = Math.min(leaves.length, roomCols);
+        let best = Math.max(leaves.length > 1 ? 2 : 1, 1);
+        let bestOff = Infinity;
+        for (let cols = 1; cols <= top; cols += 1) {
+          const rows = Math.ceil(leaves.length / cols);
+          const off = Math.abs(((cols * AM_CELL_W) / (rows * AM_CELL_H)) - aspect);
+          if (off < bestOff) { bestOff = off; best = cols; }
+        }
+        return Math.max(leaves.length > 1 ? 2 : 1, best);
+      })();
+      // A wrapped set is drawn as a region, and the region is wider than the
+      // cards inside it, so the gutter is opened before the first card as well
+      // as after the last one. What is outside a region always clears it by
+      // more than its own padding.
+      const wrapped = Math.ceil(leaves.length / perRow) > 1;
+      if (wrapped) cursor += AM_BLOCK_PAD + AM_BLOCK_GAP;
       const startX = cursor;
       const grid = [];
       // Names the block has already stripped down to a word or two need one line
@@ -14907,21 +15674,30 @@ function amLayout(tree, aspect = 1.9) {
       const shared = amSharedPhrase(leaves.map((c) => c.name || c.id || ''));
       const oneLine = !!shared && shared.short.every((t) => t.length <= AM_ONE_LINE_MAX);
       const pitch = oneLine ? AM_CELL_H - AM_ONE_LINE_TRIM : AM_CELL_H;
+      // A trailing row that does not fill its width is centred under the rows
+      // above it, so a fan of five is a block rather than a block with a corner
+      // knocked off.
+      const rowsTotal = Math.ceil(leaves.length / perRow);
+      const tail = leaves.length % perRow;
+      const tailShift = tail ? ((perRow - tail) * AM_CELL_W) / 2 : 0;
       leaves.forEach((c, i) => {
         const r = walk(c, depth + 1, node);
         if (!r) return;
-        r.x = startX + (i % perRow) * AM_CELL_W;
-        r.y = (depth + 1) * AM_CELL_H + Math.floor(i / perRow) * pitch;
+        const row = Math.floor(i / perRow);
+        r.x = startX + (i % perRow) * AM_CELL_W + (row === rowsTotal - 1 ? tailShift : 0);
+        r.y = amRowY(depth + 1) + row * pitch;
         if (shared) r.short = shared.short[i];
         r.oneLine = oneLine;
         grid.push(r);
         laid.push(r);
       });
-      cursor = startX + Math.min(leaves.length, perRow) * AM_CELL_W;
+      const cols = Math.min(leaves.length, perRow);
+      cursor = startX + cols * AM_CELL_W;
       // A block deeper than one row has no lane a connector could take to its
       // lower rows without running over the row above. The block is drawn as
       // one region on a single stem instead, and its members carry no line.
-      if (grid.length && Math.ceil(grid.length / perRow) > 1) {
+      if (grid.length && wrapped) {
+        cursor += AM_BLOCK_PAD + AM_BLOCK_GAP;
         let x0 = Infinity;
         let x1 = -Infinity;
         let y0 = Infinity;
@@ -14931,7 +15707,10 @@ function amLayout(tree, aspect = 1.9) {
           x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x);
           y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y);
         }
-        const bot = oneLine ? AM_NODE_BOT - AM_ONE_LINE_TRIM : AM_NODE_BOT;
+        // The last row's own ink, measured, so the region's bottom edge closes
+        // below the line under the card rather than across it.
+        const card = (agentMap.card && agentMap.card.bottom) || AM_NODE_BOT;
+        const bot = oneLine ? card - AM_ONE_LINE_TRIM : card;
         node.block = { x: x0, y: y0, w: (x1 - x0) + AM_CELL_W, h: (y1 - y0) + bot };
         if (shared) {
           node.block.caption = shared.phrase;
@@ -14965,6 +15744,499 @@ function amLayout(tree, aspect = 1.9) {
   return out;
 }
 
+// ── State colour, held to a standard ──
+// The three states come from the theme's own --emerald, --amber and --rose, and
+// a palette is free to put two of those on top of each other: gruvbox's green
+// is a yellow sitting beside its amber. Colour is the primary channel on this
+// field, so the canvas measures what the theme handed it and holds the three
+// apart, keeping the theme's own lightness and chroma and moving only what has
+// to move. An eleventh theme is measured the same way.
+const AM_HUE_GAP = 44;
+// Where a state hue lands when the field's own three cannot separate: cyan for
+// work in flight, amber for work waiting on a person, magenta-red for work that
+// ended badly. Degrees on the OKLCH wheel. Run sits on cyan because the source
+// at the middle of the field runs cyan, so a working agent reads as lit by the
+// thing that spawned it.
+const AM_HUE_HOME = { run: 195, wait: 58, fail: 8 };
+// A state carries enough colour to be a state, and enough separation from the
+// field to be seen on it without a glow. Waiting on a person outranks a run
+// that ended, so it is held to the higher of the two.
+const AM_STATE_C_MIN = 0.132;
+// A state never washes out to paper or sinks to ink: past this band a hue stops
+// being a hue, and two states told apart by colour need colour to tell. The
+// band is as wide as that leaves room for, because the three rungs below have
+// to fit inside it on a lifted ground like nord's and on paper alike.
+const AM_STATE_L_MAX = 0.9;
+const AM_STATE_L_MIN = 0.5;
+// Each state is the whole body of its disc, so the mark knocked out of it reads
+// at whatever the state holds against the field, and a bad end is held to the
+// same floor as work in flight rather than to the floor for a shape.
+const AM_STATE_RATIO = { run: 3, wait: 4.5, fail: 4.5 };
+// The three states also stand on a ladder of value, read outward from the
+// field: work that ended sits nearest it, work in flight above that, and work
+// waiting on a person at the top. The rungs are close together, because the
+// mark inside each disc already separates the states for a reader who cannot
+// tell the hues apart, and a wide ladder costs the top rung its colour.
+const AM_STATE_LADDER = ['run', 'fail', 'wait'];
+const AM_STATE_STEP = 1.18;
+const AM_L_STEP = 0.02;
+
+const amToLin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const amToSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * (c ** (1 / 2.4)) - 0.055);
+
+function amParseRgb(str) {
+  const s = String(str || '').trim();
+  const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].replace(/(.)/g, '$1$1') : hex[1];
+    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  }
+  const m = s.match(/^rgba?\(([^)]+)\)$/i);
+  if (!m) return null;
+  const parts = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+  if (parts.length < 3 || parts.some((v) => !Number.isFinite(v))) return null;
+  return parts.slice(0, 3).map((v) => v / 255);
+}
+
+function amRgbToOklch(rgb) {
+  const [r, g, b] = rgb.map(amToLin);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  const a1 = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  const b1 = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  return { L, C: Math.hypot(a1, b1), h: (Math.atan2(b1, a1) * 180) / Math.PI };
+}
+
+function amOklchToRgb({ L, C, h }) {
+  const rad = (h * Math.PI) / 180;
+  const a = Math.cos(rad) * C;
+  const b = Math.sin(rad) * C;
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].map(amToSrgb);
+}
+
+// Pulls chroma down until the colour is one a screen can actually show, so a
+// hue held apart never lands outside the gamut and clips to something else.
+function amFitGamut(c) {
+  let hi = c.C;
+  let lo = 0;
+  let out = amOklchToRgb(c);
+  const inside = (v) => v.every((x) => x >= -0.002 && x <= 1.002);
+  if (inside(out)) return out.map((x) => Math.min(1, Math.max(0, x)));
+  for (let i = 0; i < 18; i += 1) {
+    const mid = (lo + hi) / 2;
+    out = amOklchToRgb({ ...c, C: mid });
+    if (inside(out)) lo = mid; else hi = mid;
+  }
+  return amOklchToRgb({ ...c, C: lo }).map((x) => Math.min(1, Math.max(0, x)));
+}
+
+const amLum = (rgb) => {
+  const [r, g, b] = rgb.map(amToLin);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const amRatio = (a, b) => {
+  const x = amLum(a);
+  const y = amLum(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+const amHex = (rgb) => `#${rgb.map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255)
+  .toString(16).padStart(2, '0')).join('')}`;
+// Shortest way round the wheel, signed.
+const amHueDelta = (a, b) => ((((b - a) % 360) + 540) % 360) - 180;
+
+// Moves a hue toward where its meaning lives, only as far as the gap it is
+// missing, so a theme that already separates its states keeps them exactly.
+function amPullHue(h, home, amount) {
+  const d = amHueDelta(h, home);
+  return h + Math.sign(d) * Math.min(Math.abs(d), amount);
+}
+
+// Lightens or darkens against the field until the state can be seen on it. The
+// direction is the one that moves away from the ground: a colour already
+// lighter than the field goes lighter, and one already darker goes darker.
+function amHoldContrast(c, ground, ratio) {
+  const up = amLum(amFitGamut(c)) > amLum(ground);
+  const out = { ...c };
+  for (let i = 0; i < 40; i += 1) {
+    if (amRatio(amFitGamut(out), ground) >= ratio) break;
+    out.L = Math.min(0.985, Math.max(0.06, out.L + (up ? 0.018 : -0.018)));
+    if (out.L <= 0.06 || out.L >= 0.985) break;
+  }
+  return out;
+}
+
+function amTuneField() {
+  const pane = $('#am-canvas-pane');
+  if (!pane) return;
+  const key = `${document.body.dataset.theme || ''}:${document.body.dataset.mode || ''}`;
+  if (agentMap.tunedFor === key) return;
+  // The pass measures the field the graph is actually drawn on, not the page
+  // behind it. The canvas keeps its own ground under every theme, so the three
+  // states are separated against that ground and start from the field's own
+  // hues rather than from the theme's text colours.
+  //
+  // The written values land on this same element, so they are cleared first:
+  // otherwise a theme switch would measure the last theme's output and the
+  // hues would walk a little further out on every change.
+  for (const k of ['run', 'wait', 'fail']) pane.style.removeProperty(`--cv-${k}`);
+  const cs = getComputedStyle(pane);
+  const read = (name) => amParseRgb(cs.getPropertyValue(name));
+  const ground = read('--cv-floor');
+  const src = { run: read('--cv-run'), wait: read('--cv-wait'), fail: read('--cv-fail') };
+  if (!ground || !src.run || !src.wait || !src.fail) return;
+  const state = {};
+  for (const k of Object.keys(src)) state[k] = amRgbToOklch(src[k]);
+  // Any pair that reads as one hue is opened up, both of them moving toward
+  // where their own meaning sits rather than one of them being pushed onto a
+  // colour the theme never declared.
+  for (let pass = 0; pass < 6; pass += 1) {
+    let tight = false;
+    const keys = ['run', 'wait', 'fail'];
+    for (let i = 0; i < keys.length; i += 1) {
+      for (let j = i + 1; j < keys.length; j += 1) {
+        const a = state[keys[i]];
+        const b = state[keys[j]];
+        const gap = Math.abs(amHueDelta(a.h, b.h));
+        if (gap >= AM_HUE_GAP) continue;
+        tight = true;
+        const step = (AM_HUE_GAP - gap) / 2 + 1;
+        a.h = amPullHue(a.h, AM_HUE_HOME[keys[i]], step);
+        b.h = amPullHue(b.h, AM_HUE_HOME[keys[j]], step);
+      }
+    }
+    if (!tight) break;
+  }
+  for (const k of Object.keys(state)) {
+    state[k].L = Math.min(AM_STATE_L_MAX, Math.max(AM_STATE_L_MIN, state[k].L));
+    state[k].C = Math.max(state[k].C, AM_STATE_C_MIN);
+    state[k] = amHoldContrast(state[k], ground, AM_STATE_RATIO[k]);
+  }
+  // Away from the field is brighter on a dark ground and darker on paper, and
+  // it is the direction that also holds a state against the ground, so walking
+  // the ladder outward never costs a state the contrast it was just given.
+  const away = amLum(ground) > 0.18 ? -AM_L_STEP : AM_L_STEP;
+  const shift = (c, d, floor) => {
+    const L = Math.min(AM_STATE_L_MAX, Math.max(AM_STATE_L_MIN, c.L + d));
+    if (Math.abs(L - c.L) < 1e-6) return false;
+    if (floor && amRatio(amFitGamut({ ...c, L }), ground) < floor) return false;
+    c.L = L;
+    return true;
+  };
+  const rung = AM_STATE_LADDER.map((k) => state[k]);
+  // Measured against the field rather than against each other, so a rung has to
+  // clear the one under it on the side away from the ground: two states that
+  // happen to sit the same distance out on opposite sides are not apart.
+  const vsField = (c) => amRatio(amFitGamut(c), ground);
+  const apart = (i) => vsField(rung[i]) >= vsField(rung[i - 1]) * AM_STATE_STEP;
+  for (let i = 1; i < rung.length; i += 1) {
+    for (let n = 0; n < 60 && !apart(i); n += 1) if (!shift(rung[i], away, 0)) break;
+  }
+  // Where the band runs out at the top, the rungs under it come down to meet
+  // the gap instead, each of them still held against the field.
+  for (let i = rung.length - 2; i >= 0; i -= 1) {
+    for (let n = 0; n < 60 && !apart(i + 1); n += 1) {
+      if (!shift(rung[i], -away, AM_STATE_RATIO[AM_STATE_LADDER[i]])) break;
+    }
+  }
+  for (const k of Object.keys(state)) {
+    pane.style.setProperty(`--cv-${k}`, amHex(amFitGamut(state[k])));
+  }
+  agentMap.tunedFor = key;
+}
+
+// What a card occupies on the field, in one box: the disc plus the plate hung
+// under it. Placement works on this box rather than on the disc, which is what
+// keeps a neighbour's circle out of a name and out of the line under it.
+function amCardBox(n, room = AM_TSCALE_BOX) {
+  const r = n.rimR || AM_GLYPH_R;
+  const w = Math.max((n.a && n.a.holder ? AM_PLATE_W_LG : AM_PLATE_W) * room, r * 2);
+  return {
+    x: n.cx - w / 2,
+    y: n.cy - r,
+    w,
+    h: (r * 2) + AM_PLATE_GAP + (AM_PLATE_H * room),
+  };
+}
+
+// Rings hand every card a seat, and a wide fan-out can still seat two of them
+// close enough that one disc lands in the other's name. Overlapping cards are
+// slid along the ring they stand on until none of them touch, which clears the
+// pair without taking either of them off its own generation.
+function amSeparateRadial(nodes) {
+  const movable = nodes.filter((n) => !n.a.holder && n.ring);
+  const fixed = nodes.filter((n) => n.a.holder);
+  if (!movable.length) return;
+  const home = movable.map((n) => ({ x: n.cx, y: n.cy }));
+  // A card is moved by turning it about the centre it was thrown from, so it
+  // keeps its distance from that centre exactly and its generation stays a
+  // generation however far it has to travel.
+  const turn = (n, dth) => {
+    const c = Math.cos(dth);
+    const sn = Math.sin(dth);
+    const x = (n.cx * c) - (n.cy * sn);
+    const y = (n.cx * sn) + (n.cy * c);
+    n.cx = x;
+    n.cy = y;
+  };
+  const slide = (n, dx, dy) => {
+    const R = Math.hypot(n.cx, n.cy);
+    if (R < 1) return;
+    turn(n, ((dx * -n.cy) + (dy * n.cx)) / (R * R));
+  };
+  const overlap = (a, b) => {
+    const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    if (ox <= 0 || oy <= 0) return null;
+    // Apart on the axis they overlap least, which is the move that clears the
+    // pair without walking either of them across the field.
+    return ox < oy
+      ? { dx: (a.x < b.x ? -1 : 1) * ox, dy: 0 }
+      : { dx: 0, dy: (a.y < b.y ? -1 : 1) * oy };
+  };
+  const relax = (rounds) => {
+    for (let pass = 0; pass < rounds; pass += 1) {
+      let moved = false;
+      for (let i = 0; i < movable.length; i += 1) {
+        for (let j = i + 1; j < movable.length; j += 1) {
+          const p = overlap(amCardBox(movable[i]), amCardBox(movable[j]));
+          if (!p) continue;
+          moved = true;
+          slide(movable[i], p.dx * 0.52, p.dy * 0.52);
+          slide(movable[j], -p.dx * 0.52, -p.dy * 0.52);
+        }
+      }
+      if (!moved) return;
+    }
+  };
+  // The source holds the centre and does not move, so its own card is a wall
+  // the first generation is cleared against rather than a seat in the crowd.
+  const clearFixed = () => {
+    for (const n of movable) {
+      for (const f of fixed) {
+        const p = overlap(amCardBox(n), amCardBox(f));
+        if (p) slide(n, p.dx, p.dy);
+      }
+    }
+  };
+  // Clearing is quadratic in the size of the fleet, so a big one is given
+  // fewer passes: the seats it starts from are already further apart.
+  const rounds = Math.max(24, Math.round(6000 / movable.length));
+  clearFixed();
+  relax(rounds);
+  clearFixed();
+  // A card that had to travel is walked back toward its seat, so the ring it
+  // belongs to still reads as an order rather than a scatter, and the pairs
+  // that reopens are cleared again from there.
+  for (let i = 0; i < movable.length; i += 1) {
+    const n = movable[i];
+    const R = Math.hypot(n.cx, n.cy);
+    if (R < 1) continue;
+    const was = Math.atan2(home[i].y, home[i].x);
+    const now = Math.atan2(n.cy, n.cx);
+    const d = ((((now - was) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const cap = AM_NUDGE_MAX / R;
+    if (Math.abs(d) > cap) turn(n, Math.sign(d) * (cap - Math.abs(d)));
+  }
+  relax(Math.min(60, rounds));
+  // Where a fleet is dense enough that a seat cannot be cleared, the card keeps
+  // its name and gives up the line under it, which hover and the rail both
+  // still carry.
+  for (const n of movable) n.hideTime = false;
+  for (let i = 0; i < movable.length; i += 1) {
+    for (let j = i + 1; j < movable.length; j += 1) {
+      // Measured against the plate at rest: the room reserved above it is
+      // headroom for the camera, and a card only gives up its line when the
+      // text itself would land on a neighbour.
+      if (!overlap(amCardBox(movable[i], 1), amCardBox(movable[j], 1))) continue;
+      // The plate hangs under the disc, so the card reaching into its
+      // neighbour is the higher of the two.
+      const upper = movable[i].cy < movable[j].cy ? movable[i] : movable[j];
+      upper.hideTime = true;
+    }
+  }
+}
+
+// Radial: the thing that started the work sits at the centre and everything it
+// started is thrown outward, one ring per generation. A fleet is then read the
+// way it actually behaves, as a source and its reach, and a wide fan-out gets
+// the whole circumference to spread across instead of one page-wide row.
+function amLayoutRadial(tree, box) {
+  const out = [];
+  const placed = new Set();
+  const systems = [];
+  const pending = [];
+
+  // What a subtree needs on its ring: a leaf takes one slot, a branch takes the
+  // sum of its own. Angle is handed out in that proportion, so a fan gets the
+  // arc it needs and a chain stays thin.
+  const weight = (a, depth) => {
+    const kids = depth >= AM_DEPTH_MAX ? [] : (tree.kids.get(a.id) || []);
+    if (!kids.length) return 1;
+    let w = 0;
+    for (const c of kids) w += weight(c, depth + 1);
+    return w;
+  };
+
+  for (const root of tree.roots) {
+    const nodes = [];
+    const perDepth = [];
+    const walk = (a, depth, parent, a0, a1) => {
+      if (placed.has(a.id)) return null;
+      placed.add(a.id);
+      const n = {
+        a, depth, parent, x: 0, y: 0, cx: 0, cy: 0, ox: 0, oy: 0,
+        ang: depth ? (a0 + a1) / 2 : 0,
+        rimR: amRimOf(a),
+        live: window.husk.agents.isLive(a.state), kids: 0,
+      };
+      // Pushed before its children, so the array is the tree in reading order
+      // and the keyboard walk still steps parent, then what it started.
+      nodes.push(n);
+      out.push(n);
+      perDepth[depth] = (perDepth[depth] || 0) + 1;
+      const kids = depth >= AM_DEPTH_MAX ? [] : (tree.kids.get(a.id) || []);
+      const laid = [];
+      if (kids.length) {
+        let total = 0;
+        for (const c of kids) total += weight(c, depth + 1);
+        let cur = a0;
+        for (const c of kids) {
+          const span = ((a1 - a0) * weight(c, depth + 1)) / (total || 1);
+          const r = walk(c, depth + 1, n, cur, cur + span);
+          cur += span;
+          if (r) laid.push(r);
+        }
+      }
+      for (const c of laid) n.kids += 1 + c.kids;
+      // An edge earns its current from the work below it, not from its own node.
+      if (laid.some((c) => c.live)) n.live = true;
+      return n;
+    };
+    // A whole turn, opened at the top. Each child takes the middle of its arc,
+    // so one child hangs under the source, two stand either side of it, and a
+    // fan spreads evenly around it.
+    if (!walk(root, 0, null, -Math.PI / 2, Math.PI * 1.5)) continue;
+
+    // How much room the frame actually has, once the floating chrome and the
+    // half card that hangs off each edge are taken out of it. The ellipse then
+    // matches the shape of the room rather than a fixed proportion.
+    const INS = AM_FIT_INSET;
+    const roomX = Math.max(120, ((box && box.width ? box.width : 900) - INS.l - INS.r) / 2 - AM_PLATE_W / 2);
+    const roomY = Math.max(90, ((box && box.height ? box.height : 620) - INS.t - INS.b - (AM_NODE_H + AM_GLYPH_R)) / 2);
+    const ay = Math.max(0.62, Math.min(1, roomY / roomX));
+    pending.push({ nodes, perDepth, ay, roomX, roomY });
+  }
+
+  // Rings are shared by every system on the field. A generation means the same
+  // distance from whatever started it, so two sources standing side by side put
+  // their first generation on one circle rather than on two different ones.
+  const depths = Math.max(1, ...pending.map((q) => q.perDepth.length));
+  const ax = 1;
+  const ay = pending.length ? Math.min(...pending.map((q) => q.ay)) : 1;
+  const roomX = pending.length ? Math.min(...pending.map((q) => q.roomX)) : 400;
+  const roomY = pending.length ? Math.min(...pending.map((q) => q.roomY)) : 260;
+  const outer = Math.max(1, depths - 1);
+  const rFill = Math.min(roomX / ax, roomY / ay) / Math.max(1, pending.length);
+  const rings = [0];
+  for (let d = 1; d < depths; d += 1) {
+    // Spacing is measured on the short axis of the ellipse, which is where two
+    // neighbours sit closest together, and on the busiest system at that depth.
+    const need = (Math.max(1, ...pending.map((q) => q.perDepth[d] || 1)) * AM_ARC_MIN) / (Math.PI * 2 * ay);
+    // A ring grows to fill the frame, but only up to what the generation on it
+    // needs with room to spare. Past that the frame is simply bigger than the
+    // fleet, and six agents on a six hundred pixel circle are six specks.
+    const comfort = Math.max(AM_RING_0 + (d - 1) * AM_RING_STEP, need * 1.5);
+    rings[d] = Math.max(rings[d - 1] + AM_RING_STEP, Math.min((rFill * d) / outer, comfort), need);
+  }
+  // A ring is measured against the generation inside it as well as its own
+  // neighbours: ring d grows until no card on it lands in a card on ring d-1,
+  // in any system sharing the rings. Growth is capped so a fleet the frame
+  // cannot hold is handed to the separator rather than pushed off the field.
+  const seat = (n) => {
+    const r = rings[n.depth] || 0;
+    n.ring = r;
+    n.cx = Math.cos(n.ang) * r * ax;
+    n.cy = Math.sin(n.ang) * r * ay;
+  };
+  const clash = (p, c) => {
+    const a = amCardBox(p, 1);
+    const b = amCardBox(c, 1);
+    return a.x < b.x + b.w + AM_RING_AIR && b.x < a.x + a.w + AM_RING_AIR
+      && a.y < b.y + b.h + AM_RING_AIR && b.y < a.y + a.h + AM_RING_AIR;
+  };
+  for (let d = 1; d < rings.length; d += 1) {
+    for (let grown = 0; grown < AM_RING_GROW_MAX; grown += AM_RING_GROW_STEP) {
+      let hit = false;
+      for (const q of pending) {
+        const inner = q.nodes.filter((n) => n.depth === d - 1);
+        const outer = q.nodes.filter((n) => n.depth === d);
+        for (const n of inner) seat(n);
+        for (const n of outer) seat(n);
+        hit = outer.some((c) => inner.some((p) => clash(p, c)));
+        if (hit) break;
+      }
+      if (!hit) break;
+      for (let e = d; e < rings.length; e += 1) rings[e] += AM_RING_GROW_STEP;
+    }
+  }
+  for (const q of pending) {
+    for (const n of q.nodes) seat(n);
+    amSeparateRadial(q.nodes);
+    const radius = rings[Math.max(0, q.perDepth.length - 1)] || 0;
+    systems.push({ nodes: q.nodes, rings, perDepth: q.perDepth, ax, ay, radius, ox: 0, oy: 0 });
+  }
+
+  // Each root holds its own system, so they sit side by side on one axis with
+  // clear space between them rather than sharing a centre.
+  let tallest = 0;
+  for (const sys of systems) tallest = Math.max(tallest, sys.radius * sys.ay);
+  let cursor = 0;
+  for (const sys of systems) {
+    const halfW = sys.radius * sys.ax;
+    sys.ox = cursor + halfW;
+    sys.oy = tallest;
+    cursor += halfW * 2 + AM_SYS_GAP;
+  }
+
+  // Framing reads the layout as a box that starts at the origin, so the whole
+  // field is shifted until nothing sits at a negative coordinate.
+  let minX = Infinity;
+  let minY = Infinity;
+  for (const sys of systems) {
+    for (const n of sys.nodes) {
+      n.ox = sys.ox;
+      n.oy = sys.oy;
+      n.cx += sys.ox;
+      n.cy += sys.oy;
+      minX = Math.min(minX, n.cx - AM_CELL_W / 2);
+      minY = Math.min(minY, n.cy - n.rimR);
+    }
+  }
+  if (!out.length) return out;
+  const dx = -minX;
+  const dy = -minY;
+  for (const sys of systems) { sys.ox += dx; sys.oy += dy; }
+  for (const n of out) {
+    n.ox += dx;
+    n.oy += dy;
+    n.cx += dx;
+    n.cy += dy;
+    n.x = n.cx - AM_CELL_W / 2;
+    n.y = n.cy - n.rimR;
+  }
+  agentMap.systems = systems;
+  return out;
+}
+
 // From the parent's rim to the top of the child's glyph. Sideways moves happen
 // only on the corridor between two generations, which holds no card.
 const AM_EDGE_R = 14;
@@ -14972,17 +16244,31 @@ const AM_EDGE_R = 14;
 const AM_EDGE_GAP = 7;
 
 // Card height follows the type inside it, which moves with the font scale, so
-// it is measured from a painted card rather than assumed.
+// it is measured from a painted card rather than assumed. A lane or a region
+// reserves the room the plate takes at the widest framing a name is drawn at
+// full size, so a stroke and a border both land clear of the text.
 function amCardMetrics() {
-  const m = { glyph: 44, glyphLg: 54, bottom: AM_NODE_BOT, bottomLg: AM_NODE_BOT_LG };
+  const m = {
+    glyph: 48, glyphLg: 68, glyphRun: 52,
+    bottom: AM_NODE_BOT, bottomLg: AM_NODE_BOT_LG, bottomRun: AM_NODE_BOT,
+  };
   for (const [, el] of agentMap.nodeEls) {
     const g = el.querySelector('.am-node-glyph');
     const t = el.querySelector('.am-node-time');
     const l = el.querySelector('.am-node-label');
+    const plate = el.querySelector('.am-node-plate');
     if (!g) continue;
     const last = t && t.offsetHeight ? t : l;
-    const bottom = last ? last.offsetTop + last.offsetHeight : g.offsetTop + g.offsetHeight;
-    if (el.classList.contains('is-holder')) {
+    const flat = last ? last.offsetTop + last.offsetHeight : g.offsetTop + g.offsetHeight;
+    const bottom = plate && plate.offsetHeight
+      ? plate.offsetTop + plate.offsetHeight * AM_TSCALE_BOX
+      : flat;
+    if (el.classList.contains('is-run')) {
+      // A run is scenery like a core is, and a different size, so it is measured
+      // on its own rather than pulling the core's height down onto it.
+      m.glyphRun = Math.max(m.glyphRun, g.offsetTop + g.offsetHeight);
+      m.bottomRun = Math.max(m.bottomRun, bottom);
+    } else if (el.classList.contains('is-holder')) {
       m.glyphLg = Math.max(m.glyphLg, g.offsetTop + g.offsetHeight);
       m.bottomLg = Math.max(m.bottomLg, bottom);
     } else {
@@ -14993,12 +16279,30 @@ function amCardMetrics() {
   return m;
 }
 // Breathing room between a block's region and the cards inside it, plus the
-// band across the top where the words its members share are written.
-const AM_BLOCK_PAD = 14;
+// band across the top where the words its members share are written. The
+// gutter between two regions is wider than either one's padding, so a region
+// reads as belonging to what is inside it.
+// A block leans taller than the pane it sits in, because the width of the tree
+// is already spent on sibling groups standing side by side and the height is
+// not. Cards then stay wide enough to carry their names.
+const AM_BLOCK_LEAN = 0.5;
+const AM_BLOCK_PAD = 20;
+// The band above the first row, where the bus that feeds it hangs.
+const AM_BLOCK_TOP = 34;
 const AM_BLOCK_CAP = 24;
+const AM_BLOCK_GAP = 32;
+// Parentage inside a region is drawn the same way it is drawn outside one: the
+// branch arrives in a lane of its own above the region's border, drops onto a
+// spine held clear of the first card, and each row hangs off that spine on a
+// bus with a stem into every disc. The border is a dashed boundary and every
+// line carrying parentage is solid, and they sit a clear band apart, so the two
+// facts read as two marks rather than as one doubled edge.
+const AM_BLOCK_LANE = 14;
+const AM_BLOCK_SPINE = 26;
+const AM_BLOCK_STEM = 12;
 
 function amBlockRect(n) {
-  const top = AM_BLOCK_PAD + (n.block.caption ? AM_BLOCK_CAP : 0);
+  const top = AM_BLOCK_TOP + (n.block.caption ? AM_BLOCK_CAP : 0);
   return {
     x: n.block.x - AM_BLOCK_PAD,
     y: n.block.y - top,
@@ -15007,23 +16311,124 @@ function amBlockRect(n) {
   };
 }
 
+// Where a line leaves a circle: the point on the rim facing wherever the line
+// is headed, plus a hair of clear air so the stroke never touches the glyph.
+function amHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function amRimPoint(n, tx, ty) {
+  const dx = tx - n.cx;
+  const dy = ty - n.cy;
+  const d = Math.hypot(dx, dy) || 1;
+  // A stroke has width, and half of it falls outside the point it is drawn to,
+  // so a line told to stop exactly on the rim finishes under the ring.
+  const r = (n.rimR || AM_GLYPH_R) + (n.a && n.a.holder ? 4 : 3);
+  return { x: n.cx + (dx / d) * r, y: n.cy + (dy / d) * r };
+}
+
+// The plate under a disc, in layout space, at the size it is drawn at now.
+function amPlateBox(n) {
+  const el = agentMap.nodeEls.get(n.a.id);
+  const plate = el && el.querySelector('.am-node-plate');
+  if (!plate || !plate.offsetHeight) return null;
+  const ts = agentMap.tscale || 1;
+  const w = (n.a.holder ? AM_PLATE_W_LG : AM_PLATE_W) * ts;
+  const top = n.y + plate.offsetTop;
+  return { x: n.cx - w / 2, y: top, w, h: plate.offsetHeight * ts };
+}
+
+// Where a straight run from s to e passes through a box, as a share of the
+// run: null when it misses.
+function amCut(s, e, box) {
+  const dx = e.x - s.x;
+  const dy = e.y - s.y;
+  const span = (lo, hi, o, d) => {
+    if (Math.abs(d) < 1e-6) return o >= lo && o <= hi ? [-Infinity, Infinity] : null;
+    const a = (lo - o) / d;
+    const b = (hi - o) / d;
+    return [Math.min(a, b), Math.max(a, b)];
+  };
+  const tx = span(box.x, box.x + box.w, s.x, dx);
+  const ty = span(box.y, box.y + box.h, s.y, dy);
+  if (!tx || !ty) return null;
+  const t0 = Math.max(tx[0], ty[0], 0);
+  const t1 = Math.min(tx[1], ty[1], 1);
+  return t1 > t0 ? [t0, t1] : null;
+}
+
+// A straight run between two rims, broken wherever it would cross the name
+// under either disc: the line meets both circles and never crosses text.
+function amStraightPath(s, e, nodes) {
+  const cuts = [];
+  for (const n of nodes) {
+    const box = amPlateBox(n);
+    const cut = box && amCut(s, e, { x: box.x, y: box.y - 2, w: box.w, h: box.h + 4 });
+    if (cut) cuts.push(cut);
+  }
+  cuts.sort((a, b) => a[0] - b[0]);
+  const at = (t) => `${(s.x + (e.x - s.x) * t).toFixed(1)},${(s.y + (e.y - s.y) * t).toFixed(1)}`;
+  let d = `M${at(0)}`;
+  let t = 0;
+  for (const [a, b] of cuts) {
+    if (a > t) d += ` L${at(a)}`;
+    d += ` M${at(b)}`;
+    t = Math.max(t, b);
+  }
+  return `${d} L${at(1)}`;
+}
+
+// A hop between two rings bows toward the core, so a dense generation reads as
+// a sheaf of curves leaving one place rather than a grid of crossing lines.
+function amRadialEdgePath(p, c) {
+  const ox = p.ox;
+  const oy = p.oy;
+  const r1 = Math.hypot(p.cx - ox, p.cy - oy);
+  const r2 = Math.hypot(c.cx - ox, c.cy - oy);
+  const toChild = Math.atan2(c.cy - oy, c.cx - ox);
+  const a1 = r1 < 0.5 ? toChild : Math.atan2(p.cy - oy, p.cx - ox);
+  let a2 = toChild;
+  while (a2 - a1 > Math.PI) a2 -= Math.PI * 2;
+  while (a1 - a2 > Math.PI) a2 += Math.PI * 2;
+  const mid = (a1 + a2) / 2;
+  const rm = r1 < 0.5 ? r2 * 0.5 : ((r1 + r2) / 2) * 0.9;
+  const qx = ox + Math.cos(mid) * rm;
+  const qy = oy + Math.sin(mid) * rm;
+  const s = amRimPoint(p, qx, qy);
+  const e = amRimPoint(c, qx, qy);
+  // A hop that would run through a name under either disc goes straight and
+  // breaks for the name; only a clear hop gets the bow.
+  const crosses = [p, c].some((n) => {
+    const box = amPlateBox(n);
+    return box && amCut(s, e, box);
+  });
+  if (crosses) return amStraightPath(s, e, [p, c]);
+  return `M${s.x.toFixed(1)},${s.y.toFixed(1)} Q${qx.toFixed(1)},${qy.toFixed(1)} ${e.x.toFixed(1)},${e.y.toFixed(1)}`;
+}
+
 function amEdgePath(p, c) {
+  if (agentMap.topo === 'radial') return amRadialEdgePath(p, c);
   const m = agentMap.card || amCardMetrics();
-  const holder = !!p.a.holder;
+  const kind = p.a.holder === 'run' ? 'Run' : (p.a.holder ? 'Lg' : '');
   const x1 = p.x + AM_CELL_W / 2;
   const x2 = c.x + AM_CELL_W / 2;
   const y2 = c.y;
-  // The rim of the circle, so the line reads as leaving the node itself. It
-  // passes behind the card's name plate on its way down.
-  const y1 = p.y + (holder ? m.glyphLg : m.glyph);
+  // The rim of the circle, so the line reads as leaving the node itself. On
+  // its way down it breaks for the name under the disc rather than running
+  // through it.
+  const y1 = p.y + m[`glyph${kind}`];
+  const plate = amPlateBox(p);
+  const gap = plate ? ` L${x1},${(plate.y - 2).toFixed(1)} M${x1},${(plate.y + plate.h + 2).toFixed(1)}` : '';
   // Below the parent's own text, where the row is empty all the way across, so
   // every sideways move happens where no card can be.
-  const lane = p.y + (holder ? m.bottomLg : m.bottom) + AM_EDGE_GAP;
+  const lane = p.y + m[`bottom${kind}`] + AM_EDGE_GAP;
   const corridor = Math.max(y1 + 2, Math.min(lane, y2 - 2));
-  if (Math.abs(x2 - x1) < 0.5) return `M${x1},${y1} L${x2},${y2}`;
+  if (Math.abs(x2 - x1) < 0.5) return `M${x1},${y1}${gap} L${x2},${y2}`;
   const dir = x2 > x1 ? 1 : -1;
   const r = Math.max(2, Math.min(AM_EDGE_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - corridor) / 2));
-  return `M${x1},${y1}`
+  return `M${x1},${y1}${gap}`
     + ` L${x1},${corridor - r}`
     + ` Q${x1},${corridor} ${x1 + dir * r},${corridor}`
     + ` L${x2 - dir * r},${corridor}`
@@ -15042,20 +16447,170 @@ function amPolishSparseLayout(layout) {
   return true;
 }
 
+// Which name a map keeps when two of them want the same place. What the reader
+// is looking at wins, then the source, then the states a person can act on,
+// then the card with the most work under it.
+function amLabelRank(n) {
+  if (agentMap.selected === n.a.id) return 900;
+  // Scenery is what the fleet hangs from, so it is named before anything that
+  // hangs from it: an unnamed source or run leaves the tree unreadable.
+  if (n.a.holder) return 800;
+  const st = amStateOf(n.a);
+  const base = st === 'blocked' ? 600 : st === 'failed' ? 500 : st === 'running' ? 400 : 100;
+  return base + Math.min(99, n.kids || 0);
+}
+
+// Names are drawn at a fixed size on screen, so zooming out closes the gaps
+// between them rather than shrinking them into it. Where two names want the
+// same pixels the lower-ranked one steps aside, which is what keeps every name
+// that is drawn readable at every zoom.
+const amHits = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+function amCullLabels(eff) {
+  const layout = agentMap.layout;
+  if (!layout.length) return;
+  const k = agentMap.cam.k;
+  const m = agentMap.card || {};
+  const w = AM_PLATE_W * eff;
+  const h = AM_PLATE_H * eff;
+  const boxes = [];
+  const discs = [];
+  // Each kind of node is measured at its own size, so a plate is placed under
+  // the disc it belongs to rather than under the tallest disc on the field.
+  const glyphOf = (n) => {
+    if (n.a.holder === 'run') return m.glyphRun || 52;
+    return n.a.holder ? (m.glyphLg || 68) : (m.glyph || 48);
+  };
+  for (const n of layout) {
+    const el = agentMap.nodeEls.get(n.a.id);
+    if (!el) continue;
+    const glyph = glyphOf(n);
+    const mid = (n.x + AM_CELL_W / 2) * k;
+    discs.push({ x: mid - (glyph * k) / 2, y: n.y * k, w: glyph * k, h: glyph * k });
+    boxes.push({
+      el,
+      holder: !!n.a.holder,
+      // The disc this plate belongs to, so a name is never judged to be covering
+      // the very card it names.
+      own: discs.length - 1,
+      x: mid - w / 2,
+      y: (n.y + glyph + AM_PLATE_GAP) * k,
+      w,
+      h,
+      rank: amLabelRank(n),
+    });
+  }
+  boxes.sort((a, b) => b.rank - a.rank);
+  const kept = [];
+  for (const b of boxes) {
+    // A disc is the card itself and always outranks a neighbour's name, so a
+    // plate that would cover one steps aside the same way it does for another
+    // plate that got there first.
+    // The source is never given up. It is the one node whose name says what the
+    // whole field is, so a crowded ring costs an agent its name before it costs
+    // the thing that started them all.
+    const hit = !b.holder
+      && (discs.some((d, i) => i !== b.own && amHits(b, d)) || kept.some((o) => amHits(b, o)));
+    b.el.classList.toggle('is-nameless', hit);
+    if (!hit) kept.push(b);
+  }
+}
+
+// A pan changes where the field is, not how big anything on it is. Everything
+// that depends on scale alone is left alone while the camera is only moving,
+// which is what keeps a drag on the frame instead of behind it.
+// The plate's drawn size moves with the camera, so the point a line leaves a
+// card from moves with it too.
+function amRepathEdges() {
+  for (const n of agentMap.layout || []) {
+    if (!n.parent || n.inBlock) continue;
+    const path = agentMap.edgeEls.get(`${n.parent.a.id}>${n.a.id}`);
+    if (!path) continue;
+    const d = amEdgePath(n.parent, n);
+    path.setAttribute('d', d);
+    const spark = agentMap.flowEls && agentMap.flowEls.get(`${n.parent.a.id}>${n.a.id}`);
+    if (spark) spark.setAttribute('d', d);
+  }
+}
+
 function amApplyCam() {
+  // The readout is one number and a person just asked for it, so it is written
+  // now. Everything else waits for the frame.
+  const zl = $('#am-cv-zoom');
+  if (zl) zl.textContent = `${Math.round(agentMap.cam.k * 100)}%`;
+  if (agentMap.camFrame) return;
+  agentMap.camFrame = requestAnimationFrame(() => {
+    agentMap.camFrame = 0;
+    amPaintCam();
+  });
+}
+
+function amPaintCam() {
   const stage = $('#am-cv-stage');
   const grid = $('#am-cv-grid');
   const { x, y, k } = agentMap.cam;
-  if (stage) stage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+  const scaled = agentMap.lastK !== k;
+  agentMap.lastK = k;
+  if (stage) {
+    stage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${k})`;
+    // A name is drawn at its own size and is never allowed below the size it
+    // can be read at, so the plate takes back exactly as much of the camera's
+    // scale as the floor needs and no more. Taking back less than the whole
+    // scale is what keeps a name inside the room the layout reserved for it.
+    const ts = k > 1 ? 1 / k : Math.min(AM_TSCALE_MAX, Math.max(1, AM_READ_PX / (AM_LABEL_PX * k)));
+    if (scaled) {
+    agentMap.tscale = ts;
+    stage.style.setProperty('--cv-tscale', String(ts));
+    amRepathEdges();
+    // Past the point where the camera outruns the plate, the smallest type on
+    // the card goes first and the name goes last, because type drawn under
+    // these sizes is not type any more.
+    stage.classList.toggle('is-terse', AM_TIME_PX * k * ts < AM_TIME_FLOOR_PX);
+    stage.classList.toggle('is-mute', AM_LABEL_PX * k * ts < AM_NAME_FLOOR_PX);
+    const ks = Math.min(AM_KSCALE_MAX, Math.max(1, AM_KIDS_READ_PX / (AM_KIDS_PX * k)));
+    stage.style.setProperty('--cv-kscale', String(ks));
+    stage.classList.toggle('is-countless', AM_KIDS_PX * k * ks < AM_TIME_FLOOR_PX);
+    amCullLabels(k * ts);
+    }
+  }
   // The grid is painted on the pane rather than the stage, so it scrolls with
   // the camera instead of scaling its own dots into blobs.
   if (grid) {
-    const s = 26 * k;
-    grid.style.backgroundSize = `${s}px ${s}px`;
+    if (scaled) {
+      const s = 26 * k;
+      grid.style.backgroundSize = `${s}px ${s}px`;
+    }
     grid.style.backgroundPosition = `${x}px ${y}px`;
   }
-  const zl = $('#am-cv-zoom');
-  if (zl) zl.textContent = `${Math.round(k * 100)}%`;
+
+}
+
+function amClampCam() {
+  const pane = $('#am-canvas-pane');
+  const nodes = agentMap.layout;
+  if (!pane || !nodes.length) return;
+  const r = { width: pane.clientWidth, height: pane.clientHeight };
+  if (!r.width || !r.height) return;
+  const cardH = Math.max(AM_NODE_H, (agentMap.card || {}).bottom || 0, (agentMap.card || {}).bottomLg || 0);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + AM_NODE_W);
+    maxY = Math.max(maxY, n.y + cardH);
+  }
+  const cam = agentMap.cam;
+  const keep = 0.25;
+  const w = Math.max(1, (maxX - minX) * cam.k);
+  const h = Math.max(1, (maxY - minY) * cam.k);
+  const left = minX * cam.k;
+  const top = minY * cam.k;
+  cam.x = Math.min(r.width - w * keep - left, Math.max(-left - w * (1 - keep) + r.width * 0, cam.x));
+  cam.x = Math.max(r.width * keep - left - w, Math.min(r.width - w * keep - left, cam.x));
+  cam.y = Math.max(r.height * keep - top - h, Math.min(r.height - h * keep - top, cam.y));
 }
 
 function amZoomTo(k, cx, cy) {
@@ -15081,22 +16636,40 @@ function amFit(animate) {
   // read mid-entrance carries that scale into the framing.
   const r = { width: pane.clientWidth, height: pane.clientHeight };
   if (!r.width || !r.height) return;
-  let maxX = 0;
-  let maxY = 0;
+  // Both extremes, not just the far ones: a shape that starts at x = 52 is not
+  // a shape that starts at zero, and centring it as though it did walks the
+  // whole graph off the middle of the pane.
   const cardH = Math.max(AM_NODE_H, (agentMap.card || {}).bottom || 0, (agentMap.card || {}).bottomLg || 0);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
   for (const n of nodes) {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
     maxX = Math.max(maxX, n.x + AM_NODE_W);
     maxY = Math.max(maxY, n.y + cardH);
+    if (n.block) {
+      minX = Math.min(minX, n.block.x - AM_BLOCK_PAD);
+      minY = Math.min(minY, n.block.y - AM_BLOCK_TOP);
+      maxX = Math.max(maxX, n.block.x + n.block.w + AM_BLOCK_PAD);
+      maxY = Math.max(maxY, n.block.y + n.block.h + AM_BLOCK_PAD);
+    }
   }
-  const fitMax = nodes.length <= 2 ? AM_FIT_MAX_TINY : AM_FIT_MAX;
-  const k = Math.min(fitMax, (r.width - AM_FIT_PAD * 2) / maxX, (r.height - AM_FIT_PAD * 2) / maxY);
+  const w = Math.max(1, maxX - minX);
+  const h = Math.max(1, maxY - minY);
+  const INS = AM_FIT_INSET;
+  const fw = r.width - INS.l - INS.r;
+  const fh = r.height - INS.t - INS.b;
+  const k = Math.min(AM_FIT_MAX, fw / w, fh / h);
   const cam = agentMap.cam;
   cam.k = Math.max(AM_ZOOM_MIN, k);
-  cam.x = (r.width - maxX * cam.k) / 2;
-  const spareY = Math.max(0, r.height - maxY * cam.k);
-  cam.y = nodes.length <= 2
-    ? spareY / 2 - Math.min(16, spareY * 0.04)
-    : spareY / 2 - Math.min(30, spareY * 0.12);
+  cam.x = INS.l + (fw - w * cam.k) / 2 - minX * cam.k;
+  // The optical lift is a share of the ink rather than a share of the void, so
+  // a graph in a frame it nearly fills is not pushed off centre by the little
+  // room that is left.
+  const spareY = Math.max(0, fh - h * cam.k);
+  cam.y = INS.t + spareY / 2 - Math.min(h * cam.k * 0.035, spareY / 2) - minY * cam.k;
   const stage = $('#am-cv-stage');
   if (stage) {
     stage.classList.toggle('is-gliding', !!animate);
@@ -15145,8 +16718,11 @@ function amNodeEl(a) {
   el.dataset.amId = a.id;
   // eslint-disable-next-line no-unsanitized/property -- Static shell; every value lands via textContent in amPaintNode.
   el.innerHTML = '<span class="am-node-glyph">'
+    + '<i class="am-node-halo" aria-hidden="true"></i>'
+    + '<i class="am-node-ring" aria-hidden="true"></i>'
+    + '<i class="am-node-lock" aria-hidden="true"></i>'
     + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
-    + '<b class="am-node-kids"></b></span>'
+    + '<b class="am-node-mono"></b></span>'
     + '<span class="am-node-plate">'
     + '<span class="am-node-label"></span>'
     + '<span class="am-node-time"></span></span>';
@@ -15155,13 +16731,18 @@ function amNodeEl(a) {
 
 // The glyph says state without a legend: a check for finished, an exclamation
 // for waiting on a human, a ring for work in flight.
+function amMonogram(name) {
+  const words = String(name || '').trim().split(/[\s._/-]+/).filter(Boolean);
+  if (!words.length) return '?';
+  if (words.length === 1) return words[0].slice(0, 1);
+  return (words[0][0] || '') + (words[1][0] || '');
+}
+
 const AM_MARKS = {
   done: 'M5.2 12.4l4.3 4.25L18.8 7.4',
   blocked: 'M12 6.25v7.25M12 17.8h.01',
-  running: 'M12 5.75a6.25 6.25 0 1 1 0 12.5 6.25 6.25 0 0 1 0-12.5z',
+  running: 'M14.6 6.29a6.25 6.25 0 1 1-4.45 0.13',
   failed: 'M8.5 8.5l7 7M15.5 8.5l-7 7',
-  chat: 'M4.75 6.75a2 2 0 0 1 2-2h10.5a2 2 0 0 1 2 2v6.65a2 2 0 0 1-2 2H10l-4.15 3.45v-3.45h-.1a2 2 0 0 1-1-2z',
-  project: 'M3.75 7.7a2 2 0 0 1 2-2h3.4l2 2h7.1a2 2 0 0 1 2 2v6.6a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2z',
 };
 
 // A fan-out names its agents from one template, so every card in a block ends
@@ -15207,26 +16788,36 @@ function amPaintNode(el, n) {
   el.classList.toggle('is-holder', !!a.holder);
   el.classList.toggle('is-chat', a.holder === 'chat');
   el.classList.toggle('is-project', a.holder === 'project');
+  el.classList.toggle('is-run', a.holder === 'run');
   el.classList.toggle('is-running', st === 'running');
   el.classList.toggle('is-blocked', st === 'blocked');
   el.classList.toggle('is-failed', st === 'failed');
   el.classList.toggle('is-done', st === 'done');
   el.classList.toggle('is-selected', agentMap.selected === a.id);
+  el.classList.toggle('is-onpath', !!(agentMap.lit && agentMap.lit.has(a.id)));
   el.classList.toggle('is-root', n.depth === 0);
   el.classList.toggle('is-oneline', !!n.oneLine);
   el.setAttribute('aria-selected', agentMap.selected === a.id ? 'true' : 'false');
   el.style.transform = `translate3d(${n.x}px, ${n.y}px, 0)`;
   const mark = el.querySelector('.am-node-mark');
   mark.replaceChildren();
-  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  p.setAttribute('d', a.holder ? AM_MARKS[a.holder] : AM_MARKS[st]);
-  mark.appendChild(p);
+  // A holder is light rather than a picture: the name written under it already
+  // says what it is, and a mark in the middle only dims the core.
+  if (!a.holder) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', AM_MARKS[st]);
+    mark.appendChild(p);
+  }
   const rawName = a.name || a.id || 'agent';
   const shown = n.short || rawName;
-  el.querySelector('.am-node-label').textContent = agentMap.layout.length <= 3 ? shown : amCanvasLabel(shown);
+  el.querySelector('.am-node-label').textContent = shown;
+  const mono = el.querySelector('.am-node-mono');
+  mono.textContent = a.holder ? amMonogram(rawName) : '';
   const time = el.querySelector('.am-node-time');
   if (a.holder) {
-    time.textContent = n.kids === 1 ? '1 agent' : `${n.kids} agents`;
+    // A source is named by what it started, so the count of agents under it
+    // stands where an agent's clock would.
+    time.textContent = n.kids ? `${n.kids} agent${n.kids === 1 ? '' : 's'}` : '';
     time.dataset.amLive = '0';
     time.dataset.amTs = '0';
   } else {
@@ -15234,12 +16825,59 @@ function amPaintNode(el, n) {
     time.dataset.amTs = String(Number(a.startedAt) || 0);
     time.dataset.amLive = st === 'done' ? '0' : '1';
   }
-  const kids = el.querySelector('.am-node-kids');
-  const badge = a.holder ? 0 : n.kids;
-  kids.textContent = badge ? String(badge) : '';
-  kids.hidden = !badge;
+  // Where a seat could not be cleared, the line under the card would land on a
+  // neighbour's disc, so the card keeps its name and drops the line.
+  el.classList.toggle('is-timeless', !a.holder && !!n.hideTime);
   // The whole card is the tooltip: the name in full plus what it is doing.
   el.title = `${a.name || a.id || 'agent'}\n${amRowSub(a)}`;
+}
+
+// The rings the generations stand on, drawn as ground. Distance from the core
+// is then readable without counting hops out to a node.
+function amPaintOrbits(svg, radial) {
+  let layer = svg.querySelector('#am-cv-orbits');
+  if (!layer) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    layer.setAttribute('id', 'am-cv-orbits');
+    svg.insertBefore(layer, svg.firstChild);
+  }
+  if (!radial) { layer.replaceChildren(); return; }
+  const marks = [];
+  for (const sys of agentMap.systems) {
+    // The ring is a circle in the system's own space and the group carries the
+    // same stretch the seats were placed with, so a ring runs through the
+    // generation standing on it.
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform',
+      `translate(${sys.ox.toFixed(1)} ${sys.oy.toFixed(1)}) scale(${sys.ax} ${sys.ay})`);
+    const ring = (r, cls) => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('class', cls);
+      c.setAttribute('cx', '0');
+      c.setAttribute('cy', '0');
+      c.setAttribute('r', r.toFixed(1));
+      c.setAttribute('vector-effect', 'non-scaling-stroke');
+      g.appendChild(c);
+    };
+    // A ring is a reading aid for a generation spread around one: with a single
+    // node on it the line from the source already says everything a ring would,
+    // and the ring is left as a shape around nothing.
+    let drawn = 0;
+    for (let d = 1; d < sys.rings.length; d += 1) {
+      if ((sys.perDepth[d] || 0) < 2) continue;
+      ring(sys.rings[d], 'am-orbit');
+      drawn += 1;
+    }
+    // The bezel gives the field an edge, which is only worth having once there
+    // is a field to edge.
+    if (drawn) ring(sys.radius + AM_RING_STEP * 0.42, 'am-orbit is-rim');
+    if (drawn) marks.push(g);
+  }
+  layer.replaceChildren(...marks);
+  // The key names what is on the field. With no ring drawn there is no
+  // generation to explain, so that entry stands down with the rings.
+  const pane = $('#am-canvas-pane');
+  if (pane) pane.classList.toggle('has-rings', marks.length > 0);
 }
 
 function amPaintCanvas() {
@@ -15247,13 +16885,18 @@ function amPaintCanvas() {
   const nodeLayer = $('#am-cv-nodes');
   const svg = $('#am-cv-edges');
   if (!pane || !nodeLayer || !svg) return;
+  amTuneField();
 
   const rows = agentMap.rows.filter(amMatches);
   const box = pane.getBoundingClientRect();
   const aspect = box.height > 0 ? Math.max(0.4, Math.min(6, box.width / box.height)) : 1.9;
-  const layout = amLayout(amBuildTree(rows, agentMap.chats), aspect);
-  const sparse = amPolishSparseLayout(layout);
+  const tree = amBuildTree(rows, agentMap.chats, agentMap.runs);
+  const radial = agentMap.topo === 'radial';
+  agentMap.systems = [];
+  const layout = radial ? amLayoutRadial(tree, box) : amLayout(tree, aspect, box.width);
+  const sparse = !radial && amPolishSparseLayout(layout);
   agentMap.layout = layout;
+  pane.classList.toggle('is-radial', radial);
   pane.classList.toggle('is-sparse', sparse);
   $('#am-cv-stage')?.classList.toggle('is-sparse', sparse);
   // The arrows walk the tree the way it is read: a parent, then its descendants.
@@ -15270,6 +16913,7 @@ function amPaintCanvas() {
   svg.setAttribute('width', String(maxX));
   svg.setAttribute('height', String(maxY));
   svg.setAttribute('viewBox', `0 0 ${maxX} ${maxY}`);
+  amPaintOrbits(svg, radial);
 
   const seenNodes = new Set();
   const fresh = [];
@@ -15304,30 +16948,73 @@ function amPaintCanvas() {
     svg.insertBefore(blockLayer, svg.firstChild);
   }
   const blocks = layout.filter((n) => n.block);
+  // Which cards each region holds, so the rows inside it can be strung onto the
+  // spine their parent's branch arrives on.
+  const inBlock = new Map();
+  for (const n of layout) {
+    if (!n.inBlock || !n.parent) continue;
+    const held = inBlock.get(n.parent.a.id) || [];
+    held.push(n);
+    inBlock.set(n.parent.a.id, held);
+  }
   blockLayer.replaceChildren(...blocks.map((n) => {
     const box = amBlockRect(n);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    r.setAttribute('class', `am-block${n.live ? ' is-live' : ''}`);
+    // The region says these cards are one fan-out and nothing more. Their
+    // state is on the discs inside it.
+    r.setAttribute('class', 'am-block');
     r.setAttribute('x', String(box.x));
     r.setAttribute('y', String(box.y));
     r.setAttribute('width', String(box.w));
     r.setAttribute('height', String(box.h));
-    r.setAttribute('rx', '18');
+    r.setAttribute('rx', '10');
     g.appendChild(r);
     if (n.block.caption) {
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('class', `am-block-cap${n.live ? ' is-live' : ''}`);
+      t.setAttribute('class', 'am-block-cap');
       t.setAttribute('x', String(box.x + box.w / 2));
       t.setAttribute('y', String(box.y + 17));
       t.setAttribute('text-anchor', 'middle');
       t.textContent = n.block.caption;
       g.appendChild(t);
     }
+    const stem = (d, live) => {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('class', `am-stem${live ? ' is-live' : ''}`);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('d', d);
+      g.appendChild(p);
+    };
+    const rows = new Map();
+    for (const c of inBlock.get(n.a.id) || []) {
+      const row = rows.get(c.y) || [];
+      row.push(c);
+      rows.set(c.y, row);
+    }
+    const ys = [...rows.keys()].sort((a, b) => a - b);
+    if (ys.length) {
+      const sx = box.x + AM_BLOCK_SPINE;
+      stem(`M${sx},${box.y - AM_BLOCK_LANE} L${sx},${ys[ys.length - 1] - AM_BLOCK_STEM}`, n.live);
+      for (const y of ys) {
+        const bus = y - AM_BLOCK_STEM;
+        const row = rows.get(y).sort((a, b) => a.x - b.x);
+        stem(`M${sx},${bus} L${row[row.length - 1].x + AM_CELL_W / 2},${bus}`, row.some((c) => c.live));
+        for (const c of row) {
+          const cx = c.x + AM_CELL_W / 2;
+          stem(`M${cx},${bus} L${cx},${y}`, c.live);
+        }
+      }
+    }
     return g;
   }));
 
   agentMap.card = amCardMetrics();
+
+  // Everything between the selection and the source it came from. Selecting an
+  // agent then says where it came from, which is the reason this is a graph
+  // rather than a list.
+  const lit = amLight(agentMap.selected);
 
   const seenEdges = new Set();
   for (const n of layout) {
@@ -15345,7 +17032,8 @@ function amPaintCanvas() {
       agentMap.edgeEls.set(key, path);
     }
     path.setAttribute('d', amEdgePath(n.parent, n));
-    path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}${brandNew && !agentMap.known.has(n.a.id) ? ' is-enter' : ''}`);
+    const onPath = lit.has(n.a.id) && n.parent && lit.has(n.parent.a.id);
+    path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}${onPath ? ' is-onpath' : ''}${brandNew && !agentMap.known.has(n.a.id) ? ' is-enter' : ''}`);
     if (brandNew) svg.appendChild(path);
   }
   for (const n of blocks) {
@@ -15360,7 +17048,13 @@ function amPaintCanvas() {
       agentMap.edgeEls.set(key, path);
     }
     const box = amBlockRect(n);
-    const target = { x: box.x + box.w / 2 - AM_CELL_W / 2, y: box.y, a: {} };
+    // The branch stops in its own lane above the region and hands over to the
+    // spine inside it, so the border it arrives at is never the line itself.
+    const target = {
+      x: box.x + AM_BLOCK_SPINE - AM_CELL_W / 2,
+      y: box.y - AM_BLOCK_LANE,
+      a: {},
+    };
     path.setAttribute('d', amEdgePath(n, target));
     path.setAttribute('class', `am-edge${n.live ? ' is-live' : ''}`);
     if (brandNew) svg.appendChild(path);
@@ -15370,6 +17064,53 @@ function amPaintCanvas() {
     path.remove();
     agentMap.edgeEls.delete(key);
   }
+
+  // Current runs only where work is. A live branch carries a second stroke on
+  // its own line, short and travelling; a finished one carries nothing, so a
+  // still frame means a still fleet.
+  let flowLayer = svg.querySelector('#am-cv-flow');
+  if (!flowLayer) {
+    flowLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    flowLayer.setAttribute('id', 'am-cv-flow');
+  }
+  // The pips are kept the way the edges under them are kept. A fresh element
+  // starts its animation at offset zero, so rebuilding the layer on every poll
+  // snapped every pip back to the source at once and locked them all in phase.
+  if (!agentMap.flowEls) agentMap.flowEls = new Map();
+  const liveKeys = new Set();
+  for (const [key, path] of agentMap.edgeEls) {
+    if (!path.classList.contains('is-live')) continue;
+    liveKeys.add(key);
+    let spark = agentMap.flowEls.get(key);
+    if (!spark) {
+      spark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      spark.setAttribute('class', 'am-flow');
+      spark.setAttribute('fill', 'none');
+      agentMap.flowEls.set(key, spark);
+      flowLayer.appendChild(spark);
+    }
+    spark.setAttribute('d', path.getAttribute('d'));
+    // Speed is a distance over a time rather than a share of the path, so the
+    // pip on a short stem and the pip on a long spoke travel at one rate.
+    const len = typeof spark.getTotalLength === 'function' ? spark.getTotalLength() : 0;
+    if (len) {
+      const dur = len / 90;
+      spark.style.strokeDasharray = `4 ${Math.round(len)}`;
+      spark.style.setProperty('--flow-run', `${Math.round(len + 4)}px`);
+      spark.style.animationDuration = `${dur.toFixed(2)}s`;
+      // The phase is a function of the branch, so it is written on every paint:
+      // it never moves for a given branch and no two branches start together.
+      spark.style.animationDelay = `${(-(amHash(key) % 97) / 97 * dur).toFixed(2)}s`;
+    }
+  }
+  for (const [key, spark] of agentMap.flowEls) {
+    if (liveKeys.has(key)) continue;
+    spark.remove();
+    agentMap.flowEls.delete(key);
+  }
+  // Last, so the travelling stroke sits over the line it belongs to and over
+  // every edge added since the layer was made.
+  svg.appendChild(flowLayer);
 
   for (const n of layout) agentMap.known.add(n.a.id);
   // The class only exists to start the animation; dropping it afterwards keeps
@@ -15381,6 +17122,21 @@ function amPaintCanvas() {
     agentMap.fitted = true;
     requestAnimationFrame(() => amFit(false));
   }
+}
+
+// Switching topology keeps every card: the cards carry their own place, so a
+// card glides from where the old geometry put it to where the new one does and
+// the fleet is watched crossing over rather than replaced.
+function amSetTopo(topo, { save = true } = {}) {
+  const next = topo === 'tree' ? 'tree' : 'radial';
+  agentMap.topo = next;
+  if (save) amSaveTopo(next);
+  $$('#am-cv-topo .am-cv-tp').forEach((b) => {
+    const on = b.dataset.amTopo === next;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if (agentMap.mode === 'canvas') { amPaint(true); amRefit(); }
 }
 
 function amSetView(mode, { save = true } = {}) {
@@ -15403,8 +17159,9 @@ function amSetView(mode, { save = true } = {}) {
 function amSignature() {
   return JSON.stringify([
     agentMap.filter, agentMap.q, agentMap.selected, agentMap.loading,
-    agentMap.supported, agentMap.error, agentMap.mode,
+    agentMap.supported, agentMap.error, agentMap.mode, agentMap.topo,
     agentMap.rows.map((a) => [a.id, amStateOf(a), a.name, amRowSub(a), a.cwd, a.parentSessionId || '']),
+    agentMap.runs.map((r) => [r.id, r.name, r.running]),
   ]);
 }
 
@@ -15476,10 +17233,7 @@ function amPaintFeed() {
     </li>`).join('');
   feed.dataset.last = keyOf(f.entries[f.entries.length - 1]);
   if (atBottom || prevIdx === -1) {
-    const pin = () => {
-      feed.scrollTop = feed.scrollHeight;
-      feed.scrollTop = Math.max(0, feed.scrollTop - 30);
-    };
+    const pin = () => { feed.scrollTop = feed.scrollHeight; };
     pin();
     // Fonts or wrapping can settle a frame later; align again so the top fold
     // never slices through a readable row while the newest lines remain visible.
@@ -15567,11 +17321,25 @@ function amPaintDetail() {
   const a = agentMap.rows.find((x) => x.id === agentMap.selected) || null;
   const detail = $('#am-detail');
   const none = $('#am-detail-blank');
+  const pane = $('#am-detail-pane');
+  const card = $('#agent-map .am-card');
   if (!detail || !none) return;
   detail.hidden = !a;
   none.hidden = !!a;
-  if (!a) return;
+  for (const st of ['blocked', 'running', 'failed', 'done']) {
+    if (pane) pane.classList.remove(`is-${st}`);
+    if (card) card.classList.remove(`is-${st}`);
+  }
+  if (!a) {
+    if (pane) delete pane.dataset.state;
+    return;
+  }
   const st = amStateOf(a);
+  if (pane) {
+    pane.dataset.state = st;
+    pane.classList.add(`is-${st}`);
+  }
+  if (card) card.classList.add(`is-${st}`);
   const stateEl = $('#am-d-state');
   stateEl.className = `am-state is-${st}`;
   stateEl.textContent = { blocked: 'Needs you', running: 'Running', failed: 'Failed' }[st] || 'Finished';
@@ -15650,14 +17418,37 @@ async function endBgAgent(a, action) {
   if (action === 'remove') {
     agentMap.rows = agentMap.rows.filter((r) => r.id !== a.id);
     agentMap.selected = null;
+    agentMap.focused = false;
   }
   await amRefresh();
   refreshTopbarAgents();
 }
 
-function amSelect(id, { scroll = false } = {}) {
+// Everything between a node and the source it came from, marked on the nodes
+// and on the connectors between them. Returns the set so a repaint can reuse it
+// for the edges it is about to build.
+function amLight(id) {
+  const lit = new Set();
+  if (id) {
+    let cur = (agentMap.layout || []).find((n) => n.a.id === id);
+    while (cur) { lit.add(cur.a.id); cur = cur.parent; }
+  }
+  agentMap.lit = lit;
+  for (const [nid, el] of agentMap.nodeEls) el.classList.toggle('is-onpath', lit.has(nid));
+  for (const [key, path] of agentMap.edgeEls) {
+    const [pid, cid] = key.split('>');
+    path.classList.toggle('is-onpath', lit.has(pid) && lit.has(cid));
+  }
+  const stage = $('#am-cv-stage');
+  if (stage) stage.classList.toggle('has-selection', !!agentMap.focused && lit.size > 1);
+  return lit;
+}
+
+function amSelect(id, { scroll = false, byUser = false } = {}) {
   if (agentMap.selected === id) return;
   agentMap.selected = id;
+  if (byUser) agentMap.focused = true;
+  amLight(id);
   $$('#am-list .am-row').forEach((li) => {
     const on = li.dataset.amId === id;
     li.classList.toggle('is-selected', on);
@@ -15705,7 +17496,11 @@ async function amRefresh() {
   agentMap.loading = false;
   agentMap.supported = !(res && res.supported === false);
   agentMap.error = res && res.ok === false ? (res.error || 'could not list agents') : '';
-  agentMap.rows = (res && res.ok !== false && Array.isArray(res.agents)) ? res.agents.slice() : [];
+  const listed = (res && res.ok !== false && Array.isArray(res.agents)) ? res.agents.slice() : [];
+  // Runs are scenery, not work. They are kept beside the fleet rather than in
+  // it, so nothing that counts agents, lists them or selects one ever sees a run.
+  agentMap.runs = listed.filter((r) => r && r.holder === 'run');
+  agentMap.rows = listed.filter((r) => !r || r.holder !== 'run');
   agentMap.chats = (res && res.ok !== false && Array.isArray(res.chats)) ? res.chats.slice() : [];
   const foot = $('#am-foot');
   if (foot) foot.textContent = agentMap.rows.length ? `Updated ${new Date().toLocaleTimeString()}` : '';
@@ -15748,6 +17543,7 @@ function openAgentMap() {
   for (const p of agentMap.edgeEls.values()) p.remove();
   agentMap.nodeEls.clear();
   agentMap.edgeEls.clear();
+  amSetTopo(amSavedTopo(), { save: false });
   amSetView(amSavedView(), { save: false });
   amRefresh();
   if (agentMap.timer) clearInterval(agentMap.timer);
@@ -15802,13 +17598,18 @@ $('#am-views') && $('#am-views').addEventListener('click', (e) => {
   if (b) amSetView(b.dataset.amView);
 });
 
+$('#am-cv-topo') && $('#am-cv-topo').addEventListener('click', (e) => {
+  const b = e.target.closest('.am-cv-tp');
+  if (b) amSetTopo(b.dataset.amTopo);
+});
+
 // Canvas pointer model: a press on a node selects it, a press on the ground
 // pans. The pan only begins after a few pixels of travel, so a click that
 // wobbles still counts as a click.
 $('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.target.closest('.am-cv-hud')) return;
+  if (e.button !== 0 || e.target.closest('.am-cv-hud') || e.target.closest('.am-cv-topo')) return;
   const node = e.target.closest('.am-node');
-  if (node) { if (!node.classList.contains('is-holder')) amSelect(node.dataset.amId); return; }
+  if (node) { if (!node.classList.contains('is-holder')) amSelect(node.dataset.amId, { byUser: true }); return; }
   const pane = e.currentTarget;
   agentMap.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: agentMap.cam.x, oy: agentMap.cam.y, moved: false };
   pane.setPointerCapture(e.pointerId);
@@ -15848,13 +17649,18 @@ $('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('dblclick', (e) =>
 // Shift holds it to panning for anyone who wants to slide the frame instead.
 $('#am-canvas-pane') && $('#am-canvas-pane').addEventListener('wheel', (e) => {
   e.preventDefault();
-  if (e.shiftKey) {
-    agentMap.cam.x -= e.deltaX || e.deltaY;
-    agentMap.cam.y -= e.shiftKey && !e.deltaX ? 0 : e.deltaY;
-    amApplyCam();
+  // A bare wheel is a two finger scroll on a trackpad, which every canvas in
+  // this class treats as a pan. A pinch arrives as a wheel with ctrl held, and
+  // a mouse wheel with a modifier is the same gesture on hardware that has no
+  // pinch, so those are the ones that zoom.
+  if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    amZoomTo(agentMap.cam.k * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
     return;
   }
-  amZoomTo(agentMap.cam.k * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
+  agentMap.cam.x -= e.deltaX;
+  agentMap.cam.y -= e.deltaY;
+  amClampCam();
+  amApplyCam();
 }, { passive: false });
 
 $('#am-cv-in') && $('#am-cv-in').addEventListener('click', () => amZoomTo(agentMap.cam.k * 1.25));
@@ -15893,7 +17699,7 @@ $('#am-cv-expand') && $('#am-cv-expand').addEventListener('click', () => {
 
 $('#am-list') && $('#am-list').addEventListener('click', (e) => {
   const li = e.target.closest('.am-row');
-  if (li) amSelect(li.dataset.amId);
+  if (li) amSelect(li.dataset.amId, { byUser: true });
 });
 $('#am-list') && $('#am-list').addEventListener('dblclick', (e) => {
   const li = e.target.closest('.am-row');
@@ -15919,7 +17725,7 @@ document.addEventListener('keydown', (e) => {
     const i = v.indexOf(agentMap.selected);
     const step = e.key === 'ArrowDown' ? 1 : -1;
     const next = i === -1 ? (step === 1 ? 0 : v.length - 1) : Math.min(v.length - 1, Math.max(0, i + step));
-    amSelect(v[next], { scroll: true });
+    amSelect(v[next], { scroll: true, byUser: true });
     return;
   }
   if (e.key === 'Enter' && !inSearch) {
@@ -15964,6 +17770,8 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === '\\') { e.preventDefault(); toggleSplit(); return; }
+  if (e.key === 'Escape' && splitPicking) { splitPicking = false; renderTabStrip(); return; }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '6': 'prefs', '7': 'agents' };

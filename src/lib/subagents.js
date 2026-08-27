@@ -106,10 +106,39 @@ function runProgress(dir) {
 // was asked to do, the name it was given, then the id it can always be called.
 // A workflow spawns its fleet without either, so those borrow the run's name and
 // keep enough of the id to tell siblings apart.
-function agentName(meta, fileId, runName) {
+// The opening line of an agent's own transcript. A workflow writes its fleet
+// with nothing in the metadata but a type, so the only place the work it was
+// given survives is the prompt it was handed, and that is the first record of
+// its file. The record never changes once written, so each file is read once
+// however often the fleet is polled.
+const HEAD_BYTES = 65536;
+
+function promptHead(file, cache) {
+  if (cache && cache.has(file)) return cache.get(file);
+  const text = firstPrompt(file, HEAD_BYTES);
+  if (cache) cache.set(file, text);
+  return text;
+}
+
+// What to call an agent given the words it was started with. The first sentence
+// is what a person wrote to say what the job was, so it is the title; anything
+// past it is the briefing.
+function promptTitle(prompt) {
+  const raw = String(prompt || '').trim();
+  if (!raw) return '';
+  const line = raw.split('\n').map((l) => l.trim()).find(Boolean) || '';
+  if (!line) return '';
+  const stop = line.search(/[.:!?](\s|$)/);
+  const head = (stop > 12 ? line.slice(0, stop) : line).trim();
+  return head.replace(/\s+/g, ' ').slice(0, 90);
+}
+
+function agentName(meta, fileId, runName, prompt) {
   const desc = meta && typeof meta.description === 'string' ? meta.description.replace(/\s+/g, ' ').trim() : '';
   const named = meta && typeof meta.name === 'string' ? meta.name.trim() : '';
   if (desc || named) return (desc || named).slice(0, 120);
+  const title = promptTitle(prompt);
+  if (title) return title;
   const short = String(fileId).slice(0, 8);
   return (runName ? `${runName} ${short}` : `agent ${short}`).slice(0, 120);
 }
@@ -127,7 +156,56 @@ function runScriptNames(sessionDir) {
   return out;
 }
 
-function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running, now }) {
+// The session key a run stands under. A run is not a session, but the graph
+// links a child to its parent by session, so the run needs one key of its own
+// that no CLI session could ever collide with.
+function runKey(runId) {
+  return `wf:${runId}`;
+}
+
+// One workflow run, as the thing its fleet hangs from. It is scenery in the same
+// way a chat is: it did no work itself, it is where work came from, and it is
+// on screen only while something it started is.
+function runNode({ runId, name, parentSessionId, cwd, fleet, now }) {
+  let startedAt = now;
+  let updatedAt = 0;
+  let running = false;
+  for (const a of fleet) {
+    if (a.startedAt && a.startedAt < startedAt) startedAt = a.startedAt;
+    if (a.updatedAt > updatedAt) updatedAt = a.updatedAt;
+    if (a.running) running = true;
+  }
+  return {
+    id: `wf-${runId}`,
+    agentId: '',
+    kind: 'run',
+    // Scenery, like the chat and the project a graph already draws. Nothing that
+    // counts agents may count this.
+    holder: 'run',
+    sessionId: runKey(runId),
+    parentSessionId,
+    runId,
+    teamName: '',
+    agentType: '',
+    name: String(name || runId).slice(0, 120),
+    cwd,
+    running,
+    attachable: false,
+    held: false,
+    state: running ? 'working' : 'done',
+    status: '',
+    detail: '',
+    intent: '',
+    needs: '',
+    tokens: 0,
+    startedAt,
+    updatedAt: updatedAt || now,
+    hasTranscript: false,
+    transcript: '',
+  };
+}
+
+function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running, now, heads }) {
   const meta = readJson(path.join(dir, `agent-${id}.meta.json`)) || {};
   const st = statOf(file);
   const startedAt = st ? Math.round(st.birthtimeMs || st.ctimeMs || st.mtimeMs) : now;
@@ -145,7 +223,7 @@ function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running
     runId: runId || '',
     teamName: typeof meta.teamName === 'string' ? meta.teamName : '',
     agentType: typeof meta.agentType === 'string' ? meta.agentType : '',
-    name: agentName(meta, id, runName),
+    name: agentName(meta, id, runName, promptHead(file, heads)),
     cwd,
     running,
     // In-process agents are reached through their parent chat, never attached to
@@ -168,7 +246,7 @@ function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running
 // Every in-process agent under one parent chat. `alive` is the parent's own
 // process: when it has exited, nothing it was running is still running, whatever
 // the files say.
-function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now }) {
+function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now, heads }) {
   const base = path.join(dir, 'subagents');
   const rows = [];
   const entries = listDir(base);
@@ -194,7 +272,7 @@ function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now }) 
         running = !!st && (now - st.mtimeMs) < IDLE_MS;
       }
     }
-    rows.push(agentRow({ file, dir: base, id, parentSessionId: sessionId, cwd, runId: '', running, now }));
+    rows.push(agentRow({ file, dir: base, id, parentSessionId: sessionId, cwd, runId: '', running, now, heads }));
   }
 
   const runsDir = path.join(base, 'workflows');
@@ -203,23 +281,37 @@ function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now }) 
     if (!run.isDirectory() || !RUN_DIR.test(run.name)) continue;
     const runPath = path.join(runsDir, run.name);
     const { started, done } = runProgress(runPath);
+    const fleet = [];
     for (const ent of listDir(runPath)) {
       if (!ent.isFile()) continue;
       const m = AGENT_FILE.exec(ent.name);
       if (!m) continue;
       const id = m[1];
-      rows.push(agentRow({
+      fleet.push(agentRow({
         file: path.join(runPath, ent.name),
         dir: runPath,
         id,
-        parentSessionId: sessionId,
+        // A workflow fleet hangs off the run that fanned it out, not off the
+        // chat, so the shape on screen is the shape the work actually took.
+        parentSessionId: runKey(run.name),
         cwd,
         runId: run.name,
         runName: runNames.get(run.name) || '',
         running: alive && started.has(id) && !done.has(id),
         now,
+        heads,
       }));
     }
+    if (!fleet.length) continue;
+    rows.push(runNode({
+      runId: run.name,
+      name: runNames.get(run.name) || run.name,
+      parentSessionId: sessionId,
+      cwd,
+      fleet,
+      now,
+    }));
+    rows.push(...fleet);
   }
   return rows;
 }
@@ -266,15 +358,21 @@ function stampOf(a) {
 function retainLastBatch(rows, { windowMs = HISTORY_WINDOW_MS } = {}) {
   const live = [];
   const over = [];
-  for (const a of rows || []) (a && a.running ? live : over).push(a);
-  if (!over.length) return live;
+  // Scenery is not work, so it is never what the history window is measured
+  // against. It stays, and the graph drops any of it left holding nothing.
+  const scenery = [];
+  for (const a of rows || []) {
+    if (a && a.holder) { scenery.push(a); continue; }
+    (a && a.running ? live : over).push(a);
+  }
+  if (!over.length) return scenery.concat(live);
   const bySession = new Map();
   for (const r of rows) if (r && r.sessionId) bySession.set(r.sessionId, r);
   let newest = null;
   for (const a of over) if (!newest || stampOf(a) > stampOf(newest)) newest = a;
   const key = rootKey(newest, bySession);
   const floor = stampOf(newest) - windowMs;
-  return live.concat(over.filter((a) => rootKey(a, bySession) === key || stampOf(a) >= floor));
+  return scenery.concat(live, over.filter((a) => rootKey(a, bySession) === key || stampOf(a) >= floor));
 }
 
 // The opening of an agent's own conversation, which is the nearest thing a
@@ -312,4 +410,7 @@ function describe(rows, { bytes = 64 * 1024 } = {}) {
   return rows;
 }
 
-module.exports = { scanParent, retainLastBatch, describe, batchKey, resolvedToolUses, runProgress, IDLE_MS };
+module.exports = {
+  scanParent, retainLastBatch, describe, batchKey, resolvedToolUses, runProgress,
+  agentName, promptTitle, promptHead, runKey, IDLE_MS,
+};
