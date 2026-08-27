@@ -1,0 +1,231 @@
+Package: husk
+Architecture: amd64
+Version: 2.10.0
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 325319
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.10.0-linux-amd64.deb
+Size: 100840180
+MD5sum: f847464c7dc406cd93d189d3c236114a
+SHA1: 8ec6b6ba9f87142d3080f9965a61658801ca29b3
+SHA256: af6b34b2008752536a3b67f6ba3745e37f022bf2f94e8e9dd05a35204612bbfa
+SHA512: 5f76b5f18b0d5e77d07b8d3430f32ea3e4e944241048c9339cd920fa1d58ebb5021773144f7eadb374d562efa562d70a3380e4206fe328407c03ecd1fcf4b33f
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.10.1
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 325555
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.10.1-linux-amd64.deb
+Size: 100955292
+MD5sum: 27fa3a7404485c10fd295c17a33ad743
+SHA1: 6941365f3ba5ce3fed3359e8f9c1b3bcab1771ed
+SHA256: 138218fbb4b7497c851bd4464c48c886ad22652ee311d60d574738aab899c5ab
+SHA512: 63273ddb7af6154dc7b2545360c875fbf33ae90242d57725858cc6813a240d80f0b84c4d45d797954e750c5b5ff1e319a0f2c6bf1ad1342887a46d1dc09ed4d3
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.10.2
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 325674
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.10.2-linux-amd64.deb
+Size: 100984912
+MD5sum: 0ead8f1772d020ec28348e013130472c
+SHA1: 829f92948d948be6258649631968d83ca774cbb2
+SHA256: 17b0137334d41034981a74ef995f260b06e802aad3275b251428a51e5410397f
+SHA512: ce7f186df3e816252fa491f8b14e59e692a7ebdd1222488b6e899331810a6d621f3adfb9c136949c313830fca940362f9f6b3cbd11792cceaec2e821c648b47b
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.11.0
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 327532
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.11.0-linux-amd64.deb
+Size: 102243784
+MD5sum: 6c01247503fb4859c06580459a9f1d42
+SHA1: 05c7d1a997a697da628d2fcf899329fdb33e17d8
+SHA256: 0a609060f0d93bbdb73b98a8e2dfdb225b1e786e4985c7e5b4633b072747d80d
+SHA512: a5a4ce88a248862ffaa416547b324d2cedcbc7d97769a5287518400eba093985f4d6ede1b754dbf3fc88f748addb1c72ad020cfc5c7f1b6183b590d9edffc5b3
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.11.1
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 327535
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.11.1-linux-amd64.deb
+Size: 102046860
+MD5sum: 5df44bd01a03df3ce73dcf32d97a3340
+SHA1: a0b89150bd3078074aa44d3a980e21581fa36afa
+SHA256: 03a8982ae0a9d5b9fe90b9219dcdb8370e9fc76d803b72483663cb666cf274aa
+SHA512: 78148c34830601d6f66fbbf004056b8ea415cb3a48b68b350f602efb5f81b680c09007431d896a6176f8920bce1ef9bcf5e007b3b7e03c544e47799165251063
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.11.3
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 327708
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.11.3-linux-amd64.deb
+Size: 102086944
+MD5sum: 57afa6196725d78f456bb2531ac0cc43
+SHA1: 81721bb009c009fb4b4988e2c2ae362fcc04d115
+SHA256: 68eacff2ad5d5b9750dd3c1b5f165384291c214e06249c273f7e2b5a70ff1837
+SHA512: a2d6fac7a4950cbf9c273a4d16641ba3a8d2ac577a5aa7a4a03cb59647bcb45462d9b9bec451799d7290da6f3339477bf6fb6cd562888fefb01433be887c671b
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.12.0
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 329015
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.12.0-linux-amd64.deb
+Size: 102925992
+MD5sum: 6b264e0029ab5da842594c72aa3edf02
+SHA1: 8ad70feab68e9c847a8a0215a096b65879ee0eb7
+SHA256: 529b587c38d176e2a931c8b08743ff5fd4623301a7d08dd39ad0f72cdd478334
+SHA512: ead0e3ffe0157fbbc664c200dabe20f4e58f666f746f508bff79ce34fd9689a5894c648b093a6b8d77e716a8b2bf780d2a2f756b7a957e9bde9e034fb5985f16
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.8.7
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 325751
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.8.7-linux-amd64.deb
+Size: 104410824
+MD5sum: 0a40920053868ca18646020de5096f3f
+SHA1: 371727a9a5d5d191b938253f83b31146c096a0fc
+SHA256: 7f1d0787698cff77a0c4650d77e47738d3b43e32859cdde06b3ca0269e0136b5
+SHA512: 5ef79fbaa76a7e70e734ad73949fd77473e33c4b789752fe342c1d9ff1b13ee67af51843e0f535129add1f81d30f5d3ea4eeed5f2ce4e5f3c9035d80f444eba3
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.8.8
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 326527
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.8.8-linux-amd64.deb
+Size: 104584560
+MD5sum: 2976950376b85e8264c51136d1939086
+SHA1: 72adec8734554ce36310eb183aea49ab3d350fcd
+SHA256: bdd4d7dd1860d12e8480bc9e7e92a7d8844cadf633c68447a6d89290bc5c3d30
+SHA512: bd7e00c1e84685a41b683a26d25168e529a21e51f638ee3beeb83fd0e3ef3c36c418b8d37af8831b51270d41c9e9c7c099e7734cbdcf2650e56de341ead3b77d
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.8.9
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 320357
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.8.9-linux-amd64.deb
+Size: 98029060
+MD5sum: 5c71c7950bc557d68d51d14dc865f38d
+SHA1: d57a6433f7da9b81cd1bd912cc37dbd4aa25ddd8
+SHA256: 415f8f0d0c85e8808b496b9763ed82941f9ea4dd096def822dd271e7ff1a7a70
+SHA512: e42edcfd843f791a75db36df0633370e53359071304b52ded135da25f7309a864e38fbba2fefedd43fc3e08d6040bc44c3d39dd779db44acc9d89fe6d5696bd1
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
+Package: husk
+Architecture: amd64
+Version: 2.9.0
+Priority: optional
+Section: default
+Maintainer: DorShaer <85877103+DorShaer@users.noreply.github.com>
+Installed-Size: 320785
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0, libasound2t64 | libasound2
+Recommends: libappindicator3-1
+Filename: pool/main/husk-v2.9.0-linux-amd64.deb
+Size: 98573032
+MD5sum: 9a2cb07afaba6fd03fdacdf68dbda737
+SHA1: 97ba129164b835fd8e5b2ea00a1d2326d99dcc69
+SHA256: b16b50e17df082d19e8694f56f682860129af42dc875a3fb0f93118868fcce5d
+SHA512: 5c82051a7d63068f7c1190d8f0da1b0f29fe2439d41576fde87993af4cd7645efbf7621dfce64f5599156a037e4340dd958d6009feff9eeaa33f6042bef50631
+Homepage: https://github.com/DorShaer/Husk
+Description: Desktop home for CLI AI agents
+  Husk wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop file context, sessions, and voice.
+License: MIT
+Vendor: DorShaer <85877103+DorShaer@users.noreply.github.com>
+
