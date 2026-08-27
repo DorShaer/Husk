@@ -14,7 +14,7 @@ const wf = (over) => ({
 
 const ap = (over) => ({
   sessionId: 'auto-abc', capturedAt: '2026-08-21T10:00:00Z', endedAt: '2026-08-21T10:30:00Z',
-  workspaceRoot: '/home/dor/code/husk', goal: 'Fix the parser', status: 'done',
+  workspaceRoot: '/home/user/code/husk', goal: 'Fix the parser', status: 'done',
   fileCount: 4, dollars: 0.42, tokens: 12000, agent: 'claude',
   ...over,
 });

@@ -55,7 +55,7 @@ const WF = [
 ];
 const AP = [{
   sessionId: 'auto-a', capturedAt: '2026-08-24T11:00:00Z', endedAt: '2026-08-24T11:38:00Z',
-  workspaceRoot: '/home/dor/code/husk', goal: 'Add a registry reader', status: 'done',
+  workspaceRoot: '/home/user/code/husk', goal: 'Add a registry reader', status: 'done',
   fileCount: 7, dollars: 1.84, tokens: 412000, agent: 'claude',
 }];
 
