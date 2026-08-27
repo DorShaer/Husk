@@ -171,7 +171,9 @@ function splitDiffGitPaths(rest) {
   return [rest.slice(0, sp), rest.slice(sp + 1)];
 }
 
-const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
+// The counts are read as one comma-joined run, then split, so the pattern
+// carries no quantifier nested in an optional group and stays linear.
+const HUNK_RE = /^@@ -([\d,]+) \+([\d,]+) @@(.*)$/;
 
 function newFile() {
   return {
@@ -298,14 +300,16 @@ function parseUnifiedDiff(text) {
 
       const m = HUNK_RE.exec(line);
       if (m && file) {
-        const fn = m[5].startsWith(' ') ? m[5].slice(1) : m[5];
+        const fn = m[3].startsWith(' ') ? m[3].slice(1) : m[3];
+        const [oldStart, oldLines] = m[1].split(',');
+        const [newStart, newLines] = m[2].split(',');
         hunk = {
           header: line,
           fn,
-          oldStart: parseInt(m[1], 10),
-          oldLines: m[2] === undefined ? 1 : parseInt(m[2], 10),
-          newStart: parseInt(m[3], 10),
-          newLines: m[4] === undefined ? 1 : parseInt(m[4], 10),
+          oldStart: parseInt(oldStart, 10),
+          oldLines: oldLines === undefined ? 1 : parseInt(oldLines, 10),
+          newStart: parseInt(newStart, 10),
+          newLines: newLines === undefined ? 1 : parseInt(newLines, 10),
           lines: [],
         };
         file.hunks.push(hunk);

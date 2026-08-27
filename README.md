@@ -188,7 +188,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 
 ### Pages
 
-- **Chat**: the PTY surface. Drag-drop files, status panel on the right.
+- **Chat**: the PTY surface. Drag-drop files, status panel on the right. Split the view to run two chats side by side (`Ctrl+\`).
 - **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`).
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
@@ -197,10 +197,14 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 - **Skills**: toggle the skills bundled with Husk plus any skills you keep in `~/.claude/skills/`.
 - **MCP**: install / toggle / health-check Model Context Protocol servers.
 - **Plugins**: browse and manage Husk plugins.
+- **Source**: read the working-tree diff, stage a file or an individual change, and commit, on the branch you are on.
 - **Files**: drag-drop file context, with a tree view of your working directory.
-- **Sessions**: resume any prior agent session from its JSONL log. Agents a chat started are grouped under that chat rather than listed beside it.
+- **Schedule**: run a workflow or an autopilot goal on a recurrence, every so often, daily, or on a chosen weekday.
+- **Artifacts**: a ledger of every workflow and autopilot run with its outcome, time, tokens and cost, and the per step detail.
+- **GitHub**: the open pull requests and issues for the current project, with their checks, labels and review state, filtered as you type.
+- **Sessions**: resume any prior agent session from its JSONL log. Group the roster into folders you name. Agents a chat started are grouped under that chat rather than listed beside it.
 
-Preferences (agent command, name, theme, accent, voice, recap, sidebar defaults) open as a modal from the rail or `Alt+6`, not as a page.
+A command palette (`Cmd/Ctrl+K`) searches chats, projects, workflows, agents, prompts and skills from anywhere. Preferences is its own page (agent command, name, theme, accent, voice, recap, sidebar defaults, and an About entry that reports the version and checks for updates), opened from the rail.
 
 ## Architecture
 
