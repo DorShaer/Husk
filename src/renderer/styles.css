@@ -4195,6 +4195,48 @@ body[data-page="chat"] #chats-panel { display: flex; }
    reading gutter, so the surface reaches the column edges while the text does not. */
 .term-pane { position: absolute; inset: 0; display: none; }
 .term-pane.show { display: block; }
+/* Split: the pair sits in a row, the left pane at the share the divider was
+   dragged to and the right pane taking the rest. */
+#terminal.is-split { display: flex; flex-direction: row; align-items: stretch; }
+#terminal.is-split .term-pane.show {
+  position: relative; inset: auto;
+  min-width: 0; height: 100%;
+  flex: 1 1 0;
+}
+#terminal.is-split .term-pane.is-a { flex: 0 0 var(--split-a, 50%); }
+.term-divider {
+  flex: 0 0 6px;
+  align-self: stretch;
+  cursor: col-resize;
+  background: var(--surface-line);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.term-divider:hover,
+#terminal.is-resizing .term-divider { background: color-mix(in srgb, var(--accent) 60%, var(--surface-line)); }
+#terminal.is-resizing { user-select: none; }
+#terminal.is-resizing .term-pane { pointer-events: none; }
+/* A single thread has the welcome screen; a split has two live chats. */
+.chat-stage.is-split .chat-empty { display: none; }
+/* Tabs in the pair carry a pane mark; picking dims every other choice. */
+.chat-tab.in-split .chat-tab-label::before {
+  content: '';
+  display: inline-block;
+  width: 9px; height: 9px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  background: linear-gradient(to right, transparent calc(50% - 0.75px), currentColor calc(50% - 0.75px), currentColor calc(50% + 0.75px), transparent calc(50% + 0.75px));
+  opacity: 0.7;
+}
+.tab-strip.is-picking .chat-tab:not(.active) { color: var(--text); background: var(--surface); }
+.tab-strip.is-picking .chat-tab:not(.active):hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+.tab-strip.is-picking .chat-tab.active { opacity: 0.55; }
+/* Picking a partner, the tab is one pick target: its hover pencil and close
+   stand down so a click anywhere on it chooses that chat. */
+.tab-strip.is-picking .chat-tab-edit,
+.tab-strip.is-picking .chat-tab-close { display: none; }
+#btn-split.active { color: var(--text); background: var(--surface); }
 /* The reading gutter belongs to the terminal element, because that is the padding
    the fit addon subtracts when it sizes the buffer to the pane. */
 #terminal .xterm { height: 100%; padding: var(--space-2) var(--space-6); }

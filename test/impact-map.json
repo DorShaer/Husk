@@ -327,6 +327,7 @@
         "recap-voice.spec.js",
         "reload-no-copilot-session.spec.js",
         "reload-repaint.spec.js",
+        "split-screen.spec.js",
         "term-colors.spec.js",
         "wheel-forward.spec.js"
       ],

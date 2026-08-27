@@ -376,6 +376,15 @@ let activeTabId = null;
 let tabSeq = 0;
 let term = null;
 let fitAddon = null;
+// Split state: the pair on screen, the last pair (for the close path), the
+// pick handshake, and the left pane's share of the row.
+let SPLIT = null;
+let SPLIT_LAST = { a: null, b: null };
+let splitPicking = false;
+let splitBusy = false;
+const SPLIT_MIN = 0.2;
+const SPLIT_MAX = 0.8;
+let splitShare = 0.5;
 
 // Route URL clicks through the OS browser via shell.openExternal, behind
 // Husk's confirm dialog so the user sees the destination first. Covers both
@@ -465,6 +474,10 @@ function createTab(idOverride) {
       refreshFromShortcut();
       return false;
     }
+    // Split keys are handled once, by the window; xterm only keeps them from
+    // reaching the agent.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === '\\') return false;
+    if (e.key === 'Escape' && splitPicking) return false;
     const meta = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
     if (meta && (e.key === 'c' || e.key === 'C')) {
       if (t.hasSelection()) { copyTerminalSelection(); return false; }
@@ -488,7 +501,8 @@ function activateTab(id) {
   fitAddon = tab.fitAddon;
   agentMouseOn = !!tab.mouseOn;
   chatHasInput = tab.chatHasInput;
-  for (const t of TABS.values()) t.el.classList.toggle('show', t.id === id);
+  for (const t of TABS.values()) t.el.classList.toggle('show', isPaneVisible(t.id));
+  applySplit();
   renderTabStrip();
   fitNow();
   try { term.focus(); } catch (_) {}
@@ -550,9 +564,11 @@ window.husk.pty.onMouseMode((sessionId, on) => {
   if (sessionId === activeTabId) agentMouseOn = !!on;
 });
 $('#terminal').addEventListener('wheel', (e) => {
-  if (!agentMouseOn || !term) return;
-  const tab = TABS.get(activeTabId);
-  const screen = tab && tab.el.querySelector('.xterm-screen');
+  const paneEl = e.target && e.target.closest ? e.target.closest('.term-pane') : null;
+  const tab = TABS.get(paneEl ? paneEl.dataset.sessionId : activeTabId);
+  if (!tab || !tab.mouseOn) return;
+  const term = tab.term;
+  const screen = tab.el.querySelector('.xterm-screen');
   if (!screen) return;
   const rect = screen.getBoundingClientRect();
   const cw = rect.width / term.cols || 1;
@@ -561,7 +577,7 @@ $('#terminal').addEventListener('wheel', (e) => {
   let row = Math.floor((e.clientY - rect.top) / ch) + 1;
   col = Math.min(Math.max(col, 1), term.cols);
   row = Math.min(Math.max(row, 1), term.rows);
-  window.husk.pty.wheel({ deltaY: e.deltaY, deltaMode: e.deltaMode, col, row }, activeTabId);
+  window.husk.pty.wheel({ deltaY: e.deltaY, deltaMode: e.deltaMode, col, row }, tab.id);
   e.preventDefault();
   e.stopPropagation();
 }, { capture: true, passive: false });
@@ -697,24 +713,27 @@ function contrastForXterm() {
   return getComputedStyle(document.body).getPropertyValue('--term-light').trim() === '1' ? 4.5 : 1;
 }
 
+function fitTab(tab) {
+  if (!tab || !tab.el.classList.contains('show')) return;
+  // Skip while the pane is not laid out yet: fitting against a zero-size box
+  // yields a degenerate resize.
+  const host = tab.term.element;
+  if (host && (host.clientWidth === 0 || host.clientHeight === 0)) return;
+  try {
+    tab.fitAddon.fit();
+    const { cols, rows } = tab.term;
+    if (!cols || !rows) return;
+    // Only resize the PTY when the geometry actually changed. A redundant
+    // resize makes the agent's TUI redraw and drop unsent input-line text.
+    if (tab._cols === cols && tab._rows === rows) return;
+    tab._cols = cols; tab._rows = rows;
+    window.husk.pty.resize({ cols, rows }, tab.id);
+  } catch (_) {}
+}
 function fitNow() {
   if (currentPage !== 'chat') return;
   if (!fitAddon || !term) return;
-  // Skip while the terminal is not laid out yet: fitting against a zero-size
-  // box yields a degenerate resize.
-  const host = term.element;
-  if (host && (host.clientWidth === 0 || host.clientHeight === 0)) return;
-  try {
-    fitAddon.fit();
-    const { cols, rows } = term;
-    if (!cols || !rows) return;
-    const tab = TABS.get(activeTabId);
-    // Only resize the PTY when the geometry actually changed. A redundant
-    // resize makes the agent's TUI redraw and drop unsent input-line text.
-    if (tab && tab._cols === cols && tab._rows === rows) return;
-    if (tab) { tab._cols = cols; tab._rows = rows; }
-    window.husk.pty.resize({ cols, rows }, activeTabId);
-  } catch (_) {}
+  for (const t of TABS.values()) fitTab(t);
 }
 // Refit on resize. A trailing debounce coalesces the rapid resize burst
 // from a window drag into one fit so the terminal reflow stays smooth.
@@ -1448,6 +1467,11 @@ async function startPty() {
 // Open a brand-new chat in its own tab, leaving every existing tab's agent
 // running. Backs the "+ New chat" action.
 async function openNewChatTab(opts = {}) {
+  // A new chat is its own single pane, so any active split ends here. Without
+  // this the new tab becomes active while neither half of the split, so its
+  // pane never shows and the keyboard lands in a hidden terminal.
+  SPLIT = null;
+  splitPicking = false;
   const tab = createTab();
   if (opts.resumeAttempt) {
     tab.resumeAttempt = {
@@ -1552,16 +1576,24 @@ if (window.husk.shortcuts && window.husk.shortcuts.onRestartAgent) {
 async function closeTab(id) {
   const tab = TABS.get(id);
   if (!tab) return;
+  splitPicking = false;
+  if (SPLIT && (SPLIT.a === id || SPLIT.b === id)) {
+    SPLIT = null;
+    if (activeTabId === id) {
+      const other = TABS.get(id === SPLIT_LAST.a ? SPLIT_LAST.b : SPLIT_LAST.a);
+      if (other) activeTabId = other.id;
+    }
+  }
   try { await window.husk.pty.close(id); } catch (_) {}
   try { tab.term.dispose(); } catch (_) {}
   try { tab.el.remove(); } catch (_) {}
   TABS.delete(id);
   if (TABS.size === 0) { await openNewChatTab(); return; }
-  if (activeTabId === id) {
+  if (activeTabId === id || !TABS.has(activeTabId)) {
     const next = TABS.keys().next();
     if (!next.done) activateTab(next.value);
   } else {
-    renderTabStrip();
+    activateTab(activeTabId);
   }
 }
 
@@ -1676,7 +1708,8 @@ function renderTabStrip() {
   for (const t of tabs) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '');
+    btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '')
+      + (SPLIT && (SPLIT.a === t.id || SPLIT.b === t.id) ? ' in-split' : '');
     btn.dataset.tab = t.id;
     const name = displayTitle(t);
     btn.title = name;
@@ -1715,6 +1748,16 @@ function renderTabStrip() {
   add.addEventListener('click', () => { openNewChatTab(); });
   strip.appendChild(add);
   strip.classList.toggle('multi', tabs.length >= 1);
+  strip.classList.toggle('is-picking', splitPicking);
+  const splitBtn = $('#btn-split');
+  if (splitBtn) {
+    splitBtn.classList.toggle('active', !!SPLIT || splitPicking);
+    const lbl = splitBtn.querySelector('.btn-label');
+    if (lbl) lbl.textContent = SPLIT ? 'Unsplit' : (splitPicking ? 'Pick a chat' : 'Split');
+    splitBtn.title = SPLIT ? 'Back to one chat (Ctrl+\\)'
+      : (splitPicking ? 'Click a chat in the strip to show it beside this one'
+        : 'Show two chats side by side (Ctrl+\\)');
+  }
   // The strip scrolls once the tabs outrun the head, so the focused chat is
   // brought back into view after every render.
   const active = strip.querySelector('.chat-tab.active');
@@ -1804,6 +1847,16 @@ setInterval(syncTabTitles, 5000);
   const strip = document.getElementById('tab-strip');
   if (strip) {
     strip.addEventListener('click', (e) => {
+      // While picking a split partner the whole tab is one target, so the
+      // hover pencil and close never intercept the pick.
+      if (splitPicking) {
+        const pickEl = e.target.closest('[data-tab]');
+        if (!pickEl) return;
+        splitPicking = false;
+        const pid = pickEl.dataset.tab;
+        if (pid !== activeTabId) splitWith(pid); else renderTabStrip();
+        return;
+      }
       const editEl = e.target.closest('[data-edit]');
       if (editEl) {
         e.stopPropagation();
@@ -1815,10 +1868,134 @@ setInterval(syncTabTitles, 5000);
       const closeEl = e.target.closest('[data-close]');
       if (closeEl) { e.stopPropagation(); confirmCloseTab(closeEl.dataset.close); return; }
       const tabEl = e.target.closest('[data-tab]');
-      if (tabEl && tabEl.dataset.tab !== activeTabId) activateTab(tabEl.dataset.tab);
+      if (!tabEl) return;
+      const id = tabEl.dataset.tab;
+      if (id === activeTabId) return;
+      // While split, a chat outside the pair takes the focused pane's seat.
+      if (SPLIT && SPLIT.a !== id && SPLIT.b !== id) {
+        if (SPLIT.a === activeTabId) SPLIT = { a: id, b: SPLIT.b };
+        else SPLIT = { a: SPLIT.a, b: id };
+        SPLIT_LAST = SPLIT;
+      }
+      activateTab(id);
     });
   }
 }
+
+// ─── Split screen: two chats side by side ───────────────────────────────────
+// A split shows two of the panes that already exist, a on the left and b on
+// the right, each still its own xterm and its own session. The tab strip is
+// the one indicator of which pane is focused; clicking a pane focuses it.
+function isPaneVisible(id) {
+  return SPLIT ? (SPLIT.a === id || SPLIT.b === id) : id === activeTabId;
+}
+
+function splitWith(otherId) {
+  if (!TABS.has(otherId) || otherId === activeTabId) return;
+  SPLIT = { a: activeTabId, b: otherId };
+  SPLIT_LAST = SPLIT;
+  splitShare = 0.5;
+  activateTab(activeTabId);
+}
+
+function unsplit(keepId) {
+  if (!SPLIT) return;
+  SPLIT = null;
+  activateTab(TABS.has(keepId) ? keepId : activeTabId);
+}
+
+// Split, unsplit, or start picking, depending on where the thread is.
+async function toggleSplit() {
+  if (currentPage !== 'chat') return;
+  // A second press while the first is still opening the partner chat would see
+  // the half-built state and wedge pick mode on beside the split.
+  if (splitBusy) return;
+  if (SPLIT) { unsplit(activeTabId); return; }
+  if (splitPicking) { splitPicking = false; renderTabStrip(); return; }
+  if (TABS.size < 2) {
+    splitBusy = true;
+    try {
+      const first = activeTabId;
+      await openNewChatTab({ skipWelcome: true });
+      if (TABS.has(first) && TABS.has(activeTabId) && first !== activeTabId) {
+        SPLIT = { a: first, b: activeTabId };
+        SPLIT_LAST = SPLIT;
+        splitShare = 0.5;
+        activateTab(activeTabId);
+      }
+    } finally { splitBusy = false; }
+    return;
+  }
+  splitPicking = true;
+  renderTabStrip();
+}
+
+function splitDivider() {
+  let bar = $('#term-divider');
+  if (bar) return bar;
+  bar = document.createElement('div');
+  bar.id = 'term-divider';
+  bar.className = 'term-divider';
+  bar.setAttribute('role', 'separator');
+  bar.setAttribute('aria-orientation', 'vertical');
+  bar.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !SPLIT) return;
+    e.preventDefault();
+    const host = $('#terminal');
+    const rect = host.getBoundingClientRect();
+    host.classList.add('is-resizing');
+    const move = (ev) => {
+      const share = (ev.clientX - rect.left) / (rect.width || 1);
+      splitShare = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, share));
+      host.style.setProperty('--split-a', (splitShare * 100).toFixed(2) + '%');
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      host.classList.remove('is-resizing');
+      fitNow();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+  return bar;
+}
+
+// Lays the pair out in a row with the divider between them, or puts the
+// thread back to one pane.
+function applySplit() {
+  const host = $('#terminal');
+  if (!host) return;
+  const stage = host.closest('.chat-stage');
+  host.classList.toggle('is-split', !!SPLIT);
+  if (stage) stage.classList.toggle('is-split', !!SPLIT);
+  const bar = splitDivider();
+  if (!SPLIT) {
+    if (bar.parentNode) bar.remove();
+    for (const t of TABS.values()) { t.el.style.order = ''; t.el.classList.remove('is-a', 'is-b'); }
+    host.style.removeProperty('--split-a');
+    return;
+  }
+  host.style.setProperty('--split-a', (splitShare * 100).toFixed(2) + '%');
+  for (const t of TABS.values()) {
+    t.el.classList.toggle('is-a', t.id === SPLIT.a);
+    t.el.classList.toggle('is-b', t.id === SPLIT.b);
+    t.el.style.order = t.id === SPLIT.a ? '0' : (t.id === SPLIT.b ? '2' : '');
+  }
+  bar.style.order = '1';
+  if (bar.parentNode !== host) host.appendChild(bar);
+}
+
+// A click in the other pane makes it the focused chat.
+$('#terminal').addEventListener('mousedown', (e) => {
+  if (!SPLIT) return;
+  const paneEl = e.target && e.target.closest ? e.target.closest('.term-pane') : null;
+  if (!paneEl) return;
+  const id = paneEl.dataset.sessionId;
+  if (id && id !== activeTabId && TABS.has(id)) activateTab(id);
+}, true);
+
+$('#btn-split') && $('#btn-split').addEventListener('click', () => { toggleSplit(); });
 
 // ─── Theme + accent ─────────────────────────────────────────────────────────────
 function retintAllTabs() {
@@ -17455,6 +17632,8 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openPalette(); }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === '\\') { e.preventDefault(); toggleSplit(); return; }
+  if (e.key === 'Escape' && splitPicking) { splitPicking = false; renderTabStrip(); return; }
   // Alt+1..6 page switch (Alt to avoid conflicting with terminal input)
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const map = { '1': 'chat', '2': 'skills', '3': 'sessions', '4': 'files', '5': 'mcp', '6': 'prefs', '7': 'agents' };
