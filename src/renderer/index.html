@@ -337,38 +337,40 @@
         <header class="am-top">
           <div class="am-id">
             <h2 class="am-title" id="am-title">Agents</h2>
-            <p class="am-sub" id="am-sub">&nbsp;</p>
+            <p class="am-sub" id="am-sub"></p>
           </div>
-          <button class="am-close" id="am-close" aria-label="Close" title="Close (Esc)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-          </button>
-        </header>
-        <div class="am-filters" id="am-filters">
           <!-- Live leads and is where the center opens: the reason to look is
                what is happening now. The rest stays one click away. -->
-          <div class="am-chipset" role="tablist" aria-label="Filter agents">
-            <button class="am-chip is-live is-active" data-am-filter="live" role="tab" aria-selected="true">Live <span class="am-chip-n" id="am-n-live"></span></button>
-            <button class="am-chip is-blocked" data-am-filter="blocked" role="tab" aria-selected="false">Needs you <span class="am-chip-n" id="am-n-blocked"></span></button>
-            <button class="am-chip is-running" data-am-filter="running" role="tab" aria-selected="false">Running <span class="am-chip-n" id="am-n-running"></span></button>
-            <button class="am-chip is-done" data-am-filter="done" role="tab" aria-selected="false">Finished <span class="am-chip-n" id="am-n-done"></span></button>
-            <button class="am-chip" data-am-filter="all" role="tab" aria-selected="false">All <span class="am-chip-n" id="am-n-all"></span></button>
+          <div class="am-filters" id="am-filters">
+            <div class="am-chipset" role="tablist" aria-label="Filter agents">
+              <button class="am-chip is-live is-active" data-am-filter="live" role="tab" aria-selected="true">Live <span class="am-chip-n" id="am-n-live"></span></button>
+              <button class="am-chip is-blocked" data-am-filter="blocked" role="tab" aria-selected="false">Needs you <span class="am-chip-n" id="am-n-blocked"></span></button>
+              <button class="am-chip is-running" data-am-filter="running" role="tab" aria-selected="false">Running <span class="am-chip-n" id="am-n-running"></span></button>
+              <button class="am-chip is-done" data-am-filter="done" role="tab" aria-selected="false">Finished <span class="am-chip-n" id="am-n-done"></span></button>
+              <button class="am-chip" data-am-filter="all" role="tab" aria-selected="false">All <span class="am-chip-n" id="am-n-all"></span></button>
+            </div>
           </div>
-          <div class="am-views" id="am-views" role="tablist" aria-label="View">
-            <button class="am-view is-active" data-am-view="canvas" role="tab" aria-selected="true" title="Spawn graph">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.1 10.9 15.9 6.9M7.1 13.1l8.8 4"/></svg>
-              Graph
-            </button>
-            <button class="am-view" data-am-view="list" role="tab" aria-selected="false" title="List">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
-              List
+          <div class="am-tools">
+            <div class="am-views" id="am-views" role="tablist" aria-label="View">
+              <button class="am-view is-active" data-am-view="canvas" role="tab" aria-selected="true" title="Spawn graph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.1 10.9 15.9 6.9M7.1 13.1l8.8 4"/></svg>
+                Graph
+              </button>
+              <button class="am-view" data-am-view="list" role="tab" aria-selected="false" title="List">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+                List
+              </button>
+            </div>
+            <label class="am-search" for="am-search-input">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+              <input type="text" id="am-search-input" placeholder="Search" autocomplete="off" spellcheck="false" />
+              <kbd aria-hidden="true">/</kbd>
+            </label>
+            <button class="am-close" id="am-close" aria-label="Close" title="Close (Esc)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>
           </div>
-          <label class="am-search" for="am-search-input">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
-            <input type="text" id="am-search-input" placeholder="Search" autocomplete="off" spellcheck="false" />
-            <kbd aria-hidden="true">/</kbd>
-          </label>
-        </div>
+        </header>
         <div class="am-body">
           <!-- Spawn graph. One transformed layer holds the dot grid, the edge
                svg and the node layer, so pan and zoom move all three together. -->
@@ -425,17 +427,22 @@
               <p>Select an agent to watch it work</p>
             </div>
             <div class="am-detail" id="am-detail" hidden>
-              <div class="am-d-head">
-                <span class="am-state" id="am-d-state"></span>
-                <span class="am-d-elapsed" id="am-d-elapsed"></span>
+              <div class="am-d-scroll">
+                <div class="am-d-head">
+                  <span class="am-state" id="am-d-state"></span>
+                  <span class="am-d-elapsed" id="am-d-elapsed"></span>
+                </div>
+                <h3 class="am-d-name" id="am-d-name" dir="auto"></h3>
+                <p class="am-d-intent" id="am-d-intent"></p>
+                <div class="am-d-feed-wrap">
+                  <div class="am-d-feed-label">Activity</div>
+                  <ol class="am-d-feed" id="am-d-feed"></ol>
+                </div>
+                <div class="am-d-facts-wrap">
+                  <div class="am-d-facts-label">Details</div>
+                  <dl class="am-d-facts" id="am-d-facts"></dl>
+                </div>
               </div>
-              <h3 class="am-d-name" id="am-d-name" dir="auto"></h3>
-              <p class="am-d-intent" id="am-d-intent"></p>
-              <div class="am-d-feed-wrap">
-                <div class="am-d-feed-label">Activity</div>
-                <ol class="am-d-feed" id="am-d-feed"></ol>
-              </div>
-              <dl class="am-d-facts" id="am-d-facts"></dl>
               <div class="am-d-actions">
                 <button class="am-d-open" id="am-d-open">Open session</button>
                 <button class="am-d-end" id="am-d-end" title="Stop this agent">Stop</button>

@@ -217,10 +217,10 @@ test('the graph draws the fleet as a spawn tree, live where the work is', async 
   // A chat with work still in it is itself live.
   await expect(win.locator('.am-node.is-chat')).toHaveClass(/is-running/);
 
-  // A parent says how many agents it put into the world, counting the whole
-  // subtree rather than only its own children.
-  await expect(win.locator('.am-node[data-am-id="root-a"] .am-node-kids')).toHaveText('3');
-  await expect(win.locator('.am-node[data-am-id="kid-a2"] .am-node-kids')).toBeHidden();
+  // The source says how many agents ran under it, counting the whole forest;
+  // an agent carries its clock and nothing else on its rim.
+  await expect(win.locator('.am-node.is-chat .am-node-time')).toHaveText('7 agents');
+  await expect(win.locator('.am-node-kids')).toHaveCount(0);
 
   await win.waitForTimeout(700);
   await shoot(win, 'graph-dark.png');
@@ -642,11 +642,15 @@ test('the graph holds in the light theme', async () => {
   const field = await win.evaluate(() => {
     const pane = document.querySelector('#am-canvas-pane');
     const cs = getComputedStyle(pane);
-    const px = (v) => v.trim().replace('#', '');
-    const lum = (hex) => {
-      const n = parseInt(px(hex), 16);
-      const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-        .map((c) => c / 255)
+    // A token may resolve through color-mix, so it is read back through the
+    // engine rather than parsed as a bare hex.
+    const probe = document.createElement('i');
+    document.body.appendChild(probe);
+    const lum = (value) => {
+      probe.style.color = value.trim();
+      const m = getComputedStyle(probe).color.match(/[\d.]+/g).map(Number);
+      const ch = m.slice(0, 3)
+        .map((c) => (m[0] <= 1 && m[1] <= 1 && m[2] <= 1 && /srgb/.test(getComputedStyle(probe).color) ? c : c / 255))
         .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
       return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
     };

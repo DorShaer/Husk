@@ -15218,19 +15218,14 @@ function amPaintCounts() {
     else if (agentMap.error) sub.textContent = 'Could not reach the agent list';
     else if (!agentMap.rows.length) sub.textContent = 'Nothing running on this machine';
     else {
-      // This line says what wants a person. Every plain count is already on the
-      // filter rail beside it, so it stays out of here until there is nothing
-      // to raise.
-      const bits = [];
-      if (by.blocked) bits.push(`<span class="am-sub-needs">${by.blocked} need${by.blocked === 1 ? 's' : ''} you</span>`);
-      if (by.failed) bits.push(`<span class="am-sub-failed">${by.failed} failed</span>`);
-      if (!bits.length) {
-        bits.push(by.running
-          ? `<span class="am-sub-live">${by.running} running</span>`
-          : `${by.all} finished`);
-      }
+      // The title raises the highest-priority fleet condition so the center
+      // has a readable heartbeat even before the eye reaches the tabs.
       // eslint-disable-next-line no-unsanitized/property -- Numbers and literals only.
-      sub.innerHTML = bits.join(' <span aria-hidden="true">·</span> ');
+      sub.innerHTML = by.failed
+        ? `<span class="am-sub-failed">${by.failed} failed</span>`
+        : (by.blocked
+          ? `<span class="am-sub-needs">${by.blocked} needs you</span><span aria-hidden="true">·</span><span>${by.running} running</span>`
+          : (by.live ? `<span class="am-sub-live">${by.live} live</span>` : ''));
     }
   }
 }
@@ -15332,7 +15327,7 @@ function amPaintList() {
       const proj = showProj && (a.cwd || '') !== domProj && amProjectName(a.cwd)
         ? `<span class="am-row-proj">${esc(amProjectName(a.cwd))}</span>` : '';
       html += `
-    <li class="am-row is-${st}${sub ? '' : ' is-compact'}${agentMap.selected === a.id ? ' is-selected' : ''}" data-am-id="${esc(a.id)}" role="option" aria-selected="${agentMap.selected === a.id}">
+    <li class="am-row is-${st}${a.kind === 'subagent' ? ' is-subagent' : ''}${sub ? '' : ' is-compact'}${agentMap.selected === a.id ? ' is-selected' : ''}" data-am-id="${esc(a.id)}" role="option" aria-selected="${agentMap.selected === a.id}">
       <span class="am-dot" aria-hidden="true"></span>
       <span class="am-row-name">${esc(a.name || a.id || 'agent')}</span>
       <span class="am-row-sub">${esc(sub)}</span>
@@ -15394,16 +15389,12 @@ const amRowY = (depth) => depth * AM_CELL_H + (depth ? AM_ROOT_DROP : 0);
 const AM_ONE_LINE_MAX = 16;
 const AM_ONE_LINE_TRIM = 22;
 const AM_FIT_PAD = 44;
-const AM_FIT_INSET = { t: 56, r: 44, b: 64, l: 44 };
+const AM_FIT_INSET = { t: 66, r: 44, b: 64, l: 44 };
 const AM_ZOOM_MIN = 0.35;
 const AM_ZOOM_MAX = 1.8;
-// Framing never magnifies a fleet that already fits, so 100 percent is the
-// framing rather than a number to zoom back out to. A graph of one or two
-// cards is the exception: it is given the room it has rather than left as a
-// stamp in the middle of an empty field.
+// Framing never magnifies. A fleet that already fits is shown at 100 percent
+// and a sparse graph sits in space.
 const AM_FIT_MAX = 1;
-const AM_FIT_MAX_TINY = 1.5;
-const AM_FIT_MAX_SMALL = 1.2;
 // Guards a parent chain that loops: layout walks depth-first, so a cycle would
 // recurse forever without a ceiling on top of the visited set.
 const AM_DEPTH_MAX = 24;
@@ -15432,9 +15423,9 @@ const AM_KSCALE_MAX = 1.7;
 // Radial geometry. The rim radii are the glyph sizes the stylesheet paints, so
 // a line stops on the edge of the circle it leaves rather than under it; the
 // pair moves together.
-const AM_GLYPH_R = 28;
+const AM_GLYPH_R = 27;
 const AM_CORE_R = 31;
-const AM_RUN_R = 30;
+const AM_RUN_R = 26;
 
 // Where a line stops on each kind of node: the radius the stylesheet paints it
 // at. The pair moves together.
@@ -15447,6 +15438,11 @@ const AM_RING_STEP = 128;
 // The arc one agent needs on its ring before its neighbours crowd it. A ring
 // that cannot give every agent on it this much is pushed further out.
 const AM_ARC_MIN = 152;
+// How far a ring may be pushed out to clear the generation inside it, and the
+// step it is pushed by. Air is the clear space kept between two card boxes.
+const AM_RING_GROW_MAX = 420;
+const AM_RING_GROW_STEP = 8;
+const AM_RING_AIR = 18;
 const AM_SYS_GAP = 150;
 
 // What a card claims on the field: the disc, then the plate hung under it. A
@@ -15454,8 +15450,10 @@ const AM_SYS_GAP = 150;
 // The plate is 112 by 52 at rest and grows as the camera pulls back, so the
 // claim carries the room it takes at the framing the graph is read at.
 const AM_PLATE_W = 118;
-const AM_PLATE_GAP = 8;
-const AM_PLATE_H = 54;
+// The source's name runs on one line at the width the stylesheet gives it.
+const AM_PLATE_W_LG = 168;
+const AM_PLATE_GAP = 10;
+const AM_PLATE_H = 62;
 // The room a card claims is the plate at the widest framing a name is still
 // drawn at full size, so a seat cleared once stays clear as the camera moves.
 const AM_TSCALE_BOX = 1.4;
@@ -15926,7 +15924,7 @@ function amTuneField() {
 // keeps a neighbour's circle out of a name and out of the line under it.
 function amCardBox(n, room = AM_TSCALE_BOX) {
   const r = n.rimR || AM_GLYPH_R;
-  const w = Math.max(AM_PLATE_W * room, r * 2);
+  const w = Math.max((n.a && n.a.holder ? AM_PLATE_W_LG : AM_PLATE_W) * room, r * 2);
   return {
     x: n.cx - w / 2,
     y: n.cy - r,
@@ -16062,7 +16060,7 @@ function amLayoutRadial(tree, box) {
       placed.add(a.id);
       const n = {
         a, depth, parent, x: 0, y: 0, cx: 0, cy: 0, ox: 0, oy: 0,
-        ang: depth ? a0 : 0,
+        ang: depth ? (a0 + a1) / 2 : 0,
         rimR: amRimOf(a),
         live: window.husk.agents.isLive(a.state), kids: 0,
       };
@@ -16089,8 +16087,9 @@ function amLayoutRadial(tree, box) {
       if (laid.some((c) => c.live)) n.live = true;
       return n;
     };
-    // A whole turn, opened at the top, so the first thing a chat started lands
-    // where the eye already is.
+    // A whole turn, opened at the top. Each child takes the middle of its arc,
+    // so one child hangs under the source, two stand either side of it, and a
+    // fan spreads evenly around it.
     if (!walk(root, 0, null, -Math.PI / 2, Math.PI * 1.5)) continue;
 
     // How much room the frame actually has, once the floating chrome and the
@@ -16124,13 +16123,39 @@ function amLayoutRadial(tree, box) {
     const comfort = Math.max(AM_RING_0 + (d - 1) * AM_RING_STEP, need * 1.5);
     rings[d] = Math.max(rings[d - 1] + AM_RING_STEP, Math.min((rFill * d) / outer, comfort), need);
   }
-  for (const q of pending) {
-    for (const n of q.nodes) {
-      const r = rings[n.depth] || 0;
-      n.ring = r;
-      n.cx = Math.cos(n.ang) * r * ax;
-      n.cy = Math.sin(n.ang) * r * ay;
+  // A ring is measured against the generation inside it as well as its own
+  // neighbours: ring d grows until no card on it lands in a card on ring d-1,
+  // in any system sharing the rings. Growth is capped so a fleet the frame
+  // cannot hold is handed to the separator rather than pushed off the field.
+  const seat = (n) => {
+    const r = rings[n.depth] || 0;
+    n.ring = r;
+    n.cx = Math.cos(n.ang) * r * ax;
+    n.cy = Math.sin(n.ang) * r * ay;
+  };
+  const clash = (p, c) => {
+    const a = amCardBox(p, 1);
+    const b = amCardBox(c, 1);
+    return a.x < b.x + b.w + AM_RING_AIR && b.x < a.x + a.w + AM_RING_AIR
+      && a.y < b.y + b.h + AM_RING_AIR && b.y < a.y + a.h + AM_RING_AIR;
+  };
+  for (let d = 1; d < rings.length; d += 1) {
+    for (let grown = 0; grown < AM_RING_GROW_MAX; grown += AM_RING_GROW_STEP) {
+      let hit = false;
+      for (const q of pending) {
+        const inner = q.nodes.filter((n) => n.depth === d - 1);
+        const outer = q.nodes.filter((n) => n.depth === d);
+        for (const n of inner) seat(n);
+        for (const n of outer) seat(n);
+        hit = outer.some((c) => inner.some((p) => clash(p, c)));
+        if (hit) break;
+      }
+      if (!hit) break;
+      for (let e = d; e < rings.length; e += 1) rings[e] += AM_RING_GROW_STEP;
     }
+  }
+  for (const q of pending) {
+    for (const n of q.nodes) seat(n);
     amSeparateRadial(q.nodes);
     const radius = rings[Math.max(0, q.perDepth.length - 1)] || 0;
     systems.push({ nodes: q.nodes, rings, perDepth: q.perDepth, ax, ay, radius, ox: 0, oy: 0 });
@@ -16270,6 +16295,57 @@ function amRimPoint(n, tx, ty) {
   return { x: n.cx + (dx / d) * r, y: n.cy + (dy / d) * r };
 }
 
+// The plate under a disc, in layout space, at the size it is drawn at now.
+function amPlateBox(n) {
+  const el = agentMap.nodeEls.get(n.a.id);
+  const plate = el && el.querySelector('.am-node-plate');
+  if (!plate || !plate.offsetHeight) return null;
+  const ts = agentMap.tscale || 1;
+  const w = (n.a.holder ? AM_PLATE_W_LG : AM_PLATE_W) * ts;
+  const top = n.y + plate.offsetTop;
+  return { x: n.cx - w / 2, y: top, w, h: plate.offsetHeight * ts };
+}
+
+// Where a straight run from s to e passes through a box, as a share of the
+// run: null when it misses.
+function amCut(s, e, box) {
+  const dx = e.x - s.x;
+  const dy = e.y - s.y;
+  const span = (lo, hi, o, d) => {
+    if (Math.abs(d) < 1e-6) return o >= lo && o <= hi ? [-Infinity, Infinity] : null;
+    const a = (lo - o) / d;
+    const b = (hi - o) / d;
+    return [Math.min(a, b), Math.max(a, b)];
+  };
+  const tx = span(box.x, box.x + box.w, s.x, dx);
+  const ty = span(box.y, box.y + box.h, s.y, dy);
+  if (!tx || !ty) return null;
+  const t0 = Math.max(tx[0], ty[0], 0);
+  const t1 = Math.min(tx[1], ty[1], 1);
+  return t1 > t0 ? [t0, t1] : null;
+}
+
+// A straight run between two rims, broken wherever it would cross the name
+// under either disc: the line meets both circles and never crosses text.
+function amStraightPath(s, e, nodes) {
+  const cuts = [];
+  for (const n of nodes) {
+    const box = amPlateBox(n);
+    const cut = box && amCut(s, e, { x: box.x, y: box.y - 2, w: box.w, h: box.h + 4 });
+    if (cut) cuts.push(cut);
+  }
+  cuts.sort((a, b) => a[0] - b[0]);
+  const at = (t) => `${(s.x + (e.x - s.x) * t).toFixed(1)},${(s.y + (e.y - s.y) * t).toFixed(1)}`;
+  let d = `M${at(0)}`;
+  let t = 0;
+  for (const [a, b] of cuts) {
+    if (a > t) d += ` L${at(a)}`;
+    d += ` M${at(b)}`;
+    t = Math.max(t, b);
+  }
+  return `${d} L${at(1)}`;
+}
+
 // A hop between two rings bows toward the core, so a dense generation reads as
 // a sheaf of curves leaving one place rather than a grid of crossing lines.
 function amRadialEdgePath(p, c) {
@@ -16288,6 +16364,13 @@ function amRadialEdgePath(p, c) {
   const qy = oy + Math.sin(mid) * rm;
   const s = amRimPoint(p, qx, qy);
   const e = amRimPoint(c, qx, qy);
+  // A hop that would run through a name under either disc goes straight and
+  // breaks for the name; only a clear hop gets the bow.
+  const crosses = [p, c].some((n) => {
+    const box = amPlateBox(n);
+    return box && amCut(s, e, box);
+  });
+  if (crosses) return amStraightPath(s, e, [p, c]);
   return `M${s.x.toFixed(1)},${s.y.toFixed(1)} Q${qx.toFixed(1)},${qy.toFixed(1)} ${e.x.toFixed(1)},${e.y.toFixed(1)}`;
 }
 
@@ -16298,17 +16381,20 @@ function amEdgePath(p, c) {
   const x1 = p.x + AM_CELL_W / 2;
   const x2 = c.x + AM_CELL_W / 2;
   const y2 = c.y;
-  // The rim of the circle, so the line reads as leaving the node itself. It
-  // passes behind the card's name plate on its way down.
+  // The rim of the circle, so the line reads as leaving the node itself. On
+  // its way down it breaks for the name under the disc rather than running
+  // through it.
   const y1 = p.y + m[`glyph${kind}`];
+  const plate = amPlateBox(p);
+  const gap = plate ? ` L${x1},${(plate.y - 2).toFixed(1)} M${x1},${(plate.y + plate.h + 2).toFixed(1)}` : '';
   // Below the parent's own text, where the row is empty all the way across, so
   // every sideways move happens where no card can be.
   const lane = p.y + m[`bottom${kind}`] + AM_EDGE_GAP;
   const corridor = Math.max(y1 + 2, Math.min(lane, y2 - 2));
-  if (Math.abs(x2 - x1) < 0.5) return `M${x1},${y1} L${x2},${y2}`;
+  if (Math.abs(x2 - x1) < 0.5) return `M${x1},${y1}${gap} L${x2},${y2}`;
   const dir = x2 > x1 ? 1 : -1;
   const r = Math.max(2, Math.min(AM_EDGE_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - corridor) / 2));
-  return `M${x1},${y1}`
+  return `M${x1},${y1}${gap}`
     + ` L${x1},${corridor - r}`
     + ` Q${x1},${corridor} ${x1 + dir * r},${corridor}`
     + ` L${x2 - dir * r},${corridor}`
@@ -16399,6 +16485,20 @@ function amCullLabels(eff) {
 // A pan changes where the field is, not how big anything on it is. Everything
 // that depends on scale alone is left alone while the camera is only moving,
 // which is what keeps a drag on the frame instead of behind it.
+// The plate's drawn size moves with the camera, so the point a line leaves a
+// card from moves with it too.
+function amRepathEdges() {
+  for (const n of agentMap.layout || []) {
+    if (!n.parent || n.inBlock) continue;
+    const path = agentMap.edgeEls.get(`${n.parent.a.id}>${n.a.id}`);
+    if (!path) continue;
+    const d = amEdgePath(n.parent, n);
+    path.setAttribute('d', d);
+    const spark = agentMap.flowEls && agentMap.flowEls.get(`${n.parent.a.id}>${n.a.id}`);
+    if (spark) spark.setAttribute('d', d);
+  }
+}
+
 function amApplyCam() {
   // The readout is one number and a person just asked for it, so it is written
   // now. Everything else waits for the frame.
@@ -16423,9 +16523,11 @@ function amPaintCam() {
     // can be read at, so the plate takes back exactly as much of the camera's
     // scale as the floor needs and no more. Taking back less than the whole
     // scale is what keeps a name inside the room the layout reserved for it.
-    const ts = Math.min(AM_TSCALE_MAX, Math.max(1, AM_READ_PX / (AM_LABEL_PX * k)));
+    const ts = k > 1 ? 1 / k : Math.min(AM_TSCALE_MAX, Math.max(1, AM_READ_PX / (AM_LABEL_PX * k)));
     if (scaled) {
+    agentMap.tscale = ts;
     stage.style.setProperty('--cv-tscale', String(ts));
+    amRepathEdges();
     // Past the point where the camera outruns the plate, the smallest type on
     // the card goes first and the name goes last, because type drawn under
     // these sizes is not type any more.
@@ -16525,9 +16627,7 @@ function amFit(animate) {
   const INS = AM_FIT_INSET;
   const fw = r.width - INS.l - INS.r;
   const fh = r.height - INS.t - INS.b;
-  const fitMax = nodes.length <= 2 ? AM_FIT_MAX_TINY
-    : nodes.length <= 6 ? AM_FIT_MAX_SMALL : AM_FIT_MAX;
-  const k = Math.min(fitMax, fw / w, fh / h);
+  const k = Math.min(AM_FIT_MAX, fw / w, fh / h);
   const cam = agentMap.cam;
   cam.k = Math.max(AM_ZOOM_MIN, k);
   cam.x = INS.l + (fw - w * cam.k) / 2 - minX * cam.k;
@@ -16588,8 +16688,7 @@ function amNodeEl(a) {
     + '<i class="am-node-ring" aria-hidden="true"></i>'
     + '<i class="am-node-lock" aria-hidden="true"></i>'
     + '<svg class="am-node-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>'
-    + '<b class="am-node-mono"></b>'
-    + '<b class="am-node-kids"></b></span>'
+    + '<b class="am-node-mono"></b></span>'
     + '<span class="am-node-plate">'
     + '<span class="am-node-label"></span>'
     + '<span class="am-node-time"></span></span>';
@@ -16682,9 +16781,9 @@ function amPaintNode(el, n) {
   mono.textContent = a.holder ? amMonogram(rawName) : '';
   const time = el.querySelector('.am-node-time');
   if (a.holder) {
-    // The count the source carries rides the same rim badge every agent uses,
-    // so the source keeps one line of name and nothing hangs under it.
-    time.textContent = '';
+    // A source is named by what it started, so the count of agents under it
+    // stands where an agent's clock would.
+    time.textContent = n.kids ? `${n.kids} agent${n.kids === 1 ? '' : 's'}` : '';
     time.dataset.amLive = '0';
     time.dataset.amTs = '0';
   } else {
@@ -16695,12 +16794,6 @@ function amPaintNode(el, n) {
   // Where a seat could not be cleared, the line under the card would land on a
   // neighbour's disc, so the card keeps its name and drops the line.
   el.classList.toggle('is-timeless', !a.holder && !!n.hideTime);
-  const kids = el.querySelector('.am-node-kids');
-  // The core counts the agents that ran under it, the same number the footer
-  // states; an agent counts what it started.
-  const badge = n.kids;
-  kids.textContent = badge ? String(badge) : '';
-  kids.hidden = !badge;
   // The whole card is the tooltip: the name in full plus what it is doing.
   el.title = `${a.name || a.id || 'agent'}\n${amRowSub(a)}`;
 }
@@ -17106,10 +17199,7 @@ function amPaintFeed() {
     </li>`).join('');
   feed.dataset.last = keyOf(f.entries[f.entries.length - 1]);
   if (atBottom || prevIdx === -1) {
-    const pin = () => {
-      feed.scrollTop = feed.scrollHeight;
-      feed.scrollTop = Math.max(0, feed.scrollTop - 30);
-    };
+    const pin = () => { feed.scrollTop = feed.scrollHeight; };
     pin();
     // Fonts or wrapping can settle a frame later; align again so the top fold
     // never slices through a readable row while the newest lines remain visible.
@@ -17197,11 +17287,25 @@ function amPaintDetail() {
   const a = agentMap.rows.find((x) => x.id === agentMap.selected) || null;
   const detail = $('#am-detail');
   const none = $('#am-detail-blank');
+  const pane = $('#am-detail-pane');
+  const card = $('#agent-map .am-card');
   if (!detail || !none) return;
   detail.hidden = !a;
   none.hidden = !!a;
-  if (!a) return;
+  for (const st of ['blocked', 'running', 'failed', 'done']) {
+    if (pane) pane.classList.remove(`is-${st}`);
+    if (card) card.classList.remove(`is-${st}`);
+  }
+  if (!a) {
+    if (pane) delete pane.dataset.state;
+    return;
+  }
   const st = amStateOf(a);
+  if (pane) {
+    pane.dataset.state = st;
+    pane.classList.add(`is-${st}`);
+  }
+  if (card) card.classList.add(`is-${st}`);
   const stateEl = $('#am-d-state');
   stateEl.className = `am-state is-${st}`;
   stateEl.textContent = { blocked: 'Needs you', running: 'Running', failed: 'Failed' }[st] || 'Finished';

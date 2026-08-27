@@ -13479,176 +13479,242 @@ body:not([data-status="collapsed"]) #btn-status-toggle svg rect { fill: var(--bg
 .ws-board::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Agent command center ───────────────────────────────────────────────────
-   Every background agent on this machine: a grouped live list beside a detail
-   pane that streams what the selected agent is doing. Calm by default: colour
-   is rationed to "waiting on a human" (amber), liveness (green) and the one
-   primary action; everything else stays neutral. */
+   Every background agent on this machine, drawn as a spawn graph or a list
+   beside a rail that streams what the selected agent is doing. One control
+   recipe, one ordered set of surfaces, one type ramp. Colour is spent on state
+   and on the one action a person can take; everything else is ink on ground. */
 #agent-map.modal {
-  background: rgba(0, 0, 0, 0.60);
-  backdrop-filter: blur(10px);
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(8px);
 }
 
 .am-card {
+  /* The recipe every control on the page is drawn from: one height, an outer
+     radius for a group and an inner radius for the segment inside it. */
+  --am-ctl-h: 30px;
+  --am-r-out: 8px;
+  --am-r-in: 6px;
+  --am-ctl-bg: color-mix(in srgb, var(--text) 4%, transparent);
+  --am-ctl-line: var(--line);
+  --am-ctl-on: color-mix(in srgb, var(--text) 9%, transparent);
+  --am-ctl-ink: var(--text-2);
+  --am-ctl-lift: 0 1px 2px rgba(0, 0, 0, 0.18), inset 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent);
+  /* The three state hues. The stage tunes its own copies against its ground;
+     the chrome reads these, so a pill and a disc mean the same amber. */
+  --cv-run:  #12b3a4;
+  --cv-wait: #f76808;
+  --cv-fail: #e5484d;
+  --am-run-ink:  var(--cv-run);
+  --am-wait-ink: var(--cv-wait);
+  --am-fail-ink: var(--cv-fail);
+  --am-rule: var(--line);
+  --am-chrome: var(--notif-bg);
+  /* Type ramp: 11 caption, 12 secondary, 13 body, 15 title, 17 rail name. */
+  --am-fs-1: 11px;
+  --am-fs-2: 12px;
+  --am-fs-3: 13px;
+  --am-fs-4: 15px;
+  --am-fs-5: 17px;
   width: min(1200px, 95vw);
   height: min(740px, 92vh);
   padding: 0;
   display: flex; flex-direction: column;
   text-align: left;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, #fff 3%, transparent), transparent 120px),
-    var(--notif-bg);
+  background: var(--am-chrome);
   border: 1px solid var(--line-2);
-  border-radius: var(--radius-2xl);
+  border-radius: 12px;
   box-shadow: var(--elev-4);
   animation: am-enter 0.18s var(--ease-out);
   transition: width var(--motion-base) var(--ease-out), height var(--motion-base) var(--ease-out);
 }
-@media (prefers-reduced-motion: reduce) { .am-card { transition: none; } }
+/* The card is one opaque surface: the glass the app gives dark modals would
+   put the page behind it into the chrome. */
+#agent-map .am-card {
+  background: var(--am-chrome);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+body[data-mode="light"] .am-card {
+  --am-ctl-bg: color-mix(in srgb, var(--text) 3.5%, transparent);
+  --am-ctl-on: #ffffff;
+  --am-ctl-lift: 0 1px 2px rgba(0, 0, 0, 0.10), 0 0 0 1px var(--line-2);
+  --am-run-ink:  color-mix(in srgb, var(--cv-run) 72%, var(--text));
+  --am-wait-ink: color-mix(in srgb, var(--cv-wait) 78%, var(--text));
+  --am-fail-ink: color-mix(in srgb, var(--cv-fail) 84%, var(--text));
+}
 @keyframes am-enter {
   from { opacity: 0; transform: translateY(6px) scale(0.985); }
   to   { opacity: 1; transform: none; }
 }
-@media (prefers-reduced-motion: reduce) { .am-card { animation: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .am-chip,
-  .am-view,
-  .am-search,
-  .am-card .am-search input[type="text"] {
-    transition: none;
-  }
+  .am-card { animation: none; transition: none; }
+  .am-chip, .am-view, .am-search, .am-card .am-search input[type="text"] { transition: none; }
 }
 
-/* Header: identity and the close, nothing else. */
+/* ── Command bar ──
+   One row: what this is, the state tabs, then the view, the search and the
+   close. The tabs are full height so their rule sits on the bar's own rule. */
 .am-top {
-  display: flex; align-items: flex-start; gap: var(--space-3);
-  padding: 24px var(--space-4) 7px var(--space-5);
+  display: flex; align-items: stretch; gap: var(--space-4);
+  height: 56px; flex: 0 0 auto;
+  padding: 0 var(--space-4) 0 var(--space-5);
+  border-bottom: 1px solid var(--am-rule);
 }
-.am-id { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
+.am-id { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 0 0 auto; }
 .am-title {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 18px; font-weight: 650; letter-spacing: -0.025em;
-  line-height: var(--lh-tight); color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--am-fs-4); font-weight: 600; letter-spacing: -0.01em;
+  line-height: 1; color: var(--text);
 }
-/* The line under the title is the one that says something is wrong, so it sits
-   a step above the filter rail in both size and weight rather than a step
-   below it. */
+/* What wants a person, said once beside the title. A count that asks for
+   something is a pill in its state's colour; a plain summary is plain text. */
 .am-sub {
-  display: flex; align-items: baseline; gap: 6px;
-  margin: 0; font-size: 13px; font-weight: 500; line-height: var(--lh-snug); color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-.am-sub .am-sub-needs { color: var(--as-mark); font-weight: 650; }
-.am-sub .am-sub-failed { color: var(--rose); font-weight: 650; }
-.am-sub .am-sub-live { color: var(--emerald); font-weight: 650; }
-.am-sub span[aria-hidden="true"] { color: var(--text-3); opacity: 0.58; transform: translateY(-0.5px); }
-/* The state hues are tuned for a dark ground. On paper they are deepened until
-   every value in this line reads at the same strength as the rest of it. */
-body[data-mode="light"] .am-sub .am-sub-live { color: color-mix(in srgb, var(--emerald) 78%, var(--text)); }
-body[data-mode="light"] .am-sub .am-sub-needs { color: color-mix(in srgb, var(--as-mark) 88%, var(--text)); }
-body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(--rose) 90%, var(--text)); }
-
-.am-close {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; flex: 0 0 auto;
-  background: transparent; border: 0; border-radius: var(--radius-md);
-  color: var(--text-3); cursor: pointer;
-  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
-}
-.am-close:hover { color: var(--text); background: var(--bg-3); }
-.am-close:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.am-close svg { width: var(--icon-sm); height: var(--icon-sm); }
-
-/* One rail for narrowing: state chips on the left, search on the right, both
-   the same height, the first chip's label on the title's 24px rail. */
-.am-filters {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-1) var(--space-4) 10px var(--space-5);
-  border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg-1) 58%, transparent));
-}
-.am-chipset { display: flex; align-items: center; gap: var(--space-1); min-width: 0; flex: 1; }
-.am-chipset .am-chip:first-child { margin-left: calc(var(--space-3) * -1); }
-.am-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 28px; padding: 0 var(--space-3);
-  border: 1px solid transparent; border-radius: var(--radius-pill);
-  background: transparent; color: color-mix(in srgb, var(--text) 82%, var(--text-2));
-  font-family: inherit; font-size: var(--fs-micro); font-weight: 520;
+  margin: 0; height: 22px;
+  font-size: var(--am-fs-2); font-weight: 500; line-height: 1; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.am-sub:empty { display: none; }
+.am-sub:has(.am-sub-needs), .am-sub:has(.am-sub-failed), .am-sub:has(.am-sub-live) {
+  padding: 0 9px 0 8px;
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--radius-pill);
+  background: var(--am-ctl-bg);
+}
+.am-sub:has(.am-sub-needs) {
+  color: var(--am-wait-ink);
+  border-color: color-mix(in srgb, var(--cv-wait) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-wait) 9%, transparent);
+}
+.am-sub:has(.am-sub-failed) {
+  color: var(--am-fail-ink);
+  border-color: color-mix(in srgb, var(--cv-fail) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-fail) 9%, transparent);
+}
+.am-sub:has(.am-sub-live) {
+  color: var(--am-run-ink);
+  border-color: color-mix(in srgb, var(--cv-run) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-run) 9%, transparent);
+}
+.am-sub .am-sub-needs, .am-sub .am-sub-failed, .am-sub .am-sub-live { font-weight: 600; }
+.am-sub span[aria-hidden="true"] { color: var(--text-3); }
+.am-sub:has(.am-sub-needs)::before, .am-sub:has(.am-sub-failed)::before, .am-sub:has(.am-sub-live)::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto;
+}
+
+.am-filters { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; }
+.am-chipset { display: flex; align-items: stretch; gap: 2px; min-width: 0; }
+.am-chip {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 10px;
+  border: 0; border-radius: 0;
+  background: transparent; color: var(--text-2);
+  font-family: inherit; font-size: var(--am-fs-3); font-weight: 500; line-height: 1;
   cursor: pointer; white-space: nowrap;
-  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+  transition: color var(--motion-fast) var(--ease);
 }
-.am-chip:hover:not(.is-active) { background: var(--bg-2); border-color: var(--line); color: var(--text); }
-.am-chip.is-active {
-  background: color-mix(in srgb, var(--bg-3) 86%, var(--bg-4));
-  border-color: var(--line-2);
-  color: var(--text);
-  box-shadow: var(--hl-top), inset 0 -1px 0 rgba(0,0,0,0.18);
+.am-chip::after {
+  content: '';
+  position: absolute; left: 10px; right: 10px; bottom: -1px;
+  height: 2px; border-radius: 2px 2px 0 0;
+  background: var(--text);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
 }
-.am-chip:focus-visible { outline: 2px solid var(--focus-ink); outline-offset: -2px; }
+.am-chip:hover { color: var(--text); }
+.am-chip.is-active { color: var(--text); }
+.am-chip.is-active::after { opacity: 1; }
+.am-chip:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ink); border-radius: var(--am-r-in); }
 .am-chip-n {
-  display: inline-flex; align-items: baseline;
   min-width: 1ch;
-  transform: translateY(-0.5px);
-  font-size: var(--fs-nano); font-weight: 520; color: color-mix(in srgb, var(--text-2) 78%, var(--text-3));
+  font-size: var(--am-fs-2); font-weight: 500; color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 .am-chip.is-active .am-chip-n { color: var(--text-2); }
 .am-chip-n:empty { display: none; }
-/* The filter rail is the count surface, and the only count on it that is asking
-   for something carries a colour. The rest stay grey so that one can be seen. */
-.am-chip.is-blocked .am-chip-n { color: var(--as-mark); font-weight: 700; }
-.am-chip.is-live.is-active {
-  background: color-mix(in srgb, var(--emerald) 13%, var(--bg-3));
-  border-color: color-mix(in srgb, var(--emerald) 28%, var(--line-2));
+/* The only count on the rail that is asking for something carries a colour. */
+.am-chip.is-blocked .am-chip-n { color: var(--am-wait-ink); font-weight: 600; }
+
+.am-tools { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; margin-left: auto; }
+
+.am-views {
+  display: flex; align-items: center; gap: 2px;
+  height: var(--am-ctl-h); box-sizing: border-box; padding: 2px;
+  background: var(--am-ctl-bg);
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--am-r-out);
 }
+.am-view {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 10px;
+  border: 0; border-radius: var(--am-r-in);
+  background: transparent; color: var(--am-ctl-ink);
+  font-family: inherit; font-size: var(--am-fs-2); font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+.am-view svg { width: 14px; height: 14px; }
+.am-view:hover:not(.is-active) { color: var(--text); }
+.am-view.is-active { background: var(--am-ctl-on); color: var(--text); box-shadow: var(--am-ctl-lift); }
+.am-view:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 .am-search {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  height: 28px; padding: 0 var(--space-2) 0 var(--space-3);
-  border: 1px solid var(--line); border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-1) 86%, transparent);
+  display: inline-flex; align-items: center; gap: 8px;
+  height: var(--am-ctl-h); box-sizing: border-box;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--am-ctl-line); border-radius: var(--am-r-out);
+  background: var(--am-ctl-bg);
   color: var(--text-3);
-  transition: border-color var(--motion-base) var(--ease-out), background var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
+  transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
 }
-.am-search:hover { border-color: var(--line-2); background: var(--bg-1); }
+.am-search:hover { border-color: var(--line-2); }
 .am-search:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--line-3));
-  background: var(--bg-2);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 11%, transparent), var(--hl-top);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.am-search svg { width: var(--icon-xs); height: var(--icon-xs); flex: 0 0 auto; }
-/* Undoes the app-wide modal/glass input chrome: the pill is the field here. */
+.am-search svg { width: 14px; height: 14px; flex: 0 0 auto; }
+/* Undoes the app-wide modal input chrome: the group is the field here. */
 .am-card .am-search input[type="text"] {
-  width: 150px; height: auto;
+  width: 140px; height: auto;
   border: 0; outline: 0; background: transparent; box-shadow: none;
   padding: 0; border-radius: 0;
-  color: var(--text); font-family: inherit; font-size: var(--fs-micro);
+  color: var(--text); font-family: inherit; font-size: var(--am-fs-3);
   transition: width var(--motion-base) var(--ease-out);
 }
-.am-search:focus-within input[type="text"] {
-  width: 210px;
-}
+.am-search:focus-within input[type="text"] { width: 200px; }
 .am-card .am-search input[type="text"]:focus,
 .am-card .am-search input[type="text"]:focus-visible {
   border: 0 !important; background: transparent; box-shadow: none;
 }
-.am-search input::placeholder { color: color-mix(in srgb, var(--text-3) 82%, var(--text-2)); }
+.am-search input::placeholder { color: var(--text-3); }
 .am-search kbd {
-  min-width: 16px;
-  font-family: var(--font-body); font-size: var(--fs-pico); color: color-mix(in srgb, var(--text-3) 86%, var(--text-2));
+  min-width: 18px; height: 18px; box-sizing: border-box;
+  font-family: var(--font-body); font-size: var(--am-fs-1); line-height: 16px; color: var(--text-3);
   text-align: center;
-  border: 1px solid var(--line-2); border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  padding: 0 5px; line-height: 1.45;
-  box-shadow: var(--hl-top);
+  border: 1px solid var(--line-2); border-radius: 4px;
+  background: var(--am-ctl-bg);
+  padding: 0 4px;
 }
 .am-search:focus-within kbd { opacity: 0; }
 
+.am-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--am-ctl-h); height: var(--am-ctl-h); flex: 0 0 auto;
+  background: transparent; border: 0; border-radius: var(--am-r-out);
+  color: var(--text-3); cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+.am-close:hover { color: var(--text); background: var(--am-ctl-on); }
+.am-close:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.am-close svg { width: 16px; height: 16px; }
+
 .am-body {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: minmax(0, 1fr) 386px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px;
   grid-template-rows: minmax(0, 1fr);
 }
 /* With nothing to list there is nothing to detail: the empty state owns the
@@ -13659,26 +13725,19 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 /* ── List pane ── */
 .am-list-pane {
   position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column;
-  border-right: 1px solid var(--line);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-1) 82%, transparent), transparent 120px),
-    color-mix(in srgb, var(--bg) 34%, transparent);
+  background: var(--bg);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.35);
 }
-.am-body.is-empty .am-list-pane { border-right: 0; }
+body[data-mode="light"] .am-list-pane {
+  background: color-mix(in srgb, var(--text) 3.5%, var(--bg));
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.05);
+}
 .am-list {
   flex: 1; min-height: 0; overflow-y: auto;
   margin: 0; padding: var(--space-2) var(--space-3) var(--space-4); list-style: none;
   outline: none;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
-/* Quiet rails: 6px, visible only while the pointer is over the pane. */
-.am-list::-webkit-scrollbar, .am-d-feed::-webkit-scrollbar, .am-detail::-webkit-scrollbar { width: 6px; }
-.am-list::-webkit-scrollbar-thumb, .am-d-feed::-webkit-scrollbar-thumb, .am-detail::-webkit-scrollbar-thumb {
-  background: transparent; border-radius: var(--radius-pill); border: 2px solid transparent; background-clip: padding-box;
-}
-.am-list:hover, .am-d-feed:hover, .am-detail:hover { scrollbar-color: var(--line-2) transparent; }
-.am-list:hover::-webkit-scrollbar-thumb, .am-d-feed:hover::-webkit-scrollbar-thumb, .am-detail:hover::-webkit-scrollbar-thumb { background-color: var(--line-2); }
-.am-list::-webkit-scrollbar-track, .am-d-feed::-webkit-scrollbar-track, .am-detail::-webkit-scrollbar-track { background: transparent; }
 
 /* Floating section labels: small caps, generous air above, no chrome. Only the
    human-blocking band takes the amber. */
@@ -13694,8 +13753,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   font-weight: 400; letter-spacing: 0; font-variant-numeric: tabular-nums;
   color: var(--text-3); opacity: 0.68;
 }
-.am-sect.is-blocked { color: var(--as-mark); }
-.am-sect.is-failed { color: var(--rose); }
+.am-sect.is-blocked { color: var(--am-wait-ink); }
+.am-sect.is-failed { color: var(--am-fail-ink); }
 
 .am-row {
   position: relative;
@@ -13735,8 +13794,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   background: color-mix(in srgb, var(--bg-2) 88%, var(--bg-3));
   box-shadow: var(--hl-top), inset 0 0 0 1px color-mix(in srgb, var(--line-2) 66%, transparent);
 }
-.am-row.is-selected.is-blocked { background: color-mix(in srgb, var(--as-mark) 5%, var(--bg-2)); }
-.am-row.is-selected.is-running { background: color-mix(in srgb, var(--emerald) 4%, var(--bg-2)); }
+.am-row.is-selected.is-blocked { background: color-mix(in srgb, var(--am-wait-ink) 5%, var(--bg-2)); }
+.am-row.is-selected.is-running { background: color-mix(in srgb, var(--am-run-ink) 4%, var(--bg-2)); }
 .am-row.is-selected::before {
   content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
   border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
@@ -13753,9 +13812,9 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   background: var(--line-2);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 18%, transparent);
 }
-.am-row.is-running .am-dot { background: var(--emerald); }
-.am-row.is-blocked .am-dot { background: var(--as-mark); }
-.am-row.is-failed .am-dot { background: var(--rose); }
+.am-row.is-running .am-dot { background: var(--am-run-ink); }
+.am-row.is-blocked .am-dot { background: var(--am-wait-ink); }
+.am-row.is-failed .am-dot { background: var(--am-fail-ink); }
 .am-row.is-done .am-dot { background: color-mix(in srgb, var(--text-3) 34%, var(--line-2)); opacity: 0.72; }
 .am-row.is-running .am-dot::after,
 .am-row.is-blocked .am-dot::after {
@@ -13763,8 +13822,8 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   border: 1px solid currentColor; opacity: 0;
   animation: am-ping 2.4s var(--ease) infinite;
 }
-.am-row.is-running .am-dot::after { color: var(--emerald); }
-.am-row.is-blocked .am-dot::after { color: var(--as-mark); }
+.am-row.is-running .am-dot::after { color: var(--am-run-ink); }
+.am-row.is-blocked .am-dot::after { color: var(--am-wait-ink); }
 @keyframes am-ping {
   0% { transform: scale(0.6); opacity: 0.7; }
   70%, 100% { transform: scale(1.45); opacity: 0; }
@@ -13807,7 +13866,7 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
   font-variant-numeric: tabular-nums; line-height: 15px; text-align: right;
   white-space: nowrap;
 }
-.am-row.is-running .am-row-time { color: color-mix(in srgb, var(--emerald) 70%, var(--text-3)); }
+.am-row.is-running .am-row-time { color: color-mix(in srgb, var(--am-run-ink) 70%, var(--text-3)); }
 .am-row-proj {
   max-width: 132px;
   min-height: 16px;
@@ -13936,104 +13995,56 @@ body[data-mode="light"] .am-sub .am-sub-failed { color: color-mix(in srgb, var(-
 .am-blank-act { pointer-events: auto; margin-top: var(--space-3); height: 28px; font-size: var(--fs-micro); }
 
 /* ── Spawn graph ────────────────────────────────────────────────────────────
-   The fleet along the axis a list cannot show: who started whom. Cards sit on a
-   dot field, edges curve from parent to child, and the only things that move
-   are the ones that mean something: a node arriving, an edge drawing itself,
-   and a current running out along every branch that still has work under it. */
-
-.am-views {
-  display: flex; align-items: center; gap: 2px;
-  padding: 2px; flex: 0 0 auto;
-  background: color-mix(in srgb, var(--bg-1) 86%, transparent);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
-}
-.am-view {
-  display: inline-flex; align-items: center; gap: 5px;
-  height: 22px; padding: 0 8px;
-  border: 1px solid transparent; border-radius: var(--radius-md);
-  background: transparent; color: var(--text-3);
-  font-size: var(--fs-nano); font-weight: 600; letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
-}
-.am-view svg { width: var(--icon-xs); height: var(--icon-xs); }
-.am-view:hover:not(.is-active) { background: var(--bg-2); color: var(--text-2); }
-.am-view.is-active {
-  background: color-mix(in srgb, var(--bg-3) 88%, var(--bg-4));
-  border-color: var(--line-2);
-  color: var(--text);
-  box-shadow: var(--hl-top), 0 1px 2px rgba(0,0,0,0.22);
-}
-.am-view:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+   The fleet along the axis a list cannot show: who started whom. Discs sit on
+   a recessed field, edges run from parent to child, and the only things that
+   move are the ones that mean something: a node arriving, an edge drawing
+   itself, work turning inside a running disc, and a ring breathing around an
+   agent that is waiting on a person. */
 
 /* ── The field ──
-   The graph is a viewport into a space rather than a page of content, so its
-   ground is the theme's own surface with the light taken out of it. Every
-   colour below resolves from a theme token, which is why nord reads slate,
-   gruvbox reads earth and tokyo-night reads indigo without any of them being
-   named here, and why an eleventh theme costs the canvas nothing. State is the
-   only thing carrying a hue of its own, and the one thing that moves is work
-   that is actually running. */
+   A step below the chrome around it, so the graph reads as a view into a
+   space. Every colour resolves from a theme token; state is the only thing
+   carrying a hue of its own. */
 .am-canvas-pane {
-  /* The field is the page it sits on. A graph is a view of the work, not a
-     separate instrument bolted into the window, so it takes the theme's ground
-     and the theme's ink and stays one surface with everything around it. */
-  --cv-floor: color-mix(in srgb, var(--cv-ink) 7%, var(--bg));
-  --cv-void:  var(--cv-floor);
   --cv-ink:   var(--text);
   --cv-dim:   var(--text-2);
   --cv-off:   var(--text-3);
-  --cv-time:  color-mix(in srgb, var(--cv-ink) 62%, var(--cv-floor));
-  /* Structure is neutral so that colour on this field means state and nothing
-     else. The accent stays for what a person can act on. */
+  --cv-floor: var(--bg);
+  --cv-void:  var(--cv-floor);
+  --cv-time:  color-mix(in srgb, var(--cv-ink) 76%, var(--cv-floor));
   --cv-line:   var(--line);
   --cv-line-2: var(--line-2);
-  /* State. Three hues the canvas measures against the field it is drawn on and
-     separates, so no theme can resolve two states to one colour. */
-  --cv-run:  #12b3a4;
-  --cv-wait: #f76808;
-  --cv-fail: #e5484d;
-  /* A disc is a chip of the theme's own surface, so it lifts off the field the
-     same way every other raised thing in the app does. */
-  --cv-disc-a: color-mix(in srgb, var(--cv-ink) 20%, var(--bg));
+  /* A disc is a chip of the theme's own surface, lifted off the field the way
+     every other raised thing in the app is. */
+  --cv-disc-a: color-mix(in srgb, var(--cv-ink) 15%, var(--cv-floor));
   --cv-disc-b: var(--cv-disc-a);
-  /* The edge is what a reader takes the disc's shape from, so it carries enough
-     ink to stand clear of the field without reading as a hairline. */
-  --cv-disc-line: var(--cv-line-2);
-  --cv-cast: color-mix(in srgb, #000 30%, transparent);
-  --cv-disc-lift: 0 1px 2px color-mix(in srgb, var(--cv-cast) 22%, transparent),
-                  0 2px 6px color-mix(in srgb, var(--cv-cast) 18%, transparent);
-  /* What a live disc is worth against the field: a ring of its own colour and
-     the shadow any raised object drops. No bloom. A glow is the one thing that
-     cannot exist on paper, and a state that depends on it has no reading in
-     half the themes this runs in. */
-  --cv-lit-run:  0 2px 6px -3px var(--cv-cast);
-  --cv-lit-wait: 0 2px 8px -3px color-mix(in srgb, var(--cv-wait) 34%, var(--cv-cast));
-  /* Texture. Both layers sit at the edge of sight: the field is ground for the
-     graph, never a pattern competing with it. */
-  --cv-grid-dot: color-mix(in srgb, var(--cv-ink) 9%, transparent);
-  --cv-halo:     var(--cv-floor);
+  --cv-disc-line: color-mix(in srgb, var(--cv-ink) 34%, transparent);
+  --cv-cast: color-mix(in srgb, #000 40%, transparent);
+  --cv-disc-lift: 0 1px 2px color-mix(in srgb, var(--cv-cast) 30%, transparent),
+                  0 3px 8px -2px color-mix(in srgb, var(--cv-cast) 26%, transparent);
+  --cv-grid-dot: color-mix(in srgb, var(--cv-ink) 13%, transparent);
+  --cv-halo: var(--cv-floor);
+  --cv-recess: inset 0 1px 0 rgba(0, 0, 0, 0.35);
   position: relative;
   min-width: 0; min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--cv-line);
   background: var(--cv-floor);
+  box-shadow: var(--cv-recess);
   cursor: grab;
   touch-action: none;
 }
-/* On paper the direction inverts: the field is a step below white and a disc is
-   white, rather than both being a step up from a dark ground. */
+/* On paper the field is a step below white and a disc is white. */
 body[data-mode="light"] .am-canvas-pane {
-  --cv-floor: #f2f2f2;
+  --cv-floor: color-mix(in srgb, var(--text) 3.5%, var(--bg));
   --cv-disc-a: #ffffff;
   --cv-disc-b: #ffffff;
+  --cv-disc-line: color-mix(in srgb, var(--cv-ink) 34%, transparent);
+  --cv-cast: color-mix(in srgb, #000 22%, transparent);
+  --cv-grid-dot: color-mix(in srgb, var(--cv-ink) 10%, transparent);
+  --cv-recess: inset 0 1px 0 rgba(0, 0, 0, 0.05);
 }
-
 .am-canvas-pane.is-panning { cursor: grabbing; }
 .am-canvas-pane[hidden] { display: none; }
-
 
 .am-cv-grid {
   position: absolute; inset: 0;
@@ -14041,7 +14052,6 @@ body[data-mode="light"] .am-canvas-pane {
      whole device pixel per CSS pixel and a 1px dot rounds away to nothing. */
   background-image: radial-gradient(circle at 1px 1px, var(--cv-grid-dot) 1.15px, transparent 0);
   background-size: 26px 26px;
-  opacity: 1;
   pointer-events: none;
   transition: opacity var(--motion-base) var(--ease);
 }
@@ -14056,41 +14066,33 @@ body[data-mode="light"] .am-canvas-pane {
 .am-cv-edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
 .am-cv-nodes { position: absolute; top: 0; left: 0; outline: none; }
 
-/* One ring per generation. Distance from the core is then readable without
-   counting the hops out to a node. */
+/* One ring per generation, drawn as ground. */
 .am-orbit {
   fill: none;
-  stroke: color-mix(in srgb, var(--cv-line) 78%, transparent);
+  stroke: color-mix(in srgb, var(--cv-ink) 10%, transparent);
   stroke-width: 1;
   stroke-dasharray: 3 9;
-  opacity: 0.8;
 }
-/* The bezel: one ring outside the last generation, ticked rather than dashed,
-   so the field has an edge and the rings inside it read as measured. */
 .am-orbit.is-rim {
-  stroke: var(--cv-line);
-  stroke-width: 1.3;
+  stroke: color-mix(in srgb, var(--cv-ink) 12%, transparent);
+  stroke-width: 1.2;
   stroke-dasharray: 1.5 16;
-  opacity: 0.85;
 }
 
-/* A connector is background structure, not something to act on, so it is drawn
-   in ink rather than in the accent a person can click. */
+/* A connector is structure, not something to act on, so it is drawn in ink
+   rather than in the accent a person can click. */
 .am-edge, .am-stem {
-  stroke: color-mix(in srgb, var(--cv-ink) 72%, transparent);
-  opacity: 1;
-  stroke-width: 1.25;
+  stroke: color-mix(in srgb, var(--cv-ink) 48%, transparent);
+  stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
   stroke-linecap: butt;
   stroke-linejoin: round;
   fill: none;
   transition: d var(--motion-base) var(--ease-out), stroke var(--motion-base) var(--ease), stroke-width var(--motion-base) var(--ease);
 }
-/* A branch is live while anything under it still runs, so the light shows where
-   the work is rather than only where a single node sits. */
+/* A branch is live while anything under it still runs. */
 .am-edge.is-live, .am-stem.is-live {
-  stroke: color-mix(in srgb, var(--cv-run) 46%, var(--cv-line));
-  opacity: 1;
+  stroke: color-mix(in srgb, var(--cv-run) 72%, var(--cv-ink));
   stroke-width: 1.5;
 }
 .am-edge.is-enter {
@@ -14100,28 +14102,24 @@ body[data-mode="light"] .am-canvas-pane {
 }
 @keyframes am-draw { to { stroke-dashoffset: 0; } }
 
-/* The current itself, drawn on top of the line it belongs to. Only live
-   branches get one. */
+/* The current itself: one pip walking each live branch. Both numbers of the
+   dash pattern are written onto the element, because they are the length of
+   the path the pip is running along. */
 .am-flow {
   stroke: var(--cv-run);
   stroke-width: 2;
-  opacity: 1;
   vector-effect: non-scaling-stroke;
   stroke-linecap: round;
   animation: am-flow 1.5s linear infinite;
 }
-/* One pip per branch, not a dotted line: the gap in the dash pattern is the
-   whole length of the path, so exactly one dash exists and it is walked from
-   one end to the other. Both numbers are written onto the element, because they
-   are the length of the path the pip is running along. */
 @keyframes am-flow {
   from { stroke-dashoffset: var(--flow-run, 0px); }
   to { stroke-dashoffset: 0px; }
 }
 
 /* ── Nodes ──
-   A node is a lit disc the eye can track across a ring, with its name hung
-   underneath. Small on purpose: a whole generation has to fit in one frame. */
+   A disc with a state mark cut into it and its name hung underneath. Small on
+   purpose: a whole generation has to fit in one frame. */
 .am-node {
   position: absolute; top: 0; left: 0;
   box-sizing: border-box;
@@ -14132,225 +14130,154 @@ body[data-mode="light"] .am-canvas-pane {
   user-select: none;
   transition: transform var(--motion-base) var(--ease-out);
 }
-
 .am-node-glyph {
   position: relative;
   z-index: 1;
   display: grid; place-items: center;
   width: 56px; height: 56px;
-  border: 1px solid var(--cv-disc-line);
+  border: 1.5px solid var(--cv-disc-line);
   border-radius: 50%;
   background: var(--cv-disc-a);
-  color: color-mix(in srgb, var(--cv-ink) 78%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--cv-ink) 12%, transparent),
-              var(--cv-disc-lift);
+  color: color-mix(in srgb, var(--cv-ink) 74%, transparent);
+  box-shadow: var(--cv-disc-lift);
   transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease),
-              color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease-out);
+              color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease);
 }
 .am-node-mark { width: 24px; height: 24px; overflow: visible; position: relative; }
-/* A mark cut out of a solid body is read off the colour around it, so it is
-   drawn heavy enough to survive the camera's own scale. */
 .am-node:is(.is-running, .is-blocked, .is-failed):not(.is-holder) .am-node-mark { stroke-width: 2.6; }
 
-/* Two layers of light, both off until a state turns one on: a bloom around the
-   disc, which only live work lights, and the ring that marks what is selected.
-   The ring sits inside the disc's own geometry, so selection can never reach
-   the name under the card. */
+/* Two rings outside the disc, both off until something turns one on: the
+   attention ring an agent waiting on a person breathes, and the lock that
+   marks what is selected. Both sit inside the disc's own geometry, so neither
+   can reach the name under the card. */
 .am-node-halo, .am-node-ring, .am-node-lock {
   position: absolute; border-radius: 50%;
   pointer-events: none;
   opacity: 0;
 }
-.am-node-halo { inset: -18px; }
-.am-node-ring { inset: -7px; border: 1px solid transparent; }
+.am-node-halo { display: none; }
+.am-node-ring { inset: -6px; border: 1px solid transparent; }
 /* Selection is a state of the interface, not a state of the work, so it is
    drawn in ink and never in a hue that already means something on the field. */
 .am-node-lock {
   inset: -7px;
-  border: 2px solid var(--cv-ink);
+  border: 2px solid color-mix(in srgb, var(--cv-ink) 72%, var(--cv-floor));
   box-shadow: inset 0 0 0 2px var(--cv-floor);
   transition: opacity var(--motion-fast) var(--ease);
 }
 
-/* Descendant count, parked on the rim where it cannot crowd the mark. It is a
-   number read off real work, so it takes the camera's scale back out the way
-   the name plate does, holding its size on screen from its outer corner where
-   there is field rather than disc to grow into. */
-.am-node-kids {
-  position: absolute; right: -5px; bottom: -5px;
-  min-width: 20px; height: 20px; padding: 0 6px;
-  display: grid; place-items: center;
-  border: 1px solid color-mix(in srgb, var(--cv-ink) 16%, transparent);
-  border-radius: var(--radius-pill);
-  background: var(--cv-disc-a);
-  color: color-mix(in srgb, var(--cv-ink) 76%, transparent);
-  box-shadow: 0 0 0 2px var(--cv-floor), 0 4px 12px -7px var(--cv-cast);
-  font-size: 10.5px; font-weight: 620; font-variant-numeric: tabular-nums;
-  transform: scale(var(--cv-kscale, 1));
-  transform-origin: 100% 100%;
-}
-.am-node-kids[hidden] { display: none; }
-/* Where the camera has outrun the badge as well as the plate, the count leaves
-   rather than being drawn as a smudge a reader cannot take a number from. */
-.am-cv-stage.is-countless .am-node:not(.is-holder) .am-node-kids { display: none; }
-
-/* A holder states which chat or project it is and nothing else. */
-.am-node-time:empty { display: none; }
-
-/* The plate is the ground the name is set on. It is painted rather than
-   shadowed, and it sits above the layer the connectors are drawn in, so a
-   stroke stops at the edge of the box and a duration can never read as struck
-   through. It also takes the camera's scale back out, so a name holds its size
-   on screen the way a map holds its place names. */
+/* The plate is the ground the name is set on. It takes the camera's scale
+   back out, so a name holds its size on screen the way a map holds its place
+   names. The halo follows the letterforms, so a line running behind a name
+   stays one line. */
 .am-node-plate {
   position: relative;
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 2px 0 3px;
-  padding: 2px 0 3px;
-  background: none;
   transform: scale(var(--cv-tscale, 1));
   transform-origin: 50% 0;
 }
-/* The halo follows the letterforms rather than a box around them, so a line
-   running behind a name stays one line. */
 .am-node-plate .am-node-label,
 .am-node-plate .am-node-time {
   text-shadow: 0 0 2px var(--cv-halo), 0 0 5px var(--cv-halo);
 }
-
 .am-node-label {
-  width: 118px; height: 2.5em;
+  width: 118px; max-height: 2.5em;
   font-size: 13px; font-weight: 560;
   letter-spacing: -0.012em; line-height: 1.25;
   color: var(--cv-ink); text-align: center;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: anywhere; hyphens: none;
 }
-/* A block whose cards are down to a word or two holds them on one line, so the
-   time under them sits where the second line would have been. */
 .am-node.is-oneline .am-node-label {
-  height: 1.25em; -webkit-line-clamp: 1;
+  max-height: 1.25em; -webkit-line-clamp: 1;
 }
-/* A label never grows past its own column: the space either side of it is the
-   lane a connector takes to the next generation. */
 .am-canvas-pane.is-sparse .am-node:not(.is-holder) .am-node-label {
-  width: 118px; height: auto; max-height: 3.75em;
+  width: 118px; max-height: 3.75em;
   -webkit-line-clamp: 3;
-  font-size: 13px; line-height: 1.25;
 }
-/* One step down from the name in size, weight and tone together, so how long a
-   run has been going never claims the rank of what the run is. */
+/* One step down from the name in size, weight and tone together. */
 .am-node-time {
   font-size: 11px; font-weight: 500;
   color: var(--cv-time);
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
+.am-node-time:empty { display: none; }
 /* Where the camera has outrun the plate, the smallest line goes first and the
-   name goes last, because a name drawn too small to read is worse than a card
-   that only carries its state. */
+   name goes last. */
 .am-cv-stage.is-terse .am-node-time,
 .am-node.is-timeless .am-node-time { display: none; }
 .am-cv-stage.is-mute .am-node-plate,
 .am-node.is-nameless .am-node-plate { display: none; }
 
-/* State lives in the disc and the ring around it. The name under a node holds
-   one colour and one weight in every state, so a label is a constant the eye
-   can read rather than a sixth copy of a signal the disc already carries. */
-.am-node.is-running:not(.is-holder) .am-node-glyph {
-  border: 2px solid var(--cv-run);
-  background: var(--cv-disc-a);
-  color: var(--cv-run);
-  box-shadow: var(--cv-disc-lift);
-}
-/* Motion is the one channel that means live work, so it runs here and on an
-   agent waiting for a person, and nowhere else. */
-.am-node.is-running .am-node-mark { animation: am-spin 4s linear infinite; }
+/* State lives in the disc. The name under a node holds one colour and one
+   weight in every state, so a label is a constant the eye can read. */
 
-/* An agent waiting on a person is the loudest thing on the field, because it is
-   the only one the field can ask for. */
+/* Running: the disc takes the run hue on its rim and its mark, and the mark
+   turns, because work is the one thing on the field that is actually moving. */
+.am-node.is-running:not(.is-holder) .am-node-glyph {
+  border: 2px solid color-mix(in srgb, var(--cv-run) 82%, var(--cv-ink));
+  background: color-mix(in srgb, var(--cv-run) 12%, var(--cv-floor));
+  color: color-mix(in srgb, var(--cv-run) 82%, var(--cv-ink));
+}
+.am-node.is-running .am-node-mark { animation: am-spin 4s linear infinite; }
+@keyframes am-spin { to { transform: rotate(360deg); } }
+
+/* Waiting on a person: the loudest thing on the field, because it is the only
+   thing the field can ask for. A tinted body, an amber rim, and a thin ring
+   outside it that breathes. */
 .am-node.is-blocked:not(.is-holder) .am-node-glyph {
   border: 2px solid var(--cv-wait);
-  background: color-mix(in srgb, var(--cv-wait) 14%, var(--cv-disc-a));
+  background: color-mix(in srgb, var(--cv-wait) 18%, var(--cv-floor));
   color: var(--cv-wait);
-  box-shadow: 0 0 0 var(--am-pulse, 4px) color-mix(in srgb, var(--cv-wait) 26%, transparent),
-              var(--cv-disc-lift);
-  animation: am-pulse 1.9s var(--ease) infinite;
 }
-@property --am-pulse { syntax: '<length>'; inherits: false; initial-value: 4px; }
-@keyframes am-pulse {
-  0%, 100% { --am-pulse: 2px; }
-  50% { --am-pulse: 7px; }
+.am-node.is-blocked:not(.is-holder) .am-node-ring {
+  border-color: var(--cv-wait);
+  opacity: 0.8;
+  animation: am-breathe 1.8s var(--ease-in-out) infinite;
+}
+@keyframes am-breathe {
+  0%, 100% { opacity: 0.25; transform: scale(0.94); }
+  50% { opacity: 0.85; transform: scale(1); }
 }
 
-
-/* A failure is work that already ended, so it is drawn still and unlit, and it
-   is the rarest thing on the field, so it carries a body of its own rather than
-   the disc every finished agent already uses. No glow: glow means live. */
+/* Failed: work that already ended, drawn still. */
 .am-node.is-failed:not(.is-holder) .am-node-glyph {
-  border: 3px solid var(--cv-fail);
+  border: 2px solid var(--cv-fail);
   background: color-mix(in srgb, var(--cv-fail) 12%, var(--cv-disc-a));
   color: var(--cv-fail);
-  box-shadow: var(--cv-disc-lift);
 }
 
-/* Nothing is happening here, so nothing here is lit and nothing here moves.
-   Most of a finished fleet is this disc, so its edge carries enough ink to give
-   the circle a shape and its mark enough to be read on its own face, and both
-   stay under the one agent that ended badly. */
+/* Finished: a body with an edge and a check, under everything that is live. */
 .am-node.is-done .am-node-glyph {
   border: 1.5px solid var(--cv-disc-line);
   background: var(--cv-disc-a);
-  color: color-mix(in srgb, var(--cv-ink) 80%, transparent);
-  box-shadow: none;
+  color: color-mix(in srgb, var(--cv-ink) 66%, transparent);
 }
 
-/* Hover. Declared after every state so it is the last word at equal weight, and
-   carried on channels a state never writes: the disc rises a little and takes
-   its own colour into a ring. */
+/* Hover, on channels a state never writes: the disc rises a little. */
 .am-node:hover:not(.is-holder) .am-node-glyph {
-  transform: translateY(-1px) scale(1.06);
-  background: color-mix(in srgb, var(--cv-ink) 4%, var(--cv-disc-a));
-  box-shadow: 0 8px 18px -8px var(--cv-cast);
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 6px 14px -6px var(--cv-cast), var(--cv-disc-lift);
 }
 .am-node:hover .am-node-label { color: var(--cv-ink); }
 
-@keyframes am-breathe {
-  0%, 100% { transform: scale(0.92); opacity: 0.62; }
-  50% { transform: scale(1.06); opacity: 1; }
-}
-
-/* ── The core ──
-   Holders are where work came from, not work itself: a chat that started
-   agents, or the project they ran in when the chat is gone. They are not
-   selectable and they do not compete with state colour, so they carry size and
-   light instead: a lit sphere with the field turning around it. */
-.am-node.is-holder { cursor: default; }
-/* What the sphere encodes is a source: where the work came from, and how much
-   of it ran. It carries no state, so it is drawn in the one hue every theme
-   declares for information rather than for a state, turned across the sphere so
-   the light in it reads as two currents meeting. Nord's frost, gruvbox's aqua
-   and rose pine's iris each land here on their own, and an eleventh theme costs
-   the core nothing. */
-/* The core is the one object on the field that is a source rather than a state,
-   and it is the same object under every theme, so it carries its own two
-   currents instead of borrowing whichever hue the theme happens to declare.
-   Only the shell answers to the theme: it is the ground the sphere is cut out
-   of, which is what makes the sphere sit in the field rather than on top of it. */
 /* ── The source ──
-   Where the work came from. It is the same disc an agent is drawn as, one step
-   larger and carrying the accent, because it is not an agent and it never runs:
-   nothing about it should read as a state. */
+   Where the work came from: a chat that started agents, or the project they
+   ran in when the chat is gone. It never runs and has no state, so it is the
+   one solid object on a field of outlines, one step larger, carrying a
+   monogram and the count of what ran under it. */
+.am-node.is-holder { cursor: default; }
 .am-node.is-holder .am-node-glyph {
   width: 62px; height: 62px;
   border: none;
-  background: var(--cv-ink);
-  color: var(--bg);
+  background: color-mix(in srgb, var(--cv-ink) 92%, var(--cv-floor));
+  color: var(--cv-floor);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--cv-cast) 34%, transparent),
-              0 10px 24px -12px var(--cv-cast);
+              0 8px 20px -10px var(--cv-cast);
 }
-/* The source carries a monogram of the project it belongs to. It is not an
-   agent and it has no state, so it is told apart by weight rather than by
-   another ring: it is the one solid object on a field of outlines. */
 .am-node-mono {
   font-size: 17px; font-weight: 650; letter-spacing: 0.01em;
   line-height: 1; transform: translateY(0.06em);
@@ -14358,118 +14285,71 @@ body[data-mode="light"] .am-canvas-pane {
   font-variant-numeric: normal;
 }
 .am-node:not(.is-holder) .am-node-mono { display: none; }
-.am-node.is-holder .am-node-glyph::before,
-.am-node.is-holder .am-node-glyph::after { display: none; }
 .am-node.is-holder .am-node-ring { opacity: 0; }
 .am-node.is-holder .am-node-mark { display: none; }
-.am-node.is-holder .am-node-halo { display: none; }
-/* The source outranks the agents it started, so its name is the largest thing
-   on the field and takes one line rather than reserving a second it never
-   fills, which is what pushed the count away from it. */
 .am-node.is-holder .am-node-label {
   width: 168px; height: auto; -webkit-line-clamp: 1;
   font-size: 14px; font-weight: 620; letter-spacing: -0.014em;
   color: var(--cv-ink);
 }
-/* The count the source carries is the same badge every agent uses for the work
-   it started, so it sits on the rim rather than on a line of its own. */
-.am-node.is-holder .am-node-kids {
-  background: var(--cv-floor);
-  color: var(--cv-ink);
-}
-/* A project only stands in for a chat that is gone, so it is the same source
-   disc turned down: it keeps the shape and gives up the weight. */
+/* A project only stands in for a chat that is gone: same shape, less weight. */
 .am-node.is-project .am-node-glyph {
-  background: color-mix(in srgb, var(--cv-ink) 62%, var(--cv-floor));
-  box-shadow: 0 0 0 1px var(--cv-disc-line), 0 6px 16px -12px var(--cv-cast);
+  background: color-mix(in srgb, var(--cv-ink) 64%, var(--cv-floor));
 }
 
-/* A workflow run. It is neither work nor the source the work came from: it is
-   the dispatch a fleet was fanned out by, so it reads as its own kind of node,
-   smaller than the core and carrying the accent rather than the core's
-   currents. The ring turns only while something under it is still running. */
+/* A workflow run: the dispatch a fleet was fanned out by. Smaller than the
+   source and carrying the accent. The ring turns only while something under
+   it still runs. */
 .am-node.is-run .am-node-glyph {
   width: 52px; height: 52px;
-  border: 1.5px solid color-mix(in srgb, var(--accent) 78%, transparent);
-  background:
-    /* the dispatch point itself */
-    radial-gradient(closest-side at 50% 50%,
-      color-mix(in srgb, var(--accent) 92%, var(--cv-ink)) 0%,
-      color-mix(in srgb, var(--accent) 78%, transparent) 15%,
-      transparent 30%),
-    /* the band the fleet left along */
-    radial-gradient(closest-side at 50% 50%,
-      transparent 52%,
-      color-mix(in srgb, var(--accent) 30%, transparent) 62%,
-      color-mix(in srgb, var(--accent) 30%, transparent) 70%,
-      transparent 80%),
-    radial-gradient(100% 100% at 50% 50%,
-      color-mix(in srgb, var(--accent) 16%, var(--cv-disc-a)) 40%,
-      color-mix(in srgb, var(--accent) 8%, var(--cv-disc-b)) 100%);
+  border: 1.5px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--cv-disc-a));
   color: var(--cv-ink);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
-    0 0 22px -8px color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: var(--cv-disc-lift);
 }
-/* The core's shells and filaments belong to the core alone. */
-.am-node.is-run .am-node-glyph::before,
-.am-node.is-run .am-node-glyph::after { display: none; }
-.am-node.is-run .am-node-halo { opacity: 0; }
 .am-node.is-run .am-node-ring {
   opacity: 1; inset: -6px;
   border: 1px dashed color-mix(in srgb, var(--accent) 42%, transparent);
-  animation: none;
 }
 .am-node.is-run.is-running .am-node-ring { animation: am-spin 9s linear infinite; }
-/* A run is named by what it was called, not shouted like the source is. */
 .am-node.is-run .am-node-label {
   text-transform: none;
-  font-size: 12px; font-weight: 700; letter-spacing: -0.01em;
+  font-size: 12px; font-weight: 650; letter-spacing: -0.01em;
   color: var(--cv-ink);
 }
 .am-node.is-run .am-node-time { color: color-mix(in srgb, var(--accent) 62%, var(--cv-time)); }
 
-@media (prefers-reduced-motion: reduce) {
-  .am-node.is-run.is-running .am-node-ring { animation: none; }
-}
-
-/* Selection is ink around the disc and nothing more, so what a person happens
-   to be looking at never reads as a state the fleet is in. */
+/* Selection is one ring of ink around the disc and nothing more: the state
+   ring stands down while the lock is on, so a selected node is never two
+   rings deep. */
 .am-node.is-selected .am-node-lock { opacity: 1; }
-.am-node.is-selected .am-node-halo { opacity: 0; animation: none; }
+.am-node.is-selected .am-node-ring { opacity: 0; animation: none; }
+.am-node.is-selected .am-node-label { color: var(--cv-ink); }
 
 /* Selecting an agent lights the line back to what started it and turns
-   everything else down. Nothing is hidden: the rest of the fleet stays on the
-   field at a weight that keeps it readable as context. */
-.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.68; }
+   everything else down. Nothing is hidden. */
+.am-cv-stage.has-selection .am-node:not(.is-onpath) { opacity: 0.62; }
 .am-cv-stage.has-selection .am-node:not(.is-onpath):is(.is-blocked, .is-failed) { opacity: 0.9; }
 .am-cv-stage.has-selection .am-node:hover { opacity: 1; }
 .am-cv-stage.has-selection .am-edge:not(.is-onpath),
-.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.55; }
+.am-cv-stage.has-selection .am-stem:not(.is-onpath) { opacity: 0.5; }
 .am-cv-stage.has-selection .am-flow { opacity: 0.5; }
 .am-cv-stage.has-selection .am-edge.is-onpath { stroke-width: 2; }
 .am-node, .am-edge, .am-stem, .am-flow {
   transition: opacity var(--motion-base) var(--ease);
 }
-.am-node.is-selected .am-node-label { color: var(--cv-ink); }
 
-/* The region a wrapped set of agents occupies in the tree shape. A fan-out too
-   wide for every member to carry its own line is drawn as one region on one
-   stem, and that is the only thing a region ever means: the state of the work
-   inside it is on the discs. */
+/* The region a wrapped set of agents occupies in the tree shape: one region on
+   one stem, dashed so a boundary and a connector read as two different facts. */
 .am-block {
   fill: none;
-  stroke: color-mix(in srgb, var(--cv-line) 72%, transparent);
+  stroke: color-mix(in srgb, var(--cv-ink) 14%, transparent);
   stroke-width: 1;
-  /* A boundary and a connector are two different facts, so the region is dashed
-     and every line that carries parentage is solid. */
   stroke-dasharray: 3 5;
 }
-/* What every card in the block has in common, said once. The words are knocked
-   out of the field so the stem entering the region passes behind them. */
 .am-block-cap {
   fill: var(--cv-dim);
-  font-size: 11px; font-weight: 650; letter-spacing: 0.02em;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
   stroke: var(--cv-halo); stroke-width: 4px; stroke-linejoin: round;
   paint-order: stroke fill;
 }
@@ -14479,380 +14359,335 @@ body[data-mode="light"] .am-canvas-pane {
 .am-node.is-enter { animation: am-node-in 0.5s var(--ease-out) backwards; }
 @keyframes am-node-in { from { opacity: 0; scale: 0.72; } }
 
-/* Full screen grows the card to the window. The detail pane stays: at this size
-   there is room for both, and the point is to see more, not less. */
+/* Full screen grows the card to the window. The rail stays, and the feed
+   takes the room the taller rail gives it. */
 .am-card.is-full { width: 98vw; height: 96vh; }
+.am-card.is-full .am-d-feed { max-height: 480px; }
 
-/* ── Console chrome ──
-   Three fixed instruments over the field: the shape of the graph, the key to
-   its colours, and the framing controls. One material, one 36px height and one
-   4px inset on all three, so 10px outer minus 4px lands on the 6px their inner
-   controls use and every corner stays concentric. */
+/* ── Stage chrome ──
+   Two instruments over the field, both drawn from the control recipe on the
+   chrome surface, so they read as chrome floating over the stage. */
 .am-cv-topo, .am-cv-hud {
   position: absolute;
-  height: 36px;
-  border: 1px solid color-mix(in srgb, var(--cv-line) 72%, transparent);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--cv-void) 78%, transparent);
-  backdrop-filter: blur(18px) saturate(1.2);
-  box-shadow: 0 18px 40px -26px var(--cv-cast), var(--hl-top);
+  display: flex; align-items: center; gap: 2px;
+  height: var(--am-ctl-h); box-sizing: border-box; padding: 2px;
+  background: var(--am-chrome);
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--am-r-out);
+  box-shadow: 0 4px 14px -8px var(--cv-cast);
 }
-.am-cv-topo {
-  left: var(--space-3); top: var(--space-3);
-  display: flex; align-items: center; gap: 1px;
-  padding: 0 4px;
-}
+.am-cv-topo { left: 12px; top: 12px; }
 .am-cv-tp {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 28px; padding: 0 10px;
-  border: 0; border-radius: var(--radius-md);
-  background: transparent;
-  color: color-mix(in srgb, var(--cv-ink) 58%, transparent);
-  font-size: 11px; font-weight: 650; letter-spacing: 0.03em;
+  height: 100%; padding: 0 10px;
+  border: 0; border-radius: var(--am-r-in);
+  background: transparent; color: var(--am-ctl-ink);
+  font-family: inherit; font-size: var(--am-fs-2); font-weight: 500;
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
 }
-.am-cv-tp svg { width: 15px; height: 15px; }
-.am-cv-tp:hover { color: var(--cv-ink); background: color-mix(in srgb, var(--cv-ink) 7%, transparent); }
-.am-cv-tp.is-active {
-  color: var(--cv-ink);
-  background: var(--cv-disc-a);
-  box-shadow: 0 1px 2px -1px var(--cv-cast), inset 0 0 0 1px var(--cv-line);
-}
+.am-cv-tp svg { width: 14px; height: 14px; }
+.am-cv-tp:hover { color: var(--text); }
+.am-cv-tp.is-active { color: var(--text); background: var(--am-ctl-on); box-shadow: var(--am-ctl-lift); }
 .am-cv-tp:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-/* Zoom and framing, parked out of the way of the graph itself. */
-.am-cv-hud {
-  right: var(--space-3); bottom: var(--space-3);
-  display: flex; align-items: center; gap: 1px;
-  padding: 0 4px;
-}
+.am-cv-hud { right: 12px; bottom: 12px; }
 .am-cv-btn, .am-cv-zoom {
   display: inline-grid; place-items: center;
-  height: 28px; border: 0; border-radius: var(--radius-md);
-  background: transparent; color: color-mix(in srgb, var(--cv-ink) 62%, transparent);
+  height: 100%; border: 0; border-radius: var(--am-r-in);
+  background: transparent; color: var(--am-ctl-ink);
+  font-family: inherit;
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
 }
-.am-cv-btn { width: 28px; }
-.am-cv-btn svg { width: var(--icon-sm); height: var(--icon-sm); stroke-width: 1.9; }
+.am-cv-btn { width: 26px; }
+.am-cv-btn svg { width: 14px; height: 14px; stroke-width: 2; }
 .am-cv-zoom {
-  min-width: 52px; padding: 0 7px;
-  font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums;
-  letter-spacing: 0.03em;
+  min-width: 48px; padding: 0 6px;
+  font-size: var(--am-fs-2); font-weight: 500; font-variant-numeric: tabular-nums;
 }
-.am-cv-btn:hover, .am-cv-zoom:hover { background: color-mix(in srgb, var(--cv-ink) 8%, transparent); color: var(--cv-ink); }
-.am-cv-btn:active, .am-cv-zoom:active { background: color-mix(in srgb, var(--cv-ink) 13%, transparent); }
+.am-cv-btn:hover, .am-cv-zoom:hover { background: var(--am-ctl-on); color: var(--text); }
+.am-cv-btn:active, .am-cv-zoom:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
 .am-cv-btn:focus-visible, .am-cv-zoom:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.am-cv-btn.is-on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--cv-ink); }
-.am-cv-sep { width: 1px; height: 18px; margin: 0 5px; background: color-mix(in srgb, var(--cv-line) 80%, transparent); }
-
-@media (max-width: 1180px) {
-}
+.am-cv-btn.is-on { background: var(--am-ctl-on); color: var(--text); box-shadow: var(--am-ctl-lift); }
+.am-cv-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--am-ctl-line); }
 
 @media (prefers-reduced-motion: reduce) {
   .am-node, .am-cv-stage.is-gliding, .am-cv-grid { transition: none; }
   .am-node.is-enter { animation: none; }
-  /* Written out state by state: each of these has to match or beat the rule it
-     is switching off, or the more specific one keeps moving. */
-  .am-node-halo, .am-node-ring,
-  .am-node.is-running .am-node-halo,
-  .am-node.is-blocked .am-node-halo { animation: none; }
+  .am-node.is-running .am-node-mark,
+  .am-node.is-run.is-running .am-node-ring { animation: none; }
+  .am-node.is-blocked:not(.is-holder) .am-node-ring { animation: none; opacity: 0.7; }
   .am-edge, .am-stem { transition: none; }
   .am-edge.is-enter { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
   .am-flow { animation: none; stroke-dasharray: none; opacity: 0.8; }
 }
 
-/* ── Detail pane ── */
+/* ── Inspector rail ──
+   The same surface as the chrome, one rule away from the stage. State and the
+   clock at the top, the name, what it was asked, the live feed, the facts, and
+   the actions pinned under the scroll rather than riding over it. */
 .am-detail-pane {
   min-height: 0;
   display: flex; flex-direction: column;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 44%, transparent), transparent 118px),
-    color-mix(in srgb, var(--bg-1) 92%, var(--bg));
-  border-left: 1px solid color-mix(in srgb, var(--line-2) 58%, transparent);
+  background: var(--am-chrome);
+  border-left: 1px solid var(--am-rule);
 }
 .am-detail-blank {
   margin: auto; padding: var(--space-6) var(--space-5);
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
-  color: var(--text-3); font-size: var(--fs-micro); line-height: var(--lh-base); text-align: center;
-  max-width: 210px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
+  color: var(--text-3); font-size: var(--am-fs-2); line-height: var(--lh-base); text-align: center;
+  max-width: 220px;
 }
 .am-detail-blank svg {
-  width: 34px; height: 34px; padding: 8px;
-  border: 1px solid var(--line); border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-3) 52%, transparent);
+  width: 36px; height: 36px; padding: 9px; box-sizing: border-box;
+  border: 1px solid var(--am-ctl-line); border-radius: var(--am-r-out);
+  background: var(--am-ctl-bg);
   color: var(--text-2);
-  opacity: 0.86;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
 }
 .am-detail-blank p { margin: 0; }
 
 .am-detail {
   flex: 1; min-height: 0;
-  display: flex; flex-direction: column; gap: var(--space-3);
-  padding: 22px var(--space-4) var(--space-3);
-  overflow-y: auto;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
+.am-d-scroll {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: 20px 20px var(--space-4);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.am-d-scroll::-webkit-scrollbar { display: none; }
+.am-d-feed:hover, .am-list:hover { scrollbar-color: var(--line-2) transparent; }
+.am-d-feed::-webkit-scrollbar, .am-list::-webkit-scrollbar { width: 6px; }
+.am-d-feed::-webkit-scrollbar-thumb, .am-list::-webkit-scrollbar-thumb {
+  background-color: transparent; border-radius: 3px;
+}
+.am-d-feed:hover::-webkit-scrollbar-thumb, .am-list:hover::-webkit-scrollbar-thumb { background-color: var(--line-2); }
+.am-d-feed::-webkit-scrollbar-track, .am-list::-webkit-scrollbar-track { background: transparent; }
+
 .am-d-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .am-state {
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 21px;
-  font-size: 9.5px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.11em;
-  padding: 2px 9px 2px 8px; border-radius: var(--radius-pill);
-  border: 1px solid var(--line); color: var(--text-2); background: var(--bg-2);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent);
+  height: 22px; padding: 0 9px 0 8px;
+  font-size: var(--am-fs-1); font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; line-height: 1;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--am-ctl-line); color: var(--text-2); background: var(--am-ctl-bg);
 }
-.am-state::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); }
+.am-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .am-state.is-running {
-  color: var(--emerald);
-  border-color: color-mix(in srgb, var(--emerald) 22%, transparent);
-  background: color-mix(in srgb, var(--emerald) 8%, transparent);
+  color: var(--am-run-ink);
+  border-color: color-mix(in srgb, var(--cv-run) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-run) 9%, transparent);
 }
 .am-state.is-blocked {
-  color: var(--as-mark);
-  border-color: color-mix(in srgb, var(--as-mark) 22%, transparent);
-  background: color-mix(in srgb, var(--as-mark) 8%, transparent);
+  color: var(--am-wait-ink);
+  border-color: color-mix(in srgb, var(--cv-wait) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-wait) 9%, transparent);
 }
 .am-state.is-failed {
-  color: var(--rose);
-  border-color: color-mix(in srgb, var(--rose) 22%, transparent);
-  background: color-mix(in srgb, var(--rose) 8%, transparent);
+  color: var(--am-fail-ink);
+  border-color: color-mix(in srgb, var(--cv-fail) 30%, transparent);
+  background: color-mix(in srgb, var(--cv-fail) 9%, transparent);
 }
 .am-state.is-running::before, .am-state.is-blocked::before { animation: am-state-pulse 1.8s var(--ease-out) infinite; }
 @keyframes am-state-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent); opacity: 0.88; }
-  50% { box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 0%, transparent); opacity: 1; }
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .am-state.is-running::before, .am-state.is-blocked::before { animation: none; } }
 .am-d-elapsed {
   margin-left: auto;
-  font-size: var(--fs-nano); color: var(--text-3);
+  font-size: var(--am-fs-2); color: var(--text-2);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 .am-d-name {
-  margin: var(--space-1) 0 0;
-  font-size: 16px; font-weight: 680; letter-spacing: -0.018em;
-  color: color-mix(in srgb, var(--text) 94%, #fff); line-height: 1.22;
+  margin: 2px 0 0;
+  font-size: var(--am-fs-5); font-weight: 650; letter-spacing: -0.015em;
+  color: var(--text); line-height: 1.25;
   overflow-wrap: anywhere;
 }
 .am-d-intent {
-  margin: 0 0 var(--space-1); font-size: 11.5px; color: color-mix(in srgb, var(--text-2) 88%, var(--text-3)); line-height: 1.5;
+  margin: 0; font-size: 12.5px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
+.am-d-intent[hidden] { display: none; }
 
-/* The live feed leads the pane: what the agent is doing, newest at the bottom.
-   Prose reads as prose; tool calls are a neutral pill and the argument's tail. */
-/* The list ends where the run's activity ends. Nothing frames it, because a
-   border drawn around empty space is the largest thing in the rail and says
-   nothing, and the rows beneath it already stand on the pane's own margins. */
-.am-d-feed-wrap { display: flex; flex-direction: column; gap: 9px; margin-top: var(--space-1); }
-.am-d-feed-label {
-  font-size: 9.5px; font-weight: 650; letter-spacing: 0.12em;
+.am-d-feed-wrap, .am-d-facts-wrap { display: flex; flex-direction: column; gap: 8px; }
+.am-d-feed-wrap { margin-top: var(--space-2); }
+.am-d-facts-wrap { padding-top: var(--space-3); border-top: 1px solid var(--am-rule); }
+.am-d-feed-label, .am-d-facts-label {
+  font-size: var(--am-fs-1); font-weight: 600; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--text-3);
 }
 .am-d-feed {
   position: relative;
-  margin: 0; padding: 2px 0 0 0; list-style: none;
-  max-height: 420px;
+  margin: 0; padding: 0; list-style: none;
+  max-height: 300px;
   overflow-y: auto;
   scroll-padding-block: 12px 12px;
+  scrollbar-width: thin; scrollbar-color: transparent transparent;
+  /* The feed is pinned to its newest line, so the oldest one on screen leaves
+     through a fade rather than being cut at the fold. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22px);
+  mask-image: linear-gradient(to bottom, transparent, #000 22px);
 }
-/* One rule down the chip column, so the entries read as one sequence and the
-   rule ends where the last entry does. */
+/* One rule down the chip column, so the entries read as one sequence. */
 .am-d-feed::before {
   content: '';
-  position: absolute; left: 20px; top: 12px; bottom: 12px;
+  position: absolute; left: 22px; top: 6px; bottom: 6px;
   width: 1px;
-  background: color-mix(in srgb, var(--line-2) 70%, transparent);
+  background: var(--am-rule);
 }
 .am-d-feed li {
   position: relative;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 31px;
+  grid-template-columns: 46px minmax(0, 1fr) 34px;
   gap: 9px;
   align-items: start;
-  padding: 9px 0 9px 0;
-  font-size: 12px; line-height: 1.66;
-  color: color-mix(in srgb, var(--text) 72%, var(--text-2));
+  padding: 8px 0;
+  font-size: 12.5px; line-height: 1.6;
+  color: color-mix(in srgb, var(--text) 82%, var(--text-2));
 }
 .am-d-feed .ftime {
   justify-self: end;
   padding-top: 2px;
-  font-size: 9.5px; line-height: 1.2;
-  color: var(--text-3); opacity: 0.78;
+  font-size: var(--am-fs-1); line-height: 1.2;
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .am-d-feed li.is-new { animation: am-feed-in 0.24s var(--ease-out); }
 @keyframes am-feed-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .am-d-feed li.is-new { animation: none; } }
+/* One neutral pill voice for every role: who said a line never borrows a
+   colour that means an agent is running. Opaque, because it sits on the rule. */
 .am-d-feed .fk {
   justify-self: start;
   box-sizing: border-box;
-  min-width: 30px; max-width: 42px;
+  min-width: 32px; max-width: 46px;
   overflow: hidden; text-overflow: ellipsis;
-  font-size: 9px; font-weight: 650; line-height: 15px; letter-spacing: 0.015em;
-  padding: 0 5px; border-radius: var(--radius-pill);
-  border: 1px solid color-mix(in srgb, var(--line-2) 62%, transparent);
-  /* Opaque, because the pill sits on the rule that runs down the column. */
-  background: color-mix(in srgb, var(--bg-3) 88%, var(--bg));
-  color: color-mix(in srgb, var(--text-3) 88%, var(--text-2));
+  font-size: 10.5px; font-weight: 600; line-height: 16px; letter-spacing: 0;
+  padding: 0 6px; border-radius: var(--radius-pill);
+  border: 1px solid var(--am-ctl-line);
+  background: color-mix(in srgb, var(--text) 7%, var(--am-chrome));
+  color: var(--text-3);
   text-transform: lowercase;
   white-space: nowrap;
   text-align: center;
 }
-/* One neutral pill voice for every role. Green, amber and rose are spent on
-   state alone, so who said a line never borrows a colour that means an agent
-   is running. */
 .am-d-feed .ft { min-width: 0; overflow-wrap: anywhere; }
 .am-d-feed .ftxt { display: block; }
 .am-d-feed li.k-tool .ft {
   font-family: var(--font-mono);
-  font-size: 11.1px; line-height: 1.6;
-  color: color-mix(in srgb, var(--text-2) 92%, var(--text));
+  font-size: 11.5px; line-height: 1.6;
+  color: var(--text-2);
 }
-.am-d-feed li.k-user .ft { color: color-mix(in srgb, var(--text) 86%, var(--text-2)); }
+.am-d-feed li.k-user .ft { color: var(--text); }
 .am-d-feed-empty {
   display: block;
-  padding: var(--space-5) var(--space-4); color: var(--text-3);
-  font-size: var(--fs-nano); text-align: center;
-  border-top: 0;
+  padding: var(--space-4) 0; color: var(--text-3);
+  font-size: var(--am-fs-2);
 }
 
 .am-d-facts {
-  display: grid; grid-template-columns: 78px minmax(0, 1fr);
-  gap: 3px var(--space-3); margin: 0;
-  font-size: var(--fs-micro);
-  padding-top: 7px; border-top: 1px solid color-mix(in srgb, #fff 4.5%, transparent);
+  display: grid; grid-template-columns: 80px minmax(0, 1fr);
+  gap: 2px var(--space-3); margin: 0;
   align-items: center;
 }
 .am-d-facts dt, .am-d-facts dd {
-  min-height: 22px;
+  min-height: 24px;
   display: flex; align-items: center;
 }
-.am-d-facts dt { color: color-mix(in srgb, var(--text-3) 92%, var(--text-2)); }
+.am-d-facts dt { font-size: var(--am-fs-2); color: var(--text-3); }
 .am-d-facts dd {
-  margin: 0; color: color-mix(in srgb, var(--text) 66%, var(--text-2));
+  margin: 0; font-size: var(--am-fs-3); color: color-mix(in srgb, var(--text) 84%, var(--text-2));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
-.am-d-facts dd.is-mono { font-family: var(--font-mono); font-size: var(--fs-nano); }
+.am-d-facts dd.is-mono { font-family: var(--font-mono); font-size: 11.5px; }
 /* The id is a control: click copies the whole session id. */
 .am-d-copyid {
   display: inline-flex; align-items: center; gap: 6px;
-  max-width: 100%;
-  border: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent); border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-3) 62%, transparent); color: var(--text-2);
-  font-family: var(--font-mono); font-size: var(--fs-nano);
-  padding: 2px 7px; cursor: pointer;
-  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+  max-width: 100%; height: 22px;
+  border: 1px solid var(--am-ctl-line); border-radius: var(--am-r-in);
+  background: var(--am-ctl-bg); color: var(--text-2);
+  font-family: var(--font-mono); font-size: 11.5px;
+  padding: 0 7px; cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
 }
-.am-d-copyid svg { width: var(--icon-xs); height: var(--icon-xs); color: var(--text-3); flex: 0 0 auto; }
-.am-d-copyid:hover { background: var(--bg-4); border-color: var(--line-3); color: var(--text); transform: translateY(-0.5px); }
+.am-d-copyid svg { width: 13px; height: 13px; color: var(--text-3); flex: 0 0 auto; }
+.am-d-copyid:hover { background: var(--am-ctl-on); border-color: var(--line-2); color: var(--text); }
 .am-d-copyid:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-/* The rail reads as facts at the top and controls at the bottom, so the action
-   row takes the slack between them rather than floating mid pane. */
+/* The actions stand under the scroll on their own rule, so nothing the rail
+   says can end up under a button. */
 .am-d-actions {
-  display: flex; gap: var(--space-2);
-  margin: auto calc(-1 * var(--space-4)) calc(-1 * var(--space-3));
-  padding: var(--space-3) var(--space-4) var(--space-3);
-  position: sticky; bottom: 0;
-  border-top: 1px solid color-mix(in srgb, #fff 4.5%, transparent);
-  background: color-mix(in srgb, var(--notif-bg) 84%, transparent);
-  backdrop-filter: blur(14px) saturate(1.12);
-  -webkit-backdrop-filter: blur(14px) saturate(1.12);
+  display: flex; gap: var(--space-2); flex: 0 0 auto;
+  padding: var(--space-3) 20px;
+  border-top: 1px solid var(--am-rule);
+  background: var(--am-chrome);
 }
-/* A quiet primary: tinted at rest, full accent only under the pointer. The
-   whole overlay stays calm and the one urgent case borrows the amber. */
-/* Ending an agent sits beside opening it, quieter: it is the rarer intent and
-   the destructive one. */
-.am-d-actions .am-d-end {
-  height: 30px; padding: 0 12px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line-2);
-  background: var(--bg-2); color: var(--text-2);
-  font-size: var(--fs-nano); font-weight: 600;
+.am-d-actions .am-d-open {
+  flex: 1; height: 32px;
+  border: 0; border-radius: var(--am-r-out);
+  background: var(--accent);
+  color: var(--on-accent, #ffffff);
+  font-family: inherit; font-size: var(--am-fs-3); font-weight: 600;
   cursor: pointer;
-  transition: color var(--motion-base) var(--ease), border-color var(--motion-base) var(--ease), background var(--motion-base) var(--ease);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(0, 0, 0, 0.16);
+  transition: filter var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+}
+.am-d-actions .am-d-open:hover:not(:disabled) { filter: brightness(1.06); }
+.am-d-actions .am-d-open:active:not(:disabled) { transform: translateY(1px); }
+.am-d-actions .am-d-open:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.am-d-actions .am-d-open:disabled { opacity: 0.45; cursor: not-allowed; }
+.am-d-actions .am-d-end {
+  height: 32px; padding: 0 12px;
+  border-radius: var(--am-r-out);
+  border: 1px solid var(--line-2);
+  background: var(--am-ctl-bg); color: var(--text-2);
+  font-family: inherit; font-size: var(--am-fs-2); font-weight: 600;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
 }
 .am-d-actions .am-d-end:hover:not(:disabled) {
-  color: var(--rose);
-  border-color: color-mix(in srgb, var(--rose) 45%, var(--line-2));
-  background: color-mix(in srgb, var(--rose) 10%, var(--bg-2));
+  color: var(--am-fail-ink);
+  border-color: color-mix(in srgb, var(--cv-fail) 45%, var(--line-2));
+  background: color-mix(in srgb, var(--cv-fail) 9%, transparent);
 }
 .am-d-actions .am-d-end:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .am-d-actions .am-d-end:disabled { opacity: 0.45; cursor: not-allowed; }
 .am-d-actions .am-d-end[hidden] { display: none; }
 
-.am-d-actions .am-d-open {
-  flex: 1; height: 30px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: color-mix(in srgb, var(--accent) 92%, var(--text));
-  font-family: inherit; font-size: 13px; font-weight: 650;
-  cursor: pointer;
-  box-shadow: none;
-  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
-}
-.am-d-actions .am-d-open:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
-  color: color-mix(in srgb, var(--accent) 94%, var(--text));
-}
-.am-d-actions .am-d-open:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.am-d-actions .am-d-open:active:not(:disabled) { transform: translateY(1px); }
-.am-d-actions .am-d-open:disabled { opacity: 0.5; cursor: not-allowed; }
-.am-d-actions .am-d-open.is-blocked {
-  border-color: color-mix(in srgb, var(--as-mark) 42%, var(--line));
-  background: color-mix(in srgb, var(--as-mark) 8%, transparent);
-  color: color-mix(in srgb, var(--as-mark) 92%, var(--text));
-}
-.am-d-actions .am-d-open.is-blocked:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--as-mark) 12%, transparent);
-  border-color: color-mix(in srgb, var(--as-mark) 56%, var(--line));
-  color: color-mix(in srgb, var(--as-mark) 94%, var(--text));
-}
-
 /* ── Footer ── */
 .am-foot {
   display: flex; align-items: center; gap: var(--space-4);
+  height: 36px; flex: 0 0 auto;
   padding: 0 var(--space-5);
-  border-top: 1px solid var(--line);
-  min-height: 40px;
+  border-top: 1px solid var(--am-rule);
+  font-size: var(--am-fs-2);
+  font-variant-numeric: tabular-nums;
 }
 .am-foot:has(.am-foot-note:empty):has(.am-foot-sum:empty) { display: none; }
 .am-foot-note {
   display: inline-flex; align-items: center; gap: 8px;
-  height: 22px;
-  font-size: var(--fs-micro); font-weight: 500; color: color-mix(in srgb, var(--text) 74%, var(--text-2));
-  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
 }
 .am-foot-note:not(:empty)::before {
   content: "";
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--emerald);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--emerald) 14%, transparent);
+  background: var(--am-run-ink);
   animation: am-foot-live 2.4s var(--ease-in-out) infinite;
 }
-.am-foot-sum {
-  margin-left: auto;
-  font-size: var(--fs-micro); color: color-mix(in srgb, var(--text-2) 82%, var(--text-3));
-  font-variant-numeric: tabular-nums;
-}
+.am-foot-sum { margin-left: auto; color: var(--text-3); }
 @keyframes am-foot-live {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--emerald) 14%, transparent);
-  }
-  50% {
-    opacity: 0.72;
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--emerald) 5%, transparent);
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 @media (prefers-reduced-motion: reduce) {
   .am-foot-note:not(:empty)::before { animation: none; }
@@ -14863,13 +14698,716 @@ body[data-mode="light"] .am-canvas-pane {
   .am-detail-pane { display: none; }
 }
 
-/* Light theme: the pane keeps its layering when translucency stops doing the
-   work. The activity list stands on the pane itself, so it shares the margin
-   the rows under it use rather than riding on a card of its own. */
-[data-mode="light"] .am-detail-pane { background: color-mix(in srgb, var(--bg-2) 60%, var(--bg-1)); }
-[data-mode="light"] .am-d-feed .fk { background: var(--bg-1); }
-[data-mode="light"] .am-d-actions {
-  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
+/* ── Agent command center polish ───────────────────────────────────────────
+   A more premium Fleet Command composition over the same DOM and keyboard
+   model: Mica-like depth, state-aware light, roomier detail reading surfaces
+   and list rows that feel intentional rather than table-like. */
+#agent-map.modal {
+  background:
+    radial-gradient(920px 540px at 50% 46%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 72%),
+    radial-gradient(720px 520px at 72% 22%, color-mix(in srgb, var(--cv-wait, #ff8a3d) 8%, transparent), transparent 70%),
+    rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+}
+
+.am-card {
+  position: relative;
+  isolation: isolate;
+  --am-ctl-h: 34px;
+  --am-r-out: 12px;
+  --am-r-in: 9px;
+  --am-ctl-bg: color-mix(in srgb, var(--text) 5%, transparent);
+  --am-ctl-line: color-mix(in srgb, var(--text) 11%, transparent);
+  --am-ctl-on: color-mix(in srgb, var(--text) 11%, transparent);
+  --am-ctl-lift: inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent),
+                  0 1px 2px rgba(0, 0, 0, 0.24);
+  --cv-run:  #20d5bf;
+  --cv-wait: #ff8a3d;
+  --cv-fail: #ff5f6d;
+  --am-run-ink:  var(--cv-run);
+  --am-wait-ink: var(--cv-wait);
+  --am-fail-ink: var(--cv-fail);
+  --am-rule: color-mix(in srgb, var(--text) 10%, transparent);
+  --am-chrome: color-mix(in srgb, var(--notif-bg) 88%, var(--bg));
+  width: min(1320px, 96vw);
+  height: min(820px, 94vh);
+  border-radius: 20px;
+  border-color: color-mix(in srgb, var(--text) 14%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent 24%),
+    var(--am-chrome);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 30px 90px rgba(0, 0, 0, 0.62),
+    0 8px 24px rgba(0, 0, 0, 0.34);
+}
+
+.am-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.am-card::before,
+.am-card::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.am-card::before {
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, #fff 7%, transparent) 20%, transparent 42%),
+    radial-gradient(560px 180px at 22% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 78%);
+  opacity: 0.85;
+  mask-image: linear-gradient(to bottom, #000, transparent 38%);
+}
+
+.am-card::after {
+  left: 22%;
+  right: 20%;
+  bottom: -110px;
+  height: 220px;
+  border-radius: 999px;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%);
+  filter: blur(10px);
+  opacity: 0.65;
+}
+
+.am-card.is-blocked::before {
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, #fff 7%, transparent) 20%, transparent 42%),
+    radial-gradient(600px 190px at 72% 0%, color-mix(in srgb, var(--cv-wait) 16%, transparent), transparent 78%);
+}
+
+.am-card.is-running::before {
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, #fff 7%, transparent) 20%, transparent 42%),
+    radial-gradient(600px 190px at 72% 0%, color-mix(in srgb, var(--cv-run) 14%, transparent), transparent 78%);
+}
+
+body[data-mode="light"] #agent-map.modal {
+  background:
+    radial-gradient(900px 540px at 50% 46%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 72%),
+    rgba(18, 18, 18, 0.26);
+}
+
+body[data-mode="light"] .am-card {
+  --am-ctl-bg: rgba(255, 255, 255, 0.58);
+  --am-ctl-line: color-mix(in srgb, var(--text) 10%, transparent);
+  --am-ctl-on: #ffffff;
+  --am-rule: color-mix(in srgb, var(--text) 9%, transparent);
+  --am-chrome: color-mix(in srgb, #fff 88%, var(--bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 28px 80px rgba(15, 15, 15, 0.16),
+    0 8px 24px rgba(15, 15, 15, 0.08);
+}
+
+.am-top {
+  height: 64px;
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px 0 24px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent),
+    color-mix(in srgb, var(--am-chrome) 96%, transparent);
+  border-bottom-color: var(--am-rule);
+}
+
+.am-id {
+  gap: 12px;
+}
+
+.am-title {
+  font-size: 16px;
+  font-weight: 680;
+  letter-spacing: -0.018em;
+}
+
+.am-sub {
+  height: 24px;
+  font-size: 11.5px;
+}
+
+.am-filters {
+  align-items: center;
+  flex: 1 1 auto;
+}
+
+.am-chipset {
+  height: var(--am-ctl-h);
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--am-ctl-line);
+  border-radius: var(--am-r-out);
+  background: var(--am-ctl-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.am-chipset::-webkit-scrollbar { height: 0; }
+
+.am-chip {
+  height: 100%;
+  padding: 0 11px;
+  border-radius: var(--am-r-in);
+  font-size: 12px;
+  transition:
+    color var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease),
+    box-shadow var(--motion-fast) var(--ease);
+}
+
+.am-chip::after { display: none; }
+.am-chip:hover:not(.is-active) { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.am-chip.is-active {
+  background: var(--am-ctl-on);
+  color: var(--text);
+  box-shadow: var(--am-ctl-lift);
+}
+.am-chip.is-blocked.is-active {
+  color: var(--am-wait-ink);
+  background: color-mix(in srgb, var(--cv-wait) 13%, var(--am-ctl-on));
+}
+.am-chip.is-running.is-active {
+  color: var(--am-run-ink);
+  background: color-mix(in srgb, var(--cv-run) 11%, var(--am-ctl-on));
+}
+.am-chip-n { font-size: 11px; }
+
+.am-tools {
+  gap: 8px;
+}
+
+.am-views,
+.am-search {
+  background: var(--am-ctl-bg);
+  border-color: var(--am-ctl-line);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+}
+
+.am-card .am-search input[type="text"] {
+  width: 150px;
+}
+
+.am-search:focus-within input[type="text"] {
+  width: 218px;
+}
+
+.am-close:hover {
+  background: color-mix(in srgb, var(--cv-fail) 10%, var(--am-ctl-on));
+  color: var(--text);
+}
+
+.am-body {
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 430px);
+  background: color-mix(in srgb, var(--bg) 82%, #000);
+}
+
+body[data-mode="light"] .am-body {
+  background: color-mix(in srgb, var(--text) 3%, var(--bg));
+}
+
+.am-canvas-pane,
+.am-list-pane {
+  background:
+    radial-gradient(640px 420px at 50% 38%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 74%),
+    radial-gradient(520px 360px at 22% 76%, color-mix(in srgb, var(--cv-run) 5%, transparent), transparent 76%),
+    color-mix(in srgb, var(--bg) 92%, #000);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    inset -1px 0 0 color-mix(in srgb, #000 38%, transparent);
+}
+
+body[data-mode="light"] .am-canvas-pane,
+body[data-mode="light"] .am-list-pane {
+  background:
+    radial-gradient(640px 420px at 50% 38%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 74%),
+    color-mix(in srgb, var(--text) 3%, var(--bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset -1px 0 0 color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.am-cv-grid {
+  opacity: 0.86;
+  background-image:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--cv-ink) 18%, transparent) 1.05px, transparent 0);
+  background-size: 32px 32px;
+}
+
+.am-edge.is-live,
+.am-stem.is-live {
+  stroke: color-mix(in srgb, var(--cv-run) 78%, var(--cv-ink));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--cv-run) 28%, transparent));
+}
+
+.am-flow {
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--cv-run) 42%, transparent));
+}
+
+.am-cv-topo,
+.am-cv-hud {
+  height: 34px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--am-chrome) 72%, transparent);
+  border-color: color-mix(in srgb, var(--text) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent),
+    0 10px 26px -18px #000;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.am-cv-topo { left: 14px; top: 14px; }
+.am-cv-hud { right: 14px; bottom: 14px; }
+
+.am-node-glyph {
+  width: 54px;
+  height: 54px;
+  border-width: 1px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 5%, transparent), transparent),
+    color-mix(in srgb, var(--cv-floor) 84%, var(--cv-ink) 8%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 1px 2px color-mix(in srgb, var(--cv-cast) 18%, transparent),
+    0 9px 20px -18px var(--cv-cast);
+}
+
+.am-node.is-holder .am-node-glyph {
+  width: 62px;
+  height: 62px;
+  border: 1px solid color-mix(in srgb, var(--cv-ink) 18%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-ink) 7%, transparent), transparent),
+    color-mix(in srgb, var(--cv-floor) 76%, var(--cv-ink) 12%);
+  color: var(--cv-ink);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent),
+    0 8px 18px -16px var(--cv-cast);
+}
+
+body[data-mode="light"] .am-node.is-holder .am-node-glyph {
+  background:
+    linear-gradient(180deg, #fff, color-mix(in srgb, var(--text) 2.5%, var(--bg)));
+  border-color: color-mix(in srgb, var(--text) 16%, transparent);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(15, 15, 15, 0.08),
+    0 10px 22px -19px rgba(15, 15, 15, 0.26);
+}
+
+.am-node.is-blocked:not(.is-holder) .am-node-glyph {
+  width: 54px;
+  height: 54px;
+  border: 1.5px solid color-mix(in srgb, var(--cv-wait) 72%, var(--cv-ink));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-wait) 14%, transparent), transparent),
+    color-mix(in srgb, var(--cv-wait) 10%, var(--cv-floor));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--cv-wait) 7%, transparent),
+    0 10px 22px -18px color-mix(in srgb, var(--cv-wait) 54%, #000);
+}
+
+.am-node.is-blocked:not(.is-holder) .am-node-ring {
+  inset: -6px;
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--cv-wait) 68%, var(--cv-ink));
+}
+
+.am-node.is-running:not(.is-holder) .am-node-glyph {
+  width: 54px;
+  height: 54px;
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--cv-run) 70%, var(--cv-ink));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-run) 13%, transparent), transparent),
+    color-mix(in srgb, var(--cv-run) 8%, var(--cv-floor));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--cv-run) 6%, transparent),
+    0 10px 22px -18px color-mix(in srgb, var(--cv-run) 54%, #000);
+}
+
+.am-node.is-selected .am-node-lock {
+  inset: -7px;
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--cv-ink) 62%, var(--cv-floor));
+  box-shadow:
+    inset 0 0 0 2px var(--cv-floor);
+}
+
+body[data-mode="light"] .am-node-glyph {
+  border-color: color-mix(in srgb, var(--text) 15%, transparent);
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--text) 2.25%, var(--bg)));
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(15, 15, 15, 0.07),
+    0 10px 22px -20px rgba(15, 15, 15, 0.22);
+}
+
+body[data-mode="light"] .am-node.is-blocked:not(.is-holder) .am-node-glyph {
+  border-color: color-mix(in srgb, var(--cv-wait) 72%, var(--text));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-wait) 12%, #fff), color-mix(in srgb, var(--cv-wait) 7%, #fff));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 0 0 3px color-mix(in srgb, var(--cv-wait) 7%, transparent),
+    0 10px 22px -20px color-mix(in srgb, var(--cv-wait) 34%, rgba(15, 15, 15, 0.18));
+}
+
+body[data-mode="light"] .am-node.is-running:not(.is-holder) .am-node-glyph {
+  border-color: color-mix(in srgb, var(--cv-run) 68%, var(--text));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cv-run) 10%, #fff), color-mix(in srgb, var(--cv-run) 5%, #fff));
+}
+
+.am-node-label {
+  width: 108px;
+  font-weight: 650;
+  letter-spacing: -0.018em;
+}
+
+.am-node.is-holder .am-node-label {
+  width: auto;
+  max-width: 140px;
+}
+
+.am-list {
+  padding: 14px 14px 18px;
+}
+
+.am-sect {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 8px -2px 6px;
+  padding: 8px 10px 5px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 92%, transparent), transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.am-row {
+  grid-template-columns: 20px minmax(0, 1fr) minmax(62px, auto);
+  grid-template-rows: 19px 17px;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin: 3px 0;
+  padding: 10px 12px 11px 10px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-1) 38%, transparent);
+}
+
+.am-row:hover {
+  background: color-mix(in srgb, var(--bg-2) 84%, transparent);
+  border-color: color-mix(in srgb, var(--line-2) 78%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent),
+    0 10px 22px -20px #000;
+}
+
+.am-row.is-selected {
+  border-color: color-mix(in srgb, var(--line-3) 56%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
+    color-mix(in srgb, var(--bg-2) 94%, var(--bg-3));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent),
+    0 12px 26px -22px #000;
+}
+
+.am-row.is-selected::before {
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  background: var(--accent);
+}
+
+.am-row.is-selected.is-blocked::before { background: var(--am-wait-ink); }
+.am-row.is-selected.is-running::before { background: var(--am-run-ink); }
+.am-row.is-selected.is-failed::before { background: var(--am-fail-ink); }
+.am-row.is-selected.is-blocked {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--am-wait-ink) 11%, transparent), transparent 48%),
+    color-mix(in srgb, var(--bg-2) 92%, var(--bg-3));
+}
+.am-row.is-selected.is-running {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--am-run-ink) 9%, transparent), transparent 48%),
+    color-mix(in srgb, var(--bg-2) 92%, var(--bg-3));
+}
+
+.am-dot {
+  width: 8px;
+  height: 8px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent),
+    0 0 0 3px color-mix(in srgb, currentColor 9%, transparent);
+}
+
+.am-row-name {
+  font-size: 13.5px;
+  font-weight: 640;
+  line-height: 19px;
+}
+
+.am-row-sub {
+  font-size: 11.5px;
+  line-height: 17px;
+}
+
+.am-row-time {
+  font-size: 10.5px;
+  line-height: 16px;
+}
+
+.am-detail-pane {
+  position: relative;
+  overflow: hidden;
+  border-left-color: color-mix(in srgb, var(--text) 12%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent 30%),
+    var(--am-chrome);
+  box-shadow: inset 1px 0 0 color-mix(in srgb, #fff 3%, transparent);
+}
+
+.am-detail-pane::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(360px 240px at 50% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 72%);
+  opacity: 0.9;
+}
+
+.am-detail-pane[data-state="blocked"]::before {
+  background: radial-gradient(390px 260px at 50% 0%, color-mix(in srgb, var(--cv-wait) 16%, transparent), transparent 76%);
+}
+
+.am-detail-pane[data-state="running"]::before {
+  background: radial-gradient(390px 260px at 50% 0%, color-mix(in srgb, var(--cv-run) 13%, transparent), transparent 76%);
+}
+
+.am-detail,
+.am-detail-blank {
+  position: relative;
+  z-index: 1;
+}
+
+.am-d-scroll {
+  gap: 16px;
+  padding: 24px 24px 18px;
+}
+
+.am-d-head {
+  align-items: center;
+}
+
+.am-state {
+  height: 24px;
+  padding-inline: 9px 10px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
+}
+
+.am-d-elapsed {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--text-2) 78%, var(--text-3));
+}
+
+.am-d-name {
+  margin-top: -2px;
+  font-size: 20px;
+  font-weight: 720;
+  letter-spacing: -0.028em;
+  line-height: 1.22;
+}
+
+.am-d-intent {
+  display: block;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: initial;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent),
+    color-mix(in srgb, var(--bg-2) 68%, transparent);
+  color: color-mix(in srgb, var(--text) 80%, var(--text-2));
+  line-height: 1.55;
+  overflow: hidden;
+}
+
+.am-d-feed-wrap,
+.am-d-facts-wrap {
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 3.5%, transparent), transparent),
+    color-mix(in srgb, var(--bg-1) 84%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+}
+
+.am-d-feed-wrap {
+  margin-top: 0;
+}
+
+.am-d-facts-wrap {
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--line-2) 72%, transparent);
+}
+
+.am-d-feed-label,
+.am-d-facts-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: color-mix(in srgb, var(--text-2) 66%, var(--text-3));
+}
+
+.am-d-feed-label::before,
+.am-d-facts-label::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.am-detail-pane[data-state="blocked"] .am-d-feed-label::before { background: var(--am-wait-ink); }
+.am-detail-pane[data-state="running"] .am-d-feed-label::before { background: var(--am-run-ink); }
+
+.am-d-feed {
+  max-height: 235px;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.am-d-feed::before {
+  left: 25px;
+  background: color-mix(in srgb, var(--line-2) 74%, transparent);
+}
+
+.am-d-feed li {
+  grid-template-columns: 50px minmax(0, 1fr) 38px;
+  gap: 10px;
+  padding: 9px 0;
+  font-size: 12.5px;
+}
+
+.am-d-feed .fk {
+  min-width: 36px;
+  max-width: 50px;
+  height: 18px;
+  line-height: 16px;
+  border-color: color-mix(in srgb, var(--line-2) 76%, transparent);
+  background: color-mix(in srgb, var(--text) 7%, var(--am-chrome));
+}
+
+.am-d-feed li.k-tool .fk {
+  color: color-mix(in srgb, var(--text-2) 72%, var(--text-3));
+}
+
+.am-d-feed li.k-user .fk,
+.am-d-feed li.k-agent .fk {
+  color: color-mix(in srgb, var(--text) 74%, var(--text-2));
+}
+
+.am-d-feed .ftxt {
+  color: color-mix(in srgb, var(--text) 86%, var(--text-2));
+}
+
+.am-d-feed li.k-tool .ftxt {
+  color: color-mix(in srgb, var(--text-2) 86%, var(--text-3));
+}
+
+.am-d-facts {
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 4px 14px;
+}
+
+.am-d-facts dt,
+.am-d-facts dd {
+  min-height: 26px;
+}
+
+.am-d-copyid {
+  height: 24px;
+  border-radius: 8px;
+}
+
+.am-d-actions {
+  gap: 10px;
+  padding: 14px 24px 18px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--am-chrome) 78%, transparent), var(--am-chrome)),
+    var(--am-chrome);
+  border-top-color: color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: 0 -18px 34px -28px #000;
+}
+
+.am-d-actions .am-d-open,
+.am-d-actions .am-d-end {
+  height: 38px;
+  border-radius: 12px;
+}
+
+.am-d-actions .am-d-open {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fff 12%, transparent), transparent),
+    linear-gradient(180deg, var(--accent), var(--accent-2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 10px 22px -16px color-mix(in srgb, var(--accent) 72%, #000);
+}
+
+.am-d-actions .am-d-open.is-blocked {
+  color: color-mix(in srgb, #1b0d04 86%, #000);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fff 18%, transparent), transparent),
+    linear-gradient(180deg, #ff9d62, #ff743d);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    0 12px 28px -17px color-mix(in srgb, var(--cv-wait) 80%, #000);
+}
+
+.am-d-actions .am-d-end {
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.am-foot {
+  height: 34px;
+  background: color-mix(in srgb, var(--am-chrome) 94%, transparent);
+  border-top-color: var(--am-rule);
+}
+
+@media (max-width: 1100px) {
+  .am-card .am-search input[type="text"] { width: 116px; }
+  .am-search:focus-within input[type="text"] { width: 160px; }
+  .am-body { grid-template-columns: minmax(0, 1fr) 370px; }
+}
+
+@media (max-width: 960px) {
+  .am-top { gap: 10px; padding-left: 18px; }
+  .am-sub { display: none; }
+  .am-view { padding-inline: 9px; }
+  .am-card .am-search input[type="text"] { width: 96px; }
 }
 
 /* ─── Workflow marketplace ──────────────────────────────────────────────────
