@@ -772,6 +772,40 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.12.0': {
+    items: [
+      {
+        title: 'Split the chat in two',
+        body: 'Put two chats side by side in one window and drag the divider to give each the width it needs. Click a pane to type into it, and closing either half puts the thread back to a single view.',
+        media: 'assets/wn-2120-split.png',
+      },
+      {
+        title: 'A command palette for the whole workspace',
+        body: 'One search reaches your chats, projects, workflows, agents, prompts and skills at once. Open it from anywhere, type a few letters, and jump straight to what you meant.',
+        media: 'assets/wn-2120-palette.png',
+      },
+      {
+        title: 'A source control page',
+        body: 'Read the diff, stage a file or a change, and commit without leaving Husk. The page opens on the first change and follows the branch you are on.',
+        media: 'assets/wn-2120-source.png',
+      },
+      {
+        title: 'Pull requests and issues, in the window',
+        body: 'The GitHub page lists the open pull requests and issues for the project you are in, with their checks, labels and review state, and filters them in place as you type.',
+        media: 'assets/wn-2120-github.png',
+      },
+      {
+        title: 'Run a workflow on a schedule',
+        body: 'Set a workflow or an autopilot run to repeat every so often, daily, or on a chosen weekday, and the Schedule page shows when each one next fires and when it last ran.',
+        media: 'assets/wn-2120-schedule.png',
+      },
+      {
+        title: 'One ledger for what your runs left behind',
+        body: 'Every workflow and autopilot run reports its outcome, time, tokens and cost in a single filterable list, with the per step detail one click away.',
+        media: 'assets/wn-2120-artifacts.png',
+      },
+    ],
+  },
   '2.11.3': {
     items: [
       {
