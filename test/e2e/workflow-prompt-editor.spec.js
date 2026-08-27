@@ -100,7 +100,7 @@ test('delete node reads as destructive and matches the Done button', async () =>
       const del = document.getElementById('wf-np-delete');
       const done = document.getElementById('wf-node-panel-done');
       const dc = getComputedStyle(del);
-      const rose = getComputedStyle(document.documentElement).getPropertyValue('--rose').trim();
+      const rose = getComputedStyle(document.body).getPropertyValue('--rose').trim();
       const toRgb = (hex) => {
         const h = hex.replace('#', '');
         return `rgb(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)})`;
