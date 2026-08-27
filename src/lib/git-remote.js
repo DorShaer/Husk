@@ -13,10 +13,19 @@ const MAX_INPUT = 2048;
 // Transports a remote can legitimately use. The output is always https.
 const SCHEMES = ['https', 'http', 'ssh', 'git'];
 
+// One DNS label: 1 to 63 characters, alphanumeric at both ends, hyphens only
+// between. Written as two anchored cases so it validates in one linear pass.
+const LABEL = /^[a-z0-9]$|^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/i;
 // A host is a run of dot-separated labels and nothing else, so a bracketed
 // address, an empty label and any delimiter smuggled into the authority all
-// fail here.
-const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+// fail here. Each label is validated on its own, which keeps the check linear
+// in the length of the host.
+function isHost(h) {
+  if (typeof h !== 'string' || !h || h.length > 253) return false;
+  const labels = h.split('.');
+  for (const label of labels) if (!LABEL.test(label)) return false;
+  return true;
+}
 const PORT = /^\d{1,5}$/;
 const USER = /^[a-z0-9._-]{1,64}$/i;
 const SHA = /^[0-9a-f]{7,64}$/i;
@@ -57,7 +66,7 @@ function hostAndPath(authority, pathPart) {
     if (!PORT.test(port)) return null;
   }
   host = host.toLowerCase();
-  if (!HOST.test(host)) return null;
+  if (!isHost(host)) return null;
   return { host, path: pathPart };
 }
 
