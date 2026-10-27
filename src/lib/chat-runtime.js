@@ -217,7 +217,12 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       }
       if (isPermissionRequest(ev)) {
         const r = ev.request || {};
-        s.permInputs.set(String(ev.request_id), { input: r.input || {}, suggestions: Array.isArray(r.permission_suggestions) ? r.permission_suggestions : [] });
+        // The card says "for this session", so every rule handed back is
+        // scoped to the session, whatever destination the CLI proposed.
+        const suggestions = Array.isArray(r.permission_suggestions)
+          ? r.permission_suggestions.filter((p) => p && typeof p === 'object').map((p) => ({ ...p, destination: 'session' }))
+          : [];
+        s.permInputs.set(String(ev.request_id), { input: r.input || {}, suggestions });
       }
       const events = normalizeClaudeEvent(ev);
       for (const ne of events) {

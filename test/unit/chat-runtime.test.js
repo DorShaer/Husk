@@ -264,6 +264,21 @@ test('a stopped or exited child leaves the list', async () => {
   assert.equal(h.rt.list().length, 0);
 });
 
+test('claude allow-session scopes every suggested rule to the session', async () => {
+  const { rt, children } = harness();
+  await rt.start({ tabId: 't9', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  const suggestions = [
+    { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow', destination: 'localSettings' },
+    { type: 'addDirectories', directories: ['/w/x'], destination: 'userSettings' },
+  ];
+  c.feed({ type: 'control_request', request_id: 'req-9', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' }, permission_suggestions: suggestions } });
+  await rt.permission({ tabId: 't9', requestId: 'req-9', optionId: 'allow-session' });
+  const resp = c.stdinLines[c.stdinLines.length - 1].response.response;
+  assert.deepEqual(resp.updatedPermissions.map((p) => p.destination), ['session', 'session']);
+  assert.deepEqual(resp.updatedPermissions[0].rules, suggestions[0].rules);
+});
+
 test('claude allow-session hands the permission suggestions back as updatedPermissions', async () => {
   const { rt, children, events } = harness();
   await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
