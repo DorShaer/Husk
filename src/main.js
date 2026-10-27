@@ -1530,12 +1530,15 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    // Model preference. settings.json holds the model the user selected and is
-    // the value the CLI's own picker reports. Transcripts are used for turn
-    // counts and occupancy, which are per-file by nature, and for the model only
-    // when settings names none.
+    // Model preference. The transcript records the model each turn ran on, so
+    // it names what this session uses. settings.json holds the default for new
+    // sessions; it wins only when the session has no turn yet, or when it
+    // changed after the last turn (a picker switch the next turn will record).
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
-    let effModel = settingsModel || model;
+    let transcriptMtime = 0;
+    if (latest) try { transcriptMtime = fs.statSync(latest).mtimeMs; } catch (_) {}
+    const settingsNewer = !!settingsModel && _claudeSettingsCache.mtime > transcriptMtime;
+    let effModel = (model && !settingsNewer) ? model : (settingsModel || model);
     // Model label fallback, DISPLAY ONLY. When neither settings.json nor this
     // tab's own transcript names a model, borrow one from the newest transcript
     // in the project dir just for the label. Occupancy and turn counts above

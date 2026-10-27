@@ -972,3 +972,20 @@ test('a session log over the replay limit still resumes into Chat, showing its l
   await expect(win.locator('.term-pane.show')).toHaveCount(0);
   await app.close();
 });
+
+test('the status bar names the model the chat reports, and follows a switch', async () => {
+  const { homeDir, bin } = makeHome();
+  // A default for new sessions that this chat is not running.
+  fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, '.claude', 'settings.json'), JSON.stringify({ model: 'some-other-model' }));
+  const { app, win } = await launch(homeDir, bin);
+  await chatReady(win);
+  const pane = win.locator('.chat-pane.show');
+  await expect(pane.locator('.chat-model-btn')).toHaveText('Fake 1');
+  await expect(win.locator('#sb-model')).toHaveText('Fake 1');
+  await pane.locator('.chat-model-btn').click();
+  await win.locator('.chat-model-item', { hasText: 'Fake 2' }).click();
+  await expect(pane.locator('.chat-model-btn')).toHaveText('Fake 2');
+  await expect(win.locator('#sb-model')).toHaveText('Fake 2');
+  await app.close();
+});

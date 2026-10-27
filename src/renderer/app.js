@@ -3077,6 +3077,8 @@ if (window.husk.chat) {
     }
     if (ev && ev.type === 'title') adoptChatTitle(tab, ev.title);
     tab.chat.apply(ev);
+    // The bar names the model the agent reports, so a switch shows at once.
+    if (ev && ev.type === 'session' && tabId === activeTabId) refreshShellStatusBar();
   });
   window.husk.chat.onExit((tabId, code) => {
     const buf = chatRestoreBuffers.get(tabId);
@@ -3408,6 +3410,25 @@ function ctxBucketColor(pos) {
 // Strips the tier suffix and vendor prefix, then splits the rest into family
 // and version. A bare alias renders capitalized and gains its version once the
 // session resolves the full id. Date stamps (6+ digits) are dropped.
+// The model a chat tab's agent reported for itself, the same one its composer
+// chip shows. Status figures come from transcripts and settings, which can name
+// the default for new sessions rather than the one this chat runs.
+function chatTabModel(tab) {
+  if (!tab || tab.mode !== 'chat' || !tab.chat || typeof tab.chat.getState !== 'function') return null;
+  let st = null;
+  try { st = tab.chat.getState(); } catch (_) { return null; }
+  if (!st) return null;
+  // state.model is what the chip prints: an id from Claude, a name from ACP.
+  const raw = String(st.model || (st.models && st.models.current) || '').trim();
+  if (!raw) return null;
+  const list = st.models && Array.isArray(st.models.available) ? st.models.available : [];
+  const hit = list.find((m) => m && (m.id === raw || m.name === raw));
+  const id = hit && hit.id ? String(hit.id) : raw;
+  const named = hit && hit.name && hit.name !== hit.id ? String(hit.name).split('·')[0].trim() : '';
+  const label = named || (/^[a-z0-9][a-z0-9.\-\[\]]*$/i.test(raw) && raw.includes('-') ? prettyModelLabel(raw) : raw);
+  return { id, label: label || raw };
+}
+
 function prettyModelLabel(raw) {
   const id = String(raw || '').replace(/\[[^\]]*\]/g, '').replace(/^claude-/, '');
   if (!id) return '';
@@ -3493,7 +3514,9 @@ function refreshShellStatusBar() {
     || ((s.workspace && s.workspace.cwd) || (cfg && cfg.agentCwd) || huskHome || '~');
   // The session's own reading first, then the model the command that started
   // this chat named. Neither knows one, so neither does the bar.
-  const model = (u.session && u.session.modelLabel)
+  const live = chatTabModel(tab);
+  const model = (live && live.label)
+    || (u.session && u.session.modelLabel)
     || prettyModelLabel((u.session && u.session.model) || '')
     || modelFromCommand((tab && tab.command) || (cfg && cfg.agentCommand) || '');
 
@@ -3554,9 +3577,12 @@ async function refreshStatusline() {
   // empty when no model is known, which hides the row. The CLI's own name for
   // the model wins once the catalog has been read, with the id-derived name as
   // the fallback until then.
-  const modelId = (u.session && u.session.model)
+  const liveModel = chatTabModel(TABS.get(activeTabId));
+  const modelId = (liveModel && liveModel.id)
+    || (u.session && u.session.model)
     || (agentKindCache === 'claude' && ctx && ctx.model) || '';
-  const modelLabel = (u.session && u.session.modelLabel)
+  const modelLabel = (liveModel && liveModel.label)
+    || (u.session && u.session.modelLabel)
     || (agentKindCache === 'claude' && ctx && ctx.modelLabel)
     || prettyModelLabel(modelId);
   // The active agent CLI (claude, codex, copilot, ...) and its version, so the
