@@ -38,6 +38,7 @@
     selected: null,         // row number
     status: 'idle',         // idle | loading | ready | error
     error: null,
+    checksUnavailable: false,
     fetchedAt: 0,
   };
 
@@ -160,9 +161,11 @@
         el('span', { class: 'gh-del' }, ` -${row.deletions}`)));
 
       const c = row.checks;
-      kids.push(field('Checks', c && c.total
-        ? el('span', {}, `${c.passed} passed, ${c.failed} failed, ${c.pending} running, ${c.total} total`)
-        : el('span', { class: 'gh-meta' }, 'no checks ran')));
+      kids.push(field('Checks', state.checksUnavailable
+        ? el('span', { class: 'gh-meta' }, 'checks unavailable for this view')
+        : c && c.total
+          ? el('span', {}, `${c.passed} passed, ${c.failed} failed, ${c.pending} running, ${c.total} total`)
+          : el('span', { class: 'gh-meta' }, 'no checks ran')));
 
       // An empty review decision is not an approval, and the copy says which.
       kids.push(field('Review', row.reviewDecision
@@ -246,6 +249,7 @@
         'no-remote': 'Add a GitHub remote to this repository, then press Refresh.',
         'repo-not-found': 'The account gh is logged in as cannot see that repository.',
         'rate-limited': 'Wait for the limit to reset, then press Refresh.',
+        'github-unavailable': 'GitHub returned a temporary server error. Press Refresh to try again.',
       }[e.code];
       if (advice) kids.push(el('div', { class: 'gh-advice' }, advice));
       if (e.detail) kids.push(el('div', { class: 'gh-detail-line' }, e.detail));
@@ -291,9 +295,12 @@
 
     const sub = byId('gh-sub');
     if (sub) {
-      sub.textContent = state.status === 'ready'
-        ? `${rows.length} of ${state.rows.length} ${state.kind === 'pulls' ? 'pull requests' : 'issues'}`
-        : 'Pull requests and issues for the folder you are working in';
+      if (state.status === 'ready') {
+        const base = `${rows.length} of ${state.rows.length} ${state.kind === 'pulls' ? 'pull requests' : 'issues'}`;
+        sub.textContent = state.checksUnavailable ? `${base} (checks unavailable)` : base;
+      } else {
+        sub.textContent = 'Pull requests and issues for the folder you are working in';
+      }
     }
   }
 
@@ -306,6 +313,7 @@
     const mine = ++epoch;
     state.status = 'loading';
     state.error = null;
+    state.checksUnavailable = false;
     paint();
 
     const api = window.husk.github;
@@ -331,9 +339,11 @@
       state.error = res || {};
       state.rows = [];
       state.selected = null;
+      state.checksUnavailable = false;
     } else {
       state.status = 'ready';
       state.rows = res.rows || [];
+      state.checksUnavailable = res.checksUnavailable === true;
       state.fetchedAt = Date.now();
       if (state.selected === null && state.rows.length) state.selected = state.rows[0].number;
     }
@@ -348,6 +358,7 @@
     state.rows = [];
     state.selected = null;
     state.label = '';
+    state.checksUnavailable = false;
     // Issues have no merged state, so a state gh would refuse is corrected here
     // rather than sent and bounced.
     if (kind === 'issues' && state.listState === 'merged') state.listState = 'open';

@@ -13,6 +13,13 @@ test('a list call asks for exactly the fields the surface draws', () => {
   assert.deepStrictEqual(json, G.PR_FIELDS);
 });
 
+test('a list call can drop the expensive check rollup field', () => {
+  const args = G.prListArgs({ includeChecks: false });
+  const json = args[args.indexOf('--json') + 1].split(',');
+  assert.deepStrictEqual(json, G.PR_FIELDS_WITHOUT_CHECKS);
+  assert.ok(!json.includes('statusCheckRollup'));
+});
+
 test('every value is its own argument, so nothing can become a second command', () => {
   const hostile = 'fix; rm -rf ~ && echo "pwned" | sh';
   const args = G.prListArgs({ search: hostile });
@@ -61,6 +68,8 @@ test('gh explains its own failures and each one gets its own code', () => {
     ['GraphQL: Could not resolve to a Repository with the name x/y.', 'repo-not-found'],
     ['HTTP 404: Not Found', 'repo-not-found'],
     ['API rate limit exceeded for user ID 1.', 'rate-limited'],
+    ['HTTP 502: 502 Bad Gateway (https://api.github.com/graphql)', 'github-unavailable'],
+    ['HTTP 504: We could not respond to your request in time.', 'github-unavailable'],
   ];
   for (const [stderr, code] of cases) {
     assert.strictEqual(G.classifyFailure(1, stderr).code, code, stderr);

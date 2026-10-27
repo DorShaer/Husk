@@ -122,6 +122,20 @@ test('the detail pane answers the row under the cursor', async () => {
   await app.close();
 });
 
+test('a degraded check response does not claim no checks ran', async () => {
+  const app = await launch();
+  const win = await ready(app);
+  await show(win, ROWS, {
+    checksUnavailable: true,
+    rows: [pr({ number: 20, title: 'Old change', checks: { total: 0, passed: 0, failed: 0, pending: 0, state: 'none' } })],
+    selected: 20,
+  });
+
+  expect(await win.evaluate(() => document.getElementById('gh-sub').textContent)).toContain('checks unavailable');
+  expect(await win.evaluate(() => document.getElementById('gh-detail').textContent)).toContain('checks unavailable for this view');
+  await app.close();
+});
+
 test('filtering narrows the list in place, with no call to gh', async () => {
   const app = await launch();
   const win = await ready(app);
