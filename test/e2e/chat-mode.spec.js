@@ -56,7 +56,7 @@ test('a chat tab streams text, shows a tool card, answers a permission and ends 
   await expect(pane.locator('.chat-composer-meta')).toContainText('gemini');
   await expect(win.locator('.term-pane.show')).toHaveCount(0);
   await expect(pane.locator('.chat-input')).not.toBeDisabled();
-  await win.waitForFunction(() => !/Starting/.test(document.querySelector('.chat-pane.show .chat-input').placeholder));
+  await chatReady(win);
 
   await pane.locator('.chat-input').fill('write a greeting');
   await pane.locator('.chat-input').press('Enter');
@@ -100,7 +100,7 @@ test('rejecting a permission marks the tool failed and keeps the thread usable',
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
-  await win.waitForFunction(() => !/Starting/.test(document.querySelector('.chat-pane.show .chat-input').placeholder));
+  await chatReady(win);
   await pane.locator('.chat-input').fill('try it');
   await pane.locator('.chat-input').press('Enter');
   const perm = pane.locator('.chat-perm');
@@ -239,7 +239,7 @@ test('a Chat profile boots straight into a chat pane with no welcome screen, eve
   await expect(win.locator('#chat-empty')).not.toHaveClass(/show/);
   await expect(win.locator('.chat-pane.show')).toBeVisible();
   await expect(win.locator('.term-pane.show')).toHaveCount(0);
-  await win.waitForFunction(() => !/Starting/.test(document.querySelector('.chat-pane.show .chat-input').placeholder));
+  await chatReady(win);
   await pane.locator('.chat-input').fill('hello straight away');
   await pane.locator('.chat-input').press('Enter');
   await expect(pane.locator('.chat-item-user .chat-bubble').first()).toHaveText('hello straight away');

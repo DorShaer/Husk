@@ -351,6 +351,7 @@ test('copy from the terminal context menu keeps focus in the terminal', async ()
   // The copy menu belongs to Terminal view; config.chatView is the only pin now.
   const app = await launch({ firstRunDone: true, chatView: 'terminal' });
   const win = await ready(app);
+  await win.waitForFunction(() => typeof cfg !== 'undefined' && !!cfg); // eslint-disable-line no-undef
   const focused = await win.evaluate(async () => {
     setPage('chat');
     // Cold boot shows the welcome screen with no terminal yet; start the agent
@@ -386,6 +387,9 @@ test('adding a context file types its path and nothing else', async () => {
   fs.writeFileSync(sourcePath, 'demo certificate');
   const app = await launch({ firstRunDone: true, agentCommand: 'bash --noprofile --norc', paiEnabled: false });
   const win = await ready(app);
+  // A tab started before boot loads the config takes the default agent, not
+  // this test's shell.
+  await win.waitForFunction(() => typeof cfg !== 'undefined' && !!cfg); // eslint-disable-line no-undef
   await win.evaluate(async () => {
     setPage('chat'); // eslint-disable-line no-undef
     await startPty(); // eslint-disable-line no-undef
