@@ -140,9 +140,14 @@ test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence
 
   // 7. The run must be recorded, and recorded against the fingerprint it ran on.
   // Without this a receipt can never be built, which is the entire product.
-  const runs = await win.evaluate((id) => window.husk.workflows.runs(id), newId);
-  const rows = Array.isArray(runs) ? runs : (runs && runs.runs) || [];
-  expect(rows.length, `no run history recorded: ${JSON.stringify(runs)}`).toBeGreaterThan(0);
+  // The wait above also clears in the instant before the run registers, so
+  // the history is polled for the row rather than read once.
+  const readRuns = async () => {
+    const runs = await win.evaluate((id) => window.husk.workflows.runs(id), newId);
+    return Array.isArray(runs) ? runs : (runs && runs.runs) || [];
+  };
+  await expect.poll(async () => (await readRuns()).length, { timeout: 30_000, message: 'no run history recorded' }).toBeGreaterThan(0);
+  const rows = await readRuns();
 
   const mine = rows.filter((r) => r && r.workflowId === newId);
   expect(mine.length, 'run history has no row for this workflow').toBeGreaterThan(0);
