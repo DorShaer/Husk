@@ -209,10 +209,15 @@ test('New prompt still creates, and does not disturb the open prompt', async () 
   await win.fill('#np-desc', 'A fresh one');
   await win.fill('#np-content', 'Fresh body.');
   await win.click('#np-create');
-  await win.waitForSelector('#new-prompt-modal', { state: 'hidden', timeout: 10_000 });
-  await win.waitForTimeout(600);
+  // The modal closes once the create round trip returns, which a loaded runner
+  // can stretch. Poll for it, and carry any toast along so a refused create
+  // names its reason instead of timing out.
+  await expect.poll(() => win.evaluate(() => ({
+    hidden: !!document.getElementById('new-prompt-modal').hidden,
+    toast: Array.from(document.querySelectorAll('#toast-stack .toast-body')).map((t) => t.textContent.trim()).join(' | '),
+  })), { timeout: 30_000 }).toMatchObject({ hidden: true });
 
-  expect(fs.existsSync(path.join(env.dir, 'brand-new.md'))).toBe(true);
+  await expect.poll(() => fs.existsSync(path.join(env.dir, 'brand-new.md')), { timeout: 10_000 }).toBe(true);
   expect(fs.readFileSync(path.join(env.dir, 'triage.md'), 'utf8')).toContain('Body.');
 
   await app.close();
