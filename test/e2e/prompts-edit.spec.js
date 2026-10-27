@@ -198,7 +198,7 @@ test('Ctrl+S saves without reaching for the pointer', async () => {
   fs.rmSync(env.root, { recursive: true, force: true });
 });
 
-test('New prompt still creates, and does not disturb the open prompt', async () => {
+test('New prompt still creates, and does not disturb the open prompt', async ({}, testInfo) => {
   const env = makeEnv({ 'triage.md': md('triage', 'Desc', 'Body.') });
   const { app, win } = await openPrompts(env);
 
@@ -208,11 +208,41 @@ test('New prompt still creates, and does not disturb the open prompt', async () 
   await win.fill('#np-name', 'brand-new');
   await win.fill('#np-desc', 'A fresh one');
   await win.fill('#np-content', 'Fresh body.');
+  // This step has stayed open past its wait on CI runners with nothing to say
+  // why, and it does not reproduce locally. Record what happens between the
+  // click and the close: every toast, every flip of the modal's hidden flag,
+  // the click reaching the button, and the create round trip.
+  await win.evaluate(() => {
+    const log = [];
+    const t0 = Date.now();
+    const note = (s) => log.push(`${Date.now() - t0}ms ${s}`);
+    window.__npLog = log;
+    const modal = document.getElementById('new-prompt-modal');
+    new MutationObserver(() => note(`modal.hidden=${modal.hidden}`)).observe(modal, { attributes: true, attributeFilter: ['hidden'] });
+    const stack = document.getElementById('toast-stack');
+    if (stack) new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => note(`toast: ${(n.textContent || '').trim()}`)))).observe(stack, { childList: true });
+    document.getElementById('np-create').addEventListener('click', () => note('click reached np-create'), true);
+    try {
+      const orig = window.husk.prompts.create;
+      window.husk.prompts.create = async (...a) => { note('create: sent'); const r = await orig(...a); note(`create: ${JSON.stringify(r)}`); return r; };
+    } catch (e) { note(`create wrap failed: ${e.message}`); }
+  });
   await win.click('#np-create');
-  await win.waitForSelector('#new-prompt-modal', { state: 'hidden', timeout: 10_000 });
-  await win.waitForTimeout(600);
+  const closed = await win.waitForFunction(() => document.getElementById('new-prompt-modal').hidden, null, { timeout: 30_000 }).then(() => true, () => false);
+  if (!closed) {
+    const state = await win.evaluate(() => ({
+      log: window.__npLog,
+      name: document.getElementById('np-name').value,
+      desc: document.getElementById('np-desc').value,
+      createDisabled: document.getElementById('np-create').disabled,
+      active: document.activeElement && (document.activeElement.id || document.activeElement.className || document.activeElement.tagName),
+      openModals: Array.from(document.querySelectorAll('.modal:not([hidden])')).map((m) => m.id),
+    }));
+    await win.screenshot({ path: testInfo.outputPath('new-prompt-modal.png') }).catch(() => {});
+    throw new Error('new prompt modal still open after Create: ' + JSON.stringify(state, null, 2));
+  }
 
-  expect(fs.existsSync(path.join(env.dir, 'brand-new.md'))).toBe(true);
+  await expect.poll(() => fs.existsSync(path.join(env.dir, 'brand-new.md')), { timeout: 10_000 }).toBe(true);
   expect(fs.readFileSync(path.join(env.dir, 'triage.md'), 'utf8')).toContain('Body.');
 
   await app.close();
