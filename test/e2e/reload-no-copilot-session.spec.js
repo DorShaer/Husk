@@ -14,6 +14,8 @@ test('Ctrl+R reloads non-chat pages but restarts Copilot chat without renderer r
     firstRunDone: true,
     skipWelcome: true,
     agentCommand: 'copilot',
+    // This spec is about the PTY path; the fake copilot speaks no ACP.
+    chatView: 'terminal',
   }));
   fs.mkdirSync(path.join(homeDir, '.copilot', 'session-state'), { recursive: true });
   const binDir = path.join(homeDir, 'bin');

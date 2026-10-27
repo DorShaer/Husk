@@ -348,17 +348,22 @@ test('appearance changes preview live and persist only on save', async () => {
 });
 
 test('copy from the terminal context menu keeps focus in the terminal', async () => {
-  const app = await launch();
+  // The copy menu belongs to Terminal view; config.chatView is the only pin now.
+  const app = await launch({ firstRunDone: true, chatView: 'terminal' });
   const win = await ready(app);
   const focused = await win.evaluate(async () => {
     setPage('chat');
     // Cold boot shows the welcome screen with no terminal yet; start the agent
-    // so a tab (and its terminal) exists before exercising copy.
+    // so a tab (and its terminal) exists before exercising copy. The copy menu
     try { await startPty(); } catch (_) {}
     for (let i = 0; i < 100 && !term; i++) await new Promise((r) => setTimeout(r, 20));
     try { term.write('hello selection'); } catch (_) {}
     await new Promise((r) => setTimeout(r, 50));
     try { term.selectAll(); } catch (_) {}
+    // A late-arriving modal (what's new, trust) would take focus and fake a
+    // failure; the test is about the copy menu, not the modals.
+    document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; });
+    try { term.focus(); } catch (_) {}
     const copyBtn = document.querySelector('#terminal-ctx-menu [data-action="copy"]');
     copyBtn.click();
     // Focus restoration is async (clipboard write then term.focus); poll for

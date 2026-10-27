@@ -295,7 +295,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'source', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
+const VALID_PAGES = new Set(['chat', 'terminal', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'source', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -363,6 +363,7 @@ function applyPageShell(name) {
   document.body.dataset.contextPane = CONTEXT_PANE_PAGES.has(page) ? 'on' : 'off';
   $$('.page').forEach((p) => { p.hidden = p.dataset.page !== page; });
   $$('.rail-item').forEach((it) => it.classList.toggle('active', it.dataset.page === page));
+  syncChatLayout();
 }
 applyPageShell(currentPage);
 
@@ -385,6 +386,10 @@ let splitBusy = false;
 const SPLIT_MIN = 0.2;
 const SPLIT_MAX = 0.8;
 let splitShare = 0.5;
+// The chat page's Sessions column: the fetched history, the search, which
+// groups are folded, and the paint bookkeeping. Declared up here because tab
+// code that runs early schedules its paint.
+const cs = { list: null, agent: '', currentCwd: '', query: '', folded: new Set(), open: new Set(), frame: 0, lastSig: '', loading: null, byKey: null };
 
 // Route URL clicks through the OS browser via shell.openExternal, behind
 // Husk's confirm dialog so the user sees the destination first. Covers both
@@ -423,7 +428,7 @@ function createTab(idOverride) {
     // When the terminal is not focused, draw no cursor instead of xterm's
     // default hollow outline block, which reads as a stray artifact.
     cursorInactiveStyle: 'none',
-    fontFamily: '"JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace',
+    fontFamily: '"Ubuntu Mono", "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace',
     fontSize: 13,
     theme: themeForXterm(),
     minimumContrastRatio: contrastForXterm(),
@@ -442,6 +447,19 @@ function createTab(idOverride) {
     // pinned model is named.
     exited: false,
     command: null,
+    // mode is how the tab shows its agent: 'terminal' (the CLI's own TUI in a
+    // PTY) or 'chat' (the CLI run headlessly, painted by chat-ui.js).
+    // ptyStarted records whether a PTY was ever spawned, so switching a
+    // chat-born tab to Terminal knows to spawn one. launchCommand and cwd are
+    // what the tab was opened with, reused when the other mode starts.
+    mode: 'terminal',
+    ptyStarted: false,
+    launchCommand: null,
+    cwd: null,
+    chat: null,
+    chatRunning: false,
+    chatStopping: false,
+    chatStart: null,
     // title is the auto-derived name (agent session title, else this default).
     // customTitle, when set, is the user's rename and wins over title.
     // agentId links this tab to its claude session once resolved.
@@ -501,11 +519,12 @@ function activateTab(id) {
   fitAddon = tab.fitAddon;
   agentMouseOn = !!tab.mouseOn;
   chatHasInput = tab.chatHasInput;
-  for (const t of TABS.values()) t.el.classList.toggle('show', isPaneVisible(t.id));
+  applyPaneVisibility();
   applySplit();
   renderTabStrip();
+  renderChatModeToggle();
   fitNow();
-  try { term.focus(); } catch (_) {}
+  try { focusActiveChat(); } catch (_) {}
   // Refresh the status panel for the newly focused tab. Switch the main
   // process's active session first so stats:get resolves this tab's
   // transcript, then fetch and render fresh stats.
@@ -564,6 +583,7 @@ window.husk.pty.onMouseMode((sessionId, on) => {
   if (sessionId === activeTabId) agentMouseOn = !!on;
 });
 $('#terminal').addEventListener('wheel', (e) => {
+  if (e.target && e.target.closest && e.target.closest('.chat-pane')) return;
   const paneEl = e.target && e.target.closest ? e.target.closest('.term-pane') : null;
   const tab = TABS.get(paneEl ? paneEl.dataset.sessionId : activeTabId);
   if (!tab || !tab.mouseOn) return;
@@ -641,7 +661,10 @@ function selEdgeTick() {
 }
 
 // Capture phase, so the drag registers even if the event stops bubbling.
-$('#terminal').addEventListener('mousedown', (e) => { if (e.button === 0) selDragging = true; }, true);
+$('#terminal').addEventListener('mousedown', (e) => {
+  if (e.target && e.target.closest && e.target.closest('.chat-pane')) return;
+  if (e.button === 0) selDragging = true;
+}, true);
 window.addEventListener('mouseup', () => { selDragging = false; selEdgeStop(); });
 document.addEventListener('mousemove', (e) => {
   if (!selDragging || selSynthetic) return;
@@ -772,6 +795,35 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.13.0': {
+    items: [
+      {
+        title: 'Your CLI agent, as a real chat',
+        body: 'Claude, Copilot, Gemini and Kiro now open as a native chat: streamed replies, tool calls that open into their diff, and permission cards with the agent\'s own choices. Every past session sits in a column beside the thread, and a click reopens it with its history.',
+        media: 'assets/wn-2130-chat.png',
+      },
+      {
+        title: 'Pick any model your CLI offers',
+        body: 'The model chip in the composer, or /model, lists the models your CLI itself reports and switches in place, without restarting the conversation. New models show up the day your CLI ships them.',
+        media: 'assets/wn-2130-models.png',
+      },
+      {
+        title: 'Keep typing while it works',
+        body: 'Enter queues your next message and sends it when the agent is free. Up brings back an earlier prompt or a queued one, paste or drop an image straight into the composer, and Edit and resend rewrites a prompt in place.',
+        media: 'assets/wn-2130-queue.png',
+      },
+      {
+        title: 'A Terminal page',
+        body: 'A real shell in your project, in tabs, one click from the rail. Run the test the agent just changed or check git without leaving the window.',
+        media: 'assets/wn-2130-terminal.png',
+      },
+      {
+        title: 'Clone an MCP server',
+        body: 'Clone opens the server form filled in from the original and named for the copy. Change what you need and save it as a new server; the original stays as it was.',
+        media: 'assets/wn-2130-mcp-clone.png',
+      },
+    ],
+  },
   '2.12.0': {
     items: [
       {
@@ -1149,6 +1201,8 @@ async function pasteIntoTerminal() {
     if (copyBtn) copyBtn.disabled = !term.hasSelection();
   }
   terminalEl.addEventListener('contextmenu', (e) => {
+    // A chat pane is ordinary DOM: its text selects and copies natively.
+    if (e.target && e.target.closest && e.target.closest('.chat-pane')) return;
     e.preventDefault();
     showMenu(e.clientX, e.clientY);
   });
@@ -1376,6 +1430,9 @@ function captureResumeFailure(tab, data) {
 }
 
 window.husk.pty.onData((sessionId, d) => {
+  // A shell tab owns its own id. Letting it claim the frame first keeps chat
+  // panes from ever being written to by a terminal, and vice versa.
+  if (window.Tm && window.Tm.onData(sessionId, d)) return;
   const tab = TABS.get(sessionId) || (!sessionId ? TABS.get(activeTabId) : null);
   if (!tab || tab.restarting) return;
   if (captureResumeFailure(tab, d)) return;
@@ -1388,6 +1445,7 @@ window.husk.pty.onData((sessionId, d) => {
   if (!tab.flushScheduled) { tab.flushScheduled = true; requestAnimationFrame(() => _flushTabWrite(tab)); }
 });
 window.husk.pty.onExit((sessionId, code) => {
+  if (window.Tm && window.Tm.onExit(sessionId, code)) return;
   const tab = TABS.get(sessionId);
   // Skip the exit notice while this tab's PTY is being torn down on purpose.
   if (!tab || tab.restarting) return;
@@ -1413,10 +1471,17 @@ function announceInTerminal(msg) {
 // in a fresh PTY, which re-renders the full history; everything else keeps its
 // live process and reattaches. Returns true if any chat was restored.
 async function reattachSessions() {
+  // Chat children outlive a reload too. Read them first so a tab whose PTY sits
+  // behind a chat pane reattaches to that PTY instead of being resumed.
+  const chats = await listLiveChats();
+  const chatIds = new Set(chats.map((c) => c.tabId));
+  for (const c of chats) chatRestoreBuffers.set(c.tabId, { events: [], exitCode: null });
   let live;
   try { live = await window.husk.pty.list(); } catch (_) { live = null; }
-  if (!live || !live.ok || !Array.isArray(live.sessions) || !live.sessions.length) return false;
+  const ptys = live && live.ok && Array.isArray(live.sessions) ? live.sessions : [];
+  if (!ptys.length && !chats.length) return false;
   $('#chat-empty').classList.remove('show');
+  const wantActive = bootingFromReloadState && bootingFromReloadState.activeTabId;
   const agent = (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude').trim().split(/\s+/)[0].toLowerCase();
   let activeTab = null;
   for (const sess of live.sessions) {
@@ -1425,17 +1490,22 @@ async function reattachSessions() {
     // otherwise the live PTY is kept and reattached below.
     let resumeCmd = null;
     // Resume only when the transcript still exists, so a session that was
-    // never written stays where it is.
-    if (sess.claudeSessionId && sess.resumable) {
+    // never written stays where it is. A tab showing a live chat keeps its
+    // PTY as is: the chat is what the user sees.
+    if (sess.claudeSessionId && sess.resumable && !chatIds.has(sess.sessionId)) {
       try {
         const r = await window.husk.sessions.resumeCommand({ agent, id: sess.claudeSessionId, cwd: sess.cwd || '' });
         if (r && r.ok && r.command) resumeCmd = r.command;
       } catch (_) { /* no resume form for this agent: keep the live PTY below */ }
     }
     if (resumeCmd) {
-      // Resume the conversation in a fresh PTY; drop the orphaned old one.
+      // Resume the conversation in a fresh tab; drop the orphaned old PTY. Chat
+      // view with the history replayed when the CLI can, else a fresh PTY.
       try { await window.husk.pty.close(sess.sessionId); } catch (_) {}
-      tab = await openNewChatTab({ command: resumeCmd, cwd: sess.cwd || null, skipContext: true });
+      let viaChat = false;
+      try { viaChat = await resumeIntoChat({ id: sess.claudeSessionId, owner: agent, project: sess.cwd || '' }); } catch (_) { viaChat = false; }
+      if (viaChat) tab = TABS.get(activeTabId) || null;
+      else tab = await openNewChatTab({ command: resumeCmd, cwd: sess.cwd || null, skipContext: true });
       if (tab) {
         tab.agentId = sess.claudeSessionId;
         try {
@@ -1450,20 +1520,98 @@ async function reattachSessions() {
       // No resumable session id: keep the live process and reattach to it.
       tab = createTab(sess.sessionId);
       tab.chatHasInput = true;
+      tab.ptyStarted = true;
+      const chat = chats.find((c) => c.tabId === tab.id);
+      // The chat pane goes up before the tab is shown, so a chat tab never
+      // flashes its xterm while the PTY behind it reattaches.
+      if (chat) restoreChatTab(tab, chat);
       activateTab(tab.id);
       try { tab.fitAddon.fit(); } catch (_) {}
       try { await window.husk.pty.reattach({ sessionId: tab.id, cols: tab.term.cols || 100, rows: tab.term.rows || 30, activate: true }); } catch (_) {}
     }
     if (tab && (sess.active || !activeTab)) activeTab = tab;
+    if (tab && wantActive && tab.id === wantActive) activeTab = tab;
   }
+  // Chat-only tabs: born in chat mode, no PTY behind them.
+  for (const chat of chats) {
+    if (TABS.has(chat.tabId)) continue;
+    const tab = createTab(chat.tabId);
+    if (!restoreChatTab(tab, chat)) { chatRestoreBuffers.delete(chat.tabId); continue; }
+    if (!activeTab || (wantActive && tab.id === wantActive) || (!wantActive && !ptys.length)) activeTab = tab;
+  }
+  // Anything still buffered belongs to a chat that could not be rebuilt.
+  chatRestoreBuffers.clear();
   if (activeTab) activateTab(activeTab.id);
   renderTabStrip();
+  renderChatModeToggle();
+  return TABS.size > 0;
+}
+
+// The main process's live chat children with their replay logs, or [] when
+// the bridge has no list yet or it fails.
+async function listLiveChats() {
+  const api = window.husk.chat;
+  if (!api || typeof api.list !== 'function' || !window.HuskChat) return [];
+  let res;
+  try { res = await api.list(); } catch (_) { return []; }
+  if (!res || !res.ok || !Array.isArray(res.sessions)) return [];
+  return res.sessions.filter((c) => c && typeof c.tabId === 'string' && c.tabId);
+}
+
+// Rebuilds one chat tab around an agent that is still running: mounts the
+// pane, replays the recorded thread, then applies whatever arrived while that
+// happened. The child is alive, so nothing is started. Returns false when the
+// pane cannot be mounted.
+function restoreChatTab(tab, chat) {
+  tab.mode = 'chat';
+  tab.launchCommand = chat.command || null;
+  tab.command = chat.command || (cfg && cfg.agentCommand) || null;
+  tab.cwd = chat.cwd || null;
+  tab.chatHasInput = true;
+  tab.exited = false;
+  tab.chatStopping = false;
+  tab.chatStart = Promise.resolve(true);
+  tab.chatAlive = true;
+  if (chat.sessionId) { tab.agentId = String(chat.sessionId); tab.agentIdProvisional = false; }
+  const c = ensureChatPane(tab);
+  if (!c) { tab.mode = 'terminal'; return false; }
+  const cli = tabAgentCommand(tab).split(/\s+/)[0];
+  c.setInfo({ agentName: cli, cwd: chatWorkDir(tab) });
+  const events = Array.isArray(chat.events) ? chat.events : [];
+  if (typeof c.replay === 'function') c.replay(events, { turnOpen: !!chat.turnOpen });
+  else { for (const ev of events) c.apply(ev); c.flush(); }
+  const firstUser = events.find((ev) => ev && ev.type === 'user' && String(ev.text || '').trim());
+  if (firstUser) {
+    tab.promptSent = true;
+    if (!tab.customTitle && !tab.titleEarned) {
+      const t = chatTitleFrom(firstUser.text);
+      if (t) tab.title = t;
+    }
+  }
+  const titled = events.filter((ev) => ev && ev.type === 'title' && String(ev.title || '').trim()).pop();
+  if (titled) adoptChatTitle(tab, titled.title);
+  c.setRunning(!!chat.turnOpen);
+  tab.chatRunning = !!chat.turnOpen;
+  const buf = chatRestoreBuffers.get(tab.id);
+  chatRestoreBuffers.delete(tab.id);
+  if (buf) {
+    for (const ev of buf.events) { if (ev && ev.type === 'title') adoptChatTitle(tab, ev.title); c.apply(ev); }
+    if (buf.events.length) c.flush();
+    if (buf.exitCode !== null && buf.exitCode !== undefined) {
+      c.apply({ type: 'status', text: `Agent exited (code ${buf.exitCode}). Restart for a new session.` });
+      c.setRunning(false);
+      c.setExited(true);
+      tab.exited = true;
+    }
+  }
   return true;
 }
 
 async function startPty() {
   // First tab + its session.
   const tab = createTab();
+  // Decided before the tab is shown, so a chat tab never flashes its xterm.
+  if (initialTabMode(cfg && cfg.agentCommand) === 'chat' && ensureChatPane(tab)) tab.mode = 'chat';
   activateTab(tab.id);
   fitAddon.fit();
   const { cols, rows } = term;
@@ -1480,6 +1628,14 @@ async function startPty() {
   // Sessions list, not something the app does automatically on startup.
   tab.command = (cfg && cfg.agentCommand) || null;
   tab.exited = false;
+  if (tab.mode === 'chat') {
+    await startChatForTab(tab);
+    refreshShellStatusBar();
+    maybeShowTrustBanner();
+    try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
+    return tab;
+  }
+  tab.ptyStarted = true;
   await window.husk.pty.start({ cols, rows, sessionId: tab.id, resumeLast: false });
   refreshShellStatusBar();
   term.focus();
@@ -1496,6 +1652,7 @@ async function startPty() {
   // Snapshot which MCPs were enabled at launch so the MCP page can split
   // them into Loaded vs Pending, and the welcome screen can show what's live.
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
+  return tab;
 }
 
 // Open a brand-new chat in its own tab, leaving every existing tab's agent
@@ -1507,6 +1664,23 @@ async function openNewChatTab(opts = {}) {
   SPLIT = null;
   splitPicking = false;
   const tab = createTab();
+  tab.launchCommand = opts.command || null;
+  tab.cwd = opts.cwd || null;
+  // A session resumed into Chat: its past events are painted before the agent
+  // starts, and the tab is that session from the first frame.
+  if (Array.isArray(opts.history)) tab.chatHistory = opts.history;
+  if (opts.sessionId) { tab.agentId = String(opts.sessionId); tab.agentIdProvisional = false; tab.resumedSessionId = String(opts.sessionId); }
+  if (opts.title) {
+    if (opts.customTitle) tab.customTitle = String(opts.title);
+    else { tab.title = String(opts.title); tab.titleEarned = true; }
+    tab.promptSent = true;
+  }
+  // A new chat with another CLI (the Sessions column's New menu) opens in Chat
+  // like any new chat when that CLI can; a plain launch command stays a PTY.
+  if ((!opts.command || opts.preferChat) && !opts.resumeAttempt
+    && initialTabMode(opts.command || (cfg && cfg.agentCommand)) === 'chat' && ensureChatPane(tab)) {
+    tab.mode = 'chat';
+  }
   if (opts.resumeAttempt) {
     tab.resumeAttempt = {
       agent: String(opts.resumeAttempt.agent || ''),
@@ -1521,6 +1695,21 @@ async function openNewChatTab(opts = {}) {
     };
   }
   activateTab(tab.id);
+  if (tab.mode === 'chat') {
+    chatHasInput = false;
+    resetSpeechState();
+    clearSessionContext();
+    tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+    // The welcome screen goes up before the agent is ready, so a prompt typed
+    // into it waits on tab.chatStart rather than racing the start.
+    if (welcomeWanted() && !opts.skipWelcome) $('#chat-empty').classList.add('show');
+    await startChatForTab(tab);
+    refreshShellStatusBar();
+    maybeShowTrustBanner();
+    try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
+    renderTabStrip();
+    return tab;
+  }
   fitAddon.fit();
   const { cols, rows } = tab.term;
   chatHasInput = false;
@@ -1528,13 +1717,14 @@ async function openNewChatTab(opts = {}) {
   clearSessionContext();
   tab.command = opts.command || (cfg && cfg.agentCommand) || null;
   tab.exited = false;
+  tab.ptyStarted = true;
   await window.husk.pty.start({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   refreshShellStatusBar();
   tab.term.focus();
   maybeShowTrustBanner();
   // skipWelcome: the caller is about to write into this chat, so painting the
   // welcome screen for a frame and pulling it straight back reads as a glitch.
-  if (!(cfg && cfg.skipWelcome) && !opts.skipWelcome) $('#chat-empty').classList.add('show');
+  if (welcomeWanted() && !opts.skipWelcome) $('#chat-empty').classList.add('show');
   // Do not inject the workflow-context primer into a resumed conversation: it
   // would land as a stray message mid-chat. Only fresh chats get it.
   if (!opts.skipContext) {
@@ -1552,6 +1742,21 @@ async function openNewChatTab(opts = {}) {
 async function restartPty(opts = {}) {
   const tab = TABS.get(activeTabId);
   if (!tab) return;
+  if (tab.mode === 'chat') {
+    const next = String(opts.command || (cfg && cfg.agentCommand) || 'claude').trim();
+    if (chatProtocolFor(next)) { await restartChat(tab, opts); return; }
+    // The CLI it restarts into has no chat protocol, so the tab goes back to
+    // its terminal, spawning one if it never had a PTY.
+    await leaveChatMode(tab);
+    if (!tab.ptyStarted) {
+      tab.launchCommand = opts.command || null;
+      tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+      if (opts.cwd) tab.cwd = opts.cwd;
+      await startTabPty(tab);
+      if (!opts.silent) toast('New session', 'success');
+      return;
+    }
+  }
   tab.restarting = true;
   fitAddon.fit();
   const { cols, rows } = tab.term;
@@ -1563,6 +1768,7 @@ async function restartPty(opts = {}) {
   try { tab.term.reset(); } catch (_) { try { tab.term.clear(); } catch (_) {} }
   tab.command = opts.command || (cfg && cfg.agentCommand) || null;
   tab.exited = false;
+  tab.ptyStarted = true;
   await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
   // Quiet window that lets the closing PTY drain its tail notice into the
   // suppressed handlers before output is re-enabled.
@@ -1572,9 +1778,10 @@ async function restartPty(opts = {}) {
   tab.restarting = false;
   refreshShellStatusBar();
   // Respect the "Don't show this on next launch" toggle on restart too.
-  if (!(cfg && cfg.skipWelcome)) $('#chat-empty').classList.add('show');
+  if (welcomeWanted()) $('#chat-empty').classList.add('show');
   tab.term.focus();
   try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
+  renderChatModeToggle();
   if (!opts.silent) toast('New session', 'success');
 }
 
@@ -1618,10 +1825,18 @@ async function closeTab(id) {
       if (other) activeTabId = other.id;
     }
   }
+  if (tab.mode === 'chat') {
+    tab.chatStopping = true;
+    try { await window.husk.chat.stop({ tabId: id }); } catch (_) {}
+  }
   try { await window.husk.pty.close(id); } catch (_) {}
   try { tab.term.dispose(); } catch (_) {}
   try { tab.el.remove(); } catch (_) {}
+  if (tab.chat) { try { tab.chat.destroy(); } catch (_) {} tab.chat = null; }
   TABS.delete(id);
+  // The closed chat is history now, so the Sessions column lists it again.
+  sessionsFetchInvalidate();
+  csLoad();
   if (TABS.size === 0) { await openNewChatTab(); return; }
   if (activeTabId === id || !TABS.has(activeTabId)) {
     const next = TABS.keys().next();
@@ -1749,7 +1964,7 @@ function renderTabStrip() {
     btn.title = name;
     const label = document.createElement('span');
     label.className = 'chat-tab-label';
-    if (!t.customTitle && !t.titleEarned && t.promptSent) {
+    if (!t.customTitle && !t.titleEarned && (t.mode === 'chat' ? t.chatRunning : t.promptSent)) {
       // Name is brewing: breathing dots instead of the "Chat N" placeholder.
       showThinkingDots(label);
     } else {
@@ -1796,6 +2011,9 @@ function renderTabStrip() {
   // brought back into view after every render.
   const active = strip.querySelector('.chat-tab.active');
   if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  for (const t of tabs) if (t.chat) t.chat.setInfo({ title: displayTitle(t) });
+  csSchedule();
+  refreshTopbarChatStat();
 }
 
 // Link each tab to the agent session it spawned, so a saved custom name can be
@@ -1803,7 +2021,9 @@ function renderTabStrip() {
 // session and while the session it landed on is still provisional, so it can
 // move across to the real session once that appears.
 async function linkTabs() {
-  const pending = [...TABS.values()].filter((t) => !t.agentId || t.agentIdProvisional);
+  // A chat tab learns its session id from the agent itself; the PTY resolver
+  // would only guess at it.
+  const pending = [...TABS.values()].filter((t) => t.mode !== 'chat' && (!t.agentId || t.agentIdProvisional));
   if (!pending.length) return;
   const claimed = [...TABS.values()]
     .filter((t) => t.agentId && !t.agentIdProvisional)
@@ -2006,15 +2226,17 @@ function applySplit() {
   const bar = splitDivider();
   if (!SPLIT) {
     if (bar.parentNode) bar.remove();
-    for (const t of TABS.values()) { t.el.style.order = ''; t.el.classList.remove('is-a', 'is-b'); }
+    for (const t of TABS.values()) for (const pel of tabPaneEls(t)) { pel.style.order = ''; pel.classList.remove('is-a', 'is-b'); }
     host.style.removeProperty('--split-a');
     return;
   }
   host.style.setProperty('--split-a', (splitShare * 100).toFixed(2) + '%');
   for (const t of TABS.values()) {
-    t.el.classList.toggle('is-a', t.id === SPLIT.a);
-    t.el.classList.toggle('is-b', t.id === SPLIT.b);
-    t.el.style.order = t.id === SPLIT.a ? '0' : (t.id === SPLIT.b ? '2' : '');
+    for (const pel of tabPaneEls(t)) {
+      pel.classList.toggle('is-a', t.id === SPLIT.a);
+      pel.classList.toggle('is-b', t.id === SPLIT.b);
+      pel.style.order = t.id === SPLIT.a ? '0' : (t.id === SPLIT.b ? '2' : '');
+    }
   }
   bar.style.order = '1';
   if (bar.parentNode !== host) host.appendChild(bar);
@@ -2023,13 +2245,863 @@ function applySplit() {
 // A click in the other pane makes it the focused chat.
 $('#terminal').addEventListener('mousedown', (e) => {
   if (!SPLIT) return;
-  const paneEl = e.target && e.target.closest ? e.target.closest('.term-pane') : null;
+  const paneEl = e.target && e.target.closest ? e.target.closest('.term-pane, .chat-pane') : null;
   if (!paneEl) return;
   const id = paneEl.dataset.sessionId;
   if (id && id !== activeTabId && TABS.has(id)) activateTab(id);
 }, true);
 
 $('#btn-split') && $('#btn-split').addEventListener('click', () => { toggleSplit(); });
+
+// ─── Chat mode: a native thread in place of the xterm, per tab ──────────────
+// A tab shows its agent one of two ways. Terminal is the CLI's own TUI in a
+// PTY. Chat runs the same CLI headlessly over its machine protocol (ACP or
+// claude stream-json) in the main process and paints the thread with
+// chat-ui.js. The stored preference only decides how a new tab opens; each
+// tab switches on its own. Chat panes live inside #terminal next to the term
+// panes, so split view seats either kind with the same order and classes.
+const CHAT_MODE_KEY = 'husk.chatMode';
+
+function preferredTabMode() {
+  // Chat is the default for a CLI that speaks a protocol; Terminal stays the
+  // default only when the user picked it (or the CLI has no protocol).
+  // There is no per-tab switch any more (shells live on the Terminal page),
+  // so a saved per-profile preference is not read: config.chatView
+  // ("terminal") is the only way to pin the old view.
+  return (cfg && cfg.chatView === 'terminal') ? 'terminal' : 'chat';
+}
+// The welcome screen (press Enter to start) belongs to Terminal view, where
+// nothing else can take a first prompt. A chat tab has its own composer and
+// empty state, so Chat-default profiles never see it.
+function welcomeWanted() {
+  if (cfg && cfg.skipWelcome) return false;
+  return initialTabMode(cfg && cfg.agentCommand) !== 'chat';
+}
+function setPreferredTabMode(mode) {
+  try { localStorage.setItem(CHAT_MODE_KEY, mode === 'chat' ? 'chat' : 'terminal'); } catch (_) {}
+}
+// 'acp' | 'claude' | null. Null means the CLI has no protocol Husk can drive.
+function chatProtocolFor(command) {
+  try { return (window.husk.chat && window.husk.chat.transportFor(command)) || null; } catch (_) { return null; }
+}
+function tabAgentCommand(tab) {
+  return String((tab && (tab.launchCommand || tab.command)) || (cfg && cfg.agentCommand) || 'claude').trim();
+}
+// A new tab opens in Chat only when the user prefers it and the CLI can do it.
+function initialTabMode(command) {
+  return preferredTabMode() === 'chat' && chatProtocolFor(String(command || 'claude')) ? 'chat' : 'terminal';
+}
+// Mirrors the main process's chatCwd policy (explicit cwd, else the active
+// project, else the configured agentCwd), so the footer and the @ file list
+// name the folder the agent actually runs in.
+function chatWorkDir(tab) {
+  if (tab && tab.cwd) return tab.cwd;
+  const project = projectsCache.find((p) => p && p.id === activeProjectId);
+  if (project && project.path) return project.path;
+  if (cfg && cfg.agentCwd) return cfg.agentCwd;
+  try { return workRoot().path || ''; } catch (_) { return ''; }
+}
+function tabPaneEls(t) {
+  return t.chat ? [t.el, t.chat.el] : [t.el];
+}
+// Exactly one surface per visible tab: the chat pane in chat mode, the xterm
+// pane otherwise. fitTab skips a hidden xterm, so fitNow stays safe.
+function applyPaneVisibility() {
+  for (const t of TABS.values()) {
+    const vis = isPaneVisible(t.id);
+    t.el.classList.toggle('show', vis && t.mode !== 'chat');
+    if (t.chat) t.chat.el.classList.toggle('show', vis && t.mode === 'chat');
+  }
+}
+function focusActiveChat() {
+  const tab = TABS.get(activeTabId);
+  if (tab && tab.mode === 'chat' && tab.chat) { tab.chat.focus(); return; }
+  if (term) term.focus();
+}
+// The first message names a chat until the agent's own title lands, since a
+// headless session may never be linked to a generated name.
+function chatTitleFrom(text) {
+  const line = String(text || '').replace(/\s+/g, ' ').trim();
+  return line.length > 40 ? line.slice(0, 39).replace(/\s+\S*$/, '') + '...' : line;
+}
+
+function ensureChatPane(tab) {
+  if (tab.chat) return tab.chat;
+  if (!window.HuskChat || !window.husk.chat) return null;
+  const cmd = tabAgentCommand(tab);
+  tab.chat = window.HuskChat.mount(tab, {
+    host: $('#terminal'),
+    agentName: cmd.split(/\s+/)[0],
+    agentCommand: cmd,
+    onModelChange: () => { try { refreshStats(); } catch (_) {} },
+    cwd: chatWorkDir(tab),
+    onAttach: () => { shareFilesViaPicker(); },
+    // After the agent exits on its own, the composer offers this in place of
+    // Send: a new session in the same tab with the command it was opened with.
+    onRestart: () => {
+      if (!TABS.has(tab.id) || tab.mode !== 'chat') return;
+      if (tab.id !== activeTabId) activateTab(tab.id);
+      restartChat(tab, { command: tab.launchCommand || undefined, silent: true, skipWelcome: true });
+    },
+    onSend: (text) => {
+      $('#chat-empty').classList.remove('show');
+      tab.chatHasInput = true;
+      if (tab.id === activeTabId) chatHasInput = true;
+      if (!tab.customTitle && !tab.titleEarned && !tab.promptSent && !sessionTitleUsable(tab.title)) {
+        const t = chatTitleFrom(text);
+        if (t) tab.title = t;
+      }
+      if (!tab.promptSent) { tab.promptSent = true; renderTabStrip(); }
+    },
+    onRunningChange: (on) => {
+      tab.chatRunning = !!on;
+      renderTabStrip();
+    },
+    // Every paint hands over the thread state, which the Sessions column card
+    // and the top bar counter read.
+    onState: (state) => {
+      const n = Array.isArray(state && state.items) ? state.items.length : 0;
+      if (n !== tab.csItems) { tab.csItems = n; if (n) tab.csAt = Date.now(); }
+      tab.chatState = state;
+      csSchedule();
+      if (tab.id === activeTabId) refreshTopbarChatStat();
+    },
+    onOpenTerminal: () => {
+      if (!TABS.has(tab.id)) return;
+      if (tab.id !== activeTabId) activateTab(tab.id);
+      // Per tab only: the next chat still opens in Chat view.
+      setTabMode(tab, 'terminal');
+    },
+    title: displayTitle(tab),
+  });
+  return tab.chat;
+}
+
+// Starts this tab's headless agent with a fresh thread. Resolves true once the
+// agent took the start; tab.chatStart holds the same promise so a prompt typed
+// while it boots waits for it instead of being refused.
+function startChatForTab(tab) {
+  const c = ensureChatPane(tab);
+  if (!c) return Promise.resolve(false);
+  tab.mode = 'chat';
+  tab.chatStopping = false;
+  tab.exited = false;
+  const cmd = tabAgentCommand(tab);
+  const cli = cmd.split(/\s+/)[0];
+  c.reset();
+  c.setInfo({ agentName: cli, cwd: chatWorkDir(tab) });
+  c.setStarting(true);
+  tab.chatAlive = false;
+  if (tab.chatHistory) {
+    const history = tab.chatHistory;
+    tab.chatHistory = null;
+    c.replay(history, { turnOpen: false });
+    c.apply({ type: 'status', text: 'Resumed session' });
+    c.flush();
+  }
+  applyPaneVisibility();
+  applySplit();
+  renderChatModeToggle();
+  const run = (async () => {
+    let res;
+    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null }); }
+    catch (err) { res = { ok: false, error: (err && err.message) || String(err) }; }
+    // Closed or switched away while starting: nothing here to update.
+    if (!TABS.has(tab.id) || tab.chat !== c || tab.mode !== 'chat') return false;
+    c.setStarting(false);
+    if (!res || !res.ok) {
+      c.apply({ type: 'error', text: `Could not start ${cli}: ${(res && res.error) || 'no reason given'}` });
+      c.setExited(true);
+      tab.exited = true;
+      refreshShellStatusBar();
+      return false;
+    }
+    // A resumed tab keeps the id it resumed: that is the conversation the
+    // user sees, whatever id the CLI reports for its own continuation.
+    if (res.sessionId && !tab.resumedSessionId) { tab.agentId = String(res.sessionId); tab.agentIdProvisional = false; }
+    if (res.cwd) c.setInfo({ cwd: String(res.cwd) });
+    tab.chatAlive = true;
+    csSchedule();
+    if (tab.id === activeTabId) refreshTopbarChatStat();
+    if (tab.id === activeTabId && currentPage === 'chat' && !$('#chat-empty').classList.contains('show')) c.focus();
+    return true;
+  })();
+  tab.chatStart = run;
+  return run;
+}
+
+// Stops the headless agent on purpose. The exit that follows is expected, so
+// chatStopping keeps it off the thread, and the short quiet window lets that
+// exit land before anything new starts under the same tab id.
+async function stopChatForTab(tab) {
+  if (!tab) return;
+  tab.chatStopping = true;
+  try { await window.husk.chat.stop({ tabId: tab.id }); } catch (_) {}
+  if (tab.chat) tab.chat.setRunning(false);
+  await new Promise((r) => setTimeout(r, 150));
+}
+
+// Back to the xterm. The PTY's own session link, set aside on the way into
+// chat, is restored only when that PTY is still the one behind the pane.
+async function leaveChatMode(tab) {
+  await stopChatForTab(tab);
+  tab.mode = 'terminal';
+  tab.chatRunning = false;
+  const saved = tab.termAgent;
+  tab.termAgent = null;
+  tab.agentId = tab.ptyStarted && saved ? saved.id : null;
+  tab.agentIdProvisional = tab.ptyStarted && saved ? saved.provisional : false;
+  if (TABS.has(tab.id)) activateTab(activeTabId && TABS.has(activeTabId) ? activeTabId : tab.id);
+}
+
+// The fresh-tab PTY path, for a tab that was born in chat mode.
+async function startTabPty(tab) {
+  try { tab.fitAddon.fit(); } catch (_) {}
+  const { cols, rows } = tab.term;
+  tab.exited = false;
+  tab.ptyStarted = true;
+  await window.husk.pty.start({ cols, rows, command: tab.launchCommand || null, cwd: tab.cwd || null, sessionId: tab.id });
+  refreshShellStatusBar();
+  if (tab.id === activeTabId) { try { tab.term.focus(); } catch (_) {} }
+}
+
+// Switches one tab between Terminal and Chat. Terminal to Chat leaves the PTY
+// running behind its hidden pane; Chat to Terminal stops the headless agent.
+async function setTabMode(tab, mode) {
+  if (!tab || tab.modeBusy || mode === tab.mode) { renderChatModeToggle(); return; }
+  if (mode === 'chat' && !chatProtocolFor(tabAgentCommand(tab))) { renderChatModeToggle(); return; }
+  tab.modeBusy = true;
+  renderChatModeToggle();
+  try {
+    if (mode === 'chat') {
+      tab.termAgent = { id: tab.agentId, provisional: !!tab.agentIdProvisional };
+      tab.agentId = null;
+      tab.agentIdProvisional = false;
+      $('#chat-empty').classList.remove('show');
+      await startChatForTab(tab);
+    } else {
+      await leaveChatMode(tab);
+      if (!tab.ptyStarted) await startTabPty(tab);
+    }
+  } finally {
+    tab.modeBusy = false;
+    renderTabStrip();
+    renderChatModeToggle();
+    refreshShellStatusBar();
+  }
+}
+
+async function restartChat(tab, opts = {}) {
+  await stopChatForTab(tab);
+  tab.launchCommand = opts.command || null;
+  tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+  if (opts.cwd) tab.cwd = opts.cwd;
+  chatHasInput = false;
+  tab.chatHasInput = false;
+  resetSpeechState();
+  clearSessionContext();
+  if (welcomeWanted() && !opts.skipWelcome) $('#chat-empty').classList.add('show');
+  await startChatForTab(tab);
+  refreshShellStatusBar();
+  try { const inv = await reloadMcpInventory(); snapshotLoadedMcps(inv); } catch (_) {}
+  if (!opts.silent) toast('New session', 'success');
+}
+
+function renderChatModeToggle() {
+  const wrap = $('#chat-mode-toggle');
+  if (!wrap) return;
+  const tab = TABS.get(activeTabId) || null;
+  const mode = tab ? tab.mode : preferredTabMode();
+  const cmd = tabAgentCommand(tab);
+  const cli = cmd.split(/\s+/)[0] || 'This CLI';
+  const can = !!chatProtocolFor(cmd);
+  const busy = !!(tab && tab.modeBusy);
+  for (const b of wrap.querySelectorAll('[data-mode]')) {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.disabled = busy || (b.dataset.mode === 'chat' && !can);
+  }
+  const chatBtn = wrap.querySelector('[data-mode="chat"]');
+  if (chatBtn) chatBtn.title = can ? 'Show this chat as a native thread' : `${cli} has no chat protocol yet, Terminal only`;
+}
+
+// ─── Sessions column: live tabs and past sessions beside the thread ──────────
+// The chat page's left column. Live tabs and the session history share one
+// list, grouped the way the Sessions page groups: the user's folders, then this
+// project, then by day, and anything past the newest CS_RECENT_MAX folded
+// under Older sessions. Every string lands through textContent.
+const CS_RECENT_MAX = 30;
+const CS_POLL_MS = 20000;
+
+function sessionsColumnWanted() {
+  try { return localStorage.getItem('husk.sessionsColumn') !== 'hidden'; } catch (_) { return true; }
+}
+function setSessionsColumn(on) {
+  try { localStorage.setItem('husk.sessionsColumn', on ? 'shown' : 'hidden'); } catch (_) {}
+  syncChatLayout();
+  if (on) csLoad();
+  setTimeout(fitNow, 60);
+}
+
+// The column needs the width, so while it shows the rail stands in its icon
+// strip. Every other page keeps the rail the user chose.
+function syncChatLayout() {
+  const on = currentPage === 'chat' && sessionsColumnWanted();
+  document.body.dataset.sessionsCol = on ? 'on' : 'off';
+  const btn = document.getElementById('btn-sessions-col');
+  if (btn) {
+    const t = on ? 'Hide the sessions column' : 'Show the sessions column';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.title = t;
+    btn.setAttribute('aria-label', t);
+  }
+  if (!cfg) return;
+  // First showing after boot: nothing has been fetched yet.
+  if (on && cs.list === null && !cs.loading) csLoad();
+  if (currentPage === 'prefs' && pendingAppearance) return;
+  const want = on ? 'collapsed' : (cfg.railExpanded === false ? 'collapsed' : 'expanded');
+  if (document.body.dataset.rail !== want) {
+    document.body.dataset.rail = want;
+    syncRailToggleTitle();
+    setTimeout(fitNow, 120);
+  }
+}
+
+function csBase(p) {
+  const segs = String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean);
+  return segs.length ? segs[segs.length - 1] : '';
+}
+function csClip(s, max) {
+  const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+// What a live tab is doing, in the words its card shows.
+function csLiveState(t) {
+  if (t.exited) return { kind: 'exited', text: 'Exited' };
+  if (t.mode !== 'chat') return { kind: 'terminal', text: 'In the terminal' };
+  const s = t.chatState || {};
+  if (Array.isArray(s.pending) && s.pending.length) return { kind: 'needs', text: 'Needs approval' };
+  if (s.turnOpen || t.chatRunning) return { kind: 'running', text: 'Thinking...' };
+  if (t.chatAlive === false) return { kind: 'idle', text: 'Starting...' };
+  const items = Array.isArray(s.items) ? s.items : [];
+  return items.some((it) => it && it.kind === 'user') ? { kind: 'done', text: 'Done' } : { kind: 'idle', text: 'Ready' };
+}
+
+function csLiveCard(t) {
+  if (!t.csAt) t.csAt = Date.now();
+  const s = t.chatState || {};
+  const items = Array.isArray(s.items) ? s.items : [];
+  let excerpt = '';
+  for (let k = items.length - 1; k >= 0; k--) {
+    if (items[k] && items[k].kind === 'user') { excerpt = String(items[k].text || ''); break; }
+  }
+  const st = csLiveState(t);
+  const chips = [];
+  const dir = csBase(chatWorkDir(t));
+  if (dir) chips.push(dir);
+  if (s.model) chips.push(String(s.model));
+  return {
+    key: `t:${t.id}`, live: true, tabId: t.id,
+    sessionId: t.agentId && !t.agentIdProvisional ? t.agentId : '',
+    agent: csBase(tabAgentCommand(t).split(/\s+/)[0]) || 'agent',
+    mtime: t.csAt,
+    title: displayTitle(t),
+    state: st.kind, last: st.text, excerpt: csClip(excerpt, 120),
+    chips, active: t.id === activeTabId,
+    s: { id: t.agentId || '', mtime: t.csAt, originalCwd: chatWorkDir(t) },
+  };
+}
+
+function csPastCard(s, names) {
+  const SVm = window.husk.sessionView;
+  const agents = (typeof sx !== 'undefined' && sx.agents) ? sx.agents : { bySession: new Map(), byParent: new Map() };
+  const sig = SVm.signal(s, agents);
+  const chips = [];
+  const dir = SVm.basename(SVm.sessionCwd(s));
+  if (dir) chips.push(dir);
+  if (s.model) chips.push(String(s.model));
+  return {
+    key: `s:${s.id}`, live: false, session: s, sessionId: s.id,
+    agent: cs.agent || 'agent',
+    mtime: s.mtime || 0,
+    title: SVm.titleOf(s, names) || 'Untitled chat',
+    state: sig ? sig.kind : '', last: csClip(SVm.scent(s, sig, names), 140), excerpt: '',
+    chips, active: false, s,
+  };
+}
+
+function csModel() {
+  const SVm = window.husk.sessionView;
+  const names = (cfg && cfg.sessionNames) || {};
+  const folders = Array.isArray(cfg && cfg.sessionFolders) ? cfg.sessionFolders : [];
+  const folderOf = (cfg && cfg.sessionFolderOf) || {};
+  const q = cs.query.trim().toLowerCase();
+  const match = (c) => !q || `${c.title}\n${c.last}\n${c.excerpt}`.toLowerCase().includes(q);
+  const open = new Set();
+  for (const t of TABS.values()) if (t.agentId) open.add(t.agentId);
+  const live = [...TABS.values()].map(csLiveCard).filter(match);
+  const past = (Array.isArray(cs.list) ? cs.list : []).filter((s) => s && !open.has(s.id))
+    .map((s) => csPastCard(s, names)).filter(match)
+    .sort((a, b) => b.mtime - a.mtime);
+  const recent = new Set(past.slice(0, CS_RECENT_MAX).map((c) => c.key));
+
+  // The user's folders first, in the order they made them, empty ones too, the
+  // way the Sessions page files them (config.sessionFolders and sessionFolderOf).
+  const groups = [];
+  const filed = new Set();
+  const all = [...live, ...past];
+  for (const fo of folders) {
+    if (!fo || typeof fo.id !== 'string' || !fo.id) continue;
+    const cards = all.filter((c) => c.sessionId && folderOf[c.sessionId] === fo.id);
+    for (const c of cards) filed.add(c.key);
+    if (q && !cards.length) continue;
+    const name = (typeof fo.name === 'string' && fo.name.trim()) ? fo.name.trim() : 'Folder';
+    groups.push({ id: `f:${fo.id}`, kind: 'folder', name, cards });
+  }
+  const unfiled = all.filter((c) => !filed.has(c.key));
+  const here = cs.currentCwd;
+  const inProject = (c) => c.live || (here && SVm.inCurrentProject(c.s, here));
+  const project = unfiled.filter((c) => inProject(c) && (c.live || recent.has(c.key)));
+  const rest = unfiled.filter((c) => !inProject(c) && recent.has(c.key));
+  const older = unfiled.filter((c) => !c.live && !recent.has(c.key));
+  if (project.length || !q) {
+    groups.push({ id: 'project', kind: 'project', name: csBase(here) || 'This project', cards: project, note: 'this project' });
+  }
+  // Day headings come from the Sessions page's own view model, so the two
+  // lists name a day the same way.
+  if (rest.length) {
+    const byId = new Map(rest.map((c) => [c.sessionId, c]));
+    const view = SVm.buildView(rest.map((c) => c.session), { now: Date.now(), groupBy: 'day', olderOpen: true, names });
+    for (const g of (view && view.groups) || []) {
+      const cards = [];
+      for (const e of g.rows || []) {
+        for (const ss of [e.s, ...(e.sibs || [])]) { const card = ss && byId.get(ss.id); if (card) cards.push(card); }
+      }
+      if (cards.length) groups.push({ id: g.id, kind: 'day', name: g.name, cards: cards.sort((x, y) => y.mtime - x.mtime) });
+    }
+  }
+  if (older.length) groups.push({ id: 'older', kind: 'older', name: 'Older sessions', cards: older });
+  return { groups, empty: !live.length && !past.length };
+}
+
+function csIcon(paths) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.75');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of paths) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+const CS_FOLDER_D = ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z'];
+const CS_CHEV_D = ['M9 6l6 6-6 6'];
+
+function csEl(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+
+function csCardEl(c) {
+  const b = csEl('button', 'cs-card' + (c.active ? ' is-active' : ''));
+  b.type = 'button';
+  b.dataset.key = c.key;
+  b.dataset.kind = c.live ? 'live' : 'past';
+  if (c.tabId) b.dataset.tab = c.tabId;
+  if (c.sessionId) b.dataset.session = c.sessionId;
+  if (c.state) b.dataset.state = c.state;
+  const top = csEl('div', 'cs-card-top');
+  top.appendChild(csEl('span', 'cs-card-agent', c.agent));
+  const when = window.husk.sessionView.formatWhen(c.mtime, Date.now());
+  const time = csEl('span', 'cs-card-time', c.live ? (when.label === 'now' ? 'now' : when.label) : when.label);
+  if (when.title) time.title = when.title;
+  top.appendChild(time);
+  b.appendChild(top);
+  b.appendChild(csEl('div', 'cs-card-title', c.title));
+  if (c.last || c.excerpt) {
+    const last = csEl('div', 'cs-card-last');
+    if (c.live) {
+      if (c.state === 'needs' || c.state === 'running') last.appendChild(csEl('span', 'cs-card-dot'));
+      last.appendChild(csEl('span', 'cs-card-state', c.last));
+      if (c.excerpt) last.appendChild(csEl('span', 'cs-card-excerpt', ` · ${c.excerpt}`));
+    } else {
+      last.appendChild(csEl('span', 'cs-card-excerpt', c.last));
+    }
+    b.appendChild(last);
+  }
+  if (c.chips.length) {
+    const chips = csEl('div', 'cs-chips');
+    for (const t of c.chips) chips.appendChild(csEl('span', 'cs-chip', t));
+    b.appendChild(chips);
+  }
+  b.title = c.title;
+  return b;
+}
+
+function csPaint() {
+  cs.frame = 0;
+  const list = document.getElementById('cs-list');
+  if (!list || document.body.dataset.sessionsCol !== 'on') return;
+  const model = csModel();
+  const sig = JSON.stringify([cs.query, [...cs.open], model.groups.map((g) => [g.id, g.name, g.cards.map((c) =>
+    [c.key, c.title, c.state, c.last, c.excerpt, c.active, c.chips.join(','), Math.floor(c.mtime / 60000)])])]);
+  if (sig === cs.lastSig) return;
+  cs.lastSig = sig;
+  const scroll = list.scrollTop;
+  const frag = document.createDocumentFragment();
+  if (model.empty) {
+    frag.appendChild(csEl('div', 'cs-empty', cs.query.trim() ? 'No sessions match.' : 'No sessions yet. Start a chat to see it here.'));
+  }
+  for (const g of model.groups) {
+    // Older sessions start folded; every other group starts open. A search
+    // opens everything so a match is never hidden.
+    const folded = !cs.query.trim() && (g.id === 'older' ? !cs.open.has(g.id) : cs.folded.has(g.id));
+    const sec = csEl('section', 'cs-group');
+    sec.dataset.group = g.id;
+    sec.dataset.kind = g.kind;
+    const head = csEl('button', 'cs-group-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    head.dataset.group = g.id;
+    const chev = csIcon(CS_CHEV_D);
+    chev.setAttribute('class', 'cs-group-chev');
+    head.appendChild(chev);
+    if (g.kind === 'folder') {
+      const fi = csIcon(CS_FOLDER_D);
+      fi.setAttribute('class', 'cs-group-icon');
+      head.appendChild(fi);
+    }
+    head.appendChild(csEl('span', 'cs-group-name', g.name));
+    head.appendChild(csEl('span', 'cs-group-count', g.cards.length));
+    sec.appendChild(head);
+    if (!folded) {
+      const body = csEl('div', 'cs-group-body');
+      if (!g.cards.length) body.appendChild(csEl('div', 'cs-group-empty', g.kind === 'folder' ? 'Empty folder' : 'Nothing here yet'));
+      for (const c of g.cards) body.appendChild(csCardEl(c));
+      sec.appendChild(body);
+    }
+    frag.appendChild(sec);
+  }
+  list.replaceChildren(frag);
+  list.scrollTop = scroll;
+  cs.byKey = new Map();
+  for (const g of model.groups) for (const c of g.cards) cs.byKey.set(c.key, c);
+}
+
+function csSchedule() {
+  if (cs.frame) return;
+  cs.frame = requestAnimationFrame(csPaint);
+}
+
+async function csLoad() {
+  if (cs.loading) return cs.loading;
+  cs.loading = (async () => {
+    try {
+      const r = await sessionsFetch();
+      if (r && r.ok !== false) {
+        cs.list = Array.isArray(r.sessions) ? r.sessions : [];
+        cs.agent = String(r.agent || '');
+        cs.currentCwd = String(r.currentCwd || '');
+      }
+    } catch (_) { /* the column keeps what it had */ }
+    cs.lastSig = '';
+    csSchedule();
+  })().finally(() => { cs.loading = null; });
+  return cs.loading;
+}
+
+// On a cold boot the newest past session comes back in Chat view with its
+// history, the same path a Sessions card takes. Returns false when there is
+// nothing to resume or Chat cannot carry it, and the caller opens a fresh chat.
+// config.resumeLastOnLaunch: false turns it off.
+async function resumeLastSessionOnBoot() {
+  if (cfg && cfg.resumeLastOnLaunch === false) return false;
+  if (preferredTabMode() !== 'chat') return false;
+  let r = null;
+  try { r = await sessionsFetch(); } catch (_) { return false; }
+  const rows = r && r.ok !== false && Array.isArray(r.sessions) ? r.sessions : [];
+  if (!rows.length) return false;
+  const when = (s) => Number(s.mtime || s.updatedAt || s.mtimeMs || s.ts || 0) || 0;
+  const ordered = rows.slice().sort((x, y) => when(y) - when(x));
+  // The newest session is often the one open in another Husk window (held),
+  // or one the CLI can only attach to; those open nothing, so walk down the
+  // list until one resumes.
+  const agents = (typeof sx !== 'undefined' && sx.agents) ? sx.agents : null;
+  let tried = 0;
+  for (const s of ordered) {
+    if (!s || !s.id) continue;
+    const holder = agents && agents.bySession ? agents.bySession.get(s.id) : null;
+    if (holder && holder.held) continue;
+    if (tried++ >= 5) break;
+    const owned = { ...s, owner: String(r.agent || ''), project: s.projectPath, prdpath: s.prdPath };
+    let done = false;
+    try { done = await resumeIntoChat(owned); } catch (_) { done = false; }
+    if (done) return true;
+  }
+  return false;
+}
+
+// The same way into a past session the Sessions page uses.
+function csOpenPast(s) {
+  if (!s) return;
+  const agents = (typeof sx !== 'undefined' && sx.agents) ? sx.agents : null;
+  const holder = agents && agents.bySession ? agents.bySession.get(s.id) : null;
+  const owned = { ...s, owner: cs.agent, project: s.projectPath, prdpath: s.prdPath };
+  if (holder && holder.held) { resumeSessionInChat(owned); return; }
+  if (focusOpenSession(s.id)) return;
+  resumeIntoChat(owned).then((done) => { if (!done) resumeSessionInChat(owned); })
+    .catch(() => resumeSessionInChat(owned));
+}
+
+// Resumes a past session in Chat view: the conversation so far is read from
+// the agent's own log and replayed into a new chat tab, then the agent starts
+// with its resume form so the next prompt continues the same session. Resolves
+// false, having opened nothing, whenever Chat cannot carry it (Terminal is the
+// preference, the CLI has no chat protocol or no readable log, or the session
+// is held and needs attaching or a copy), so the caller takes the Terminal
+// resume path instead.
+async function resumeIntoChat(d) {
+  if (preferredTabMode() !== 'chat') return false;
+  if (!window.husk.chat || typeof window.husk.chat.history !== 'function') return false;
+  const agent = String(d.owner || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0].toLowerCase();
+  const cwd = d.project || '';
+  let plan = null;
+  try { plan = await window.husk.sessions.resumeCommand({ agent, id: d.id, cwd }); } catch (_) { return false; }
+  if (!plan || !plan.ok || !plan.command) return false;
+  if (plan.mode === 'attach' || plan.mode === 'fork') return false;
+  if (!chatProtocolFor(plan.command)) return false;
+  let hist = null;
+  try { hist = await window.husk.chat.history({ agent, sessionId: d.id, cwd }); } catch (_) { return false; }
+  if (!hist || !hist.ok || !Array.isArray(hist.events)) return false;
+  if (focusOpenSession(d.id)) return true;
+  setPage('chat');
+  const names = (cfg && cfg.sessionNames) || {};
+  await openNewChatTab({
+    command: plan.command,
+    cwd: cwd || null,
+    preferChat: true,
+    skipWelcome: true,
+    skipContext: true,
+    history: hist.events,
+    sessionId: d.id,
+    title: names[d.id] || d.title || '',
+    customTitle: !!names[d.id],
+  });
+  return true;
+}
+
+function csCloseMenus() {
+  for (const id of ['cs-agent-menu', 'cs-kebab-menu']) { const m = document.getElementById(id); if (m) m.hidden = true; }
+  for (const id of ['cs-new-caret', 'cs-kebab']) { const b = document.getElementById(id); if (b) b.setAttribute('aria-expanded', 'false'); }
+}
+
+function csPaintAgentMenu() {
+  const menu = document.getElementById('cs-agent-menu');
+  if (!menu) return;
+  menu.replaceChildren();
+  const current = String((cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
+  if (!agentsCache.length) menu.appendChild(csEl('div', 'cs-menu-note', 'Looking for installed agents...'));
+  for (const a of agentsCache) {
+    const b = csEl('button', 'cs-menu-item');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.dataset.cmd = a.command;
+    b.disabled = !a.available;
+    b.appendChild(csEl('span', 'cs-menu-label', a.label || a.command));
+    b.appendChild(csEl('span', 'cs-menu-sub', a.available ? (a.command === current ? `${a.command} · current` : a.command) : 'not installed'));
+    menu.appendChild(b);
+  }
+}
+
+(function wireSessionsColumn() {
+  const list = document.getElementById('cs-list');
+  if (!list) return;
+  list.addEventListener('click', (e) => {
+    const head = e.target.closest('.cs-group-head');
+    if (head) {
+      const id = head.dataset.group;
+      if (id === 'older') { if (cs.open.has(id)) cs.open.delete(id); else cs.open.add(id); }
+      else if (cs.folded.has(id)) cs.folded.delete(id); else cs.folded.add(id);
+      cs.lastSig = '';
+      csPaint();
+      return;
+    }
+    const card = e.target.closest('.cs-card');
+    if (!card) return;
+    const c = cs.byKey && cs.byKey.get(card.dataset.key);
+    if (!c) return;
+    if (c.live) {
+      if (currentPage !== 'chat') setPage('chat');
+      if (TABS.has(c.tabId)) activateTab(c.tabId);
+      return;
+    }
+    csOpenPast(c.session);
+  });
+  const q = document.getElementById('cs-q');
+  if (q) q.addEventListener('input', () => { cs.query = q.value; csSchedule(); });
+  document.getElementById('cs-new')?.addEventListener('click', () => { csCloseMenus(); openNewChatTab(); });
+  document.getElementById('cs-new-caret')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('cs-agent-menu');
+    const opening = menu.hidden;
+    csCloseMenus();
+    if (!opening) return;
+    csPaintAgentMenu();
+    menu.hidden = false;
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+    Promise.resolve(refreshAgentMenu()).then(() => { if (!menu.hidden) csPaintAgentMenu(); }).catch(() => {});
+  });
+  document.getElementById('cs-agent-menu')?.addEventListener('click', (e) => {
+    const b = e.target.closest('.cs-menu-item');
+    if (!b || b.disabled) return;
+    csCloseMenus();
+    const cmd = b.dataset.cmd;
+    const current = String((cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
+    openNewChatTab(cmd && cmd !== current ? { command: cmd, preferChat: true } : {});
+  });
+  document.getElementById('cs-kebab')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('cs-kebab-menu');
+    const opening = menu.hidden;
+    csCloseMenus();
+    if (!opening) return;
+    menu.hidden = false;
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+  });
+  document.getElementById('cs-kebab-menu')?.addEventListener('click', (e) => {
+    const b = e.target.closest('.cs-menu-item');
+    if (!b) return;
+    csCloseMenus();
+    if (b.dataset.act === 'all') setPage('sessions');
+    if (b.dataset.act === 'refresh') { sessionsFetchInvalidate(); csLoad(); }
+    if (b.dataset.act === 'hide') setSessionsColumn(false);
+  });
+  window.addEventListener('click', (e) => {
+    if (e.target.closest && (e.target.closest('.cs-menu') || e.target.closest('#cs-new-caret') || e.target.closest('#cs-kebab'))) return;
+    csCloseMenus();
+  });
+  document.getElementById('cs-collapse')?.addEventListener('click', () => setSessionsColumn(false));
+  document.getElementById('btn-sessions-col')?.addEventListener('click', () => setSessionsColumn(!sessionsColumnWanted()));
+  setInterval(() => {
+    if (currentPage !== 'chat' || document.visibilityState !== 'visible' || document.body.dataset.sessionsCol !== 'on') return;
+    csLoad();
+  }, CS_POLL_MS);
+})();
+
+// ─── Top bar: the active chat's connection, turn and context window ─────────
+function refreshTopbarChatStat() {
+  const box = document.getElementById('topbar-chatstat');
+  if (!box) return;
+  const t = TABS.get(activeTabId);
+  const show = currentPage === 'chat' && !!t && t.mode === 'chat' && !!t.chat;
+  box.hidden = !show;
+  if (!show) return;
+  const s = t.chatState || {};
+  const conn = !t.exited && t.chatAlive !== false;
+  const run = conn && !!(s.turnOpen || t.chatRunning);
+  const connEl = document.getElementById('tcs-conn');
+  const runEl = document.getElementById('tcs-run');
+  connEl.dataset.on = conn ? '1' : '0';
+  connEl.title = conn ? 'Agent connected' : (t.exited ? 'Agent exited' : 'Agent starting');
+  runEl.dataset.on = run ? '1' : '0';
+  runEl.title = run ? 'A turn is running' : 'No turn running';
+  const ctx = window.HuskChat && window.HuskChat._contextLabel ? window.HuskChat._contextLabel(s.usage) : null;
+  const ctxEl = document.getElementById('tcs-ctx');
+  ctxEl.hidden = !ctx;
+  if (ctx) {
+    const txt = document.getElementById('tcs-ctx-text');
+    if (txt.textContent !== ctx.text) txt.textContent = ctx.text;
+    ctxEl.title = ctx.title;
+  }
+}
+
+// For callers that hand the agent a starting point rather than a message (an
+// attached file, a pasted prompt): a chat tab takes it into its composer,
+// unsent. With no tab yet and Chat preferred, one is opened first. Returns
+// false when a terminal should take it instead.
+async function offerToChatComposer(text) {
+  let tab = TABS.get(activeTabId);
+  if (!TABS.size && $('#chat-empty')?.classList.contains('show') && initialTabMode(cfg && cfg.agentCommand) === 'chat') {
+    await launchAgent({});
+    tab = TABS.get(activeTabId);
+  }
+  if (!tab || tab.mode !== 'chat' || !tab.chat) return false;
+  $('#chat-empty').classList.remove('show');
+  if (currentPage !== 'chat') setPage('chat');
+  if (tab.chatStart) await tab.chatStart;
+  tab.chat.insert(text);
+  return true;
+}
+
+// An agent-chosen session title (copilot sends one after the first prompt)
+// names the tab unless the user renamed it.
+function adoptChatTitle(tab, title) {
+  const t = String(title || '').replace(/\s+/g, ' ').trim();
+  if (!tab || !t || tab.customTitle) return;
+  tab.title = t.length > 60 ? t.slice(0, 59).replace(/\s+\S*$/, '') + '...' : t;
+  tab.titleEarned = true;
+  renderTabStrip();
+}
+
+// Chats whose agent outlived a renderer reload, keyed by tab id, while their
+// tab is being rebuilt. Events that arrive after the replay log was read and
+// before the tab exists queue here and are applied after the replay, so none
+// is dropped and none lands twice.
+const chatRestoreBuffers = new Map();
+
+if (window.husk.chat) {
+  window.husk.chat.onEvent((tabId, ev) => {
+    const buf = chatRestoreBuffers.get(tabId);
+    if (buf) { buf.events.push(ev); return; }
+    const tab = TABS.get(tabId);
+    // Late events from a child being stopped belong to no thread on screen.
+    if (!tab || !tab.chat || tab.mode !== 'chat' || tab.chatStopping) return;
+    if (ev && ev.type === 'session' && ev.sessionId && !tab.agentId) {
+      tab.agentId = String(ev.sessionId);
+      tab.agentIdProvisional = false;
+    }
+    if (ev && ev.type === 'title') adoptChatTitle(tab, ev.title);
+    tab.chat.apply(ev);
+  });
+  window.husk.chat.onExit((tabId, code) => {
+    const buf = chatRestoreBuffers.get(tabId);
+    if (buf) { buf.exitCode = code; return; }
+    const tab = TABS.get(tabId);
+    if (!tab || !tab.chat || tab.mode !== 'chat' || tab.chatStopping) return;
+    const turnOpen = tab.chat.isRunning() || !!tab.chat.getState().turnOpen;
+    tab.chat.apply(turnOpen
+      ? { type: 'error', text: `Agent exited (code ${code})` }
+      : { type: 'status', text: `Agent exited (code ${code}). Restart for a new session.` });
+    tab.chat.setRunning(false);
+    tab.chat.setExited(true);
+    tab.exited = true;
+    refreshShellStatusBar();
+  });
+}
+// Links in agent text go through the same confirm-then-open path as terminal
+// links, which also refuses anything that is not http(s).
+if (window.HuskChatMd) window.HuskChatMd.setLinkHandler((href) => openTerminalLink(null, href));
+
+$('#chat-mode-toggle')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mode]');
+  if (!b || b.disabled) return;
+  const mode = b.dataset.mode === 'chat' ? 'chat' : 'terminal';
+  setPreferredTabMode(mode);
+  const tab = TABS.get(activeTabId);
+  if (tab) setTabMode(tab, mode); else renderChatModeToggle();
+});
+renderChatModeToggle();
 
 // ─── Theme + accent ─────────────────────────────────────────────────────────────
 function retintAllTabs() {
@@ -2074,16 +3146,22 @@ function setPage(name, opts = {}) {
   // An uncommitted appearance preview belongs to Preferences, so leaving the
   // page puts the saved theme, accent and rail back.
   if (currentPage === 'prefs' && name !== 'prefs') revertAppearancePreview();
+  const leavingPage = currentPage && currentPage !== name;
   if (!opts._nav && currentPage && currentPage !== name) {
     pageHistory.push(currentPage);
     if (pageHistory.length > 64) pageHistory.shift();
     pageForwardStack = [];
   }
   currentPage = name;
+  // The center is an overlay over the page it was opened from, and it keeps
+  // polling and holding the keyboard while it is up, so leaving the page closes
+  // it rather than leaving it live behind the next one.
+  if (leavingPage) closeAgentMap();
   saveRouteState();
   applyPageShell(name);
   wsSyncRailSuppression();
-  if (name === 'chat') { renderChatsPanelSessions(); setTimeout(fitNow, 30); if (term) term.focus(); }
+  if (name === 'chat') { renderChatsPanelSessions(); csLoad(); setTimeout(fitNow, 30); focusActiveChat(); }
+  refreshTopbarChatStat();
   if (name === 'agents') renderAgents();
   if (name === 'workflows') renderWorkflows();
   if (name === 'autopilot') renderAutopilotPage();
@@ -2100,6 +3178,7 @@ function setPage(name, opts = {}) {
   if (name === 'source' && window.Sc) window.Sc.open();
   if (name === 'schedule' && window.Schedule) window.Schedule.open();
   if (name === 'artifacts' && window.Af) window.Af.open();
+  if (name === 'terminal' && window.Tm) window.Tm.open();
   if (name === 'github' && window.Gh) window.Gh.open();
   if (name === 'mcp') renderMcp();
   if (name === 'plugins') renderPlugins();
@@ -2167,6 +3246,64 @@ async function toggleStatusPanel() {
   cfg = await window.husk.config.set({ statusCollapsed: !collapsed });
   setTimeout(fitNow, 200);
 }
+// The side panel's width is the user's: drag its left edge, double-click to
+// reset. Stored in config.statusWidth and applied as --status-w on #main.
+const STATUS_W_MIN = 280;
+const STATUS_W_MAX = 760;
+const STATUS_W_DEFAULT = 380;
+function applyStatusWidth(px) {
+  const main = document.getElementById('main');
+  if (!main) return;
+  // null / undefined / NaN means back to the default; any number is clamped,
+  // so a drag past the window edge pins at the limit instead of resetting.
+  const n = Number(px);
+  if (px === null || px === undefined || !isFinite(n)) { main.style.removeProperty('--status-w'); return; }
+  main.style.setProperty('--status-w', Math.round(Math.min(STATUS_W_MAX, Math.max(STATUS_W_MIN, n))) + 'px');
+}
+function currentStatusWidth() {
+  const main = document.getElementById('main');
+  const v = main ? parseInt(main.style.getPropertyValue('--status-w'), 10) : NaN;
+  return isFinite(v) ? v : STATUS_W_DEFAULT;
+}
+(function wireStatusResize() {
+  const grip = document.getElementById('status-resize');
+  const panel = document.getElementById('status-panel');
+  if (!grip || !panel) return;
+  let dragging = false;
+  let fitTimer = null;
+  const onMove = (e) => {
+    if (!dragging) return;
+    const right = panel.getBoundingClientRect().right;
+    applyStatusWidth(right - e.clientX);
+    if (!fitTimer) fitTimer = setTimeout(() => { fitTimer = null; try { fitNow(); } catch (_) {} }, 50);
+  };
+  const stop = async () => {
+    if (!dragging) return;
+    dragging = false;
+    grip.classList.remove('is-dragging');
+    document.body.classList.remove('is-resizing-status');
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+    try { fitNow(); } catch (_) {}
+    try { cfg = await window.husk.config.set({ statusWidth: currentStatusWidth() }); } catch (_) {}
+  };
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragging = true;
+    grip.classList.add('is-dragging');
+    document.body.classList.add('is-resizing-status');
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  });
+  grip.addEventListener('dblclick', async () => {
+    applyStatusWidth(null);
+    try { fitNow(); } catch (_) {}
+    try { cfg = await window.husk.config.set({ statusWidth: null }); } catch (_) {}
+  });
+})();
 // One control owns the side panel, in the top bar, so it is in the same place
 // whether the panel is showing or hidden.
 const topStatusToggle = $('#btn-status-toggle');
@@ -5912,6 +7049,11 @@ $('#wf-term-tochat') && $('#wf-term-tochat').addEventListener('click', async () 
   $('#chat-empty').classList.remove('show');
   const tab = await openNewChatTab({ skipWelcome: true });
   const primer = `Here is the output of the workflow step "${node.name || 'Step'}":\n\n${body}`;
+  if (tab && tab.mode === 'chat' && tab.chat) {
+    tab.chat.insert(primer);
+    toast('Step output added to a new chat', 'success');
+    return;
+  }
   // Bracketed paste: the agent's TUI reads a bare newline as "send", so the
   // text is wrapped and lands in the prompt as one editable block. Control
   // characters other than tab and newline are stripped first, which keeps the
@@ -8536,6 +9678,12 @@ async function runPrompt(mdPath) {
   const body = res.content.replace(/^---[\s\S]*?---\n?/, '').trim();
   if (!body) return;
   setPage('chat');
+  const chatTab = TABS.get(activeTabId);
+  if (chatTab && chatTab.mode === 'chat' && chatTab.chat) {
+    // Mid-turn the composer holds it instead, for the user to send next.
+    if (!chatTab.chat.send(body)) chatTab.chat.insert(body);
+    return;
+  }
   // Send the prompt body to the agent's PTY. Append a newline so the agent
   // treats it as a complete user turn. setPage('chat') focuses the terminal.
   setTimeout(() => { try { armRecap(); window.husk.pty.write(body + '\n'); } catch (_) {} }, 60);
@@ -8663,6 +9811,7 @@ async function injectPromptToChat(content) {
   const trimmed = String(content).replace(/^---[\s\S]*?---\n?/, '').trim();
   if (!trimmed) return;
   setPage('chat');
+  if (await offerToChatComposer(trimmed)) return;
   // With no chat open, launch the agent with this prompt as its initial input.
   // Otherwise paste into the running PTY. The test is the live tab, not the
   // welcome screen, which can still be painted over a chat that is already up.
@@ -11031,6 +12180,15 @@ async function resumeSessionInChat(d, opts) {
   // chat and wants a second, divergent line from it, so the tab they are
   // looking at is not what they are asking for.
   if (!options.fork && focusOpenSession(d.id)) return;
+  // Chat view first: the history replays into a chat tab and the CLI resumes
+  // under it. resumeIntoChat declines (false) for a copy, an attach, a CLI
+  // without a protocol or an unreadable log, and then the Terminal path below
+  // takes over.
+  if (!options.fork) {
+    let viaChat = false;
+    try { viaChat = await resumeIntoChat(d); } catch (_) { viaChat = false; }
+    if (viaChat) return;
+  }
   // The session's OWNING agent decides the resume command. Every list
   // entry carries its owner; the active config is only a last resort
   // (an owner-less entry from an older render).
@@ -12239,6 +13397,7 @@ function bindPrefs() {
   $('#pref-recap').checked = cfg.recap !== false;
   if ($('#pref-pai')) $('#pref-pai').checked = cfg.paiEnabled !== false;
   $('#pref-theme').value = cfg.theme || 'midnight';
+  if ($('#pref-chat-view')) $('#pref-chat-view').value = cfg.chatView === 'terminal' ? 'terminal' : 'chat';
   $('#pref-rail').checked = !!cfg.railExpanded;
   $('#pref-root').value = cfg.treeRoot || '';
   $('#pref-hidden').checked = !!cfg.showHidden;
@@ -12724,6 +13883,13 @@ $('#pref-save').addEventListener('click', async () => {
     });
   }
 }
+$('#pref-chat-view')?.addEventListener('change', async (e) => {
+  const v = e.target.value === 'terminal' ? 'terminal' : 'chat';
+  cfg = await window.husk.config.set({ chatView: v });
+  // The explicit preference replaces whatever the old head toggle stored.
+  setPreferredTabMode(v);
+  toast(v === 'chat' ? 'New chats open as native chat' : 'New chats open in the agent terminal', 'success');
+});
 $('#pref-theme').addEventListener('change', (e) => {
   previewAppearance({ theme: e.target.value });
 });
@@ -12977,6 +14143,7 @@ async function attachFileToChat(filePath) {
     }
     return;
   }
+  if (await offerToChatComposer(ref)) return;
   // The welcome screen can still be up over a running chat, so a live tab
   // means write to it and clear the overlay.
   if (!TABS.size && $('#chat-empty')?.classList.contains('show')) {
@@ -13106,7 +14273,22 @@ function animateRecentTitles(wrap, sessions) {
   }
   for (const id of railTitleSeen.keys()) if (!alive.has(id)) railTitleSeen.delete(id);
 }
-$('#btn-recent-all').addEventListener('click', () => setPage('sessions'));
+$('#btn-recent-all')?.addEventListener('click', () => setPage('sessions'));
+$('#btn-report-bug')?.addEventListener('click', () => { window.husk.feedback.open('bug').catch(() => {}); });
+$('#btn-request-feature')?.addEventListener('click', () => { window.husk.feedback.open('feature').catch(() => {}); });
+$('#btn-help-github')?.addEventListener('click', () => { try { window.husk.urls.openExternal('https://github.com/DorShaer/Husk'); } catch (_) {} });
+// Help and feedback live behind one top-bar button; the menu closes on a pick,
+// a click elsewhere, or Escape.
+(function wireTopbarHelp() {
+  const btn = $('#btn-help');
+  const menu = $('#topbar-help-menu');
+  if (!btn || !menu) return;
+  const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); const open = menu.hidden; menu.hidden = !open; btn.setAttribute('aria-expanded', String(open)); });
+  menu.addEventListener('click', (e) => { if (e.target.closest('.tb-menu-item')) close(); });
+  document.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) close(); });
+})();
 
 // ─── Chats panel (sessions list in sidebar on chat page) ─────────────────────────
 async function renderChatsPanelSessions() {
@@ -13346,6 +14528,9 @@ function mcpRowHTML(s) {
         <button class="mr-edit" data-edit="1" title="Edit" aria-label="Edit MCP server">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
         </button>
+        <button class="mr-clone" data-clone="1" title="Clone" aria-label="Clone MCP server">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
+        </button>
         <button class="toggle ${s.enabled ? 'on' : ''}" data-toggle="1" title="${s.enabled ? 'Disable' : 'Enable'}"></button>
         <button class="mr-remove" data-remove="1" title="Remove">×</button>
       </div>
@@ -13374,6 +14559,11 @@ function bindMcpRows(scope) {
     const t = row.querySelector('[data-toggle]');
     const e = row.querySelector('[data-edit]');
     const x = row.querySelector('[data-remove]');
+    const c = row.querySelector('[data-clone]');
+    if (c) c.addEventListener('click', () => {
+      const server = mcpInstalled.find((s) => s.id === row.dataset.id);
+      if (server) openMcpCloneModal(server);
+    });
     if (t) t.addEventListener('click', async () => {
       const r = await window.husk.mcp.toggle(row.dataset.id);
       if (!r.ok) { toast(r.error || 'Toggle failed', 'error'); return; }
@@ -13501,6 +14691,12 @@ function openMcpEditModal(server) {
   if (!server || !server.id) return;
   renderMcpModal({ mode: 'edit', server });
 }
+// Clone opens the same form prefilled from the source, named clone-<id>, so
+// the copy can be renamed or adjusted before it is saved as a new server.
+function openMcpCloneModal(server) {
+  if (!server || !server.id) return;
+  renderMcpModal({ mode: 'clone', server });
+}
 
 // Builds the modal body for both flows.
 // Add:  form view with a toggle into paste view; the primary button reads
@@ -13511,18 +14707,25 @@ function renderMcpModal({ mode, server }) {
   mcpModalState = {
     mode,
     editingId: mode === 'edit' && server ? server.id : null,
+    sourceId: mode === 'clone' && server ? server.id : null,
     activeTab: 'stdio',
     view: 'form',
     parsedItems: [],
     parseErrors: [],
   };
-  const isEdit = mode === 'edit';
-  $('#mcp-install-title').textContent = isEdit
-    ? `Edit MCP server: ${server.id}`
-    : 'Install a custom MCP server';
-  $('#mcp-install-sub').textContent = isEdit
-    ? 'Update the fields below and save.'
-    : 'Paste a JSON snippet (one or many servers), or fill in the form.';
+  const isClone = mode === 'clone';
+  // Edit and clone both start from a filled form with no paste view.
+  const isEdit = mode === 'edit' || isClone;
+  $('#mcp-install-title').textContent = isClone
+    ? `Clone MCP server: ${server.id}`
+    : isEdit
+      ? `Edit MCP server: ${server.id}`
+      : 'Install a custom MCP server';
+  $('#mcp-install-sub').textContent = isClone
+    ? 'Name the copy, change what you need, and save it as a new server.'
+    : isEdit
+      ? 'Update the fields below and save.'
+      : 'Paste a JSON snippet (one or many servers), or fill in the form.';
   const fields = $('#mcp-install-fields');
   const codeStyle = "background:var(--bg-3); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-family:'JetBrains Mono', monospace; font-size:12px; resize:vertical;";
   // eslint-disable-next-line no-unsanitized/property -- Static modal template; dynamic values are escaped where they appear (server.id in the title above sets textContent, not innerHTML).
@@ -13605,7 +14808,7 @@ function renderMcpModal({ mode, server }) {
     // Pre-fill the form from the existing server. The original id is held
     // in mcpModalState.editingId so update() can still locate the entry
     // even when the name field is changed (a rename).
-    $('#mig-custom-id').value = server.id;
+    $('#mig-custom-id').value = isClone ? `clone-${server.id}` : server.id;
     if (server.transport === 'http' || server.transport === 'sse') {
       setMcpActiveTab('http');
       $('#mig-custom-type').value = server.transport;
@@ -13625,6 +14828,7 @@ function renderMcpModal({ mode, server }) {
   }
 
   $('#mcp-install').hidden = false;
+  if (isClone) setTimeout(() => { try { const f = $('#mig-custom-id'); f.focus(); f.select(); } catch (_) {} }, 30);
   $('#mcp-install-confirm').onclick = submitMcpModal;
   $('#mcp-install-cancel').onclick = () => { $('#mcp-install').hidden = true; };
   updateMcpFootButton();
@@ -13710,8 +14914,8 @@ function clearMcpFormError() {
 }
 function updateMcpFootButton() {
   const btn = $('#mcp-install-confirm'); if (!btn) return;
-  if (mcpModalState.mode === 'edit') {
-    btn.textContent = 'Save changes';
+  if (mcpModalState.mode === 'edit' || mcpModalState.mode === 'clone') {
+    btn.textContent = mcpModalState.mode === 'clone' ? 'Save clone' : 'Save changes';
     btn.disabled = false;
     return;
   }
@@ -13807,7 +15011,9 @@ async function submitMcpModal() {
     return setMcpFormError(err, /exists|server name|server id/i.test(err) ? 'mig-custom-id' : null);
   }
   $('#mcp-install').hidden = true;
-  toast(mcpModalState.mode === 'edit' ? `Updated ${id}` : `Installed ${id}`, 'success');
+  toast(mcpModalState.mode === 'edit' ? `Updated ${id}`
+    : mcpModalState.mode === 'clone' ? `Cloned ${mcpModalState.sourceId} as ${id}`
+      : `Installed ${id}`, 'success');
   await renderMcp();
   applyMcpChange(id);
 }
@@ -17558,7 +18764,9 @@ function closeAgentMap() {
   el.hidden = true;
   if (agentMap.timer) { clearInterval(agentMap.timer); agentMap.timer = null; }
   if (agentMap.ticker) { clearInterval(agentMap.ticker); agentMap.ticker = null; }
-  if (term) term.focus();
+  // The terminal gets the caret back only where it is the thing behind the
+  // center. Closing on the way to another page leaves the caret to that page.
+  if (term && currentPage === 'chat') term.focus();
 }
 
 // The pill and Alt+A open the same center, over the same fleet the switcher
@@ -17716,6 +18924,25 @@ document.addEventListener('keydown', (e) => {
   const overlay = $('#agent-map');
   if (!overlay || overlay.hidden) return;
   if (e.key === 'Escape') return;              // the global Esc registry owns closing
+  // The center reaches for keys from the whole document, so it has to yield the
+  // two ways it can be underneath something: a field a person is typing into,
+  // and a modal or palette layered over it. Without this every printable key in
+  // the app lands in the center's search box instead of the form in front of it.
+  // The terminal's own hidden textarea is the one field it does not yield to,
+  // because keeping keys away from the agent underneath is the point.
+  const t = e.target;
+  const tag = t && t.tagName;
+  // The chat composer is the agent's input in Chat view, same standing as the
+  // xterm helper: the center takes the keys rather than the agent.
+  const inTerminal = !!(t && t.classList && (t.classList.contains('xterm-helper-textarea') || t.classList.contains('chat-input')));
+  const inField = !inTerminal
+    && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable));
+  if (inField && t !== $('#am-search-input')) return;
+  // The center is itself a modal, so only a modal or palette that is neither it
+  // nor inside it counts as layered over it.
+  const layered = Array.from(document.querySelectorAll('.modal:not([hidden]), .palette:not([hidden])'))
+    .some((el) => el !== overlay && !overlay.contains(el));
+  if (layered && !overlay.contains(t)) return;
   const search = $('#am-search-input');
   const inSearch = e.target === search;
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -18162,7 +19389,7 @@ async function runOnboarding({ replay = false } = {}) {
       on(welcome, 'pointerleave', () => {
         if (frame) { cancelAnimationFrame(frame); frame = 0; }
         wrap.style.transition = 'transform 0.6s var(--ease-out)';
-        wrap.style.transform = '';
+  // toggle, their saved choice wins from then on (main pins older installs open).
         if (hk) {
           hk.style.setProperty('--hk-x', '0px');
           hk.style.setProperty('--hk-y', '0px');
@@ -18215,7 +19442,11 @@ async function boot() {
   applyTheme(cfg.theme || 'midnight');
   applyAccent(cfg.accent || 'orange');
   document.body.dataset.rail = cfg.railExpanded === false ? 'collapsed' : 'expanded';
+  // A fresh install starts with the side panel folded (main's default); the
+  // toggle saves the choice in statusCollapsed.
   document.body.dataset.status = cfg.statusCollapsed ? 'collapsed' : 'expanded';
+  applyStatusWidth(cfg.statusWidth);
+  syncChatLayout();
   syncRailToggleTitle();
   syncStatusToggleTitle();
 
@@ -18276,14 +19507,18 @@ async function boot() {
 
   // With skipWelcome on, boot goes straight to a chat, so the welcome screen
   // stays out of the paint entirely.
-  const autoChat = cfg.skipWelcome && !(reloadState && reloadState.suppressAutoChat);
+  const autoChat = !welcomeWanted() && !(reloadState && reloadState.suppressAutoChat);
   if (!autoChat) $('#chat-empty').classList.add('show');
 
   // A renderer reload keeps the main-process PTYs alive, so reattach to any
   // open chats first and fall through to cold boot only when there are none.
   const reattached = await reattachSessions();
   if (!reattached && autoChat) {
-    await startPty();
+    // Cold boot: pick up where the last conversation left off rather than
+    // opening an empty chat. + New in the Sessions column starts a fresh one.
+    let resumed = false;
+    try { resumed = await resumeLastSessionOnBoot(); } catch (_) { resumed = false; }
+    if (!resumed) await startPty();
   }
   bootingFromReloadState = null;
 }
@@ -18293,9 +19528,20 @@ async function launchAgent({ initialPrompt = null } = {}) {
   if (skipBox && skipBox.checked && !cfg.skipWelcome) {
     cfg = await window.husk.config.set({ skipWelcome: true });
   }
+  // A chat tab already behind the welcome screen takes the prompt itself;
+  // otherwise a new tab starts, in whichever mode the preference picks.
+  const behind = TABS.get(activeTabId);
+  if (behind && behind.mode === 'chat' && behind.chat) {
+    $('#chat-empty').classList.remove('show');
+    if (behind.chatStart) await behind.chatStart;
+    if (initialPrompt && !behind.chat.send(initialPrompt)) behind.chat.insert(initialPrompt);
+    behind.chat.focus();
+    return;
+  }
   $('#chat-empty').classList.remove('show');
+  let started = null;
   try {
-    await startPty();
+    started = await startPty();
   } catch (err) {
     // Spawn failure must not strand the user on an empty black terminal:
     // restore the welcome screen and say what happened.
@@ -18305,6 +19551,14 @@ async function launchAgent({ initialPrompt = null } = {}) {
       'Open setup',
       () => runOnboarding({ replay: true })
     );
+    return;
+  }
+  if (started && started.mode === 'chat' && started.chat) {
+    // startPty has already awaited the start, so the agent is ready or the
+    // pane says why not; a refused send keeps the text in the composer.
+    if (started.chatStart) await started.chatStart;
+    if (initialPrompt && !started.chat.send(initialPrompt)) started.chat.insert(initialPrompt);
+    started.chat.focus();
     return;
   }
   if (initialPrompt) {
