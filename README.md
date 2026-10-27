@@ -10,7 +10,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/DorShaer/Husk/ci.yml?branch=main&label=CI)](https://github.com/DorShaer/Husk/actions/workflows/ci.yml)
 [![apt install husk](https://img.shields.io/badge/apt-install%20husk-A81D33?logo=debian&logoColor=white)](https://dorshaer.github.io/Husk/)
 [![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)](https://github.com/DorShaer/Husk/releases/latest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![License: Elastic 2.0](https://img.shields.io/badge/license-Elastic%202.0-blue)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/DorShaer/Husk?style=flat&color=F74A1D)](https://github.com/DorShaer/Husk/stargazers)
 
 Husk wraps `claude`, `copilot`, `codex`, `aider`, `gemini`, `kiro`, or any other terminal-based AI agent in a clean desktop window. Agents that speak a machine protocol run as a native chat: streamed markdown, tool calls you can open, diffs, permission cards, a model picker and image paste. The rest run in a real PTY. Sessions, a Terminal page, drag-drop file context, voice output and a one-glance dashboard come with it. Clone, install, run.
@@ -350,7 +350,7 @@ Husk runs entirely on your machine. No telemetry. No analytics. The only network
 
 ## License
 
-MIT.
+Husk is source-available under the [Elastic License 2.0](LICENSE). You can use it, read it and change it, at home or at work, for free. You may not offer it to others as a hosted service, remove or bypass any license-key gate, or strip the notices. Releases before 2.13.0 were published under the MIT License and stay available under it.
 
 ## Credits
 
