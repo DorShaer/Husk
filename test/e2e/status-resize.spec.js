@@ -31,8 +31,8 @@ const panelWidth = (win) => win.evaluate(() => document.getElementById('status-p
 
 test('dragging the side panel edge resizes it, the width persists, and double-click resets', async () => {
   const { app, win, homeDir } = await launch();
-  const before = await panelWidth(win);
-  expect(Math.round(before)).toBe(380);
+  // The width is applied once boot has read the config, so poll for it.
+  await expect.poll(async () => Math.round(await panelWidth(win))).toBe(380);
 
   const grip = await win.locator('#status-resize').boundingBox();
   const y = grip.y + grip.height / 2;
@@ -52,7 +52,7 @@ test('dragging the side panel edge resizes it, the width persists, and double-cl
   await win.reload();
   await win.waitForLoadState('domcontentloaded');
   await win.waitForSelector('#status-resize');
-  expect(Math.round(await panelWidth(win))).toBe(widened);
+  await expect.poll(async () => Math.round(await panelWidth(win))).toBe(widened);
 
   // The width is clamped so the panel can neither vanish nor eat the window.
   const g2 = await win.locator('#status-resize').boundingBox();
@@ -60,10 +60,10 @@ test('dragging the side panel edge resizes it, the width persists, and double-cl
   await win.mouse.down();
   await win.mouse.move(g2.x + 900, g2.y + 40, { steps: 8 });
   await win.mouse.up();
-  expect(Math.round(await panelWidth(win))).toBe(280);
+  await expect.poll(async () => Math.round(await panelWidth(win))).toBe(280);
 
   await win.locator('#status-resize').dblclick();
-  expect(Math.round(await panelWidth(win))).toBe(380);
+  await expect.poll(async () => Math.round(await panelWidth(win))).toBe(380);
   await expect.poll(() => JSON.parse(fs.readFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), 'utf8')).statusWidth).toBe(null);
   await app.close();
 });
