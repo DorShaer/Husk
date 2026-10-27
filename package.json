@@ -1,6 +1,6 @@
 {
   "name": "husk",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "description": "A desktop home for your CLI agent. Wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop context, sessions, voice, and a live status panel.",
   "main": "src/main.js",
   "license": "MIT",
@@ -38,7 +38,7 @@
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
     "@playwright/test": "^1.62.1",
-    "electron": "^41.10.6",
+    "electron": "^42.11.18",
     "electron-builder": "^26.15.3",
     "playwright": "^1.61.1"
   },
@@ -49,6 +49,9 @@
     "appId": "com.husk.app",
     "productName": "Husk",
     "asar": true,
+    "electronLanguages": [
+      "en-US"
+    ],
     "files": [
       "src/**/*",
       "package.json",
@@ -57,7 +60,11 @@
       "!**/.DS_Store",
       "!**/.eslintrc*",
       "!**/.gitignore",
-      "!**/CHANGELOG*"
+      "!**/CHANGELOG*",
+      "!src/renderer/assets/wn-2100-*.png",
+      "!src/renderer/assets/wn-2110-*.png",
+      "!src/renderer/assets/wn-2120-*.png",
+      "!src/renderer/assets/whatsnew-*.png"
     ],
     "extraResources": [
       {
