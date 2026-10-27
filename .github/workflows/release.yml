@@ -164,7 +164,9 @@ jobs:
             exit 1
           fi
 
-          BODY=$(git tag -l --format='%(contents)' "$TAG")
+          # The annotation's first paragraph is the tag subject; the release
+          # page carries only what follows it.
+          BODY=$(git tag -l --format='%(contents:body)' "$TAG")
           if [ -z "${BODY//[[:space:]]/}" ]; then
             echo "::error::The annotation on $TAG is empty. Write the release notes into the tag message."
             exit 1

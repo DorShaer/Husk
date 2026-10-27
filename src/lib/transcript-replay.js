@@ -24,10 +24,36 @@ const MAX_TEXT = 400000;
 function str(v) { return v === null || v === undefined ? '' : String(v); }
 
 // Synthetic prompts the CLI writes for itself (local command echoes, hook
-// output, system reminders) start with a tag and are not the user's words.
+// output, system reminders, background task notifications) start with a tag
+// and are not the user's words.
 function isSyntheticPrompt(text) {
   const t = str(text).trimStart();
-  return t.startsWith('<local-command') || t.startsWith('<command-') || t.startsWith('<system-reminder') || t.startsWith('<bash-input') || t.startsWith('<bash-stdout') || t.startsWith('<bash-stderr');
+  return t.startsWith('<local-command') || t.startsWith('<command-') || t.startsWith('<system-reminder') || t.startsWith('<bash-input') || t.startsWith('<bash-stdout') || t.startsWith('<bash-stderr') || t.startsWith('<task-notification');
+}
+
+// A `user` line the CLI authored on the user's behalf: a background task
+// notification, the summary it writes after compacting the conversation, a
+// companion line for an attachment. The fields are the ones claude writes as
+// of 2.1.x; the tag check covers logs that predate them.
+function isSystemTurn(o, text) {
+  if (!o) return false;
+  if (o.promptSource === 'system' || o.turnOrigin === 'task_notification' || o.turnCompanion) return true;
+  if (o.origin && o.origin.kind === 'task-notification') return true;
+  if (o.isCompactSummary || o.isVisibleInTranscriptOnly) return true;
+  return isSyntheticPrompt(text);
+}
+
+// What the thread shows in place of a system turn: a one-line status for the
+// kinds a reader would want to know about, nothing for the rest.
+function systemTurnStatus(o, text) {
+  const t = str(text).trimStart();
+  if (o.isCompactSummary || o.isVisibleInTranscriptOnly) return 'The agent summarized the conversation so far to free up context.';
+  if (o.turnOrigin === 'task_notification' || (o.origin && o.origin.kind === 'task-notification') || t.startsWith('<task-notification')) {
+    const m = /<summary>([\s\S]*?)<\/summary>/.exec(t);
+    const summary = m ? m[1].replace(/\s+/g, ' ').trim() : '';
+    return summary ? 'Background task: ' + summary : 'A background task finished.';
+  }
+  return '';
 }
 
 function blockText(content) {
@@ -74,15 +100,31 @@ function claudeTranscriptToEvents(raw) {
     const msg = o.message || {};
     const content = msg.content;
     if (o.type === 'user') {
+      // The tag check runs on the whole string here and per block below: the
+      // CLI attaches a system reminder as its own block beside the user's words.
+      if (isSystemTurn(o, typeof content === 'string' ? content : '')) {
+        const note = systemTurnStatus(o, typeof content === 'string' ? content : blockText(content));
+        if (note) events.push({ type: 'status', text: note });
+        continue;
+      }
       if (typeof content === 'string') {
-        if (isSyntheticPrompt(content) || !content.trim()) continue;
+        if (!content.trim()) continue;
         endTurn();
         events.push({ type: 'user', text: content });
         turnOpen = true;
         continue;
       }
       if (!Array.isArray(content)) continue;
-      const texts = content.filter((c) => c && c.type === 'text' && !isSyntheticPrompt(c.text) && str(c.text).trim());
+      const texts = [];
+      for (const c of content) {
+        if (!c || c.type !== 'text' || !str(c.text).trim()) continue;
+        if (isSyntheticPrompt(c.text)) {
+          const note = systemTurnStatus(o, c.text);
+          if (note) events.push({ type: 'status', text: note });
+          continue;
+        }
+        texts.push(c);
+      }
       const results = content.filter((c) => c && c.type === 'tool_result');
       for (const r of results) {
         events.push({ type: 'tool', id: str(r.tool_use_id), status: r.is_error ? 'error' : 'done', output: blockText(r.content) });
@@ -181,4 +223,4 @@ function transcriptToEvents(agent, raw) {
   return [];
 }
 
-module.exports = { claudeTranscriptToEvents, copilotEventsToEvents, transcriptToEvents, isSyntheticPrompt };
+module.exports = { claudeTranscriptToEvents, copilotEventsToEvents, transcriptToEvents, isSyntheticPrompt, isSystemTurn };

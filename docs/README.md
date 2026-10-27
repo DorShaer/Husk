@@ -16,6 +16,6 @@ Project-level docs that live at the repo root:
 
 - [`../README.md`](../README.md): entry point, screenshots, quick install.
 - [`../SECURITY.md`](../SECURITY.md): threat model and how to report a security issue.
-- [`../LICENSE`](../LICENSE): MIT.
+- [`../LICENSE`](../LICENSE): Elastic License 2.0.
 
 Images used by the project README live under [`images/`](images/).
