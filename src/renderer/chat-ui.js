@@ -41,8 +41,6 @@
     down: [['path', { d: 'M6 9l6 6 6-6' }]],
   };
 
-  const TOOL_KINDS = new Set(['execute', 'read', 'edit', 'fetch', 'think', 'other']);
-
   function icon(name, cls) {
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -965,7 +963,6 @@
       if (e.key === 'Escape' && running) { e.preventDefault(); doStop(); return; }
       if (!e.isComposing && !e.altKey && !e.ctrlKey && !e.metaKey) {
         const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
-        const atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
         // Once a recall has started, the arrows keep walking the list wherever
         // the caret is, as a shell does; the first Up needs the caret at the start
         // so it never hijacks a multi-line draft.

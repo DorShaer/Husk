@@ -1587,7 +1587,7 @@ ipcMain.handle('terminal:defaults', () => {
     : (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
   // Same priority the chat PTY uses: active project, then the configured
   // working directory, then home.
-  let dir = HOME;
+  let dir;
   try {
     const proj = (Array.isArray(config.projects) && config.activeProjectId)
       ? config.projects.find((p) => p && p.id === config.activeProjectId)
@@ -1848,23 +1848,23 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
   }
   if (!isInside(root, file)) return { ok: false, error: 'refused' };
   try {
-    const st = fs.statSync(file);
-    if (!st.isFile()) return { ok: false, error: 'not a file' };
+    // Stat and read through one descriptor so the checks hold for the bytes read.
     let raw;
     let truncated = false;
-    if (st.size > HISTORY_TAIL_BYTES) {
-      const fd = fs.openSync(file, 'r');
-      try {
-        const buf = Buffer.alloc(HISTORY_TAIL_BYTES);
-        const n = fs.readSync(fd, buf, 0, HISTORY_TAIL_BYTES, st.size - HISTORY_TAIL_BYTES);
-        raw = buf.subarray(0, n).toString('utf8');
-      } finally { fs.closeSync(fd); }
+    const fd = fs.openSync(file, 'r');
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile()) return { ok: false, error: 'not a file' };
+      const len = Math.min(st.size, HISTORY_TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      const n = fs.readSync(fd, buf, 0, len, st.size - len);
+      raw = buf.subarray(0, n).toString('utf8');
+      truncated = st.size > HISTORY_TAIL_BYTES;
+    } finally { fs.closeSync(fd); }
+    if (truncated) {
       // The cut lands mid-line; drop that partial first line.
       const nl = raw.indexOf('\n');
       raw = nl === -1 ? '' : raw.slice(nl + 1);
-      truncated = true;
-    } else {
-      raw = fs.readFileSync(file, 'utf8');
     }
     const events = transcriptToEvents(a, raw);
     if (truncated) events.unshift({ type: 'status', text: 'Earlier messages in this session are not shown.' });

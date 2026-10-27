@@ -2846,7 +2846,7 @@ async function resumeLastSessionOnBoot() {
     if (tried++ >= 5) break;
     const owned = { ...s, owner: String(r.agent || ''), project: s.projectPath, prdpath: s.prdPath };
     let done = false;
-    try { done = await resumeIntoChat(owned); } catch (_) { done = false; }
+    try { done = await resumeIntoChat(owned, { keepPage: true }); } catch (_) { done = false; }
     if (done) return true;
   }
   return false;
@@ -2871,7 +2871,7 @@ function csOpenPast(s) {
 // preference, the CLI has no chat protocol or no readable log, or the session
 // is held and needs attaching or a copy), so the caller takes the Terminal
 // resume path instead.
-async function resumeIntoChat(d) {
+async function resumeIntoChat(d, { keepPage = false } = {}) {
   if (preferredTabMode() !== 'chat') return false;
   if (!window.husk.chat || typeof window.husk.chat.history !== 'function') return false;
   const agent = String(d.owner || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0].toLowerCase();
@@ -2885,7 +2885,10 @@ async function resumeIntoChat(d) {
   try { hist = await window.husk.chat.history({ agent, sessionId: d.id, cwd }); } catch (_) { return false; }
   if (!hist || !hist.ok || !Array.isArray(hist.events)) return false;
   if (focusOpenSession(d.id)) return true;
-  setPage('chat');
+  // On boot the user may have moved to another page while the log loaded;
+  // the session still opens, behind the page they chose.
+  const stayOn = keepPage && currentPage !== 'chat' ? currentPage : null;
+  if (!stayOn) setPage('chat');
   const names = (cfg && cfg.sessionNames) || {};
   await openNewChatTab({
     command: plan.command,
@@ -2898,6 +2901,7 @@ async function resumeIntoChat(d) {
     title: names[d.id] || d.title || '',
     customTitle: !!names[d.id],
   });
+  if (stayOn && currentPage !== stayOn) setPage(stayOn);
   return true;
 }
 
