@@ -15,6 +15,8 @@ const { parseLogRecords } = require('./lib/git-refs');
 const { attribute } = require('./lib/change-attribution');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
 const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
+const { transportFor: chatTransportFor } = require('./lib/chat-transport');
+const { emptyThread: chatEmptyThread, reduceThread: chatReduceThread } = require('./lib/chat-events');
 
 // Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
 // -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
@@ -65,6 +67,43 @@ contextBridge.exposeInMainWorld('husk', {
     onExit: (cb) => ipcRenderer.on('pty:exit', (_e, p) => cb(p.sessionId, p.code)),
     onMouseMode: (cb) => ipcRenderer.on('pty:mouse-mode', (_e, p) => cb(p.sessionId, p.on)),
     wheel: (payload, sessionId) => ipcRenderer.send('pty:wheel', Object.assign({ sessionId }, payload)),
+  },
+  // Chat mode: the agent CLI runs headlessly over its machine protocol (ACP or
+  // claude stream-json) and the renderer paints the thread itself. tabId is the
+  // same id the tab's PTY would use; the two modes never run at once per tab.
+  chat: {
+    // 'acp' | 'claude' | null (null: this CLI has no protocol, Terminal only).
+    transportFor: (command) => { try { return chatTransportFor(command); } catch (_) { return null; } },
+    // Pure thread state helpers (see src/lib/chat-events.js for the event model).
+    emptyThread: () => chatEmptyThread(),
+    reduce: (state, event) => chatReduceThread(state, event),
+    // -> { ok, transport, sessionId, error? }
+    start: (opts) => ipcRenderer.invoke('chat:start', opts || {}),
+    // Live chat children with their replay logs, for rebuilding tabs after a
+    // renderer reload. -> { ok, sessions: [{ tabId, transport, sessionId, command, cwd, turnOpen, events }] }
+    list: () => ipcRenderer.invoke('chat:list'),
+    // Past session log as chat events, for resuming into Chat view with the
+    // conversation shown. { agent, sessionId, cwd } -> { ok, agent, events, error? }
+    history: (opts) => ipcRenderer.invoke('chat:history', opts || {}),
+    // { tabId, text, images? [{ mimeType, data (base64) }] } -> { ok, error? }
+    prompt: (opts) => ipcRenderer.invoke('chat:prompt', opts || {}),
+    // { tabId } -> { ok }
+    cancel: (opts) => ipcRenderer.invoke('chat:cancel', opts || {}),
+    // { tabId, requestId, optionId } -> { ok }
+    permission: (opts) => ipcRenderer.invoke('chat:permission', opts || {}),
+    // { tabId, modelId, modelName } -> { ok, transport, model, restarted?, error? }
+    setModel: (opts) => ipcRenderer.invoke('chat:setModel', opts || {}),
+    // { tabId } -> { ok }
+    stop: (opts) => ipcRenderer.invoke('chat:stop', opts || {}),
+    // cb(tabId, event) for every normalized chat event.
+    onEvent: (cb) => ipcRenderer.on('chat:event', (_e, p) => cb(p.tabId, p.event)),
+    // cb(tabId, code) when the agent process ends.
+    onExit: (cb) => ipcRenderer.on('chat:exit', (_e, p) => cb(p.tabId, p.code)),
+  },
+  // Bug reports and feature requests: prefilled GitHub issue links.
+  feedback: {
+    url: (kind) => ipcRenderer.invoke('feedback:url', { kind }),
+    open: (kind) => ipcRenderer.invoke('feedback:open', { kind }),
   },
   // Extract the agent's recap line from rendered grid rows (pure, in-process).
   recap: {
@@ -171,6 +210,12 @@ contextBridge.exposeInMainWorld('husk', {
     create: (payload) => ipcRenderer.invoke('prompts:create', payload),
     update: (payload) => ipcRenderer.invoke('prompts:update', payload),
     delete: (mdPath) => ipcRenderer.invoke('prompts:delete', mdPath),
+  },
+  // A shell in the same window. Only asks the main process what a new shell
+  // should be and where it should open; everything after that is the pty
+  // bridge above, unchanged.
+  terminal: {
+    defaults: () => ipcRenderer.invoke('terminal:defaults'),
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
@@ -404,6 +449,8 @@ contextBridge.exposeInMainWorld('husk', {
     addMany: (items) => ipcRenderer.invoke('mcp:addMany', { items }),
     update: (payload) => ipcRenderer.invoke('mcp:update', payload),
     remove: (id) => ipcRenderer.invoke('mcp:remove', id),
+    // Copies a server as clone-<id> with the same transport, command, env or url.
+    clone: (id) => ipcRenderer.invoke('mcp:clone', id),
     toggle: (id) => ipcRenderer.invoke('mcp:toggle', id),
     health: () => ipcRenderer.invoke('mcp:health'),
     parseSnippet: (text) => ipcRenderer.invoke('mcp:parseSnippet', { text }),

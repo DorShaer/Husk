@@ -73,7 +73,9 @@ test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', 
   // promptSource "sdk". Old files predate the field and must be kept.
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-claude-sessions-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
-  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true }));
+  // The page under test lists past sessions; a cold boot would otherwise resume
+  // the newest one into a live tab before the list is read.
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, resumeLastOnLaunch: false }));
   const proj = path.join(homeDir, '.claude', 'projects', '-home-test-proj');
   fs.mkdirSync(proj, { recursive: true });
   const now = () => new Date().toISOString();
@@ -144,6 +146,7 @@ test('copilot sessions use the first prompt when workspace name is null', async 
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
     firstRunDone: true,
     agentCommand: 'copilot',
+    resumeLastOnLaunch: false,
   }));
   const sessionDir = path.join(homeDir, '.copilot', 'session-state', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
   fs.mkdirSync(sessionDir, { recursive: true });

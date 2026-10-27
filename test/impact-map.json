@@ -46,7 +46,8 @@
         "agent-center.spec.js",
         "agent-canvas.spec.js",
         "agent-attach.spec.js",
-        "agent-inprocess.spec.js"
+        "agent-inprocess.spec.js",
+        "agent-center-keys.spec.js"
       ],
       "tokens": [
         "ag",
@@ -242,7 +243,8 @@
       "specs": [
         "mcp-shared.spec.js",
         "mcp-collision.spec.js",
-        "project-mcp.spec.js"
+        "project-mcp.spec.js",
+        "mcp-clone.spec.js"
       ],
       "tokens": [
         "mcp",
@@ -383,6 +385,32 @@
         "src/renderer/wfx-install.js",
         "src/renderer/wfx-publish.js",
         "src/renderer/wfx-artifact-ui.js"
+      ]
+    },
+    "chatmode": {
+      "specs": [
+        "chat-mode.spec.js",
+        "terminal-page.spec.js",
+        "status-resize.spec.js"
+      ],
+      "tokens": [
+        "chat",
+        "ipc:chat",
+        "tm",
+        "ipc:terminal"
+      ],
+      "paths": [
+        "src/lib/jsonrpc-stdio.js",
+        "src/lib/acp-client.js",
+        "src/lib/chat-events.js",
+        "src/lib/chat-transport.js",
+        "src/lib/claude-stream.js",
+        "src/lib/chat-runtime.js",
+        "src/renderer/chat-md.js",
+        "src/renderer/chat-ui.js",
+        "test/e2e/fixtures/fake-acp-agent.js",
+        "src/renderer/tm-page.js",
+        "src/lib/transcript-replay.js"
       ]
     }
   }

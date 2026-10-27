@@ -14,6 +14,10 @@ const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
+const { createChatRuntime } = require('./lib/chat-runtime');
+const { transportFor: chatTransportFor } = require('./lib/chat-transport');
+const { transcriptToEvents } = require('./lib/transcript-replay');
+const { issueUrl } = require('./lib/feedback-url');
 const Subagents = require('./lib/subagents');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
@@ -291,10 +295,13 @@ const DEFAULT_CONFIG = {
   showHidden: false,
   // Applies to a first install only. An existing install keeps whatever theme it
   // already has, via the pin in loadConfig.
-  theme: 'light',
+  theme: 'ember',
   accent: 'orange',
   railExpanded: true,
-  statusCollapsed: false,
+  // The Crew chat layout starts with the status panel folded away; the
+  // panel toggle saves the choice. An existing install keeps its open panel
+  // via the pin in loadConfig.
+  statusCollapsed: true,
   voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
   skipWelcome: false,
   recap: true,
@@ -341,6 +348,11 @@ function loadConfig() {
     // shows when the file carries none.
     if (!Object.prototype.hasOwnProperty.call(stored, 'theme')) {
       stored.theme = PRE_EXISTING_THEME;
+    }
+    // Same for the status panel: it was open on every install before the
+    // collapsed default, so an older config without the key stays open.
+    if (!Object.prototype.hasOwnProperty.call(stored, 'statusCollapsed')) {
+      stored.statusCollapsed = false;
     }
     return { ...DEFAULT_CONFIG, ...stored };
   } catch (_) { return { ...DEFAULT_CONFIG }; }
@@ -829,6 +841,14 @@ function createWindow() {
     { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste', registerAccelerator: false }, { role: 'selectAll' }] },
     { label: 'View', submenu: viewSubmenu },
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] },
+    // Help: straight to a prefilled GitHub issue, with the environment block
+    // already written so a report arrives with the facts.
+    { label: 'Help', submenu: [
+      { label: 'Report a bug', click: () => openFeedback('bug') },
+      { label: 'Request a feature', click: () => openFeedback('feature') },
+      { type: 'separator' },
+      { label: 'Husk on GitHub', click: () => { shell.openExternal('https://github.com/DorShaer/Husk').catch(() => {}); } },
+    ] },
   ]));
 
   mainWindow.on('closed', () => {
@@ -864,6 +884,7 @@ function killSession(s) {
 // leaves no orphan agent processes behind.
 function killPtyTree() {
   for (const s of sessions.values()) killSession(s);
+  try { if (typeof chatRuntime !== 'undefined' && chatRuntime) chatRuntime.stopAll(); } catch (_) {}
   try {
     for (const r of runs.values()) {
       try { clearInterval(r.tickInterval); } catch (_) {}
@@ -972,6 +993,11 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     // early-exits.
     HUSK_HOST: '1',
   });
+  // A Husk started from inside a claude session must not pass the nesting
+  // markers on, or the agent disables transcript saving (see chatEnv).
+  delete env.CLAUDECODE;
+  delete env.CLAUDE_CODE_CHILD_SESSION;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
   // ~/.local/bin is where the native installers land, and a GUI/desktop launch
@@ -1504,12 +1530,15 @@ function readActiveSessionStats() {
         }
       } catch (_) {}
     }
-    // Model preference. settings.json holds the model the user selected and is
-    // the value the CLI's own picker reports. Transcripts are used for turn
-    // counts and occupancy, which are per-file by nature, and for the model only
-    // when settings names none.
+    // Model preference. The transcript records the model each turn ran on, so
+    // it names what this session uses. settings.json holds the default for new
+    // sessions; it wins only when the session has no turn yet, or when it
+    // changed after the last turn (a picker switch the next turn will record).
     const settingsModel = ((readClaudeSettings() || {}).model || '').trim();
-    let effModel = settingsModel || model;
+    let transcriptMtime = 0;
+    if (latest) try { transcriptMtime = fs.statSync(latest).mtimeMs; } catch (_) {}
+    const settingsNewer = !!settingsModel && _claudeSettingsCache.mtime > transcriptMtime;
+    let effModel = (model && !settingsNewer) ? model : (settingsModel || model);
     // Model label fallback, DISPLAY ONLY. When neither settings.json nor this
     // tab's own transcript names a model, borrow one from the newest transcript
     // in the project dir just for the label. Occupancy and turn counts above
@@ -1555,6 +1584,23 @@ function targetSession(sessionId) {
 ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast));
 // List the chat PTYs that are still alive, so a reloaded renderer can rebuild
 // its tabs and reattach instead of orphaning them and minting a fresh chat.
+ipcMain.handle('terminal:defaults', () => {
+  const shell = (typeof process.env.SHELL === 'string' && process.env.SHELL)
+    ? process.env.SHELL
+    : (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
+  // Same priority the chat PTY uses: active project, then the configured
+  // working directory, then home.
+  let dir;
+  try {
+    const proj = (Array.isArray(config.projects) && config.activeProjectId)
+      ? config.projects.find((p) => p && p.id === config.activeProjectId)
+      : null;
+    dir = (proj && proj.path) || activePtyCwd || config.agentCwd || HOME;
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) dir = HOME;
+  } catch (_) { dir = HOME; }
+  return { ok: true, shell, cwd: dir };
+});
+
 ipcMain.handle('pty:list', () => {
   const list = [];
   for (const [id, s] of sessions) {
@@ -1658,6 +1704,186 @@ ipcMain.handle('pty:close', (_e, sessionId) => {
     if (!next.done) setActiveSession(next.value);
   }
   return true;
+});
+
+// ─── Feedback: bug reports and feature requests ────────────────────────────
+// One builder for the Help menu and the top-bar button. The link carries the
+// facts a maintainer asks for first; the user fills in the rest on GitHub.
+function feedbackFacts() {
+  const cmd = String(config.agentCommand || 'claude').trim();
+  let agentVersion = '';
+  try {
+    const exe = resolveAgentExe(cmd.split(/\s+/)[0], process.env.PATH);
+    const out = require('child_process').spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 3000 });
+    agentVersion = String((out && out.stdout) || '').trim().split(/\r?\n/)[0].slice(0, 60);
+  } catch (_) {}
+  let osVersion = '';
+  try { osVersion = os.release(); } catch (_) {}
+  return {
+    huskVersion: app.getVersion(), platform: process.platform, arch: process.arch, osVersion,
+    electron: process.versions.electron, agentCommand: cmd, agentVersion,
+    chatView: config.chatView === 'terminal' ? 'terminal' : 'chat',
+  };
+}
+function feedbackUrl(kind) { return issueUrl(kind === 'feature' ? 'feature' : 'bug', feedbackFacts()); }
+function openFeedback(kind) {
+  const url = feedbackUrl(kind);
+  shell.openExternal(url).catch(() => {});
+  return url;
+}
+ipcMain.handle('feedback:url', (_e, { kind } = {}) => ({ ok: true, url: feedbackUrl(kind) }));
+ipcMain.handle('feedback:open', (_e, { kind } = {}) => ({ ok: true, url: openFeedback(kind) }));
+
+// ─── Chat mode IPC ─────────────────────────────────────────────────────────
+//
+// Chat mode runs the agent CLI headlessly over its machine protocol (ACP for
+// copilot/gemini/kiro-cli, stream-json for claude) and the renderer paints the
+// thread itself. One child per tab, keyed by the tab id the PTY would use, so a
+// tab is either a terminal or a chat and never both. Protocol handling lives in
+// src/lib/chat-runtime.js; this block only supplies process plumbing.
+
+// chatEnv mirrors spawnPty's env: the same PATH recovery for GUI launches and
+// the HUSK_HOST marker so PAI hooks skip their terminal chrome. CLAUDECODE is
+// dropped so a claude child never believes it is nested inside another one.
+function chatEnv() {
+  const env = Object.assign({}, process.env, { CLAUDE_DIR, HUSK_HOST: '1', HUSK_CHAT: '1' });
+  // Husk launched from inside a claude session inherits its nesting markers;
+  // a child that sees them turns off transcript saving and refuses to nest.
+  delete env.CLAUDECODE;
+  delete env.CLAUDE_CODE_CHILD_SESSION;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
+  const bunBin = path.join(HOME, '.bun', 'bin');
+  if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}${path.delimiter}${env.PATH}`;
+  const localBin = path.join(HOME, '.local', 'bin');
+  if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}${path.delimiter}${env.PATH}`;
+  return env;
+}
+
+const chatRuntime = createChatRuntime({
+  spawn: require('child_process').spawn,
+  buildEnv: chatEnv,
+  resolveExe: resolveAgentExe,
+  emit: (tabId, event) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {} },
+  emitExit: (tabId, code) => {
+    try { dropChatShadowSession(tabId); } catch (_) {}
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:exit', { tabId, code }); } catch (_) {}
+  },
+  appVersion: app.getVersion(),
+  log: (line) => { try { console.error(`[chat] ${line}`); } catch (_) {} },
+});
+
+// chatCwd applies spawnPty's cwd policy: explicit override, else the active
+// project, else the configured agentCwd, else HOME.
+function chatCwd(overrideCwd) {
+  const isDir = (p) => { try { return typeof p === 'string' && p && fs.existsSync(p) && fs.statSync(p).isDirectory(); } catch (_) { return false; } };
+  if (isDir(overrideCwd)) return overrideCwd;
+  if (Array.isArray(config.projects) && config.activeProjectId) {
+    const active = config.projects.find((p) => p && p.id === config.activeProjectId);
+    if (active && isDir(active.path)) return active.path;
+  }
+  if (isDir(config.agentCwd)) return config.agentCwd;
+  return HOME;
+}
+
+// A chat tab has no PTY, but the status panel, the Context tab and the
+// workspace readout all key off the active entry in `sessions` (cwd plus the
+// pinned claude session id). A shadow entry with no pty gives a chat tab the
+// same readouts; pty:list skips pty-less entries so it never shows as a
+// terminal. Removed when the chat child goes away.
+function chatShadowSession(tabId, cwd, claudeSessionId) {
+  const s = sessions.get(tabId) || newSession(tabId);
+  s.cwd = cwd;
+  s.claudeSessionId = claudeSessionId || null;
+  s.transcript = null;
+  s.startedAt = Date.now();
+  if (claudeSessionId) {
+    try { rememberClaudeSession(cwd.replace(/[^a-zA-Z0-9]/g, '-'), claudeSessionId); } catch (_) {}
+  }
+  if (!activeSessionId) setActiveSession(tabId);
+  return s;
+}
+function dropChatShadowSession(tabId) {
+  const s = sessions.get(tabId);
+  if (!s || s.pty) return;
+  sessions.delete(tabId);
+  if (activeSessionId === tabId) {
+    activeSessionId = null;
+    ptyProc = null;
+    activePtyCwd = null;
+    const next = sessions.keys().next();
+    if (!next.done) setActiveSession(next.value);
+  }
+}
+
+ipcMain.handle('chat:start', async (_e, { tabId, command, cwd } = {}) => {
+  const cmd = (command || config.agentCommand || 'claude').trim();
+  const dir = chatCwd(cwd);
+  const transport = chatTransportFor(cmd);
+  const claudeSessionId = transport === 'claude' ? crypto.randomUUID() : null;
+  const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId });
+  if (res && res.ok) chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
+  return res;
+});
+ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list() }));
+// chat:history reads a past session's on-disk log and returns it as chat
+// events, so a resumed session opens in Chat view with its conversation
+// already on screen. Paths are built here from validated ids, never taken
+// from the renderer.
+// A long session (hours of work, pasted screenshots) runs to tens of MB.
+// Only the tail is read: the replay keeps the last few thousand events anyway,
+// and refusing the file used to drop the resume back to Terminal view.
+const HISTORY_TAIL_BYTES = 12 * 1024 * 1024;
+ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
+  const a = String(agent || (config.agentCommand || 'claude')).trim().split(/\s+/)[0].toLowerCase();
+  const id = String(sessionId || '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(id)) return { ok: false, error: 'bad session id' };
+  let file = null;
+  let root = null;
+  if (a === 'claude') {
+    if (typeof cwd !== 'string' || !cwd) return { ok: false, error: 'cwd required' };
+    root = path.join(CLAUDE_DIR, 'projects');
+    file = path.join(root, cwd.replace(/[^a-zA-Z0-9]/g, '-'), id + '.jsonl');
+  } else if (a === 'copilot') {
+    root = path.join(COPILOT_DIR, 'session-state');
+    file = path.join(root, id, 'events.jsonl');
+  } else {
+    return { ok: false, error: a + ' keeps no readable session log' };
+  }
+  if (!isInside(root, file)) return { ok: false, error: 'refused' };
+  try {
+    // Stat and read through one descriptor so the checks hold for the bytes read.
+    let raw;
+    let truncated = false;
+    const fd = fs.openSync(file, 'r');
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile()) return { ok: false, error: 'not a file' };
+      const len = Math.min(st.size, HISTORY_TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      const n = fs.readSync(fd, buf, 0, len, st.size - len);
+      raw = buf.subarray(0, n).toString('utf8');
+      truncated = st.size > HISTORY_TAIL_BYTES;
+    } finally { fs.closeSync(fd); }
+    if (truncated) {
+      // The cut lands mid-line; drop that partial first line.
+      const nl = raw.indexOf('\n');
+      raw = nl === -1 ? '' : raw.slice(nl + 1);
+    }
+    const events = transcriptToEvents(a, raw);
+    if (truncated) events.unshift({ type: 'status', text: 'Earlier messages in this session are not shown.' });
+    return { ok: true, agent: a, events, truncated };
+  } catch (err) {
+    return { ok: false, error: err.code === 'ENOENT' ? 'no session log yet' : err.message };
+  }
+});
+ipcMain.handle('chat:prompt', (_e, { tabId, text, images } = {}) => chatRuntime.prompt({ tabId, text, images }));
+ipcMain.handle('chat:cancel', (_e, { tabId } = {}) => chatRuntime.cancel({ tabId }));
+ipcMain.handle('chat:permission', (_e, { tabId, requestId, optionId } = {}) => chatRuntime.permission({ tabId, requestId, optionId }));
+ipcMain.handle('chat:setModel', (_e, { tabId, modelId, modelName } = {}) => chatRuntime.setModel({ tabId, modelId, modelName }));
+ipcMain.handle('chat:stop', async (_e, { tabId } = {}) => {
+  const r = await chatRuntime.stop({ tabId });
+  dropChatShadowSession(tabId);
+  return r;
 });
 
 // ─── Autopilot Mode IPC ────────────────────────────────────────────────────
@@ -4703,6 +4929,7 @@ ipcMain.handle('mcp:update', (_e, payload = {}) => {
   return SharedMcp.update(oldId || id, { ...rest, newId: id });
 });
 ipcMain.handle('mcp:remove', (_e, id) => SharedMcp.remove(id));
+ipcMain.handle('mcp:clone', (_e, id) => SharedMcp.clone(id, config.agentCommand));
 ipcMain.handle('mcp:toggle', (_e, id) => SharedMcp.toggle(id, config.agentCommand));
 
 // addMany takes a list of canonical payloads (each already split into
@@ -5518,7 +5745,7 @@ ipcMain.handle('workflows:delete', (_e, id) => {
 });
 
 // Tidy coordinates for a graph, computed from its shape alone: columns by
-// depth, branches stacked, columns centred. Pure and read-only — the caller
+// depth, branches stacked, columns centred. Pure and read-only: the caller
 // decides whether the result is ever saved.
 ipcMain.handle('workflows:layout', (_e, payload = {}) => {
   const p = (payload && typeof payload === 'object') ? payload : {};
@@ -6565,8 +6792,22 @@ ipcMain.handle('github:repo', async (_e, payload = {}) => {
 
 ipcMain.handle('github:pulls', async (_e, payload = {}) => {
   const p = (payload && typeof payload === 'object') ? payload : {};
-  const res = await runGh(ghCwd(p), GhCli.prListArgs(p));
-  return res.ok ? GhCli.parsePrList(res.stdout) : res;
+  const cwd = ghCwd(p);
+  const res = await runGh(cwd, GhCli.prListArgs(p));
+  if (res.ok) return GhCli.parsePrList(res.stdout);
+
+  // GitHub's GraphQL endpoint can time out when statusCheckRollup is requested
+  // across a large closed/merged history. The list is still useful without
+  // checks, so degrade that one expensive field rather than failing the page.
+  if (res.code === 'github-unavailable' && p.includeChecks !== false) {
+    const withoutChecks = await runGh(cwd, GhCli.prListArgs({ ...p, includeChecks: false }));
+    if (withoutChecks.ok) {
+      const parsed = GhCli.parsePrList(withoutChecks.stdout);
+      if (parsed.ok) parsed.checksUnavailable = true;
+      return parsed;
+    }
+  }
+  return res;
 });
 
 ipcMain.handle('github:issues', async (_e, payload = {}) => {

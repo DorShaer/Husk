@@ -43,14 +43,14 @@ function loadConfigWith(storedJson) {
   return ctx.__result;
 }
 
-test('a first install defaults to the light theme', () => {
+test('a first install defaults to the ember theme', () => {
   // No config file on disk is the only signal that this machine has never run Husk.
   const cfg = loadConfigWith(null);
-  assert.equal(cfg.theme, 'light');
+  assert.equal(cfg.theme, 'ember');
 });
 
 test('an update never changes the theme of an install that has one saved', () => {
-  for (const theme of ['midnight', 'dark', 'nord', 'dracula', 'light']) {
+  for (const theme of ['midnight', 'dark', 'nord', 'dracula', 'light', 'ember']) {
     const cfg = loadConfigWith(JSON.stringify({ firstRunDone: true, theme }));
     assert.equal(cfg.theme, theme, `${theme} must survive an update`);
   }
@@ -71,5 +71,11 @@ test('an existing config keeps an explicitly chosen theme that matches no defaul
 
 test('a corrupt config falls back to the first-install defaults', () => {
   const cfg = loadConfigWith('{ not json');
-  assert.equal(cfg.theme, 'light');
+  assert.equal(cfg.theme, 'ember');
+});
+
+test('the status panel starts collapsed on a first install and stays open for an older config', () => {
+  assert.equal(loadConfigWith(null).statusCollapsed, true);
+  assert.equal(loadConfigWith(JSON.stringify({ firstRunDone: true, theme: 'dark' })).statusCollapsed, false);
+  assert.equal(loadConfigWith(JSON.stringify({ firstRunDone: true, statusCollapsed: true })).statusCollapsed, true);
 });

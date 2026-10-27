@@ -36,6 +36,8 @@ const PR_FIELDS = [
   'statusCheckRollup',
 ];
 
+const PR_FIELDS_WITHOUT_CHECKS = PR_FIELDS.filter((f) => f !== 'statusCheckRollup');
+
 const ISSUE_FIELDS = [
   'number', 'title', 'state', 'author', 'createdAt', 'updatedAt',
   'labels', 'assignees', 'comments', 'url',
@@ -61,6 +63,7 @@ const FAILURE_CODES = [
   'no-remote',
   'repo-not-found',
   'rate-limited',
+  'github-unavailable',
   'gh-failed',
 ];
 
@@ -72,6 +75,7 @@ const FAILURE_PATTERNS = [
   [/gh auth login|authentication token|not logged into/i, 'gh-not-authenticated'],
   [/could not resolve to a repository|HTTP 404/i, 'repo-not-found'],
   [/rate limit/i, 'rate-limited'],
+  [/HTTP 50[234]|bad gateway|gateway timeout|service unavailable/i, 'github-unavailable'],
 ];
 
 function fail(code, message, detail) {
@@ -90,6 +94,7 @@ const FAILURE_COPY = Object.freeze({
   'no-remote': 'that repository has no remote, so there is nothing on GitHub to read',
   'repo-not-found': 'GitHub does not show that repository to this account',
   'rate-limited': 'GitHub is rate limiting this account',
+  'github-unavailable': 'GitHub could not answer that request right now',
   'gh-failed': 'the GitHub CLI could not answer',
 });
 
@@ -122,11 +127,12 @@ function pickState(value, allowed) {
 // Every value is its own array element. A title, a branch or a search term
 // carrying a space, a quote or a semicolon is one argument and stays one.
 function prListArgs(opts = {}) {
+  const fields = opts.includeChecks === false ? PR_FIELDS_WITHOUT_CHECKS : PR_FIELDS;
   const args = [
     'pr', 'list',
     '--state', pickState(opts.state, PR_STATES),
     '--limit', String(clampLimit(opts.limit)),
-    '--json', PR_FIELDS.join(','),
+    '--json', fields.join(','),
   ];
   if (typeof opts.search === 'string' && opts.search.trim()) {
     args.push('--search', opts.search.trim());
@@ -331,6 +337,7 @@ function labelCounts(rows) {
 
 module.exports = {
   PR_FIELDS,
+  PR_FIELDS_WITHOUT_CHECKS,
   ISSUE_FIELDS,
   PR_STATES,
   ISSUE_STATES,

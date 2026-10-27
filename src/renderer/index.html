@@ -225,6 +225,7 @@
                 <button type="button" class="ob-theme-sw" data-mode="nord" title="Nord" aria-label="Nord"></button>
                 <button type="button" class="ob-theme-sw" data-mode="dracula" title="Dracula" aria-label="Dracula"></button>
                 <button type="button" class="ob-theme-sw" data-mode="sepia" title="Sepia" aria-label="Sepia"></button>
+                <button type="button" class="ob-theme-sw" data-mode="ember" title="Ember" aria-label="Ember"></button>
               </div>
             </div>
             <div class="ob-pref-row">
@@ -482,6 +483,28 @@
           <span class="ta-needs" id="topbar-agents-needs" hidden></span>
           <span class="ta-key" aria-hidden="true">Alt+A</span>
         </button>
+        <!-- The active chat's agent and context window, on the chat page only. -->
+        <div class="topbar-chatstat" id="topbar-chatstat" hidden>
+          <span class="tcs-dot" id="tcs-conn" data-on="0" title="Agent not connected"></span>
+          <span class="tcs-dot tcs-dot-run" id="tcs-run" data-on="0" title="No turn running"></span>
+          <span class="tcs-ctx" id="tcs-ctx" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+            <span id="tcs-ctx-text"></span>
+          </span>
+        </div>
+        <span class="tb-sep" aria-hidden="true"></span>
+        <div class="topbar-help">
+          <button class="iconbtn iconbtn-square" id="btn-help" title="Help and feedback" aria-label="Help and feedback" aria-haspopup="menu" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7"/><path d="M12 17h.01"/></svg>
+          </button>
+          <div class="tb-menu" id="topbar-help-menu" role="menu" hidden>
+            <button type="button" class="tb-menu-item" role="menuitem" id="btn-report-bug"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2l1.9 1.9M16 2l-1.9 1.9"/><path d="M9 7.5a3 3 0 0 1 6 0"/><rect x="7" y="7.5" width="10" height="12" rx="5"/><path d="M12 10v9"/><path d="M3 13h4M17 13h4"/><path d="M4 19l3-2M20 19l-3-2"/><path d="M4 7l3 2M20 7l-3 2"/></svg><span>Report a bug</span></button>
+            <button type="button" class="tb-menu-item" role="menuitem" id="btn-request-feature"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg><span>Request a feature</span></button>
+            <div class="tb-menu-sep" role="separator"></div>
+            <button type="button" class="tb-menu-item" role="menuitem" id="btn-help-github"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg><span>Husk on GitHub</span></button>
+          </div>
+        </div>
+        <span class="tb-sep" aria-hidden="true"></span>
         <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New chat</button>
         <button class="iconbtn iconbtn-square" id="btn-status-toggle" title="Toggle status panel" aria-label="Toggle status panel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -585,16 +608,22 @@
           </nav>
         </div>
 
-        <div class="rail-section rail-section-recent" id="rail-recent" hidden>
-          <div class="rail-section-head section-label">
-            <span>Recent Chats</span>
-            <button class="rail-section-action" id="btn-recent-all" title="See all sessions">View All</button>
-          </div>
-          <div class="rail-sub" id="rail-recent-list"></div>
-        </div>
+        <!-- Recent chats used to live here; the Sessions column on the chat page took it over. -->
 
         </div>
         <!-- /rail-scroll -->
+
+
+        <!-- Terminal sits directly above the tool selector: a shell and the CLI
+             it runs beside are the two things you reach for without navigating. -->
+        <div class="rail-section rail-section-term">
+          <nav class="rail-nav">
+            <button class="rail-item" data-page="terminal" title="Terminal">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg></span>
+              <span class="ri-label">Terminal</span>
+            </button>
+          </nav>
+        </div>
 
         <!-- Tool selector: which CLI is active. No section label to avoid confusing with LLM "agents". -->
         <div class="rail-section rail-section-tool">
@@ -620,7 +649,44 @@
 
         <!-- CHAT PAGE -->
         <div class="page page-chat" data-page="chat">
+          <!-- Sessions column: live tabs and past sessions, grouped the way the
+               Sessions page groups them. Painted by app.js with textContent. -->
+          <aside class="chat-sessions" id="chat-sessions" aria-label="Sessions">
+            <div class="cs-head">
+              <button type="button" class="cs-icon-btn" id="cs-collapse" title="Hide the sessions column" aria-label="Hide the sessions column">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+              </button>
+              <span class="cs-title">Sessions</span>
+              <button type="button" class="cs-icon-btn" id="cs-kebab" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="18.5" r="1.7"/></svg>
+              </button>
+              <div class="cs-new" role="group" aria-label="New chat">
+                <button type="button" class="cs-new-main" id="cs-new" title="New chat with the current agent">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                  <span>New</span>
+                </button>
+                <button type="button" class="cs-new-caret" id="cs-new-caret" title="New chat with another agent" aria-label="New chat with another agent" aria-haspopup="menu" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+              </div>
+              <div class="cs-menu" id="cs-agent-menu" role="menu" hidden></div>
+              <div class="cs-menu cs-menu-kebab" id="cs-kebab-menu" role="menu" hidden>
+                <button type="button" class="cs-menu-item" role="menuitem" data-act="all">Open the Sessions page</button>
+                <button type="button" class="cs-menu-item" role="menuitem" data-act="refresh">Refresh</button>
+                <button type="button" class="cs-menu-item" role="menuitem" data-act="hide">Hide this column</button>
+              </div>
+            </div>
+            <label class="cs-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+              <input type="search" id="cs-q" placeholder="Search sessions..." spellcheck="false" autocomplete="off" aria-label="Search sessions" />
+            </label>
+            <div class="cs-list" id="cs-list"></div>
+          </aside>
+          <div class="chat-main">
           <div class="page-head">
+            <button type="button" class="cs-toggle" id="btn-sessions-col" title="Show the sessions column" aria-label="Show the sessions column" aria-pressed="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+            </button>
             <div id="tab-strip" class="tab-strip"></div>
             <div class="page-head-right">
               <button class="ghost-btn" id="btn-split" title="Show two chats side by side (Ctrl+\)">
@@ -674,6 +740,7 @@
             <div class="terminal-wrap">
               <div id="terminal"></div>
             </div>
+          </div>
           </div>
         </div>
 
@@ -2425,6 +2492,19 @@
         <!-- Artifacts. Rows come from the two run stores and are built by
              af-page.js through WfxDom: a goal, a workflow name and a step's
              scrollback are all whatever an agent produced. -->
+        <div class="page page-terminal" data-page="terminal" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Terminal</h1>
+              <span class="page-sub">A shell in your project, without leaving the window</span>
+            </div>
+          </div>
+          <div class="tm-wrap">
+            <div class="tm-strip" id="tm-strip"></div>
+            <div class="tm-panes" id="tm-panes"></div>
+          </div>
+        </div>
+
         <div class="page page-artifacts" data-page="artifacts" hidden>
           <div class="page-head">
             <div class="page-head-left">
@@ -2787,6 +2867,17 @@
                       <option value="dracula">Dracula</option>
                       <option value="light">Light</option>
                       <option value="sepia">Sepia</option>
+                      <option value="ember">Ember</option>
+                    </select>
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Chat view</span>
+                      <span class="pref-desc">How a new chat opens. The agent terminal is the CLI's own screen, for sign-in and for CLIs without a chat protocol.</span>
+                    </span>
+                    <select id="pref-chat-view">
+                      <option value="chat">Native chat</option>
+                      <option value="terminal">Agent terminal</option>
                     </select>
                   </label>
                   <div class="pref-row">
@@ -2895,6 +2986,7 @@
       </section>
 
       <aside id="status-panel">
+        <div id="status-resize" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" title="Drag to resize, double-click to reset"></div>
         <div class="sp-head" role="tablist" aria-label="Session panel">
           <button class="sp-tab is-active" id="sp-tab-status" type="button" role="tab" data-pane="status" aria-selected="true" aria-controls="sp-content">Status</button>
           <button class="sp-tab" id="sp-tab-work" type="button" role="tab" data-pane="work" aria-selected="false" aria-controls="sp-pane-work">Context</button>
@@ -3931,9 +4023,13 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     <script src="wfx-market.js"></script>
     <script src="gh-page.js"></script>
     <script src="af-page.js"></script>
+    <script src="tm-page.js"></script>
     <script src="sch-page.js"></script>
     <script src="sc-dom.js"></script>
     <script src="sc-page.js"></script>
+    <script src="../lib/chat-events.js"></script>
+    <script src="chat-md.js"></script>
+    <script src="chat-ui.js"></script>
     <script src="app.js"></script>
     <!-- Run log. The transcript lives on disk beside the audit log, so this
          reads a finished run's output back from there. -->

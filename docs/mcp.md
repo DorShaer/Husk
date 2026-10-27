@@ -37,10 +37,10 @@ MCP servers               ↻  ＋ Add custom server
 
 INSTALLED
   ●  Loaded · live in current chat
-     memory       npx -y @modelcontextprotocol/server-memory      [● connected]   [toggle]  [×]
+     memory       npx -y @modelcontextprotocol/server-memory      [● connected]   [edit] [clone] [toggle]  [×]
 
   ●  Applying · agent reload pending
-     my-server    HTTP · https://app.example.com/mcp              [checking…]    [toggle]  [×]
+     my-server    HTTP · https://app.example.com/mcp              [checking…]    [edit] [clone] [toggle]  [×]
 
 AVAILABLE
   [Filesystem]  [Memory installed]  [GitHub]  [Time]  [Fetch]  [Brave Search]
@@ -51,6 +51,8 @@ Three semantic sections in "Installed":
 - **Loaded**: green dot. Enabled AND in the snapshot taken when the current agent process started. These are live in the chat right now.
 - **Applying**: amber dot. Enabled now but added or re-enabled since launch. Husk silently restarts the agent to load them; the dot becomes green when the new session starts.
 - **Inactive**: grey dot. Toggled off. Persisted in `_huskMcpDisabled` inside the active agent's config file, so re-enabling is one click and zero retyping.
+
+Each row also has **Edit**, which opens the server form filled in (changing the name renames the entry), and **Clone**, which opens the same form filled in from that server and named `clone-<id>`. Rename the copy, change what you need, and **Save clone** adds it as a new server; the original is untouched, and a name that is already taken is refused on the name field.
 
 Plus a per-row connection state pill: `connected` / `failed` / `needs auth` / `checking…` / `configured`. The first four come from the claude adapter's parse of `claude mcp list`. The `configured` pill is the copilot and gemini adapters' response when there is no live probe.
 
