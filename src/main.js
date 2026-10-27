@@ -9267,6 +9267,18 @@ function transcriptHasHumanTurn(fullPath, fileSize) {
   return text.includes('"kind":"human"') || text.includes('"promptSource":"typed"');
 }
 
+// Both authorship markers at once, for a transcript whose first user line
+// outran the head window. Null past the cap, where the file is kept as a chat.
+function transcriptAuthorship(fullPath, fileSize) {
+  if (fileSize > HUMAN_SCAN_CAP) return null;
+  let text = '';
+  try { text = fs.readFileSync(fullPath, 'utf8'); } catch (_) { return null; }
+  return {
+    human: text.includes('"kind":"human"') || text.includes('"promptSource":"typed"'),
+    sdk: text.includes('"promptSource":"sdk"'),
+  };
+}
+
 // Agents append a title entry to the transcript once the conversation earns a
 // name, and further entries as they refine it. Both land wherever the
 // conversation had reached, which in a long session is far past the head.
@@ -9832,6 +9844,7 @@ ipcMain.handle('sessions:list', () => {
       let sawHumanTurn = false;
       let sawSdkTurn = false;
       let sawPromptSource = false;
+      let sawUserLine = false;
       try {
         const text = readHead(fullPath, 32768);
         headComplete = st.size <= 32768;
@@ -9844,6 +9857,7 @@ ipcMain.handle('sessions:list', () => {
           if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
           if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
           if (obj.type === 'user') {
+            sawUserLine = true;
             const originKind = obj.origin && typeof obj.origin === 'object' ? obj.origin.kind : null;
             const ps = typeof obj.promptSource === 'string' ? obj.promptSource : null;
             if (ps) sawPromptSource = true;
@@ -9868,6 +9882,21 @@ ipcMain.handle('sessions:list', () => {
           if (!headComplete && aiTitle && startedISO && userMessage && originalCwd) break;
         }
       } catch (_) {}
+      // An SDK run can open with one line longer than the head window (a review
+      // prompt carrying a whole diff). That line never parses, and its origin
+      // fields sit after the message, past the window, so when the head held no
+      // user line at all the whole file is read for them, within the cap the
+      // human-turn scan uses.
+      let scannedWhole = false;
+      if (!sawUserLine && !headComplete) {
+        const a = transcriptAuthorship(fullPath, st.size);
+        if (a) {
+          scannedWhole = true;
+          if (a.human || a.sdk) sawPromptSource = true;
+          if (a.human) sawHumanTurn = true;
+          else if (a.sdk) sawSdkTurn = true;
+        }
+      }
       // Husk drives claude over the SDK, and every enqueued prompt also writes a
       // tiny queue-operation receipt file with no assistant turn, shadowing a
       // prompt that ran in the real session file. A file whose whole head fits
@@ -9884,7 +9913,7 @@ ipcMain.handle('sessions:list', () => {
       // real chat can open with a prepended SDK context turn. Files that predate
       // promptSource carry no signal and are kept.
       let background = sawSdkTurn && !sawHumanTurn && sawPromptSource;
-      if (background && !headComplete) background = !transcriptHasHumanTurn(fullPath, st.size);
+      if (background && !headComplete && !scannedWhole) background = !transcriptHasHumanTurn(fullPath, st.size);
       if (background) continue;
 
       const firstMessage = (aiTitle || userMessage || queueContent || '').slice(0, 220);

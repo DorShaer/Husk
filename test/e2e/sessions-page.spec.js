@@ -116,6 +116,15 @@ test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', 
     JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }),
     JSON.stringify({ type: 'ai-title', aiTitle: 'Chat that opened with injected context' }),
   ]);
+  // An SDK review run whose first line is longer than the head window the
+  // list reads: a prompt carrying a whole diff. That line never parses, and the
+  // CLI writes the origin fields after the message, so they sit past the
+  // window too; the run showed as a chat until the whole file was consulted.
+  write('ffffffff-0000-0000-0000-000000000006', [
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', message: { content: 'Review this change for security vulnerabilities.\n' + 'diff --git a/x b/x\n+'.repeat(3000) }, promptSource: 'sdk' }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'no findings' }] } }),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Oversized review prompt run' }),
+  ]);
 
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
@@ -136,6 +145,7 @@ test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', 
   expect(joined).toContain('Chat that opened with injected context'); // human turn anywhere kept
   expect(joined).not.toContain('Background sentiment scoring run'); // --print hidden
   expect(joined).not.toContain('Orchestrator planning run');        // SDK orchestrator hidden
+  expect(joined).not.toContain('Oversized review prompt run');      // long first line still hidden
   expect(rows.length).toBe(3);
   await app.close();
 });
