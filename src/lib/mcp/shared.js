@@ -222,6 +222,31 @@ function toggle(id, activeAgentCommand) {
     : { ok: true, id, enabled: desired, results };
 }
 
+// clone(id) copies one server under a fresh id so a variant can be edited
+// without touching the original. The copy takes clone-<id> (then clone-<id>-2,
+// -3 ...) and the original's enabled state, on every write-capable vendor.
+function clone(id, activeAgentCommand) {
+  const source = String(id || '');
+  if (!source) return { ok: false, error: 'No id' };
+  const servers = collectServers(activeAgentCommand).servers;
+  const original = servers.find((s) => s.id === source);
+  if (!original) return { ok: false, error: `MCP server "${source}" not found` };
+  const taken = new Set(servers.map((s) => s.id));
+  let next = 'clone-' + source;
+  for (let n = 2; taken.has(next); n++) next = 'clone-' + source + '-' + n;
+  const payload = { ...payloadFromServer(original), id: next };
+  const enabled = original.enabled !== false;
+  const results = {};
+  let failures = 0;
+  for (const [key, adapter] of writeAdapters()) {
+    const r = addOrUpdate(adapter, null, payload, enabled);
+    if (r && r.ok) results[key] = { status: 'installed', configPath: adapter.configPath };
+    else { failures++; results[key] = { status: 'error', error: (r && r.error) || 'clone failed', configPath: adapter.configPath }; }
+  }
+  if (failures) return { ok: false, id: next, results, error: `MCP server "${next}" could not be written for ${failures} target${failures === 1 ? '' : 's'}` };
+  return { ok: true, id: next, source, enabled, results };
+}
+
 function addMany(items = []) {
   const results = {};
   let installed = 0;
@@ -245,6 +270,7 @@ module.exports = {
   remove,
   toggle,
   addMany,
+  clone,
   collectServers,
   payloadFromServer,
 };
