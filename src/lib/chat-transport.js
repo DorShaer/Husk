@@ -59,4 +59,4 @@ function commandSessionId(agentCommand) {
   return null;
 }
 
-module.exports = { transportFor, acpArgs, userFlags, commandSessionId };
+module.exports = { transportFor, acpArgs, userFlags, commandSessionId, SESSION_ID };

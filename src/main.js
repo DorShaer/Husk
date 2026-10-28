@@ -16,8 +16,7 @@ const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: 
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
-const { commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
-const { transportFor: chatTransportFor } = require('./lib/chat-transport');
+const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
 const { issueUrl } = require('./lib/feedback-url');
 const Subagents = require('./lib/subagents');
@@ -1775,7 +1774,7 @@ const chatRuntime = createChatRuntime({
   buildEnv: chatEnv,
   resolveExe: resolveAgentExe,
   emit: (tabId, event) => {
-    try { chatSessionRegistry.addFromEvents(event); } catch (_) {}
+    try { if (event && event.type === 'session' && event.sessionId) chatSessionRegistry.add(event.sessionId); } catch (_) {}
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {}
   },
   emitExit: (tabId, code) => {

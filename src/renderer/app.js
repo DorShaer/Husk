@@ -558,13 +558,13 @@ function activateTab(id) {
 // the id written into its launch command. A tab resumed by an older build could
 // sit with an empty agentId while its command still names the session, and
 // matching only agentId then listed and opened that session twice.
-const CMD_SESSION = /--(?:resume|session-id)(?:=|\s+)([A-Za-z0-9][A-Za-z0-9-]{7,})/;
 function tabSessionId(tab) {
   if (!tab) return '';
   if (tab.agentId && !tab.agentIdProvisional) return String(tab.agentId);
   if (tab.resumedSessionId) return String(tab.resumedSessionId);
-  const m = CMD_SESSION.exec(String(tab.launchCommand || tab.command || ''));
-  return m ? m[1] : '';
+  // The id named in the launch command, parsed by the same helper the main
+  // process uses, rather than a second regex kept in step by hand.
+  try { return window.husk.chat.commandSessionId(String(tab.launchCommand || tab.command || '')) || ''; } catch (_) { return ''; }
 }
 
 function tabForSession(sessionId) {
