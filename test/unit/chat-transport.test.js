@@ -35,3 +35,14 @@ test('userFlags keeps flags and drops the program and any subcommand', () => {
   assert.deepEqual(userFlags('kiro-cli chat --model x'), ['--model', 'x']);
   assert.deepEqual(userFlags(''), []);
 });
+
+const { commandSessionId } = require('../../src/lib/chat-transport');
+test('commandSessionId reads the session a command names, and nothing else', () => {
+  assert.equal(commandSessionId('claude --resume 6b3d4688-a66f-4648-95be-a50254aae502'), '6b3d4688-a66f-4648-95be-a50254aae502');
+  assert.equal(commandSessionId('claude --session-id=abcdefgh-1234'), 'abcdefgh-1234');
+  assert.equal(commandSessionId('claude --model opus --resume abcdefgh-1234 --fork-session'), 'abcdefgh-1234');
+  assert.equal(commandSessionId('claude'), null);
+  assert.equal(commandSessionId('claude --resume'), null);
+  assert.equal(commandSessionId('claude --resume "x; rm"'), null);
+  assert.equal(commandSessionId('claude agents --json'), null);
+});

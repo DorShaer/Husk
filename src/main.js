@@ -16,6 +16,7 @@ const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: 
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
+const { commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transportFor: chatTransportFor } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
 const { issueUrl } = require('./lib/feedback-url');
@@ -1832,7 +1833,10 @@ ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay } = {}) =>
   const cmd = (command || config.agentCommand || 'claude').trim();
   const dir = chatCwd(cwd);
   const transport = chatTransportFor(cmd);
-  const claudeSessionId = transport === 'claude' ? crypto.randomUUID() : null;
+  // A fresh chat is pinned to an id Husk picks; a resume already names its
+  // session, and that is the id the shadow session, the per-project binding
+  // and the chat record must carry, not a second one nothing ever wrote.
+  const claudeSessionId = transport === 'claude' ? (chatCommandSessionId(cmd) || crypto.randomUUID()) : null;
   // A resumed chat paints its past turns in the renderer from the on-disk log,
   // but the runtime starts with an empty replay log, so a later reload rebuilt
   // an empty thread. Seeding the runtime log with those same turns means a
@@ -10256,6 +10260,11 @@ ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
   const id = String(payload.id || '');
   if (!id) return { ok: false, error: 'no session id' };
   if (agent === 'claude') {
+    // A session one of this window's own chat tabs is running is not held by
+    // somebody else: it is open here, and the answer is that tab, not a second
+    // reader the CLI would refuse or a copy nobody asked for.
+    const own = chatRuntime.list().find((c) => c && String(c.sessionId || '') === id);
+    if (own) return { ok: true, mode: 'open', tabId: own.tabId, command: `claude --resume ${id}`, cwd: own.cwd || '' };
     const holder = await sessionHolder(id);
     const fork = `claude --resume ${id} --fork-session`;
     if (holder && holder.kind === 'background') {

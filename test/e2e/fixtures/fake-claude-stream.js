@@ -15,7 +15,7 @@ if (args[0] === 'auth' && args[1] === 'status') { process.stdout.write(JSON.stri
 if (args[0] === 'agents') { process.stdout.write('[]'); process.exit(0); }
 if (!args.includes('--input-format')) { process.stdout.write('{}'); process.exit(0); }
 
-const sidIdx = args.indexOf('--session-id');
+const sidIdx = args.indexOf('--session-id') >= 0 ? args.indexOf('--session-id') : args.indexOf('--resume');
 const sessionId = sidIdx >= 0 ? args[sidIdx + 1] : '00000000-0000-4000-8000-000000000000';
 const say = (o) => { try { process.stdout.write(JSON.stringify(o) + '\n'); } catch (_) {} };
 

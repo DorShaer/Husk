@@ -74,6 +74,21 @@ test('a resumed chat keeps its thread across a reload', async () => {
     await expect(pane2.locator('.chat-item-user .chat-bubble')).toHaveText('remember the frog', { timeout: 20_000 });
     await expect(pane2.locator('.chat-item-text')).toContainText('The frog is remembered.');
     await expect(win.locator('#chat-empty')).not.toHaveClass(/show/);
+    // The tab still knows which session it is, so the Sessions column lists
+    // the chat once (live) and opening it from there focuses this tab instead
+    // of starting a second resume that the CLI would refuse into a terminal.
+    const identity = await win.evaluate((sid) => ({
+      agentId: (TABS.get(activeTabId) || {}).agentId, // eslint-disable-line no-undef
+      tabs: TABS.size, // eslint-disable-line no-undef
+      cards: Array.from(document.querySelectorAll(`.cs-card[data-session="${sid}"]`)).map((c) => c.dataset.kind),
+    }), env.sessionId);
+    expect(identity.agentId).toBe(env.sessionId);
+    expect(identity.tabs).toBe(1);
+    expect(identity.cards, 'the open chat is listed twice in the column').toEqual(['live']);
+    await win.evaluate((sid) => { const c = document.querySelector(`.cs-card[data-session="${sid}"]`); if (c) c.click(); }, env.sessionId);
+    await win.waitForTimeout(1500);
+    const after = await win.evaluate(() => ({ tabs: TABS.size, modes: Array.from(TABS.values()).map((t) => t.mode) })); // eslint-disable-line no-undef
+    expect(after, 'opening the session from the column spawned another tab').toEqual({ tabs: 1, modes: ['chat'] });
     // The same resumed child, still reachable: a new turn goes through.
     await pane2.locator('.chat-input').fill('and the toad');
     await pane2.locator('.chat-input').press('Enter');

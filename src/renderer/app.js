@@ -2940,8 +2940,10 @@ function csOpenPast(s) {
   const agents = (typeof sx !== 'undefined' && sx.agents) ? sx.agents : null;
   const holder = agents && agents.bySession ? agents.bySession.get(s.id) : null;
   const owned = { ...s, owner: cs.agent, project: s.projectPath, prdpath: s.prdPath };
-  if (holder && holder.held) { resumeSessionInChat(owned); return; }
+  // A chat this window already has open is one click away, whatever the
+  // agent list says about who holds it: the holder is this window's own child.
   if (focusOpenSession(s.id)) return;
+  if (holder && holder.held) { resumeSessionInChat(owned); return; }
   resumeIntoChat(owned).then((done) => { if (!done) resumeSessionInChat(owned); })
     .catch(() => resumeSessionInChat(owned));
 }
@@ -2961,6 +2963,13 @@ async function resumeIntoChat(d, { keepPage = false } = {}) {
   let plan = null;
   try { plan = await window.husk.sessions.resumeCommand({ agent, id: d.id, cwd }); } catch (_) { return false; }
   if (!plan || !plan.ok || !plan.command) return false;
+  // Already running in one of this window's tabs: that tab is the answer.
+  if (plan.mode === 'open') {
+    if (focusOpenSession(d.id)) return true;
+    const t = plan.tabId ? TABS.get(String(plan.tabId)) : null;
+    if (t) { closeDetail(); setPage('chat'); activateTab(t.id); return true; }
+    return false;
+  }
   if (plan.mode === 'attach' || plan.mode === 'fork') return false;
   if (!chatProtocolFor(plan.command)) return false;
   let hist = null;
