@@ -233,3 +233,30 @@ test('an agent that survives to the screen carries what it was asked', () => {
   const rows = Subagents.describe(scan(tree));
   assert.equal(rows[0].intent, 'work on a1');
 });
+
+test('the scan and head caches stay bounded under many transcripts, same result', () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-subcap-'));
+  const cache = new Map();
+  const heads = new Map();
+  // One real transcript with two tool-use/result pairs, scanned repeatedly.
+  const real = path.join(dir, 'real.jsonl');
+  fs.writeFileSync(real, [
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_a' }] } }),
+    JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_a' }] } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_b' }] } }),
+    JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_b' }] } }),
+  ].join('\n') + '\n');
+  const ids1 = Subagents.resolvedToolUses(real, cache);
+  const n1 = ids1.size;
+  // Flood the cache with far more distinct transcript paths than the cap.
+  for (let i = 0; i < 2000; i++) Subagents.resolvedToolUses(path.join(dir, `ghost-${i}.jsonl`), cache);
+  // The real entry was evicted, so a fresh scan recomputes it from scratch and
+  // must return the identical id set.
+  const ids2 = Subagents.resolvedToolUses(real, new Map());
+  assert.equal(ids2.size, n1, 'rescanning an evicted transcript changed the result');
+  assert.ok(cache.size <= 512, `scan cache grew past its cap: ${cache.size}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

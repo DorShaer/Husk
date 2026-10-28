@@ -89,10 +89,8 @@
         "src/lib/autopilot-history.js",
         "src/lib/autopilot-apply.js",
         "src/lib/autopilot-orchestrator.js",
-        "src/lib/autopilot-pool.js",
         "src/lib/autopilot-question.js",
         "src/lib/autopilot-status.js",
-        "src/lib/autopilot-worktree.js",
         "src/lib/autopilot-integrate.js",
         "src/lib/autonomy",
         "src/lib/race-judge.js"

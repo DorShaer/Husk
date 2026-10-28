@@ -53,7 +53,7 @@ function listDir(dir) {
 function resolvedToolUses(transcript, cache) {
   if (!transcript) return new Set();
   let ent = cache.get(transcript);
-  if (!ent) { ent = { off: 0, rest: '', ids: new Set() }; cache.set(transcript, ent); }
+  if (!ent) { ent = { off: 0, rest: '', ids: new Set() }; cache.set(transcript, ent); capCache(cache); }
   const st = statOf(transcript);
   if (!st) return ent.ids;
   // A file that shrank was replaced, so the offset it was read to means nothing.
@@ -112,11 +112,20 @@ function runProgress(dir) {
 // its file. The record never changes once written, so each file is read once
 // however often the fleet is polled.
 const HEAD_BYTES = 65536;
+// The scan and head caches are keyed by transcript path and, without a bound,
+// grow for every transcript ever seen while the Agents view polls. Cap the
+// number of entries, evicting the oldest. An evicted entry is simply rescanned
+// from the start next time, which yields the same result, so the cap changes
+// only memory, never output.
+const CACHE_MAX = 512;
+function capCache(cache) {
+  if (cache && cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
 
 function promptHead(file, cache) {
   if (cache && cache.has(file)) return cache.get(file);
   const text = firstPrompt(file, HEAD_BYTES);
-  if (cache) cache.set(file, text);
+  if (cache) { cache.set(file, text); capCache(cache); }
   return text;
 }
 
