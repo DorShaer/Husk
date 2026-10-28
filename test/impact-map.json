@@ -393,6 +393,7 @@
         "chat-mode.spec.js",
         "chat-login.spec.js",
         "chat-reload-resume.spec.js",
+        "chat-ctrl-r-reload.spec.js",
         "terminal-page.spec.js",
         "status-resize.spec.js"
       ],

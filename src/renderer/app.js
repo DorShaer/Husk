@@ -339,7 +339,9 @@ function writeStoredState(key, state) {
 }
 
 function saveRouteState() { writeStoredState(ROUTE_STATE_KEY, { suppressAutoChat: false }); }
-function saveReloadState() { writeStoredState(RELOAD_STATE_KEY, { suppressAutoChat: true }); }
+function saveReloadState() {
+  writeStoredState(RELOAD_STATE_KEY, { suppressAutoChat: true, page: currentPage, activeTabId });
+}
 
 function takeReloadState() {
   return readStoredState(RELOAD_STATE_KEY, true);
@@ -465,7 +467,10 @@ function createTab(idOverride) {
     // title is the auto-derived name (agent session title, else this default).
     // customTitle, when set, is the user's rename and wins over title.
     // agentId links this tab to its claude session once resolved.
-    title: `Chat ${TABS.size + 1}`,
+    title: 'New Chat',
+    // When this tab was created, so the Sessions column can keep the newest
+    // chats at the top regardless of when each last had activity.
+    createdAt: Date.now(),
     customTitle: null,
     // titleEarned flips once the session's generated name is adopted;
     // promptSent marks the first submitted prompt, which is when the name
@@ -1832,8 +1837,11 @@ function refreshFromShortcut() {
   const now = Date.now();
   if (now - lastShortcutReloadAt < 750) return;
   lastShortcutReloadAt = now;
-  if (currentPage === 'chat') restartPty();
-  else reloadRendererPreservingPlace();
+  // Ctrl+R reloads the window and comes back to the same chat. It used to
+  // restart the agent on the chat page, which started a fresh empty session in
+  // the tab and left the real one behind as a second card. Restarting the
+  // agent is the Restart button's job, not the reload key's.
+  reloadRendererPreservingPlace();
 }
 function markReloadInPlace() {
   saveReloadState();
@@ -2737,7 +2745,9 @@ function csModel() {
   const match = (c) => !q || `${c.title}\n${c.last}\n${c.excerpt}`.toLowerCase().includes(q);
   const open = new Set();
   for (const t of TABS.values()) { const sid = tabSessionId(t); if (sid) open.add(sid); }
-  const live = [...TABS.values()].map(csLiveCard).filter(match);
+  const live = [...TABS.values()]
+    .sort((a, b) => (b.createdAt || b.csAt || 0) - (a.createdAt || a.csAt || 0))
+    .map(csLiveCard).filter(match);
   const past = (Array.isArray(cs.list) ? cs.list : []).filter((s) => s && !open.has(s.id))
     .map((s) => csPastCard(s, names)).filter(match)
     .sort((a, b) => b.mtime - a.mtime);
