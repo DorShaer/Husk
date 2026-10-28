@@ -9987,7 +9987,7 @@ ipcMain.handle('sessions:list', () => {
         projectPath: cwdAuthoritative,
         originalCwd: originalCwd || '',
         path: fullPath,
-        title: matchedPrd ? matchedPrd.task : (firstMessage || '(empty)'),
+        title: matchedPrd ? matchedPrd.task : firstMessage,
         // True once the transcript carries a generated title, not just the
         // first user message standing in for one.
         named: !!aiTitle || !!matchedPrd,

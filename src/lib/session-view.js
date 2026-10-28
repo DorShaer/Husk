@@ -88,7 +88,10 @@ const norm = (x) => String(x == null ? '' : x).toLowerCase().replace(/\s+/g, ' '
 
 function titleOf(s, names) {
   const custom = names && s ? names[s.id] : '';
-  return String(custom || (s && s.title) || '');
+  const t = String(custom || (s && s.title) || '');
+  // "(empty)" is the placeholder a session with no first message carries, not
+  // a real name; treat it as untitled so a view's own fallback shows instead.
+  return t === '(empty)' ? '' : t;
 }
 
 // ─── Liveness ───────────────────────────────────────────────────────────────
