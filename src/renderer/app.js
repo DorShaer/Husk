@@ -1074,6 +1074,9 @@ const WHATS_NEW = {
     ],
   },
 };
+// 2.13.1 is a bugfix release with no new features, so an update to it shows the
+// 2.13.0 notes rather than nothing. Alias keeps a single source of those notes.
+WHATS_NEW['2.13.1'] = WHATS_NEW['2.13.0'];
 function whatsNewFor(version) {
   // Exact match only. A packaged release reports its real version; running
   // from source reports Electron's version, which has no entry here.
