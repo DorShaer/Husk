@@ -1482,6 +1482,20 @@ async function reattachSessions() {
   // Chat children outlive a reload too. Read them first so a tab whose PTY sits
   // behind a chat pane reattaches to that PTY instead of being resumed.
   const chats = await listLiveChats();
+  // A chat resumed before this session started carries an empty runtime replay
+  // log (it was painted from disk in the renderer, never recorded in the
+  // runtime). Reattaching it would show a blank thread, so any chat that comes
+  // back with no events has its history read from disk here before it is
+  // painted. New chats, and chats whose log already holds the thread, are left
+  // as they are.
+  await Promise.all(chats.map(async (c) => {
+    if (!c || (Array.isArray(c.events) && c.events.length) || !c.sessionId || !c.cwd) return;
+    try {
+      const agent = String(c.command || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0].toLowerCase();
+      const hist = await window.husk.chat.history({ agent, sessionId: c.sessionId, cwd: c.cwd });
+      if (hist && hist.ok && Array.isArray(hist.events) && hist.events.length) c.events = hist.events;
+    } catch (_) { /* leave it empty: an unreadable log is better than a crash */ }
+  }));
   const chatIds = new Set(chats.map((c) => c.tabId));
   for (const c of chats) chatRestoreBuffers.set(c.tabId, { events: [], exitCode: null });
   let live;
@@ -2456,9 +2470,13 @@ function startChatForTab(tab) {
   c.setInfo({ agentName: cli, cwd: chatWorkDir(tab) });
   c.setStarting(true);
   tab.chatAlive = false;
+  // Carried into chat.start so the runtime's own replay log holds the resumed
+  // turns too; without it a reload after a resume rebuilds an empty thread.
+  let replaySeed = null;
   if (tab.chatHistory) {
     const history = tab.chatHistory;
     tab.chatHistory = null;
+    replaySeed = Array.isArray(history) ? history : null;
     c.replay(history, { turnOpen: false });
     c.apply({ type: 'status', text: 'Resumed session' });
     c.flush();
@@ -2468,7 +2486,7 @@ function startChatForTab(tab) {
   renderChatModeToggle();
   const run = (async () => {
     let res;
-    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null }); }
+    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null, replay: replaySeed }); }
     catch (err) { res = { ok: false, error: (err && err.message) || String(err) }; }
     // Closed or switched away while starting: nothing here to update.
     if (!TABS.has(tab.id) || tab.chat !== c || tab.mode !== 'chat') return false;

@@ -392,6 +392,7 @@
       "specs": [
         "chat-mode.spec.js",
         "chat-login.spec.js",
+        "chat-reload-resume.spec.js",
         "terminal-page.spec.js",
         "status-resize.spec.js"
       ],

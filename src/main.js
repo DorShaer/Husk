@@ -1828,12 +1828,18 @@ function dropChatShadowSession(tabId) {
   }
 }
 
-ipcMain.handle('chat:start', async (_e, { tabId, command, cwd } = {}) => {
+ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay } = {}) => {
   const cmd = (command || config.agentCommand || 'claude').trim();
   const dir = chatCwd(cwd);
   const transport = chatTransportFor(cmd);
   const claudeSessionId = transport === 'claude' ? crypto.randomUUID() : null;
-  const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId });
+  // A resumed chat paints its past turns in the renderer from the on-disk log,
+  // but the runtime starts with an empty replay log, so a later reload rebuilt
+  // an empty thread. Seeding the runtime log with those same turns means a
+  // reload reconstructs the whole conversation, not just what came after the
+  // resume. Bounded so a giant history cannot swell the log past its cap.
+  const seed = Array.isArray(replay) ? replay.slice(-4000) : null;
+  const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed });
   if (res && res.ok) {
     chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
     if (transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
