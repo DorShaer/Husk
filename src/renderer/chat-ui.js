@@ -756,6 +756,16 @@
         if (mm[1]) chooseModel(mm[1], mm[1]); else openModelMenu();
         return true;
       }
+      // Signing in and out are the CLI's interactive commands: over the wire it
+      // answers that they are not available here. The host opens them in a
+      // terminal instead, where they work, and says so in the thread.
+      const auth = /^\/(login|logout)\s*$/.exec(text);
+      if (auth && textArg === undefined) {
+        input.value = ''; autogrow(); closeAc(); syncComposer();
+        if (typeof o.onAuth === 'function') { try { o.onAuth(auth[1]); } catch (_) {} }
+        else apply({ type: 'status', text: `Run ${auth[1] === 'logout' ? 'claude auth logout' : 'claude auth login'} in a Terminal tab.` });
+        return true;
+      }
       histIdx = -1;
       if (editingKey && textArg === undefined) {
         // The edited prompt and its reply leave the thread before the new one lands.

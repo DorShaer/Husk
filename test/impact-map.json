@@ -47,7 +47,8 @@
         "agent-canvas.spec.js",
         "agent-attach.spec.js",
         "agent-inprocess.spec.js",
-        "agent-center-keys.spec.js"
+        "agent-center-keys.spec.js",
+        "agent-stale-stop.spec.js"
       ],
       "tokens": [
         "ag",
@@ -390,6 +391,7 @@
     "chatmode": {
       "specs": [
         "chat-mode.spec.js",
+        "chat-login.spec.js",
         "terminal-page.spec.js",
         "status-resize.spec.js"
       ],

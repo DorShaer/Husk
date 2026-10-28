@@ -1453,6 +1453,12 @@ window.husk.pty.onExit((sessionId, code) => {
   if (!tab || tab.restarting) return;
   tab.exited = true;
   refreshShellStatusBar();
+  const auth = authTabs.get(sessionId);
+  if (auth) {
+    authTabs.delete(sessionId);
+    finishAuthTab(tab, auth, code).catch(() => {});
+    return;
+  }
   if (code === 127) {
     // 127 = shell could not find the agent binary; route the user to setup.
     const cmd = (cfg && cfg.agentCommand || 'the agent').split(/\s+/)[0];
@@ -2374,9 +2380,65 @@ function ensureChatPane(tab) {
       // Per tab only: the next chat still opens in Chat view.
       setTabMode(tab, 'terminal');
     },
+    onAuth: (kind) => { openAuthTab(tab, kind); },
     title: displayTitle(tab),
   });
   return tab.chat;
+}
+
+// /login and /logout typed in a chat. The CLI's sign-in is interactive (it
+// opens a browser and waits for a code), so it runs in a terminal tab of its
+// own; when that tab's command exits the chat is told who is signed in now.
+// Tabs opened this way are kept here so their exit is read as a sign-in result
+// rather than an agent that died.
+const authTabs = new Map();
+async function openAuthTab(fromTab, kind) {
+  const cli = tabAgentCommand(fromTab).split(/\s+/)[0];
+  const verb = kind === 'logout' ? 'logout' : 'login';
+  if (cli !== 'claude') {
+    if (fromTab.chat) fromTab.chat.apply({ type: 'status', text: `${cli} signs in from its own terminal; switch this tab to Terminal to do that.` });
+    return;
+  }
+  if (fromTab.chat) {
+    fromTab.chat.apply({ type: 'status', text: verb === 'login'
+      ? 'Opening a terminal to sign in. This chat keeps the account it started with; chats started after signing in use the new one.'
+      : 'Opening a terminal to sign out.' });
+  }
+  const tab = await openNewChatTab({ command: `claude auth ${verb}`, cwd: fromTab.cwd || null, title: verb === 'login' ? 'Sign in' : 'Sign out', customTitle: true });
+  if (tab) authTabs.set(tab.id, { verb, fromTabId: fromTab.id });
+}
+
+async function finishAuthTab(tab, auth, code) {
+  const from = TABS.get(auth.fromTabId) || null;
+  const say = (text, kind) => { if (from && from.chat) from.chat.apply({ type: kind === 'error' ? 'error' : 'status', text }); };
+  if (code !== 0) {
+    tab.term.writeln(`\r\n\x1b[38;2;244;63;94m[sign-in did not finish (exit ${code})]\x1b[0m`);
+    say(auth.verb === 'login' ? 'Signing in did not finish. The account is unchanged.' : 'Signing out did not finish.', 'error');
+    toast(auth.verb === 'login' ? 'Sign-in did not finish' : 'Sign-out did not finish', 'error');
+    return;
+  }
+  let st = null;
+  try { st = await window.husk.auth.status(); } catch (_) { st = null; }
+  const who = st && st.ok && st.loggedIn
+    ? `${st.email || 'your account'}${st.subscriptionType ? ` (${st.subscriptionType})` : ''}`
+    : '';
+  if (auth.verb === 'logout') {
+    tab.term.writeln('\r\n\x1b[38;2;106;115;133m[signed out; you can close this tab]\x1b[0m');
+    say('Signed out. Type /login to sign in again.', 'status');
+    toast('Signed out', 'success');
+    return;
+  }
+  tab.term.writeln(`\r\n\x1b[38;2;106;115;133m[signed in${who ? ' as ' + who : ''}; you can close this tab]\x1b[0m`);
+  say(who ? `Signed in as ${who}. Start a new chat to use this account; this one keeps the account it started with.` : 'Signed in. Start a new chat to use the new account.', 'status');
+  if (from && TABS.has(from.id) && from.mode === 'chat') {
+    toastAction(who ? `Signed in as ${who}` : 'Signed in', 'New chat', () => {
+      if (!TABS.has(from.id)) return;
+      if (from.id !== activeTabId) activateTab(from.id);
+      restartChat(from, { command: from.launchCommand || undefined, skipWelcome: true });
+    }, 'success');
+  } else {
+    toast(who ? `Signed in as ${who}` : 'Signed in', 'success');
+  }
 }
 
 // Starts this tab's headless agent with a fresh thread. Resolves true once the

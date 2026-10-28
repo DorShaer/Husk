@@ -101,6 +101,17 @@ test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', 
     JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'planning' }] } }),
     JSON.stringify({ type: 'ai-title', aiTitle: 'Orchestrator planning run' }),
   ]);
+  // A chat typed in Husk's own Chat view. Husk drives claude over its stream
+  // protocol, so every turn carries the same promptSource "sdk" as the runs
+  // above; what tells it apart is that Husk picked the session id itself and
+  // wrote it down. Such a chat vanished from the list on restart before.
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'chat-sessions.json'), JSON.stringify(['husk-chat-0001-typed-in-chat-view']));
+  write('husk-chat-0001-typed-in-chat-view', [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Chat held in Husk Chat view' }),
+    JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', promptSource: 'sdk', entrypoint: 'sdk-cli', message: { content: 'hi' } }),
+    JSON.stringify({ timestamp: now(), type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Hello.' }] } }),
+  ]);
+
   // A pre-promptSource file: no origin signal, so it must be kept, not hidden.
   write('dddddddd-0000-0000-0000-000000000004', [
     JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', message: { content: 'OLD chat from before origin tracking' } }),
@@ -143,10 +154,11 @@ test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', 
   expect(joined).toContain('Discuss the widget design');       // typed chat kept
   expect(joined).toContain('OLD chat from before origin tracking'); // fail-open kept
   expect(joined).toContain('Chat that opened with injected context'); // human turn anywhere kept
+  expect(joined).toContain('Chat held in Husk Chat view');         // Husk's own SDK-driven chat kept
   expect(joined).not.toContain('Background sentiment scoring run'); // --print hidden
   expect(joined).not.toContain('Orchestrator planning run');        // SDK orchestrator hidden
   expect(joined).not.toContain('Oversized review prompt run');      // long first line still hidden
-  expect(rows.length).toBe(3);
+  expect(rows.length).toBe(4);
   await app.close();
 });
 

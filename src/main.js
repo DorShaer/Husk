@@ -15,6 +15,7 @@ const { resolveInside, isInside, realParentInside, realPathInside } = require('.
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
+const { createChatSessionRegistry } = require('./lib/chat-session-registry');
 const { transportFor: chatTransportFor } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
 const { issueUrl } = require('./lib/feedback-url');
@@ -1759,11 +1760,23 @@ function chatEnv() {
   return env;
 }
 
+// Which claude sessions are Husk's own chats, so the Sessions list can keep
+// them apart from the SDK runs it hides. Seeded with the per-project bindings
+// kept in config before this record existed.
+const chatSessionRegistry = createChatSessionRegistry({
+  file: path.join(CONFIG_DIR, 'chat-sessions.json'),
+  fs,
+  seed: () => Object.values((config && config.lastClaudeSessions) || {}),
+});
+
 const chatRuntime = createChatRuntime({
   spawn: require('child_process').spawn,
   buildEnv: chatEnv,
   resolveExe: resolveAgentExe,
-  emit: (tabId, event) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {} },
+  emit: (tabId, event) => {
+    try { chatSessionRegistry.addFromEvents(event); } catch (_) {}
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {}
+  },
   emitExit: (tabId, code) => {
     try { dropChatShadowSession(tabId); } catch (_) {}
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:exit', { tabId, code }); } catch (_) {}
@@ -1821,8 +1834,36 @@ ipcMain.handle('chat:start', async (_e, { tabId, command, cwd } = {}) => {
   const transport = chatTransportFor(cmd);
   const claudeSessionId = transport === 'claude' ? crypto.randomUUID() : null;
   const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId });
-  if (res && res.ok) chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
+  if (res && res.ok) {
+    chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
+    if (transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
+  }
   return res;
+});
+
+// Who the claude CLI is signed in as, for the notice after a sign-in finishes.
+// Read from the CLI itself rather than its credential files.
+ipcMain.handle('auth:status', async () => {
+  if (activeAgentName() !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
+  const env = buildAgentEnv();
+  const exe = resolveAgentExe('claude', env.PATH);
+  try {
+    const out = await new Promise((resolve, reject) => {
+      execFile(exe, ['auth', 'status', '--json'], { env, timeout: 15000, maxBuffer: 256 * 1024 }, (err, stdout) => {
+        if (err) reject(err); else resolve(String(stdout || ''));
+      });
+    });
+    const o = JSON.parse(out);
+    return {
+      ok: true,
+      loggedIn: !!o.loggedIn,
+      email: typeof o.email === 'string' ? o.email : '',
+      subscriptionType: typeof o.subscriptionType === 'string' ? o.subscriptionType : '',
+      orgName: typeof o.orgName === 'string' ? o.orgName : '',
+    };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'could not read the sign-in status' };
+  }
 });
 ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list() }));
 // chat:history reads a past session's on-disk log and returns it as chat
@@ -9913,6 +9954,9 @@ ipcMain.handle('sessions:list', () => {
       // real chat can open with a prepended SDK context turn. Files that predate
       // promptSource carry no signal and are kept.
       let background = sawSdkTurn && !sawHumanTurn && sawPromptSource;
+      // Husk's own Chat view drives claude the same way and its turns carry the
+      // same marks, so a session Husk opened itself is a chat whatever they say.
+      if (background && chatSessionRegistry.has(id)) background = false;
       if (background && !headComplete && !scannedWhole) background = !transcriptHasHumanTurn(fullPath, st.size);
       if (background) continue;
 

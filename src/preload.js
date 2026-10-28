@@ -188,6 +188,9 @@ contextBridge.exposeInMainWorld('husk', {
   // Agents a chat started that keep working on their own. Distinct from
   // `agents` below, which detects which agent CLIs are installed, and from the
   // Agents page, which edits reusable agent definitions.
+  auth: {
+    status: () => ipcRenderer.invoke('auth:status'),
+  },
   bgAgents: {
     list: (payload) => ipcRenderer.invoke('bgAgents:list', payload || {}),
     peek: (payload) => ipcRenderer.invoke('bgAgents:peek', payload || {}),
