@@ -433,3 +433,13 @@ test('a long query keeps full subsequence matching', () => {
   const { rows } = sv.filterSessions(list, ctx({ query: 'rebses', fuzzyMatch }));
   assert.equal(rows.length, 1);
 });
+
+test('titleOf treats the "(empty)" placeholder as no title', () => {
+  // A session with no first message carries the literal "(empty)" placeholder.
+  // It is not a name, so a view's own fallback should show instead.
+  assert.equal(sv.titleOf({ id: 'a', title: '(empty)' }, {}), '');
+  assert.equal(sv.titleOf({ id: 'b', title: 'Real title' }, {}), 'Real title');
+  assert.equal(sv.titleOf({ id: 'c', title: '' }, {}), '');
+  // A user's rename wins even over the placeholder.
+  assert.equal(sv.titleOf({ id: 'd', title: '(empty)' }, { d: 'Renamed' }), 'Renamed');
+});
