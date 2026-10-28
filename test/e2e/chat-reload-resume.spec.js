@@ -98,3 +98,45 @@ test('a resumed chat keeps its thread across a reload', async () => {
     await app.close();
   }
 });
+
+test('a tab whose session id was lost is still matched by its resume command', async () => {
+  test.setTimeout(90_000);
+  const env = makeHome();
+  const app = await electron.launch({
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    cwd: REPO_ROOT,
+    env: { ...process.env, HOME: env.homeDir, USERPROFILE: env.homeDir, PATH: `${env.bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
+    timeout: 30_000,
+  });
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await win.waitForLoadState('domcontentloaded');
+    await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+    const pane = win.locator('.chat-pane.show');
+    await expect(pane.locator('.chat-item-user .chat-bubble')).toHaveText('remember the frog', { timeout: 30_000 });
+
+    // Recreate the state an older build left: the tab runs the session (its
+    // launch command names it) but its agentId was never set. The column must
+    // still list the chat once and clicking it must focus this tab, not fork a
+    // second copy.
+    const before = await win.evaluate((sid) => {
+      const t = TABS.get(activeTabId); // eslint-disable-line no-undef
+      t.agentId = null; t.agentIdProvisional = false; t.resumedSessionId = null;
+      t.launchCommand = `claude --resume ${sid}`;
+      csSchedule(); // eslint-disable-line no-undef
+      return { tabs: TABS.size }; // eslint-disable-line no-undef
+    }, env.sessionId);
+    expect(before.tabs).toBe(1);
+    await win.waitForTimeout(800);
+
+    const cards = await win.evaluate((sid) => Array.from(document.querySelectorAll(`.cs-card[data-session="${sid}"]`)).map((c) => c.dataset.kind), env.sessionId);
+    expect(cards, 'a tab with a lost id is listed twice in the column').toEqual(['live']);
+
+    await win.evaluate((sid) => { const c = document.querySelector(`.cs-card[data-session="${sid}"]`); if (c) c.click(); }, env.sessionId);
+    await win.waitForTimeout(2500);
+    const after = await win.evaluate(() => ({ tabs: TABS.size, modes: Array.from(TABS.values()).map((t) => t.mode) })); // eslint-disable-line no-undef
+    expect(after, 'clicking the chat forked a second tab instead of focusing it').toEqual({ tabs: 1, modes: ['chat'] });
+  } finally {
+    await app.close();
+  }
+});

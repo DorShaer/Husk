@@ -548,11 +548,25 @@ function activateTab(id) {
 // A provisional id is the resolver's guess at which session a fresh chat turned
 // into, and it is revised. Matching on one would focus a tab that turns out to
 // be a different conversation, so only a settled id counts as identity.
+// The claude session a tab is running, by every name it might be known under:
+// the id it adopted once the agent reported it, the id it was resumed from, and
+// the id written into its launch command. A tab resumed by an older build could
+// sit with an empty agentId while its command still names the session, and
+// matching only agentId then listed and opened that session twice.
+const CMD_SESSION = /--(?:resume|session-id)(?:=|\s+)([A-Za-z0-9][A-Za-z0-9-]{7,})/;
+function tabSessionId(tab) {
+  if (!tab) return '';
+  if (tab.agentId && !tab.agentIdProvisional) return String(tab.agentId);
+  if (tab.resumedSessionId) return String(tab.resumedSessionId);
+  const m = CMD_SESSION.exec(String(tab.launchCommand || tab.command || ''));
+  return m ? m[1] : '';
+}
+
 function tabForSession(sessionId) {
   const id = String(sessionId || '');
   if (!id) return null;
   for (const t of TABS.values()) {
-    if (t.agentId === id && !t.agentIdProvisional) return t;
+    if (tabSessionId(t) === id) return t;
   }
   return null;
 }
@@ -2686,7 +2700,7 @@ function csLiveCard(t) {
   if (s.model) chips.push(String(s.model));
   return {
     key: `t:${t.id}`, live: true, tabId: t.id,
-    sessionId: t.agentId && !t.agentIdProvisional ? t.agentId : '',
+    sessionId: tabSessionId(t),
     agent: csBase(tabAgentCommand(t).split(/\s+/)[0]) || 'agent',
     mtime: t.csAt,
     title: displayTitle(t),
@@ -2722,7 +2736,7 @@ function csModel() {
   const q = cs.query.trim().toLowerCase();
   const match = (c) => !q || `${c.title}\n${c.last}\n${c.excerpt}`.toLowerCase().includes(q);
   const open = new Set();
-  for (const t of TABS.values()) if (t.agentId) open.add(t.agentId);
+  for (const t of TABS.values()) { const sid = tabSessionId(t); if (sid) open.add(sid); }
   const live = [...TABS.values()].map(csLiveCard).filter(match);
   const past = (Array.isArray(cs.list) ? cs.list : []).filter((s) => s && !open.has(s.id))
     .map((s) => csPastCard(s, names)).filter(match)
