@@ -51,9 +51,12 @@ function commandSessionId(agentCommand) {
   const flags = userFlags(agentCommand);
   for (let i = 0; i < flags.length; i++) {
     const f = String(flags[i]);
-    const m = /^--(resume|session-id)(?:=(.*))?$/.exec(f);
+    // Match the flag and its delimiter only; the value is sliced or taken from
+    // the next argument. Keeping the value out of the pattern avoids a nested
+    // quantifier the ReDoS linter flags, with identical behavior.
+    const m = /^--(resume|session-id)(=|$)/.exec(f);
     if (!m) continue;
-    const v = m[2] !== undefined ? m[2] : flags[i + 1];
+    const v = m[2] === '=' ? f.slice(m[0].length) : flags[i + 1];
     if (v && SESSION_ID.test(String(v))) return String(v);
   }
   return null;
