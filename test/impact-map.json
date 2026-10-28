@@ -394,6 +394,7 @@
         "chat-login.spec.js",
         "chat-reload-resume.spec.js",
         "chat-ctrl-r-reload.spec.js",
+        "chat-pane-teardown.spec.js",
         "terminal-page.spec.js",
         "status-resize.spec.js"
       ],

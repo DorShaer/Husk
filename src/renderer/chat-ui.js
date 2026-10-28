@@ -734,7 +734,11 @@
     }
     function closeModelMenu() { modelMenuOpen = false; modelMenu.hidden = true; }
     function toggleModelMenu() { if (modelMenuOpen) closeModelMenu(); else openModelMenu(); }
-    document.addEventListener('click', (ev) => { if (modelMenuOpen && !modelMenu.contains(ev.target)) closeModelMenu(); });
+    // Held so destroy() can remove it: a document-level listener left behind
+    // keeps this whole pane's closure alive after the pane is gone, so every
+    // chat opened in a session would pile up until the next reload.
+    const onDocClick = (ev) => { if (modelMenuOpen && !modelMenu.contains(ev.target)) closeModelMenu(); };
+    document.addEventListener('click', onDocClick);
     async function chooseModel(modelId, modelName) {
       if (!modelId) return;
       if (running) { apply({ type: 'status', text: 'Wait for the current reply to finish, then switch the model.' }); return; }
@@ -1444,10 +1448,11 @@
     let pinning = false;
     function toBottom() { pinning = true; scroller.scrollTop = scroller.scrollHeight; requestAnimationFrame(() => { pinning = false; }); }
     scroller.addEventListener('scroll', () => { if (!pinning && scroller.clientHeight > 0) pinned = nearBottom(); });
+    let resizeObserver = null;
     if (typeof ResizeObserver === 'function') {
-      const ro = new ResizeObserver(() => { if (pinned && scroller.clientHeight > 0) toBottom(); });
-      ro.observe(scroller);
-      ro.observe(list);
+      resizeObserver = new ResizeObserver(() => { if (pinned && scroller.clientHeight > 0) toBottom(); });
+      resizeObserver.observe(scroller);
+      resizeObserver.observe(list);
     }
 
     function paint() {
@@ -1676,6 +1681,9 @@
         queue = [];
         nodes.clear();
         closeAc();
+        try { document.removeEventListener('click', onDocClick); } catch (_) {}
+        try { if (resizeObserver) resizeObserver.disconnect(); } catch (_) {}
+        resizeObserver = null;
         try { pane.remove(); } catch (_) {}
       },
     };
