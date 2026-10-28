@@ -7,7 +7,7 @@ const os = require('node:os');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-test('Ctrl+R reloads non-chat pages but restarts Copilot chat without renderer reload', async () => {
+test('Ctrl+R reloads the window on every page and keeps the live chat session', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-copilot-reload-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
@@ -83,6 +83,10 @@ setInterval(() => {}, 1000);
   const dirs = fs.readdirSync(path.join(homeDir, '.copilot', 'session-state')).sort();
   expect(dirs).toEqual(beforeDirs);
 
+  // On the chat page too, Ctrl+R now reloads the window and reattaches to the
+  // live session, rather than restarting the agent into a fresh one. So the
+  // renderer context is replaced (the sentinel is gone), no second Copilot
+  // session is spawned, and the surviving PTY is reattached in place.
   await win.evaluate(() => {
     setPage('chat');
     window.__huskNoReloadSentinel = 'chat-before';
@@ -91,12 +95,9 @@ setInterval(() => {}, 1000);
   await win.bringToFront();
   await win.click('body');
   await win.keyboard.press('Control+R');
-  await expect.poll(
-    () => fs.readdirSync(path.join(homeDir, '.copilot', 'session-state')).length,
-    { timeout: 10_000 },
-  ).toBe(2);
+  await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size === 1 && bootingFromReloadState === null, null, { timeout: 15_000 });
 
-  const afterRestart = await win.evaluate(async () => {
+  const afterReload = await win.evaluate(async () => {
     const live = await window.husk.pty.list();
     return {
       page: document.body.dataset.page,
@@ -105,10 +106,14 @@ setInterval(() => {}, 1000);
       tabs: TABS.size,
     };
   });
-  expect(afterRestart.page).toBe('chat');
-  expect(afterRestart.sentinel).toBe('chat-before');
-  expect(afterRestart.liveSessions).toBe(1);
-  expect(afterRestart.tabs).toBe(1);
+  expect(afterReload.page).toBe('chat');
+  // The renderer reloaded, so anything it held in memory is gone.
+  expect(afterReload.sentinel).toBeUndefined();
+  // The agent was reattached, not restarted: still one live session, and no
+  // new Copilot session directory was created.
+  expect(afterReload.liveSessions).toBe(1);
+  expect(afterReload.tabs).toBe(1);
+  expect(fs.readdirSync(path.join(homeDir, '.copilot', 'session-state')).sort()).toEqual(beforeDirs);
   await win.evaluate(async () => {
     const live = await window.husk.pty.list();
     if (live && live.ok) {
