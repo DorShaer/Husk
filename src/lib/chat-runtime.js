@@ -10,7 +10,7 @@
 
 const { createFramer, encodeLine } = require('./jsonrpc-stdio');
 const { createAcpClient, textPrompt } = require('./acp-client');
-const { transportFor, acpArgs, userFlags } = require('./chat-transport');
+const { transportFor, acpArgs, userFlags, commandSessionId } = require('./chat-transport');
 const {
   claudeChatArgs, encodeUserMessage, encodePermissionResponse, encodeInterrupt, encodeInitialize, isPermissionRequest,
 } = require('./claude-stream');
@@ -199,7 +199,14 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     const userPinned = flags.includes('--session-id') || flags.includes('--resume') || flags.some((f) => /^--(session-id|resume)=/.test(f));
     const pinned = !userPinned && claudeSessionId ? String(claudeSessionId) : null;
     const args = claudeChatArgs({ userFlags: flags, sessionId: pinned });
+    // A resumed chat names its session on the command line, and the CLI does
+    // not repeat it until the first prompt of the new run. Without taking it
+    // from the command here the session sat unnamed in the meantime, so a
+    // reload rebuilt the tab with no session identity: the Sessions column
+    // listed the same chat twice and opening it from there could not find the
+    // tab that already had it.
     if (pinned) s.sessionId = pinned;
+    else { const named = commandSessionId(command); if (named) s.sessionId = named; }
     try { s.child = spawnChild(exe, args, cwd, env); } catch (e) { return { ok: false, error: e.message }; }
     s.framer = createFramer((ev) => {
       // Replies to Husk's own control requests. initialize carries claude's own

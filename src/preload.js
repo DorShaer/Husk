@@ -15,7 +15,7 @@ const { parseLogRecords } = require('./lib/git-refs');
 const { attribute } = require('./lib/change-attribution');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
 const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
-const { transportFor: chatTransportFor } = require('./lib/chat-transport');
+const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { emptyThread: chatEmptyThread, reduceThread: chatReduceThread } = require('./lib/chat-events');
 
 // Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
@@ -74,6 +74,8 @@ contextBridge.exposeInMainWorld('husk', {
   chat: {
     // 'acp' | 'claude' | null (null: this CLI has no protocol, Terminal only).
     transportFor: (command) => { try { return chatTransportFor(command); } catch (_) { return null; } },
+    // The claude session a command names (--resume/--session-id), or null.
+    commandSessionId: (command) => { try { return chatCommandSessionId(command); } catch (_) { return null; } },
     // Pure thread state helpers (see src/lib/chat-events.js for the event model).
     emptyThread: () => chatEmptyThread(),
     reduce: (state, event) => chatReduceThread(state, event),
@@ -188,6 +190,9 @@ contextBridge.exposeInMainWorld('husk', {
   // Agents a chat started that keep working on their own. Distinct from
   // `agents` below, which detects which agent CLIs are installed, and from the
   // Agents page, which edits reusable agent definitions.
+  auth: {
+    status: () => ipcRenderer.invoke('auth:status'),
+  },
   bgAgents: {
     list: (payload) => ipcRenderer.invoke('bgAgents:list', payload || {}),
     peek: (payload) => ipcRenderer.invoke('bgAgents:peek', payload || {}),

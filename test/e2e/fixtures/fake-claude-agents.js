@@ -32,6 +32,13 @@ if (args[0] === 'agents' && args.includes('--json')) {
 // test harness at close.
 // Ending a session answers and exits, the way the real one does.
 if (args[0] === 'stop' || args[0] === 'rm') {
+  // With FAKE_STALE_STOP set, a stop answers the way the real CLI does for an
+  // agent whose worker is gone: it cannot confirm the stop and exits 1, with
+  // the dash the real message carries.
+  if (args[0] === 'stop' && process.env.FAKE_STALE_STOP) {
+    process.stderr.write(`couldn't confirm ${args[1] || ''} was stopped \u2014 the background service may be restarting. Try again in a moment.\n`);
+    process.exit(1);
+  }
   process.stdout.write((args[0] === 'stop' ? 'stopped ' : 'removed ') + (args[1] || '') + '\n');
   process.exit(0);
 }

@@ -437,3 +437,16 @@ test('claude: initialize lists the CLI models, set_model switches live with no r
   c.emit('exit', 0, null);
   assert.deepEqual(exits, []);
 });
+
+test('a resumed claude chat carries its session id from the moment it starts', async () => {
+  const { rt } = harness();
+  const id = '6b3d4688-a66f-4648-95be-a50254aae502';
+  const res = await rt.start({ tabId: 't1', command: `claude --resume ${id}`, cwd: '/w', claudeSessionId: 'ffffffff-0000-4000-8000-000000000000' });
+  assert.equal(res.ok, true);
+  // The id Husk minted is not used for a command that already names one.
+  assert.equal(res.sessionId, id);
+  assert.equal(rt.list()[0].sessionId, id, 'the live list left a resumed chat unnamed');
+  const eq = await rt.start({ tabId: 't2', command: `claude --resume=${id}`, cwd: '/w' });
+  assert.equal(eq.sessionId, id);
+  await rt.stopAll();
+});

@@ -47,7 +47,8 @@
         "agent-canvas.spec.js",
         "agent-attach.spec.js",
         "agent-inprocess.spec.js",
-        "agent-center-keys.spec.js"
+        "agent-center-keys.spec.js",
+        "agent-stale-stop.spec.js"
       ],
       "tokens": [
         "ag",
@@ -88,10 +89,8 @@
         "src/lib/autopilot-history.js",
         "src/lib/autopilot-apply.js",
         "src/lib/autopilot-orchestrator.js",
-        "src/lib/autopilot-pool.js",
         "src/lib/autopilot-question.js",
         "src/lib/autopilot-status.js",
-        "src/lib/autopilot-worktree.js",
         "src/lib/autopilot-integrate.js",
         "src/lib/autonomy",
         "src/lib/race-judge.js"
@@ -390,6 +389,10 @@
     "chatmode": {
       "specs": [
         "chat-mode.spec.js",
+        "chat-login.spec.js",
+        "chat-reload-resume.spec.js",
+        "chat-ctrl-r-reload.spec.js",
+        "chat-pane-teardown.spec.js",
         "terminal-page.spec.js",
         "status-resize.spec.js"
       ],

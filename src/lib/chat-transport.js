@@ -43,4 +43,20 @@ function userFlags(agentCommand) {
   return tokens;
 }
 
-module.exports = { transportFor, acpArgs, userFlags };
+// The claude session a command names, when it names one: `--resume <id>` or
+// `--session-id <id>`, in either spelling. Null for a command that leaves the
+// id to the CLI.
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,}$/;
+function commandSessionId(agentCommand) {
+  const flags = userFlags(agentCommand);
+  for (let i = 0; i < flags.length; i++) {
+    const f = String(flags[i]);
+    const m = /^--(resume|session-id)(?:=(.*))?$/.exec(f);
+    if (!m) continue;
+    const v = m[2] !== undefined ? m[2] : flags[i + 1];
+    if (v && SESSION_ID.test(String(v))) return String(v);
+  }
+  return null;
+}
+
+module.exports = { transportFor, acpArgs, userFlags, commandSessionId, SESSION_ID };

@@ -12,10 +12,11 @@ const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
-const { openCommand: bgOpenCommand, controlArgs: bgControlArgs } = require('./lib/bg-agent-open');
+const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
-const { transportFor: chatTransportFor } = require('./lib/chat-transport');
+const { createChatSessionRegistry } = require('./lib/chat-session-registry');
+const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
 const { issueUrl } = require('./lib/feedback-url');
 const Subagents = require('./lib/subagents');
@@ -1759,11 +1760,23 @@ function chatEnv() {
   return env;
 }
 
+// Which claude sessions are Husk's own chats, so the Sessions list can keep
+// them apart from the SDK runs it hides. Seeded with the per-project bindings
+// kept in config before this record existed.
+const chatSessionRegistry = createChatSessionRegistry({
+  file: path.join(CONFIG_DIR, 'chat-sessions.json'),
+  fs,
+  seed: () => Object.values((config && config.lastClaudeSessions) || {}),
+});
+
 const chatRuntime = createChatRuntime({
   spawn: require('child_process').spawn,
   buildEnv: chatEnv,
   resolveExe: resolveAgentExe,
-  emit: (tabId, event) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {} },
+  emit: (tabId, event) => {
+    try { if (event && event.type === 'session' && event.sessionId) chatSessionRegistry.add(event.sessionId); } catch (_) {}
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {}
+  },
   emitExit: (tabId, code) => {
     try { dropChatShadowSession(tabId); } catch (_) {}
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:exit', { tabId, code }); } catch (_) {}
@@ -1815,14 +1828,51 @@ function dropChatShadowSession(tabId) {
   }
 }
 
-ipcMain.handle('chat:start', async (_e, { tabId, command, cwd } = {}) => {
+ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay } = {}) => {
   const cmd = (command || config.agentCommand || 'claude').trim();
   const dir = chatCwd(cwd);
   const transport = chatTransportFor(cmd);
-  const claudeSessionId = transport === 'claude' ? crypto.randomUUID() : null;
-  const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId });
-  if (res && res.ok) chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
+  // A fresh chat is pinned to an id Husk picks; a resume already names its
+  // session, and that is the id the shadow session, the per-project binding
+  // and the chat record must carry, not a second one nothing ever wrote.
+  const claudeSessionId = transport === 'claude' ? (chatCommandSessionId(cmd) || crypto.randomUUID()) : null;
+  // A resumed chat paints its past turns in the renderer from the on-disk log,
+  // but the runtime starts with an empty replay log, so a later reload rebuilt
+  // an empty thread. Seeding the runtime log with those same turns means a
+  // reload reconstructs the whole conversation, not just what came after the
+  // resume. Bounded so a giant history cannot swell the log past its cap.
+  const seed = Array.isArray(replay) ? replay.slice(-4000) : null;
+  const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed });
+  if (res && res.ok) {
+    chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
+    if (transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
+  }
   return res;
+});
+
+// Who the claude CLI is signed in as, for the notice after a sign-in finishes.
+// Read from the CLI itself rather than its credential files.
+ipcMain.handle('auth:status', async () => {
+  if (activeAgentName() !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
+  const env = buildAgentEnv();
+  const exe = resolveAgentExe('claude', env.PATH);
+  try {
+    const out = await new Promise((resolve, reject) => {
+      execFile(exe, ['auth', 'status', '--json'], { env, timeout: 15000, maxBuffer: 256 * 1024 }, (err, stdout) => {
+        if (err) reject(err); else resolve(String(stdout || ''));
+      });
+    });
+    const o = JSON.parse(out);
+    return {
+      ok: true,
+      loggedIn: !!o.loggedIn,
+      email: typeof o.email === 'string' ? o.email : '',
+      subscriptionType: typeof o.subscriptionType === 'string' ? o.subscriptionType : '',
+      orgName: typeof o.orgName === 'string' ? o.orgName : '',
+    };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'could not read the sign-in status' };
+  }
 });
 ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list() }));
 // chat:history reads a past session's on-disk log and returns it as chat
@@ -9913,6 +9963,9 @@ ipcMain.handle('sessions:list', () => {
       // real chat can open with a prepended SDK context turn. Files that predate
       // promptSource carry no signal and are kept.
       let background = sawSdkTurn && !sawHumanTurn && sawPromptSource;
+      // Husk's own Chat view drives claude the same way and its turns carry the
+      // same marks, so a session Husk opened itself is a chat whatever they say.
+      if (background && chatSessionRegistry.has(id)) background = false;
       if (background && !headComplete && !scannedWhole) background = !transcriptHasHumanTurn(fullPath, st.size);
       if (background) continue;
 
@@ -10206,6 +10259,11 @@ ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
   const id = String(payload.id || '');
   if (!id) return { ok: false, error: 'no session id' };
   if (agent === 'claude') {
+    // A session one of this window's own chat tabs is running is not held by
+    // somebody else: it is open here, and the answer is that tab, not a second
+    // reader the CLI would refuse or a copy nobody asked for.
+    const own = chatRuntime.list().find((c) => c && String(c.sessionId || '') === id);
+    if (own) return { ok: true, mode: 'open', tabId: own.tabId, command: `claude --resume ${id}`, cwd: own.cwd || '' };
     const holder = await sessionHolder(id);
     const fork = `claude --resume ${id} --fork-session`;
     if (holder && holder.kind === 'background') {
@@ -10632,17 +10690,28 @@ ipcMain.handle('bgAgents:control', async (_e, payload = {}) => {
   if (!plan.ok) return plan;
   const env = buildAgentEnv();
   const exe = resolveAgentExe('claude', env.PATH);
-  try {
-    const out = await new Promise((resolve, reject) => {
-      execFile(exe, plan.args, { env, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-        if (err) reject(new Error(String(stderr || err.message || '').trim() || 'the agent did not stop'));
-        else resolve(String(stdout || '').trim());
-      });
+  const run = () => new Promise((resolve, reject) => {
+    execFile(exe, plan.args, { env, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(String(stderr || stdout || err.message || '').trim()));
+      else resolve(String(stdout || '').trim());
     });
-    return { ok: true, action: plan.args[0], id: plan.args[1], message: out.slice(0, 200) };
-  } catch (err) {
-    return { ok: false, error: (err && err.message) || 'the agent did not stop' };
+  });
+  // A stop the CLI could not confirm gets one more try after the pause it asks
+  // for, which covers a service that really is restarting. An agent whose
+  // worker is gone fails the same way twice and is reported as stale so the
+  // user can delete it instead of being told to try again forever.
+  let failure = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const out = await run();
+      return { ok: true, action: plan.args[0], id: plan.args[1], message: out.slice(0, 200) };
+    } catch (err) {
+      failure = bgControlFailure(payload.action, plan.args[1], err && err.message);
+      if (!failure.stale) break;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1500));
+    }
   }
+  return failure;
 });
 
 ipcMain.handle('sessions:rename', (_e, payload = {}) => {

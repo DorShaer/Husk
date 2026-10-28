@@ -126,7 +126,9 @@ function updateNotif(card, message, opts) {
   return card;
 }
 // Back-compatible API used across the renderer.
-function toast(msg, kind = '') { notify(msg, { kind }); }
+// Text from the CLI, the OS or a package manager can carry dash punctuation
+// the app never uses; it is rewritten here so no source can put it on screen.
+function toast(msg, kind = '') { notify(String(msg == null ? '' : msg).replace(/\s*[\u2014\u2013]\s*/g, ': '), { kind }); }
 // The wfx sheets and the pages loaded beside app.js reach these by name off
 // window, and every one of them guards with a typeof check, so without this
 // they silently do nothing rather than fail loudly.
@@ -337,7 +339,9 @@ function writeStoredState(key, state) {
 }
 
 function saveRouteState() { writeStoredState(ROUTE_STATE_KEY, { suppressAutoChat: false }); }
-function saveReloadState() { writeStoredState(RELOAD_STATE_KEY, { suppressAutoChat: true }); }
+function saveReloadState() {
+  writeStoredState(RELOAD_STATE_KEY, { suppressAutoChat: true, page: currentPage, activeTabId });
+}
 
 function takeReloadState() {
   return readStoredState(RELOAD_STATE_KEY, true);
@@ -463,7 +467,10 @@ function createTab(idOverride) {
     // title is the auto-derived name (agent session title, else this default).
     // customTitle, when set, is the user's rename and wins over title.
     // agentId links this tab to its claude session once resolved.
-    title: `Chat ${TABS.size + 1}`,
+    title: 'New Chat',
+    // When this tab was created, so the Sessions column can keep the newest
+    // chats at the top regardless of when each last had activity.
+    createdAt: Date.now(),
     customTitle: null,
     // titleEarned flips once the session's generated name is adopted;
     // promptSent marks the first submitted prompt, which is when the name
@@ -546,11 +553,25 @@ function activateTab(id) {
 // A provisional id is the resolver's guess at which session a fresh chat turned
 // into, and it is revised. Matching on one would focus a tab that turns out to
 // be a different conversation, so only a settled id counts as identity.
+// The claude session a tab is running, by every name it might be known under:
+// the id it adopted once the agent reported it, the id it was resumed from, and
+// the id written into its launch command. A tab resumed by an older build could
+// sit with an empty agentId while its command still names the session, and
+// matching only agentId then listed and opened that session twice.
+function tabSessionId(tab) {
+  if (!tab) return '';
+  if (tab.agentId && !tab.agentIdProvisional) return String(tab.agentId);
+  if (tab.resumedSessionId) return String(tab.resumedSessionId);
+  // The id named in the launch command, parsed by the same helper the main
+  // process uses, rather than a second regex kept in step by hand.
+  try { return window.husk.chat.commandSessionId(String(tab.launchCommand || tab.command || '')) || ''; } catch (_) { return ''; }
+}
+
 function tabForSession(sessionId) {
   const id = String(sessionId || '');
   if (!id) return null;
   for (const t of TABS.values()) {
-    if (t.agentId === id && !t.agentIdProvisional) return t;
+    if (tabSessionId(t) === id) return t;
   }
   return null;
 }
@@ -1451,6 +1472,12 @@ window.husk.pty.onExit((sessionId, code) => {
   if (!tab || tab.restarting) return;
   tab.exited = true;
   refreshShellStatusBar();
+  const auth = authTabs.get(sessionId);
+  if (auth) {
+    authTabs.delete(sessionId);
+    finishAuthTab(tab, auth, code).catch(() => {});
+    return;
+  }
   if (code === 127) {
     // 127 = shell could not find the agent binary; route the user to setup.
     const cmd = (cfg && cfg.agentCommand || 'the agent').split(/\s+/)[0];
@@ -1474,6 +1501,20 @@ async function reattachSessions() {
   // Chat children outlive a reload too. Read them first so a tab whose PTY sits
   // behind a chat pane reattaches to that PTY instead of being resumed.
   const chats = await listLiveChats();
+  // A chat resumed before this session started carries an empty runtime replay
+  // log (it was painted from disk in the renderer, never recorded in the
+  // runtime). Reattaching it would show a blank thread, so any chat that comes
+  // back with no events has its history read from disk here before it is
+  // painted. New chats, and chats whose log already holds the thread, are left
+  // as they are.
+  await Promise.all(chats.map(async (c) => {
+    if (!c || (Array.isArray(c.events) && c.events.length) || !c.sessionId || !c.cwd) return;
+    try {
+      const agent = String(c.command || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0].toLowerCase();
+      const hist = await window.husk.chat.history({ agent, sessionId: c.sessionId, cwd: c.cwd });
+      if (hist && hist.ok && Array.isArray(hist.events) && hist.events.length) c.events = hist.events;
+    } catch (_) { /* leave it empty: an unreadable log is better than a crash */ }
+  }));
   const chatIds = new Set(chats.map((c) => c.tabId));
   for (const c of chats) chatRestoreBuffers.set(c.tabId, { events: [], exitCode: null });
   let live;
@@ -1796,8 +1837,11 @@ function refreshFromShortcut() {
   const now = Date.now();
   if (now - lastShortcutReloadAt < 750) return;
   lastShortcutReloadAt = now;
-  if (currentPage === 'chat') restartPty();
-  else reloadRendererPreservingPlace();
+  // Ctrl+R reloads the window and comes back to the same chat. It used to
+  // restart the agent on the chat page, which started a fresh empty session in
+  // the tab and left the real one behind as a second card. Restarting the
+  // agent is the Restart button's job, not the reload key's.
+  reloadRendererPreservingPlace();
 }
 function markReloadInPlace() {
   saveReloadState();
@@ -2372,9 +2416,65 @@ function ensureChatPane(tab) {
       // Per tab only: the next chat still opens in Chat view.
       setTabMode(tab, 'terminal');
     },
+    onAuth: (kind) => { openAuthTab(tab, kind); },
     title: displayTitle(tab),
   });
   return tab.chat;
+}
+
+// /login and /logout typed in a chat. The CLI's sign-in is interactive (it
+// opens a browser and waits for a code), so it runs in a terminal tab of its
+// own; when that tab's command exits the chat is told who is signed in now.
+// Tabs opened this way are kept here so their exit is read as a sign-in result
+// rather than an agent that died.
+const authTabs = new Map();
+async function openAuthTab(fromTab, kind) {
+  const cli = tabAgentCommand(fromTab).split(/\s+/)[0];
+  const verb = kind === 'logout' ? 'logout' : 'login';
+  if (cli !== 'claude') {
+    if (fromTab.chat) fromTab.chat.apply({ type: 'status', text: `${cli} signs in from its own terminal; switch this tab to Terminal to do that.` });
+    return;
+  }
+  if (fromTab.chat) {
+    fromTab.chat.apply({ type: 'status', text: verb === 'login'
+      ? 'Opening a terminal to sign in. This chat keeps the account it started with; chats started after signing in use the new one.'
+      : 'Opening a terminal to sign out.' });
+  }
+  const tab = await openNewChatTab({ command: `claude auth ${verb}`, cwd: fromTab.cwd || null, title: verb === 'login' ? 'Sign in' : 'Sign out', customTitle: true });
+  if (tab) authTabs.set(tab.id, { verb, fromTabId: fromTab.id });
+}
+
+async function finishAuthTab(tab, auth, code) {
+  const from = TABS.get(auth.fromTabId) || null;
+  const say = (text, kind) => { if (from && from.chat) from.chat.apply({ type: kind === 'error' ? 'error' : 'status', text }); };
+  if (code !== 0) {
+    tab.term.writeln(`\r\n\x1b[38;2;244;63;94m[sign-in did not finish (exit ${code})]\x1b[0m`);
+    say(auth.verb === 'login' ? 'Signing in did not finish. The account is unchanged.' : 'Signing out did not finish.', 'error');
+    toast(auth.verb === 'login' ? 'Sign-in did not finish' : 'Sign-out did not finish', 'error');
+    return;
+  }
+  let st = null;
+  try { st = await window.husk.auth.status(); } catch (_) { st = null; }
+  const who = st && st.ok && st.loggedIn
+    ? `${st.email || 'your account'}${st.subscriptionType ? ` (${st.subscriptionType})` : ''}`
+    : '';
+  if (auth.verb === 'logout') {
+    tab.term.writeln('\r\n\x1b[38;2;106;115;133m[signed out; you can close this tab]\x1b[0m');
+    say('Signed out. Type /login to sign in again.', 'status');
+    toast('Signed out', 'success');
+    return;
+  }
+  tab.term.writeln(`\r\n\x1b[38;2;106;115;133m[signed in${who ? ' as ' + who : ''}; you can close this tab]\x1b[0m`);
+  say(who ? `Signed in as ${who}. Start a new chat to use this account; this one keeps the account it started with.` : 'Signed in. Start a new chat to use the new account.', 'status');
+  if (from && TABS.has(from.id) && from.mode === 'chat') {
+    toastAction(who ? `Signed in as ${who}` : 'Signed in', 'New chat', () => {
+      if (!TABS.has(from.id)) return;
+      if (from.id !== activeTabId) activateTab(from.id);
+      restartChat(from, { command: from.launchCommand || undefined, skipWelcome: true });
+    }, 'success');
+  } else {
+    toast(who ? `Signed in as ${who}` : 'Signed in', 'success');
+  }
 }
 
 // Starts this tab's headless agent with a fresh thread. Resolves true once the
@@ -2392,9 +2492,13 @@ function startChatForTab(tab) {
   c.setInfo({ agentName: cli, cwd: chatWorkDir(tab) });
   c.setStarting(true);
   tab.chatAlive = false;
+  // Carried into chat.start so the runtime's own replay log holds the resumed
+  // turns too; without it a reload after a resume rebuilds an empty thread.
+  let replaySeed = null;
   if (tab.chatHistory) {
     const history = tab.chatHistory;
     tab.chatHistory = null;
+    replaySeed = Array.isArray(history) ? history : null;
     c.replay(history, { turnOpen: false });
     c.apply({ type: 'status', text: 'Resumed session' });
     c.flush();
@@ -2404,7 +2508,7 @@ function startChatForTab(tab) {
   renderChatModeToggle();
   const run = (async () => {
     let res;
-    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null }); }
+    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null, replay: replaySeed }); }
     catch (err) { res = { ok: false, error: (err && err.message) || String(err) }; }
     // Closed or switched away while starting: nothing here to update.
     if (!TABS.has(tab.id) || tab.chat !== c || tab.mode !== 'chat') return false;
@@ -2604,7 +2708,7 @@ function csLiveCard(t) {
   if (s.model) chips.push(String(s.model));
   return {
     key: `t:${t.id}`, live: true, tabId: t.id,
-    sessionId: t.agentId && !t.agentIdProvisional ? t.agentId : '',
+    sessionId: tabSessionId(t),
     agent: csBase(tabAgentCommand(t).split(/\s+/)[0]) || 'agent',
     mtime: t.csAt,
     title: displayTitle(t),
@@ -2640,8 +2744,10 @@ function csModel() {
   const q = cs.query.trim().toLowerCase();
   const match = (c) => !q || `${c.title}\n${c.last}\n${c.excerpt}`.toLowerCase().includes(q);
   const open = new Set();
-  for (const t of TABS.values()) if (t.agentId) open.add(t.agentId);
-  const live = [...TABS.values()].map(csLiveCard).filter(match);
+  for (const t of TABS.values()) { const sid = tabSessionId(t); if (sid) open.add(sid); }
+  const live = [...TABS.values()]
+    .sort((a, b) => (b.createdAt || b.csAt || 0) - (a.createdAt || a.csAt || 0))
+    .map(csLiveCard).filter(match);
   const past = (Array.isArray(cs.list) ? cs.list : []).filter((s) => s && !open.has(s.id))
     .map((s) => csPastCard(s, names)).filter(match)
     .sort((a, b) => b.mtime - a.mtime);
@@ -2858,8 +2964,10 @@ function csOpenPast(s) {
   const agents = (typeof sx !== 'undefined' && sx.agents) ? sx.agents : null;
   const holder = agents && agents.bySession ? agents.bySession.get(s.id) : null;
   const owned = { ...s, owner: cs.agent, project: s.projectPath, prdpath: s.prdPath };
-  if (holder && holder.held) { resumeSessionInChat(owned); return; }
+  // A chat this window already has open is one click away, whatever the
+  // agent list says about who holds it: the holder is this window's own child.
   if (focusOpenSession(s.id)) return;
+  if (holder && holder.held) { resumeSessionInChat(owned); return; }
   resumeIntoChat(owned).then((done) => { if (!done) resumeSessionInChat(owned); })
     .catch(() => resumeSessionInChat(owned));
 }
@@ -2879,6 +2987,13 @@ async function resumeIntoChat(d, { keepPage = false } = {}) {
   let plan = null;
   try { plan = await window.husk.sessions.resumeCommand({ agent, id: d.id, cwd }); } catch (_) { return false; }
   if (!plan || !plan.ok || !plan.command) return false;
+  // Already running in one of this window's tabs: that tab is the answer.
+  if (plan.mode === 'open') {
+    if (focusOpenSession(d.id)) return true;
+    const t = plan.tabId ? TABS.get(String(plan.tabId)) : null;
+    if (t) { closeDetail(); setPage('chat'); activateTab(t.id); return true; }
+    return false;
+  }
   if (plan.mode === 'attach' || plan.mode === 'fork') return false;
   if (!chatProtocolFor(plan.command)) return false;
   let hist = null;
@@ -18644,6 +18759,25 @@ async function endBgAgent(a, action) {
   try {
     res = action === 'stop' ? await window.husk.bgAgents.stop(a.id) : await window.husk.bgAgents.remove(a.id);
   } catch (err) { res = { ok: false, error: (err && err.message) || 'that agent could not be ended' }; }
+  // A stop the CLI could not confirm is an agent whose worker is already gone:
+  // it still lists as live, so Stop is the button it shows, and stopping it
+  // can never succeed. Deleting is the way out, offered here rather than
+  // leaving the user to retry a button that will fail the same way again.
+  if (res && !res.ok && res.stale && action === 'stop') {
+    end.disabled = false;
+    end.textContent = was;
+    const ok = await openConfirmDialog({
+      title: 'This agent cannot be stopped',
+      bodyHtml: `<p>${escapeHtml(name)} is listed as live, but nothing is running it any more, so there is nothing to stop.</p><p>Delete it instead? Anything it was working in goes with it, and its conversation cannot be reopened afterwards.</p>`,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    end.disabled = true;
+    end.textContent = 'Deleting';
+    action = 'remove';
+    try { res = await window.husk.bgAgents.remove(a.id); }
+    catch (err) { res = { ok: false, error: (err && err.message) || 'that agent could not be deleted' }; }
+  }
   if (!res || !res.ok) {
     end.disabled = false;
     end.textContent = was;
