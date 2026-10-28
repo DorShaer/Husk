@@ -126,7 +126,9 @@ function updateNotif(card, message, opts) {
   return card;
 }
 // Back-compatible API used across the renderer.
-function toast(msg, kind = '') { notify(msg, { kind }); }
+// Text from the CLI, the OS or a package manager can carry dash punctuation
+// the app never uses; it is rewritten here so no source can put it on screen.
+function toast(msg, kind = '') { notify(String(msg == null ? '' : msg).replace(/\s*[\u2014\u2013]\s*/g, ': '), { kind }); }
 // The wfx sheets and the pages loaded beside app.js reach these by name off
 // window, and every one of them guards with a typeof check, so without this
 // they silently do nothing rather than fail loudly.
@@ -18644,6 +18646,25 @@ async function endBgAgent(a, action) {
   try {
     res = action === 'stop' ? await window.husk.bgAgents.stop(a.id) : await window.husk.bgAgents.remove(a.id);
   } catch (err) { res = { ok: false, error: (err && err.message) || 'that agent could not be ended' }; }
+  // A stop the CLI could not confirm is an agent whose worker is already gone:
+  // it still lists as live, so Stop is the button it shows, and stopping it
+  // can never succeed. Deleting is the way out, offered here rather than
+  // leaving the user to retry a button that will fail the same way again.
+  if (res && !res.ok && res.stale && action === 'stop') {
+    end.disabled = false;
+    end.textContent = was;
+    const ok = await openConfirmDialog({
+      title: 'This agent cannot be stopped',
+      bodyHtml: `<p>${escapeHtml(name)} is listed as live, but nothing is running it any more, so there is nothing to stop.</p><p>Delete it instead? Anything it was working in goes with it, and its conversation cannot be reopened afterwards.</p>`,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    end.disabled = true;
+    end.textContent = 'Deleting';
+    action = 'remove';
+    try { res = await window.husk.bgAgents.remove(a.id); }
+    catch (err) { res = { ok: false, error: (err && err.message) || 'that agent could not be deleted' }; }
+  }
   if (!res || !res.ok) {
     end.disabled = false;
     end.textContent = was;

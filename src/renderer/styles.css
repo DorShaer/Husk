@@ -14544,18 +14544,25 @@ body[data-mode="light"] .am-card {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .am-search svg { width: 14px; height: 14px; flex: 0 0 auto; }
-/* Undoes the app-wide modal input chrome: the group is the field here. */
-.am-card .am-search input[type="text"] {
+/* Undoes the app-wide modal input chrome: the group is the field here. The
+   dark family paints every text input a black well with !important, which drew
+   a dark block behind the placeholder inside the group's own fill, so the
+   dark selectors are named here too and the fill is forced clear at every
+   state. */
+.am-card .am-search input[type="text"],
+[data-mode="dark"] .am-card .am-search input[type="text"] {
   width: 140px; height: auto;
-  border: 0; outline: 0; background: transparent; box-shadow: none;
+  border: 0 !important; outline: 0; background: transparent !important; box-shadow: none !important;
   padding: 0; border-radius: 0;
   color: var(--text); font-family: inherit; font-size: var(--am-fs-3);
   transition: width var(--motion-base) var(--ease-out);
 }
 .am-search:focus-within input[type="text"] { width: 200px; }
 .am-card .am-search input[type="text"]:focus,
-.am-card .am-search input[type="text"]:focus-visible {
-  border: 0 !important; background: transparent; box-shadow: none;
+.am-card .am-search input[type="text"]:focus-visible,
+[data-mode="dark"] .am-card .am-search input[type="text"]:focus,
+[data-mode="dark"] .am-card .am-search input[type="text"]:focus-visible {
+  border: 0 !important; background: transparent !important; box-shadow: none !important;
 }
 .am-search input::placeholder { color: var(--text-3); }
 .am-search kbd {

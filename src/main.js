@@ -12,7 +12,7 @@ const pty = require('node-pty');
 
 const { shJoin } = require('./lib/shell-quote');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
-const { openCommand: bgOpenCommand, controlArgs: bgControlArgs } = require('./lib/bg-agent-open');
+const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const { transportFor: chatTransportFor } = require('./lib/chat-transport');
@@ -10632,17 +10632,28 @@ ipcMain.handle('bgAgents:control', async (_e, payload = {}) => {
   if (!plan.ok) return plan;
   const env = buildAgentEnv();
   const exe = resolveAgentExe('claude', env.PATH);
-  try {
-    const out = await new Promise((resolve, reject) => {
-      execFile(exe, plan.args, { env, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-        if (err) reject(new Error(String(stderr || err.message || '').trim() || 'the agent did not stop'));
-        else resolve(String(stdout || '').trim());
-      });
+  const run = () => new Promise((resolve, reject) => {
+    execFile(exe, plan.args, { env, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(String(stderr || stdout || err.message || '').trim()));
+      else resolve(String(stdout || '').trim());
     });
-    return { ok: true, action: plan.args[0], id: plan.args[1], message: out.slice(0, 200) };
-  } catch (err) {
-    return { ok: false, error: (err && err.message) || 'the agent did not stop' };
+  });
+  // A stop the CLI could not confirm gets one more try after the pause it asks
+  // for, which covers a service that really is restarting. An agent whose
+  // worker is gone fails the same way twice and is reported as stale so the
+  // user can delete it instead of being told to try again forever.
+  let failure = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const out = await run();
+      return { ok: true, action: plan.args[0], id: plan.args[1], message: out.slice(0, 200) };
+    } catch (err) {
+      failure = bgControlFailure(payload.action, plan.args[1], err && err.message);
+      if (!failure.stale) break;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1500));
+    }
   }
+  return failure;
 });
 
 ipcMain.handle('sessions:rename', (_e, payload = {}) => {

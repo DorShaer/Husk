@@ -32,6 +32,37 @@ function openCommand({ id = '', sessionId = '', attach = false, transcript = '',
 // job and its worktree and cannot be undone.
 const CONTROLS = { stop: 'stop', remove: 'rm' };
 
+// Text the CLI printed when it refused, made fit for a toast: no escape codes,
+// no dash punctuation, one line, a capital to start.
+function cleanCliMessage(raw) {
+  return String(raw || '')
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/\s*[\u2014\u2013]\s*/g, ': ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[a-z]/, (c) => c.toUpperCase());
+}
+
+// The CLI cannot stop an agent whose worker is no longer there to answer: a
+// session that was left waiting on the user weeks ago and whose process has
+// since gone still lists as live, and `stop` reports that it could not confirm
+// the stop and suggests trying again. Trying again never helps that agent, so
+// the failure is marked stale and the caller can offer to remove it instead.
+const STALE = /couldn.t confirm .* was stopped|background service may be restarting/i;
+
+function controlFailure(action, id, raw) {
+  const text = cleanCliMessage(raw);
+  const shortId = String(id || '').trim();
+  if (action === 'stop' && STALE.test(text)) {
+    return {
+      ok: false,
+      stale: true,
+      error: `Could not confirm ${shortId || 'the agent'} stopped. Its worker may already be gone.`,
+    };
+  }
+  return { ok: false, stale: false, error: text || (action === 'remove' ? 'The agent could not be deleted.' : 'The agent did not stop.') };
+}
+
 function controlArgs(action, id) {
   const verb = CONTROLS[String(action || '')];
   if (!verb) return { ok: false, error: 'that is not something to do to an agent' };
@@ -41,4 +72,4 @@ function controlArgs(action, id) {
   return { ok: true, args: [verb, shortId] };
 }
 
-module.exports = { openCommand, controlArgs };
+module.exports = { openCommand, controlArgs, controlFailure, cleanCliMessage };
