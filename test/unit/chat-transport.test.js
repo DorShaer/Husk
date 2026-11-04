@@ -15,6 +15,18 @@ test('ACP CLIs route to acp, claude to claude, the rest to null', () => {
   assert.equal(transportFor('some-other-cli'), null);
 });
 
+test('claude aliases (claude-work, claude_test, a path) speak the claude protocol', () => {
+  // A custom command is usually the real claude under an alias, so it must open
+  // in native chat, not the raw CLI terminal view.
+  assert.equal(transportFor('claude-test'), 'claude');
+  assert.equal(transportFor('claude-bright --model opus'), 'claude');
+  assert.equal(transportFor('claude_work'), 'claude');
+  assert.equal(transportFor('/home/user/.local/bin/claude-test'), 'claude');
+  // No separator after "claude" is not an alias we assume is claude-compatible.
+  assert.equal(transportFor('claude2'), null);
+  assert.equal(transportFor('claudia'), null);
+});
+
 test('acpArgs matches each CLI help text', () => {
   assert.deepEqual(acpArgs('copilot'), ['--acp']);
   assert.deepEqual(acpArgs('gemini'), ['--acp']);

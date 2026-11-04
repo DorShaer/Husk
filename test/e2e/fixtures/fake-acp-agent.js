@@ -31,6 +31,27 @@ const KIRO_OPTIONS = [
   { optionId: 'no', name: 'No', kind: 'reject_once' },
 ];
 const STRING_PATCH = '*** Begin Patch\n*** Add File: greeting.txt\n+hello from husk\n*** End Patch';
+// An AskUserQuestion-shaped tool input, for asserting the client renders the
+// questions readably rather than as a raw JSON blob.
+const ASK_INPUT = {
+  questions: [{
+    header: 'Legacy views',
+    question: 'Retire the old welcome page?',
+    multiSelect: false,
+    options: [
+      { label: 'Yes, retire it', description: 'Remove the press-enter page for good.' },
+      { label: 'Keep it', description: 'Leave the old page as is.' },
+    ],
+  }],
+};
+
+function askPermissionWith(sessionId, toolCall, options) {
+  const id = 'srv-' + (++serverReq);
+  return new Promise((resolve) => {
+    waitingPermission.set(id, resolve);
+    send({ jsonrpc: '2.0', id, method: 'session/request_permission', params: { sessionId, toolCall, options } });
+  });
+}
 
 function askPermission(sessionId, toolCallId, flavor) {
   const id = 'srv-' + (++serverReq);
@@ -63,6 +84,17 @@ async function runTurn(id, params) {
   // A prompt of exactly 'exit now' ends the process mid-turn, for tests of
   // an agent that goes away on its own.
   if (text.trim() === 'exit now') { notify(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Bye.' } }); setTimeout(() => process.exit(3), 30); return; }
+  // A prompt starting 'ask:' plays an AskUserQuestion permission, so a test can
+  // assert the client renders the questions and options, not raw JSON.
+  if (text.startsWith('ask:')) {
+    const toolCallId = 'tc-ask-' + Date.now().toString(36);
+    notify(sessionId, { sessionUpdate: 'tool_call', toolCallId, title: 'AskUserQuestion', kind: 'other', status: 'pending', rawInput: ASK_INPUT });
+    const choice = await askPermissionWith(sessionId, { toolCallId, title: 'AskUserQuestion', kind: 'other', rawInput: ASK_INPUT }, DEFAULT_OPTIONS);
+    notify(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'noted' } }] });
+    notify(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Answered ${choice}.` } });
+    send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+    return;
+  }
   // 'quiet:' says nothing at all for a while first, the way claude's empty
   // thinking deltas look to a client, so a test can see the client's own
   // waiting state.

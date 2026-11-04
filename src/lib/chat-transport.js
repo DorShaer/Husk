@@ -21,7 +21,11 @@ const ACP_ARGS = {
 // protocol Husk can drive. The command may carry the user's own flags.
 function transportFor(agentCommand) {
   const base = agentBaseName(agentCommand);
-  if (base === 'claude') return 'claude';
+  // A custom command is usually the real claude under an alias (claude-work,
+  // claude-bright) so people can run more than one account. Treat any claude*
+  // basename as the claude protocol, so those open in native chat instead of
+  // falling back to the raw CLI terminal view.
+  if (base === 'claude' || /^claude[-_]/.test(base)) return 'claude';
   if (Object.prototype.hasOwnProperty.call(ACP_ARGS, base)) return 'acp';
   return null;
 }

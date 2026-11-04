@@ -4726,6 +4726,27 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .chat-perm-tool { flex: 0 0 auto; color: var(--text-2); font-weight: 600; }
 .chat-perm-detail-inline { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-mono); }
 .chat-perm-verdict { flex: 0 0 auto; margin-left: auto; font-size: var(--fs-label); font-weight: 600; }
+/* AskUserQuestion: readable questions and options, not a scrolling JSON blob. */
+.chat-ask { display: flex; flex-direction: column; gap: 12px; }
+.chat-ask-q { display: flex; flex-direction: column; gap: 6px; }
+.chat-ask-tag {
+  align-self: flex-start;
+  padding: 0 7px; border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  color: var(--amber);
+  font-size: var(--fs-pico); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-section);
+}
+.chat-ask-question { color: var(--text); font-size: var(--fs-body); font-weight: 600; line-height: 1.5; }
+.chat-ask-options { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.chat-ask-option {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--bg-1);
+}
+.chat-ask-label { color: var(--text); font-size: var(--fs-body); font-weight: 600; }
+.chat-ask-desc { color: var(--text-2); font-size: var(--fs-label); line-height: 1.5; }
+.chat-ask-multi { color: var(--text-3); font-size: var(--fs-label); font-style: italic; }
 .chat-perm-verdict[data-verdict="allow"] { color: var(--emerald); }
 .chat-perm-verdict[data-verdict="deny"] { color: var(--rose); }
 

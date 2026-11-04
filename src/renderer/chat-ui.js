@@ -86,6 +86,37 @@
     try { return JSON.stringify(input, null, 2); } catch (_) { return str(input); }
   }
 
+  // An AskUserQuestion tool input is a list of questions, each with options.
+  // Dumped as raw JSON it is unreadable in a small scroll box, so render the
+  // questions and their options as plain text. Returns null for anything that
+  // is not shaped like AskUserQuestion, so callers fall back to prettyInput.
+  function questionsNode(input) {
+    const qs = input && typeof input === 'object' && Array.isArray(input.questions) ? input.questions : null;
+    if (!qs || !qs.length) return null;
+    const wrap = el('div', 'chat-ask');
+    for (const q of qs) {
+      if (!q || typeof q !== 'object') continue;
+      const block = el('div', 'chat-ask-q');
+      if (q.header) block.appendChild(el('span', 'chat-ask-tag', str(q.header)));
+      if (q.question) block.appendChild(el('div', 'chat-ask-question', str(q.question)));
+      const opts = Array.isArray(q.options) ? q.options : [];
+      if (opts.length) {
+        const ul = el('ul', 'chat-ask-options');
+        for (const o of opts) {
+          if (!o || typeof o !== 'object') continue;
+          const li = el('li', 'chat-ask-option');
+          li.appendChild(el('span', 'chat-ask-label', str(o.label)));
+          if (o.description) li.appendChild(el('span', 'chat-ask-desc', str(o.description)));
+          ul.appendChild(li);
+        }
+        if (ul.firstChild) block.appendChild(ul);
+      }
+      if (q.multiSelect) block.appendChild(el('span', 'chat-ask-multi', 'Select all that apply'));
+      if (block.firstChild) wrap.appendChild(block);
+    }
+    return wrap.firstChild ? wrap : null;
+  }
+
   function fmtDuration(ms) {
     if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) return '';
     if (ms < 1000) return (ms / 1000).toFixed(1) + 's';
@@ -1311,8 +1342,13 @@
           head.appendChild(pill);
           card.appendChild(head);
           card.appendChild(el('div', 'chat-perm-title', str(it.title)));
-          const detail = str(it.detail) || prettyInput(it.input);
-          if (detail) card.appendChild(el('pre', 'chat-perm-detail', cap(detail)));
+          const questions = questionsNode(it.input);
+          if (questions) {
+            card.appendChild(questions);
+          } else {
+            const detail = str(it.detail) || prettyInput(it.input);
+            if (detail) card.appendChild(el('pre', 'chat-perm-detail', cap(detail)));
+          }
           const actions = el('div', 'chat-perm-actions');
           const opts = Array.isArray(it.options) && it.options.length ? it.options
             : [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }];
