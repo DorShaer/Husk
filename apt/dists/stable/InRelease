@@ -1,0 +1,42 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Wed, 04 Nov 2026 10:51:08 +0000
+Label: Husk
+Origin: Husk
+Suite: stable
+MD5Sum:
+ 13240d1d5088c3e156fb1d51068d6cd9              132 Release
+ de65807f4c69d0d2702b3466bc1e0de4            14277 main/binary-amd64/Packages
+ 1e1e178d4df5e5f5f2c79e2feeaab1f0             3222 main/binary-amd64/Packages.gz
+SHA1:
+ e819ad89808c579bcf5c8d2c6e70f0e72ffc9ee3              132 Release
+ 4aa785e6dedf771300df919d7e0b7dcaa0a3e551            14277 main/binary-amd64/Packages
+ a1476274a3367289db2522c626bd6a6a41fbdd30             3222 main/binary-amd64/Packages.gz
+SHA256:
+ 0dc5861ecabb4fc223f77d4487030a0f0e0e1b4a100518401112b8f28d8e0674              132 Release
+ 60816d7f0031b4ea189992344c60290313eebf74fd9b155aa615863c4512cb4f            14277 main/binary-amd64/Packages
+ 7c7bc50d62339fc3ab45cd08c131192ba0a99a6cc5f4ab7018877f47a1f48d26             3222 main/binary-amd64/Packages.gz
+SHA512:
+ 8ed55165f5368d4e803d240bbfc6473f2d1e306494747e122338e8d3e0a770152e2834ea7e8bcfdb85e51ba560bc069ef9d586a7040dbe5fb9bd93d6042c8c5a              132 Release
+ 80063df025da917e58bad65dca6d15c9fad79024b08f0535ded018a3477f82343dc678ec72b827735cea429dc4c47d3f10b7464b4de4e6f1419952f48a413443            14277 main/binary-amd64/Packages
+ c5406dec7bf2f8a40ae5c4c3d9bd92c817baf62e4d48b467d0abb397f5343c8156f257e8cc8a823b61a0459fd961ec26b3f5c301479893339dc8f7029270e60c             3222 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEScGCiSczwwN/OEzepPizccqg7jYFAmrrDhwACgkQpPizccqg
+7jaPeA//ddt32Ug7yiLkcPg8UWSh08L8dSlIdSijLsO24StNQbSJPrq6GR2/4a8K
+oXFdrIXpbI36ojNnQxZs0oq/oId3Zm/mYqno0fdeBZI1tuvsEWFb24c20cOa9dpP
+swiMySgXCApoQEzzzDwyNna6SfDftNST0/n7JvGri5XG3dwljue9GB1ABPIZOPfW
+Z/9BPXvk7pG3vy9nA+0HxSr1TidG6itKVCe3XxflMG0fvNTP17MKrpDsF8XqIrS9
+860w9vIgh+2Swu6xnHnuOGK6HOa0rm19ha1YC5Tl3u/vUOjASx1mbfJ6yAYnny6k
+VxAcdbT74ZqK36c5R/+vyjXA9jLrk5fPsHlfBExREFhMEqNvEDY/AsgAJURGOL5V
+UwIR7r6TL9/R8tGLq1Ve8a2IMdmapFJdo5GqIquvQSEHZPAfNJADhyNbn4/e7r8T
+EVRXjzAqD1iC84zEre//PljKYfsYfaVd0mFtnaYaedKj5X/1GG6cvDCniGVV58Dd
+DBRlO8vsUkYaUxJMBz7J5rerCo3pz44TUceHu2Ac+258xZjOM2J1AiXVP2Ix4rZN
+bwXcl8hIiP6RDycjmYj541rqTE9m4r2wgI94jJpUWyUxfuzc27feBGBV0YOEvkel
+zzS/iB+yyH4vYW3jKuYW1qzTpAyTlzlyBXRr3CpYqnv7hXBIDww=
+=+Ktm
+-----END PGP SIGNATURE-----
