@@ -8,9 +8,23 @@ const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
-const pty = require('node-pty');
+let pty;
+try {
+  pty = require('node-pty');
+} catch (err) {
+  // node-pty's native pty.node failed to load (for example it was built
+  // against a newer glibc than this machine has). Husk cannot run a terminal
+  // without it, and letting this throw mid-load leaves an invisible process
+  // with no window and no log, so fail loudly and exit instead.
+  const detail = (err && err.message) ? err.message : String(err);
+  console.error('[husk] fatal: failed to load node-pty:', detail);
+  try { dialog.showErrorBox('Husk failed to start', `Could not load the terminal backend (node-pty).\n\n${detail}`); } catch (_) {}
+  app.quit();
+  process.exit(1);
+}
 
 const { shJoin } = require('./lib/shell-quote');
+const { stripAnsi } = require('./lib/strip-ansi');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
@@ -1900,11 +1914,15 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
     return { ok: false, error: a + ' keeps no readable session log' };
   }
   if (!isInside(root, file)) return { ok: false, error: 'refused' };
+  // The agents Husk runs write these files, so a planted symlink here could
+  // point the read at an arbitrary file. Canonicalize like sessions:read, and
+  // open with O_NOFOLLOW like fs:readFile, so a symlink at the path is refused.
+  if (!realPathInside(file, root)) return { ok: false, error: 'refused' };
   try {
     // Stat and read through one descriptor so the checks hold for the bytes read.
     let raw;
     let truncated = false;
-    const fd = fs.openSync(file, 'r');
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     try {
       const st = fs.fstatSync(fd);
       if (!st.isFile()) return { ok: false, error: 'not a file' };
@@ -2191,13 +2209,6 @@ function parseRunModelStatus(text) {
     if (m) { found = `Gemini ${m[1]}${m[2] ? ' ' + m[2] : ''}`; }
   }
   return found;
-}
-
-// Strip terminal escape sequences so token/sentinel scans see rendered text,
-// not cursor movement and color commands.
-function stripAnsi(s) {
-  // eslint-disable-next-line no-control-regex
-  return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b[()][0-9A-Za-z]/g, '');
 }
 
 // Busy marker rendered by agent TUIs while generating or running a tool.
@@ -7755,7 +7766,7 @@ async function executeWorkflow(event, workflow, run) {
     return { from: '', text: parts.map((p) => `[${p.from}]\n${p.text}`).join('\n\n') };
   };
 
-  const markSkipped = (n, reason) => {
+  const markSkipped = (n) => {
     if (nodeDone.has(n.id)) return;
     run.stepStates[n.id].status = 'skipped';
     nodeDone.add(n.id);
@@ -7766,7 +7777,6 @@ async function executeWorkflow(event, workflow, run) {
     wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: n.id, status: 'skipped' });
     // A skipped node takes none of its outgoing edges.
     graph.edges.filter((e) => e.from === n.id).forEach((e) => { if (edgeState.get(e.id) === 'pending') edgeState.set(e.id, 'skipped'); });
-    if (reason) { /* reason reserved for future surfacing */ }
   };
 
   const finish = () => {
@@ -8740,12 +8750,13 @@ function lastSessionMsForCwd(cwd) {
 // one round trip, and never persisted, so the stored project record stays the
 // small thing the user created. The renderer paints the list first and enriches
 // when this lands.
-ipcMain.handle('projects:state', () => {
+ipcMain.handle('projects:state', async () => {
   const projects = _projectsList();
   const retainedRuns = Object.values(readRetained());
   const liveCwds = new Set();
   for (const [, s] of sessions) { if (s && s.pty && s.cwd) liveCwds.add(s.cwd); }
   const states = {};
+  const gitTasks = [];
   for (const p of projects) {
     if (!p || !p.id) continue;
     const st = {
@@ -8763,16 +8774,16 @@ ipcMain.handle('projects:state', () => {
     // git decides; the .git entry is the fallback when git cannot be reached.
     let hasGitEntry = false;
     try { hasGitEntry = fs.existsSync(path.join(p.path, '.git')); } catch (_) {}
-    try {
-      const txt = execFileSync('git', ['-C', p.path, 'status', '--porcelain=v1', '--branch'], {
-        encoding: 'utf8', stdio: 'pipe', timeout: 4000, maxBuffer: 4 * 1024 * 1024,
-      });
-      st.isGit = true;
-      Object.assign(st, parseGitStatus(txt));
-    } catch (_) {
-      st.isGit = hasGitEntry;
-    }
+    // Run every project's git status concurrently and asynchronously, so opening
+    // the board never blocks the main process for the sum of the git calls (and
+    // never for up to N times the 4s timeout when repos hang).
+    gitTasks.push(gitRun(['-C', p.path, 'status', '--porcelain=v1', '--branch'], { timeout: 4000, maxBuffer: 4 * 1024 * 1024 })
+      .then((r) => {
+        if (r.ok) { st.isGit = true; Object.assign(st, parseGitStatus(r.stdout)); }
+        else { st.isGit = hasGitEntry; }
+      }));
   }
+  await Promise.all(gitTasks);
   return { ok: true, states, groups: groupBoard(projects, states, Date.now()) };
 });
 
@@ -9355,6 +9366,22 @@ const TITLE_DIALECTS = Object.freeze({
 const titleScanCache = new Map(); // `${dialect}:${path}` -> { size, mtimeMs, scanned, title }
 const TITLE_CACHE_MAX = 300;
 
+// Per-file read cache for the sessions:list poll (every 15s over up to 300
+// transcripts). Keyed on (path, size, mtime): an unchanged transcript answers
+// from memory instead of re-reading its head, tail, and whole-file authorship
+// scan each tick. Fields fill lazily; a changed file gets a fresh entry.
+const sessionFileCache = new Map();
+const SESSION_FILE_CACHE_MAX = 600;
+function sessionFileReads(fullPath, st) {
+  const key = `${fullPath}:${st.size}:${st.mtimeMs}`;
+  let v = sessionFileCache.get(key);
+  if (v) return v;
+  if (sessionFileCache.size > SESSION_FILE_CACHE_MAX) sessionFileCache.clear();
+  v = {};
+  sessionFileCache.set(key, v);
+  return v;
+}
+
 function latestTranscriptTitle(fullPath, dialectName) {
   const dialect = TITLE_DIALECTS[dialectName];
   if (!dialect) return '';
@@ -9875,6 +9902,7 @@ ipcMain.handle('sessions:list', () => {
   const out = [];
   let hiddenAutopilot = 0;
   for (const { id, project: projName, fullPath, st } of top) {
+    const rc = sessionFileReads(fullPath, st);
     {
       // Read the first 32KB for how the session opened, and take the title from
       // the whole transcript: it is appended once the conversation earns a name,
@@ -9896,7 +9924,7 @@ ipcMain.handle('sessions:list', () => {
       let sawPromptSource = false;
       let sawUserLine = false;
       try {
-        const text = readHead(fullPath, 32768);
+        const text = rc.head !== undefined ? rc.head : (rc.head = readHead(fullPath, 32768));
         headComplete = st.size <= 32768;
         const lines = text.split('\n');
         for (const line of lines) {
@@ -9966,7 +9994,7 @@ ipcMain.handle('sessions:list', () => {
       // Husk's own Chat view drives claude the same way and its turns carry the
       // same marks, so a session Husk opened itself is a chat whatever they say.
       if (background && chatSessionRegistry.has(id)) background = false;
-      if (background && !headComplete && !scannedWhole) background = !transcriptHasHumanTurn(fullPath, st.size);
+      if (background && !headComplete && !scannedWhole) background = !(rc.human !== undefined ? rc.human : (rc.human = transcriptHasHumanTurn(fullPath, st.size)));
       if (background) continue;
 
       const firstMessage = (aiTitle || userMessage || queueContent || '').slice(0, 220);
@@ -10001,7 +10029,7 @@ ipcMain.handle('sessions:list', () => {
         sizeBytes: st.size,
         // Last-activity from the transcript's final entry; tracks real activity
         // more reliably than the file mtime.
-        mtime: lastActivityMs(fullPath, st.size, st.mtimeMs),
+        mtime: rc.last !== undefined ? rc.last : (rc.last = lastActivityMs(fullPath, st.size, st.mtimeMs)),
       });
     }
   }
@@ -10012,7 +10040,7 @@ ipcMain.handle('sessions:list', () => {
   // since the canonical session grows past its shadows.
   const dedup = new Map();
   for (const s of out) {
-    const key = `${s.project}${(s.title || '').toLowerCase()}${(s.firstMessage || '').slice(0, 200).toLowerCase()}`;
+    const key = `${s.project}${(s.title || '').toLowerCase()}${(s.firstMessage || '').slice(0, 200).toLowerCase()}${s.startedISO || ''}`;
     const cur = dedup.get(key);
     if (!cur || s.sizeBytes > cur.sizeBytes
         || (s.sizeBytes === cur.sizeBytes && s.mtime > cur.mtime)) {
@@ -11061,14 +11089,14 @@ ipcMain.handle('fs:writeFile', async (_e, { root, rel, content, expectMtimeMs, f
 ipcMain.handle('fs:gitStatus', async (_e, { root } = {}) => {
   if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
   const rootAbs = path.resolve(root);
-  try {
-    execFileSync('git', ['-C', rootAbs, 'rev-parse', '--git-dir'], { stdio: 'ignore' });
-  } catch (_) { return { ok: true, isRepo: false, porcelain: '' }; }
-  try {
-    const out = execFileSync('git', ['-C', rootAbs, 'status', '--porcelain=v1'],
-      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...GIT_PATH_ENV } });
-    return { ok: true, isRepo: true, porcelain: out };
-  } catch (err) { return { ok: false, error: err.message }; }
+  // Async git: this backs the Files panel's work-tree read, which also fires on
+  // a watch burst, so a synchronous spawn here would stall every window too.
+  if (await gitOutA(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) {
+    return { ok: true, isRepo: false, porcelain: '' };
+  }
+  const out = await gitOutA(['-C', rootAbs, 'status', '--porcelain=v1'], { maxBuffer: 16 * 1024 * 1024 });
+  if (out === null) return { ok: false, error: 'could not read status' };
+  return { ok: true, isRepo: true, porcelain: out };
 });
 
 // The environment every git call that takes a path runs under.
@@ -11199,6 +11227,18 @@ function gitRun(args, opts) {
   });
 }
 
+// Async forms of gitOut/gitLine, used by the hot read handlers (git:repo,
+// git:status) so a slow git on the 3s source-control poll or a file-watch burst
+// never blocks the main process and stalls every window's streaming.
+async function gitOutA(args, over) {
+  const r = await gitRun(args, { timeout: 5000, ...(over && typeof over === 'object' ? over : {}) });
+  return r.ok ? r.stdout : null;
+}
+async function gitLineA(args, over) {
+  const out = await gitOutA(args, over);
+  return typeof out === 'string' && out.trim() ? out.trim() : null;
+}
+
 function scInt(v, lo, hi, dflt) {
   const n = Number(v);
   if (!Number.isFinite(n)) return dflt;
@@ -11288,8 +11328,8 @@ function scMtime(abs) {
 
 // The left count is the upstream side, so it reads as behind, and the right
 // count as ahead.
-function scTrackCounts(rootAbs) {
-  const counts = gitLine(['-C', rootAbs, 'rev-list', '--left-right', '--count', '@{u}...HEAD']);
+async function scTrackCounts(rootAbs) {
+  const counts = await gitLineA(['-C', rootAbs, 'rev-list', '--left-right', '--count', '@{u}...HEAD']);
   const parts = counts ? counts.split(/\s+/) : [];
   const behind = parts.length >= 2 ? Number(parts[0]) : NaN;
   const ahead = parts.length >= 2 ? Number(parts[1]) : NaN;
@@ -11368,28 +11408,28 @@ ipcMain.handle('git:repo', async (_e, { root } = {}) => {
   if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
   const rootAbs = path.resolve(root);
   try {
-    if (gitOut(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) return { ok: true, isRepo: false };
-    const gitDir = gitLine(['-C', rootAbs, 'rev-parse', '--absolute-git-dir']) || '';
-    const toplevel = gitLine(['-C', rootAbs, 'rev-parse', '--show-toplevel']) || rootAbs;
-    const branch = gitLine(['-C', rootAbs, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
-    const headShortSha = gitLine(['-C', rootAbs, 'rev-parse', '--short=12', 'HEAD']);
+    if (await gitOutA(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) return { ok: true, isRepo: false };
+    const gitDir = await gitLineA(['-C', rootAbs, 'rev-parse', '--absolute-git-dir']) || '';
+    const toplevel = await gitLineA(['-C', rootAbs, 'rev-parse', '--show-toplevel']) || rootAbs;
+    const branch = await gitLineA(['-C', rootAbs, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+    const headShortSha = await gitLineA(['-C', rootAbs, 'rev-parse', '--short=12', 'HEAD']);
     const unborn = headShortSha === null;
     const head = unborn
       ? []
-      : String(gitOut(['-C', rootAbs, 'log', '-1', '--format=%H%x1f%an%x1f%ct%x1f%s']) || '').trim().split('\x1f');
-    const upstream = gitLine(['-C', rootAbs, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
-    const counts = upstream ? scTrackCounts(rootAbs) : { ahead: null, behind: null };
+      : String(await gitOutA(['-C', rootAbs, 'log', '-1', '--format=%H%x1f%an%x1f%ct%x1f%s']) || '').trim().split('\x1f');
+    const upstream = await gitLineA(['-C', rootAbs, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    const counts = upstream ? await scTrackCounts(rootAbs) : { ahead: null, behind: null };
     const fetchedAtMs = gitDir ? scMtime(path.join(gitDir, 'FETCH_HEAD')) : null;
     const hasFetched = fetchedAtMs !== null;
-    const remoteUrl = gitLine(['-C', rootAbs, 'config', '--get', 'remote.origin.url']);
-    const worktrees = GitRefs.parseWorktreeList(gitOut(['-C', rootAbs, 'worktree', 'list', '--porcelain']) || '')
+    const remoteUrl = await gitLineA(['-C', rootAbs, 'config', '--get', 'remote.origin.url']);
+    const worktrees = GitRefs.parseWorktreeList(await gitOutA(['-C', rootAbs, 'worktree', 'list', '--porcelain']) || '')
       .map((w) => ({
         basename: w.path ? path.basename(w.path) : '',
         branch: w.branch || null,
         detached: !!w.detached,
         managed: isAutopilotWorkspacePath(w.path || ''),
       }));
-    const stashCount = String(gitOut(['-C', rootAbs, 'stash', 'list', '--format=%gd']) || '')
+    const stashCount = String(await gitOutA(['-C', rootAbs, 'stash', 'list', '--format=%gd']) || '')
       .split('\n').filter((l) => l.trim()).length;
     const headAt = Number(head[2]);
     return {
@@ -11430,17 +11470,17 @@ ipcMain.handle('git:status', async (_e, { root } = {}) => {
   const readAt = Date.now();
   const big = { timeout: 6000, maxBuffer: 16 * 1024 * 1024 };
   try {
-    if (gitOut(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) {
+    if (await gitOutA(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) {
       return { ok: true, isRepo: false, porcelain: '', numstat: { staged: [], unstaged: [] }, mtimes: {}, truncated: false, readAt };
     }
-    const raw = gitOut(['-C', rootAbs, 'status', '--porcelain=v1', '--untracked-files=all', '--renames'], big);
+    const raw = await gitOutA(['-C', rootAbs, 'status', '--porcelain=v1', '--untracked-files=all', '--renames'], big);
     if (raw === null) return { ok: false, error: 'could not read status' };
     const lines = raw.split('\n').filter((l) => l.length >= 3);
     const truncated = lines.length > SC_MAX_ENTRIES;
     const kept = truncated ? lines.slice(0, SC_MAX_ENTRIES) : lines;
     const porcelain = kept.length ? kept.join('\n') + '\n' : '';
-    const unstaged = GitRefs.parseNumstat(gitOut(['-C', rootAbs, 'diff', '--numstat', '-z', '--'], big) || '');
-    const staged = GitRefs.parseNumstat(gitOut(['-C', rootAbs, 'diff', '--cached', '--numstat', '-z', '--'], big) || '');
+    const unstaged = GitRefs.parseNumstat(await gitOutA(['-C', rootAbs, 'diff', '--numstat', '-z', '--'], big) || '');
+    const staged = GitRefs.parseNumstat(await gitOutA(['-C', rootAbs, 'diff', '--cached', '--numstat', '-z', '--'], big) || '');
     // Every path is confined again before it is stat'd. A path that fails keeps
     // its row with a null mtime, so the count stays honest.
     const mtimes = {};
@@ -11945,7 +11985,7 @@ ipcMain.handle('git:fetch', async (_e, { root, remote } = {}) => {
       }
       return { ok: false, code: 'network', error: 'could not reach ' + name, detail: scDetail(err) };
     }
-    const counts = scTrackCounts(rootAbs);
+    const counts = await scTrackCounts(rootAbs);
     const gitDir = gitLine(['-C', rootAbs, 'rev-parse', '--absolute-git-dir']);
     return {
       ok: true,

@@ -1,5 +1,7 @@
 'use strict';
 
+const { decodeQuoted } = require('./git-quote');
+
 // Parser and single-hunk patch builder for git's unified diff format.
 //
 // parseUnifiedDiff(text) turns `git diff` output into a hunk model: one entry
@@ -15,19 +17,6 @@
 //
 // diffStat(files) totals the added and removed line counts.
 
-// C-style escapes git writes inside a quoted path, mapped to byte values.
-const ESCAPE_BYTES = {
-  a: 0x07,
-  b: 0x08,
-  t: 0x09,
-  n: 0x0a,
-  v: 0x0b,
-  f: 0x0c,
-  r: 0x0d,
-  '\\': 0x5c,
-  '"': 0x22,
-};
-
 // The same table read the other way, for writing a path back out.
 const ESCAPE_CHARS = {
   0x07: '\\a',
@@ -40,44 +29,6 @@ const ESCAPE_CHARS = {
   0x22: '\\"',
   0x5c: '\\\\',
 };
-
-// Git wraps a path carrying special bytes in double quotes and escapes those
-// bytes C-style. Decode the single-character escapes and the octal \NNN
-// sequences back into the original UTF-8 path.
-function decodeQuoted(raw) {
-  const inner = raw.slice(1, -1);
-  const bytes = [];
-  for (let i = 0; i < inner.length; i++) {
-    const c = inner[i];
-    if (c !== '\\') {
-      const buf = Buffer.from(c, 'utf8');
-      for (const b of buf) bytes.push(b);
-      continue;
-    }
-    const next = inner[i + 1];
-    if (next >= '0' && next <= '7') {
-      let oct = next;
-      let j = i + 2;
-      while (j < inner.length && oct.length < 3 && inner[j] >= '0' && inner[j] <= '7') {
-        oct += inner[j];
-        j++;
-      }
-      bytes.push(parseInt(oct, 8) & 0xff);
-      i = j - 1;
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(ESCAPE_BYTES, next)) {
-      bytes.push(ESCAPE_BYTES[next]);
-      i++;
-      continue;
-    }
-    // Unknown escape: keep the following character literally.
-    const buf = Buffer.from(next, 'utf8');
-    for (const b of buf) bytes.push(b);
-    i++;
-  }
-  return Buffer.from(bytes).toString('utf8');
-}
 
 // A path needs quoting when any byte is a control byte, a quote, a backslash,
 // or sits outside ASCII.

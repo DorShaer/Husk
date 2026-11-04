@@ -9,62 +9,7 @@
 // statusBadge(status) maps a human label to a single-letter badge.
 
 // C-style escapes git emits inside quoted paths, mapped to byte values.
-const ESCAPE_BYTES = {
-  a: 0x07,
-  b: 0x08,
-  t: 0x09,
-  n: 0x0a,
-  v: 0x0b,
-  f: 0x0c,
-  r: 0x0d,
-  '\\': 0x5c,
-  '"': 0x22,
-};
-
-// Git wraps paths with special characters in double quotes and escapes the
-// bytes C-style. Decode \n \t \\ \" the other single-char escapes, and octal
-// \NNN sequences back into the original UTF-8 path.
-function decodeQuoted(raw) {
-  const inner = raw.slice(1, -1);
-  const bytes = [];
-  for (let i = 0; i < inner.length; i++) {
-    const c = inner[i];
-    if (c !== '\\') {
-      const buf = Buffer.from(c, 'utf8');
-      for (const b of buf) bytes.push(b);
-      continue;
-    }
-    const next = inner[i + 1];
-    if (next >= '0' && next <= '7') {
-      let oct = next;
-      let j = i + 2;
-      while (j < inner.length && oct.length < 3 && inner[j] >= '0' && inner[j] <= '7') {
-        oct += inner[j];
-        j++;
-      }
-      bytes.push(parseInt(oct, 8) & 0xff);
-      i = j - 1;
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(ESCAPE_BYTES, next)) {
-      bytes.push(ESCAPE_BYTES[next]);
-      i++;
-      continue;
-    }
-    // Unknown escape: keep the following character literally.
-    const buf = Buffer.from(next, 'utf8');
-    for (const b of buf) bytes.push(b);
-    i++;
-  }
-  return Buffer.from(bytes).toString('utf8');
-}
-
-function unquote(field) {
-  if (field.length >= 2 && field[0] === '"' && field[field.length - 1] === '"') {
-    return decodeQuoted(field);
-  }
-  return field;
-}
+const { unquote } = require('./git-quote');
 
 function labelFor(code) {
   switch (code) {
