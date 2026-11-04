@@ -14,55 +14,7 @@
 const FIELD = '\x1f';
 const RECORD = '\x1e';
 
-// C-style escapes git emits inside quoted paths, mapped to byte values.
-const ESCAPE_BYTES = {
-  a: 0x07,
-  b: 0x08,
-  t: 0x09,
-  n: 0x0a,
-  v: 0x0b,
-  f: 0x0c,
-  r: 0x0d,
-  '\\': 0x5c,
-  '"': 0x22,
-};
-
-// Git quotes a path with special characters and escapes the bytes C-style.
-// Decode the single-character escapes and octal \NNN back into the real path.
-function unquote(raw) {
-  if (typeof raw !== 'string') return '';
-  if (raw.length < 2 || raw[0] !== '"' || raw[raw.length - 1] !== '"') return raw;
-  const inner = raw.slice(1, -1);
-  const bytes = [];
-  for (let i = 0; i < inner.length; i++) {
-    const c = inner[i];
-    if (c !== '\\') {
-      for (const b of Buffer.from(c, 'utf8')) bytes.push(b);
-      continue;
-    }
-    const next = inner[i + 1];
-    if (next === undefined) break;
-    if (next >= '0' && next <= '7') {
-      let oct = next;
-      let j = i + 2;
-      while (j < inner.length && oct.length < 3 && inner[j] >= '0' && inner[j] <= '7') {
-        oct += inner[j];
-        j++;
-      }
-      bytes.push(parseInt(oct, 8) & 0xff);
-      i = j - 1;
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(ESCAPE_BYTES, next)) {
-      bytes.push(ESCAPE_BYTES[next]);
-      i++;
-      continue;
-    }
-    for (const b of Buffer.from(next, 'utf8')) bytes.push(b);
-    i++;
-  }
-  return Buffer.from(bytes).toString('utf8');
-}
+const { unquote } = require('./git-quote');
 
 function toMs(unix) {
   const n = Number(unix);

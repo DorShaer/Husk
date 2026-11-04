@@ -816,6 +816,30 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.13.2': {
+    items: [
+      {
+        title: 'Runs on more Linux systems',
+        body: 'Fixed a startup failure on Ubuntu 24.04 and other systems where Husk opened no window at all.',
+      },
+      {
+        title: 'Any Claude command opens as a chat',
+        body: 'A custom command, such as a work-account alias, now opens in the native chat view instead of the raw terminal.',
+      },
+      {
+        title: 'A cleaner start',
+        body: 'New chats open straight into the conversation, and the old start page is gone.',
+      },
+      {
+        title: 'Questions are easier to read',
+        body: 'When an agent asks you to choose, the options show as a clear list instead of raw data.',
+      },
+      {
+        title: 'Smoother source control',
+        body: 'The git and projects views no longer stall while an agent is editing files.',
+      },
+    ],
+  },
   '2.13.0': {
     items: [
       {
@@ -2317,12 +2341,11 @@ function preferredTabMode() {
   // ("terminal") is the only way to pin the old view.
   return (cfg && cfg.chatView === 'terminal') ? 'terminal' : 'chat';
 }
-// The welcome screen (press Enter to start) belongs to Terminal view, where
-// nothing else can take a first prompt. A chat tab has its own composer and
-// empty state, so Chat-default profiles never see it.
+// The old "press Enter to start" welcome page is retired: every chat opens
+// straight into its surface (native chat composer, or the terminal itself for a
+// non-protocol CLI). Kept as a function so the callers that gate on it stay put.
 function welcomeWanted() {
-  if (cfg && cfg.skipWelcome) return false;
-  return initialTabMode(cfg && cfg.agentCommand) !== 'chat';
+  return false;
 }
 function setPreferredTabMode(mode) {
   try { localStorage.setItem(CHAT_MODE_KEY, mode === 'chat' ? 'chat' : 'terminal'); } catch (_) {}
@@ -14019,6 +14042,22 @@ $('#pref-save').addEventListener('click', async () => {
   await restartPty();
 });
 
+// paintAgentCommandPicker only reveals the free-text field on first paint, so
+// without this the dropdown is inert: picking "Custom command…" shows nothing.
+// Reveal the field for custom, and mirror a detected pick into it (that field
+// is what Save reads).
+$('#pref-agent-pick')?.addEventListener('change', (e) => {
+  const field = $('#pref-agent');
+  if (!field) return;
+  if (e.target.value === PREF_AGENT_CUSTOM) {
+    field.hidden = false;
+    field.focus();
+  } else {
+    field.value = e.target.value;
+    field.hidden = true;
+  }
+});
+
 // Folder picker for the working directory field.
 {
   const pickBtn = document.getElementById('btn-pref-cwd-pick');
@@ -19672,17 +19711,15 @@ async function boot() {
   }, 30000);
   scheduleTopbarAgents(TOPBAR_AGENTS_IDLE_MS);
 
-  // With skipWelcome on, boot goes straight to a chat, so the welcome screen
-  // stays out of the paint entirely.
-  const autoChat = !welcomeWanted() && !(reloadState && reloadState.suppressAutoChat);
-  if (!autoChat) $('#chat-empty').classList.add('show');
-
-  // A renderer reload keeps the main-process PTYs alive, so reattach to any
-  // open chats first and fall through to cold boot only when there are none.
+  // The welcome screen is retired: boot always lands in a live chat. A renderer
+  // reload keeps the main-process PTYs alive, so reattach to any open chats
+  // first and fall through to cold boot only when there are none. On a reload
+  // that restored a non-chat page, leave that page as it is.
   const reattached = await reattachSessions();
-  if (!reattached && autoChat) {
-    // Cold boot: pick up where the last conversation left off rather than
-    // opening an empty chat. + New in the Sessions column starts a fresh one.
+  const landInChat = !reloadState || !reloadState.page || reloadState.page === 'chat';
+  if (!reattached && landInChat) {
+    // Pick up where the last conversation left off rather than opening an empty
+    // chat. + New in the Sessions column starts a fresh one.
     let resumed = false;
     try { resumed = await resumeLastSessionOnBoot(); } catch (_) { resumed = false; }
     if (!resumed) await startPty();

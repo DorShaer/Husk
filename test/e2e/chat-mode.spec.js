@@ -245,14 +245,15 @@ test('a Chat profile boots straight into a chat pane with no welcome screen, eve
   await expect(pane.locator('.chat-item-user .chat-bubble').first()).toHaveText('hello straight away');
   await expect(pane.locator('.chat-item-text strong').first()).toHaveText('greeting.txt');
   await expect(pane.locator('.chat-perm')).toBeVisible();
-  // The welcome screen is still the Terminal profile's front door.
+  // The "Enter to start" welcome screen is retired: a Terminal-view profile
+  // boots straight into the terminal pane, with no welcome page either.
   await app.close();
   const term = makeHome();
   fs.writeFileSync(path.join(term.homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
     firstRunDone: true, skipWelcome: false, agentCommand: 'gemini', chatView: 'terminal',
   }));
   const second = await launch(term.homeDir, term.bin);
-  await expect(second.win.locator('#chat-empty.show #ce-prompt')).toBeVisible();
+  await expect(second.win.locator('#chat-empty')).not.toHaveClass(/show/);
   await second.app.close();
 });
 
@@ -987,5 +988,64 @@ test('the status bar names the model the chat reports, and follows a switch', as
   await win.locator('.chat-model-item', { hasText: 'Fake 2' }).click();
   await expect(pane.locator('.chat-model-btn')).toHaveText('Fake 2');
   await expect(win.locator('#sb-model')).toHaveText('Fake 2');
+  await app.close();
+});
+
+test('an AskUserQuestion permission renders readable questions and options, not raw JSON', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  const pane = win.locator('.chat-pane.show');
+  await chatReady(win);
+  await pane.locator('.chat-input').fill('ask: what do you want');
+  await pane.locator('.chat-input').press('Enter');
+
+  const perm = pane.locator('.chat-perm');
+  await expect(perm).toBeVisible();
+  await expect(perm.locator('.chat-perm-title')).toHaveText('AskUserQuestion');
+  // The questions render as text, not a scrolling JSON <pre>.
+  await expect(perm.locator('.chat-ask-question')).toHaveText('Retire the old welcome page?');
+  await expect(perm.locator('.chat-ask-tag')).toHaveText('Legacy views');
+  await expect(perm.locator('.chat-ask-option')).toHaveCount(2);
+  await expect(perm.locator('.chat-ask-label').first()).toHaveText('Yes, retire it');
+  await expect(perm.locator('.chat-ask-desc').first()).toHaveText('Remove the press-enter page for good.');
+  await expect(perm.locator('.chat-perm-detail')).toHaveCount(0);
+
+  await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
+  await expect(perm).toHaveClass(/is-resolved/);
+  await app.close();
+});
+
+test('a renderer reload never lands on the welcome screen', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  await chatReady(win);
+  // Reload the window the way Ctrl+R does (sets the suppress-auto-chat state).
+  await win.evaluate(() => { try { markReloadInPlace(); } catch (_) {} });
+  await win.reload();
+  await win.waitForLoadState('domcontentloaded');
+  await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  await win.waitForFunction(() => window.HuskChat && document.querySelector('.chat-stage'));
+  // Boot lands in a chat, not the retired "Enter to start" welcome page.
+  await expect(win.locator('#chat-empty')).not.toHaveClass(/show/);
+  await expect(win.locator('.chat-pane.show')).toBeVisible();
+  await app.close();
+});
+
+test('a questions-shaped input on a non-AskUserQuestion tool renders its raw detail, not a friendly card', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  const pane = win.locator('.chat-pane.show');
+  await chatReady(win);
+  await pane.locator('.chat-input').fill('spoof: pretend to ask');
+  await pane.locator('.chat-input').press('Enter');
+
+  const perm = pane.locator('.chat-perm');
+  await expect(perm).toBeVisible();
+  await expect(perm.locator('.chat-perm-title')).toHaveText('write_file');
+  // The friendly questions view is withheld; the real input shows instead.
+  await expect(perm.locator('.chat-ask-question')).toHaveCount(0);
+  await expect(perm.locator('.chat-perm-detail')).toBeVisible();
+  await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
+  await expect(perm).toHaveClass(/is-resolved/);
   await app.close();
 });

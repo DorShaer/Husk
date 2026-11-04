@@ -221,6 +221,16 @@
         "src/lib/fuzzy.js"
       ]
     },
+    "prefs": {
+      "specs": [
+        "prefs-custom-command.spec.js"
+      ],
+      "tokens": [
+        "pref",
+        "page:prefs"
+      ],
+      "paths": []
+    },
     "prompts": {
       "specs": [
         "prompts-edit.spec.js"
@@ -393,6 +403,7 @@
         "chat-reload-resume.spec.js",
         "chat-ctrl-r-reload.spec.js",
         "chat-pane-teardown.spec.js",
+        "welcome-retired.spec.js",
         "terminal-page.spec.js",
         "status-resize.spec.js"
       ],

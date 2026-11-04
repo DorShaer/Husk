@@ -736,3 +736,42 @@ test('the page keeps a wide diff and a long path inside the diff pane at any win
   expect(narrow.wrapBox.bottom).toBeLessThanOrEqual(narrow.mainBox.bottom + 1);
   await app.close();
 });
+
+// Per-hunk discard is the only hunk action that destroys working-tree content.
+// Its safety rests on two things with no other coverage: it refuses while the
+// index carries unrelated staged work (so that work is never swept into the
+// stash), and on a clean index it stashes exactly the one hunk. The fixture
+// stages src/lib/util.js, so the index starts dirty.
+test('per-hunk discard refuses while other work is staged, then stashes just the one hunk when the index is clean', async () => {
+  const { dir, git } = fixture('husk-sc-hunkdiscard');
+  const abs = path.join(dir, 'src', 'app.js');
+  const app = await launch(seed(dir));
+  const win = await ready(app);
+  await openSource(win, dir);
+
+  await win.locator('#sc-list .sc-band[data-band="changed"] .sc-row[data-path="src/app.js"]').click();
+  await expect.poll(() => win.evaluate(() => document.querySelectorAll('#sc-diff .sc-hunk').length), { timeout: 15_000 })
+    .toBe(2);
+
+  const discardHunk = win.locator('.sc-hunk-acts button', { hasText: 'Discard hunk' }).first();
+
+  // (a) Index dirty (util.js staged): discard must refuse and change nothing.
+  await discardHunk.click();
+  await expect(win.locator('#confirm-modal')).toBeVisible();
+  await win.locator('#confirm-ok').click();
+  await expect(win.locator('#toast-stack .toast .toast-msg').first())
+    .toContainText('commit or unstage the staged changes before discarding a hunk');
+  expect(fs.readFileSync(abs, 'utf8')).toContain('return 11;'); // hunk untouched
+  expect(git('diff', '--cached', '--name-only').trim()).toContain('src/lib/util.js'); // staged work intact
+
+  // (b) Clean the index, then discard one hunk: it leaves the tree, the other
+  // hunk stays, and the change is recoverable from a stash.
+  git('restore', '--staged', 'src/lib/util.js');
+  await discardHunk.click();
+  await expect(win.locator('#confirm-modal')).toBeVisible();
+  await win.locator('#confirm-ok').click();
+  await expect.poll(() => fs.readFileSync(abs, 'utf8').includes('return 11;'), { timeout: 20_000 }).toBe(false);
+  expect(fs.readFileSync(abs, 'utf8')).toContain('return 55;'); // the second hunk is untouched
+  expect(git('stash', 'list').trim()).not.toBe(''); // recoverable
+  await app.close();
+});

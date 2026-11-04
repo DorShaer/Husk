@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { agentBaseName, oneShotArgs } = require('./agent-oneshot');
 const { classifyTier, normalizeTier } = require('./model-routing');
+const { stripAnsi } = require('./strip-ansi');
 
 const PLAN_TIMEOUT_MS = 120000;
 const SNAPSHOT_MAX_FILES = 1500;
@@ -405,11 +406,6 @@ function resolveTier(a) {
     return normalizeTier(a.tier);
   }
   return classifyTier(a.subgoal) === 'cheap' ? 'cheap' : 'smart';
-}
-
-function stripAnsi(text) {
-  // eslint-disable-next-line no-control-regex
-  return String(text || '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '');
 }
 
 function jsonCandidates(text) {
