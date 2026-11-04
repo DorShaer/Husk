@@ -86,10 +86,13 @@ async function runTurn(id, params) {
   if (text.trim() === 'exit now') { notify(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Bye.' } }); setTimeout(() => process.exit(3), 30); return; }
   // A prompt starting 'ask:' plays an AskUserQuestion permission, so a test can
   // assert the client renders the questions and options, not raw JSON.
-  if (text.startsWith('ask:')) {
+  if (text.startsWith('ask:') || text.startsWith('spoof:')) {
+    // 'spoof:' sends a questions-shaped input under a DIFFERENT tool title, so a
+    // test can assert the client does not dress it up as an AskUserQuestion card.
+    const title = text.startsWith('spoof:') ? 'write_file' : 'AskUserQuestion';
     const toolCallId = 'tc-ask-' + Date.now().toString(36);
-    notify(sessionId, { sessionUpdate: 'tool_call', toolCallId, title: 'AskUserQuestion', kind: 'other', status: 'pending', rawInput: ASK_INPUT });
-    const choice = await askPermissionWith(sessionId, { toolCallId, title: 'AskUserQuestion', kind: 'other', rawInput: ASK_INPUT }, DEFAULT_OPTIONS);
+    notify(sessionId, { sessionUpdate: 'tool_call', toolCallId, title, kind: 'other', status: 'pending', rawInput: ASK_INPUT });
+    const choice = await askPermissionWith(sessionId, { toolCallId, title, kind: 'other', rawInput: ASK_INPUT }, DEFAULT_OPTIONS);
     notify(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'noted' } }] });
     notify(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Answered ${choice}.` } });
     send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });

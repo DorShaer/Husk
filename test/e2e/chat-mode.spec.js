@@ -1030,3 +1030,22 @@ test('a renderer reload never lands on the welcome screen', async () => {
   await expect(win.locator('.chat-pane.show')).toBeVisible();
   await app.close();
 });
+
+test('a questions-shaped input on a non-AskUserQuestion tool renders its raw detail, not a friendly card', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  const pane = win.locator('.chat-pane.show');
+  await chatReady(win);
+  await pane.locator('.chat-input').fill('spoof: pretend to ask');
+  await pane.locator('.chat-input').press('Enter');
+
+  const perm = pane.locator('.chat-perm');
+  await expect(perm).toBeVisible();
+  await expect(perm.locator('.chat-perm-title')).toHaveText('write_file');
+  // The friendly questions view is withheld; the real input shows instead.
+  await expect(perm.locator('.chat-ask-question')).toHaveCount(0);
+  await expect(perm.locator('.chat-perm-detail')).toBeVisible();
+  await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
+  await expect(perm).toHaveClass(/is-resolved/);
+  await app.close();
+});

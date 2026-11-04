@@ -1342,7 +1342,10 @@
           head.appendChild(pill);
           card.appendChild(head);
           card.appendChild(el('div', 'chat-perm-title', str(it.title)));
-          const questions = questionsNode(it.input);
+          // Only the AskUserQuestion tool gets the rich questions view. Any other
+          // tool that happens to carry a questions-shaped input still shows its
+          // real detail, so a card can never dress up what is being approved.
+          const questions = str(it.title) === 'AskUserQuestion' ? questionsNode(it.input) : null;
           if (questions) {
             card.appendChild(questions);
           } else {
