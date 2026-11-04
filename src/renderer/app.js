@@ -816,6 +816,30 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.13.2': {
+    items: [
+      {
+        title: 'Runs on more Linux systems',
+        body: 'Fixed a startup failure on Ubuntu 24.04 and other systems where Husk opened no window at all.',
+      },
+      {
+        title: 'Any Claude command opens as a chat',
+        body: 'A custom command, such as a work-account alias, now opens in the native chat view instead of the raw terminal.',
+      },
+      {
+        title: 'A cleaner start',
+        body: 'New chats open straight into the conversation, and the old start page is gone.',
+      },
+      {
+        title: 'Questions are easier to read',
+        body: 'When an agent asks you to choose, the options show as a clear list instead of raw data.',
+      },
+      {
+        title: 'Smoother source control',
+        body: 'The git and projects views no longer stall while an agent is editing files.',
+      },
+    ],
+  },
   '2.13.0': {
     items: [
       {
