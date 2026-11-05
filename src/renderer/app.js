@@ -3020,12 +3020,16 @@ async function resumeIntoChat(d, { keepPage = false } = {}) {
     if (t) { closeDetail(); setPage('chat'); activateTab(t.id); return true; }
     return false;
   }
-  if (plan.mode === 'attach' || plan.mode === 'fork') return false;
+  // An attach joins a live background agent: that is an interactive stream, not
+  // a transcript to replay, so it stays in the terminal. A fork is a copy that
+  // diverges from this session's history, which a chat can replay just fine.
+  if (plan.mode === 'attach') return false;
+  const forking = plan.mode === 'fork';
   if (!chatProtocolFor(plan.command)) return false;
   let hist = null;
   try { hist = await window.husk.chat.history({ agent, sessionId: d.id, cwd }); } catch (_) { return false; }
   if (!hist || !hist.ok || !Array.isArray(hist.events)) return false;
-  if (focusOpenSession(d.id)) return true;
+  if (!forking && focusOpenSession(d.id)) return true;
   // On boot the user may have moved to another page while the log loaded;
   // the session still opens, behind the page they chose.
   const stayOn = keepPage && currentPage !== 'chat' ? currentPage : null;
@@ -3038,9 +3042,11 @@ async function resumeIntoChat(d, { keepPage = false } = {}) {
     skipWelcome: true,
     skipContext: true,
     history: hist.events,
-    sessionId: d.id,
-    title: names[d.id] || d.title || '',
-    customTitle: !!names[d.id],
+    // A fork mints its own session id, so it must not claim the parent's; the
+    // resolver links it once the CLI assigns one. A plain resume keeps its id.
+    sessionId: forking ? undefined : d.id,
+    title: forking ? '' : (names[d.id] || d.title || ''),
+    customTitle: !forking && !!names[d.id],
   });
   if (stayOn && currentPage !== stayOn) setPage(stayOn);
   return true;
@@ -12410,14 +12416,20 @@ async function resumeSessionInChat(d, opts) {
   setChatSubBase({ tool: cmdShort, dir: cwd || huskHome });
   if ($('#sp-agent')) $('#sp-agent').textContent = cmdShort;
   if ($('#sp-session-id')) $('#sp-session-id').textContent = `${d.id.slice(0, 8)} · ${cwd || huskHome}`;
+  // Honor the Chat-view preference for any resumable session (the command
+  // resumes and the agent streams its history back). Only an attach to a live
+  // agent stays in the terminal, since that is an interactive join, not a resume.
+  const openAsChat = !attaching && preferredTabMode() === 'chat' && !!chatProtocolFor(cmd);
   // Resume in a fresh tab so the current chat keeps running alongside it.
   const tab = await openNewChatTab({
     command: cmd,
     cwd,
+    preferChat: openAsChat,
+    skipWelcome: true,
     skipContext: true,
-    // The failure watcher is for a resume. An attach fails its own way and has
-    // no transcript to be missing, so it is not watched for one.
-    resumeAttempt: (attaching || forking) ? null : { agent, id: d.id, cwd: d.project || '', previousHeader },
+    // The failure watcher is for a terminal resume; a chat shows the outcome in
+    // its own stream, and an attach fails its own way with no transcript to miss.
+    resumeAttempt: (attaching || forking || openAsChat) ? null : { agent, id: d.id, cwd: d.project || '', previousHeader },
   });
   // The other real answer, offered rather than taken. Attaching shows the work
   // as it happens; a fork is a copy that stops tracking it.
