@@ -26,6 +26,7 @@ try {
 const { shJoin } = require('./lib/shell-quote');
 const { stripAnsi } = require('./lib/strip-ansi');
 const { openaiModels } = require('./lib/openai-stream');
+const { lastTurnMs } = require('./lib/session-activity');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
@@ -9586,16 +9587,42 @@ function readTail(filePath, bytes, fileSize) {
   fs.closeSync(fd);
   return buf.toString('utf8', 0, n);
 }
+// A session's activity time is the timestamp of its last real conversation turn
+// (a user or assistant message), NOT of any line. Merely opening a session makes
+// the CLI and framework hooks append non-turn lines (api-request, session-owner)
+// with a current timestamp; counting those bumped a yesterday chat to "now" and
+// jumped it to the top of the list. The scan is forward-only and cached per file
+// (like the title scan), so an appended megabyte blob cannot push the real turn
+// out of a tail window, and an unchanged file costs one stat.
+const lastTurnCache = new Map(); // path -> { size, mtimeMs, scanned, ms }
+const LAST_TURN_CACHE_MAX = 400;
 function lastActivityMs(filePath, fileSize, fallbackMs) {
+  const prev = lastTurnCache.get(filePath);
+  let fd;
+  try { fd = fs.openSync(filePath, 'r'); } catch (_) { return fallbackMs; }
   try {
-    const tail = readTail(filePath, 8192, fileSize);
-    let last = null;
-    const re = /"timestamp":"([^"]+)"/g;
-    let m;
-    while ((m = re.exec(tail)) !== null) last = m[1];
-    if (last) { const t = Date.parse(last); if (isFinite(t)) return t; }
-  } catch (_) {}
-  return fallbackMs;
+    const st = fs.fstatSync(fd);
+    // Resume only when this is the same file still growing; a shrink means it
+    // was replaced, so rescan from the start.
+    const resumable = prev && st.size >= prev.size;
+    let scanned = resumable ? prev.scanned : 0;
+    let ms = resumable ? prev.ms : null;
+    if (scanned < st.size) {
+      const len = st.size - scanned;
+      const buf = Buffer.alloc(len);
+      const n = fs.readSync(fd, buf, 0, len, scanned);
+      const res = lastTurnMs(buf.toString('utf8', 0, n), ms);
+      ms = res.ms;
+      scanned += res.consumed;
+    }
+    if (lastTurnCache.size > LAST_TURN_CACHE_MAX) lastTurnCache.clear();
+    lastTurnCache.set(filePath, { size: st.size, mtimeMs: st.mtimeMs, scanned, ms });
+    return ms != null ? ms : fallbackMs;
+  } catch (_) {
+    return fallbackMs;
+  } finally {
+    try { fs.closeSync(fd); } catch (_) {}
+  }
 }
 
 // Parse the head of a claude session JSONL for the fields Husk titles a
