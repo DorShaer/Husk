@@ -102,6 +102,10 @@ contextBridge.exposeInMainWorld('husk', {
     // cb(tabId, code) when the agent process ends.
     onExit: (cb) => ipcRenderer.on('chat:exit', (_e, p) => cb(p.tabId, p.code)),
   },
+  // BYOK: list an OpenAI-compatible endpoint's models for the picker.
+  openai: {
+    models: (opts) => ipcRenderer.invoke('openai:models', opts || {}),
+  },
   // Bug reports and feature requests: prefilled GitHub issue links.
   feedback: {
     url: (kind) => ipcRenderer.invoke('feedback:url', { kind }),

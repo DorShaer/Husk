@@ -2776,17 +2776,38 @@
                   </label>
                   <label class="pref-row">
                     <span class="pref-row-text">
-                      <span class="pref-label">Custom endpoint</span>
-                      <span class="pref-desc">Bring your own key: point claude at an Anthropic-compatible endpoint, or a local proxy (litellm, claude-code-router) fronting OpenAI or Ollama. Leave empty for the default subscription.</span>
+                      <span class="pref-label">Provider</span>
+                      <span class="pref-desc">Claude uses the default CLI. OpenAI-compatible talks straight to an endpoint (OpenAI, or a local Ollama) with your key and model, shown natively in Husk.</span>
                     </span>
-                    <input type="text" id="pref-agent-base-url" placeholder="https://api.example.com or http://localhost:4000" spellcheck="false" autocomplete="off" />
+                    <select id="pref-agent-vendor" aria-label="Provider">
+                      <option value="claude">Claude (default)</option>
+                      <option value="openai">OpenAI-compatible (bring your own key)</option>
+                    </select>
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Custom endpoint</span>
+                      <span class="pref-desc">For OpenAI-compatible: the base URL, e.g. https://api.openai.com/v1 or http://localhost:11434/v1 (Ollama). For Claude: an Anthropic-compatible endpoint or a local proxy; empty keeps the subscription.</span>
+                    </span>
+                    <input type="text" id="pref-agent-base-url" placeholder="https://api.openai.com/v1 or http://localhost:11434/v1" spellcheck="false" autocomplete="off" />
                   </label>
                   <label class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">API key</span>
-                      <span class="pref-desc">Sent to the custom endpoint above. Stored locally in your Husk config.</span>
+                      <span class="pref-desc">Sent to the endpoint above. Stored locally in your Husk config.</span>
                     </span>
                     <input type="password" id="pref-agent-api-key" placeholder="sk-..." spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Model</span>
+                      <span class="pref-desc">For OpenAI-compatible only. Pick from the endpoint, or type one.</span>
+                    </span>
+                    <span class="pref-field-group">
+                      <input type="text" id="pref-agent-model" list="pref-agent-model-list" placeholder="gpt-6-luna" spellcheck="false" autocomplete="off" />
+                      <datalist id="pref-agent-model-list"></datalist>
+                      <button class="ghost-btn" id="btn-pref-models" type="button">Load&hellip;</button>
+                    </span>
                   </label>
                   <button class="btn-primary" id="pref-save">Save and restart</button>
                 </section>

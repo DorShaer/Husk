@@ -13576,8 +13576,10 @@ function bindPrefs() {
   paintAgentCommandPicker();
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
   if ($('#pref-agent-cwd')) $('#pref-agent-cwd').value = cfg.agentCwd || '';
+  if ($('#pref-agent-vendor')) $('#pref-agent-vendor').value = cfg.agentVendor === 'openai' ? 'openai' : 'claude';
   if ($('#pref-agent-base-url')) $('#pref-agent-base-url').value = cfg.agentBaseUrl || '';
   if ($('#pref-agent-api-key')) $('#pref-agent-api-key').value = cfg.agentApiKey || '';
+  if ($('#pref-agent-model')) $('#pref-agent-model').value = cfg.agentModel || '';
   bindOrchestratorConfig();
   $('#pref-recap').checked = cfg.recap !== false;
   if ($('#pref-pai')) $('#pref-pai').checked = cfg.paiEnabled !== false;
@@ -14051,6 +14053,8 @@ $('#pref-save').addEventListener('click', async () => {
     agentCwd,
     agentBaseUrl: baseEl ? baseEl.value.trim() : '',
     agentApiKey: keyEl ? keyEl.value.trim() : '',
+    agentVendor: $('#pref-agent-vendor') ? $('#pref-agent-vendor').value : 'claude',
+    agentModel: $('#pref-agent-model') ? $('#pref-agent-model').value.trim() : '',
   });
   bindPrefs();
   renderSkills();
@@ -14088,6 +14092,20 @@ $('#pref-agent-pick')?.addEventListener('change', (e) => {
     });
   }
 }
+// Populate the model datalist from the configured OpenAI-compatible endpoint.
+$('#btn-pref-models')?.addEventListener('click', async () => {
+  const base = ($('#pref-agent-base-url')?.value || '').trim();
+  const key = ($('#pref-agent-api-key')?.value || '').trim();
+  if (!base) { toast('Set the endpoint first', 'info'); return; }
+  try {
+    const r = await window.husk.openai.models({ baseUrl: base, apiKey: key });
+    if (r && r.ok && Array.isArray(r.models) && r.models.length) {
+      const dl = $('#pref-agent-model-list');
+      if (dl) { dl.replaceChildren(); for (const m of r.models) { const o = document.createElement('option'); o.value = m; dl.appendChild(o); } }
+      toast(`Loaded ${r.models.length} models`, 'success');
+    } else toast(`Could not load models: ${(r && r.error) || 'none returned'}`, 'error');
+  } catch (_) { toast('Could not load models', 'error'); }
+});
 $('#pref-chat-view')?.addEventListener('change', async (e) => {
   const v = e.target.value === 'terminal' ? 'terminal' : 'chat';
   cfg = await window.husk.config.set({ chatView: v });

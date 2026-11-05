@@ -17,6 +17,7 @@ const {
 const {
   normalizeAcpUpdate, normalizeAcpPermission, normalizeAcpSession, normalizeClaudeEvent,
 } = require('./chat-events');
+const { openaiTurn } = require('./openai-stream');
 
 const STDERR_KEEP = 2000;
 // Replay log bounds. A renderer reload rebuilds each tab's thread from this
@@ -129,8 +130,26 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
 
   // claudeSessionId pins claude's transcript to a known id (the same trick
   // spawnPty uses) so the status panel can find this tab's .jsonl by name.
-  async function start({ tabId, command, cwd, claudeSessionId, keepLog } = {}) {
+  async function start({ tabId, command, cwd, claudeSessionId, keepLog, openai } = {}) {
     if (!tabId) return { ok: false, error: 'tabId required' };
+    // Bring your own key, native: an OpenAI-compatible endpoint (a vendor, or a
+    // local Ollama). No child process; prompts stream over HTTP and surface as
+    // the same events the claude transport emits.
+    if (openai && openai.baseUrl && openai.model) {
+      if (sessions.has(tabId)) await stop({ tabId });
+      const s = {
+        tabId, transport: 'openai', exe: 'openai', command: String(command || '').trim(), cwd: cwd || null,
+        child: null, framer: null, acp: null, sessionId: 'openai-' + Date.now().toString(36),
+        pendingPerms: new Map(), permInputs: new Map(), stderr: '', exited: false, turnOpen: false,
+        log: Array.isArray(keepLog) ? keepLog.slice() : [], logText: 0, logTruncated: false, startedAt: Date.now(),
+        openai: { baseUrl: String(openai.baseUrl), apiKey: String(openai.apiKey || ''), model: String(openai.model) },
+        messages: [], abort: null,
+      };
+      for (const ev of s.log) if (ev && ev.text) s.logText += String(ev.text).length;
+      sessions.set(tabId, s);
+      send(tabId, { type: 'session', sessionId: s.sessionId, model: openai.model, models: { current: openai.model, available: [] } });
+      return { ok: true, transport: 'openai', sessionId: s.sessionId };
+    }
     const transport = transportFor(command);
     if (!transport) return { ok: false, error: `${String(command || '').split(/\s+/)[0] || 'agent'} has no chat protocol yet` };
     if (sessions.has(tabId)) await stop({ tabId });
@@ -274,6 +293,22 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     // The renderer paints the user's bubble itself before calling here, so the
     // log takes it directly rather than echoing it back.
     record(s, Object.assign({ type: 'user', text: body }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
+    if (s.transport === 'openai') {
+      s.messages.push({ role: 'user', content: body });
+      s.turnOpen = true;
+      s.abort = new AbortController();
+      const started = Date.now();
+      openaiTurn({ ...s.openai, messages: s.messages, signal: s.abort.signal },
+        (ev) => { if (!s.stopped) send(tabId, normalizeClaudeEvent(ev)); },
+        (err, r) => {
+          s.turnOpen = false; s.abort = null;
+          if (s.stopped) return;
+          if (err) { send(tabId, normalizeClaudeEvent({ type: 'result', subtype: 'error', is_error: true, result: err.message })); return; }
+          s.messages.push({ role: 'assistant', content: (r && r.text) || '' });
+          send(tabId, normalizeClaudeEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', duration_ms: Date.now() - started }));
+        });
+      return { ok: true };
+    }
     if (s.transport === 'acp') {
       if (!s.sessionId) return { ok: false, error: 'session not ready' };
       s.turnOpen = true;
@@ -297,6 +332,11 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
   async function cancel({ tabId } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false };
+    if (s.transport === 'openai') {
+      if (s.abort) { try { s.abort.abort(); } catch (_) {} }
+      s.turnOpen = false;
+      return { ok: true };
+    }
     if (s.transport === 'acp') {
       if (s.sessionId) s.acp.cancel(s.sessionId);
       return { ok: true };
@@ -400,6 +440,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     if (!s) return { ok: true };
     s.stopped = true;
     sessions.delete(tabId);
+    if (s.abort) { try { s.abort.abort(); } catch (_) {} }
     try { if (s.child && s.child.stdin) s.child.stdin.end(); } catch (_) {}
     killTree(s);
     return { ok: true };

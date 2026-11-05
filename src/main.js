@@ -25,6 +25,7 @@ try {
 
 const { shJoin } = require('./lib/shell-quote');
 const { stripAnsi } = require('./lib/strip-ansi');
+const { openaiModels } = require('./lib/openai-stream');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
@@ -1858,7 +1859,13 @@ ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay } = {}) =>
   // reload reconstructs the whole conversation, not just what came after the
   // resume. Bounded so a giant history cannot swell the log past its cap.
   const seed = Array.isArray(replay) ? replay.slice(-4000) : null;
-  const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed });
+  // Bring your own key, native: when the user picked an OpenAI-compatible vendor
+  // with a base URL, key and model, the chat streams from that endpoint instead
+  // of spawning claude.
+  const byokOpenai = (config.agentVendor === 'openai' && config.agentBaseUrl && config.agentApiKey && config.agentModel)
+    ? { baseUrl: String(config.agentBaseUrl).trim(), apiKey: String(config.agentApiKey).trim(), model: String(config.agentModel).trim() }
+    : null;
+  const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed, openai: byokOpenai });
   if (res && res.ok) {
     chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
     if (transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
@@ -1949,6 +1956,10 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
 ipcMain.handle('chat:prompt', (_e, { tabId, text, images } = {}) => chatRuntime.prompt({ tabId, text, images }));
 ipcMain.handle('chat:cancel', (_e, { tabId } = {}) => chatRuntime.cancel({ tabId }));
 ipcMain.handle('chat:permission', (_e, { tabId, requestId, optionId, answers } = {}) => chatRuntime.permission({ tabId, requestId, optionId, answers }));
+ipcMain.handle('openai:models', (_e, { baseUrl, apiKey } = {}) => new Promise((resolve) => {
+  if (!baseUrl || typeof baseUrl !== 'string') return resolve({ ok: false, error: 'base URL required' });
+  openaiModels({ baseUrl, apiKey }, (err, models) => resolve(err ? { ok: false, error: err.message } : { ok: true, models: Array.isArray(models) ? models : [] }));
+}));
 ipcMain.handle('chat:setModel', (_e, { tabId, modelId, modelName } = {}) => chatRuntime.setModel({ tabId, modelId, modelName }));
 ipcMain.handle('chat:stop', async (_e, { tabId } = {}) => {
   const r = await chatRuntime.stop({ tabId });
