@@ -183,7 +183,7 @@ contextBridge.exposeInMainWorld('husk', {
     create: (payload) => ipcRenderer.invoke('skills:create', payload),
   },
   sessions: {
-    list: () => ipcRenderer.invoke('sessions:list'),
+    list: (opts) => ipcRenderer.invoke('sessions:list', opts || {}),
     read: (prdPath) => ipcRenderer.invoke('sessions:read', prdPath),
     findClaudeId: (payload) => ipcRenderer.invoke('sessions:findClaudeId', payload),
     resolveLiveTitle: (payload) => ipcRenderer.invoke('sessions:resolveLiveTitle', payload),

@@ -9872,8 +9872,16 @@ function findCopilotSessionForResume(id, cwd) {
 // transcripts under ~/.claude/projects; copilot keeps per-session folders under
 // <COPILOT_HOME>/session-state. Agents we do not yet read return an empty list with
 // supported:false so the UI can say so instead of erroring.
-ipcMain.handle('sessions:list', () => {
-  const agent = activeAgentName();
+ipcMain.handle('sessions:list', (_e, opts = {}) => {
+  // The list follows the agent the caller is using (the active chat tab), not
+  // just the configured default, so a copilot or gemini chat's sessions show up
+  // too. A claude-* alias counts as claude. A non-empty agent request names the
+  // agent to list; an empty/missing one means "use the configured default"
+  // (agentBaseName('') is 'claude', so only map through it when a name was sent).
+  const raw = opts && typeof opts.agent === 'string' ? opts.agent.trim() : '';
+  const req = raw ? agentBaseName(raw) : '';
+  const reqAgent = (req === 'claude' || /^claude[-_]/.test(req)) ? 'claude' : req;
+  const agent = (reqAgent === 'claude' || reqAgent === 'copilot' || reqAgent === 'gemini') ? reqAgent : activeAgentName();
   if (agent === 'copilot') {
     const listed = listCopilotSessions({ withMeta: true });
     return {

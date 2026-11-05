@@ -10426,21 +10426,45 @@ let sxFetchInflight = null;
 let sxFetchRes = null;
 let sxFetchAt = 0;
 let sxFetchEpoch = 0;
+let sxFetchAgent = '';
+let sxFetchInflightAgent = null;
+// The sessions list belongs to the agent the user is using: the active chat
+// tab's CLI. With no active chat tab, return '' so the main process picks the
+// configured default itself (it always has config loaded, unlike the renderer's
+// cfg which arrives async). A claude-* alias is claude.
+function activeSessionsAgent() {
+  const t = TABS.get(activeTabId);
+  // Only a tab carrying its OWN command names an agent. The boot placeholder tab
+  // has none and would fall back to cfg.agentCommand, which the renderer loads
+  // async; returning '' there lets the main process use its own loaded default
+  // instead of racing the renderer's cfg (which reads 'claude' until it lands).
+  const own = t && (t.launchCommand || t.command);
+  if (!own) return '';
+  const base = String(own).trim().split(/\s+/)[0].split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
+  return (base === 'claude' || /^claude[-_]/.test(base)) ? 'claude' : base;
+}
 let sxPollPaused = false;
 let sxDeleting = false;
 
 function sessionsFetch({ maxAgeMs = 1500 } = {}) {
-  if (sxFetchInflight) return sxFetchInflight;
-  if (sxFetchRes && Date.now() - sxFetchAt < maxAgeMs) return Promise.resolve(sxFetchRes);
+  const agent = activeSessionsAgent();
+  // Reuse an in-flight fetch only for the SAME agent. An early fetch for the
+  // wrong agent (agent still settling at boot) must not be handed to a later
+  // caller that now wants a different one, or its result paints the wrong list.
+  if (sxFetchInflight && sxFetchInflightAgent === agent) return sxFetchInflight;
+  // Never serve a cached list for a different agent (a tab switch changes it).
+  if (sxFetchRes && sxFetchAgent === agent && Date.now() - sxFetchAt < maxAgeMs) return Promise.resolve(sxFetchRes);
   const epoch = sxFetchEpoch;
-  sxFetchInflight = window.husk.sessions.list().then((r) => {
+  sxFetchInflightAgent = agent;
+  const p = window.husk.sessions.list({ agent }).then((r) => {
     // A result issued before an invalidation is delivered but never cached.
-    if (epoch === sxFetchEpoch) { sxFetchRes = r; sxFetchAt = Date.now(); }
+    if (epoch === sxFetchEpoch) { sxFetchRes = r; sxFetchAt = Date.now(); sxFetchAgent = agent; }
     return r;
-  }).finally(() => { sxFetchInflight = null; });
+  }).finally(() => { if (sxFetchInflight === p) { sxFetchInflight = null; sxFetchInflightAgent = null; } });
+  sxFetchInflight = p;
   return sxFetchInflight;
 }
-function sessionsFetchInvalidate() { sxFetchEpoch += 1; sxFetchRes = null; sxFetchAt = 0; }
+function sessionsFetchInvalidate() { sxFetchEpoch += 1; sxFetchRes = null; sxFetchAt = 0; sxFetchInflight = null; sxFetchInflightAgent = null; }
 function sxPausePoll(on) { sxPollPaused = !!on; }
 
 // The only writer of the query. Setting an input's value from script fires no
