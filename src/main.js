@@ -147,7 +147,8 @@ const HUSK_PROMPTS_DIR = path.join(CONFIG_DIR, 'prompts');
 
 function getAgentKind() {
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
-  return cmd === 'claude' ? 'claude' : 'generic';
+  // A claude-* alias is claude (see transportFor / activeAgentName).
+  return (cmd === 'claude' || /^claude[-_]/.test(cmd)) ? 'claude' : 'generic';
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -2884,8 +2885,7 @@ function injectGoalToRunPty(runId, text) {
     // (see flushRunOutput).
     r.injectTextLen = body.length;
     r.bytesSinceInject = 0;
-    const agentKind = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
-      .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
+    const agentKind = activeAgentName();
     if (agentKind === 'claude') {
       r.pty.write('\x1b[200~' + body + '\x1b[201~');
       setTimeout(() => { try { if (r.pty) r.pty.write('\r'); } catch (_) {} }, 120);
@@ -9640,7 +9640,12 @@ function sessionTitleFrom(info) {
 // lowercased): 'claude', 'copilot', 'codex', 'aider', etc. Husk is
 // tool-agnostic, so anything that reads agent-specific state keys off this.
 function activeAgentName() {
-  return (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
+  const base = agentBaseName(config.agentCommand || 'claude');
+  // A claude-* alias (claude-work, claude-test) is the real claude under another
+  // name, same as transportFor treats it. Return 'claude' so the session, title,
+  // chat-control and background-agent paths that key on the dialect work for it.
+  if (base === 'claude' || /^claude[-_]/.test(base)) return 'claude';
+  return base;
 }
 
 // Parse a copilot session's workspace.yaml (a flat key: value file) into an
