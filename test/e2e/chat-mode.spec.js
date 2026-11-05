@@ -991,7 +991,7 @@ test('the status bar names the model the chat reports, and follows a switch', as
   await app.close();
 });
 
-test('an AskUserQuestion permission renders readable questions and options, not raw JSON', async () => {
+test('an AskUserQuestion permission renders selectable options and submits a pick', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
@@ -1002,15 +1002,18 @@ test('an AskUserQuestion permission renders readable questions and options, not 
   const perm = pane.locator('.chat-perm');
   await expect(perm).toBeVisible();
   await expect(perm.locator('.chat-perm-title')).toHaveText('AskUserQuestion');
-  // The questions render as text, not a scrolling JSON <pre>.
+  // The question and its options render as text, not a scrolling JSON <pre>.
   await expect(perm.locator('.chat-ask-question')).toHaveText('Retire the old welcome page?');
   await expect(perm.locator('.chat-ask-tag')).toHaveText('Legacy views');
   await expect(perm.locator('.chat-ask-option')).toHaveCount(2);
   await expect(perm.locator('.chat-ask-label').first()).toHaveText('Yes, retire it');
-  await expect(perm.locator('.chat-ask-desc').first()).toHaveText('Remove the press-enter page for good.');
   await expect(perm.locator('.chat-perm-detail')).toHaveCount(0);
 
-  await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
+  // The options are selectable (not just Allow/Deny): pick one, then submit.
+  const option = perm.locator('.chat-ask-choice').first();
+  await option.click();
+  await expect(option).toHaveClass(/is-sel/);
+  await perm.locator('.chat-perm-btn', { hasText: 'Submit' }).click();
   await expect(perm).toHaveClass(/is-resolved/);
   await app.close();
 });

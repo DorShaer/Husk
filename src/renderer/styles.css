@@ -4747,6 +4747,11 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .chat-ask-label { color: var(--text); font-size: var(--fs-body); font-weight: 600; }
 .chat-ask-desc { color: var(--text-2); font-size: var(--fs-label); line-height: 1.5; }
 .chat-ask-multi { color: var(--text-3); font-size: var(--fs-label); font-style: italic; }
+/* Selectable AskUserQuestion option: a full-width button that highlights when picked. */
+.chat-ask-choice { width: 100%; text-align: left; cursor: pointer; font: inherit; align-items: flex-start; transition: border-color 0.12s ease, background 0.12s ease; }
+.chat-ask-choice:hover:not(:disabled) { border-color: var(--accent); }
+.chat-ask-choice.is-sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-1)); }
+.chat-ask-choice:disabled { opacity: 0.6; cursor: default; }
 .chat-perm-verdict[data-verdict="allow"] { color: var(--emerald); }
 .chat-perm-verdict[data-verdict="deny"] { color: var(--rose); }
 

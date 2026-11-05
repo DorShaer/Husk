@@ -304,7 +304,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return { ok: writeLine(s, encodeInterrupt('i' + Date.now().toString(36))) };
   }
 
-  async function permission({ tabId, requestId, optionId } = {}) {
+  async function permission({ tabId, requestId, optionId, answers } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const id = String(requestId || '');
@@ -319,7 +319,10 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       s.permInputs.delete(id);
       const choice = String(optionId);
       const allow = choice === 'allow' || choice === 'allow-session';
-      writeLine(s, encodePermissionResponse(id, allow, perm.input, undefined, choice === 'allow-session' ? perm.suggestions : undefined));
+      // AskUserQuestion is answered by returning the picks in updatedInput.answers
+      // (keyed by question text and header), which claude reads as the tool result.
+      const input = (allow && answers && typeof answers === 'object') ? { ...perm.input, answers } : perm.input;
+      writeLine(s, encodePermissionResponse(id, allow, input, undefined, choice === 'allow-session' ? perm.suggestions : undefined));
     }
     send(tabId, { type: 'permission_resolved', requestId: id, optionId: String(optionId) });
     return { ok: true };

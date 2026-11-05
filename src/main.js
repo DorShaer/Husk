@@ -1947,7 +1947,7 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
 });
 ipcMain.handle('chat:prompt', (_e, { tabId, text, images } = {}) => chatRuntime.prompt({ tabId, text, images }));
 ipcMain.handle('chat:cancel', (_e, { tabId } = {}) => chatRuntime.cancel({ tabId }));
-ipcMain.handle('chat:permission', (_e, { tabId, requestId, optionId } = {}) => chatRuntime.permission({ tabId, requestId, optionId }));
+ipcMain.handle('chat:permission', (_e, { tabId, requestId, optionId, answers } = {}) => chatRuntime.permission({ tabId, requestId, optionId, answers }));
 ipcMain.handle('chat:setModel', (_e, { tabId, modelId, modelName } = {}) => chatRuntime.setModel({ tabId, modelId, modelName }));
 ipcMain.handle('chat:stop', async (_e, { tabId } = {}) => {
   const r = await chatRuntime.stop({ tabId });

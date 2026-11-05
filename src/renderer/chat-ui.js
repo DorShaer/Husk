@@ -86,37 +86,6 @@
     try { return JSON.stringify(input, null, 2); } catch (_) { return str(input); }
   }
 
-  // An AskUserQuestion tool input is a list of questions, each with options.
-  // Dumped as raw JSON it is unreadable in a small scroll box, so render the
-  // questions and their options as plain text. Returns null for anything that
-  // is not shaped like AskUserQuestion, so callers fall back to prettyInput.
-  function questionsNode(input) {
-    const qs = input && typeof input === 'object' && Array.isArray(input.questions) ? input.questions : null;
-    if (!qs || !qs.length) return null;
-    const wrap = el('div', 'chat-ask');
-    for (const q of qs) {
-      if (!q || typeof q !== 'object') continue;
-      const block = el('div', 'chat-ask-q');
-      if (q.header) block.appendChild(el('span', 'chat-ask-tag', str(q.header)));
-      if (q.question) block.appendChild(el('div', 'chat-ask-question', str(q.question)));
-      const opts = Array.isArray(q.options) ? q.options : [];
-      if (opts.length) {
-        const ul = el('ul', 'chat-ask-options');
-        for (const o of opts) {
-          if (!o || typeof o !== 'object') continue;
-          const li = el('li', 'chat-ask-option');
-          li.appendChild(el('span', 'chat-ask-label', str(o.label)));
-          if (o.description) li.appendChild(el('span', 'chat-ask-desc', str(o.description)));
-          ul.appendChild(li);
-        }
-        if (ul.firstChild) block.appendChild(ul);
-      }
-      if (q.multiSelect) block.appendChild(el('span', 'chat-ask-multi', 'Select all that apply'));
-      if (block.firstChild) wrap.appendChild(block);
-    }
-    return wrap.firstChild ? wrap : null;
-  }
-
   function fmtDuration(ms) {
     if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) return '';
     if (ms < 1000) return (ms / 1000).toFixed(1) + 's';
@@ -1342,16 +1311,74 @@
           head.appendChild(pill);
           card.appendChild(head);
           card.appendChild(el('div', 'chat-perm-title', str(it.title)));
-          // Only the AskUserQuestion tool gets the rich questions view. Any other
-          // tool that happens to carry a questions-shaped input still shows its
-          // real detail, so a card can never dress up what is being approved.
-          const questions = str(it.title) === 'AskUserQuestion' ? questionsNode(it.input) : null;
-          if (questions) {
-            card.appendChild(questions);
-          } else {
-            const detail = str(it.detail) || prettyInput(it.input);
-            if (detail) card.appendChild(el('pre', 'chat-perm-detail', cap(detail)));
+          // AskUserQuestion is answered by picking options, not Allow/Deny. The
+          // picks go back as updatedInput.answers keyed by question and header,
+          // which claude reads as the tool result (verified against stream-json).
+          // Only this exact tool gets the picker; any other tool with a
+          // questions-shaped input still shows its real detail below.
+          if (str(it.title) === 'AskUserQuestion' && it.input && Array.isArray(it.input.questions)) {
+            const qs = it.input.questions;
+            const picks = qs.map(() => new Set());
+            const wrap = el('div', 'chat-ask');
+            qs.forEach((q, qi) => {
+              const block = el('div', 'chat-ask-q');
+              if (q && q.header) block.appendChild(el('span', 'chat-ask-tag', str(q.header)));
+              if (q && q.question) block.appendChild(el('div', 'chat-ask-question', str(q.question)));
+              const multi = !!(q && q.multiSelect);
+              const list = el('div', 'chat-ask-options');
+              for (const o of (Array.isArray(q && q.options) ? q.options : [])) {
+                if (!o || typeof o !== 'object') continue;
+                const b = el('button', 'chat-ask-option chat-ask-choice');
+                b.type = 'button';
+                b.appendChild(el('span', 'chat-ask-label', str(o.label)));
+                if (o.description) b.appendChild(el('span', 'chat-ask-desc', str(o.description)));
+                b.addEventListener('click', () => {
+                  const set = picks[qi];
+                  if (multi) { if (set.has(o.label)) set.delete(o.label); else set.add(o.label); }
+                  else { set.clear(); set.add(o.label); }
+                  for (const btn of list.querySelectorAll('.chat-ask-choice')) {
+                    const lbl = btn.querySelector('.chat-ask-label');
+                    btn.classList.toggle('is-sel', !!(lbl && set.has(lbl.textContent)));
+                  }
+                });
+                list.appendChild(b);
+              }
+              block.appendChild(list);
+              wrap.appendChild(block);
+            });
+            card.appendChild(wrap);
+            const resolve = (optionId, answers) => {
+              for (const btn of card.querySelectorAll('button')) btn.disabled = true;
+              const requestId = it.requestId;
+              Promise.resolve()
+                .then(() => api.permission({ tabId, requestId, optionId, answers }))
+                .then((res) => { if (res && res.ok === false) apply({ type: 'error', text: res.error || 'The decision did not reach the agent.' }); })
+                .catch((err) => apply({ type: 'error', text: (err && err.message) || 'The decision did not reach the agent.' }));
+              apply({ type: 'permission_resolved', requestId, optionId });
+            };
+            const askActions = el('div', 'chat-perm-actions');
+            const submit = el('button', 'btn-primary chat-perm-btn', 'Submit');
+            submit.type = 'button';
+            submit.addEventListener('click', () => {
+              const answers = {};
+              qs.forEach((q, qi) => {
+                const labels = [...picks[qi]];
+                if (q && q.question) answers[str(q.question)] = labels;
+                if (q && q.header) answers[str(q.header)] = labels;
+              });
+              resolve('allow', answers);
+            });
+            const dismiss = el('button', 'ghost-btn chat-perm-btn', 'Dismiss');
+            dismiss.type = 'button';
+            dismiss.addEventListener('click', () => resolve('deny', undefined));
+            askActions.appendChild(submit);
+            askActions.appendChild(dismiss);
+            card.appendChild(askActions);
+            if (!wired) { wired = true; forceScroll = true; }
+            return;
           }
+          const detail = str(it.detail) || prettyInput(it.input);
+          if (detail) card.appendChild(el('pre', 'chat-perm-detail', cap(detail)));
           const actions = el('div', 'chat-perm-actions');
           const opts = Array.isArray(it.options) && it.options.length ? it.options
             : [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }];
