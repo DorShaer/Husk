@@ -13576,6 +13576,8 @@ function bindPrefs() {
   paintAgentCommandPicker();
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
   if ($('#pref-agent-cwd')) $('#pref-agent-cwd').value = cfg.agentCwd || '';
+  if ($('#pref-agent-base-url')) $('#pref-agent-base-url').value = cfg.agentBaseUrl || '';
+  if ($('#pref-agent-api-key')) $('#pref-agent-api-key').value = cfg.agentApiKey || '';
   bindOrchestratorConfig();
   $('#pref-recap').checked = cfg.recap !== false;
   if ($('#pref-pai')) $('#pref-pai').checked = cfg.paiEnabled !== false;
@@ -14041,10 +14043,14 @@ $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
   const cwdInput = $('#pref-agent-cwd');
   const agentCwd = cwdInput ? cwdInput.value.trim() : '';
+  const baseEl = $('#pref-agent-base-url');
+  const keyEl = $('#pref-agent-api-key');
   cfg = await window.husk.config.set({
     agentCommand: $('#pref-agent').value.trim(),
     agentName: name,
     agentCwd,
+    agentBaseUrl: baseEl ? baseEl.value.trim() : '',
+    agentApiKey: keyEl ? keyEl.value.trim() : '',
   });
   bindPrefs();
   renderSkills();

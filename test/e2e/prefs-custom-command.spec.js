@@ -60,3 +60,29 @@ test('selecting "Custom command…" reveals the free-text field; a listed comman
   expect(r.afterListed.value).toBe('claude'); // Save reads #pref-agent, so it must sync
   await app.close();
 });
+
+// Bring-your-own-key: a custom endpoint and API key stored in config load back
+// into the Agent prefs fields, so the user can see and edit them.
+test('custom endpoint and API key round-trip through the Agent preferences', async () => {
+  const app = await launch({
+    firstRunDone: true, skipWelcome: true, agentCommand: 'claude',
+    agentBaseUrl: 'http://localhost:4000', agentApiKey: 'sk-test-123',
+  });
+  const win = await app.firstWindow({ timeout: 30_000 });
+  await win.waitForLoadState('domcontentloaded');
+  await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  // bindPrefs populates the fields once the boot config load lands.
+  await win.waitForFunction(() => {
+    const b = document.querySelector('#pref-agent-base-url');
+    return b && b.value === 'http://localhost:4000';
+  }, null, { timeout: 15_000 });
+  const vals = await win.evaluate(() => ({
+    base: document.querySelector('#pref-agent-base-url').value,
+    key: document.querySelector('#pref-agent-api-key').value,
+    keyType: document.querySelector('#pref-agent-api-key').type,
+  }));
+  expect(vals.base).toBe('http://localhost:4000');
+  expect(vals.key).toBe('sk-test-123');
+  expect(vals.keyType).toBe('password'); // key field is masked
+  await app.close();
+});

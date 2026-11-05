@@ -1021,6 +1021,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // login shell asynchronously, so force-prepend it here the same way as bun.
   const localBin = path.join(HOME, '.local', 'bin');
   if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
+  applyByok(env);
 
   const rawCmd = (overrideCmd || config.agentCommand || 'claude').trim();
 
@@ -1772,7 +1773,7 @@ function chatEnv() {
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}${path.delimiter}${env.PATH}`;
   const localBin = path.join(HOME, '.local', 'bin');
   if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}${path.delimiter}${env.PATH}`;
-  return env;
+  return applyByok(env);
 }
 
 // Which claude sessions are Husk's own chats, so the Sessions list can keep
@@ -5648,6 +5649,19 @@ function buildAgentEnv() {
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
   const localBin = path.join(HOME, '.local', 'bin');
   if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
+  return applyByok(env);
+}
+
+// Bring your own key: point claude at a custom Anthropic-compatible endpoint (a
+// vendor's own, or a local proxy like litellm fronting OpenAI/ollama) with your
+// own key. Applied to every agent-spawn env (terminal, chat, background) so the
+// whole app honors it; a no-op unless configured, so the default subscription
+// path is untouched.
+function applyByok(env) {
+  const baseUrl = typeof config.agentBaseUrl === 'string' ? config.agentBaseUrl.trim() : '';
+  const apiKey = typeof config.agentApiKey === 'string' ? config.agentApiKey.trim() : '';
+  if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl;
+  if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
   return env;
 }
 
@@ -5658,7 +5672,8 @@ function buildAgentEnv() {
 ipcMain.handle('autopilot:billingMode', () => {
   const agent = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
   const base = agent.split(/[\\/]/).pop();
-  const hasKey = !!(process.env.ANTHROPIC_API_KEY && String(process.env.ANTHROPIC_API_KEY).trim());
+  const hasKey = !!((process.env.ANTHROPIC_API_KEY && String(process.env.ANTHROPIC_API_KEY).trim())
+    || (config.agentApiKey && String(config.agentApiKey).trim()));
   // Only claude-on-an-API-key is truly pay-per-token in a way Husk can price.
   const metered = base === 'claude' && hasKey;
   return { metered, agent: base, hasApiKey: hasKey };
