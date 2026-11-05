@@ -865,6 +865,11 @@ test('pasting an image attaches a thumbnail, sends it with the prompt, and the b
   const bubble = pane.locator('.chat-item-user:not(.is-queued) .chat-bubble').first();
   await expect(bubble.locator('img')).toHaveCount(1);
   await expect(bubble).toContainText('what is in this picture');
+  // Clicking an image opens a full-size lightbox; a click on it closes.
+  await bubble.locator('img').click();
+  await expect(win.locator('.chat-lightbox.is-open')).toHaveCount(1);
+  await win.locator('.chat-lightbox').click();
+  await expect(win.locator('.chat-lightbox.is-open')).toHaveCount(0);
   await pane.locator('.chat-perm .chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(pane.locator('.chat-item-text').last()).toContainText('(images 1)');
   // The × drops a pasted image before it goes.

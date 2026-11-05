@@ -17588,6 +17588,15 @@ body.is-resizing-status iframe, body.is-resizing-status .term-pane { pointer-eve
 .chat-composer.is-dropping { outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: -2px; }
 .chat-bubble-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .chat-bubble-images img { max-width: 280px; max-height: 220px; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.chat-img-view { cursor: zoom-in; }
+/* Full-size image overlay: hidden until an image is clicked. */
+.chat-lightbox {
+  position: fixed; inset: 0; z-index: 1000; display: none;
+  align-items: center; justify-content: center; padding: 4vh 4vw;
+  background: rgba(0, 0, 0, 0.82); cursor: zoom-out;
+}
+.chat-lightbox.is-open { display: flex; }
+.chat-lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5); }
 .chat-bubble-image-tile { display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border: 1px dashed var(--line-2); border-radius: 6px; color: var(--text-3); font-size: var(--fs-label); }
 .chat-bubble:empty { display: none; }
 

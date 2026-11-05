@@ -20,8 +20,9 @@ function grab(re, name) {
 }
 
 const CODE = [
-  'const copilotWorkspaceCache = new Map(); const copilotTitleCache = new Map(); const COPILOT_CACHE_MAX = 300;',
+  'const copilotWorkspaceCache = new Map(); const copilotTitleCache = new Map(); const copilotActivityCache = new Map(); const COPILOT_CACHE_MAX = 300;',
   grab(/function readCopilotWorkspace\(dir\) \{[\s\S]*?\n\}/, 'readCopilotWorkspace'),
+  grab(/function copilotLastTurnMs\(dir\) \{[\s\S]*?\n\}/, 'copilotLastTurnMs'),
   grab(/function readCopilotSessionTitle\(dir\) \{[\s\S]*?\n\}/, 'readCopilotSessionTitle'),
   grab(/function isAutopilotCopilotText\(text\) \{[\s\S]*?\n\}/, 'isAutopilotCopilotText'),
   grab(/function containsAutopilotCopilotText\(text\) \{[\s\S]*?\n\}/, 'containsAutopilotCopilotText'),
@@ -57,7 +58,7 @@ function makeCopilotHome(specs) {
 
 function load(home) {
   const ctx = {
-    fs, path, JSON, Map, Buffer, Date, Number, String, Array, Object, Math,
+    fs, path, JSON, Map, Buffer, Date, Number, String, Array, Object, Math, isFinite,
     COPILOT_DIR: home,
     deriveCopilotSessionTitleFromEventsText,
     isAutopilotWorkspacePath: () => false,
@@ -102,6 +103,32 @@ test('a session the CLI has already named counts as history without events yet',
   assert.equal(listed.length, 1);
   assert.equal(listed[0].title, 'Fix Chat Click Issue');
   assert.equal(listed[0].named, true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('activity time is the last real turn, not the reopen-bumped updated_at', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-copilot-'));
+  const id = 'eeeeeeee-0000-4000-8000-000000000005';
+  const dir = path.join(home, 'session-state', id);
+  fs.mkdirSync(dir, { recursive: true });
+  // The chat's last human/assistant turn is yesterday, but opening it today
+  // rewrote workspace.yaml's updated_at to now. Activity must track the turn.
+  fs.writeFileSync(path.join(dir, 'workspace.yaml'), [
+    `id: ${id}`, 'cwd: /tmp/x', 'name: null',
+    'created_at: 2026-11-04T09:00:00.000Z',
+    'updated_at: 2026-11-05T22:00:00.000Z',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), [
+    JSON.stringify({ type: 'user.message', timestamp: '2026-11-04T09:00:00.000Z', data: { content: 'hi' } }),
+    JSON.stringify({ type: 'assistant.message', timestamp: '2026-11-04T09:01:00.000Z', data: { content: 'hello' } }),
+    // Reopening appends session machinery with a current time; it must not count.
+    JSON.stringify({ type: 'session.resume', timestamp: '2026-11-05T22:00:00.000Z' }),
+  ].join('\n') + '\n');
+  const { listCopilotSessions } = load(home);
+  const listed = listCopilotSessions();
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].mtime, Date.parse('2026-11-04T09:01:00.000Z'));
   fs.rmSync(home, { recursive: true, force: true });
 });
 

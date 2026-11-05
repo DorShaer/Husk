@@ -66,6 +66,27 @@
     return n;
   }
 
+  // Click a chat image to see it full size. One reused overlay; Escape or a
+  // click anywhere on it closes.
+  let imageLightbox = null;
+  function openImageLightbox(src) {
+    if (!src) return;
+    if (!imageLightbox) {
+      imageLightbox = el('div', 'chat-lightbox');
+      imageLightbox.addEventListener('click', closeImageLightbox);
+      imageLightbox.appendChild(document.createElement('img'));
+      document.body.appendChild(imageLightbox);
+    }
+    imageLightbox.firstChild.src = src;
+    imageLightbox.classList.add('is-open');
+  }
+  function closeImageLightbox() { if (imageLightbox) imageLightbox.classList.remove('is-open'); }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeImageLightbox(); });
+  function makeViewable(img) {
+    img.classList.add('chat-img-view');
+    img.addEventListener('click', () => openImageLightbox(img.src));
+  }
+
   function str(v) { return v === null || v === undefined ? '' : String(v); }
   function basename(p) { return str(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || str(p); }
 
@@ -1013,8 +1034,8 @@
     function imageRow(images) {
       const wrap = el('div', 'chat-bubble-images');
       for (const im of images) {
-        if (im && im.dataUrl) { const img = document.createElement('img'); img.src = im.dataUrl; img.alt = 'Attached image'; wrap.appendChild(img); }
-        else if (im && typeof im.data === 'string' && im.data.startsWith('data:')) { const img = document.createElement('img'); img.src = im.data; img.alt = 'Attached image'; wrap.appendChild(img); }
+        if (im && im.dataUrl) { const img = document.createElement('img'); img.src = im.dataUrl; img.alt = 'Attached image'; makeViewable(img); wrap.appendChild(img); }
+        else if (im && typeof im.data === 'string' && im.data.startsWith('data:')) { const img = document.createElement('img'); img.src = im.data; img.alt = 'Attached image'; makeViewable(img); wrap.appendChild(img); }
         else wrap.appendChild(el('span', 'chat-bubble-image-tile', str(im && im.mimeType ? im.mimeType.replace('image/', '') : 'image')));
       }
       return wrap;

@@ -9758,6 +9758,46 @@ function readCopilotSessionTitle(dir) {
   }
 }
 
+// Copilot bumps workspace.yaml's updated_at whenever a session is merely
+// reopened, which would wrongly jump an untouched chat to the top of the list.
+// Derive activity from the last real conversation turn in the event log instead;
+// opening a session only appends session.*/tool.* events, never a message.
+// shortcut: scans the last 512 KB of the log, upgrade if a session can trail more
+// than that in tool/hook events after its final message.
+const copilotActivityCache = new Map(); // dir -> { sig, ms }
+function copilotLastTurnMs(dir) {
+  let fd;
+  try { fd = fs.openSync(path.join(dir, 'events.jsonl'), 'r'); } catch (_) { return 0; }
+  try {
+    const st = fs.fstatSync(fd);
+    const sig = `${st.size}:${st.mtimeMs}`;
+    const hit = copilotActivityCache.get(dir);
+    if (hit && hit.sig === sig) return hit.ms;
+    const start = Math.max(0, st.size - 512 * 1024);
+    const b = Buffer.alloc(st.size - start);
+    fs.readSync(fd, b, 0, b.length, start);
+    const lines = b.toString('utf8').split('\n');
+    let ms = 0;
+    // Iterate from the end: the file ends with a complete line, so the last
+    // message line parses even though the window's first line may be truncated.
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const ln = lines[i];
+      if (ln.indexOf('"timestamp"') === -1) continue;
+      if (ln.indexOf('"user.message"') === -1 && ln.indexOf('"assistant.message"') === -1) continue;
+      try {
+        const o = JSON.parse(ln);
+        if (o && (o.type === 'user.message' || o.type === 'assistant.message') && typeof o.timestamp === 'string') {
+          const t = Date.parse(o.timestamp);
+          if (isFinite(t)) { ms = t; break; }
+        }
+      } catch (_) {}
+    }
+    if (copilotActivityCache.size > COPILOT_CACHE_MAX) copilotActivityCache.clear();
+    copilotActivityCache.set(dir, { sig, ms });
+    return ms;
+  } catch (_) { return 0; } finally { try { fs.closeSync(fd); } catch (_) {} }
+}
+
 function isAutopilotCopilotText(text) {
   const t = String(text || '').trim().replace(/^\|-\s*/, '').trim();
   return /^\[AUTONOMOUS MODE\]/.test(t)
@@ -9810,7 +9850,9 @@ function listCopilotSessions(opts = {}) {
       hiddenAutopilot++;
       if (opts.includeAutopilot !== true) continue;
     }
-    let mtime = Date.parse(ws.updated_at) || 0;
+    // Last real turn first; with none, the stable created_at, not the
+    // reopen-bumped updated_at, so an untouched chat keeps its place.
+    let mtime = copilotLastTurnMs(full) || Date.parse(ws.created_at) || Date.parse(ws.updated_at) || 0;
     let sizeBytes = 0;
     try { const st = fs.statSync(path.join(full, 'events.jsonl')); sizeBytes = st.size; if (!mtime) mtime = st.mtimeMs; }
     catch (_) { if (!mtime) { try { mtime = fs.statSync(full).mtimeMs; } catch (_e) {} } }
@@ -10094,8 +10136,11 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
         startedMs: sessionStartMs,
         sizeBytes: st.size,
         // Last-activity from the transcript's final entry; tracks real activity
-        // more reliably than the file mtime.
-        mtime: rc.last !== undefined ? rc.last : (rc.last = lastActivityMs(fullPath, st.size, st.mtimeMs)),
+        // more reliably than the file mtime. When a transcript carries no human
+        // turn at all (an SDK sidecar), fall back to its birth time, not its
+        // mtime: reopening a session rewrites metadata lines and bumps the mtime,
+        // which would wrongly jump an untouched chat to the top as "now".
+        mtime: rc.last !== undefined ? rc.last : (rc.last = lastActivityMs(fullPath, st.size, st.birthtimeMs || st.mtimeMs)),
       });
     }
   }
