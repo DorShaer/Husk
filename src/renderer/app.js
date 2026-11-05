@@ -10,8 +10,8 @@ const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
 // A top-center stack of independent cards. Each slides in, auto-dismisses
 // (errors linger longer), pauses on hover, and can be dismissed by hand.
 // Newest sits on top and the stack is capped.
-const NOTIF_MAX = 4;
-const NOTIF_TTL = { error: 6500, warn: 5500, success: 4000, info: 4000, '': 4000 };
+const NOTIF_MAX = 3;
+const NOTIF_TTL = { error: 5000, warn: 4000, success: 2200, info: 2200, '': 2200 };
 // Icon path sets (stroke, 24x24 viewBox), built with createElementNS.
 const NOTIF_ICONS = {
   success: [['path', 'M20 6 9 17l-5-5']],
