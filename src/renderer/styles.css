@@ -8597,24 +8597,27 @@ body[data-mode="light"] .sx {
   font-family: var(--font-mono); font-size: 0.92em; color: var(--text-2);
 }
 /* Text fields and dropdowns form the right-hand control column. */
-.pref-row > input[type="text"], .pref-row select {
-  flex: 0 0 auto; width: 260px; max-width: 46%;
+.pref-row > input[type="text"], .pref-row > input[type="password"], .pref-row select {
+  flex: 0 0 auto; width: 300px; max-width: 48%;
   text-align: left;
   font-family: var(--font-mono); font-size: var(--fs-small);
   padding: 7px 11px; color: var(--text); outline: 0;
   background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--radius-control);
 }
-.pref-row input[type="text"]:focus, .pref-row select:focus { border-color: var(--accent); }
+.pref-row input[type="text"]:focus, .pref-row input[type="password"]:focus, .pref-row select:focus { border-color: var(--accent); }
 /* A field plus the control that fills it share one column, and stack when both stand. */
 .pref-field-group { flex: 0 0 auto; width: 300px; max-width: 48%; display: inline-flex; flex-wrap: wrap; gap: 8px; }
 .pref-field-group > select { flex: 1 1 100%; width: auto; min-width: 0; max-width: none; }
-.pref-field-group > input[type="text"] {
+.pref-field-group > input[type="text"], .pref-field-group > input[type="password"] {
   flex: 1; min-width: 0;
   font-family: var(--font-mono); font-size: var(--fs-small);
   padding: 7px 11px; color: var(--text); outline: 0;
   background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--radius-control);
 }
-.pref-field-group > input[type="text"]:focus { border-color: var(--accent); }
+.pref-field-group > input[type="text"]:focus, .pref-field-group > input[type="password"]:focus { border-color: var(--accent); }
+/* The eye toggle is a square icon button, not a wide labelled one. */
+.pref-key-reveal { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 7px 9px; }
+.pref-key-reveal[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .pref-rate-group { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 12px; }
 /* A read-out and the button that refreshes it share the control column. */
 .pref-inline-group { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-3); }
@@ -8640,6 +8643,7 @@ body[data-mode="light"] .sx {
   .pref-row { flex-direction: column; align-items: stretch; gap: var(--space-3); }
   .pref-row-text { flex: 0 0 auto; }
   .pref-row > input[type="text"],
+  .pref-row > input[type="password"],
   .pref-row select,
   .pref-field-group,
   .pref-inline-group,

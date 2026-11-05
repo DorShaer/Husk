@@ -14116,6 +14116,17 @@ $('#pref-agent-pick')?.addEventListener('change', (e) => {
     });
   }
 }
+// Show or hide the API key in place.
+$('#btn-pref-key-reveal')?.addEventListener('click', () => {
+  const el = $('#pref-agent-api-key');
+  const btn = $('#btn-pref-key-reveal');
+  if (!el || !btn) return;
+  const show = el.type === 'password';
+  el.type = show ? 'text' : 'password';
+  btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+  btn.setAttribute('aria-label', show ? 'Hide key' : 'Show key');
+  btn.title = show ? 'Hide key' : 'Show key';
+});
 // Populate the model datalist from the configured OpenAI-compatible endpoint.
 $('#btn-pref-models')?.addEventListener('click', async () => {
   const base = ($('#pref-agent-base-url')?.value || '').trim();
