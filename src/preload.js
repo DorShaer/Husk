@@ -18,10 +18,23 @@ const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { emptyThread: chatEmptyThread, reduceThread: chatReduceThread } = require('./lib/chat-events');
 
-// Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this,
-// and the renderer labels this level as its baseline.
-const HUSK_BASE_ZOOM = 0.5;
+// Husk's default zoom (see src/lib/ui-zoom.js). User-driven zoom (Ctrl/Cmd
+// +/-/0, View menu) layers on top of this, is saved, and is restored at launch.
+// The renderer labels this level as its baseline.
+const uiZoom = require('./lib/ui-zoom');
+const HUSK_BASE_ZOOM = uiZoom.BASE_ZOOM;
 try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
+
+// Saving the zoom is debounced so holding Ctrl/Cmd + writes the config once.
+let zoomSaveTimer = null;
+function applyZoom(level) {
+  webFrame.setZoomLevel(level);
+  clearTimeout(zoomSaveTimer);
+  zoomSaveTimer = setTimeout(() => {
+    ipcRenderer.invoke('config:set', { uiZoom: uiZoom.zoomToStore(level) }).catch(() => {});
+  }, 400);
+  return level;
+}
 
 // Stamp the saved theme onto <body> the moment it is parsed, before the first
 // paint. index.html ships a dark theme on the body tag as its static value, and
@@ -30,6 +43,10 @@ try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
 // here and writing it as soon as the element exists closes that window.
 try {
   const boot = ipcRenderer.sendSync('config:boot-theme');
+  // Restore the zoom the user picked last time, before the first paint.
+  if (boot) {
+    try { webFrame.setZoomLevel(uiZoom.startZoom(boot.uiZoom)); } catch (_) {}
+  }
   if (boot && boot.theme) {
     const stamp = () => {
       if (!document.body) return false;
@@ -497,10 +514,13 @@ contextBridge.exposeInMainWorld('husk', {
     onStatus: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s)),
   },
   ui: {
-    zoomIn: () => { const lvl = Math.min(webFrame.getZoomLevel() + 0.5, 5); webFrame.setZoomLevel(lvl); return lvl; },
-    zoomOut: () => { const lvl = Math.max(webFrame.getZoomLevel() - 0.5, -3); webFrame.setZoomLevel(lvl); return lvl; },
+    zoomIn: () => applyZoom(uiZoom.stepZoom(webFrame.getZoomLevel(), 1)),
+    zoomOut: () => applyZoom(uiZoom.stepZoom(webFrame.getZoomLevel(), -1)),
     // Reset returns to Husk's default UI scale, not the browser default.
-    zoomReset: () => { webFrame.setZoomLevel(HUSK_BASE_ZOOM); return HUSK_BASE_ZOOM; },
+    zoomReset: () => applyZoom(HUSK_BASE_ZOOM),
+    // The View menu's zoom items arrive here, so they take the same path as
+    // the keyboard: one readout, one terminal refit, and the level is saved.
+    onZoomCommand: (cb) => ipcRenderer.on('ui:zoom-command', (_e, dir) => cb(dir)),
     zoomGet: () => webFrame.getZoomLevel(),
     // Husk's base zoom level, so the renderer can label it as 100%.
     zoomBase: HUSK_BASE_ZOOM,

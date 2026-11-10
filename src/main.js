@@ -35,6 +35,7 @@ const { createChatSessionRegistry } = require('./lib/chat-session-registry');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
 const { issueUrl } = require('./lib/feedback-url');
+const { sanitizeZoom } = require('./lib/ui-zoom');
 const Subagents = require('./lib/subagents');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
@@ -339,6 +340,9 @@ const DEFAULT_CONFIG = {
   // entry inherits the global list, so a project nobody has customized runs
   // the CLI's own set untouched. See src/lib/project-mcp.js.
   projectMcp: {},
+  // The user's UI zoom level (Ctrl/Cmd +/-). null = the default (BASE_ZOOM).
+  // See src/lib/ui-zoom.js.
+  uiZoom: null,
 };
 
 // The theme an install shows when its config file carries no `theme` key, so it
@@ -766,6 +770,10 @@ function copyDirRecursiveSync(src, dst) {
 
 // ─── Window ──────────────────────────────────────────────────────────────────────
 
+function sendZoomCommand(dir) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ui:zoom-command', dir);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1500,
@@ -846,11 +854,13 @@ function createWindow() {
     },
     ...(app.isPackaged ? [] : [{ role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }]),
     // The renderer owns the Ctrl/Cmd +/-/0 keys (applies zoom, refits the
-    // terminal, shows the percent), so `registerAccelerator: false` keeps the
-    // menu roles from binding them too. Menu clicks still work.
-    { role: 'resetZoom', registerAccelerator: false },
-    { role: 'zoomIn', registerAccelerator: false },
-    { role: 'zoomOut', registerAccelerator: false },
+    // terminal, shows the percent, saves the level), so `registerAccelerator:
+    // false` keeps the menu from binding them too. Menu clicks are forwarded to
+    // the renderer so they go through the same path instead of the built-in
+    // zoom roles, which would bypass the readout, the refit and the save.
+    { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', registerAccelerator: false, click: () => sendZoomCommand('reset') },
+    { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', registerAccelerator: false, click: () => sendZoomCommand('in') },
+    { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', registerAccelerator: false, click: () => sendZoomCommand('out') },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
@@ -12626,6 +12636,8 @@ ipcMain.on('config:boot-theme', (e) => {
     theme: config.theme,
     accent: config.accent,
     mode: LIGHT_THEMES.has(config.theme) ? 'light' : 'dark',
+    // Read here too, so the preload restores the saved zoom before first paint.
+    uiZoom: sanitizeZoom(config.uiZoom),
   };
 });
 

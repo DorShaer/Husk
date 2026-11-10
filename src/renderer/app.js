@@ -15928,6 +15928,14 @@ const settleZoom = debounce((lvl) => {
   fitNow();
 }, 120);
 function reportZoom(lvl) { settleZoom(lvl); }
+// View menu zoom items, routed through the same calls as the keyboard.
+if (window.husk.ui && typeof window.husk.ui.onZoomCommand === 'function') {
+  window.husk.ui.onZoomCommand((dir) => {
+    if (dir === 'in') reportZoom(window.husk.ui.zoomIn());
+    else if (dir === 'out') reportZoom(window.husk.ui.zoomOut());
+    else if (dir === 'reset') reportZoom(window.husk.ui.zoomReset());
+  });
+}
 // Zoom controls live in the View menu (Ctrl/Cmd +/-/0). The Electron menu
 // handles them via webContents zoom. We keep the renderer-side keyboard
 // shortcuts as a fallback for when the menu is hidden.
