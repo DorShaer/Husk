@@ -18,9 +18,9 @@ const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { emptyThread: chatEmptyThread, reduceThread: chatReduceThread } = require('./lib/chat-events');
 
-// Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
-// -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
-const HUSK_BASE_ZOOM = -0.5;
+// Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this,
+// and the renderer labels this level as its baseline.
+const HUSK_BASE_ZOOM = 0.5;
 try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
 
 // Stamp the saved theme onto <body> the moment it is parsed, before the first

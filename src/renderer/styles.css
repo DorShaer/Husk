@@ -1123,7 +1123,7 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
   border-top: 1px solid var(--line);
   background: var(--bg);
   color: var(--text-3);
-  font-size: var(--fs-label);
+  font-size: var(--fs-body);
   font-weight: var(--fw-label);
   white-space: nowrap;
   overflow: hidden;
@@ -1150,7 +1150,7 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
 /* The path is the one field a reader scans character by character. */
 .statusbar .sb-mono {
   font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-body);
 }
 /* The folder is the longest field, so it is the one that yields width. */
 .statusbar .sb-item-path { flex: 0 1 auto; min-width: 0; }
@@ -4198,6 +4198,10 @@ body[data-page="chat"] #chats-panel { display: flex; }
               border-color var(--motion-fast) var(--ease-out);
 }
 .chat-tab:hover { color: var(--text-2); background: var(--surface); }
+/* Reordering: the dragged chat fades and an edge marks where it will land. */
+.chat-tab.is-dragging { opacity: 0.45; }
+.chat-tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.chat-tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
 .chat-tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);
@@ -9490,6 +9494,8 @@ body[data-mode="light"] .sx {
   justify-content: flex-start;
 }
 .sp-content::-webkit-scrollbar { width: 0; height: 0; }
+/* The readout is glanced at from a distance, so it sits a step above body text. */
+.sp-content { --fs-status: calc(var(--fs-body-lg) + 1px); }
 .sp-fit {
   display: flex; flex-direction: column; gap: 14px;
   /* Scale from the top left. The fit buys vertical room, so the wrapper is widened
@@ -9504,7 +9510,7 @@ body[data-mode="light"] .sx {
 /* Same small caps step as the Context pane, so both tabs of the pane read as one. */
 .sp-section-head {
   display: flex; align-items: center; gap: 6px;
-  font-size: var(--fs-section); font-weight: var(--fw-section);
+  font-size: var(--fs-label); font-weight: var(--fw-section);
   letter-spacing: var(--tracking-section); text-transform: uppercase;
   color: var(--text-3);
 }
@@ -9513,7 +9519,7 @@ body[data-mode="light"] .sx {
   width: 12px; text-align: center;
 }
 .sp-section-body {
-  font-size: var(--fs-body-lg); color: var(--text-2);
+  font-size: var(--fs-status); color: var(--text-2);
   line-height: 1.5;
   display: flex; flex-direction: column; gap: 6px;
 }
@@ -9524,7 +9530,7 @@ body[data-mode="light"] .sx {
 }
 .sp-section-body .sp-mono {
   color: var(--text);
-  font-size: var(--fs-body-lg);
+  font-size: var(--fs-status);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-weight: 500;

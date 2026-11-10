@@ -1557,23 +1557,25 @@ async function reattachSessions() {
     // Close-and-resume only when the active agent has a resume form;
     // otherwise the live PTY is kept and reattached below.
     let resumeCmd = null;
+    let resumeMode = '';
     // Resume only when the transcript still exists, so a session that was
     // never written stays where it is. A tab showing a live chat keeps its
     // PTY as is: the chat is what the user sees.
     if (sess.claudeSessionId && sess.resumable && !chatIds.has(sess.sessionId)) {
       try {
         const r = await window.husk.sessions.resumeCommand({ agent, id: sess.claudeSessionId, cwd: sess.cwd || '' });
-        if (r && r.ok && r.command) resumeCmd = r.command;
+        if (r && r.ok && r.command) { resumeCmd = r.command; resumeMode = r.mode || ''; }
       } catch (_) { /* no resume form for this agent: keep the live PTY below */ }
     }
     if (resumeCmd) {
       // Resume the conversation in a fresh tab; drop the orphaned old PTY. Chat
-      // view with the history replayed when the CLI can, else a fresh PTY.
+      // view with the history replayed when the log reads, a chat without it
+      // when it does not. Only an attach, which joins a live stream, is a PTY.
       try { await window.husk.pty.close(sess.sessionId); } catch (_) {}
       let viaChat = false;
       try { viaChat = await resumeIntoChat({ id: sess.claudeSessionId, owner: agent, project: sess.cwd || '' }); } catch (_) { viaChat = false; }
       if (viaChat) tab = TABS.get(activeTabId) || null;
-      else tab = await openNewChatTab({ command: resumeCmd, cwd: sess.cwd || null, skipContext: true });
+      else tab = await openNewChatTab({ command: resumeCmd, cwd: sess.cwd || null, skipContext: true, preferChat: resumeMode !== 'attach' });
       if (tab) {
         tab.agentId = sess.claudeSessionId;
         try {
@@ -1967,6 +1969,9 @@ function typewriterTo(el, full, msPerChar = 30) {
 // agent session id (once the tab is linked) so it survives restarts.
 function beginRename(tab, labelEl) {
   if (!tab || !labelEl || labelEl.querySelector('input')) return;
+  // A draggable parent swallows text selection inside the field.
+  const pill = labelEl.closest('.chat-tab');
+  if (pill) pill.draggable = false;
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'chat-tab-rename';
@@ -2031,6 +2036,7 @@ function renderTabStrip() {
     btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '')
       + (SPLIT && (SPLIT.a === t.id || SPLIT.b === t.id) ? ' in-split' : '');
     btn.dataset.tab = t.id;
+    btn.draggable = !splitPicking;
     const name = displayTitle(t);
     btn.title = name;
     const label = document.createElement('span');
@@ -2166,11 +2172,64 @@ async function syncTabTitles() {
 }
 setInterval(syncTabTitles, 5000);
 
+// Puts one chat before or after another in the strip. The strip paints TABS in
+// insertion order, so the order is the map's own.
+function moveTab(id, targetId, after) {
+  if (id === targetId || !TABS.has(id) || !TABS.has(targetId)) return;
+  const moved = TABS.get(id);
+  const rest = [...TABS].filter(([k]) => k !== id);
+  rest.splice(rest.findIndex(([k]) => k === targetId) + (after ? 1 : 0), 0, [id, moved]);
+  TABS.clear();
+  for (const [k, v] of rest) TABS.set(k, v);
+  renderTabStrip();
+}
+
 // Delegated handling for the tab strip: rename on the pencil, close (with
-// confirm) on the ×, otherwise switch focus to the clicked tab.
+// confirm) on the ×, otherwise switch focus to the clicked tab. A chat dragged
+// along the strip lands where it is dropped.
 {
   const strip = document.getElementById('tab-strip');
   if (strip) {
+    let dragId = null;
+    // A strip repainted mid-drag never hears that drag end, so a file dragged
+    // in afterwards must not be taken for the chat that was moving.
+    const foreign = (e) => Array.from(e.dataTransfer.types || []).includes('Files');
+    const clearMarks = () => strip.querySelectorAll('.drop-before, .drop-after, .is-dragging')
+      .forEach((el) => el.classList.remove('drop-before', 'drop-after', 'is-dragging'));
+    // Which chat the pointer is over, and which half of it.
+    const landing = (e) => {
+      const el = e.target.closest('[data-tab]');
+      if (!el || !dragId || el.dataset.tab === dragId) return null;
+      const r = el.getBoundingClientRect();
+      return { el, id: el.dataset.tab, after: e.clientX > r.left + r.width / 2 };
+    };
+    strip.addEventListener('dragstart', (e) => {
+      const el = e.target.closest('[data-tab]');
+      if (!el) return;
+      dragId = el.dataset.tab;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragId);
+      el.classList.add('is-dragging');
+    });
+    strip.addEventListener('dragover', (e) => {
+      if (!dragId || foreign(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const hit = landing(e);
+      strip.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+      if (hit) hit.el.classList.add(hit.after ? 'drop-after' : 'drop-before');
+    });
+    strip.addEventListener('drop', (e) => {
+      if (!dragId || foreign(e)) { dragId = null; return; }
+      e.preventDefault();
+      e.stopPropagation();
+      const hit = landing(e);
+      const id = dragId;
+      dragId = null;
+      clearMarks();
+      if (hit) moveTab(id, hit.id, hit.after);
+    });
+    strip.addEventListener('dragend', () => { dragId = null; clearMarks(); });
     strip.addEventListener('click', (e) => {
       // While picking a split partner the whole tab is one target, so the
       // hover pencil and close never intercept the pick.
@@ -2350,7 +2409,7 @@ function welcomeWanted() {
 function setPreferredTabMode(mode) {
   try { localStorage.setItem(CHAT_MODE_KEY, mode === 'chat' ? 'chat' : 'terminal'); } catch (_) {}
 }
-// 'acp' | 'claude' | null. Null means the CLI has no protocol Husk can drive.
+// 'acp' | 'claude' | 'codex' | null. Null means the CLI has no protocol Husk can drive.
 function chatProtocolFor(command) {
   try { return (window.husk.chat && window.husk.chat.transportFor(command)) || null; } catch (_) { return null; }
 }
@@ -2553,6 +2612,12 @@ function startChatForTab(tab) {
     tab.chatAlive = true;
     csSchedule();
     if (tab.id === activeTabId) refreshTopbarChatStat();
+    // The tab was focused before its agent existed, so the main process could
+    // not point at it then. Point it now, or the readouts keep describing the
+    // chat that was focused before this one.
+    if (tab.id === activeTabId) {
+      Promise.resolve(window.husk.pty.setActive(tab.id)).then(() => refreshStats()).then(() => refreshStatusline()).catch(() => {});
+    }
     if (tab.id === activeTabId && currentPage === 'chat' && !$('#chat-empty').classList.contains('show')) c.focus();
     return true;
   })();
@@ -3653,10 +3718,14 @@ function refreshShellStatusBar() {
   const project = projectsCache.find((p) => p.id === activeProjectId);
   const tab = TABS.get(activeTabId);
 
-  const tool = (chatSubBase && chatSubBase.tool)
+  // The focused chat names its own tool and folder. The shared header pair is
+  // window-wide, so it only speaks while no chat is open.
+  const tool = (tab && tabAgentCommand(tab).split(/\s+/)[0])
+    || (chatSubBase && chatSubBase.tool)
     || s.agent
     || ((cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'agent');
-  const dir = (chatSubBase && chatSubBase.dir)
+  const dir = (tab && tab.cwd)
+    || (chatSubBase && chatSubBase.dir)
     || (project ? project.path : null)
     || ((s.workspace && s.workspace.cwd) || (cfg && cfg.agentCwd) || huskHome || '~');
   // The session's own reading first, then the model the command that started
@@ -3717,9 +3786,10 @@ async function refreshStatusline() {
   if (u.session && u.session.ctxTokens > 0) lastGoodCtx = u.session;
   // Context window is a Claude-session figure; for any other agent, do not
   // fall back to a Claude session's cached ctx.
-  const ctx = agentKindCache !== 'claude'
-    ? null
-    : ((u.session && u.session.ctxTokens > 0) ? u.session : lastGoodCtx);
+  // The poll names the focused tab's agent; the page-wide kind is for the
+  // other pages, which follow the configured default.
+  const claudeTab = typeof s.agentIsClaude === 'boolean' ? s.agentIsClaude : agentKindCache === 'claude';
+  const ctx = claudeTab ? ((u.session && u.session.ctxTokens > 0) ? u.session : lastGoodCtx) : null;
   // The active model, read from the active agent's own session transcript and
   // empty when no model is known, which hides the row. The CLI's own name for
   // the model wins once the catalog has been read, with the id-derived name as
@@ -3727,10 +3797,10 @@ async function refreshStatusline() {
   const liveModel = chatTabModel(TABS.get(activeTabId));
   const modelId = (liveModel && liveModel.id)
     || (u.session && u.session.model)
-    || (agentKindCache === 'claude' && ctx && ctx.model) || '';
+    || (claudeTab && ctx && ctx.model) || '';
   const modelLabel = (liveModel && liveModel.label)
     || (u.session && u.session.modelLabel)
-    || (agentKindCache === 'claude' && ctx && ctx.modelLabel)
+    || (claudeTab && ctx && ctx.modelLabel)
     || prettyModelLabel(modelId);
   // The active agent CLI (claude, codex, copilot, ...) and its version, so the
   // Build section reflects whichever agent is selected, not a fixed one.
@@ -3780,7 +3850,7 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⌬</span><span>Tools</span></div>
       <div class="sp-section-body">
-        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo(agentKindCache === 'claude' ? 'Skills in the shared library; auto-loaded by the agent. Click to open.' : 'Skills in the shared library; use Use on the Skills page to inject one into the chat. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
+        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo(claudeTab ? 'Skills in the shared library; auto-loaded by the agent. Click to open.' : 'Skills in the shared library; use Use on the Skills page to inject one into the chat. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
         <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows ${spInfo('Saved Husk workflows. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.workflows)}</span></div>
         ${s.hooksApplicable ? `<div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks ${spInfo('Hooks the agent runs at lifecycle events. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>` : ''}
         ${mcp.supported ? `<div class="sp-row sp-clickable" data-open="mcp"><span class="sp-muted">MCP ${spInfo('MCP servers running for the active agent, out of the total configured. Click to open the MCP page.')}</span><span class="sp-mono sp-accent">${escapeHtml(mcp.enabled)}${mcp.count > mcp.enabled ? `<span class="sp-muted"> / ${escapeHtml(mcp.count)}</span>` : ''}</span></div>` : ''}
@@ -3790,16 +3860,7 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⏱</span><span>Usage</span></div>
       <div class="sp-section-body">
-        ${(ctx && ctx.ctxWindow > 0) ? `
-        <div class="sp-row"><span class="sp-muted">Context Window ${spInfo('Tokens currently held in the model context window versus the model capacity. This is what fills up during a conversation and triggers compaction.')}</span></div>
-        <div class="sp-row sp-ctx-head" title="Context window used">
-          <span class="sp-mono" style="color:${ctxPctColor(ctx.ctxPct)}; font-weight:600;">${fmtPct(ctx.ctxPct)}</span>
-          <span class="sp-mono sp-muted">${escapeHtml(fmtCtx(ctx.ctxTokens))} / ${escapeHtml(fmtCtx(ctx.ctxWindow))}</span>
-        </div>
-        ${ctxBarHTML(ctx.ctxPct)}
-        <div class="sp-divider"></div>
-        ` : ''}
-        ${agentKindCache === 'claude' ? (u.cache_present ? `
+        ${claudeTab ? (u.cache_present ? `
         <div class="sp-row"><span class="sp-muted">5 Hours Limit ${spInfo('Share of your rolling 5-hour usage allowance consumed.')}</span><span class="sp-mono">${fmtPct(u.h5_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.h5_pct||0)}%"></div></div>
         ${u.h5_reset ? `<div class="sp-row"><span class="sp-muted">Resets ${spInfo('When the 5-hour usage window resets.')}</span><span class="sp-mono" title="${escapeHtml(u.h5_reset)}">${escapeHtml(fmtUntil(u.h5_reset))}</span></div>` : ''}
@@ -3838,7 +3899,7 @@ async function refreshStatusline() {
       </div>
     </div>
 
-    ${agentKindCache === 'claude' ? `
+    ${claudeTab ? `
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">◎</span><span>Memory</span></div>
       <div class="sp-section-body">
@@ -3848,7 +3909,7 @@ async function refreshStatusline() {
         <div class="sp-row sp-clickable" data-open="research"><span class="sp-muted">Research ${spInfo('Research entries stored in memory. Click to open.')}</span><span class="sp-mono sp-accent">${s.research}</span></div>
       </div>
     </div>` : ''}
-    ${agentKindCache === 'claude' ? `
+    ${claudeTab ? `
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">✿</span><span>Learning</span></div>
       <div class="sp-section-body">
@@ -3986,7 +4047,8 @@ function pinnedAgentLabel() {
 function workRoot() {
   const project = projectsCache.find((p) => p.id === activeProjectId);
   const ws = (lastStats && lastStats.workspace) || {};
-  const path = (chatSubBase && chatSubBase.dir) || (project ? project.path : '') || ws.cwd || (cfg && cfg.agentCwd) || huskHome || '';
+  const tab = TABS.get(activeTabId);
+  const path = (tab && tab.cwd) || (chatSubBase && chatSubBase.dir) || (project ? project.path : '') || ws.cwd || (cfg && cfg.agentCwd) || huskHome || '';
   const name = (project && project.name) || ws.name || (path ? path.split('/').filter(Boolean).pop() : '');
   return { path, name };
 }
@@ -4007,8 +4069,34 @@ const FILE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 const FOLDER_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
 const DROP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
+// How full the focused chat's context window is. Claude's comes from its
+// transcript; any other chat reports its own as it runs.
+function focusedContextUse() {
+  const s = (lastStats && lastStats.usage && lastStats.usage.session) || null;
+  const claudeTab = lastStats && typeof lastStats.agentIsClaude === 'boolean' ? lastStats.agentIsClaude : agentKindCache === 'claude';
+  if (claudeTab) {
+    const c = (s && s.ctxTokens > 0) ? s : lastGoodCtx;
+    if (c && c.ctxWindow > 0) return { used: c.ctxTokens, size: c.ctxWindow, pct: c.ctxPct };
+  }
+  const tab = TABS.get(activeTabId);
+  const live = tab && tab.mode === 'chat' && tab.chatState ? tab.chatState.usage : null;
+  const used = Number(live && live.used);
+  const size = Number(live && live.size);
+  return isFinite(used) && size > 0 ? { used, size, pct: used / size * 100 } : null;
+}
+
 function workPaneHTML() {
   const { path, name } = workRoot();
+  const use = focusedContextUse();
+  const windowGroup = use ? `
+      <section class="sp-work-group">
+        <div class="section-label sp-work-head"><span>Context window</span></div>
+        <div class="sp-row sp-ctx-head" title="Context window used">
+          <span class="sp-mono" style="color:${ctxPctColor(use.pct)}; font-weight:600;">${fmtPct(use.pct)}</span>
+          <span class="sp-mono sp-muted">${escapeHtml(fmtCtx(use.used))} / ${escapeHtml(fmtCtx(use.size))}</span>
+        </div>
+        ${ctxBarHTML(use.pct)}
+      </section>` : '';
   const ws = (lastStats && lastStats.workspace) || {};
   const g = ws.git || {};
   const pinned = pinnedAgentLabel();
@@ -4059,7 +4147,7 @@ function workPaneHTML() {
       <section class="sp-work-group">
         <div class="section-label sp-work-head"><span>Project</span></div>
         ${project}
-      </section>
+      </section>${windowGroup}
       <section class="sp-work-group">
         <div class="section-label sp-work-head"><span>Changes</span>${workTree.isRepo ? `<span class="section-label-count">${workTree.files.length}</span>` : ''}</div>
         ${changes}
@@ -16289,6 +16377,8 @@ async function openBgAgent(a) {
       cwd: res.cwd || target.cwd || null,
       skipContext: true,
       skipWelcome: true,
+      // A finished agent resumes like any chat; attaching joins a live stream.
+      preferChat: res.mode !== 'attach',
     });
     if (tab) {
       // The tab is the chat, so an agent that lives inside one keeps the chat's

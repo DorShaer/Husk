@@ -1,7 +1,7 @@
 'use strict';
 
-// Chat-mode runtime: one headless agent child per tab, driven over ACP or
-// claude stream-json, surfacing normalized chat events. Process handling is
+// Chat-mode runtime: one headless agent child per tab, driven over ACP,
+// codex app-server or claude stream-json, surfacing normalized chat events. Process handling is
 // injected (spawn, env, exe resolution, event sink) so the whole thing is unit
 // testable with a fake child; main.js supplies the real ones.
 //
@@ -18,6 +18,9 @@ const {
   normalizeAcpUpdate, normalizeAcpPermission, normalizeAcpSession, normalizeClaudeEvent,
 } = require('./chat-events');
 const { openaiTurn } = require('./openai-stream');
+const {
+  APP_SERVER_ARGS, codexModel, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision,
+} = require('./codex-app-server');
 
 const STDERR_KEEP = 2000;
 // Replay log bounds. A renderer reload rebuilds each tab's thread from this
@@ -128,6 +131,16 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     try { s.child.stdin.write(encodeLine(obj)); return true; } catch (e) { note(`chat stdin write failed: ${e && e.message}`); return false; }
   }
 
+  // Records the live codex turn. A stop pressed before codex named the turn
+  // could not be sent then, so it goes out the moment the id is known.
+  function codexTurn(s, id) {
+    if (!id || s.turnId === String(id)) return;
+    s.turnId = String(id);
+    if (!s.cancelWanted) return;
+    s.cancelWanted = false;
+    s.acp.request('turn/interrupt', { threadId: s.sessionId, turnId: s.turnId }).catch(() => {});
+  }
+
   // claudeSessionId pins claude's transcript to a known id (the same trick
   // spawnPty uses) so the status panel can find this tab's .jsonl by name.
   async function start({ tabId, command, cwd, claudeSessionId, keepLog, openai } = {}) {
@@ -208,6 +221,58 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         // in ACP terms, or its own login error on stderr). The way back is the
         // CLI's interactive login, which lives in Terminal mode.
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail) || (e && e.code === -32000);
+        await stop({ tabId });
+        return { ok: false, error: authy ? `${detail}\n${AUTH_HINT}` : detail };
+      }
+      return { ok: true, transport, sessionId: s.sessionId };
+    }
+
+    if (transport === 'codex') {
+      try { s.child = spawnChild(exe, APP_SERVER_ARGS.slice(), cwd, env); } catch (e) { return { ok: false, error: e.message }; }
+      s.acp = createAcpClient({
+        send: (msg) => writeLine(s, msg),
+        onNotification: (method, params) => {
+          if (method === 'turn/started' && params.turn) codexTurn(s, params.turn.id);
+          if (method === 'turn/completed') { s.turnOpen = false; s.turnId = null; s.cancelWanted = false; }
+          send(tabId, normalizeCodexNotification(method, params));
+        },
+        onRequest: (method, params) => {
+          const requestId = 'p' + (++permSeq);
+          const card = normalizeCodexApproval(requestId, method, params);
+          if (!card) return undefined;
+          return new Promise((resolve) => {
+            s.pendingPerms.set(requestId, (optionId) => resolve(codexDecision(optionId)));
+            send(tabId, card);
+          });
+        },
+      });
+      s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`codex non-json line: ${raw.slice(0, 200)}`));
+      s.codexModel = codexModel(command);
+      sessions.set(tabId, s);
+      wireChild(s);
+      try {
+        let timer = null;
+        const expiry = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${exeName} did not answer the app-server handshake within ${Math.round(handshakeLimit / 1000)}s. It may not support app-server in this version.`)), handshakeLimit);
+          if (timer && timer.unref) timer.unref();
+        });
+        const handshake = (async () => {
+          await s.acp.request('initialize', { clientInfo: { name: 'husk', title: 'Husk', version: String(appVersion || '0.0.0') }, capabilities: null });
+          s.acp.notify('initialized');
+          // The model list only feeds the picker; a CLI without it still chats.
+          const models = await s.acp.request('model/list', {}).catch(() => null);
+          const thread = await s.acp.request('thread/start', Object.assign({ cwd: cwd || process.cwd() }, s.codexModel ? { model: s.codexModel } : {}));
+          return { thread, models: models && models.data };
+        })();
+        const res = await Promise.race([handshake, expiry]);
+        clearTimeout(timer);
+        s.codexModel = null;
+        const ev = codexSession(res.thread, res.models);
+        s.sessionId = ev.sessionId || null;
+        send(tabId, ev);
+      } catch (e) {
+        const detail = (e && e.message) || tailStderr(s) || 'app-server handshake failed';
+        const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail);
         await stop({ tabId });
         return { ok: false, error: authy ? `${detail}\n${AUTH_HINT}` : detail };
       }
@@ -325,6 +390,21 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         });
       return { ok: true };
     }
+    if (s.transport === 'codex') {
+      if (!s.sessionId) return { ok: false, error: 'session not ready' };
+      s.turnOpen = true;
+      // A model picked since the last turn rides on this one and holds from then on.
+      const model = s.codexModel;
+      s.codexModel = null;
+      s.acp.request('turn/start', Object.assign({ threadId: s.sessionId, input: codexInput(body, pics) }, model ? { model } : {}))
+        .then((res) => { if (res && res.turn && s.turnOpen) codexTurn(s, res.turn.id); })
+        .catch((e) => {
+          s.turnOpen = false;
+          if (s.exited) return;
+          send(tabId, { type: 'turn_end', stopReason: 'error', isError: true, text: (e && e.message) || 'prompt failed' });
+        });
+      return { ok: true };
+    }
     s.turnOpen = true;
     return { ok: writeLine(s, encodeUserMessage(body, pics)) };
   }
@@ -341,6 +421,11 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       if (s.sessionId) s.acp.cancel(s.sessionId);
       return { ok: true };
     }
+    if (s.transport === 'codex') {
+      if (s.turnId) s.acp.request('turn/interrupt', { threadId: s.sessionId, turnId: s.turnId }).catch(() => {});
+      else if (s.turnOpen) s.cancelWanted = true;
+      return { ok: true };
+    }
     return { ok: writeLine(s, encodeInterrupt('i' + Date.now().toString(36))) };
   }
 
@@ -348,7 +433,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const id = String(requestId || '');
-    if (s.transport === 'acp') {
+    if (s.transport === 'acp' || s.transport === 'codex') {
       const resolve = s.pendingPerms.get(id);
       if (!resolve) return { ok: false, error: 'unknown permission request' };
       s.pendingPerms.delete(id);
@@ -382,6 +467,11 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       try { await s.acp.setModel(s.sessionId, id); } catch (e) { return { ok: false, error: (e && e.message) || 'the agent refused the model' }; }
       send(tabId, { type: 'session', model: String(modelName || id) });
       return { ok: true, transport: 'acp', model: id };
+    }
+    if (s.transport === 'codex') {
+      s.codexModel = id;
+      send(tabId, { type: 'session', model: String(modelName || id) });
+      return { ok: true, transport: 'codex', model: id };
     }
     // claude takes set_model on its control channel and applies it from the
     // next turn, with no restart (verified on claude 2.1.310).

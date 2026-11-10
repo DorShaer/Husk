@@ -19,7 +19,7 @@
 const PROTOCOL_VERSION = 1;
 const METHOD_NOT_FOUND = -32601;
 
-function createAcpClient({ send, onUpdate, onPermission, onNotification } = {}) {
+function createAcpClient({ send, onUpdate, onPermission, onNotification, onRequest } = {}) {
   if (typeof send !== 'function') throw new TypeError('send is required');
   let nextId = 0;
   const pending = new Map();
@@ -104,6 +104,16 @@ function createAcpClient({ send, onUpdate, onPermission, onNotification } = {}) 
           try { reply(msg.id, { outcome: { outcome: 'cancelled' } }); } catch (_) {}
         });
       void options;
+      return;
+    }
+
+    // Any other server request goes to the caller, which answers by returning
+    // a promise of the result; undefined means it has no answer for the method.
+    const answer = typeof onRequest === 'function' ? onRequest(msg.method, msg.params || {}) : undefined;
+    if (answer !== undefined) {
+      Promise.resolve(answer)
+        .then((result) => reply(msg.id, result))
+        .catch((e) => { try { replyError(msg.id, -32603, (e && e.message) || 'request failed'); } catch (_) {} });
       return;
     }
 

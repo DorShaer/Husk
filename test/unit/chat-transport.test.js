@@ -11,7 +11,8 @@ test('ACP CLIs route to acp, claude to claude, the rest to null', () => {
   assert.equal(transportFor('claude'), 'claude');
   assert.equal(transportFor('claude --model opus'), 'claude');
   assert.equal(transportFor('aider'), null);
-  assert.equal(transportFor('codex'), null);
+  assert.equal(transportFor('codex'), 'codex');
+  assert.equal(transportFor('codex --model gpt-x'), 'codex');
   assert.equal(transportFor('some-other-cli'), null);
 });
 

@@ -162,6 +162,8 @@ test('pick mode chooses the second chat from the strip and a close unsplits', as
   // Pick the first tab with a real centre-of-tab click: in pick mode the hover
   // pencil and close stand down, so the whole tab is one target.
   await win.click('#btn-split');
+  // Three chats can outrun the strip, which then scrolls to the focused one.
+  await win.locator(`.chat-tab[data-tab="${ids[0]}"]`).scrollIntoViewIfNeeded();
   const pickBox = await win.locator(`.chat-tab[data-tab="${ids[0]}"]`).boundingBox();
   await win.mouse.move(pickBox.x + pickBox.width / 2, pickBox.y + pickBox.height / 2);
   const underCursor = await win.evaluate(({ x, y }) => {

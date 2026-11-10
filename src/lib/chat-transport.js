@@ -7,7 +7,7 @@
 //   kiro-cli acp            Start Agent Client Protocol (ACP) agent
 //   claude   -p --input-format stream-json --output-format stream-json
 //   aider    (no machine protocol; Terminal mode only)
-//   codex    app-server / codex-acp (not wired yet; Terminal mode only)
+//   codex    app-server      JSON-RPC on stdio (see codex-app-server.js)
 
 const { agentBaseName } = require('./agent-oneshot');
 
@@ -17,7 +17,7 @@ const ACP_ARGS = {
   'kiro-cli': ['acp'],
 };
 
-// transportFor returns 'acp', 'claude', or null when the CLI has no headless
+// transportFor returns 'acp', 'claude', 'codex', or null when the CLI has no headless
 // protocol Husk can drive. The command may carry the user's own flags.
 function transportFor(agentCommand) {
   const base = agentBaseName(agentCommand);
@@ -27,6 +27,7 @@ function transportFor(agentCommand) {
   // falling back to the raw CLI terminal view.
   if (base === 'claude' || /^claude[-_]/.test(base)) return 'claude';
   if (Object.prototype.hasOwnProperty.call(ACP_ARGS, base)) return 'acp';
+  if (base === 'codex') return 'codex';
   return null;
 }
 

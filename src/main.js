@@ -1026,6 +1026,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   applyByok(env);
 
   const rawCmd = (overrideCmd || config.agentCommand || 'claude').trim();
+  // Kept on the session so the status readouts describe this tab's own agent.
+  s.agentCommand = rawCmd;
 
   // Tokenize the user's agent command into program + extra args. A naive
   // whitespace split covers the common forms ('claude', 'claude --some-flag').
@@ -1821,9 +1823,10 @@ function chatCwd(overrideCwd) {
 // pinned claude session id). A shadow entry with no pty gives a chat tab the
 // same readouts; pty:list skips pty-less entries so it never shows as a
 // terminal. Removed when the chat child goes away.
-function chatShadowSession(tabId, cwd, claudeSessionId) {
+function chatShadowSession(tabId, cwd, claudeSessionId, command) {
   const s = sessions.get(tabId) || newSession(tabId);
   s.cwd = cwd;
+  s.agentCommand = command;
   s.claudeSessionId = claudeSessionId || null;
   s.transcript = null;
   s.startedAt = Date.now();
@@ -1868,7 +1871,7 @@ ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay } = {}) =>
     : null;
   const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed, openai: byokOpenai });
   if (res && res.ok) {
-    chatShadowSession(tabId, dir, res.sessionId || claudeSessionId);
+    chatShadowSession(tabId, dir, res.sessionId || claudeSessionId, cmd);
     if (transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
   }
   return res;
@@ -5240,11 +5243,15 @@ function mcpSummary() {
 }
 
 ipcMain.handle('stats:get', () => {
-  const agentCmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
+  // The focused tab's own agent, so a codex tab beside a claude tab reads as
+  // codex. The configured default stands in until a tab has started one.
+  const focused = activeSession();
+  const agentLine = ((focused && focused.agentCommand) || config.agentCommand || 'claude').trim();
+  const agentCmd = agentBaseName(agentLine);
   // The model, per-session context and plan-usage caches come from ~/.claude
   // state and describe the Claude CLI only, so they are read solely when the
-  // active agent is claude.
-  const agentIsClaude = agentCmd === 'claude';
+  // active agent is claude (or an alias of it).
+  const agentIsClaude = agentCmd === 'claude' || /^claude[-_]/.test(agentCmd);
   const skillsDir = path.join(CLAUDE_DIR, 'skills');
   const skills = safeCount(skillsDir, (d) => d.isDirectory());
   const workflowsDir = path.join(CLAUDE_DIR, 'workflows');
@@ -5317,7 +5324,7 @@ ipcMain.handle('stats:get', () => {
   const cwd = activePtyCwd || (activeProject && activeProject.path) || HOME;
   return {
     skills, workflows, hooks, hooksApplicable, sessions: sessionsCount, ratings, research,
-    agent: agentCmd, agentVersion: getAgentVersion(agentCmd),
+    agent: agentCmd, agentIsClaude, agentVersion: getAgentVersion(agentCmd),
     huskVer: app.getVersion(),
     workspace: {
       name: (activeProject && activeProject.name) || path.basename(cwd) || '',
