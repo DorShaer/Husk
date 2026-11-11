@@ -206,7 +206,9 @@ function normalizeCodexApproval(requestId, method, params) {
   // codex names the answers it will take for a command; a file change takes all three.
   const offered = Array.isArray(p.availableDecisions) ? p.availableDecisions.filter((d) => typeof d === 'string') : null;
   const options = DECISION_OPTIONS.filter((o) => !offered || offered.includes(o.optionId) || o.optionId === 'decline');
-  const command = p.command ? commandLabel(p) : '';
+  // The card is what gets approved, so it carries the command exactly as it
+  // will run, never the parsed summary a tool card shows.
+  const command = str(p.command);
   return {
     type: 'permission',
     requestId: str(requestId),

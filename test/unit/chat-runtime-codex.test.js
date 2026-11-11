@@ -146,3 +146,11 @@ test('a stop pressed before codex names the turn goes out once it does', async (
   c.feed({ method: 'turn/started', params: { turn: { id: 'u7' } } });
   assert.deepEqual(sent(c, 'turn/interrupt').map((l) => l.params.turnId), ['u7']);
 });
+
+test('recalled context rides ahead of the prompt on the wire and stays out of the log', async () => {
+  const { rt, c } = await started();
+  await rt.prompt({ tabId: 't1', text: 'hello', context: '[notes]' });
+  assert.equal(sent(c, 'turn/start')[0].params.input[0].text, '[notes]\n\nhello');
+  const logged = rt.list()[0].events.find((e) => e.type === 'user');
+  assert.equal(logged.text, 'hello');
+});

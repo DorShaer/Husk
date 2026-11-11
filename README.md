@@ -170,8 +170,9 @@ The full walkthrough (prerequisites, building your own `.deb`/`.dmg`/`.exe`, tro
 ## Uninstall
 
 ```bash
-./installer/uninstall.sh             # remove launcher, icon, config, voice models
-./installer/uninstall.sh --keep-data # preserve config and Piper voices
+./installer/uninstall.sh               # remove launcher and icon; asks whether to keep your data (Enter keeps it)
+./installer/uninstall.sh --keep-data   # preserve config and Piper voices, without asking
+./installer/uninstall.sh --remove-data # delete them too, without asking
 ```
 
 The source checkout and `node_modules/` are protected; if the checkout is inside

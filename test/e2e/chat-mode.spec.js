@@ -684,6 +684,11 @@ test('the thread shows a live Thinking row while a turn runs and drops it when t
   // A permission card is the state while it waits on the reader: no row.
   await expect(pane.locator('.chat-perm')).toBeVisible();
   await expect(typing).toHaveCount(0);
+  // The turn is still running, and the tab already has a name (the prompt):
+  // it keeps showing it, not the dots that stand in for a missing name.
+  const label = win.locator('#tab-strip .chat-tab.active .chat-tab-label');
+  await expect(label.locator('.title-thinking')).toHaveCount(0);
+  await expect(label).toHaveText('quiet: think first');
   await pane.locator('.chat-perm .chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(pane.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(1);
   await expect(typing).toHaveCount(0);

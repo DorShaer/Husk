@@ -31,6 +31,8 @@ const { resolveInside, isInside, realParentInside, realPathInside } = require('.
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
+const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES } = require('./lib/brain');
+const { nativeCommand, nativeReply } = require('./lib/native-commands');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
@@ -167,7 +169,7 @@ let pendingRendererReloadState = null;
 function normalizeRendererPage(page) {
   return [
     'chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts',
-    'skills', 'sessions', 'files', 'mcp', 'plugins',
+    'skills', 'sessions', 'files', 'mcp', 'plugins', 'brain',
   ].includes(page) ? page : 'chat';
 }
 
@@ -1795,9 +1797,11 @@ const chatRuntime = createChatRuntime({
   resolveExe: resolveAgentExe,
   emit: (tabId, event) => {
     try { if (event && event.type === 'session' && event.sessionId) chatSessionRegistry.add(event.sessionId); } catch (_) {}
+    try { brainObserve(tabId, event); } catch (_) {}
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {}
   },
   emitExit: (tabId, code) => {
+    try { brainTurnOver(tabId); } catch (_) {}
     try { dropChatShadowSession(tabId); } catch (_) {}
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:exit', { tabId, code }); } catch (_) {}
   },
@@ -1957,7 +1961,119 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
     return { ok: false, error: err.code === 'ENOENT' ? 'no session log yet' : err.message };
   }
 });
-ipcMain.handle('chat:prompt', (_e, { tabId, text, images } = {}) => chatRuntime.prompt({ tabId, text, images }));
+// ─── Brain ───────────────────────────────────────────────────────────────────
+// What Husk remembers, kept in one file under the config directory (see
+// src/lib/brain.js). A prompt wakes the memories that bear on it and carries
+// them to the agent; a turn that ends well leaves a decision behind. Every
+// firing is reported to the renderer, which is what the Brain page draws.
+const brain = createBrain({ file: path.join(CONFIG_DIR, 'brain.json'), fs });
+// The turn each chat tab is in: what was asked, and the reply as it builds.
+const brainTurns = new Map();
+
+function brainScope(tabId) {
+  const s = tabId ? sessions.get(tabId) : null;
+  return (s && s.cwd) || chatCwd(null);
+}
+
+function brainActivity(kind, ids) {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('brain:activity', { kind, ids: ids || [], busy: brain.isEnabled() && brainTurns.size > 0 });
+  } catch (_) {}
+}
+
+function brainTurnOver(tabId) {
+  if (brainTurns.delete(tabId)) brainActivity('idle');
+}
+
+// Follows a turn's stream. The outcome kept is the last thing the agent said,
+// since the text before a tool call is commentary on the way there.
+function brainObserve(tabId, ev) {
+  const t = brainTurns.get(tabId);
+  if (!t || !ev) return;
+  if (ev.type === 'text') t.cur += ev.text || '';
+  else if (ev.type === 'text_final') t.cur = ev.text || '';
+  else if (ev.type === 'block_end' || ev.type === 'tool') { if (t.cur.trim()) t.last = t.cur; t.cur = ''; }
+  else if (ev.type === 'error') brainTurnOver(tabId);
+  else if (ev.type === 'turn_end') {
+    brainTurns.delete(tabId);
+    const kept = !ev.isError && ev.stopReason !== 'cancelled'
+      ? brain.captureTurn({ prompt: t.prompt, outcome: t.cur.trim() || t.last, scope: t.scope }) : null;
+    brainActivity(kept && kept.ok ? 'capture' : 'idle', kept && kept.ok ? [kept.node.id] : []);
+  }
+}
+
+// Runs the CLI's own non-interactive form of a slash command and resolves with
+// what it printed. The argv comes from the table in native-commands.js, never
+// from the text that was typed.
+function runNativeCommand(native, cwd) {
+  const env = chatEnv();
+  return new Promise((resolve) => {
+    execFile(resolveAgentExe(native.program, env.PATH), native.args, { env, cwd, timeout: 30000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      const out = stripAnsi(String(stdout || '')).trim();
+      const why = stripAnsi(String(stderr || '')).trim();
+      if (err && !out) resolve({ isError: true, output: why || err.message });
+      else resolve({ isError: false, output: out });
+    });
+  });
+}
+
+ipcMain.handle('chat:prompt', async (_e, { tabId, text, images } = {}) => {
+  const ask = String(text || '');
+  const tabSession = tabId ? sessions.get(tabId) : null;
+  const native = nativeCommand((tabSession && tabSession.agentCommand) || config.agentCommand, ask);
+  if (native && chatRuntime.info(tabId)) {
+    const ran = await runNativeCommand(native, brainScope(tabId));
+    return chatRuntime.local({ tabId, text: ask, reply: nativeReply(native.label, ran.output), isError: ran.isError });
+  }
+  // A slash command is an instruction to the CLI, not a question: it must reach
+  // it untouched, and it is not something to remember.
+  const command = ask.trimStart().startsWith('/');
+  const scope = brainScope(tabId);
+  const found = command ? { hits: [], context: '' } : brain.recall(ask, { scope });
+  const res = await chatRuntime.prompt({ tabId, text, images, context: found.context });
+  if (res && res.ok && !command) {
+    brainTurns.set(tabId, { prompt: ask, scope, cur: '', last: '' });
+    brainActivity('recall', found.hits.map((h) => h.id));
+  }
+  return res;
+});
+
+ipcMain.handle('brain:graph', (_e, { all } = {}) => {
+  const scope = chatCwd(null);
+  return { ok: true, scope, scopeName: path.basename(scope) || scope, all: !!all, ...brain.graph({ scope, all: !!all }) };
+});
+ipcMain.handle('brain:addNote', (_e, { text, global } = {}) => {
+  const r = brain.addNote({ text, scope: global ? '' : chatCwd(null) });
+  if (r.ok) brainActivity('learn', [r.node.id]);
+  return r;
+});
+// The files come from the system picker, never from a path the renderer names.
+ipcMain.handle('brain:addFiles', async (_e, { global } = {}) => {
+  const picked = await dialog.showOpenDialog(mainWindow, { title: 'Teach the Brain from files', properties: ['openFile', 'multiSelections'] });
+  if (picked.canceled || !picked.filePaths.length) return { ok: true, added: [], failed: [] };
+  const scope = global ? '' : chatCwd(null);
+  const added = [];
+  const failed = [];
+  for (const p of picked.filePaths) {
+    const name = path.basename(p);
+    try {
+      if (fs.statSync(p).size > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
+      const r = brain.addFile({ path: p, content: fs.readFileSync(p, 'utf8'), scope });
+      if (r.ok) added.push({ id: r.node.id, name, chunks: r.chunks });
+      else failed.push({ name, error: r.error });
+    } catch (err) { failed.push({ name, error: err.message }); }
+  }
+  if (added.length) brainActivity('learn', added.map((a) => a.id));
+  return { ok: true, added, failed };
+});
+ipcMain.handle('brain:remove', (_e, { id } = {}) => brain.remove(id));
+ipcMain.handle('brain:pin', (_e, { id, pinned } = {}) => brain.setPinned(id, pinned));
+ipcMain.handle('brain:setEnabled', (_e, { on } = {}) => {
+  const r = brain.setEnabled(on);
+  brainActivity('idle');
+  return r;
+});
 ipcMain.handle('chat:cancel', (_e, { tabId } = {}) => chatRuntime.cancel({ tabId }));
 ipcMain.handle('chat:permission', (_e, { tabId, requestId, optionId, answers } = {}) => chatRuntime.permission({ tabId, requestId, optionId, answers }));
 ipcMain.handle('openai:models', (_e, { baseUrl, apiKey } = {}) => new Promise((resolve) => {
@@ -1967,6 +2083,7 @@ ipcMain.handle('openai:models', (_e, { baseUrl, apiKey } = {}) => new Promise((r
 ipcMain.handle('chat:setModel', (_e, { tabId, modelId, modelName } = {}) => chatRuntime.setModel({ tabId, modelId, modelName }));
 ipcMain.handle('chat:stop', async (_e, { tabId } = {}) => {
   const r = await chatRuntime.stop({ tabId });
+  brainTurnOver(tabId);
   dropChatShadowSession(tabId);
   return r;
 });
@@ -10166,6 +10283,12 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
     }
   }
   const deduped = [...dedup.values()].sort((a, b) => b.mtime - a.mtime);
+  if (process.env.HUSK_SXDUMP) {
+    try {
+      const line = deduped.slice(0, 12).map((s) => `${new Date(s.mtime).toISOString().slice(5, 19)} ${String(s.id).slice(0, 8)} ${String(s.title || '').slice(0, 30)}`).join('\n');
+      fs.writeFileSync('/tmp/husk-sxdump.log', new Date().toISOString().slice(11, 23) + ' currentCwd=' + (activePtyCwd || '') + '\n' + line + '\n');
+    } catch (_) {}
+  }
   // currentCwd is the live working directory of the active chat. The renderer
   // uses it to scope the rail's Recent list to this project, so only this
   // project's sessions appear there.

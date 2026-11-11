@@ -96,8 +96,9 @@ Any third-party script the installer fetches (currently just the bun installer) 
 ## Uninstall
 
 ```bash
-./installer/uninstall.sh             # removes the launcher, OS registration, config, voice models
-./installer/uninstall.sh --keep-data # preserves ~/.config/husk/ and the Piper voices
+./installer/uninstall.sh               # removes the launcher and OS registration; asks whether to keep your data (Enter keeps it)
+./installer/uninstall.sh --keep-data   # preserves ~/.config/husk/ and the Piper voices, without asking
+./installer/uninstall.sh --remove-data # deletes them too, without asking
 ```
 
 The project directory and `node_modules/` are always left intact so `./installer/install.sh` can re-run.

@@ -549,6 +549,10 @@
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg><span class="rail-aut-pulse" id="rail-aut-pulse" hidden></span></span>
               <span class="ri-label">Autopilot</span><span class="rail-beta-tag">BETA</span>
             </button>
+            <button class="rail-item rail-item-brain" data-page="brain" title="Brain" id="rail-brain">
+              <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.5A2.5 2.5 0 0 0 9.5 4a3 3 0 0 0-3 3 3.2 3.2 0 0 0-2 5.4A3.2 3.2 0 0 0 6.2 17 3 3 0 0 0 12 17.5z"/><path d="M12 6.5A2.5 2.5 0 0 1 14.5 4a3 3 0 0 1 3 3 3.2 3.2 0 0 1 2 5.4 3.2 3.2 0 0 1-1.7 4.6A3 3 0 0 1 12 17.5z"/><path d="M12 10.5H9.5M12 14h2.5"/></svg><span class="rail-aut-pulse" id="rail-brain-pulse" hidden></span></span>
+              <span class="ri-label">Brain</span>
+            </button>
             <button class="rail-item" data-page="projects" title="Projects">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg></span>
               <span class="ri-label">Projects</span>
@@ -2421,6 +2425,75 @@
           </div>
         </div>
 
+        <!-- Brain. The canvas and the lists are built by brain-page.js; every
+             title is user text, so it lands through textContent. -->
+        <div class="page page-brain" data-page="brain" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Brain</h1>
+              <span class="page-sub" id="br-sub">What Husk remembers for this workspace, and how it connects</span>
+            </div>
+            <div class="page-head-right">
+              <div class="br-scope" role="group" aria-label="How much of the Brain to show">
+                <button class="br-scope-btn" type="button" data-all="0" aria-pressed="false" title="Only what is in reach of the open workspace">This workspace</button>
+                <button class="br-scope-btn is-on" type="button" data-all="1" aria-pressed="true" title="Everything Husk remembers, from every workspace">Whole brain</button>
+              </div>
+              <label class="br-switch" title="When on, a prompt wakes the memories that match it and each finished turn is remembered">
+                <input type="checkbox" id="br-enabled" checked />
+                <span>Recall into chats</span>
+              </label>
+              <button class="ghost-btn" id="br-add-note" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add note</span></button>
+              <button class="btn-primary" id="br-add-files" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg> Add files</button>
+            </div>
+          </div>
+          <div class="page-body br-body">
+            <div class="br-main">
+            <div class="br-stage">
+              <div class="br-stats" id="br-stats" aria-label="What the Brain has done"></div>
+              <canvas id="br-canvas" aria-label="Memories and the connections between them"></canvas>
+              <div class="br-empty" id="br-empty" hidden>
+                <div class="br-empty-title">Nothing remembered yet</div>
+                <div class="br-empty-text">Add a note or a few files, or just chat. Each finished turn leaves a memory here, and a prompt lights the ones it wakes.</div>
+              </div>
+              <div class="br-legend" aria-hidden="true">
+                <span data-kind="note"><i></i>Note</span>
+                <span data-kind="file"><i></i>File</span>
+                <span data-kind="chunk"><i></i>Passage</span>
+                <span data-kind="decision"><i></i>Decision</span>
+              </div>
+              <div class="br-hud">
+                <button class="br-hud-btn" id="br-zoom-out" type="button" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 12h12"/></svg></button>
+                <button class="br-hud-zoom" id="br-zoom" type="button" title="Fit everything in view">100%</button>
+                <button class="br-hud-btn" id="br-zoom-in" type="button" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg></button>
+                <button class="br-hud-btn" id="br-fit" type="button" aria-label="Fit to view" title="Fit everything in view (or double-click the field)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4H5.5A1.5 1.5 0 0 0 4 5.5V9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15M15 20h3.5a1.5 1.5 0 0 0 1.5-1.5V15"/></svg></button>
+                <button class="br-hud-btn" id="br-full" type="button" aria-label="Fill the window" aria-pressed="false" title="Fill the window"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg></button>
+              </div>
+              <div class="br-tip" id="br-tip" hidden></div>
+              <div class="br-last" id="br-last" role="status"></div>
+            </div>
+            </div>
+            <aside class="br-side">
+              <form class="br-note" id="br-note-form" hidden>
+                <textarea id="br-note-text" rows="4" maxlength="4000" placeholder="Something worth remembering: a rule, a fact about this project, how a thing is done here"></textarea>
+                <div class="br-note-row">
+                  <label class="br-switch"><input type="checkbox" id="br-note-global" /><span>All workspaces</span></label>
+                  <span class="br-note-acts">
+                    <button class="ghost-btn" id="br-note-cancel" type="button">Cancel</button>
+                    <button class="btn-primary" type="submit">Remember</button>
+                  </span>
+                </div>
+              </form>
+              <div class="br-tabs" role="tablist" aria-label="Brain lists">
+                <button class="br-tab is-active" type="button" role="tab" data-tab="memories" aria-selected="true">Memories</button>
+                <button class="br-tab" type="button" role="tab" data-tab="activity" aria-selected="false">Activity <span class="br-tab-count" id="br-tab-activity-count"></span></button>
+              </div>
+              <input class="br-search" id="br-search" type="search" placeholder="Search memories" aria-label="Search memories" />
+              <div class="br-list" id="br-list"></div>
+              <div class="br-detail" id="br-detail" hidden></div>
+            </aside>
+          </div>
+        </div>
+
         <!-- Schedule. Rows are built by sch-page.js through WfxDom: a schedule
              name is whatever the user typed. -->
         <div class="page page-schedule" data-page="schedule" hidden>
@@ -4065,6 +4138,7 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     <script src="af-page.js"></script>
     <script src="tm-page.js"></script>
     <script src="sch-page.js"></script>
+    <script src="brain-page.js"></script>
     <script src="sc-dom.js"></script>
     <script src="sc-page.js"></script>
     <script src="../lib/chat-events.js"></script>

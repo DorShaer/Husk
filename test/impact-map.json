@@ -400,6 +400,8 @@
       "specs": [
         "chat-mode.spec.js",
         "codex-chat.spec.js",
+        "trust-keeps-chat.spec.js",
+        "brain.spec.js",
         "chat-login.spec.js",
         "chat-reload-resume.spec.js",
         "chat-ctrl-r-reload.spec.js",
@@ -418,6 +420,9 @@
         "src/lib/jsonrpc-stdio.js",
         "src/lib/acp-client.js",
         "src/lib/codex-app-server.js",
+        "src/lib/brain.js",
+        "src/lib/native-commands.js",
+        "src/renderer/brain-page.js",
         "src/lib/chat-events.js",
         "src/lib/chat-transport.js",
         "src/lib/claude-stream.js",

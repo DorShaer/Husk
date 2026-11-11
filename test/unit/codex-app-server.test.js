@@ -96,7 +96,9 @@ test('approvals offer what codex will take, and always a way to refuse', () => {
     itemId: 'e1', command: "/bin/zsh -lc 'rm x'", cwd: '/w', commandActions: [{ type: 'unknown', command: 'rm x' }], reason: 'why', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: {} }, 'cancel'],
   });
   assert.equal(cmd.toolCallId, 'e1');
-  assert.equal(cmd.detail, 'rm x\nwhy');
+  // The full command as it will run, not the parsed action.
+  assert.equal(cmd.detail, "/bin/zsh -lc 'rm x'\nwhy");
+  assert.equal(cmd.input.command, "/bin/zsh -lc 'rm x'");
   assert.deepEqual(cmd.options.map((o) => o.optionId), ['accept', 'decline']);
   const patch = normalizeCodexApproval('p2', 'item/fileChange/requestApproval', { itemId: 'f1' });
   assert.deepEqual(patch.options.map((o) => o.optionId), ['accept', 'acceptForSession', 'decline']);

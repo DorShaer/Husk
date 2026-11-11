@@ -83,6 +83,23 @@ test('codex opens as a Husk thread and answers an approval', async () => {
   } finally { await app.close(); }
 });
 
+test('/mcp shows what the CLI itself prints, not a pointer to its terminal', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    const pane = win.locator('.chat-pane.show');
+    await chatReady(win);
+    await pane.locator('.chat-input').fill('/mcp');
+    await pane.locator('.chat-input').press('Enter');
+    await expect(pane.locator('.chat-item-user .chat-bubble')).toHaveText('/mcp');
+    await expect(pane.locator('.chat-item-text code').first()).toHaveText('codex mcp list');
+    await expect(pane.locator('.chat-item-text pre')).toContainText('fixture  node     enabled');
+    await expect(pane.locator('.chat-meta .chat-meta-line')).toContainText('Done');
+    // The command never reached the agent, so no turn of its own was played.
+    await expect(pane.locator('.chat-tool')).toHaveCount(0);
+  } finally { await app.close(); }
+});
+
 test('the footer and Status panel follow the focused chat, and chats reorder by drag', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);

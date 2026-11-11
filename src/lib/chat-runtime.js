@@ -349,17 +349,21 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return out;
   }
 
-  async function prompt({ tabId, text, images } = {}) {
+  // context is reference text Husk adds for the agent alone (what the Brain
+  // recalled). It rides ahead of the prompt on the wire and stays out of the
+  // replay log, so the thread shows what the user typed.
+  async function prompt({ tabId, text, images, context } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const body = String(text || '');
     const pics = cleanImages(images);
     if (!body.trim() && !pics.length) return { ok: false, error: 'empty prompt' };
+    const wire = context && body.trim() ? String(context) + '\n\n' + body : body;
     // The renderer paints the user's bubble itself before calling here, so the
     // log takes it directly rather than echoing it back.
     record(s, Object.assign({ type: 'user', text: body }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
     if (s.transport === 'openai') {
-      s.messages.push({ role: 'user', content: body });
+      s.messages.push({ role: 'user', content: wire });
       s.turnOpen = true;
       s.abort = new AbortController();
       const started = Date.now();
@@ -378,7 +382,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       if (!s.sessionId) return { ok: false, error: 'session not ready' };
       s.turnOpen = true;
       send(tabId, { type: 'turn_start' });
-      s.acp.prompt(s.sessionId, textPrompt(body, pics))
+      s.acp.prompt(s.sessionId, textPrompt(wire, pics))
         .then((res) => {
           s.turnOpen = false;
           send(tabId, { type: 'turn_end', stopReason: (res && res.stopReason) || 'end_turn' });
@@ -396,7 +400,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       // A model picked since the last turn rides on this one and holds from then on.
       const model = s.codexModel;
       s.codexModel = null;
-      s.acp.request('turn/start', Object.assign({ threadId: s.sessionId, input: codexInput(body, pics) }, model ? { model } : {}))
+      s.acp.request('turn/start', Object.assign({ threadId: s.sessionId, input: codexInput(wire, pics) }, model ? { model } : {}))
         .then((res) => { if (res && res.turn && s.turnOpen) codexTurn(s, res.turn.id); })
         .catch((e) => {
           s.turnOpen = false;
@@ -406,7 +410,21 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       return { ok: true };
     }
     s.turnOpen = true;
-    return { ok: writeLine(s, encodeUserMessage(body, pics)) };
+    return { ok: writeLine(s, encodeUserMessage(wire, pics)) };
+  }
+
+  // A turn Husk answered itself (a slash command run through the CLI's own
+  // non-interactive form). It is logged like any other, so a reload keeps it.
+  function local({ tabId, text, reply, isError } = {}) {
+    const s = sessions.get(tabId);
+    if (!s) return { ok: false, error: 'no chat session' };
+    record(s, { type: 'user', text: String(text || '') });
+    send(tabId, [
+      { type: 'turn_start' },
+      { type: 'text_final', text: String(reply || '') },
+      { type: 'turn_end', stopReason: isError ? 'error' : 'end_turn', isError: !!isError },
+    ]);
+    return { ok: true };
   }
 
   async function cancel({ tabId } = {}) {
@@ -560,7 +578,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return out;
   }
 
-  return { start, prompt, cancel, permission, setModel, stop, stopAll, info, list, size: () => sessions.size };
+  return { start, prompt, local, cancel, permission, setModel, stop, stopAll, info, list, size: () => sessions.size };
 }
 
 module.exports = { createChatRuntime };

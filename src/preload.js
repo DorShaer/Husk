@@ -296,6 +296,18 @@ contextBridge.exposeInMainWorld('husk', {
     filter: (rows, opts) => { try { return artifactLedger.filterLedger(rows, opts); } catch (_) { return []; } },
     summarise: (rows) => { try { return artifactLedger.summarise(rows); } catch (_) { return { runs: 0 }; } },
   },
+  // The Brain: what Husk remembers and recalls into a prompt (src/lib/brain.js).
+  // graph -> { ok, scope, scopeName, enabled, nodes, edges }. onActivity fires
+  // with { kind: 'recall'|'capture'|'learn'|'idle', ids, busy } as it works.
+  brain: {
+    graph: (opts) => ipcRenderer.invoke('brain:graph', opts || {}),
+    addNote: (opts) => ipcRenderer.invoke('brain:addNote', opts || {}),
+    addFiles: (opts) => ipcRenderer.invoke('brain:addFiles', opts || {}),
+    remove: (id) => ipcRenderer.invoke('brain:remove', { id }),
+    pin: (id, pinned) => ipcRenderer.invoke('brain:pin', { id, pinned }),
+    setEnabled: (on) => ipcRenderer.invoke('brain:setEnabled', { on }),
+    onActivity: (cb) => ipcRenderer.on('brain:activity', (_e, payload) => cb(payload)),
+  },
   // Recurring runs. The rules about when one fires live in schedule.js and run
   // in the main process; `describe` is the same wording, computed in-process so
   // a row and a form never disagree about what a recurrence says.

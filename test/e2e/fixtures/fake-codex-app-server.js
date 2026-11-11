@@ -4,8 +4,11 @@
 // A deterministic `codex app-server` for Chat-mode e2e. Speaks the newline
 // JSON-RPC the real one does and plays one fixed turn per prompt: streamed
 // text, a shell command that asks for approval, a token reading, a closing
-// line that echoes the approval so a test can assert on the client's choice.
+// line that echoes the approval so a test can assert on the client's choice,
+// and whether the prompt arrived carrying notes from Husk's Brain.
 
+// The non-interactive listing Husk runs for /mcp typed in a chat.
+if (process.argv[2] === 'mcp' && process.argv[3] === 'list') { process.stdout.write('Name     Command  Status\nfixture  node     enabled\n'); process.exit(0); }
 if (process.argv[2] !== 'app-server') { process.stdout.write('fake codex 0.0.1\n'); process.exit(0); }
 
 const THREAD = 'thread-0001';
@@ -22,7 +25,7 @@ function ask(method, params) {
   return new Promise((resolve) => { waiting.set(id, resolve); send({ id, method, params }); });
 }
 
-async function playTurn(turnId) {
+async function playTurn(turnId, prompt) {
   note('turn/started', { threadId: THREAD, turn: { id: turnId, status: 'inProgress' } });
   note('item/started', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm1', text: '' } });
   for (const delta of ['Running ', 'the **command**.']) note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'm1', delta });
@@ -37,7 +40,7 @@ async function playTurn(turnId) {
   note('item/completed', { threadId: THREAD, turnId, item: { ...exec, status: ok ? 'completed' : 'declined', exitCode: ok ? 0 : null, aggregatedOutput: ok ? 'hi\n' : null } });
   note('thread/tokenUsage/updated', { threadId: THREAD, turnId, tokenUsage: { total: { totalTokens: 20000 }, last: { totalTokens: 20000 }, modelContextWindow: 200000 } });
   note('item/started', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm2', text: '' } });
-  const closing = `decision was ${answer && answer.decision}`;
+  const closing = `decision was ${answer && answer.decision} brain=${/Husk Brain/.test(prompt) ? 'yes' : 'no'}`;
   note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'm2', delta: closing });
   note('item/completed', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm2', text: closing } });
   note('turn/completed', { threadId: THREAD, turn: { id: turnId, status: 'completed', error: null, durationMs: 1200 } });
@@ -57,7 +60,7 @@ function handle(msg) {
     case 'turn/start': {
       const turnId = 'turn-' + (++turnSeq);
       send({ id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
-      playTurn(turnId);
+      playTurn(turnId, ((msg.params && msg.params.input) || []).map((i) => i.text || '').join(' '));
       break;
     }
     default: send({ id: msg.id, error: { code: -32601, message: 'unknown method ' + msg.method } });

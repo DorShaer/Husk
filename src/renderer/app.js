@@ -297,7 +297,7 @@ let lastStats = null;
 let lastGoodCtx = null;
 const RELOAD_STATE_KEY = 'husk:reload-state';
 const ROUTE_STATE_KEY = 'husk:route-state';
-const VALID_PAGES = new Set(['chat', 'terminal', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'source', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'prefs']);
+const VALID_PAGES = new Set(['chat', 'terminal', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'source', 'files', 'schedule', 'artifacts', 'github', 'mcp', 'plugins', 'brain', 'prefs']);
 let bootingFromReloadState = null;
 
 function normalizePageName(name) {
@@ -2041,8 +2041,10 @@ function renderTabStrip() {
     btn.title = name;
     const label = document.createElement('span');
     label.className = 'chat-tab-label';
-    if (!t.customTitle && !t.titleEarned && (t.mode === 'chat' ? t.chatRunning : t.promptSent)) {
+    if (!t.customTitle && !t.titleEarned && !sessionTitleUsable(t.title) && (t.mode === 'chat' ? t.chatRunning : t.promptSent)) {
       // Name is brewing: breathing dots instead of the "Chat N" placeholder.
+      // Only ever in place of a placeholder: a tab already named after its
+      // first prompt keeps that name on every later turn.
       showThinkingDots(label);
     } else {
       label.textContent = name;
@@ -2146,8 +2148,9 @@ function adoptTabTitle(tab, title) {
 
 // Keep each tab's label in step with its session's title, so the tab matches
 // the Sessions and Recent lists. A user rename (customTitle) wins and opts the
-// tab out. The first earned name types itself in; later refinements swap
-// silently through the repaint inside adoptTabTitle.
+// tab out. The first earned name types itself in and then sticks; later
+// refinements the CLI generates as the thread grows are ignored so the tab
+// stops relabeling on every message.
 async function syncTabTitles() {
   for (const tab of TABS.values()) {
     if (!tab.agentId || tab.customTitle) continue;
@@ -2165,8 +2168,10 @@ async function syncTabTitles() {
       // Only a name the CLI generated counts, so the dots keep breathing
       // until one arrives.
       if (!res.named || !sessionTitleUsable(res.title)) continue;
-      const clean = String(res.title).trim();
-      if (clean !== tab.title || !tab.titleEarned) adoptTabTitle(tab, clean);
+      // Adopt the first earned name only. Later refinements the CLI generates as
+      // the thread grows are ignored, so a named tab keeps its name.
+      if (tab.titleEarned) continue;
+      adoptTabTitle(tab, String(res.title).trim());
     } catch (_) {}
   }
 }
@@ -3264,7 +3269,10 @@ async function offerToChatComposer(text) {
 // names the tab unless the user renamed it.
 function adoptChatTitle(tab, title) {
   const t = String(title || '').replace(/\s+/g, ' ').trim();
-  if (!tab || !t || tab.customTitle) return;
+  // Once a name is earned it stays. A user rename (customTitle) overrides it;
+  // the agent's later per-turn refinements do not, so the tab stops relabeling
+  // on every message.
+  if (!tab || !t || tab.customTitle || tab.titleEarned) return;
   tab.title = t.length > 60 ? t.slice(0, 59).replace(/\s+\S*$/, '') + '...' : t;
   tab.titleEarned = true;
   renderTabStrip();
@@ -3395,6 +3403,8 @@ function setPage(name, opts = {}) {
   }
   if (name === 'source' && window.Sc) window.Sc.open();
   if (name === 'schedule' && window.Schedule) window.Schedule.open();
+  // The canvas animates, so it runs only while its page is the one showing.
+  if (window.Brain) { if (name === 'brain') window.Brain.open(); else window.Brain.close(); }
   if (name === 'artifacts' && window.Af) window.Af.open();
   if (name === 'terminal' && window.Tm) window.Tm.open();
   if (name === 'github' && window.Gh) window.Gh.open();
@@ -3426,12 +3436,38 @@ async function maybeShowTrustBanner() {
     banner.hidden = !!(r && r.trusted);
   } catch (_) { banner.hidden = true; }
 }
+// Restarts the focused chat's agent so it reads a changed setting. A chat that
+// has already been spoken to comes back as itself: the agent resumes the same
+// session under the same tab, with the thread still on screen. A plain restart
+// starts a new session there, which left the conversation behind as a second
+// entry beside an empty chat.
+async function restartKeepingConversation() {
+  const tab = TABS.get(activeTabId);
+  const id = tab && !tab.agentIdProvisional ? tab.agentId : null;
+  const spoken = !!tab && (tab.mode === 'chat'
+    ? !!(tab.chatState && Array.isArray(tab.chatState.items) && tab.chatState.items.some((it) => it.kind === 'user'))
+    : !!tab.promptSent);
+  if (!id || !spoken || chatProtocolFor(tabAgentCommand(tab)) !== 'claude') { await restartPty({ silent: true }); return; }
+  const base = tabAgentCommand(tab);
+  const command = base.includes(id) ? base : `${base} --resume ${id}`;
+  if (tab.mode === 'chat') {
+    // The thread is repainted from the runtime's own log, read before the
+    // agent it belongs to is stopped.
+    try {
+      const live = await window.husk.chat.list();
+      const mine = live && Array.isArray(live.sessions) ? live.sessions.find((c) => c.tabId === tab.id) : null;
+      if (mine && Array.isArray(mine.events) && mine.events.length) tab.chatHistory = mine.events;
+    } catch (_) {}
+    tab.resumedSessionId = id;
+  }
+  await restartPty({ silent: true, command, cwd: tab.cwd || undefined });
+}
 $('#btn-trust-folder')?.addEventListener('click', async () => {
   const r = await window.husk.claudeTrust.accept();
   if (r && r.ok) {
     $('#trust-banner').hidden = true;
     toast('Folder trusted · reloading agent', 'success');
-    await restartPty({ silent: true });
+    await restartKeepingConversation();
   } else {
     toast(`Could not trust folder: ${(r && r.error) || 'unknown error'}`, 'error');
   }
@@ -3954,9 +3990,11 @@ function userZoomRatio() {
 }
 
 // Scale the status stack down when it is taller than the space between the
-// head and foot border lines, so every section stays visible at any window
+// head and foot border lines, so more of it stays visible at a short window
 // height. The budget is the panel's height at base zoom, which keeps the
-// user's zoom intact.
+// user's zoom intact. The shrink stops where the rows would read smaller than
+// the Context pane's beside them; past that the pane scrolls.
+const STATUS_FIT_FLOOR = 0.87;
 function fitStatusContent() {
   const box = $('#sp-content');
   const fit = $('#sp-fit');
@@ -3970,7 +4008,7 @@ function fitStatusContent() {
   const need = fit.scrollHeight;
   const budget = avail * userZoomRatio();
   if (need <= budget) return;
-  const scale = budget / need;
+  const scale = Math.max(budget / need, STATUS_FIT_FLOOR);
   // Widening the wrapper by the same factor it is scaled by keeps the painted
   // width at the panel's, so the shrink reads as vertical only.
   fit.style.width = `${100 / scale}%`;
@@ -14607,9 +14645,10 @@ function animateRecentTitles(wrap, sessions) {
     railTitleSeen.set(s.id, { title: s.title, named: !!s.named });
     if (!s.named) {
       // No generated name yet: a session with fresh activity breathes dots
-      // (its name is brewing); a stale one keeps its placeholder text.
+      // (its name is brewing); a stale one keeps its placeholder text. One
+      // already titled by its first message keeps that title.
       const active = Date.now() - (Number(s.mtime) || 0) < RAIL_NAMING_WINDOW_MS;
-      if (active) showThinkingDots(titleEl);
+      if (active && !sessionTitleUsable(s.title)) showThinkingDots(titleEl);
       continue;
     }
     // First paint of the generated name after the unnamed phase: type it in.
@@ -16060,6 +16099,7 @@ const PALETTE_ACTIONS = [
   { icon: ICONS.files,       label: 'Switch to Files',                run: () => setPage('files'),       shortcut: 'Alt 4' },
   { icon: ICONS.workflows,   label: 'Switch to Source',               run: () => setPage('source') },
   { icon: ICONS.autopilot,   label: 'Switch to Schedule',             run: () => setPage('schedule') },
+  { icon: ICONS.autopilot,   label: 'Switch to Brain',                run: () => setPage('brain') },
   { icon: ICONS.workflows,   label: 'Switch to Artifacts',            run: () => setPage('artifacts') },
   { icon: ICONS.github,      label: 'Switch to GitHub',               run: () => setPage('github') },
   { icon: ICONS.mcp,         label: 'Switch to MCP',                  run: () => setPage('mcp'),         shortcut: 'Alt 5' },
