@@ -318,7 +318,8 @@
     "statuspanel": {
       "specs": [
         "chat-model.spec.js",
-        "layout-overflow.spec.js"
+        "layout-overflow.spec.js",
+        "ui-zoom.spec.js"
       ],
       "tokens": [
         "sp",
@@ -327,6 +328,7 @@
       "paths": [
         "src/lib/model-catalog.js",
         "src/lib/model-routing.js",
+        "src/lib/ui-zoom.js",
         "src/lib/pai-state.js"
       ]
     },
