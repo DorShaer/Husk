@@ -154,3 +154,20 @@ test('recalled context rides ahead of the prompt on the wire and stays out of th
   const logged = rt.list()[0].events.find((e) => e.type === 'user');
   assert.equal(logged.text, 'hello');
 });
+
+test('Allow all accepts this codex approval and the ones after it, one accept each', async () => {
+  const { rt, c, events } = await started();
+  c.feed({ id: 7, method: 'item/commandExecution/requestApproval', params: { itemId: 'e1', command: 'ls', availableDecisions: ['accept', 'acceptForSession', 'cancel'] } });
+  const card = events.find((e) => e.type === 'permission');
+  assert.deepEqual(card.options.map((o) => o.optionId), ['accept', 'acceptForSession', 'allow-all', 'decline']);
+  assert.deepEqual(await rt.permission({ tabId: 't1', requestId: card.requestId, optionId: 'allow-all' }), { ok: true });
+  await tick();
+  assert.deepEqual(c.stdinLines.find((l) => l.id === 7 && l.result).result, { decision: 'accept' });
+  // A different command and a file change: no click, same answer.
+  c.feed({ id: 8, method: 'item/commandExecution/requestApproval', params: { itemId: 'e2', command: 'rm -rf build' } });
+  c.feed({ id: 9, method: 'item/fileChange/requestApproval', params: { itemId: 'e3' } });
+  await tick();
+  assert.deepEqual(c.stdinLines.find((l) => l.id === 8 && l.result).result, { decision: 'accept' });
+  assert.deepEqual(c.stdinLines.find((l) => l.id === 9 && l.result).result, { decision: 'accept' });
+  assert.equal(events.filter((e) => e.type === 'permission_resolved').length, 3);
+});

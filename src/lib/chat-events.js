@@ -21,6 +21,7 @@
 //   { type: 'tool', id, title?, kind?, status?, detail?, input?, output?, diffs?, locations? }
 //   { type: 'permission', requestId, toolCallId?, title, detail?, input?, options: [{ optionId, name, kind }] }
 //   { type: 'permission_resolved', requestId, optionId }
+//   { type: 'allow_all', on }                    every approval is being answered for the user
 //   { type: 'plan', entries: [{ content, status, priority }] }
 //   { type: 'commands', commands: [{ name, description }] }
 //   { type: 'title', title }                     agent-chosen session title
@@ -418,6 +419,8 @@ function reduceThread(state, event) {
       return Object.assign({}, s, { modes: Object.assign({}, s.modes || {}, { current: event.modeId }) });
     case 'billing':
       return Object.assign({}, s, { billing: str(event.plan) || null });
+    case 'allow_all':
+      return Object.assign({}, s, { allowAll: !!event.on });
     case 'turn_end': {
       const closed = closeOpen(s);
       // The CLI's total_cost_usd is API list price. On a subscription nothing

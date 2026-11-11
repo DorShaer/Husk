@@ -2,7 +2,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { nativeCommand, nativeReply } = require('../../src/lib/native-commands');
+const { nativeCommand, nativeCwd, nativeReply } = require('../../src/lib/native-commands');
+
+test('an untrusted folder is never where the command runs', () => {
+  assert.deepEqual(nativeCwd('/work/repo', true, '/home/me'), { cwd: '/work/repo', note: '' });
+  const out = nativeCwd('/work/cloned', false, '/home/me');
+  assert.equal(out.cwd, '/home/me');
+  assert.match(out.note, /not trusted/);
+  assert.equal(nativeCwd('', true, '/home/me').cwd, '/home/me');
+  assert.match(nativeReply('claude mcp list', 'a: ok', out.note), /```\n\nThis folder is not trusted/);
+});
 
 test('/mcp maps to each CLI\'s own listing', () => {
   assert.deepEqual(nativeCommand('claude', '/mcp'), { program: 'claude', args: ['mcp', 'list'], label: 'claude mcp list' });

@@ -29,6 +29,8 @@ const STDERR_KEEP = 2000;
 const LOG_MAX_EVENTS = 4000;
 const LOG_MAX_TEXT = 400000;
 
+const ALLOW_ALL = 'allow-all';
+
 const AUTH_HINT = 'Switch this tab to Terminal mode to sign in, then switch back to Chat.';
 // An ACP agent answers initialize within a second or two; one that never does
 // (an older build, a wrapper that ignores --acp) must fail the start instead
@@ -74,6 +76,44 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     }
   }
 
+  // "Allow all" is one answer for every approval a chat asks for from then on,
+  // until it is switched off or the agent exits. Husk gives the answer itself,
+  // so it works the same for every CLI, and each approval still lands in the
+  // thread, already answered, so what ran unasked can be read back. A question
+  // put to the user is not an approval, and is always asked.
+  const isQuestion = (card) => card.title === 'AskUserQuestion' && card.input && Array.isArray(card.input.questions);
+  function offer(s, tabId, card) {
+    if (!card || card.type !== 'permission' || isQuestion(card)) { send(tabId, card); return; }
+    const own = Array.isArray(card.options) ? card.options : [];
+    if (!s.cards) s.cards = new Map();
+    s.cards.set(String(card.requestId), own);
+    const options = own.slice();
+    const at = own.findIndex((o) => String((o && o.kind) || '').startsWith('reject'));
+    options.splice(at === -1 ? options.length : at, 0, { optionId: ALLOW_ALL, name: 'Allow all', kind: 'allow_all' });
+    send(tabId, Object.assign({}, card, { options }));
+    if (s.allowAll) permission({ tabId, requestId: card.requestId, optionId: ALLOW_ALL });
+  }
+
+  // The agent's own answer that allows one request, which is what "Allow all"
+  // sends each time: the agent is never handed a standing rule.
+  function onceOption(s, id) {
+    if (s.transport === 'codex') return 'accept';
+    if (s.transport !== 'acp') return 'allow';
+    const own = (s.cards && s.cards.get(id)) || [];
+    const pick = own.find((o) => o && o.kind === 'allow_once') || own.find((o) => o && String(o.kind || '').startsWith('allow'));
+    return pick ? pick.optionId : null;
+  }
+
+  function allowAll({ tabId, on } = {}) {
+    const s = sessions.get(tabId);
+    if (!s) return { ok: false, error: 'no chat session' };
+    if (!!s.allowAll !== !!on) {
+      s.allowAll = !!on;
+      send(tabId, { type: 'allow_all', on: !!on });
+    }
+    return { ok: true };
+  }
+
   function tailStderr(s) {
     return String(s.stderr || '').trim().split(/\r?\n/).filter(Boolean).slice(-3).join('\n');
   }
@@ -115,6 +155,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       if (s.acp) s.acp.close('agent exited');
       for (const r of s.pendingPerms.values()) { try { r(null); } catch (_) {} }
       s.pendingPerms.clear();
+      // Allow all ends with the agent it was given to.
+      if (s.allowAll) { s.allowAll = false; send(s.tabId, { type: 'allow_all', on: false }); }
       s.exited = true;
       if (sessions.get(s.tabId) === s) sessions.delete(s.tabId);
       // A child Husk stopped or replaced on purpose (stop, restart in place)
@@ -191,7 +233,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         onPermission: (params) => new Promise((resolve) => {
           const requestId = 'p' + (++permSeq);
           s.pendingPerms.set(requestId, resolve);
-          send(tabId, normalizeAcpPermission(requestId, params));
+          offer(s, tabId, normalizeAcpPermission(requestId, params));
         }),
       });
       s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`acp non-json line: ${raw.slice(0, 200)}`));
@@ -242,7 +284,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
           if (!card) return undefined;
           return new Promise((resolve) => {
             s.pendingPerms.set(requestId, (optionId) => resolve(codexDecision(optionId)));
-            send(tabId, card);
+            offer(s, tabId, card);
           });
         },
       });
@@ -320,7 +362,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         if (ne.type === 'session' && ne.sessionId) s.sessionId = ne.sessionId;
         if (ne.type === 'turn_end') s.turnOpen = false;
       }
-      send(tabId, events);
+      for (const ne of events) { if (ne && ne.type === 'permission') offer(s, tabId, ne); else send(tabId, ne); }
     }, (raw) => note(`claude non-json line: ${raw.slice(0, 200)}`));
     sessions.set(tabId, s);
     wireChild(s);
@@ -451,23 +493,32 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const id = String(requestId || '');
+    const all = String(optionId) === ALLOW_ALL;
+    const answer = all ? onceOption(s, id) : optionId;
     if (s.transport === 'acp' || s.transport === 'codex') {
       const resolve = s.pendingPerms.get(id);
       if (!resolve) return { ok: false, error: 'unknown permission request' };
       s.pendingPerms.delete(id);
-      resolve(optionId === null || optionId === undefined ? null : String(optionId));
+      resolve(answer === null || answer === undefined ? null : String(answer));
     } else {
       const perm = s.permInputs.get(id);
       if (perm === undefined) return { ok: false, error: 'unknown permission request' };
       s.permInputs.delete(id);
-      const choice = String(optionId);
+      const choice = String(answer);
       const allow = choice === 'allow' || choice === 'allow-session';
       // AskUserQuestion is answered by returning the picks in updatedInput.answers
       // (keyed by question text and header), which claude reads as the tool result.
       const input = (allow && answers && typeof answers === 'object') ? { ...perm.input, answers } : perm.input;
       writeLine(s, encodePermissionResponse(id, allow, input, undefined, choice === 'allow-session' ? perm.suggestions : undefined));
     }
+    if (s.cards) s.cards.delete(id);
     send(tabId, { type: 'permission_resolved', requestId: id, optionId: String(optionId) });
+    if (all && !s.allowAll) {
+      s.allowAll = true;
+      send(tabId, { type: 'allow_all', on: true });
+      // Whatever else was waiting is covered by the same answer.
+      for (const other of [...(s.cards ? s.cards.keys() : [])]) permission({ tabId, requestId: other, optionId: ALLOW_ALL });
+    }
     return { ok: true };
   }
 
@@ -578,7 +629,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return out;
   }
 
-  return { start, prompt, local, cancel, permission, setModel, stop, stopAll, info, list, size: () => sessions.size };
+  return { start, prompt, local, cancel, permission, allowAll, setModel, stop, stopAll, info, list, size: () => sessions.size };
 }
 
 module.exports = { createChatRuntime };

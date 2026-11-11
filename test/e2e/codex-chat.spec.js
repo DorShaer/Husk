@@ -67,8 +67,8 @@ test('codex opens as a Husk thread and answers an approval', async () => {
     const perm = pane.locator('.chat-perm');
     await expect(perm).toBeVisible();
     // The fixture offers accept and cancel only, so no session-wide allow shows.
-    await expect(perm.locator('.chat-perm-btn')).toHaveCount(2);
-    await perm.locator('.chat-perm-btn', { hasText: 'Allow' }).click();
+    await expect(perm.locator('.chat-perm-btn')).toHaveCount(3);
+    await perm.locator('.chat-perm-btn', { hasText: /^Allow$/ }).click();
     await expect(tool).toHaveAttribute('data-status', 'done');
     await expect(pane.locator('.chat-item-text').last()).toContainText('decision was accept');
     await expect(pane.locator('.chat-meta .chat-meta-line')).toContainText('Done');

@@ -33,10 +33,20 @@ function nativeCommand(agentCommand, text) {
   return args ? { program, args: args.slice(), label: `${base} ${args.join(' ')}` } : null;
 }
 
-// What the thread shows: the command that ran, then its output as it printed.
-function nativeReply(label, output) {
-  const body = String(output || '').replace(/\r\n/g, '\n').trim() || '(no output)';
-  return '`' + label + '`\n\n```\n' + body.replace(/```/g, "'''") + '\n```';
+// Where the command runs. A CLI run inside a folder reads that folder's own
+// config, and a listing may start what the config names: in a folder the user
+// has not trusted, that is somebody else's commands running unasked. There the
+// command runs from the home directory, which answers for the user's own setup.
+function nativeCwd(folder, trusted, home) {
+  return trusted && folder ? { cwd: folder, note: '' }
+    : { cwd: home, note: 'This folder is not trusted, so this ran from your home folder and lists only your own setup. Trust the folder to include what it defines.' };
 }
 
-module.exports = { nativeCommand, nativeReply };
+// What the thread shows: the command that ran, then its output as it printed,
+// then anything the reader should know about how it was run.
+function nativeReply(label, output, note) {
+  const body = String(output || '').replace(/\r\n/g, '\n').trim() || '(no output)';
+  return '`' + label + '`\n\n```\n' + body.replace(/```/g, "'''") + '\n```' + (note ? '\n\n' + note : '');
+}
+
+module.exports = { nativeCommand, nativeCwd, nativeReply };

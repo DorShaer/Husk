@@ -74,7 +74,7 @@ test('a chat tab streams text, shows a tool card, answers a permission and ends 
 
   const perm = pane.locator('.chat-perm');
   await expect(perm).toBeVisible();
-  await expect(perm.locator('.chat-perm-btn')).toHaveCount(3);
+  await expect(perm.locator('.chat-perm-btn')).toHaveCount(4);
   await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'chat-mode-permission.png') });
   await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
 
@@ -167,7 +167,7 @@ test('a reload keeps the chat tab, its thread and its live agent', async () => {
   await expect(pane.locator('.chat-item-user')).toHaveCount(2);
   await expect(pane.locator('.chat-item-user .chat-bubble').nth(1)).toHaveText('and again');
   await expect(pane.locator('.chat-perm')).toHaveCount(2);
-  await expect(pane.locator('.chat-perm').nth(1).locator('.chat-perm-btn')).toHaveCount(3);
+  await expect(pane.locator('.chat-perm').nth(1).locator('.chat-perm-btn')).toHaveCount(4);
   await app.close();
 });
 
@@ -298,7 +298,7 @@ test('an agent title names the tab, usage shows as ctx %, and Yes / Always / No 
   await expect(usage).toHaveAttribute('title', /of .* context tokens used/);
 
   const perm = pane.locator('.chat-perm');
-  await expect(perm.locator('.chat-perm-btn')).toHaveText(['Yes', 'Always', 'No']);
+  await expect(perm.locator('.chat-perm-btn')).toHaveText(['Yes', 'Always', 'Allow all', 'No']);
   await expect(perm.locator('.chat-perm-detail')).toContainText('*** Add File: greeting.txt');
   await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'chat-mode-kiro-perm.png') });
   await perm.locator('.chat-perm-btn', { hasText: 'Always' }).click();
@@ -1060,5 +1060,53 @@ test('a questions-shaped input on a non-AskUserQuestion tool renders its raw det
   await expect(perm.locator('.chat-perm-detail')).toBeVisible();
   await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(perm).toHaveClass(/is-resolved/);
+  await app.close();
+});
+
+test('Allow all stops the asking for the rest of the chat, shows what it let through, and can be turned off', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  await chatReady(win);
+  const pane = win.locator('.chat-pane.show');
+  const send = async (text) => { await pane.locator('.chat-input').fill(text); await pane.locator('.chat-input').press('Enter'); };
+  const done = (n) => expect(pane.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(n);
+  const pill = pane.locator('.chat-allowall');
+  await expect(pill).toBeHidden();
+
+  // First ask: the card waits, and Allow all is one of its answers.
+  await send('write a greeting');
+  const first = pane.locator('.chat-perm').nth(0);
+  await expect(first.locator('.chat-perm-btn', { hasText: 'Allow all' })).toBeVisible();
+  await first.locator('.chat-perm-btn', { hasText: 'Allow all' }).click();
+  await expect(first.locator('.chat-perm-verdict')).toHaveText('Allowed, with everything after it');
+  await done(1);
+  await expect(pill).toBeVisible();
+
+  // Every later ask goes through unasked: the turn finishes with no click,
+  // and its card is in the thread, already answered.
+  await send('write a greeting again');
+  await done(2);
+  await expect(pane.locator('.chat-perm')).toHaveCount(2);
+  await expect(pane.locator('.chat-perm:not(.is-resolved)')).toHaveCount(0);
+  await expect(pane.locator('.chat-perm').nth(1).locator('.chat-perm-verdict')).toHaveText('Allowed, with everything after it');
+  await send('write a greeting a third time');
+  await done(3);
+  await expect(pane.locator('.chat-perm:not(.is-resolved)')).toHaveCount(0);
+  await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'chat-allow-all.png') });
+
+  // It survives a reload of the window, like the agent it was given to.
+  await win.reload();
+  await win.waitForFunction(() => document.querySelector('.chat-pane.show .chat-allowall'));
+  await expect(win.locator('.chat-pane.show .chat-allowall')).toBeVisible();
+
+  // Turned off, the next ask waits for an answer again.
+  await win.locator('.chat-pane.show .chat-allowall').click();
+  await expect(win.locator('.chat-pane.show .chat-allowall')).toBeHidden();
+  const again = win.locator('.chat-pane.show');
+  await chatReady(win);
+  await again.locator('.chat-input').fill('write a greeting once more');
+  await again.locator('.chat-input').press('Enter');
+  await expect(again.locator('.chat-perm:not(.is-resolved)')).toHaveCount(1);
+  await expect(again.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(3);
   await app.close();
 });

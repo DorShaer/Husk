@@ -4879,6 +4879,13 @@ body .chat-pane .chat-composer textarea.chat-input:focus-visible {
   transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
 }
 .chat-composer .chat-stop:hover { color: var(--rose); border-color: var(--rose); }
+.chat-allowall {
+  flex: 0 0 auto; height: 22px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+  border-radius: var(--radius-pill); background: color-mix(in srgb, var(--amber) 12%, transparent);
+  color: var(--text); font-family: inherit; font-size: var(--fs-label); white-space: nowrap; cursor: pointer;
+}
+.chat-allowall[hidden] { display: none; }
+.chat-allowall:hover { background: color-mix(in srgb, var(--amber) 22%, transparent); }
 .chat-composer .chat-restart { flex: 0 0 auto; height: var(--control-h); padding: 0 14px; border-radius: var(--radius-pill); }
 
 /* Composer autocomplete: slash commands and @ file mentions, floated above

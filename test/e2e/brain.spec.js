@@ -143,7 +143,7 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
     await expect(win.locator('#rail-brain .ri-icon')).toHaveCSS('animation-name', 'ap-icon-blink');
     // The thread shows what was typed, not what was added for the agent.
     await expect(pane.locator('.chat-item-user .chat-bubble')).toHaveText('how does the staging cluster deploy work?');
-    await pane.locator('.chat-perm:not(.is-resolved) .chat-perm-btn', { hasText: 'Allow' }).click();
+    await pane.locator('.chat-perm:not(.is-resolved) .chat-perm-btn', { hasText: /^Allow$/ }).click();
     await expect(pane.locator('.chat-item-text').last()).toContainText('brain=yes');
     await expect(pane.locator('.chat-meta .chat-meta-line')).toContainText('Done');
 
@@ -199,7 +199,7 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
     await win.uncheck('#br-enabled');
     await win.evaluate(() => setPage('chat')); // eslint-disable-line no-undef
     pane = await ask(win, 'tell me about the staging cluster deploy again');
-    await pane.locator('.chat-perm:not(.is-resolved) .chat-perm-btn', { hasText: 'Allow' }).click();
+    await pane.locator('.chat-perm:not(.is-resolved) .chat-perm-btn', { hasText: /^Allow$/ }).click();
     await expect(pane.locator('.chat-item-text').last()).toContainText('brain=no');
     await win.evaluate(() => setPage('brain')); // eslint-disable-line no-undef
     await expect(win.locator('#br-list .br-row[data-kind="decision"]')).toHaveCount(1);

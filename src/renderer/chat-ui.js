@@ -464,8 +464,16 @@
     restart.type = 'button';
     restart.title = 'Start a new session with this agent';
     restart.hidden = true;
+    // Shown for as long as approvals are being answered for the user; the one
+    // place to take that back.
+    const allowAll = el('button', 'chat-allowall', 'Allow all is on · Turn off');
+    allowAll.type = 'button';
+    allowAll.title = 'This chat runs what it asks for without asking. Click to be asked again.';
+    allowAll.hidden = true;
+    allowAll.addEventListener('click', () => { if (api.allowAll) api.allowAll({ tabId, on: false }); });
     foot.appendChild(attach);
     foot.appendChild(meta);
+    foot.appendChild(allowAll);
     foot.appendChild(el('span', 'chat-composer-spacer'));
     foot.appendChild(stop);
     foot.appendChild(restart);
@@ -1296,6 +1304,7 @@
     function decisionLabel(it) {
       const opt = (it.options || []).find((x) => x && x.optionId === it.decision);
       const kind = str(opt && opt.kind);
+      if (kind === 'allow_all') return 'Allowed, with everything after it';
       if (kind === 'allow_always') return 'Always allowed';
       if (kind.startsWith('allow')) return 'Allowed';
       if (kind === 'reject_always') return 'Always denied';
@@ -1405,8 +1414,10 @@
             : [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }];
           for (const opt of opts) {
             const kind = str(opt.kind);
-            const b = el('button', kind.startsWith('allow') ? 'btn-primary chat-perm-btn' : 'ghost-btn chat-perm-btn', str(opt.name) || str(opt.optionId));
+            // Allow all is the wide answer, so it is not dressed as the default one.
+            const b = el('button', kind.startsWith('allow') && kind !== 'allow_all' ? 'btn-primary chat-perm-btn' : 'ghost-btn chat-perm-btn', str(opt.name) || str(opt.optionId));
             b.type = 'button';
+            if (kind === 'allow_all') b.title = 'Allow this and everything else this chat asks to do, without asking again, until you turn it off or the chat ends';
             b.addEventListener('click', () => {
               for (const other of actions.querySelectorAll('button')) other.disabled = true;
               const requestId = it.requestId;
@@ -1543,6 +1554,7 @@
     }
 
     function paint() {
+      allowAll.hidden = !state.allowAll;
       if (destroyed) return;
       const stick = forceScroll || pinned;
       if (forceScroll) pinned = true;

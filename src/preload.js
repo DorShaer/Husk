@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('husk', {
     cancel: (opts) => ipcRenderer.invoke('chat:cancel', opts || {}),
     // { tabId, requestId, optionId } -> { ok }
     permission: (opts) => ipcRenderer.invoke('chat:permission', opts || {}),
+    allowAll: (opts) => ipcRenderer.invoke('chat:allowAll', opts || {}),
     // { tabId, modelId, modelName } -> { ok, transport, model, restarted?, error? }
     setModel: (opts) => ipcRenderer.invoke('chat:setModel', opts || {}),
     // { tabId } -> { ok }

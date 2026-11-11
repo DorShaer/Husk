@@ -32,7 +32,7 @@ const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: 
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES } = require('./lib/brain');
-const { nativeCommand, nativeReply } = require('./lib/native-commands');
+const { nativeCommand, nativeCwd, nativeReply } = require('./lib/native-commands');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
@@ -2023,8 +2023,10 @@ ipcMain.handle('chat:prompt', async (_e, { tabId, text, images } = {}) => {
   const tabSession = tabId ? sessions.get(tabId) : null;
   const native = nativeCommand((tabSession && tabSession.agentCommand) || config.agentCommand, ask);
   if (native && chatRuntime.info(tabId)) {
-    const ran = await runNativeCommand(native, brainScope(tabId));
-    return chatRuntime.local({ tabId, text: ask, reply: nativeReply(native.label, ran.output), isError: ran.isError });
+    const folder = brainScope(tabId);
+    const where = nativeCwd(folder, isCwdTrusted(folder), HOME);
+    const ran = await runNativeCommand(native, where.cwd);
+    return chatRuntime.local({ tabId, text: ask, reply: nativeReply(native.label, ran.output, where.note), isError: ran.isError });
   }
   // A slash command is an instruction to the CLI, not a question: it must reach
   // it untouched, and it is not something to remember.
@@ -2076,6 +2078,7 @@ ipcMain.handle('brain:setEnabled', (_e, { on } = {}) => {
 });
 ipcMain.handle('chat:cancel', (_e, { tabId } = {}) => chatRuntime.cancel({ tabId }));
 ipcMain.handle('chat:permission', (_e, { tabId, requestId, optionId, answers } = {}) => chatRuntime.permission({ tabId, requestId, optionId, answers }));
+ipcMain.handle('chat:allowAll', (_e, { tabId, on } = {}) => chatRuntime.allowAll({ tabId, on: !!on }));
 ipcMain.handle('openai:models', (_e, { baseUrl, apiKey } = {}) => new Promise((resolve) => {
   if (!baseUrl || typeof baseUrl !== 'string') return resolve({ ok: false, error: 'base URL required' });
   openaiModels({ baseUrl, apiKey }, (err, models) => resolve(err ? { ok: false, error: err.message } : { ok: true, models: Array.isArray(models) ? models : [] }));
