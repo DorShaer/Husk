@@ -463,7 +463,7 @@
      field or a table column, --fs-mono holds ids, paths and counts. */
   --fs-page: 30px;
   --fw-page: 600;
-  --fs-section: 11px;
+  --fs-section: 12px;
   --fw-section: 600;
   --fs-body: 13px;
   --fw-body: 400;
@@ -680,7 +680,8 @@ body {
   letter-spacing: var(--tracking-section);
   text-transform: uppercase;
   line-height: var(--lh-snug);
-  color: var(--text-3);
+  /* Labels are read, so they wear the second ink, not the faintest. */
+  color: var(--text-2);
 }
 /* A count beside a section header reads as data, so it drops the small caps. It
    styles itself, so it can sit inside the label or beside it. */
@@ -1429,6 +1430,12 @@ body[data-rail="collapsed"] .rail-item:hover::after {
 /* Sectioned rail layout */
 .rail-section { display: flex; flex-direction: column; gap: 4px; }
 .rail-section + .rail-section { margin-top: 12px; }
+.rail-fold { width: 100%; border: 0; background: none; font-family: inherit; text-align: left; cursor: pointer; }
+.rail-fold:hover { color: var(--text); }
+.rail-fold:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+.rail-fold-mark { width: 12px; height: 12px; flex: none; transition: transform var(--motion-base) var(--ease); }
+.rail-section.is-folded .rail-fold-mark { transform: rotate(-90deg); }
+body[data-rail="expanded"] .rail-section.is-folded .rail-item:not(.active) { display: none; }
 /* Type comes from .section-label; the rail adds its own spacing and the fade it
    plays when the sidebar expands. */
 .rail-section-head {
@@ -1770,7 +1777,14 @@ body[data-page="boot"] .page { display: none !important; }
   color: var(--state-warning-ink);
 }
 .trust-banner-icon svg { width: var(--icon-sm); height: var(--icon-sm); display: block; }
+.trust-banner { flex-wrap: wrap; }
 .trust-banner-text { flex: 1; min-width: 0; }
+.trust-banner-why {
+  padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-decoration: underline;
+  text-underline-offset: 2px; cursor: pointer;
+}
+.trust-banner-more { flex: 0 0 100%; margin: 0; max-width: 78ch; font-size: var(--fs-label); line-height: 1.5; color: var(--text-2); }
+.trust-banner-more[hidden] { display: none; }
 .trust-banner .trust-banner-btn {
   height: var(--control-h-sm);
   padding: 0 var(--space-3);
@@ -4410,6 +4424,13 @@ body[data-page="chat"] #chats-panel { display: flex; }
 
 .chat-empty-hint { padding-top: 16vh; text-align: center; color: var(--text-3); }
 .chat-empty-title { font-size: var(--fs-h3); font-weight: 500; color: var(--text-2); }
+.chat-starters { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); max-width: 560px; margin: var(--space-4) auto 0; }
+.chat-starter {
+  height: 30px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: var(--radius-pill); background: transparent;
+  color: var(--text-2); font-family: inherit; font-size: var(--fs-body); cursor: pointer;
+}
+.chat-starter:hover { background: var(--surface); color: var(--text); }
+.chat-starter:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .chat-empty-sub { margin-top: var(--space-1); font-size: var(--fs-body); }
 
 .chat-item { min-width: 0; }
@@ -4969,8 +4990,11 @@ body[data-sessions-col="on"] .chat-sessions { display: flex; }
   display: inline-flex; align-items: stretch;
   height: 30px;
   border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--on-accent);
+  /* The top bar holds the one loud New chat; this one is the same action in
+     the panel, with the agent picker beside it, so it stays quiet. */
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line-2);
   overflow: hidden;
 }
 .cs-new button {
@@ -4980,9 +5004,9 @@ body[data-sessions-col="on"] .chat-sessions { display: flex; }
   cursor: pointer;
 }
 .cs-new-main { padding: 0 10px 0 9px; }
-.cs-new-caret { padding: 0 7px; border-left: 1px solid color-mix(in srgb, var(--on-accent) 22%, transparent) !important; }
+.cs-new-caret { padding: 0 7px; border-left: 1px solid var(--line-2) !important; }
 .cs-new svg { width: 14px; height: 14px; display: block; }
-.cs-new button:hover { background: color-mix(in srgb, #fff 12%, transparent); }
+.cs-new button:hover { background: var(--bg-3); }
 .cs-new button:focus-visible,
 .cs-icon-btn:focus-visible,
 .cs-card:focus-visible,

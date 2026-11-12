@@ -187,6 +187,14 @@
     return out;
   }
 
+  // What an empty chat offers to start with: things worth asking of any project.
+  const STARTERS = [
+    ['Explain this project', 'Read through this project and explain what it does, how it is laid out, and where I should start.'],
+    ['Review my changes', 'Review my uncommitted changes. Point out bugs, risks and anything unclear, most serious first.'],
+    ['Find a bug', 'Look for a likely bug in this project. Show me where it is and why, and propose a fix. Do not change anything yet.'],
+    ['Write tests', 'Find the part of this project with the least test coverage and write tests for it.'],
+  ];
+
   function renderDiff(d) {
     const box = el('div', 'chat-diff');
     const ops = lineDiff(d.oldText, d.newText);
@@ -679,14 +687,17 @@
         const found = Array.isArray(modes.available) ? modes.available.find((m) => m && m.id === modes.current) : null;
         parts.push(str(found && found.name ? found.name : modes.current));
       }
+      // Each chip says what it is on hover: three bare words side by side do not.
       parts.forEach((p, k) => {
-        meta.appendChild(el('span', 'chat-chip' + (k === 1 && cwd ? ' chat-composer-cwd' : ''), p));
+        const chip = el('span', 'chat-chip' + (k === 1 && cwd ? ' chat-composer-cwd' : ''), p);
+        chip.title = k === 0 ? `Agent: ${agentName}` : (k === 1 && cwd ? `Folder: ${cwd}` : `Mode: ${p}`);
+        meta.appendChild(chip);
       });
       // The model chip opens the picker (ACP lists come from the agent, claude's
       // from Husk's catalog). Shown even before a model is known, as 'Model'.
       const mb = el('button', 'chat-chip chat-model-btn', state.model ? str(state.model) : 'Model');
       mb.type = 'button';
-      mb.title = 'Switch model';
+      mb.title = state.model ? `Model: ${str(state.model)}. Click to switch` : 'Model. Click to pick one';
       mb.setAttribute('aria-haspopup', 'menu');
       mb.addEventListener('click', (ev) => { ev.stopPropagation(); toggleModelMenu(); });
       meta.appendChild(mb);
@@ -701,6 +712,19 @@
       empty.textContent = '';
       empty.appendChild(el('div', 'chat-empty-title', `Talking to ${agentName}`));
       if (cwd) empty.appendChild(el('div', 'chat-empty-sub', `in ${basename(cwd)}`));
+      // A first click that is obvious: each starter fills the composer, where
+      // it can be changed before it is sent.
+      if (cwd) {
+        const row = el('div', 'chat-starters');
+        for (const [label, text] of STARTERS) {
+          const b = el('button', 'chat-starter', label);
+          b.type = 'button';
+          b.title = text;
+          b.addEventListener('click', () => { input.value = text; autogrow(); input.focus(); });
+          row.appendChild(b);
+        }
+        empty.appendChild(row);
+      }
     }
 
     // ── model picker ──

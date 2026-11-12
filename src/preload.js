@@ -531,6 +531,9 @@ contextBridge.exposeInMainWorld('husk', {
     zoomOut: () => applyZoom(uiZoom.stepZoom(webFrame.getZoomLevel(), -1)),
     // Reset returns to Husk's default UI scale, not the browser default.
     zoomReset: () => applyZoom(HUSK_BASE_ZOOM),
+    // A level picked by name in Preferences; out-of-range input lands on the default.
+    zoomSet: (level) => applyZoom(uiZoom.startZoom(level)),
+    zoomStep: uiZoom.ZOOM_STEP,
     // The View menu's zoom items arrive here, so they take the same path as
     // the keyboard: one readout, one terminal refit, and the level is saved.
     onZoomCommand: (cb) => ipcRenderer.on('ui:zoom-command', (_e, dir) => cb(dir)),

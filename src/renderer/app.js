@@ -146,6 +146,7 @@ function toastAction(msg, actionLabel, onAction, kind = 'error') {
   btn.textContent = actionLabel;
   btn.addEventListener('click', () => { try { onAction(); } catch (_) {} dismissNotif(card); });
   body.appendChild(btn);
+  return card;
 }
 // Skill, plugin and MCP changes reach a session only when it starts, so the
 // notice that asks for a restart carries the restart action itself.
@@ -1297,6 +1298,18 @@ function persistConfig(patch) {
   _pendingCfgPatch = Object.assign(_pendingCfgPatch || {}, patch);
   cfg = Object.assign({}, cfg, patch);
   _flushCfgPatch();
+}
+
+// The Tools group folds to its heading. The page you are on stays in view
+// even when its group is folded, and the icon-only rail ignores the fold.
+function syncRailFold() {
+  const sec = $('#rail-tools');
+  const head = $('#rail-tools-fold');
+  if (!sec || !head) return;
+  const folded = !!cfg.railToolsFolded;
+  sec.classList.toggle('is-folded', folded);
+  head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  head.title = folded ? 'Show the tools' : 'Hide the tools';
 }
 
 function appearanceSnapshot() {
@@ -3462,6 +3475,16 @@ async function restartKeepingConversation() {
   }
   await restartPty({ silent: true, command, cwd: tab.cwd || undefined });
 }
+$('#rail-tools-fold')?.addEventListener('click', async () => {
+  cfg = await window.husk.config.set({ railToolsFolded: !cfg.railToolsFolded });
+  syncRailFold();
+});
+$('#btn-trust-why')?.addEventListener('click', (e) => {
+  const more = $('#trust-banner-more');
+  if (!more) return;
+  more.hidden = !more.hidden;
+  e.currentTarget.setAttribute('aria-expanded', more.hidden ? 'false' : 'true');
+});
 $('#btn-trust-folder')?.addEventListener('click', async () => {
   const r = await window.husk.claudeTrust.accept();
   if (r && r.ok) {
@@ -3743,7 +3766,9 @@ function shellSessionState() {
   const tab = TABS.get(activeTabId);
   if (!tab) return { key: 'none', word: 'no session', title: 'No chat is open' };
   if (tab.exited) return { key: 'exited', word: 'agent exited', title: 'The agent for this chat has exited; Restart starts a new one' };
-  return { key: 'live', word: 'connected', title: 'Husk is attached to the agent running this chat' };
+  // Says what is connected, so the word is not left to mean the network.
+  const cli = String(tabAgentCommand(tab) || '').trim().split(/\s+/)[0].split(/[\\/]/).pop() || 'agent';
+  return { key: 'live', word: `${cli} connected`, title: `Husk is attached to ${cli}, the agent running this chat` };
 }
 
 function refreshShellStatusBar() {
@@ -5859,6 +5884,9 @@ function paintWorkflowList() {
   const setStat = (name, text) => {
     for (const el of document.querySelectorAll(`#wfx-stat-${name}, #wfx-hero-${name}`)) el.textContent = text;
   };
+  // Figures about runs mean nothing before the first run: the hero keeps its
+  // calls to action and the row of zeros and blanks stays out of it.
+  for (const row of document.querySelectorAll('.wfx-hero-stats')) row.hidden = !wfRunsCache.length;
   setStat('flows', String(workflowsCache.length));
   setStat('runs', String(week.length));
   setStat('pass', week.length ? `${Math.round((passed / week.length) * 100)}%` : 'n/a');
@@ -10362,6 +10390,7 @@ $('#skills-state').addEventListener('click', (e) => {
   $('#skills-state').querySelectorAll('[data-state]').forEach((b) => b.classList.toggle('is-active', b === btn));
   paintSkills(skillsCache, $('#skills-search').value);
 });
+let skBulkNotice = null;
 $('#sk-bulk').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   if (btn.disabled) return;
@@ -10373,14 +10402,32 @@ $('#sk-bulk').addEventListener('click', async (e) => {
   // reload: each toggle renames a directory, so the paths only settle once
   // every rename is done.
   let changed = 0;
+  const flipped = [];
   for (const sk of scope) {
     if (!!sk.disabled === !turnOn) continue;
     const r = await window.husk.skills.toggle({ id: sk.id, source: sk.source, dirName: sk.id });
-    if (r.ok) changed += 1;
+    // A toggle renames the item, so the way back is the name it has now.
+    if (r.ok) { changed += 1; flipped.push({ id: r.id || r.dirName, source: sk.source }); }
   }
-  if (changed) toastRestart(`${changed} ${changed === 1 ? 'skill' : 'skills'} ${turnOn ? 'enabled' : 'disabled'}`);
-  else toast('Nothing to change', 'info');
   await renderSkills();
+  // One switch moves many skills, so the notice carries the way back: Undo
+  // flips exactly the ones this click flipped.
+  if (changed) {
+    // One notice at a time: a second flip replaces the first one's, so the
+    // cards never pile up over the switch they came from.
+    if (skBulkNotice && skBulkNotice.isConnected) dismissNotif(skBulkNotice);
+    skBulkNotice = toastAction(`${changed} ${changed === 1 ? 'skill' : 'skills'} ${turnOn ? 'enabled' : 'disabled'} · restart the agent to apply`, 'Undo', async () => {
+      let back = 0;
+      for (const it of flipped) {
+        if (!it.id) continue;
+        const r = await window.husk.skills.toggle({ id: it.id, source: it.source, dirName: it.id });
+        if (r.ok) back += 1;
+      }
+      await renderSkills();
+      refreshStats();
+      toast(`Undone: ${back} ${back === 1 ? 'skill' : 'skills'} ${turnOn ? 'disabled' : 'enabled'} again`, 'success');
+    }, 'success');
+  } else toast('Nothing to change', 'info');
   refreshStats();
   btn.disabled = false;
 });
@@ -15963,9 +16010,38 @@ const settleZoom = debounce((lvl) => {
   const pct = Math.round(Math.pow(1.2, lvl - base) * 100);
   // Keyed, so stepping the zoom rewrites one readout instead of stacking a
   // card per step.
-  notify(`Zoom: ${pct}%`, { kind: 'success', key: 'zoom' });
+  // The percent is of Husk's own default, and says so: the default is not
+  // the same size as another app's 100%.
+  notify(pct === 100 ? 'Interface size: default' : `Interface size: ${pct}% of default`, { kind: 'success', key: 'zoom' });
+  syncUiSize(lvl);
   fitNow();
 }, 120);
+// The same setting by name, in Preferences > Appearance.
+function syncUiSize(lvl) {
+  const pick = $('#pref-ui-size');
+  const ui = window.husk.ui;
+  if (!pick || !ui) return;
+  const steps = Math.round((lvl - ui.zoomBase) / (ui.zoomStep || 0.5));
+  let opt = [...pick.options].find((o) => o.value === String(steps));
+  // A size reached with the keys that has no name of its own still shows.
+  const custom = pick.querySelector('option[data-custom]');
+  if (custom && custom !== opt) custom.remove();
+  if (!opt) {
+    opt = document.createElement('option');
+    opt.value = String(steps);
+    opt.dataset.custom = '1';
+    opt.textContent = `${Math.round(Math.pow(1.2, lvl - ui.zoomBase) * 100)}% of default`;
+    pick.appendChild(opt);
+  }
+  pick.value = String(steps);
+}
+if ($('#pref-ui-size') && window.husk.ui && typeof window.husk.ui.zoomSet === 'function') {
+  syncUiSize(window.husk.ui.zoomGet());
+  $('#pref-ui-size').addEventListener('change', (e) => {
+    const ui = window.husk.ui;
+    reportZoom(ui.zoomSet(ui.zoomBase + Number(e.target.value) * (ui.zoomStep || 0.5)));
+  });
+}
 function reportZoom(lvl) { settleZoom(lvl); }
 // View menu zoom items, routed through the same calls as the keyboard.
 if (window.husk.ui && typeof window.husk.ui.onZoomCommand === 'function') {
@@ -19122,6 +19198,12 @@ async function amRefresh() {
   // it, so nothing that counts agents, lists them or selects one ever sees a run.
   agentMap.runs = listed.filter((r) => r && r.holder === 'run');
   agentMap.rows = listed.filter((r) => !r || r.holder !== 'run');
+  // An opening starts on what is live. When nothing is, and there are agents
+  // to show, it starts on all of them: the graph of what ran beats an empty page.
+  if (agentMap.fresh) {
+    agentMap.fresh = false;
+    if (agentMap.filter === 'live' && agentMap.rows.length && !agentMap.rows.some((a) => window.husk.agents.isLive(a.state))) agentMap.filter = 'all';
+  }
   agentMap.chats = (res && res.ok !== false && Array.isArray(res.chats)) ? res.chats.slice() : [];
   const foot = $('#am-foot');
   if (foot) foot.textContent = agentMap.rows.length ? `Updated ${new Date().toLocaleTimeString()}` : '';
@@ -19153,6 +19235,7 @@ function openAgentMap() {
   // Every opening starts on what is happening now, whatever was left selected
   // last time.
   agentMap.filter = 'live';
+  agentMap.fresh = true;
   const q = $('#am-search-input');
   if (q) q.value = '';
   // A fresh opening draws itself: the fleet animates in and the camera frames
@@ -19597,7 +19680,7 @@ async function runOnboarding({ replay = false } = {}) {
       }
       const btn = a.installable
         ? `<button type="button" class="ob-cli-btn ob-cli-install" data-id="${escapeAttr(a.id)}">Install</button>`
-        : `<button type="button" class="ob-cli-btn" data-docs="${escapeAttr(a.docs || '')}">Install page</button>`;
+        : `<button type="button" class="ob-cli-btn" data-docs="${escapeAttr(a.docs || '')}" title="Opens the install instructions in your browser">Open install page</button>`;
       return `
         <div class="ob-cli ob-cli-missing" data-id="${escapeAttr(a.id)}">
           ${main}
@@ -19634,6 +19717,16 @@ async function runOnboarding({ replay = false } = {}) {
   async function installAgent(id, btn) {
     const def = detection.agents.find((a) => a.id === id);
     if (!def) return;
+    // The first click says exactly what will run, on this machine, for every
+    // user of it; the second runs it.
+    if (btn.dataset.armed !== '1') {
+      btn.dataset.armed = '1';
+      btn.textContent = 'Run it';
+      log.hidden = false;
+      log.textContent = `Install will run this command, which installs ${def.label} for your whole user account:\n\n  ${def.installCommand || '(command unavailable)'}\n\nPress Run it to start, or pick another agent to leave it.\n`;
+      return;
+    }
+    delete btn.dataset.armed;
     btn.disabled = true;
     btn.textContent = 'Installing…';
     log.hidden = false;
@@ -19665,8 +19758,11 @@ async function runOnboarding({ replay = false } = {}) {
     const name = (nameInput.value || '').trim().slice(0, 40) || 'Husk';
     const cmd = (selectedCmd || cfg.agentCommand || 'claude').trim();
     const patch = { agentCommand: cmd, agentName: name, theme, accent, railExpanded: rail };
-    if (!replay) patch.firstRunDone = true;
+    // A new install starts with the power tools folded away; anyone who has
+    // used Husk before keeps the rail as they know it.
+    if (!replay) { patch.firstRunDone = true; patch.railToolsFolded = true; }
     cfg = await window.husk.config.set(patch);
+    syncRailFold();
     document.body.dataset.rail = rail ? 'expanded' : 'collapsed';
     syncRailToggleTitle();
     overlay.hidden = true;
@@ -19857,6 +19953,7 @@ async function boot() {
   applyTheme(cfg.theme || 'midnight');
   applyAccent(cfg.accent || 'orange');
   document.body.dataset.rail = cfg.railExpanded === false ? 'collapsed' : 'expanded';
+  syncRailFold();
   // A fresh install starts with the side panel folded (main's default); the
   // toggle saves the choice in statusCollapsed.
   document.body.dataset.status = cfg.statusCollapsed ? 'collapsed' : 'expanded';
@@ -19865,16 +19962,16 @@ async function boot() {
   syncRailToggleTitle();
   syncStatusToggleTitle();
 
-  // What's new. First run shows the welcome tour and then the What's new page;
+  // What's new. First run shows the welcome tour and no What's new page;
   // an existing user who just updated (version changed) sees only the What's
   // new page, never the tour again. Either way we record the version so it is
   // shown at most once per version.
   let curVer = '';
   try { curVer = ((await window.husk.updates.get()) || {}).current || ''; } catch (_) {}
   if (!reloadState && !cfg.firstRunDone) {
+    // Someone who has never used Husk has nothing to compare a changelog
+    // against: after the tour the current version simply counts as seen.
     await runOnboarding();
-    // Non-blocking: float the What's new page on top while the app renders.
-    if (curVer) showWhatsNew(curVer);
   } else if (!reloadState && curVer && cfg.lastSeenVersion !== curVer) {
     showWhatsNew(curVer);
   }

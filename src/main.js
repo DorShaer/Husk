@@ -1,7 +1,7 @@
 // Husk: Electron main process.
 // Wraps a configurable agent CLI via node-pty and exposes pages: chat, skills, sessions, files, preferences.
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -342,6 +342,9 @@ const DEFAULT_CONFIG = {
   // entry inherits the global list, so a project nobody has customized runs
   // the CLI's own set untouched. See src/lib/project-mcp.js.
   projectMcp: {},
+  // Whether the rail's Tools group is folded to its heading. New installs
+  // start folded; set at the end of first-run setup.
+  railToolsFolded: false,
   // The user's UI zoom level (Ctrl/Cmd +/-). null = the default (BASE_ZOOM).
   // See src/lib/ui-zoom.js.
   uiZoom: null,
@@ -359,6 +362,13 @@ const LIGHT_THEMES = new Set(['light', 'sepia']);
 // needed: the window is only visible behind the app for the first frame.
 const THEME_BG = { light: '#fafafa', sepia: '#f3ead6' };
 const DARK_BG = '#0c0a09';
+
+// The window frame the desktop draws (title bar, its buttons) follows the app's
+// own theme rather than the desktop's, so a dark Husk does not sit under a
+// light grey bar.
+function syncNativeTheme() {
+  try { nativeTheme.themeSource = LIGHT_THEMES.has(config.theme) ? 'light' : 'dark'; } catch (_) {}
+}
 
 function themeBackground(theme) {
   return THEME_BG[theme] || (LIGHT_THEMES.has(theme) ? THEME_BG.light : DARK_BG);
@@ -777,6 +787,7 @@ function sendZoomCommand(dir) {
 }
 
 function createWindow() {
+  syncNativeTheme();
   mainWindow = new BrowserWindow({
     width: 1500,
     height: 950,
@@ -789,6 +800,9 @@ function createWindow() {
     backgroundColor: themeBackground(config.theme),
     title: 'Husk',
     titleBarStyle: 'hiddenInset',
+    // Off macOS the menu is a second bar above the app. It stays out of the
+    // way until Alt asks for it; every item in it has a key or a button.
+    autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -4793,6 +4807,7 @@ ipcMain.handle('config:set', (_e, partial) => {
     && incoming.paiEnabled !== config.paiEnabled;
   config = { ...config, ...incoming };
   saveConfig(config);
+  if (Object.prototype.hasOwnProperty.call(incoming, 'theme')) syncNativeTheme();
   if (paiChanged) {
     // Park or restore ~/.claude/CLAUDE.md so the next agent restart sees the
     // selected PAI instruction state. The statusline tick follows the same
@@ -4923,6 +4938,8 @@ ipcMain.handle('agents:detect', () => {
       command: a.command,
       docs: a.docs,
       installer: a.install ? a.install.tool : null,
+      // The exact command Install runs, shown before it is run.
+      installCommand: a.install ? `${a.install.tool} ${a.install.args.join(' ')}` : '',
       installable: a.install ? !!tools[a.install.tool] : false,
       available: isOnPath(a.command),
     })),

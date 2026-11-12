@@ -505,7 +505,7 @@
           </div>
         </div>
         <span class="tb-sep" aria-hidden="true"></span>
-        <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New chat</button>
+        <button class="iconbtn iconbtn-primary" id="btn-new-session" title="Open a new chat"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New chat</button>
         <button class="iconbtn iconbtn-square" id="btn-status-toggle" title="Toggle status panel" aria-label="Toggle status panel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>
@@ -564,8 +564,8 @@
           </nav>
         </div>
 
-        <div class="rail-section">
-          <div class="rail-section-head section-label">Tools</div>
+        <div class="rail-section" id="rail-tools">
+          <button class="rail-section-head section-label rail-fold" id="rail-tools-fold" type="button" aria-expanded="true" aria-controls="rail-tools">Tools<svg class="rail-fold-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
           <nav class="rail-nav">
             <button class="rail-item" data-page="skills" title="Skills">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
@@ -707,9 +707,10 @@
           <div id="autopilot-banner" class="autopilot-banner" hidden></div>
           <div id="trust-banner" class="trust-banner" hidden>
             <span class="trust-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg></span>
-            <span class="trust-banner-text">This folder is not trusted yet, so your saved permissions are ignored.</span>
+            <span class="trust-banner-text">Trust this folder to let the agent use the permissions you saved for it. <button class="trust-banner-why" id="btn-trust-why" type="button" aria-expanded="false" aria-controls="trust-banner-more">What does this do?</button></span>
             <button class="ghost-btn trust-banner-btn" id="btn-trust-folder" type="button">Trust this folder</button>
             <button class="trust-banner-x" id="btn-trust-dismiss" type="button" title="Dismiss" aria-label="Dismiss">×</button>
+            <p class="trust-banner-more" id="trust-banner-more" hidden>Until you trust a folder, the agent asks before each action here, even ones you already allowed, because a folder you just downloaded can carry settings of its own. Trusting says this folder is yours: your saved permissions apply, and so do the settings inside it. Only trust a folder whose contents you know. Trusting restarts the agent in this chat and keeps the conversation.</p>
           </div>
           <div class="chat-stage">
             <div id="chat-empty" class="chat-empty">
@@ -2887,7 +2888,7 @@
                       <button class="ghost-btn" id="btn-pref-models" type="button">Load&hellip;</button>
                     </span>
                   </label>
-                  <button class="btn-primary" id="pref-save">Save and restart</button>
+                  <button class="btn-primary" id="pref-save" title="Saves these settings and restarts the agent in the open chat. Husk itself keeps running.">Save and restart agent</button>
                 </section>
               </div><!-- /pref-section agent -->
 
@@ -2964,6 +2965,20 @@
               <div class="pref-section" data-prefs-section="appearance">
                 <section class="pref-card">
                   <div class="pref-card-title section-label">Appearance</div>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Interface size</span>
+                      <span class="pref-desc">How large text and controls are. Also Ctrl/Cmd with + and -. Remembered between launches.</span>
+                    </span>
+                    <select id="pref-ui-size">
+                      <option value="-2">Smaller</option>
+                      <option value="-1">Small</option>
+                      <option value="0">Default</option>
+                      <option value="1">Large</option>
+                      <option value="2">Larger</option>
+                      <option value="3">Largest</option>
+                    </select>
+                  </label>
                   <label class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">Theme</span>

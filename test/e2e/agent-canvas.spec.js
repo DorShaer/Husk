@@ -542,6 +542,14 @@ test('the center opens on live work, with everything else one click away', async
   await win.click('#am-blank-act');
   await expect(win.locator('.am-node')).toHaveCount(8);
 
+  // Opened when nothing is live, the center starts on the whole fleet: the
+  // graph of what ran, not an empty page with a button behind it.
+  await win.keyboard.press('Escape');
+  await win.evaluate(() => openAgentMap());              // eslint-disable-line no-undef
+  await expect(win.locator('[data-am-filter="all"]')).toHaveClass(/is-active/, { timeout: 15_000 });
+  await expect(win.locator('#am-canvas-pane')).toBeVisible();
+  await expect(win.locator('.am-node')).toHaveCount(8);
+
   await app.close();
 });
 

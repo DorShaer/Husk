@@ -242,6 +242,16 @@ test('the header switch flips the whole selected source in one go', async () => 
       { timeout: 30_000 },
     ).toBe(FAMILY.length);
     await expect(win.locator('#sk-bulk-label')).toHaveText('All on');
+
+    // One switch moved the whole family, so its notice carries the way back.
+    await win.locator('#sk-bulk').click();
+    await expect(win.locator('#sk-bulk-label')).toHaveText('All off');
+    await win.locator('#toast-stack .toast-action', { hasText: 'Undo' }).last().click();
+    await expect.poll(
+      () => fs.readdirSync(skillsDir).filter((d) => d.startsWith('zed-hunt-')).length,
+      { timeout: 30_000 },
+    ).toBe(FAMILY.length);
+    await expect(win.locator('#sk-bulk-label')).toHaveText('All on');
   } finally { await app.close(); }
 });
 

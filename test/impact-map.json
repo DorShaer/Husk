@@ -319,7 +319,8 @@
       "specs": [
         "chat-model.spec.js",
         "layout-overflow.spec.js",
-        "ui-zoom.spec.js"
+        "ui-zoom.spec.js",
+        "first-impressions.spec.js"
       ],
       "tokens": [
         "sp",
