@@ -1,0 +1,42 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Fri, 13 Nov 2026 03:57:05 +0000
+Label: Husk
+Origin: Husk
+Suite: stable
+MD5Sum:
+ 0e163f4b5556a992e5c2b1813290d0c6              132 Release
+ bb651b9506edc12bc9fa49d1f176e079            15307 main/binary-amd64/Packages
+ 1589f8021940a70961cda003dac71ea4             3415 main/binary-amd64/Packages.gz
+SHA1:
+ a8198fe5b6ca0e34e19685784f974257be34776d              132 Release
+ 2d20c5a104c5d6400597f96cd89087819a972dac            15307 main/binary-amd64/Packages
+ 8828d4e776e8ab4dcb9b9422a2cd6f296fd4169e             3415 main/binary-amd64/Packages.gz
+SHA256:
+ e91d44e495b618f1c428d210bb64d1b64ea212df7a4ed6dc48ca0859109a5c3c              132 Release
+ 4d8f96f5f162237945b272dd089e8241b060244af56921b41a95208b555e9c28            15307 main/binary-amd64/Packages
+ aa7d0e342339f9ef7456500cdcdc11f226c6233afd26952085a686012152f657             3415 main/binary-amd64/Packages.gz
+SHA512:
+ 3579112d0be2896365d7e0f8bddef02ab3ba6ec1ccea62d3bb47fbb066039fcedd902ad1f4e5a37027c90c9dbf0c74820ea69dee895a16d4bb04a9a9b5bf1af6              132 Release
+ 23803d7af834dcd0bb0d7ef624859d151ae141d87702a776ae32b6a9c225ade7e82a2f8c1c4c380959f3f015d0aac1d8ebd4522fc28505b36c123d55653ffef5            15307 main/binary-amd64/Packages
+ 70026fe16e75ae4a5b37928d3623593c92c8bdf53348837606b4d4ddd78b0359beeba35f39f832813fecbbfdfa42f80056dc66a54b8f4985998809c880d74c4a             3415 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEScGCiSczwwN/OEzepPizccqg7jYFAmr2ipIACgkQpPizccqg
+7jbQ2RAAuxl0Peuk4AHYOAKFN0RKxjJLjIJVviTBtsrq7ilepVmib/qkNLCwYCUO
+WA/VsunlUaf+Jc4DczSyMSdf9UeMR/FTCvQkXUE6aneeVnu2U1vW1OBW7VfYJEjx
+yM1J4yjUIB6wh8/q/AO0AW8P5dNq0AiqNXbK2xrhQ7wsyMpkWNgk0MUgderE1mU7
+EwSHBqWwl5fc3P9OYZA72CZm4SBhPSIfJp6mTerUf9PrrlJ1r+ncAqC4WabXPRhz
+Zam4g5cR9NdSUXIIx2m6MI93ciFTykMCq6sRkI1MhEcobYDCTILxabu93zCkFGjy
+0pB8f6LrEyvBqYUUqAlBx4Qqjc0YiGigmBwFINDFGRhg9WSx2OMyLrGZ1Ewxl84W
+KpMyfAMDIvx/gsVZgcWay0k6MmsZN/A7NGAyo3RhMFouq2A6jkXRYUjRscIK7Hcg
+d4I2+gaRogyjvJGpiCvzxOxE/xC88NiPglsySWUckEvKdsI8t2kBYr55n6KthHT3
+Vqen6D0FTS+krlgErakjeGiIm10xHdUk2XbNhdl7Clcq1wnHMhYwjIMDaDNKvtxE
+AY2JVbPqTQa32I08EG6IFPXVhA3fG7DIv25zNMFPdEUEMZZN74734Q1RrCZfkJQh
+rULpENZE6UxCNt0a4aAqNSXh+tlmjCqfnOGkUb9Ck4bs6exsxMM=
+=br53
+-----END PGP SIGNATURE-----
