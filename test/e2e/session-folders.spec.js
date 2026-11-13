@@ -21,7 +21,7 @@ const SESSION_B = '22222222-3333-4444-5555-666666666666';
 // so every test here needs at least one session on disk. sessions:list skips
 // user-only files as queue receipts, so each fixture carries an assistant turn.
 function seedSession(homeDir, id, cwd) {
-  const proj = path.join(homeDir, '.claude', 'projects', `-${cwd.replace(/\//g, '-')}`);
+  const proj = path.join(homeDir, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
   fs.mkdirSync(proj, { recursive: true });
   const lines = [
     JSON.stringify({ timestamp: new Date().toISOString(), cwd, type: 'user', message: { content: `work on ${id}` } }),
@@ -33,12 +33,14 @@ function seedSession(homeDir, id, cwd) {
 function launch(config, sessions = [SESSION_A]) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   const cfgDir = path.join(homeDir, '.config', 'husk');
+  const project = path.join(homeDir, 'project');
   fs.mkdirSync(cfgDir, { recursive: true });
+  fs.mkdirSync(project);
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, ...(config || {}),
+    firstRunDone: true, skipWelcome: true, agentCwd: project, resumeLastOnLaunch: false, ...(config || {}),
   }, null, 2));
-  for (const id of sessions) seedSession(homeDir, id, '/home/test/proj');
+  for (const id of sessions) seedSession(homeDir, id, project);
   return { homeDir, app: electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,

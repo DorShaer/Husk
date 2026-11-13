@@ -13,6 +13,16 @@ const fs = require('node:fs');
 const os = require('node:os');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
+// A handle avoids Playwright's asynchronous value serialization during a
+// native resize, when Electron can collect its temporary evaluation promise.
+async function setWindowContentSize(app, width, height) {
+  const result = await app.evaluateHandle(({ BrowserWindow }, size) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    win.setContentSize(size.width, size.height);
+  }, { width, height });
+  await result.dispose();
+}
+
 test('short window keeps the rail bottom and status footer visible', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
@@ -37,7 +47,7 @@ test('short window keeps the rail bottom and status footer visible', async () =>
     return !!fit && fit.children.length > 0 && fit.scrollHeight > 0;
   }, null, { timeout: 15_000 });
 
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 620); });
+  await setWindowContentSize(app, 1100, 620);
 
   // Fill the rail so its middle section has to scroll, then wait for the layout
   // and the status panel's fit pass (driven by a ResizeObserver) to settle.
@@ -61,8 +71,9 @@ test('short window keeps the rail bottom and status footer visible', async () =>
     const box = document.getElementById('sp-content');
     const fit = document.getElementById('sp-fit');
     if (!scrollEl || !box || !fit) return false;
-    // The rail overflows, and the status content has been fitted to its box.
-    const fitted = fit.getBoundingClientRect().height <= box.clientHeight + 1;
+    // The rail overflows, and the status content has been through the fit pass:
+    // it fits its box, or it shrank and the box scrolls the rest.
+    const fitted = fit.getBoundingClientRect().height <= box.clientHeight + 1 || fit.style.transform !== '';
     return scrollEl.scrollHeight > scrollEl.clientHeight && fitted;
   }, null, { timeout: 10_000 });
 
@@ -78,10 +89,12 @@ test('short window keeps the rail bottom and status footer visible', async () =>
       toolBottom: bottom('#rail-agent-pill'),
       spFootBottom: bottom('.sp-foot'),
       railScrollable: scrollEl.scrollHeight > scrollEl.clientHeight,
-      // The status body clips its overflow and scales #sp-fit, so the check is
-      // that the rendered content fits.
+      // The status body scales #sp-fit down to a floor and scrolls past it, so
+      // the check is that the rendered content fits or can be scrolled to.
       fitHeight: Math.round(fit.getBoundingClientRect().height),
       boxHeight: box.clientHeight,
+      boxScrollHeight: box.scrollHeight,
+      fitScale: fit.style.transform ? parseFloat(fit.style.transform.slice(6)) : 1,
       fitBottom: Math.round(fit.getBoundingClientRect().bottom),
       footTop: foot ? Math.round(foot.getBoundingClientRect().top) : null,
       sectionCount: fit.children.length,
@@ -95,10 +108,12 @@ test('short window keeps the rail bottom and status footer visible', async () =>
   // The rail sends its overflow to its scroll region rather than off the window.
   expect(info.railScrollable).toBe(true);
   // The status panel really has sections to lay out, and every one of them is
-  // visible: the fitted content stays inside its box and above the footer.
+  // reachable: the content fits its box, or the box scrolls to the rest of it.
+  // Either way the rows never shrink past the size the Context pane reads at.
   expect(info.sectionCount).toBeGreaterThan(0);
-  expect(info.fitHeight).toBeLessThanOrEqual(info.boxHeight + 1);
-  expect(info.fitBottom).toBeLessThanOrEqual(info.footTop + 1);
+  expect(info.fitScale).toBeGreaterThanOrEqual(0.87);
+  if (info.fitHeight > info.boxHeight + 1) expect(info.boxScrollHeight).toBeGreaterThanOrEqual(info.fitHeight - 1);
+  else expect(info.fitBottom).toBeLessThanOrEqual(info.footTop + 1);
 
   await app.close();
   fs.rmSync(homeDir, { recursive: true, force: true });
@@ -185,13 +200,13 @@ test('the status rows keep both edges at any fit scale', async () => {
 
   // Two window heights, both inside the smallest screen this runs on. The rows
   // reach the same two edges at either height.
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 760); });
+  await setWindowContentSize(app, 1100, 760);
   await win.waitForTimeout(700);
   const tall = await gaps();
   expect(Math.abs(tall.left - tall.right), JSON.stringify(tall)).toBeLessThanOrEqual(1);
 
   // Short enough that the fit has more work to do, at whatever scale comes out.
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 460); });
+  await setWindowContentSize(app, 1100, 460);
   await win.waitForTimeout(900);
   const short = await gaps();
   expect(Math.abs(short.left - short.right), JSON.stringify(short)).toBeLessThanOrEqual(1);

@@ -61,6 +61,7 @@ function buildGenericDirectives({ agentName, recap } = {}) {
   const name = cleanName(agentName);
   const lines = [
     `Your name in this session is ${name}. When asked your name or identity, answer as ${name}.`,
+    'Husk skills are shared across agents in ~/.agents/skills/. When a task matches a skill, read its SKILL.md and follow it; supporting files are beside that file.',
     'When the user asks you to read an attached context file, look for that file by name in the session context directory at ~/.claude/MEMORY/CONTEXT/.',
   ];
   if (recap !== false) {

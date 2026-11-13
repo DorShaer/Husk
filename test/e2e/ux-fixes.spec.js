@@ -43,14 +43,15 @@ test('AI tool selector sits at the bottom, above Preferences', async () => {
       autopilot: idx('#rail-autopilot'),
       toolPill: idx('#rail-agent-pill'),
       prefs: idx('#btn-open-prefs'),
-      betaText: document.querySelector('#rail-autopilot .rail-beta-tag')?.textContent || '',
+      autopilotText: (document.querySelector('#rail-autopilot')?.textContent || '').trim(),
       headerAutopilotExists: !!document.getElementById('btn-autopilot'),
     };
   });
   // Tool pill sits after the nav items and immediately before Preferences.
   expect(order.toolPill).toBeGreaterThan(order.autopilot);
   expect(order.prefs).toBeGreaterThan(order.toolPill);
-  expect(order.betaText).toBe('BETA');
+  // The row is its name alone, with no maturity tag beside it.
+  expect(order.autopilotText).toBe('Autopilot');
   expect(order.headerAutopilotExists).toBe(false);
   await app.close();
 });

@@ -1,7 +1,7 @@
 {
   "name": "husk",
-  "version": "2.13.2",
-  "description": "A desktop home for your CLI agent. Wraps claude / copilot / codex / aider in a clean Electron window with a real PTY, MCP integration, drag-drop context, sessions, voice, and a live status panel.",
+  "version": "2.14.0",
+  "description": "A desktop home for your CLI agents. Adds chat and session history for Claude Code, Copilot CLI, Codex, Gemini CLI and Kiro, with a real terminal for Aider and other CLIs.",
   "main": "src/main.js",
   "license": "Elastic-2.0",
   "engines": {
@@ -43,7 +43,8 @@
     "playwright": "^1.61.1"
   },
   "overrides": {
-    "js-yaml": "^4.3.1"
+    "js-yaml": "^4.3.1",
+    "minimatch@>=7.0.0 <11.0.1": "11.0.1"
   },
   "build": {
     "appId": "com.husk.app",

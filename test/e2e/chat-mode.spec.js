@@ -44,6 +44,14 @@ async function launch(homeDir, bin) {
   return { app, win };
 }
 
+async function setWindowContentSize(app, width, height) {
+  const result = await app.evaluateHandle(({ BrowserWindow }, size) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    win.setContentSize(size.width, size.height);
+  }, { width, height });
+  await result.dispose();
+}
+
 test('a chat tab streams text, shows a tool card, answers a permission and ends the turn', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
@@ -52,6 +60,7 @@ test('a chat tab streams text, shows a tool card, answers a permission and ends 
 
   // The pane is up, with the footer naming the agent and no xterm pane shown.
   const pane = win.locator('.chat-pane.show');
+  await expect(win.locator('#btn-restart')).toHaveCount(0);
   await expect(pane).toBeVisible();
   await expect(pane.locator('.chat-composer-meta')).toContainText('gemini');
   await expect(win.locator('.term-pane.show')).toHaveCount(0);
@@ -74,7 +83,7 @@ test('a chat tab streams text, shows a tool card, answers a permission and ends 
 
   const perm = pane.locator('.chat-perm');
   await expect(perm).toBeVisible();
-  await expect(perm.locator('.chat-perm-btn')).toHaveCount(3);
+  await expect(perm.locator('.chat-perm-btn')).toHaveCount(4);
   await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'chat-mode-permission.png') });
   await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
 
@@ -135,6 +144,49 @@ async function chatReady(win) {
   });
 }
 
+test('same chat titles from different agents are labeled in tabs and the sessions column', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  const labels = await win.evaluate(() => {
+    const template = [...TABS.values()][0];
+    const makeTab = (id, command) => ({
+      ...template,
+      id,
+      command,
+      launchCommand: command,
+      mode: 'chat',
+      isShell: false,
+      title: 'Shared investigation',
+      customTitle: null,
+      titleEarned: true,
+      agentId: null,
+      agentIdProvisional: false,
+      chatState: { items: [] },
+      chatRunning: false,
+      chatAlive: true,
+      createdAt: Date.now(),
+    });
+    TABS.clear();
+    TABS.set('same-claude', makeTab('same-claude', 'claude'));
+    TABS.set('same-codex', makeTab('same-codex', 'codex'));
+    activeTabId = 'same-codex';
+    cs.list = [];
+    renderTabStrip();
+    const tabs = [...document.querySelectorAll('#tab-strip .chat-tab')].map((el) => ({
+      title: el.title,
+      vendor: el.querySelector('.chat-tab-vendor')?.textContent || '',
+    }));
+    const cards = csModel().groups.flatMap((group) => group.cards).map((card) => card.displayTitle);
+    return { tabs, cards };
+  });
+  expect(labels.tabs).toEqual([
+    { title: 'Shared investigation · Claude', vendor: 'Claude' },
+    { title: 'Shared investigation · Codex', vendor: 'Codex' },
+  ]);
+  expect(labels.cards).toEqual(['Shared investigation · Claude', 'Shared investigation · Codex']);
+  await app.close();
+});
+
 test('a reload keeps the chat tab, its thread and its live agent', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
@@ -167,7 +219,7 @@ test('a reload keeps the chat tab, its thread and its live agent', async () => {
   await expect(pane.locator('.chat-item-user')).toHaveCount(2);
   await expect(pane.locator('.chat-item-user .chat-bubble').nth(1)).toHaveText('and again');
   await expect(pane.locator('.chat-perm')).toHaveCount(2);
-  await expect(pane.locator('.chat-perm').nth(1).locator('.chat-perm-btn')).toHaveCount(3);
+  await expect(pane.locator('.chat-perm').nth(1).locator('.chat-perm-btn')).toHaveCount(4);
   await app.close();
 });
 
@@ -298,7 +350,7 @@ test('an agent title names the tab, usage shows as ctx %, and Yes / Always / No 
   await expect(usage).toHaveAttribute('title', /of .* context tokens used/);
 
   const perm = pane.locator('.chat-perm');
-  await expect(perm.locator('.chat-perm-btn')).toHaveText(['Yes', 'Always', 'No']);
+  await expect(perm.locator('.chat-perm-btn')).toHaveText(['Yes', 'Always', 'Allow all', 'No']);
   await expect(perm.locator('.chat-perm-detail')).toContainText('*** Add File: greeting.txt');
   await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'chat-mode-kiro-perm.png') });
   await perm.locator('.chat-perm-btn', { hasText: 'Always' }).click();
@@ -348,6 +400,7 @@ test('the Sessions column lists live tabs with their state, + New adds a second 
 
   // + New opens a second tab, which gets its own card and becomes the active one.
   await col.locator('#cs-new').click();
+  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(live).toHaveCount(2);
   await expect(col.locator('.cs-card.is-active')).toHaveCount(1);
@@ -391,7 +444,7 @@ test('a tool row opens into its card, Formatted and Raw switch, the top bar coun
     firstRunDone: true, skipWelcome: true, agentCommand: 'gemini', theme: 'ember',
   }));
   const { app, win } = await launch(homeDir, bin);
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1500, 900); });
+  await setWindowContentSize(app, 1500, 900);
   await expect(win.locator('body')).toHaveAttribute('data-theme', 'ember');
   await expect(win.locator('#pref-theme option[value="ember"]')).toHaveText('Ember');
   expect(await win.locator('#pref-theme').inputValue()).toBe('ember');
@@ -475,7 +528,8 @@ function seedPastSession(homeDir, bin, extraConfig) {
   const when = new Date(Date.now() - 1800 * 1000).toISOString();
   fs.writeFileSync(path.join(dir, 'workspace.yaml'), `id: ${id}\ncwd: ${work}\ncreated_at: ${when}\nupdated_at: ${when}\nname: Yesterday's thread\n`);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), [
-    { type: 'user.message', data: { content: 'where were we' } },
+    // As it went to the agent: recalled notes ahead of what was typed.
+    { type: 'user.message', data: { content: '[Husk Brain: notes kept for this workspace that may bear on the message below.]\n- installer: the installer lives in installer/\n[End of Husk Brain notes]\n\nwhere were we' } },
     { type: 'assistant.message', data: { content: 'We were fixing the installer.' } },
   ].map((o) => JSON.stringify(o)).join('\n') + '\n');
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify(Object.assign({
@@ -503,6 +557,7 @@ test('a cold boot resumes the newest session into Chat instead of opening an emp
   await expect(pane.locator('.chat-item-user')).toHaveCount(2);
   // + New still opens a fresh chat beside it.
   await win.locator('#cs-new').click();
+  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(win.locator('.chat-pane.show .chat-item-user')).toHaveCount(0);
   await app.close();
@@ -684,6 +739,11 @@ test('the thread shows a live Thinking row while a turn runs and drops it when t
   // A permission card is the state while it waits on the reader: no row.
   await expect(pane.locator('.chat-perm')).toBeVisible();
   await expect(typing).toHaveCount(0);
+  // The turn is still running, and the tab already has a name (the prompt):
+  // it keeps showing it, not the dots that stand in for a missing name.
+  const label = win.locator('#tab-strip .chat-tab.active .chat-tab-label');
+  await expect(label.locator('.title-thinking')).toHaveCount(0);
+  await expect(label).toHaveText('quiet: think first');
   await pane.locator('.chat-perm .chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(pane.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(1);
   await expect(typing).toHaveCount(0);
@@ -783,7 +843,7 @@ test('Report a bug and Request a feature live in the top bar and the Help menu, 
   await expect(win.locator('#btn-report-bug')).toBeHidden();
   // Right side reads as groups: agents/status, help, then the two actions.
   const groups = await win.evaluate(() => [...document.querySelectorAll('.topbar-side-right > *')].map((n) => n.id || n.className.split(' ')[0]));
-  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-help', 'tb-sep', 'btn-new-session', 'btn-status-toggle']);
+  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
   const bug = await win.evaluate(() => window.husk.feedback.url('bug'));
   expect(bug.ok).toBe(true);
   const u = new URL(bug.url);
@@ -865,6 +925,11 @@ test('pasting an image attaches a thumbnail, sends it with the prompt, and the b
   const bubble = pane.locator('.chat-item-user:not(.is-queued) .chat-bubble').first();
   await expect(bubble.locator('img')).toHaveCount(1);
   await expect(bubble).toContainText('what is in this picture');
+  // Clicking an image opens a full-size lightbox; a click on it closes.
+  await bubble.locator('img').click();
+  await expect(win.locator('.chat-lightbox.is-open')).toHaveCount(1);
+  await win.locator('.chat-lightbox').click();
+  await expect(win.locator('.chat-lightbox.is-open')).toHaveCount(0);
   await pane.locator('.chat-perm .chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(pane.locator('.chat-item-text').last()).toContainText('(images 1)');
   // The × drops a pasted image before it goes.
@@ -991,7 +1056,7 @@ test('the status bar names the model the chat reports, and follows a switch', as
   await app.close();
 });
 
-test('an AskUserQuestion permission renders readable questions and options, not raw JSON', async () => {
+test('an AskUserQuestion permission renders selectable options and submits a pick', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
@@ -1002,15 +1067,18 @@ test('an AskUserQuestion permission renders readable questions and options, not 
   const perm = pane.locator('.chat-perm');
   await expect(perm).toBeVisible();
   await expect(perm.locator('.chat-perm-title')).toHaveText('AskUserQuestion');
-  // The questions render as text, not a scrolling JSON <pre>.
+  // The question and its options render as text, not a scrolling JSON <pre>.
   await expect(perm.locator('.chat-ask-question')).toHaveText('Retire the old welcome page?');
   await expect(perm.locator('.chat-ask-tag')).toHaveText('Legacy views');
   await expect(perm.locator('.chat-ask-option')).toHaveCount(2);
   await expect(perm.locator('.chat-ask-label').first()).toHaveText('Yes, retire it');
-  await expect(perm.locator('.chat-ask-desc').first()).toHaveText('Remove the press-enter page for good.');
   await expect(perm.locator('.chat-perm-detail')).toHaveCount(0);
 
-  await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
+  // The options are selectable (not just Allow/Deny): pick one, then submit.
+  const option = perm.locator('.chat-ask-choice').first();
+  await option.click();
+  await expect(option).toHaveClass(/is-sel/);
+  await perm.locator('.chat-perm-btn', { hasText: 'Submit' }).click();
   await expect(perm).toHaveClass(/is-resolved/);
   await app.close();
 });
@@ -1047,5 +1115,53 @@ test('a questions-shaped input on a non-AskUserQuestion tool renders its raw det
   await expect(perm.locator('.chat-perm-detail')).toBeVisible();
   await perm.locator('.chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(perm).toHaveClass(/is-resolved/);
+  await app.close();
+});
+
+test('Allow all stops the asking for the rest of the chat, shows what it let through, and can be turned off', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  await chatReady(win);
+  const pane = win.locator('.chat-pane.show');
+  const send = async (text) => { await pane.locator('.chat-input').fill(text); await pane.locator('.chat-input').press('Enter'); };
+  const done = (n) => expect(pane.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(n);
+  const pill = pane.locator('.chat-allowall');
+  await expect(pill).toBeHidden();
+
+  // First ask: the card waits, and Allow all is one of its answers.
+  await send('write a greeting');
+  const first = pane.locator('.chat-perm').nth(0);
+  await expect(first.locator('.chat-perm-btn', { hasText: 'Allow all' })).toBeVisible();
+  await first.locator('.chat-perm-btn', { hasText: 'Allow all' }).click();
+  await expect(first.locator('.chat-perm-verdict')).toHaveText('Allowed, with everything after it');
+  await done(1);
+  await expect(pill).toBeVisible();
+
+  // Every later ask goes through unasked: the turn finishes with no click,
+  // and its card is in the thread, already answered.
+  await send('write a greeting again');
+  await done(2);
+  await expect(pane.locator('.chat-perm')).toHaveCount(2);
+  await expect(pane.locator('.chat-perm:not(.is-resolved)')).toHaveCount(0);
+  await expect(pane.locator('.chat-perm').nth(1).locator('.chat-perm-verdict')).toHaveText('Allowed, with everything after it');
+  await send('write a greeting a third time');
+  await done(3);
+  await expect(pane.locator('.chat-perm:not(.is-resolved)')).toHaveCount(0);
+  await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'chat-allow-all.png') });
+
+  // It survives a reload of the window, like the agent it was given to.
+  await win.reload();
+  await win.waitForFunction(() => document.querySelector('.chat-pane.show .chat-allowall'));
+  await expect(win.locator('.chat-pane.show .chat-allowall')).toBeVisible();
+
+  // Turned off, the next ask waits for an answer again.
+  await win.locator('.chat-pane.show .chat-allowall').click();
+  await expect(win.locator('.chat-pane.show .chat-allowall')).toBeHidden();
+  const again = win.locator('.chat-pane.show');
+  await chatReady(win);
+  await again.locator('.chat-input').fill('write a greeting once more');
+  await again.locator('.chat-input').press('Enter');
+  await expect(again.locator('.chat-perm:not(.is-resolved)')).toHaveCount(1);
+  await expect(again.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(3);
   await app.close();
 });

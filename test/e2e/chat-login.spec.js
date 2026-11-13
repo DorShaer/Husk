@@ -2,8 +2,8 @@
 
 // /login typed in a chat. Over the stream protocol the CLI answers that the
 // command is not available, so it never let the user switch accounts from
-// Chat view. The command now opens the CLI's own sign-in in a terminal tab,
-// and when that finishes the chat is told who is signed in.
+// Chat view. The command opens the CLI's own sign-in inside the chat, and
+// when that finishes the chat is told who is signed in.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');
@@ -31,7 +31,7 @@ function makeHome() {
 
 const calls = (file) => fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).argv);
 
-test('/login opens the CLI sign-in in a terminal tab and reports the account when it finishes', async () => {
+test('/login runs the CLI sign-in inside the chat and reports the account when it finishes', async () => {
   test.setTimeout(90_000);
   const env = makeHome();
   const app = await electron.launch({
@@ -56,20 +56,16 @@ test('/login opens the CLI sign-in in a terminal tab and reports the account whe
     await win.press('.chat-pane.show .chat-input', 'Enter');
     await win.press('.chat-pane.show .chat-input', 'Enter');
 
-    // A second tab, in Terminal mode, running the CLI's sign-in.
-    await win.waitForFunction(() => TABS.size === 2, null, { timeout: 15_000 }); // eslint-disable-line no-undef
-    const opened = await win.evaluate((id) => { // eslint-disable-line no-undef
-      const t = Array.from(TABS.values()).find((x) => x.id !== id); // eslint-disable-line no-undef
-      return { mode: t.mode, command: t.launchCommand, title: t.customTitle, active: activeTabId === t.id }; // eslint-disable-line no-undef
-    }, chatTabId);
-    expect(opened).toEqual({ mode: 'terminal', command: 'claude auth login', title: 'Sign in', active: true });
+    // The CLI's own sign-in runs in this chat: no second tab.
     await expect.poll(() => calls(env.capture).some((a) => a[0] === 'auth' && a[1] === 'login'), { timeout: 15_000 }).toBe(true);
     // The command was never sent to the chat child as a prompt.
     const thread = await win.evaluate(() => document.querySelector('.chat-pane .chat-thread, .chat-pane').textContent);
     expect(thread).not.toContain("isn't available");
 
     // When the sign-in exits, the account is read back and announced.
-    await expect(win.locator('#toast-stack')).toContainText('Signed in as tester@example.com (max)', { timeout: 20_000 });
+    await expect(win.locator('.chat-native-term')).toHaveCount(0, { timeout: 20_000 });
+    expect(await win.evaluate(() => TABS.size)).toBe(1); // eslint-disable-line no-undef
+    await expect(win.locator('.chat-pane.show')).toContainText('Signed in as tester@example.com (max)', { timeout: 20_000 });
     expect(calls(env.capture).some((a) => a[0] === 'auth' && a[1] === 'status')).toBe(true);
     const chatText = await win.evaluate((id) => { // eslint-disable-line no-undef
       const t = TABS.get(id); return t.chat ? JSON.stringify(t.chat.getState().items.map((i) => i.text || '')) : ''; // eslint-disable-line no-undef

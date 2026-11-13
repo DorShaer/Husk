@@ -18,10 +18,23 @@ const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { emptyThread: chatEmptyThread, reduceThread: chatReduceThread } = require('./lib/chat-events');
 
-// Husk's default zoom. User-driven zoom (Ctrl/Cmd +/-/0) layers on top of this.
-// -0.5 = zoom factor 1.2^-0.5 ≈ 0.91, which fits everything without scrolling.
-const HUSK_BASE_ZOOM = -0.5;
+// Husk's default zoom (see src/lib/ui-zoom.js). User-driven zoom (Ctrl/Cmd
+// +/-/0, View menu) layers on top of this, is saved, and is restored at launch.
+// The renderer labels this level as its baseline.
+const uiZoom = require('./lib/ui-zoom');
+const HUSK_BASE_ZOOM = uiZoom.BASE_ZOOM;
 try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
+
+// Saving the zoom is debounced so holding Ctrl/Cmd + writes the config once.
+let zoomSaveTimer = null;
+function applyZoom(level) {
+  webFrame.setZoomLevel(level);
+  clearTimeout(zoomSaveTimer);
+  zoomSaveTimer = setTimeout(() => {
+    ipcRenderer.invoke('config:set', { uiZoom: uiZoom.zoomToStore(level) }).catch(() => {});
+  }, 400);
+  return level;
+}
 
 // Stamp the saved theme onto <body> the moment it is parsed, before the first
 // paint. index.html ships a dark theme on the body tag as its static value, and
@@ -30,6 +43,10 @@ try { webFrame.setZoomLevel(HUSK_BASE_ZOOM); } catch (_) {}
 // here and writing it as soon as the element exists closes that window.
 try {
   const boot = ipcRenderer.sendSync('config:boot-theme');
+  // Restore the zoom the user picked last time, before the first paint.
+  if (boot) {
+    try { webFrame.setZoomLevel(uiZoom.startZoom(boot.uiZoom)); } catch (_) {}
+  }
   if (boot && boot.theme) {
     const stamp = () => {
       if (!document.body) return false;
@@ -93,6 +110,7 @@ contextBridge.exposeInMainWorld('husk', {
     cancel: (opts) => ipcRenderer.invoke('chat:cancel', opts || {}),
     // { tabId, requestId, optionId } -> { ok }
     permission: (opts) => ipcRenderer.invoke('chat:permission', opts || {}),
+    allowAll: (opts) => ipcRenderer.invoke('chat:allowAll', opts || {}),
     // { tabId, modelId, modelName } -> { ok, transport, model, restarted?, error? }
     setModel: (opts) => ipcRenderer.invoke('chat:setModel', opts || {}),
     // { tabId } -> { ok }
@@ -101,6 +119,10 @@ contextBridge.exposeInMainWorld('husk', {
     onEvent: (cb) => ipcRenderer.on('chat:event', (_e, p) => cb(p.tabId, p.event)),
     // cb(tabId, code) when the agent process ends.
     onExit: (cb) => ipcRenderer.on('chat:exit', (_e, p) => cb(p.tabId, p.code)),
+  },
+  // BYOK: list an OpenAI-compatible endpoint's models for the picker.
+  openai: {
+    models: (opts) => ipcRenderer.invoke('openai:models', opts || {}),
   },
   // Bug reports and feature requests: prefilled GitHub issue links.
   feedback: {
@@ -155,6 +177,7 @@ contextBridge.exposeInMainWorld('husk', {
     signal: (s, ctx) => { try { return sessionView.signal(s, ctx); } catch (_) { return null; } },
     scent: (s, sig, names) => { try { return sessionView.scent(s, sig, names); } catch (_) { return ''; } },
     titleOf: (s, names) => { try { return sessionView.titleOf(s, names); } catch (_) { return ''; } },
+    disambiguateTitles: (items) => { try { return sessionView.disambiguateTitles(items); } catch (_) { return []; } },
     sessionCwd: (s) => { try { return sessionView.sessionCwd(s); } catch (_) { return ''; } },
     basename: (p) => { try { return sessionView.basename(p); } catch (_) { return ''; } },
     inCurrentProject: (s, cwd) => { try { return sessionView.inCurrentProject(s, cwd); } catch (_) { return false; } },
@@ -179,7 +202,7 @@ contextBridge.exposeInMainWorld('husk', {
     create: (payload) => ipcRenderer.invoke('skills:create', payload),
   },
   sessions: {
-    list: () => ipcRenderer.invoke('sessions:list'),
+    list: (opts) => ipcRenderer.invoke('sessions:list', opts || {}),
     read: (prdPath) => ipcRenderer.invoke('sessions:read', prdPath),
     findClaudeId: (payload) => ipcRenderer.invoke('sessions:findClaudeId', payload),
     resolveLiveTitle: (payload) => ipcRenderer.invoke('sessions:resolveLiveTitle', payload),
@@ -280,6 +303,7 @@ contextBridge.exposeInMainWorld('husk', {
     isLive: (state) => { try { return agentIsLive(state); } catch (_) { return false; } },
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
+    authCommand: (command, verb) => ipcRenderer.invoke('agents:authCommand', { command, verb }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
   },
   // The artifact ledger: what runs left behind, from the two stores that
@@ -291,6 +315,18 @@ contextBridge.exposeInMainWorld('husk', {
     },
     filter: (rows, opts) => { try { return artifactLedger.filterLedger(rows, opts); } catch (_) { return []; } },
     summarise: (rows) => { try { return artifactLedger.summarise(rows); } catch (_) { return { runs: 0 }; } },
+  },
+  // The Brain: what Husk remembers and recalls into a prompt (src/lib/brain.js).
+  // graph -> { ok, scope, scopeName, enabled, nodes, edges }. onActivity fires
+  // with { kind: 'recall'|'capture'|'learn'|'idle', ids, busy } as it works.
+  brain: {
+    graph: (opts) => ipcRenderer.invoke('brain:graph', opts || {}),
+    addNote: (opts) => ipcRenderer.invoke('brain:addNote', opts || {}),
+    addFiles: (opts) => ipcRenderer.invoke('brain:addFiles', opts || {}),
+    remove: (id) => ipcRenderer.invoke('brain:remove', { id }),
+    pin: (id, pinned) => ipcRenderer.invoke('brain:pin', { id, pinned }),
+    setEnabled: (on) => ipcRenderer.invoke('brain:setEnabled', { on }),
+    onActivity: (cb) => ipcRenderer.on('brain:activity', (_e, payload) => cb(payload)),
   },
   // Recurring runs. The rules about when one fires live in schedule.js and run
   // in the main process; `describe` is the same wording, computed in-process so
@@ -493,10 +529,16 @@ contextBridge.exposeInMainWorld('husk', {
     onStatus: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s)),
   },
   ui: {
-    zoomIn: () => { const lvl = Math.min(webFrame.getZoomLevel() + 0.5, 5); webFrame.setZoomLevel(lvl); return lvl; },
-    zoomOut: () => { const lvl = Math.max(webFrame.getZoomLevel() - 0.5, -3); webFrame.setZoomLevel(lvl); return lvl; },
+    zoomIn: () => applyZoom(uiZoom.stepZoom(webFrame.getZoomLevel(), 1)),
+    zoomOut: () => applyZoom(uiZoom.stepZoom(webFrame.getZoomLevel(), -1)),
     // Reset returns to Husk's default UI scale, not the browser default.
-    zoomReset: () => { webFrame.setZoomLevel(HUSK_BASE_ZOOM); return HUSK_BASE_ZOOM; },
+    zoomReset: () => applyZoom(HUSK_BASE_ZOOM),
+    // A level picked by name in Preferences; out-of-range input lands on the default.
+    zoomSet: (level) => applyZoom(uiZoom.startZoom(level)),
+    zoomStep: uiZoom.ZOOM_STEP,
+    // The View menu's zoom items arrive here, so they take the same path as
+    // the keyboard: one readout, one terminal refit, and the level is saved.
+    onZoomCommand: (cb) => ipcRenderer.on('ui:zoom-command', (_e, dir) => cb(dir)),
     zoomGet: () => webFrame.getZoomLevel(),
     // Husk's base zoom level, so the renderer can label it as 100%.
     zoomBase: HUSK_BASE_ZOOM,

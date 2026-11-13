@@ -43,10 +43,11 @@ function loadConfigWith(storedJson) {
   return ctx.__result;
 }
 
-test('a first install defaults to the ember theme', () => {
+test('a first install defaults to the light theme with the indigo accent', () => {
   // No config file on disk is the only signal that this machine has never run Husk.
   const cfg = loadConfigWith(null);
-  assert.equal(cfg.theme, 'ember');
+  assert.equal(cfg.theme, 'light');
+  assert.equal(cfg.accent, 'indigo');
 });
 
 test('an update never changes the theme of an install that has one saved', () => {
@@ -71,7 +72,7 @@ test('an existing config keeps an explicitly chosen theme that matches no defaul
 
 test('a corrupt config falls back to the first-install defaults', () => {
   const cfg = loadConfigWith('{ not json');
-  assert.equal(cfg.theme, 'ember');
+  assert.equal(cfg.theme, 'light');
 });
 
 test('the status panel starts collapsed on a first install and stays open for an older config', () => {

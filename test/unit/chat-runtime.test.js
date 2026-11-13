@@ -102,7 +102,8 @@ test('acp prompt streams updates, answers permission, and ends the turn', async 
   const perm = events.find((e) => e.ev.type === 'permission');
   assert.ok(perm);
   assert.equal(perm.ev.title, 'rm x');
-  assert.equal(perm.ev.options.length, 2);
+  // The two the agent offered, and Allow all between its allow and its reject.
+  assert.equal(perm.ev.options.length, 3);
 
   assert.deepEqual(await rt.permission({ tabId: 't1', requestId: perm.ev.requestId, optionId: 'allow' }), { ok: true });
   await tick();
@@ -286,7 +287,7 @@ test('claude allow-session hands the permission suggestions back as updatedPermi
   const suggestions = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }];
   c.feed({ type: 'control_request', request_id: 'req-1', request: { subtype: 'can_use_tool', tool_name: 'Write', input: { file_path: '/w/a.txt', content: 'x' }, permission_suggestions: suggestions } });
   const perm = events.find((e) => e.ev.type === 'permission');
-  assert.deepEqual(perm.ev.options.map((o) => o.optionId), ['allow', 'allow-session', 'deny']);
+  assert.deepEqual(perm.ev.options.map((o) => o.optionId), ['allow', 'allow-session', 'allow-all', 'deny']);
   await rt.permission({ tabId: 't2', requestId: 'req-1', optionId: 'allow-session' });
   const resp = c.stdinLines[c.stdinLines.length - 1].response.response;
   assert.equal(resp.behavior, 'allow');
@@ -295,12 +296,12 @@ test('claude allow-session hands the permission suggestions back as updatedPermi
 
   c.feed({ type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
   const perm2 = events.filter((e) => e.ev.type === 'permission')[1];
-  assert.deepEqual(perm2.ev.options.map((o) => o.optionId), ['allow', 'deny']);
+  assert.deepEqual(perm2.ev.options.map((o) => o.optionId), ['allow', 'allow-all', 'deny']);
   await rt.permission({ tabId: 't2', requestId: 'req-2', optionId: 'allow' });
   assert.equal(c.stdinLines[c.stdinLines.length - 1].response.response.updatedPermissions, undefined);
 });
 
-test('an ACP handshake refused for auth points the user at Terminal mode', async () => {
+test('an ACP handshake refused for auth says so in its result', async () => {
   const { rt, children } = harness();
   const p = rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
   await tick();
@@ -310,7 +311,8 @@ test('an ACP handshake refused for auth points the user at Terminal mode', async
   const r = await p;
   assert.equal(r.ok, false);
   assert.match(r.error, /Authentication required/);
-  assert.match(r.error, /Terminal mode to sign in/);
+  assert.equal(r.auth, true);
+  assert.doesNotMatch(r.error, /Terminal/);
 });
 
 test('on Windows a .cmd shim runs through the command interpreter', async () => {
@@ -449,4 +451,59 @@ test('a resumed claude chat carries its session id from the moment it starts', a
   const eq = await rt.start({ tabId: 't2', command: `claude --resume=${id}`, cwd: '/w' });
   assert.equal(eq.sessionId, id);
   await rt.stopAll();
+});
+
+test('Allow all answers this approval and every later one, shows each, and still asks questions', async () => {
+  const { rt, children, events } = harness();
+  await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  const ask = (id, tool, input) => c.feed({ type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: tool, input } });
+  const answers = () => c.stdinLines.filter((l) => l.type === 'control_response' && l.response.response && l.response.response.behavior).map((l) => [l.response.request_id, l.response.response.behavior]);
+
+  // Two cards waiting; Allow all on the first covers the second too.
+  ask('r1', 'Bash', { command: 'ls' });
+  ask('r2', 'Bash', { command: 'pwd' });
+  assert.deepEqual(answers(), []);
+  assert.equal((await rt.permission({ tabId: 't2', requestId: 'r1', optionId: 'allow-all' })).ok, true);
+  assert.deepEqual(answers(), [['r1', 'allow'], ['r2', 'allow']]);
+  assert.deepEqual(events.filter((e) => e.ev.type === 'allow_all').map((e) => e.ev.on), [true]);
+
+  // A different command, a different tool: answered at once, each exactly once,
+  // with no standing rule handed to the CLI, and each still shown in the thread.
+  ask('r3', 'Bash', { command: 'rm -rf build' });
+  ask('r4', 'Write', { file_path: '/w/a', content: 'x' });
+  assert.deepEqual(answers(), [['r1', 'allow'], ['r2', 'allow'], ['r3', 'allow'], ['r4', 'allow']]);
+  assert.equal(c.stdinLines.some((l) => l.response && l.response.response && l.response.response.updatedPermissions), false);
+  assert.equal(events.filter((e) => e.ev.type === 'permission').length, 4);
+  assert.deepEqual(events.filter((e) => e.ev.type === 'permission_resolved').map((e) => e.ev.requestId), ['r1', 'r2', 'r3', 'r4']);
+
+  // A question to the user is not an approval: it waits for its answer.
+  ask('q1', 'AskUserQuestion', { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }] }] });
+  assert.equal(answers().length, 4);
+  const q = events.filter((e) => e.ev.type === 'permission').pop().ev;
+  assert.equal(q.options.some((o) => o.optionId === 'allow-all'), false);
+
+  // Turned off, the next approval waits again.
+  assert.equal(rt.allowAll({ tabId: 't2', on: false }).ok, true);
+  ask('r5', 'Bash', { command: 'ls' });
+  assert.equal(answers().length, 4);
+  assert.deepEqual(events.filter((e) => e.ev.type === 'allow_all').map((e) => e.ev.on), [true, false]);
+});
+
+test('Allow all belongs to one chat and ends with its agent', async () => {
+  const { rt, children, events } = harness();
+  await rt.start({ tabId: 'a', command: 'claude', cwd: '/w' });
+  await rt.start({ tabId: 'b', command: 'claude', cwd: '/w' });
+  children[0].feed({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
+  await rt.permission({ tabId: 'a', requestId: 'r1', optionId: 'allow-all' });
+  // The other chat still asks.
+  children[1].feed({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
+  assert.equal(children[1].stdinLines.some((l) => l.type === 'control_response' && l.response.response && l.response.response.behavior), false);
+  // A fresh agent in the first tab starts asking again.
+  await rt.stop({ tabId: 'a' });
+  await rt.start({ tabId: 'a', command: 'claude', cwd: '/w' });
+  const fresh = children[children.length - 1];
+  fresh.feed({ type: 'control_request', request_id: 'r9', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
+  assert.equal(fresh.stdinLines.some((l) => l.type === 'control_response' && l.response.response && l.response.response.behavior), false);
+  assert.equal(events.filter((e) => e.tabId === 'a' && e.ev.type === 'permission').length, 2);
 });

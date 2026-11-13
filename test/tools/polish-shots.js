@@ -33,6 +33,7 @@ const flag = (name, dflt) => {
 };
 const THEME = flag('theme', 'dark');
 const SCENE = flag('scene', 'all');
+const SELECTED = flag('select', '');
 
 const sanitize = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
 const sid = (n) => `c0ffee00-0000-4dc7-abb3-${String(n).padStart(12, '0')}`;
@@ -242,14 +243,17 @@ async function run() {
     const app = await launch(env);
     try {
       const win = await openCenter(app);
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: 1900, height: 1100 }));
+      await settle(win, 300);
       await win.waitForSelector('.am-node', { timeout: 20_000 });
+      if (SELECTED) await win.evaluate((id) => amSelect(id, { scroll: true }), SELECTED);
       await settle(win, 1200);
       await shoot(win, 'graph-live-fleet');
       await win.click('[data-am-filter="all"]');
       await settle(win, 900);
       await shoot(win, 'graph-all-fleet');
       // Select the blocked agent so the detail pane shows the urgent case.
-      await win.evaluate(() => amSelect('kid-a11', { scroll: true }));   // eslint-disable-line no-undef
+      if (!SELECTED) await win.evaluate(() => amSelect('kid-a11', { scroll: true }));   // eslint-disable-line no-undef
       await settle(win, 900);
       await shoot(win, 'graph-all-fleet-selected');
       await shoot(win, 'detail-crop-fleet', { element: '#am-detail-pane' });

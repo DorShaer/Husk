@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Husk uninstaller. Removes the launcher and platform-specific app
-# registration, plus config / voice / cache by default. Pass --keep-data
-# to preserve config and voice data. The project directory and node_modules
-# are always left intact (re-install via ./installer/install.sh uses them).
+# registration. Your data (projects, settings, sessions, the Brain, voices) is
+# kept unless you say otherwise: the script asks, and Enter keeps it.
+#   --keep-data     keep the data without asking
+#   --remove-data   delete the data without asking
+# Run without a terminal (piped, from a script) it keeps the data, since
+# nothing should be deleted that nobody was asked about. The project directory
+# and node_modules are always left intact (re-install via ./installer/install.sh
+# uses them).
 set -e
 
 APP_ID="husk"
@@ -24,8 +29,15 @@ LINUX_ICON_DIRS="$HOME/.local/share/icons/hicolor"
 # macOS-specific
 MAC_APP_BUNDLE="$HOME/Applications/$APP_NAME.app"
 
-KEEP_DATA=0
-[ "$1" = "--keep-data" ] && KEEP_DATA=1
+# Empty until decided: a flag decides it here, the question below otherwise.
+KEEP_DATA=""
+for arg in "$@"; do
+    case "$arg" in
+        --keep-data)   KEEP_DATA=1 ;;
+        --remove-data) KEEP_DATA=0 ;;
+        *) echo "unknown option: $arg (use --keep-data or --remove-data)" >&2; exit 2 ;;
+    esac
+done
 
 C_OK='\033[0;32m'; C_WARN='\033[1;33m'; C_DIM='\033[2m'; C_RST='\033[0m'
 
@@ -49,6 +61,19 @@ is_protected_path() {
     esac
     return 1
 }
+
+# Asked before anything is removed, so backing out with Ctrl+C leaves the
+# install whole. Only "n" or "no" deletes; Enter and anything else keeps.
+if [ -z "$KEEP_DATA" ]; then
+    KEEP_DATA=1
+    if [ -t 0 ] && { [ -e "$CONFIG_DIR" ] || [ -e "$DATA_DIR" ]; }; then
+        printf 'Keep your Husk data (projects, settings, sessions, Brain, voices)? [Y/n] '
+        read -r answer || answer=""
+        case "$answer" in
+            [nN]|[nN][oO]) KEEP_DATA=0 ;;
+        esac
+    fi
+fi
 
 removed=0
 remove_path() {
@@ -95,7 +120,7 @@ case "$PLATFORM" in
         ;;
 esac
 
-# User data (default: removed; --keep-data preserves)
+# User data (kept unless the answer above, or --remove-data, said to delete it)
 if [ "$KEEP_DATA" -eq 0 ]; then
     remove_path "$CONFIG_DIR"
     remove_path "$DATA_DIR"
@@ -110,6 +135,6 @@ else
     echo
     echo -e "${C_OK}Husk uninstalled${C_RST}"
     echo "  Project directory and node_modules left intact at: $APP_DIR"
-    if [ "$KEEP_DATA" -eq 1 ]; then echo "  Config and voice data kept (--keep-data)"; fi
+    if [ "$KEEP_DATA" -eq 1 ]; then echo "  Your data was kept: $CONFIG_DIR"; fi
 fi
 exit 0

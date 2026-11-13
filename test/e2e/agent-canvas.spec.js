@@ -444,7 +444,8 @@ test('the camera frames the fleet and the graph shares its selection', async () 
   const cardW = async () => (await win.locator('#agent-map .am-card').boundingBox()).width;
   const small = await cardW();
   await win.click('#am-cv-expand');
-  await expect.poll(cardW, { timeout: 15_000 }).toBeGreaterThan(small + 100);
+  // How far it grows depends on how much window the card left unused.
+  await expect.poll(cardW, { timeout: 15_000 }).toBeGreaterThan(small + 10);
   await expect(win.locator('#am-detail-pane')).toBeVisible();
   await win.click('#am-cv-expand');
   await expect.poll(async () => Math.abs((await cardW()) - small), { timeout: 15_000 }).toBeLessThan(1);
@@ -539,6 +540,14 @@ test('the center opens on live work, with everything else one click away', async
   await win.waitForTimeout(600);
   await shoot(win, 'graph-live-empty.png');
   await win.click('#am-blank-act');
+  await expect(win.locator('.am-node')).toHaveCount(8);
+
+  // Opened when nothing is live, the center starts on the whole fleet: the
+  // graph of what ran, not an empty page with a button behind it.
+  await win.keyboard.press('Escape');
+  await win.evaluate(() => openAgentMap());              // eslint-disable-line no-undef
+  await expect(win.locator('[data-am-filter="all"]')).toHaveClass(/is-active/, { timeout: 15_000 });
+  await expect(win.locator('#am-canvas-pane')).toBeVisible();
   await expect(win.locator('.am-node')).toHaveCount(8);
 
   await app.close();

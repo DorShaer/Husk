@@ -2,7 +2,7 @@
 
 // Contract checks for the skills:toggle IPC handler. We do not boot
 // Electron here; we verify the handler source uses resolveInside for
-// every join under HUSK_PROMPTS_DIR and the claude skills dir, and we
+// every join under HUSK_PROMPTS_DIR and the shared skills roots, and we
 // exercise resolveInside on the shapes the handler accepts.
 
 const { test } = require('node:test');
@@ -39,8 +39,8 @@ test('skills:toggle handler joins both roots via resolveInside', () => {
   const husk = handler.match(/resolveInside\(HUSK_PROMPTS_DIR/g) || [];
   assert.ok(husk.length >= 2, 'expected resolveInside(HUSK_PROMPTS_DIR, ...) for both oldPath and newPath');
 
-  const claude = handler.match(/resolveInside\(skillsDir/g) || [];
-  assert.ok(claude.length >= 2, 'expected resolveInside(skillsDir, ...) for both oldPath and newPath');
+  assert.match(handler, /oldPath = resolveInside\(skillsDir, itemId\)/);
+  assert.match(handler, /newPath = resolveInside\(targetDir, newDirName\)/);
 
   const rawHusk = /path\.join\(HUSK_PROMPTS_DIR,\s*(itemId|newName)\)/.test(handler);
   assert.equal(rawHusk, false, 'skills:toggle still path.joins HUSK_PROMPTS_DIR with itemId/newName');

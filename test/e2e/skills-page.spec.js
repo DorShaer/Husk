@@ -19,7 +19,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FAMILY = ['xss', 'sqli', 'ssrf', 'idor', 'rce'];
 const PLAIN = ['Agents', 'Research', 'Interceptor'];
 
-function boot() {
+function boot(agentCommand = 'claude') {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-skills-'));
   const cfgDir = path.join(homeDir, '.config', 'husk');
   const promptsDir = path.join(cfgDir, 'prompts');
@@ -27,7 +27,7 @@ function boot() {
   fs.mkdirSync(promptsDir, { recursive: true });
   fs.mkdirSync(skillsDir, { recursive: true });
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand: 'claude',
+    firstRunDone: true, skipWelcome: true, agentCommand, paiEnabled: false,
   }));
   // Backdated well past the recency window: this stands for a library that has
   // been there a while, so only what a test installs itself counts as new.
@@ -94,7 +94,7 @@ const rowFor = (win, name) => win.locator(`.sk-row[data-name="${name}"]`);
 // are legitimately new. Backdating them after the fact gives a settled library
 // to test against.
 async function settleLibrary(win, env) {
-  const dir = path.join(env.homeDir, '.claude', 'skills');
+  const dir = path.join(env.homeDir, '.agents', 'skills');
   const when = new Date(Date.now() - 40 * 864e5);
   for (const d of fs.readdirSync(dir)) {
     try { fs.utimesSync(path.join(dir, d), when, when); } catch (_) { /* raced with a write */ }
@@ -151,7 +151,7 @@ test('Husk prompts stay on their own page', async () => {
     const srcs = await win.evaluate(
       () => [...new Set([...document.querySelectorAll('.sk-row')].map((r) => r.dataset.source))],
     );
-    expect(srcs).toEqual(['claude']);
+    expect(srcs).toEqual(['shared', 'shared-disabled']);
   } finally { await app.close(); }
 });
 
@@ -195,16 +195,16 @@ test('source and state filters compose rather than replace each other', async ()
   } finally { await app.close(); }
 });
 
-test('a skill switch renames it on disk, and back', async () => {
+test('a skill switch parks it outside native discovery, and restores it', async () => {
   test.setTimeout(90_000);
   const env = boot();
   const app = await launch(env);
-  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  const skillsDir = path.join(env.homeDir, '.agents', 'skills');
   try {
     const win = await openSkills(app);
     await rowFor(win, 'Agents').locator('[data-toggle]').click();
     await expect.poll(
-      () => fs.existsSync(path.join(skillsDir, '_disabled_Agents')),
+      () => fs.existsSync(path.join(env.homeDir, '.config', 'husk', 'skills-disabled', '_disabled_Agents')),
       { timeout: 10_000 },
     ).toBe(true);
     await expect(rowFor(win, 'Agents')).toHaveClass(/disabled/);
@@ -224,19 +224,30 @@ test('the header switch flips the whole selected source in one go', async () => 
   test.setTimeout(120_000);
   const env = boot();
   const app = await launch(env);
-  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  const skillsDir = path.join(env.homeDir, '.agents', 'skills');
+  const disabledDir = path.join(env.homeDir, '.config', 'husk', 'skills-disabled');
   try {
     const win = await openSkills(app);
     await pickSource(win, 'zed');
     await expect(win.locator('#sk-sub')).toHaveText(`${FAMILY.length} of ${FAMILY.length} enabled`);
     await win.locator('#sk-bulk').click();
     await expect.poll(
-      () => fs.readdirSync(skillsDir).filter((d) => d.startsWith('_disabled_zed-hunt-')).length,
+      () => fs.readdirSync(disabledDir).filter((d) => d.startsWith('_disabled_zed-hunt-')).length,
       { timeout: 30_000 },
     ).toBe(FAMILY.length);
     await expect(win.locator('#sk-bulk-label')).toHaveText('All off');
 
     await win.locator('#sk-bulk').click();
+    await expect.poll(
+      () => fs.readdirSync(skillsDir).filter((d) => d.startsWith('zed-hunt-')).length,
+      { timeout: 30_000 },
+    ).toBe(FAMILY.length);
+    await expect(win.locator('#sk-bulk-label')).toHaveText('All on');
+
+    // One switch moved the whole family, so its notice carries the way back.
+    await win.locator('#sk-bulk').click();
+    await expect(win.locator('#sk-bulk-label')).toHaveText('All off');
+    await win.locator('#toast-stack .toast-action', { hasText: 'Undo' }).last().click();
     await expect.poll(
       () => fs.readdirSync(skillsDir).filter((d) => d.startsWith('zed-hunt-')).length,
       { timeout: 30_000 },
@@ -337,7 +348,7 @@ test('recently added skills get their own view, newest first', async () => {
   test.setTimeout(90_000);
   const env = boot();
   const app = await launch(env);
-  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  const skillsDir = path.join(env.homeDir, '.agents', 'skills');
   try {
     const win = await openSkills(app);
     await settleLibrary(win, env);
@@ -381,7 +392,7 @@ test('a skill you already have can be imported from disk', async () => {
   test.setTimeout(90_000);
   const env = boot();
   const app = await launch(env);
-  const skillsDir = path.join(env.homeDir, '.claude', 'skills');
+  const skillsDir = path.join(env.homeDir, '.agents', 'skills');
   // A skill file sitting somewhere else on disk, as if handed over.
   const inbox = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-inbox-'));
   const src = path.join(inbox, 'handover.md');
@@ -405,5 +416,26 @@ test('a skill you already have can be imported from disk', async () => {
     await expect(rowFor(win, 'handover').locator('.sk-row-desc')).toHaveText('Arrived from elsewhere.');
     // And it counts as new, which is the whole reason the view exists.
     expect((await sources(win)).map((r) => r.key)).toContain('__recent');
+  } finally { await app.close(); }
+});
+
+test('creating a skill with Codex selected installs it in the shared library', async () => {
+  test.setTimeout(90_000);
+  const env = boot('codex');
+  const app = await launch(env);
+  try {
+    const win = await openSkills(app);
+    await win.click('#btn-skills-new');
+    await win.fill('#ns-name', 'shared-release-check');
+    await win.fill('#ns-desc', 'Checks that skill creation is shared across agent vendors.');
+    await win.fill('#ns-content', '## Steps\n\nRead the shared instructions.');
+    await win.click('#ns-create');
+    const skill = path.join(env.homeDir, '.agents', 'skills', 'shared-release-check', 'SKILL.md');
+    await expect.poll(() => fs.existsSync(skill), { timeout: 10_000 }).toBe(true);
+    expect(fs.readFileSync(skill, 'utf8')).toContain('Read the shared instructions.');
+    expect(fs.realpathSync(path.join(env.homeDir, '.claude', 'skills', 'shared-release-check')))
+      .toBe(fs.realpathSync(path.dirname(skill)));
+    expect(fs.realpathSync(path.join(env.homeDir, '.kiro', 'skills', 'shared-release-check')))
+      .toBe(fs.realpathSync(path.dirname(skill)));
   } finally { await app.close(); }
 });

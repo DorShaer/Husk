@@ -278,7 +278,12 @@
 
       <div class="ob-stage" id="wn-stage"></div>
 
-      <div class="ob-dots" id="wn-dots" aria-hidden="true"></div>
+      <footer class="wn-footer">
+        <button class="btn-primary ob-cta wn-next" id="wn-next" type="button">
+          Next <span class="ob-nav-arrow">&#8594;</span>
+        </button>
+        <div class="ob-dots" id="wn-dots" aria-hidden="true"></div>
+      </footer>
     </div>
 
     <!-- Drag overlay -->
@@ -505,7 +510,6 @@
           </div>
         </div>
         <span class="tb-sep" aria-hidden="true"></span>
-        <button class="iconbtn iconbtn-primary" id="btn-new-session" title="New chat session (restarts the agent)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New chat</button>
         <button class="iconbtn iconbtn-square" id="btn-status-toggle" title="Toggle status panel" aria-label="Toggle status panel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>
@@ -547,7 +551,11 @@
             </button>
             <button class="rail-item rail-item-autopilot" data-page="autopilot" title="Autopilot" id="rail-autopilot">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"/><path d="M12 22v-6"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M16 12h6"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg><span class="rail-aut-pulse" id="rail-aut-pulse" hidden></span></span>
-              <span class="ri-label">Autopilot</span><span class="rail-beta-tag">BETA</span>
+              <span class="ri-label">Autopilot</span>
+            </button>
+            <button class="rail-item rail-item-brain" data-page="brain" title="Brain" id="rail-brain">
+              <span class="ri-icon"><svg viewBox="2 2.25 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.5A2.5 2.5 0 0 0 9.5 4a3 3 0 0 0-3 3 3.2 3.2 0 0 0-2 5.4A3.2 3.2 0 0 0 6.2 17 3 3 0 0 0 12 17.5z"/><path d="M12 6.5A2.5 2.5 0 0 1 14.5 4a3 3 0 0 1 3 3 3.2 3.2 0 0 1 2 5.4 3.2 3.2 0 0 1-1.7 4.6A3 3 0 0 1 12 17.5z"/><path d="M12 10.5H9.5M12 14h2.5"/></svg><span class="rail-aut-pulse" id="rail-brain-pulse" hidden></span></span>
+              <span class="ri-label">Brain</span>
             </button>
             <button class="rail-item" data-page="projects" title="Projects">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 11h18"/></svg></span>
@@ -560,8 +568,8 @@
           </nav>
         </div>
 
-        <div class="rail-section">
-          <div class="rail-section-head section-label">Tools</div>
+        <div class="rail-section" id="rail-tools">
+          <button class="rail-section-head section-label rail-fold" id="rail-tools-fold" type="button" aria-expanded="true" aria-controls="rail-tools">Tools<svg class="rail-fold-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
           <nav class="rail-nav">
             <button class="rail-item" data-page="skills" title="Skills">
               <span class="ri-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
@@ -689,6 +697,10 @@
             </button>
             <div id="tab-strip" class="tab-strip"></div>
             <div class="page-head-right">
+              <button class="ghost-btn" id="btn-canvas" aria-pressed="false" title="Show what changed, the pull request and its checks beside the chat">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v9M7.5 8.5h9M7.5 19h9"/></svg>
+                <span class="btn-label">Changes</span>
+              </button>
               <button class="ghost-btn" id="btn-split" title="Show two chats side by side (Ctrl+\)">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
                 <span class="btn-label">Split</span>
@@ -697,15 +709,15 @@
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 <span class="btn-label">Add context</span>
               </button>
-              <button class="ghost-btn" id="btn-restart" title="Restart agent"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> <span class="btn-label">Restart</span></button>
             </div>
           </div>
           <div id="autopilot-banner" class="autopilot-banner" hidden></div>
           <div id="trust-banner" class="trust-banner" hidden>
             <span class="trust-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg></span>
-            <span class="trust-banner-text">This folder is not trusted yet, so your saved permissions are ignored.</span>
+            <span class="trust-banner-text">Trust this folder to let the agent use the permissions you saved for it. <button class="trust-banner-why" id="btn-trust-why" type="button" aria-expanded="false" aria-controls="trust-banner-more">What does this do?</button></span>
             <button class="ghost-btn trust-banner-btn" id="btn-trust-folder" type="button">Trust this folder</button>
             <button class="trust-banner-x" id="btn-trust-dismiss" type="button" title="Dismiss" aria-label="Dismiss">×</button>
+            <p class="trust-banner-more" id="trust-banner-more" hidden>Until you trust a folder, the agent asks before each action here, even ones you already allowed, because a folder you just downloaded can carry settings of its own. Trusting says this folder is yours: your saved permissions apply, and so do the settings inside it. Only trust a folder whose contents you know. Trusting restarts the agent in this chat and keeps the conversation.</p>
           </div>
           <div class="chat-stage">
             <div id="chat-empty" class="chat-empty">
@@ -740,6 +752,7 @@
             <div class="terminal-wrap">
               <div id="terminal"></div>
             </div>
+            <aside id="chat-canvas" class="cc" aria-label="Changes, pull request and checks" hidden></aside>
           </div>
           </div>
         </div>
@@ -2421,6 +2434,67 @@
           </div>
         </div>
 
+        <!-- Brain. The canvas and the lists are built by brain-page.js; every
+             title is user text, so it lands through textContent. -->
+        <div class="page page-brain" data-page="brain" hidden>
+          <div class="page-head">
+            <div class="page-head-left">
+              <h1 class="page-title">Brain</h1>
+              <span class="page-sub" id="br-sub">What Husk remembers for this workspace, and how it connects</span>
+            </div>
+            <div class="page-head-right">
+              <div class="br-scope" role="group" aria-label="How much of the Brain to show">
+                <button class="br-scope-btn" type="button" data-all="0" aria-pressed="false" title="Only what is in reach of the open workspace">This workspace</button>
+                <button class="br-scope-btn is-on" type="button" data-all="1" aria-pressed="true" title="Everything Husk remembers, from every workspace">Whole brain</button>
+              </div>
+              <label class="br-switch" title="When on, a prompt wakes the memories that match it and each finished turn is remembered">
+                <input type="checkbox" id="br-enabled" checked />
+                <span>Recall into chats</span>
+              </label>
+              <button class="ghost-btn" id="br-add-note" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add note</span></button>
+              <button class="btn-primary" id="br-add-files" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg> Add files</button>
+            </div>
+          </div>
+          <div class="page-body br-body">
+            <div class="br-stats" id="br-stats" aria-label="Brain overview"></div>
+            <div class="br-last" id="br-last" role="status"></div>
+            <div class="br-workspace">
+            <aside class="br-side">
+              <form class="br-note" id="br-note-form" hidden>
+                <textarea id="br-note-text" rows="4" maxlength="4000" placeholder="Something worth remembering: a rule, a fact about this project, how a thing is done here"></textarea>
+                <div class="br-note-row">
+                  <label class="br-switch"><input type="checkbox" id="br-note-global" /><span>All workspaces</span></label>
+                  <span class="br-note-acts">
+                    <button class="ghost-btn" id="br-note-cancel" type="button">Cancel</button>
+                    <button class="btn-primary" type="submit">Remember</button>
+                  </span>
+                </div>
+              </form>
+              <div class="br-tabs" role="tablist" aria-label="Brain lists">
+                <button class="br-tab is-active" type="button" role="tab" data-tab="memories" aria-selected="true">Memories</button>
+                <button class="br-tab" type="button" role="tab" data-tab="activity" aria-selected="false">Activity <span class="br-tab-count" id="br-tab-activity-count"></span></button>
+              </div>
+              <input class="br-search" id="br-search" type="search" placeholder="Search memories" aria-label="Search memories" />
+              <div class="br-list" id="br-list"></div>
+            </aside>
+            <section class="br-reader" aria-label="Memory details">
+              <div class="br-network-panel">
+                <div class="br-network-head"><span class="section-label">Synapses</span><span id="br-network-count" class="br-detail-meta"></span><span class="br-net-tools" role="group" aria-label="Synapse view"><button type="button" class="br-net-btn" id="br-net-out" aria-label="Zoom out" title="Zoom out">−</button><span class="br-net-zoom" id="br-net-zoom">100%</span><button type="button" class="br-net-btn" id="br-net-in" aria-label="Zoom in" title="Zoom in">+</button><button type="button" class="br-net-btn br-net-fit" id="br-net-fit" title="Show all of it">Fit</button></span><button type="button" class="ghost-btn" id="br-network-full" aria-label="Expand synapse network" aria-pressed="false">Full screen</button></div>
+                <svg id="br-network" viewBox="0 0 800 340" role="group" aria-label="Interactive memory connections"></svg>
+                <div class="br-network-caption" id="br-network-caption" role="status">Scroll to zoom, drag to move. Select a memory or connection to explore it.</div>
+              </div>
+              <div class="br-reading">
+              <div class="br-empty" id="br-empty">
+                <div class="br-empty-title">Your knowledge, in context</div>
+                <div class="br-empty-text">Select a memory to read it, explore related information, or manage what Husk remembers.</div>
+              </div>
+              <div class="br-detail" id="br-detail" hidden></div>
+              </div>
+            </section>
+            </div>
+          </div>
+        </div>
+
         <!-- Schedule. Rows are built by sch-page.js through WfxDom: a schedule
              name is whatever the user typed. -->
         <div class="page page-schedule" data-page="schedule" hidden>
@@ -2774,7 +2848,47 @@
                       <button class="ghost-btn" id="btn-pref-cwd-pick" type="button">Pick&hellip;</button>
                     </span>
                   </label>
-                  <button class="btn-primary" id="pref-save">Save and restart</button>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Provider</span>
+                      <span class="pref-desc">Claude uses the default CLI. OpenAI-compatible talks straight to an endpoint (OpenAI, or a local Ollama) with your key and model, shown natively in Husk.</span>
+                    </span>
+                    <select id="pref-agent-vendor" aria-label="Provider">
+                      <option value="claude">Claude (default)</option>
+                      <option value="openai">OpenAI-compatible (bring your own key)</option>
+                    </select>
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Custom endpoint</span>
+                      <span class="pref-desc">For OpenAI-compatible: the base URL, e.g. https://api.openai.com/v1 or http://localhost:11434/v1 (Ollama). For Claude: an Anthropic-compatible endpoint or a local proxy; empty keeps the subscription.</span>
+                    </span>
+                    <input type="text" id="pref-agent-base-url" placeholder="https://api.openai.com/v1 or http://localhost:11434/v1" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">API key</span>
+                      <span class="pref-desc">Sent to the endpoint above. Stored locally in your Husk config.</span>
+                    </span>
+                    <span class="pref-field-group">
+                      <input type="password" id="pref-agent-api-key" placeholder="sk-..." spellcheck="false" autocomplete="off" />
+                      <button class="ghost-btn pref-key-reveal" id="btn-pref-key-reveal" type="button" aria-label="Show key" aria-pressed="false" title="Show key">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </button>
+                    </span>
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Model</span>
+                      <span class="pref-desc">For OpenAI-compatible only. Pick from the endpoint, or type one.</span>
+                    </span>
+                    <span class="pref-field-group">
+                      <input type="text" id="pref-agent-model" list="pref-agent-model-list" placeholder="gpt-6-luna" spellcheck="false" autocomplete="off" />
+                      <datalist id="pref-agent-model-list"></datalist>
+                      <button class="ghost-btn" id="btn-pref-models" type="button">Load&hellip;</button>
+                    </span>
+                  </label>
+                  <button class="btn-primary" id="pref-save" title="Saves these settings and restarts the agent in the open chat. Husk itself keeps running.">Save and restart agent</button>
                 </section>
               </div><!-- /pref-section agent -->
 
@@ -2851,6 +2965,20 @@
               <div class="pref-section" data-prefs-section="appearance">
                 <section class="pref-card">
                   <div class="pref-card-title section-label">Appearance</div>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Interface size</span>
+                      <span class="pref-desc">How large text and controls are. Also Ctrl/Cmd with + and -. Remembered between launches.</span>
+                    </span>
+                    <select id="pref-ui-size">
+                      <option value="-2">Smaller</option>
+                      <option value="-1">Small</option>
+                      <option value="0">Default</option>
+                      <option value="1">Large</option>
+                      <option value="2">Larger</option>
+                      <option value="3">Largest</option>
+                    </select>
+                  </label>
                   <label class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">Theme</span>
@@ -4025,9 +4153,12 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     <script src="af-page.js"></script>
     <script src="tm-page.js"></script>
     <script src="sch-page.js"></script>
+    <script src="brain-page.js"></script>
     <script src="sc-dom.js"></script>
     <script src="sc-page.js"></script>
     <script src="../lib/chat-events.js"></script>
+    <script src="../lib/turn-changes.js"></script>
+    <script src="chat-canvas.js"></script>
     <script src="chat-md.js"></script>
     <script src="chat-ui.js"></script>
     <script src="app.js"></script>

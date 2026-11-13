@@ -42,6 +42,27 @@ const ctx = (over = {}) => ({
   ...over,
 });
 
+test('disambiguateTitles adds vendor labels only when vendors share a title', () => {
+  const items = [
+    { title: 'Same task', agent: '/usr/bin/claude' },
+    { title: 'Same   task', agent: 'codex' },
+    { title: 'Different task', agent: 'gemini' },
+  ];
+  assert.deepEqual(sv.disambiguateTitles(items), [
+    'Same task · Claude',
+    'Same task · Codex',
+    'Different task',
+  ]);
+  assert.deepEqual(sv.disambiguateTitles([
+    { title: 'Same task', agent: 'claude' },
+    { title: 'Same task', agent: 'claude-code' },
+  ]), ['Same task', 'Same task']);
+  assert.deepEqual(sv.disambiguateTitles([
+    { title: 'New Chat', agent: 'codex' },
+    { title: 'New Chat', agent: 'gemini' },
+  ]), ['New Chat', 'New Chat']);
+});
+
 // ─── Day arithmetic ─────────────────────────────────────────────────────────
 
 test('dayDiff counts calendar days, not elapsed 24h blocks', () => {

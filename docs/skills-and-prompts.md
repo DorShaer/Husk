@@ -4,20 +4,20 @@ Husk keeps two different things on two different pages, because they behave diff
 
 | | Skills | Prompts |
 |---|---|---|
-| Live in | `~/.claude/skills/` | `~/.config/husk/prompts/` |
-| Loaded by | the agent, on its own | nothing; you send them |
+| Live in | `~/.agents/skills/` | `~/.config/husk/prompts/` |
+| Loaded by | the agent, on its own when relevant | nothing; you send them |
 | Page | **Skills** | **Prompts** |
 
-## Skills: `~/.claude/skills/`
+## Skills: `~/.agents/skills/`
 
-A skill is a folder holding a `SKILL.md`, plus any files it needs. The agent reads the front-matter `name` and `description` at startup and decides for itself when a skill is relevant, then reads the body at the moment it invokes it.
+A skill is a folder holding a `SKILL.md`, plus any files it needs. Husk stores skills in the shared Agent Skills library at `~/.agents/skills/`. Codex, Copilot and Gemini use that location directly. Husk links shared skills into Claude Code's `~/.claude/skills/` and Kiro's `~/.kiro/skills/` so their native skill loaders can use the same files. Aider has no native skill loader; Husk's startup instructions point it to the shared library and tell it to read a matching `SKILL.md` when relevant.
 
-That is the whole contract, and it is why the Skills page has no "run this" button. An enabled skill is already available; pasting its body into the chat would spend the context the skill exists to save and take the decision away from the model.
+Each agent decides whether a skill applies, then reads its body and supporting files when it needs them. The Skills page has no "run this" button: an enabled skill is available to the agent without pasting the whole body into every chat.
 
 Husk's job is to manage what the agent can see:
 
 - **List** every skill folder, including disabled ones (prefixed `_disabled_`).
-- **Enable or disable**, one at a time or a whole source at once. Toggling renames the directory between `<name>` and `_disabled_<name>`, so the agent picks it up or skips it on its next launch.
+- **Enable or disable**, one at a time or a whole source at once. Disabled shared skills move outside the active library, so native skill loaders do not see them. Claude skills that predate the shared library retain their source folder and are linked into the shared library while enabled.
 - **Import** a skill you already have.
 - **Show** each description, so the library is scannable.
 
@@ -50,8 +50,10 @@ Clicking a row opens its detail panel with the full `SKILL.md`.
 ### Adding a skill
 
 - **Create skill** writes a new one from a name, description and body.
-- **Import** picks one or more `.md` files and installs each as `~/.claude/skills/<name>/SKILL.md`.
-- **Drag a `.md` onto the window** and choose **Install as skill**, which lands in the same place. The other target, **Add to context**, copies into `~/.claude/MEMORY/CONTEXT/` and puts the quoted path in the agent's pending input instead.
+- **Import** picks one or more `.md` files and installs each as `~/.agents/skills/<name>/SKILL.md`.
+- **Drag a `.md` onto the window** and choose **Install as skill**, which installs it in the shared library. The other target, **Add to context**, copies into the context directory and puts the quoted path in the agent's pending input instead.
+
+Older skills already in `~/.claude/skills/` remain available. If the shared library does not exist yet, Husk moves the old skills directory into it and creates per-skill links in Claude Code's native directory. If both locations already contain skills, Husk keeps the existing files and links non-conflicting Claude skills into the shared library. Husk also uses `KIRO_HOME` when Kiro has a custom home directory.
 
 ## Prompts: `~/.config/husk/prompts/`
 

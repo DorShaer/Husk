@@ -111,3 +111,44 @@ test('transcriptToEvents routes by agent and isSyntheticPrompt spots CLI echoes'
   assert.equal(isSyntheticPrompt('  <command-name>/model</command-name>'), true);
   assert.equal(isSyntheticPrompt('hello'), false);
 });
+
+test('a replayed prompt is what was typed, without notes Husk sent ahead of it', () => {
+  const framed = '[Husk Brain: notes kept for this workspace that may bear on the message below.]\n- deploy: goes through the blue pipeline\n[End of Husk Brain notes]\n\nhow does the deploy work?';
+  const claude = claudeTranscriptToEvents(lines([
+    { type: 'user', message: { role: 'user', content: framed } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'text', text: framed }] } },
+  ]));
+  assert.deepEqual(claude.filter((e) => e.type === 'user').map((e) => e.text), ['how does the deploy work?', 'how does the deploy work?']);
+  const copilot = copilotEventsToEvents(lines([{ type: 'user.message', data: { content: framed } }]));
+  assert.deepEqual(copilot.filter((e) => e.type === 'user').map((e) => e.text), ['how does the deploy work?']);
+});
+
+
+test('codex rollout replays messages once, skips instructions, and restores tool output', () => {
+  const raw = lines([
+    { type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'private instructions' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>cwd</environment_context>' }] } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'check release' } },
+    { type: 'response_item', timestamp: '2026-11-13T02:00:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'check release' }] } },
+    { type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'c1', name: 'exec', input: 'npm test' } },
+    { type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'c1', output: '292 passed' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'All tests pass.' } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'All tests pass.' }] } },
+    { type: 'event_msg', payload: { type: 'turn_aborted' } },
+  ]);
+  const events = transcriptToEvents('codex', raw + '{torn');
+  const thread = fold(events);
+  assert.deepEqual(thread.items.filter((i) => i.kind === 'user' || i.kind === 'text').map((i) => i.text), ['check release', 'All tests pass.']);
+  assert.equal(events.find((e) => e.type === 'user').at, Date.parse('2026-11-13T02:00:00Z'));
+  assert.equal(thread.items.find((i) => i.kind === 'tool').output, '292 passed');
+  assert.equal(thread.turnOpen, false);
+});
+
+test('codex event-only rollout tails retain the conversation', () => {
+  const events = transcriptToEvents('codex', lines([
+    { type: 'event_msg', payload: { type: 'user_message', message: 'continue' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'Done.' } },
+  ]));
+  assert.equal(events.filter((e) => e.type === 'user').length, 1);
+  assert.equal(events.find((e) => e.type === 'text_final').text, 'Done.');
+});

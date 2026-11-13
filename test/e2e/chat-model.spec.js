@@ -7,6 +7,17 @@ const os = require('node:os');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
+
+// The readouts describe the focused tab's own agent, so the stand-in process
+// has to answer to the agent's name.
+function agentShim(homeDir, name) {
+  const bin = path.join(homeDir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, name), '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(path.join(bin, name), 0o755);
+  return `${bin}${path.delimiter}${process.env.PATH}`;
+}
+
 test('status panel shows the active model', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
@@ -26,7 +37,7 @@ test('status panel shows the active model', async () => {
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
+    env: { ...process.env, PATH: agentShim(homeDir, 'claude'), HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
     timeout: 30_000,
   });
   const win = await app.firstWindow({ timeout: 30_000 });
@@ -34,7 +45,7 @@ test('status panel shows the active model', async () => {
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
 
   // Spawn a pty in the matching cwd so activePtyCwd is set, then read stats.
-  await win.evaluate((cwd) => window.husk.pty.restart({ cols: 80, rows: 24, command: 'true', cwd }), realCwd);
+  await win.evaluate((cwd) => window.husk.pty.restart({ cols: 80, rows: 24, command: 'claude', cwd }), realCwd);
   await win.waitForTimeout(300);
 
   const result = await win.evaluate(async () => {
@@ -99,13 +110,13 @@ test('status panel shows Copilot event-log usage', async () => {
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1', COPILOT_HOME: path.join(homeDir, '.copilot') },
+    env: { ...process.env, PATH: agentShim(homeDir, 'copilot'), HOME: homeDir, USERPROFILE: homeDir, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1', COPILOT_HOME: path.join(homeDir, '.copilot') },
     timeout: 30_000,
   });
   const win = await app.firstWindow({ timeout: 30_000 });
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
-  await win.evaluate((cwd) => window.husk.pty.restart({ cols: 80, rows: 24, command: 'true', cwd }), realCwd);
+  await win.evaluate((cwd) => window.husk.pty.restart({ cols: 80, rows: 24, command: 'copilot', cwd }), realCwd);
   await win.waitForTimeout(300);
 
   const result = await win.evaluate(async () => {

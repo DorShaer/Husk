@@ -1,5 +1,7 @@
 'use strict';
 
+const { withoutContext } = require('./brain');
+
 function collapseTitle(value, limit = 120) {
   return String(value || '')
     .replace(/\s+/g, ' ')
@@ -61,7 +63,7 @@ function deriveCopilotSessionTitleFromEventsText(text) {
       firstTitle = titleFromEvent(event);
     }
     if (!firstUser && (type === 'user.message' || type === 'user' || /^user[._-]/.test(type))) {
-      firstUser = collapseTitle(userTextFromEvent(event));
+      firstUser = collapseTitle(withoutContext(userTextFromEvent(event)));
     }
     if (!sawAssistant && (type === 'assistant.message' || type === 'assistant' || /^assistant[._-]/.test(type))) {
       sawAssistant = true;

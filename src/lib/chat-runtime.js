@@ -1,7 +1,7 @@
 'use strict';
 
-// Chat-mode runtime: one headless agent child per tab, driven over ACP or
-// claude stream-json, surfacing normalized chat events. Process handling is
+// Chat-mode runtime: one headless agent child per tab, driven over ACP,
+// codex app-server or claude stream-json, surfacing normalized chat events. Process handling is
 // injected (spawn, env, exe resolution, event sink) so the whole thing is unit
 // testable with a fake child; main.js supplies the real ones.
 //
@@ -17,6 +17,10 @@ const {
 const {
   normalizeAcpUpdate, normalizeAcpPermission, normalizeAcpSession, normalizeClaudeEvent,
 } = require('./chat-events');
+const { openaiTurn } = require('./openai-stream');
+const {
+  APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision,
+} = require('./codex-app-server');
 
 const STDERR_KEEP = 2000;
 // Replay log bounds. A renderer reload rebuilds each tab's thread from this
@@ -25,7 +29,8 @@ const STDERR_KEEP = 2000;
 const LOG_MAX_EVENTS = 4000;
 const LOG_MAX_TEXT = 400000;
 
-const AUTH_HINT = 'Switch this tab to Terminal mode to sign in, then switch back to Chat.';
+const ALLOW_ALL = 'allow-all';
+
 // An ACP agent answers initialize within a second or two; one that never does
 // (an older build, a wrapper that ignores --acp) must fail the start instead
 // of leaving the tab on "Starting" forever.
@@ -44,14 +49,21 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
   // are kept as-is since the resolved event follows them in the log.
   function record(s, ev) {
     if (!s || !ev) return;
+    const timed = ev.type === 'user' || ev.type === 'text' || ev.type === 'text_final';
+    const rawAt = Number(ev.at);
+    const item = timed
+      ? Object.assign({}, ev, { at: Number.isFinite(rawAt) && rawAt > 0 ? rawAt : Date.now() })
+      : ev;
     const log = s.log;
     const last = log[log.length - 1];
-    if ((ev.type === 'text' || ev.type === 'thought') && last && last.type === ev.type) {
-      last.text += ev.text;
-      s.logText += ev.text.length;
+    if ((item.type === 'text' || item.type === 'thought') && last && last.type === item.type) {
+      last.text += item.text;
+      s.logText += item.text.length;
     } else {
-      log.push(ev.type === 'text' || ev.type === 'thought' ? { type: ev.type, text: ev.text } : ev);
-      if (ev.text) s.logText += String(ev.text).length;
+      log.push(item.type === 'text' || item.type === 'thought'
+        ? Object.assign({ type: item.type, text: item.text }, item.at === undefined ? {} : { at: item.at })
+        : item);
+      if (item.text) s.logText += String(item.text).length;
     }
     while (log.length > LOG_MAX_EVENTS || (s.logText > LOG_MAX_TEXT && log.length > 1)) {
       const dropped = log.shift();
@@ -68,6 +80,44 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       if (s) record(s, ev);
       if (typeof emit === 'function') emit(tabId, ev);
     }
+  }
+
+  // "Allow all" is one answer for every approval a chat asks for from then on,
+  // until it is switched off or the agent exits. Husk gives the answer itself,
+  // so it works the same for every CLI, and each approval still lands in the
+  // thread, already answered, so what ran unasked can be read back. A question
+  // put to the user is not an approval, and is always asked.
+  const isQuestion = (card) => card.title === 'AskUserQuestion' && card.input && Array.isArray(card.input.questions);
+  function offer(s, tabId, card) {
+    if (!card || card.type !== 'permission' || isQuestion(card)) { send(tabId, card); return; }
+    const own = Array.isArray(card.options) ? card.options : [];
+    if (!s.cards) s.cards = new Map();
+    s.cards.set(String(card.requestId), own);
+    const options = own.slice();
+    const at = own.findIndex((o) => String((o && o.kind) || '').startsWith('reject'));
+    options.splice(at === -1 ? options.length : at, 0, { optionId: ALLOW_ALL, name: 'Allow all', kind: 'allow_all' });
+    send(tabId, Object.assign({}, card, { options }));
+    if (s.allowAll) permission({ tabId, requestId: card.requestId, optionId: ALLOW_ALL });
+  }
+
+  // The agent's own answer that allows one request, which is what "Allow all"
+  // sends each time: the agent is never handed a standing rule.
+  function onceOption(s, id) {
+    if (s.transport === 'codex') return 'accept';
+    if (s.transport !== 'acp') return 'allow';
+    const own = (s.cards && s.cards.get(id)) || [];
+    const pick = own.find((o) => o && o.kind === 'allow_once') || own.find((o) => o && String(o.kind || '').startsWith('allow'));
+    return pick ? pick.optionId : null;
+  }
+
+  function allowAll({ tabId, on } = {}) {
+    const s = sessions.get(tabId);
+    if (!s) return { ok: false, error: 'no chat session' };
+    if (!!s.allowAll !== !!on) {
+      s.allowAll = !!on;
+      send(tabId, { type: 'allow_all', on: !!on });
+    }
+    return { ok: true };
   }
 
   function tailStderr(s) {
@@ -111,6 +161,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       if (s.acp) s.acp.close('agent exited');
       for (const r of s.pendingPerms.values()) { try { r(null); } catch (_) {} }
       s.pendingPerms.clear();
+      // Allow all ends with the agent it was given to.
+      if (s.allowAll) { s.allowAll = false; send(s.tabId, { type: 'allow_all', on: false }); }
       s.exited = true;
       if (sessions.get(s.tabId) === s) sessions.delete(s.tabId);
       // A child Husk stopped or replaced on purpose (stop, restart in place)
@@ -127,10 +179,38 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     try { s.child.stdin.write(encodeLine(obj)); return true; } catch (e) { note(`chat stdin write failed: ${e && e.message}`); return false; }
   }
 
+  // Records the live codex turn. A stop pressed before codex named the turn
+  // could not be sent then, so it goes out the moment the id is known.
+  function codexTurn(s, id) {
+    if (!id || s.turnId === String(id)) return;
+    s.turnId = String(id);
+    if (!s.cancelWanted) return;
+    s.cancelWanted = false;
+    s.acp.request('turn/interrupt', { threadId: s.sessionId, turnId: s.turnId }).catch(() => {});
+  }
+
   // claudeSessionId pins claude's transcript to a known id (the same trick
   // spawnPty uses) so the status panel can find this tab's .jsonl by name.
-  async function start({ tabId, command, cwd, claudeSessionId, keepLog } = {}) {
+  async function start({ tabId, command, cwd, claudeSessionId, keepLog, openai } = {}) {
     if (!tabId) return { ok: false, error: 'tabId required' };
+    // Bring your own key, native: an OpenAI-compatible endpoint (a vendor, or a
+    // local Ollama). No child process; prompts stream over HTTP and surface as
+    // the same events the claude transport emits.
+    if (openai && openai.baseUrl && openai.model) {
+      if (sessions.has(tabId)) await stop({ tabId });
+      const s = {
+        tabId, transport: 'openai', exe: 'openai', command: String(command || '').trim(), cwd: cwd || null,
+        child: null, framer: null, acp: null, sessionId: 'openai-' + Date.now().toString(36),
+        pendingPerms: new Map(), permInputs: new Map(), stderr: '', exited: false, turnOpen: false,
+        log: Array.isArray(keepLog) ? keepLog.slice() : [], logText: 0, logTruncated: false, startedAt: Date.now(),
+        openai: { baseUrl: String(openai.baseUrl), apiKey: String(openai.apiKey || ''), model: String(openai.model) },
+        messages: [], abort: null,
+      };
+      for (const ev of s.log) if (ev && ev.text) s.logText += String(ev.text).length;
+      sessions.set(tabId, s);
+      send(tabId, { type: 'session', sessionId: s.sessionId, model: openai.model, models: { current: openai.model, available: [] } });
+      return { ok: true, transport: 'openai', sessionId: s.sessionId };
+    }
     const transport = transportFor(command);
     if (!transport) return { ok: false, error: `${String(command || '').split(/\s+/)[0] || 'agent'} has no chat protocol yet` };
     if (sessions.has(tabId)) await stop({ tabId });
@@ -159,7 +239,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         onPermission: (params) => new Promise((resolve) => {
           const requestId = 'p' + (++permSeq);
           s.pendingPerms.set(requestId, resolve);
-          send(tabId, normalizeAcpPermission(requestId, params));
+          offer(s, tabId, normalizeAcpPermission(requestId, params));
         }),
       });
       s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`acp non-json line: ${raw.slice(0, 200)}`));
@@ -186,11 +266,65 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       } catch (e) {
         const detail = tailStderr(s) || (e && e.message) || 'ACP handshake failed';
         // An agent that is not signed in refuses the session (auth_required
-        // in ACP terms, or its own login error on stderr). The way back is the
-        // CLI's interactive login, which lives in Terminal mode.
+        // in ACP terms, or its own login error on stderr). The result says
+        // so, and the host opens the CLI's own sign-in.
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail) || (e && e.code === -32000);
         await stop({ tabId });
-        return { ok: false, error: authy ? `${detail}\n${AUTH_HINT}` : detail };
+        return { ok: false, error: detail, auth: authy };
+      }
+      return { ok: true, transport, sessionId: s.sessionId };
+    }
+
+    if (transport === 'codex') {
+      try { s.child = spawnChild(exe, APP_SERVER_ARGS.slice(), cwd, env); } catch (e) { return { ok: false, error: e.message }; }
+      s.acp = createAcpClient({
+        send: (msg) => writeLine(s, msg),
+        onNotification: (method, params) => {
+          if (method === 'turn/started' && params.turn) codexTurn(s, params.turn.id);
+          if (method === 'turn/completed') { s.turnOpen = false; s.turnId = null; s.cancelWanted = false; }
+          send(tabId, normalizeCodexNotification(method, params));
+        },
+        onRequest: (method, params) => {
+          const requestId = 'p' + (++permSeq);
+          const card = normalizeCodexApproval(requestId, method, params);
+          if (!card) return undefined;
+          return new Promise((resolve) => {
+            s.pendingPerms.set(requestId, (optionId) => resolve(codexDecision(optionId)));
+            offer(s, tabId, card);
+          });
+        },
+      });
+      s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`codex non-json line: ${raw.slice(0, 200)}`));
+      s.codexModel = codexModel(command);
+      sessions.set(tabId, s);
+      wireChild(s);
+      try {
+        let timer = null;
+        const expiry = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${exeName} did not answer the app-server handshake within ${Math.round(handshakeLimit / 1000)}s. It may not support app-server in this version.`)), handshakeLimit);
+          if (timer && timer.unref) timer.unref();
+        });
+        const handshake = (async () => {
+          await s.acp.request('initialize', { clientInfo: { name: 'husk', title: 'Husk', version: String(appVersion || '0.0.0') }, capabilities: null });
+          s.acp.notify('initialized');
+          // The model list only feeds the picker; a CLI without it still chats.
+          const models = await s.acp.request('model/list', {}).catch(() => null);
+          const resumeId = codexResumeId(command);
+          const thread = await s.acp.request(resumeId ? 'thread/resume' : 'thread/start', Object.assign(
+            { cwd: cwd || process.cwd() }, resumeId ? { threadId: resumeId, excludeTurns: true } : {}, s.codexModel ? { model: s.codexModel } : {}));
+          return { thread, models: models && models.data };
+        })();
+        const res = await Promise.race([handshake, expiry]);
+        clearTimeout(timer);
+        s.codexModel = null;
+        const ev = codexSession(res.thread, res.models);
+        s.sessionId = ev.sessionId || null;
+        send(tabId, ev);
+      } catch (e) {
+        const detail = (e && e.message) || tailStderr(s) || 'app-server handshake failed';
+        const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail);
+        await stop({ tabId });
+        return { ok: false, error: detail, auth: authy };
       }
       return { ok: true, transport, sessionId: s.sessionId };
     }
@@ -236,7 +370,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         if (ne.type === 'session' && ne.sessionId) s.sessionId = ne.sessionId;
         if (ne.type === 'turn_end') s.turnOpen = false;
       }
-      send(tabId, events);
+      for (const ne of events) { if (ne && ne.type === 'permission') offer(s, tabId, ne); else send(tabId, ne); }
     }, (raw) => note(`claude non-json line: ${raw.slice(0, 200)}`));
     sessions.set(tabId, s);
     wireChild(s);
@@ -265,20 +399,41 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return out;
   }
 
-  async function prompt({ tabId, text, images } = {}) {
+  // context is reference text Husk adds for the agent alone (what the Brain
+  // recalled). It rides ahead of the prompt on the wire and stays out of the
+  // replay log, so the thread shows what the user typed.
+  async function prompt({ tabId, text, images, context, at } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const body = String(text || '');
     const pics = cleanImages(images);
     if (!body.trim() && !pics.length) return { ok: false, error: 'empty prompt' };
+    const wire = context && body.trim() ? String(context) + '\n\n' + body : body;
+    const sentAt = Number.isFinite(Number(at)) && Number(at) > 0 ? Number(at) : Date.now();
     // The renderer paints the user's bubble itself before calling here, so the
     // log takes it directly rather than echoing it back.
-    record(s, Object.assign({ type: 'user', text: body }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
+    record(s, Object.assign({ type: 'user', text: body, at: sentAt }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
+    if (s.transport === 'openai') {
+      s.messages.push({ role: 'user', content: wire });
+      s.turnOpen = true;
+      s.abort = new AbortController();
+      const started = Date.now();
+      openaiTurn({ ...s.openai, messages: s.messages, signal: s.abort.signal },
+        (ev) => { if (!s.stopped) send(tabId, normalizeClaudeEvent(ev)); },
+        (err, r) => {
+          s.turnOpen = false; s.abort = null;
+          if (s.stopped) return;
+          if (err) { send(tabId, normalizeClaudeEvent({ type: 'result', subtype: 'error', is_error: true, result: err.message })); return; }
+          s.messages.push({ role: 'assistant', content: (r && r.text) || '' });
+          send(tabId, normalizeClaudeEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', duration_ms: Date.now() - started }));
+        });
+      return { ok: true };
+    }
     if (s.transport === 'acp') {
       if (!s.sessionId) return { ok: false, error: 'session not ready' };
       s.turnOpen = true;
       send(tabId, { type: 'turn_start' });
-      s.acp.prompt(s.sessionId, textPrompt(body, pics))
+      s.acp.prompt(s.sessionId, textPrompt(wire, pics))
         .then((res) => {
           s.turnOpen = false;
           send(tabId, { type: 'turn_end', stopReason: (res && res.stopReason) || 'end_turn' });
@@ -290,38 +445,89 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         });
       return { ok: true };
     }
+    if (s.transport === 'codex') {
+      if (!s.sessionId) return { ok: false, error: 'session not ready' };
+      s.turnOpen = true;
+      // A model picked since the last turn rides on this one and holds from then on.
+      const model = s.codexModel;
+      s.codexModel = null;
+      s.acp.request('turn/start', Object.assign({ threadId: s.sessionId, input: codexInput(wire, pics) }, model ? { model } : {}))
+        .then((res) => { if (res && res.turn && s.turnOpen) codexTurn(s, res.turn.id); })
+        .catch((e) => {
+          s.turnOpen = false;
+          if (s.exited) return;
+          send(tabId, { type: 'turn_end', stopReason: 'error', isError: true, text: (e && e.message) || 'prompt failed' });
+        });
+      return { ok: true };
+    }
     s.turnOpen = true;
-    return { ok: writeLine(s, encodeUserMessage(body, pics)) };
+    return { ok: writeLine(s, encodeUserMessage(wire, pics)) };
+  }
+
+  // A turn Husk answered itself (a slash command run through the CLI's own
+  // non-interactive form). It is logged like any other, so a reload keeps it.
+  function local({ tabId, text, reply, isError } = {}) {
+    const s = sessions.get(tabId);
+    if (!s) return { ok: false, error: 'no chat session' };
+    record(s, { type: 'user', text: String(text || '') });
+    send(tabId, [
+      { type: 'turn_start' },
+      { type: 'text_final', text: String(reply || '') },
+      { type: 'turn_end', stopReason: isError ? 'error' : 'end_turn', isError: !!isError },
+    ]);
+    return { ok: true };
   }
 
   async function cancel({ tabId } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false };
+    if (s.transport === 'openai') {
+      if (s.abort) { try { s.abort.abort(); } catch (_) {} }
+      s.turnOpen = false;
+      return { ok: true };
+    }
     if (s.transport === 'acp') {
       if (s.sessionId) s.acp.cancel(s.sessionId);
+      return { ok: true };
+    }
+    if (s.transport === 'codex') {
+      if (s.turnId) s.acp.request('turn/interrupt', { threadId: s.sessionId, turnId: s.turnId }).catch(() => {});
+      else if (s.turnOpen) s.cancelWanted = true;
       return { ok: true };
     }
     return { ok: writeLine(s, encodeInterrupt('i' + Date.now().toString(36))) };
   }
 
-  async function permission({ tabId, requestId, optionId } = {}) {
+  async function permission({ tabId, requestId, optionId, answers } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const id = String(requestId || '');
-    if (s.transport === 'acp') {
+    const all = String(optionId) === ALLOW_ALL;
+    const answer = all ? onceOption(s, id) : optionId;
+    if (s.transport === 'acp' || s.transport === 'codex') {
       const resolve = s.pendingPerms.get(id);
       if (!resolve) return { ok: false, error: 'unknown permission request' };
       s.pendingPerms.delete(id);
-      resolve(optionId === null || optionId === undefined ? null : String(optionId));
+      resolve(answer === null || answer === undefined ? null : String(answer));
     } else {
       const perm = s.permInputs.get(id);
       if (perm === undefined) return { ok: false, error: 'unknown permission request' };
       s.permInputs.delete(id);
-      const choice = String(optionId);
+      const choice = String(answer);
       const allow = choice === 'allow' || choice === 'allow-session';
-      writeLine(s, encodePermissionResponse(id, allow, perm.input, undefined, choice === 'allow-session' ? perm.suggestions : undefined));
+      // AskUserQuestion is answered by returning the picks in updatedInput.answers
+      // (keyed by question text and header), which claude reads as the tool result.
+      const input = (allow && answers && typeof answers === 'object') ? { ...perm.input, answers } : perm.input;
+      writeLine(s, encodePermissionResponse(id, allow, input, undefined, choice === 'allow-session' ? perm.suggestions : undefined));
     }
+    if (s.cards) s.cards.delete(id);
     send(tabId, { type: 'permission_resolved', requestId: id, optionId: String(optionId) });
+    if (all && !s.allowAll) {
+      s.allowAll = true;
+      send(tabId, { type: 'allow_all', on: true });
+      // Whatever else was waiting is covered by the same answer.
+      for (const other of [...(s.cards ? s.cards.keys() : [])]) permission({ tabId, requestId: other, optionId: ALLOW_ALL });
+    }
     return { ok: true };
   }
 
@@ -339,6 +545,11 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       try { await s.acp.setModel(s.sessionId, id); } catch (e) { return { ok: false, error: (e && e.message) || 'the agent refused the model' }; }
       send(tabId, { type: 'session', model: String(modelName || id) });
       return { ok: true, transport: 'acp', model: id };
+    }
+    if (s.transport === 'codex') {
+      s.codexModel = id;
+      send(tabId, { type: 'session', model: String(modelName || id) });
+      return { ok: true, transport: 'codex', model: id };
     }
     // claude takes set_model on its control channel and applies it from the
     // next turn, with no restart (verified on claude 2.1.310).
@@ -397,6 +608,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     if (!s) return { ok: true };
     s.stopped = true;
     sessions.delete(tabId);
+    if (s.abort) { try { s.abort.abort(); } catch (_) {} }
     try { if (s.child && s.child.stdin) s.child.stdin.end(); } catch (_) {}
     killTree(s);
     return { ok: true };
@@ -426,7 +638,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return out;
   }
 
-  return { start, prompt, cancel, permission, setModel, stop, stopAll, info, list, size: () => sessions.size };
+  return { start, prompt, local, cancel, permission, allowAll, setModel, stop, stopAll, info, list, size: () => sessions.size };
 }
 
 module.exports = { createChatRuntime };

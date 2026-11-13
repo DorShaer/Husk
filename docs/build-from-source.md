@@ -100,8 +100,9 @@ npm run test:e2e   # Playwright smoke that boots the real app
 ## Uninstall
 
 ```bash
-./installer/uninstall.sh             # removes launcher, OS registration, config, voice models
-./installer/uninstall.sh --keep-data # keeps ~/.config/husk/ and downloaded voices
+./installer/uninstall.sh               # removes launcher and OS registration; asks whether to keep your data (Enter keeps it)
+./installer/uninstall.sh --keep-data   # keeps ~/.config/husk/ and downloaded voices, without asking
+./installer/uninstall.sh --remove-data # deletes them too, without asking
 ```
 
 The clone and `node_modules/` are always left intact, so `./installer/install.sh` can re-run.

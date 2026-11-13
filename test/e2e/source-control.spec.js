@@ -51,6 +51,14 @@ async function ready(app) {
   return win;
 }
 
+async function setWindowContentSize(app, width, height) {
+  await app.evaluate(({ BrowserWindow }, size) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    setTimeout(() => win.setContentSize(size.width, size.height), 20);
+    return true;
+  }, { width, height });
+}
+
 // The mutating gate accepts a root only when it is one of the pinned projects,
 // so the fixture is pinned and made active before the window opens.
 function seed(dir, over) {
@@ -689,7 +697,7 @@ test('the page keeps a wide diff and a long path inside the diff pane at any win
   const rel = addWideFile(repo);
   const app = await launch(seed(repo.dir));
   const win = await ready(app);
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1280, 800); });
+  await setWindowContentSize(app, 1280, 800);
   await openSource(win, repo.dir);
 
   await win.locator('#sc-list .sc-row[data-path="' + rel + '"]').click();
@@ -717,7 +725,7 @@ test('the page keeps a wide diff and a long path inside the diff pane at any win
   expect(wide.columns).toBe(2);
 
   // Narrow enough for the single-column breakpoint, where the same rules hold.
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(760, 640); });
+  await setWindowContentSize(app, 760, 640);
   await expect.poll(async () => (await overflow(win)).columns, { timeout: 10_000 }).toBe(1);
 
   const narrow = await overflow(win);
