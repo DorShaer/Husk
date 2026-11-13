@@ -2114,8 +2114,23 @@ ipcMain.handle('brain:addFiles', async (_e, { global } = {}) => {
   for (const p of picked.filePaths) {
     const name = path.basename(p);
     try {
-      if (fs.statSync(p).size > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
-      const r = brain.addFile({ path: p, content: fs.readFileSync(p, 'utf8'), scope });
+      let content;
+      const fd = fs.openSync(p, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+      try {
+        const st = fs.fstatSync(fd);
+        if (!st.isFile()) { failed.push({ name, error: 'choose a regular file to learn from' }); continue; }
+        if (st.size > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
+        const buf = Buffer.alloc(BRAIN_FILE_MAX_BYTES + 1);
+        let total = 0;
+        while (total < buf.length) {
+          const n = fs.readSync(fd, buf, total, buf.length - total, total);
+          if (!n) break;
+          total += n;
+        }
+        if (total > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
+        content = buf.subarray(0, total).toString('utf8');
+      } finally { fs.closeSync(fd); }
+      const r = brain.addFile({ path: p, content, scope });
       if (r.ok) added.push({ id: r.node.id, name, chunks: r.chunks });
       else failed.push({ name, error: r.error });
     } catch (err) { failed.push({ name, error: err.message }); }
@@ -10493,12 +10508,6 @@ function listAgentSessions(opts = {}) {
     }
   }
   const deduped = [...dedup.values()].sort((a, b) => b.mtime - a.mtime);
-  if (process.env.HUSK_SXDUMP) {
-    try {
-      const line = deduped.slice(0, 12).map((s) => `${new Date(s.mtime).toISOString().slice(5, 19)} ${String(s.id).slice(0, 8)} ${String(s.title || '').slice(0, 30)}`).join('\n');
-      fs.writeFileSync('/tmp/husk-sxdump.log', new Date().toISOString().slice(11, 23) + ' currentCwd=' + (activePtyCwd || '') + '\n' + line + '\n');
-    } catch (_) {}
-  }
   // currentCwd is the live working directory of the active chat. The renderer
   // uses it to scope the rail's Recent list to this project, so only this
   // project's sessions appear there.

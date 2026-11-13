@@ -9,10 +9,6 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 
-function pick(baseUrl) {
-  const u = new URL(String(baseUrl || '').replace(/\/+$/, '') + '/placeholder');
-  return u.protocol === 'http:' ? http : https;
-}
 function endpoint(baseUrl, path) {
   return new URL(String(baseUrl || '').replace(/\/+$/, '') + path);
 }

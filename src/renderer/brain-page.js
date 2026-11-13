@@ -600,7 +600,7 @@
       copy.appendChild(h('span', 'br-row-preview', n.text || n.source || KIND_LABEL[n.kind]));
       row.appendChild(copy);
       row.appendChild(h('span', 'br-row-meta', n.pinned ? 'pinned' : (n.hits ? `${n.hits}×` : KIND_LABEL[n.kind].toLowerCase())));
-      row.addEventListener('click', () => select(n.id, true));
+      row.addEventListener('click', () => select(n.id));
       list.appendChild(row);
     }
   }
@@ -628,20 +628,9 @@
       row.appendChild(h('span', 'br-act-title', e.title || '(no text)'));
       // The line points back at the memories it is about.
       row.disabled = !ids.length;
-      row.addEventListener('click', () => { select(ids[0], true); });
+      row.addEventListener('click', () => { select(ids[0]); });
       list.appendChild(row);
     }
-  }
-
-  function neighbours(id) {
-    const out = [];
-    for (const e of state.data.edges) {
-      if (e.kind !== 'synapse') continue;
-      const other = e.a === id ? e.b : (e.b === id ? e.a : null);
-      const node = other && state.data.nodes.find((n) => n.id === other);
-      if (node) out.push({ node, weight: e.weight || 0 });
-    }
-    return out.sort((a, b) => b.weight - a.weight);
   }
 
   function linkRows(box, label, nodes) {
@@ -651,7 +640,7 @@
       const row = h('button', 'br-link', n.title);
       row.type = 'button';
       row.dataset.kind = n.kind;
-      row.addEventListener('click', () => select(n.id, true));
+      row.addEventListener('click', () => select(n.id));
       box.appendChild(row);
     }
   }
@@ -720,7 +709,7 @@
       copy.appendChild(h('span', 'br-row-preview', n.text || n.source || KIND_LABEL[n.kind]));
       row.appendChild(copy);
       row.appendChild(h('span', 'br-row-meta', KIND_LABEL[n.kind].toLowerCase()));
-      row.addEventListener('click', () => select(n.id, true));
+      row.addEventListener('click', () => select(n.id));
       box.appendChild(row);
     }
     if (!syn) { box.appendChild(h('div', 'br-detail-meta', 'This passage was learned from this file.')); return; }
@@ -852,7 +841,7 @@
       form.hidden = true;
       text.value = '';
       await load();
-      select(res.node.id, true);
+      select(res.node.id);
     });
 
     byId('br-add-files').addEventListener('click', async () => {
