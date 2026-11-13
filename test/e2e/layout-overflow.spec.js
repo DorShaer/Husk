@@ -13,14 +13,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-// A handle avoids Playwright's asynchronous value serialization during a
-// native resize, when Electron can collect its temporary evaluation promise.
+// Let the evaluation RPC return before a native resize runs. Keep the driver
+// out of the main-process bridge while the resize event drains.
 async function setWindowContentSize(app, width, height) {
-  const result = await app.evaluateHandle(({ BrowserWindow }, size) => {
+  await app.evaluate(({ BrowserWindow }, size) => {
     const win = BrowserWindow.getAllWindows()[0];
-    win.setContentSize(size.width, size.height);
+    setTimeout(() => win.setContentSize(size.width, size.height), 50);
+    return true;
   }, { width, height });
-  await result.dispose();
+  await new Promise((resolve) => setTimeout(resolve, 150));
 }
 
 test('short window keeps the rail bottom and status footer visible', async () => {

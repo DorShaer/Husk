@@ -124,12 +124,25 @@ done
 
     // Keys go to the CLI. When it is idle again the card settles by itself
     // into a record of what it showed.
+    // Settings are applied by restarting the agent, so capture the completion
+    // transition before that restart repaints the conversation.
+    await card.evaluate((node) => {
+      window.nativeCardCompletion = null;
+      const observer = new MutationObserver(() => {
+        if (!node.classList.contains('is-done')) return;
+        window.nativeCardCompletion = {
+          pill: node.querySelector('.chat-native-pill').textContent,
+          terminals: node.querySelectorAll('.chat-native-term').length,
+          said: node.querySelector('.chat-native-said')?.textContent || '',
+        };
+        observer.disconnect();
+      });
+      observer.observe(node, { attributes: true, attributeFilter: ['class'] });
+    });
     await card.locator('.chat-native-term').click();
     await win.keyboard.press('Enter');
-    await expect(card).toHaveClass(/is-done/, { timeout: 15_000 });
-    await expect(card.locator('.chat-native-pill')).toHaveText('closed');
-    await expect(card.locator('.chat-native-term')).toHaveCount(0);
-    await expect(card.locator('.chat-native-said')).toContainText('server one   connected');
+    await expect.poll(() => win.evaluate(() => window.nativeCardCompletion), { timeout: 15_000 })
+      .toEqual({ pill: 'closed', terminals: 0, said: expect.stringContaining('server one   connected') });
     await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'chat-native-card-done.png') });
 
     // The conversation was there throughout and still takes a prompt.

@@ -625,7 +625,7 @@ test('a path that is also a glob is staged and discarded as the one file it name
   await win.locator('#confirm-ok').click();
 
   // One file went to the stash and the other kept every byte it had.
-  await expect.poll(() => git('status', '--porcelain=v1').split('\n').filter(Boolean), { timeout: 20_000 })
+  await expect.poll(() => git('--no-optional-locks', 'status', '--porcelain=v1').split('\n').filter(Boolean), { timeout: 20_000 })
     .toEqual([' M ' + plain]);
   expect(fs.readFileSync(path.join(dir, plain))).toEqual(plainBytes);
   expect(fs.readFileSync(path.join(dir, bracket), 'utf8')).toBe(base);

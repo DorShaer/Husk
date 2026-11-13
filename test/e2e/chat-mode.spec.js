@@ -45,11 +45,12 @@ async function launch(homeDir, bin) {
 }
 
 async function setWindowContentSize(app, width, height) {
-  const result = await app.evaluateHandle(({ BrowserWindow }, size) => {
+  await app.evaluate(({ BrowserWindow }, size) => {
     const win = BrowserWindow.getAllWindows()[0];
-    win.setContentSize(size.width, size.height);
+    setTimeout(() => win.setContentSize(size.width, size.height), 50);
+    return true;
   }, { width, height });
-  await result.dispose();
+  await new Promise((resolve) => setTimeout(resolve, 150));
 }
 
 test('a chat tab streams text, shows a tool card, answers a permission and ends the turn', async () => {
