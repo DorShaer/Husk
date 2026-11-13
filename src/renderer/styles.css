@@ -18053,7 +18053,7 @@ body[data-mode="light"] .br-stage {
 .cc-field { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: var(--fs-label); color: var(--text); }
 .cc-field:first-child { border-top: 0; }
 .cc-field-k { flex: 0 0 84px; color: var(--text-3); }
-.cc-checks { display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: var(--radius-card); overflow: hidden; }
+.cc-checks { flex: none; display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: var(--radius-card); overflow: hidden; }
 .cc-check-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-check-state { flex: none; color: var(--text-3); }
 .cc-dot, .chat-pr-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }

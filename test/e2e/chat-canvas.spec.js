@@ -178,6 +178,39 @@ test('a turn that changes nothing leaves no card, and the canvas says the tree i
   }
 });
 
+test('a long list of PR checks scrolls to its last check in a short window', async () => {
+  const { homeDir, bin } = makeHome();
+  const pulls = JSON.parse(JSON.stringify(PULLS));
+  pulls[0].statusCheckRollup = Array.from({ length: 50 }, (_, i) => ({
+    name: `check-${String(i + 1).padStart(2, '0')}`, status: 'COMPLETED', conclusion: 'SUCCESS',
+    detailsUrl: `https://example.com/run/${i + 1}`,
+  }));
+  fs.writeFileSync(path.join(bin, 'pulls.json'), JSON.stringify(pulls));
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].setContentSize(1200, 620);
+    });
+    await win.locator('#btn-canvas').click();
+    const canvas = win.locator('#chat-canvas');
+    await canvas.locator('.cc-tab[data-tab="checks"]').click();
+    await expect(canvas.locator('.cc-check')).toHaveCount(50);
+    const body = canvas.locator('.cc-body');
+    await expect.poll(() => body.evaluate((n) => n.scrollHeight > n.clientHeight)).toBe(true);
+    await body.hover();
+    await win.mouse.wheel(0, 10000);
+    await expect.poll(() => body.evaluate((n) => n.scrollTop)).toBeGreaterThan(0);
+    const last = canvas.locator('.cc-check').last();
+    await expect(last).toBeInViewport();
+    await last.click();
+    await expect(canvas.locator('.cc-title')).toContainText('check-50');
+    await expect(canvas.locator('.cc-foot')).toBeInViewport();
+  } finally {
+    await app.close();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
 test('Fix and Explain submit their prompt to the CLI in Terminal mode', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
