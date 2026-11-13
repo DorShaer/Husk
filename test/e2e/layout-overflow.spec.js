@@ -11,18 +11,8 @@ const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { setWindowContentSize } = require('../helpers/electron-window');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-
-// Let the evaluation RPC return before a native resize runs. Keep the driver
-// out of the main-process bridge while the resize event drains.
-async function setWindowContentSize(app, width, height) {
-  await app.evaluate(({ BrowserWindow }, size) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    setTimeout(() => win.setContentSize(size.width, size.height), 50);
-    return true;
-  }, { width, height });
-  await new Promise((resolve) => setTimeout(resolve, 150));
-}
 
 test('short window keeps the rail bottom and status footer visible', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
@@ -207,7 +197,7 @@ test('the status rows keep both edges at any fit scale', async () => {
   expect(Math.abs(tall.left - tall.right), JSON.stringify(tall)).toBeLessThanOrEqual(1);
 
   // Short enough that the fit has more work to do, at whatever scale comes out.
-  await setWindowContentSize(app, 1100, 460);
+  await setWindowContentSize(app, 1100, 520);
   await win.waitForTimeout(900);
   const short = await gaps();
   expect(Math.abs(short.left - short.right), JSON.stringify(short)).toBeLessThanOrEqual(1);

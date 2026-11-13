@@ -25,6 +25,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { makeRepo, makeGlobRepo } = require('../helpers/git-repo');
+const { setWindowContentSize } = require('../helpers/electron-window');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -49,14 +50,6 @@ async function ready(app) {
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
   return win;
-}
-
-async function setWindowContentSize(app, width, height) {
-  await app.evaluate(({ BrowserWindow }, size) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    setTimeout(() => win.setContentSize(size.width, size.height), 20);
-    return true;
-  }, { width, height });
 }
 
 // The mutating gate accepts a root only when it is one of the pinned projects,
