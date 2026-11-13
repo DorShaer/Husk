@@ -46,6 +46,9 @@ test('a first install: Install shows its command before running it, no changelog
   const { app, win } = await launch(home);
   try {
     await expect(win.locator('#onboarding')).toBeVisible();
+    // A new install opens light, with the indigo accent.
+    await expect(win.locator('body')).toHaveAttribute('data-theme', 'light');
+    await expect(win.locator('body')).toHaveAttribute('data-accent', 'indigo');
     await win.click('#ob-start');
     // An agent that is not installed offers Install. One click only says what
     // would run; nothing has been run.
@@ -65,6 +68,11 @@ test('a first install: Install shows its command before running it, no changelog
     // No What's new for someone who has never seen what was old, and the
     // version counts as seen so it does not turn up on the next launch either.
     await expect(win.locator('#whatsnew')).toBeHidden();
+    await expect(win.locator('body')).toHaveAttribute('data-theme', 'light');
+    await expect(win.locator('body')).toHaveAttribute('data-accent', 'indigo');
+    expect(config(home.homeDir).theme).toBe('light');
+    expect(config(home.homeDir).accent).toBe('indigo');
+    await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'first-install-light.png') });
     await expect.poll(() => config(home.homeDir).lastSeenVersion).toBeTruthy();
     expect(fs.existsSync(path.join(home.homeDir, 'npm-calls.log'))).toBe(false);
 

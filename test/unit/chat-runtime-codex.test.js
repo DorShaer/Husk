@@ -47,7 +47,8 @@ async function started(command = 'codex', { models = { result: { data: [{ id: 'm
   await tick();
   c.feed(Object.assign({ id: sent(c, 'model/list')[0].id }, models));
   await tick();
-  c.feed({ id: sent(c, 'thread/start')[0].id, result: { thread: { id: 'T1' }, model: 'm1' } });
+  const request = sent(c, 'thread/resume')[0] || sent(c, 'thread/start')[0];
+  c.feed({ id: request.id, result: { thread: { id: request.params.threadId || 'T1' }, model: 'm1' } });
   const res = await p;
   return Object.assign(h, { c, res });
 }
@@ -170,4 +171,16 @@ test('Allow all accepts this codex approval and the ones after it, one accept ea
   assert.deepEqual(c.stdinLines.find((l) => l.id === 8 && l.result).result, { decision: 'accept' });
   assert.deepEqual(c.stdinLines.find((l) => l.id === 9 && l.result).result, { decision: 'accept' });
   assert.equal(events.filter((e) => e.type === 'permission_resolved').length, 3);
+});
+
+
+test('codex resume continues the saved thread and sends follow-ups to its id', async () => {
+  const id = '01a1d208-8467-7c32-8e5a-27d5e8d10a95';
+  const { rt, c, res, events } = await started(`codex resume ${id}`);
+  assert.equal(sent(c, 'thread/start').length, 0);
+  assert.deepEqual(sent(c, 'thread/resume')[0].params, { cwd: '/w', threadId: id, excludeTurns: true });
+  assert.equal(res.sessionId, id);
+  assert.equal(events.find((e) => e.type === 'session').sessionId, id);
+  await rt.prompt({ tabId: 't1', text: 'continue' });
+  assert.equal(sent(c, 'turn/start')[0].params.threadId, id);
 });

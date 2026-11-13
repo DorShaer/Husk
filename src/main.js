@@ -31,8 +31,8 @@ const { resolveInside, isInside, realParentInside, realPathInside } = require('.
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
-const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES } = require('./lib/brain');
-const { nativeCommand, nativeCwd, nativeReply } = require('./lib/native-commands');
+const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES, withoutContext: withoutBrainContext } = require('./lib/brain');
+const { deepFirstUserMessage } = require('./lib/session-head');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
@@ -49,6 +49,7 @@ const { webUrlFor } = require('./lib/git-remote');
 const { buildSpawnSpec, withCopilotContextDir } = require('./lib/pty-spawn');
 const { capPtyBuffer } = require('./lib/pty-buffer');
 const AgentInject = require('./lib/agent-inject');
+const SharedSkills = require('./lib/shared-skills');
 const { createMouseModeStripper } = require('./lib/term-mouse');
 const { wheelSequence, wheelSteps } = require('./lib/wheel-seq');
 const { agentFileName, renderAgentMd, isHuskManaged, agentMdBody } = require('./lib/agent-file');
@@ -149,6 +150,13 @@ const COPILOT_DIR = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 const CONFIG_DIR = path.join(HOME, '.config', 'husk');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const HUSK_PROMPTS_DIR = path.join(CONFIG_DIR, 'prompts');
+const SHARED_SKILLS_DIR = path.join(HOME, '.agents', 'skills');
+const DISABLED_SHARED_SKILLS_DIR = path.join(CONFIG_DIR, 'skills-disabled');
+
+function prepareSharedSkills() {
+  try { return SharedSkills.prepareSharedSkills({ fs, home: HOME, platform: process.platform, kiroHome: process.env.KIRO_HOME }); }
+  catch (err) { console.warn('[husk] could not prepare shared skills:', err.message); return SharedSkills.skillLocations(HOME); }
+}
 
 function getAgentKind() {
   const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
@@ -316,8 +324,8 @@ const DEFAULT_CONFIG = {
   showHidden: false,
   // Applies to a first install only. An existing install keeps whatever theme it
   // already has, via the pin in loadConfig.
-  theme: 'ember',
-  accent: 'orange',
+  theme: 'light',
+  accent: 'indigo',
   railExpanded: true,
   // The Crew chat layout starts with the status panel folded away; the
   // panel toggle saves the choice. An existing install keeps its open panel
@@ -1082,15 +1090,20 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // src/lib/agent-inject.js. Skipped when the user already passed --settings and
   // on Windows. For claude the statusline override rides --settings as inline
   // JSON, which claude merges over the user's settings.json.
+  prepareSharedSkills();
   const isWin32 = process.platform === 'win32';
   let injectionPlan = { method: 'none' };
-  if (!isWin32 && !isSubcommand && !agentArgs.includes('--settings')) {
-    injectionPlan = AgentInject.planInjection({
+  if (!isSubcommand && !agentArgs.includes('--settings')) {
+    const planned = AgentInject.planInjection({
       agentCommand: rawCmd,
       agentName: config.agentName,
       paiEnabled: config.paiEnabled !== false,
       recap: config.recap,
     });
+    // Prompt-based persona injection uses quoting that cmd.exe and node-pty
+    // cannot preserve. Aider's discrete --read file argument remains safe on
+    // Windows, so keep its shared-skill index available there.
+    if (!isWin32 || planned.method === 'read-file') injectionPlan = planned;
     if (Array.isArray(injectionPlan.args) && injectionPlan.args.length) {
       agentArgs = [...injectionPlan.args, ...agentArgs];
     }
@@ -1951,6 +1964,14 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
   } else if (a === 'copilot') {
     root = path.join(COPILOT_DIR, 'session-state');
     file = path.join(root, id, 'events.jsonl');
+  } else if (a === 'codex') {
+    const saved = listCodexSessions().find((s) => s.id === id);
+    if (!saved) return { ok: false, error: 'no session log yet' };
+    file = saved.path;
+    const codexHome = process.env.CODEX_HOME || path.join(HOME, '.codex');
+    root = [path.join(codexHome, 'sessions'), path.join(codexHome, 'archived_sessions')]
+      .find((dir) => isInside(dir, file));
+    if (!root) return { ok: false, error: 'refused' };
   } else {
     return { ok: false, error: a + ' keeps no readable session log' };
   }
@@ -1990,7 +2011,17 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
 // src/lib/brain.js). A prompt wakes the memories that bear on it and carries
 // them to the agent; a turn that ends well leaves a decision behind. Every
 // firing is reported to the renderer, which is what the Brain page draws.
-const brain = createBrain({ file: path.join(CONFIG_DIR, 'brain.json'), fs });
+const brainPaths = new Map();
+function brainCanonPath(p) {
+  if (!brainPaths.has(p)) {
+    let real = p;
+    try { real = fs.realpathSync(p); } catch (_) {}
+    if (brainPaths.size > 500) brainPaths.clear();
+    brainPaths.set(p, real);
+  }
+  return brainPaths.get(p);
+}
+const brain = createBrain({ file: path.join(CONFIG_DIR, 'brain.json'), fs, canonPath: brainCanonPath });
 // The turn each chat tab is in: what was asked, and the reply as it builds.
 const brainTurns = new Map();
 
@@ -2010,11 +2041,28 @@ function brainTurnOver(tabId) {
   if (brainTurns.delete(tabId)) brainActivity('idle');
 }
 
+// How often, at most, a turn's words are read against the memories.
+const BRAIN_THINK_MS = 700;
+const BRAIN_THINK_TAIL = 500;
+
 // Follows a turn's stream. The outcome kept is the last thing the agent said,
-// since the text before a tool call is commentary on the way there.
+// since the text before a tool call is commentary on the way there. Along the
+// way, what the agent is saying, thinking and doing is read against the
+// memories, and the ones it touches are reported as it goes.
 function brainObserve(tabId, ev) {
   const t = brainTurns.get(tabId);
   if (!t || !ev) return;
+  const heard = ev.type === 'text' || ev.type === 'thought' ? (ev.text || '')
+    : ev.type === 'tool' ? ` ${ev.title || ''} ${ev.detail || ''} ` : '';
+  if (heard) {
+    t.heard = (t.heard + heard).slice(-BRAIN_THINK_TAIL);
+    const now = Date.now();
+    if (now - t.thoughtAt >= BRAIN_THINK_MS) {
+      t.thoughtAt = now;
+      const ids = brain.resonate(t.heard, { scope: t.scope });
+      if (ids.join() !== t.touching.join()) { t.touching = ids; brainActivity('think', ids); }
+    }
+  }
   if (ev.type === 'text') t.cur += ev.text || '';
   else if (ev.type === 'text_final') t.cur = ev.text || '';
   else if (ev.type === 'block_end' || ev.type === 'tool') { if (t.cur.trim()) t.last = t.cur; t.cur = ''; }
@@ -2027,31 +2075,8 @@ function brainObserve(tabId, ev) {
   }
 }
 
-// Runs the CLI's own non-interactive form of a slash command and resolves with
-// what it printed. The argv comes from the table in native-commands.js, never
-// from the text that was typed.
-function runNativeCommand(native, cwd) {
-  const env = chatEnv();
-  return new Promise((resolve) => {
-    execFile(resolveAgentExe(native.program, env.PATH), native.args, { env, cwd, timeout: 30000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-      const out = stripAnsi(String(stdout || '')).trim();
-      const why = stripAnsi(String(stderr || '')).trim();
-      if (err && !out) resolve({ isError: true, output: why || err.message });
-      else resolve({ isError: false, output: out });
-    });
-  });
-}
-
 ipcMain.handle('chat:prompt', async (_e, { tabId, text, images } = {}) => {
   const ask = String(text || '');
-  const tabSession = tabId ? sessions.get(tabId) : null;
-  const native = nativeCommand((tabSession && tabSession.agentCommand) || config.agentCommand, ask);
-  if (native && chatRuntime.info(tabId)) {
-    const folder = brainScope(tabId);
-    const where = nativeCwd(folder, isCwdTrusted(folder), HOME);
-    const ran = await runNativeCommand(native, where.cwd);
-    return chatRuntime.local({ tabId, text: ask, reply: nativeReply(native.label, ran.output, where.note), isError: ran.isError });
-  }
   // A slash command is an instruction to the CLI, not a question: it must reach
   // it untouched, and it is not something to remember.
   const command = ask.trimStart().startsWith('/');
@@ -2059,15 +2084,20 @@ ipcMain.handle('chat:prompt', async (_e, { tabId, text, images } = {}) => {
   const found = command ? { hits: [], context: '' } : brain.recall(ask, { scope });
   const res = await chatRuntime.prompt({ tabId, text, images, context: found.context });
   if (res && res.ok && !command) {
-    brainTurns.set(tabId, { prompt: ask, scope, cur: '', last: '' });
-    brainActivity('recall', found.hits.map((h) => h.id));
+    const handed = found.hits.map((h) => h.id);
+    brainTurns.set(tabId, { prompt: ask, scope, cur: '', last: '', handed, touching: [], heard: '', thoughtAt: 0 });
+    brainActivity('recall', handed);
   }
   return res;
 });
 
 ipcMain.handle('brain:graph', (_e, { all } = {}) => {
   const scope = chatCwd(null);
-  return { ok: true, scope, scopeName: path.basename(scope) || scope, all: !!all, ...brain.graph({ scope, all: !!all }) };
+  // What turns in flight are holding and touching right now, so a page
+  // opened in the middle of one shows it.
+  const live = { handed: [], touching: [] };
+  for (const t of brainTurns.values()) { live.handed.push(...t.handed); live.touching.push(...t.touching); }
+  return { ok: true, scope, scopeName: path.basename(scope) || scope, all: !!all, live, ...brain.graph({ scope, all: !!all }) };
 });
 ipcMain.handle('brain:addNote', (_e, { text, global } = {}) => {
   const r = brain.addNote({ text, scope: global ? '' : chatCwd(null) });
@@ -4828,16 +4858,19 @@ const KNOWN_AGENTS = [
   {
     id: 'claude', label: 'Claude Code', command: 'claude',
     install: { tool: 'npm', args: ['install', '-g', '@anthropic-ai/claude-code'] },
+    login: ['auth', 'login'], logout: ['auth', 'logout'],
     docs: 'https://docs.anthropic.com/claude/docs/claude-code',
   },
   {
     id: 'copilot', label: 'GitHub Copilot CLI', command: 'copilot',
     install: { tool: 'npm', args: ['install', '-g', '@github/copilot'] },
+    login: ['login'],
     docs: 'https://docs.github.com/en/copilot/github-copilot-in-the-cli',
   },
   {
     id: 'codex', label: 'OpenAI Codex CLI', command: 'codex',
     install: { tool: 'npm', args: ['install', '-g', '@openai/codex'] },
+    login: ['login'], logout: ['logout'],
     docs: 'https://github.com/openai/codex',
   },
   {
@@ -4852,6 +4885,7 @@ const KNOWN_AGENTS = [
   },
   {
     id: 'kiro-cli', label: 'Kiro CLI', command: 'kiro-cli',
+    login: ['login'], logout: ['logout'],
     docs: 'https://kiro.dev',
   },
 ];
@@ -4922,6 +4956,18 @@ function spawnName(binName) {
   if (process.platform !== 'win32') return binName;
   return resolveOnPath(binName) || binName;
 }
+
+// The command that signs a CLI in or out, run under the name the user runs it
+// by. A CLI with no command of its own for it signs in from its plain
+// interactive start.
+ipcMain.handle('agents:authCommand', (_e, { command, verb } = {}) => {
+  const program = String(command || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  const base = agentBaseName(program);
+  const family = (base === 'claude' || /^claude[-_]/.test(base)) ? 'claude' : base;
+  const def = KNOWN_AGENTS.find((a) => a.command === family);
+  const args = def && def[verb === 'logout' ? 'logout' : 'login'];
+  return { program, command: args ? `${program} ${args.join(' ')}` : program, own: !!args };
+});
 
 ipcMain.handle('agents:detect', () => {
   // Probe the install tools too so the renderer can decide between Install
@@ -5399,8 +5445,8 @@ ipcMain.handle('stats:get', () => {
   // state and describe the Claude CLI only, so they are read solely when the
   // active agent is claude (or an alias of it).
   const agentIsClaude = agentCmd === 'claude' || /^claude[-_]/.test(agentCmd);
-  const skillsDir = path.join(CLAUDE_DIR, 'skills');
-  const skills = safeCount(skillsDir, (d) => d.isDirectory());
+  const skillsDir = SHARED_SKILLS_DIR;
+  const skills = listClaudeSkills().filter((skill) => !skill.disabled).length;
   const workflowsDir = path.join(CLAUDE_DIR, 'workflows');
   const workflows = safeCount(workflowsDir, (e) => e.isFile() && e.name.endsWith('.md'))
                   + safeCount(workflowsDir, (e) => e.isDirectory());
@@ -5537,11 +5583,12 @@ function extractDescription(content) {
 }
 
 function listClaudeSkills() {
-  const skillsDir = path.join(CLAUDE_DIR, 'skills');
+  const skillsDir = prepareSharedSkills().shared;
   if (!fs.existsSync(skillsDir)) return [];
   try {
-    return fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
+    const active = fs.readdirSync(skillsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.isSymbolicLink())
+      .filter((e) => { try { return fs.statSync(path.join(skillsDir, e.name)).isDirectory(); } catch (_) { return false; } })
       .map((e) => {
         const dirName = e.name;
         const disabled = dirName.startsWith(DISABLED_PREFIX);
@@ -5561,8 +5608,42 @@ function listClaudeSkills() {
         // touches the parent rather than the entry.
         let installedAt = 0;
         try { installedAt = fs.statSync(dir).mtimeMs; } catch (_) {}
-        return { source: 'claude', name, id: dirName, path: dir, mdPath, description, disabled, installedAt };
+        let legacyClaude = false;
+        try { legacyClaude = fs.realpathSync(dir).startsWith(path.join(CLAUDE_DIR, 'skills') + path.sep); } catch (_) {}
+        return { source: disabled ? 'shared-inactive' : (legacyClaude ? 'shared-legacy' : 'shared'), name, id: dirName, path: dir, mdPath, description, disabled, installedAt };
       });
+    let disabledEntries = [];
+    try { disabledEntries = fs.readdirSync(DISABLED_SHARED_SKILLS_DIR, { withFileTypes: true }); } catch (_) {}
+    const disabledShared = disabledEntries.filter((e) => e.isDirectory() && e.name.startsWith(DISABLED_PREFIX)).map((e) => {
+      const dir = path.join(DISABLED_SHARED_SKILLS_DIR, e.name);
+      const name = e.name.slice(DISABLED_PREFIX.length);
+      const mdPath = path.join(dir, 'SKILL.md');
+      let description = '';
+      try { description = extractDescription(fs.readFileSync(mdPath, 'utf8')); } catch (_) {}
+      let installedAt = 0;
+      try { installedAt = fs.statSync(dir).mtimeMs; } catch (_) {}
+      return { source: 'shared-disabled', name, id: e.name, path: dir, mdPath, description, disabled: true, installedAt };
+    });
+    const activeNames = new Set(active.map((item) => item.name));
+    const legacyRoot = path.join(CLAUDE_DIR, 'skills');
+    let legacyEntries = [];
+    try { legacyEntries = fs.readdirSync(legacyRoot, { withFileTypes: true }); } catch (_) {}
+    const disabledLegacy = legacyEntries
+      .filter((e) => e.isDirectory() && e.name.startsWith(DISABLED_PREFIX))
+      .map((e) => {
+        const dir = path.join(legacyRoot, e.name);
+        const name = e.name.slice(DISABLED_PREFIX.length);
+        let mdPath = path.join(dir, 'SKILL.md');
+        if (!fs.existsSync(mdPath)) {
+          try { const child = fs.readdirSync(dir).find((f) => f.endsWith('.md')); if (child) mdPath = path.join(dir, child); } catch (_) {}
+        }
+        let description = '';
+        try { description = extractDescription(fs.readFileSync(mdPath, 'utf8')); } catch (_) {}
+        let installedAt = 0;
+        try { installedAt = fs.statSync(dir).mtimeMs; } catch (_) {}
+        return activeNames.has(name) ? null : { source: 'shared-legacy', name, id: e.name, path: dir, mdPath, description, disabled: true, installedAt };
+      }).filter(Boolean);
+    return [...active, ...disabledShared.filter((item) => !activeNames.has(item.name)), ...disabledLegacy];
   } catch (_) { return []; }
 }
 
@@ -9114,7 +9195,7 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
 });
 
 // Create a new Husk prompt. Always writes to HUSK_PROMPTS_DIR regardless of
-// agentKind, unlike skills:create, which routes by agent.
+// agentKind. Skills are stored in the shared Agent Skills library.
 ipcMain.handle('prompts:create', (_e, payload = {}) => {
   const { name, description, content } = payload;
   if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
@@ -9161,8 +9242,9 @@ ipcMain.handle('skills:list', () => {
 ipcMain.handle('skills:read', (_e, mdPath) => {
   // Confined to the skills and prompts roots.
   if (typeof mdPath !== 'string' || !mdPath) return { ok: false, error: 'Missing path' };
-  const skillsDir = path.join(CLAUDE_DIR, 'skills');
-  if (!isInside(skillsDir, mdPath) && !isInside(HUSK_PROMPTS_DIR, mdPath)) {
+  const legacySkillsDir = path.join(CLAUDE_DIR, 'skills');
+  const allowedRoots = [SHARED_SKILLS_DIR, DISABLED_SHARED_SKILLS_DIR, legacySkillsDir, HUSK_PROMPTS_DIR];
+  if (!allowedRoots.some((root) => isInside(root, mdPath)) || !allowedRoots.some((root) => realPathInside(mdPath, root))) {
     return { ok: false, error: 'Refusing to read outside skills/prompts directories' };
   }
   try { return { ok: true, content: fs.readFileSync(mdPath, 'utf8') }; }
@@ -9180,40 +9262,23 @@ ipcMain.handle('skills:create', (_e, { name, description, content }) => {
   const safeDesc = description.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const body = (content || '').trim() || `# ${name}\n\n${description.trim()}\n\n## When to use\n\nDescribe trigger conditions.\n\n## How to use\n\nDescribe steps.\n`;
   const md = `---\nname: ${name}\ndescription: "${safeDesc}"\n---\n\n${body}\n`;
-  const agentKind = getAgentKind();
   try {
-    if (agentKind === 'claude') {
-      const dir = path.join(CLAUDE_DIR, 'skills', name);
-      if (fs.existsSync(dir)) return { ok: false, error: `A skill named "${name}" already exists.` };
-      fs.mkdirSync(dir, { recursive: true });
-      const mdPath = path.join(dir, 'SKILL.md');
-      fs.writeFileSync(mdPath, md);
-      return { ok: true, source: 'claude', id: name, path: dir, mdPath };
-    }
-    fs.mkdirSync(HUSK_PROMPTS_DIR, { recursive: true });
-    const fileName = `${name}.md`;
-    const mdPath = path.join(HUSK_PROMPTS_DIR, fileName);
-    if (fs.existsSync(mdPath + '.disabled')) {
-      return { ok: false, error: `A prompt named "${name}" already exists.` };
-    }
-    // Atomic create-if-not-exists via O_EXCL. Throws EEXIST when the path is
-    // already there.
-    try {
-      fs.writeFileSync(mdPath, md, { flag: 'wx', mode: 0o644 });
-    } catch (e) {
-      if (e && e.code === 'EEXIST') return { ok: false, error: `A prompt named "${name}" already exists.` };
-      throw e;
-    }
-    return { ok: true, source: 'husk', id: fileName, path: mdPath, mdPath };
+    const skillsDir = prepareSharedSkills().shared;
+    const dir = path.join(skillsDir, name);
+    fs.mkdirSync(dir);
+    const mdPath = path.join(dir, 'SKILL.md');
+    fs.writeFileSync(mdPath, md, { mode: 0o644 });
+    prepareSharedSkills();
+    return { ok: true, source: 'shared', id: name, path: dir, mdPath };
   } catch (err) {
+    if (err && err.code === 'EEXIST') return { ok: false, error: `A skill named "${name}" already exists.` };
     return { ok: false, error: err.message };
   }
 });
 
-// Toggle a Claude skill (dir rename) or a Husk prompt (file rename). Renderer
-// passes the item's `id` (claude: dirName, husk: fileName) and `source` so we
-// route correctly. Back-compat: callers using only `dirName` still work for
-// claude items.
+// Toggle a shared or legacy Claude skill (directory move) or a Husk prompt
+// (file rename). Renderer passes the item's `id` and `source` so we route
+// correctly. Back-compat: callers using only `dirName` still work.
 ipcMain.handle('skills:toggle', (_e, payload = {}) => {
   const { dirName, id, source } = payload;
   const itemId = id || dirName;
@@ -9233,26 +9298,42 @@ ipcMain.handle('skills:toggle', (_e, payload = {}) => {
       return { ok: true, source: 'husk', id: newName, dirName: newName, disabled: !isDisabled };
     } catch (err) { return { ok: false, error: err.message }; }
   }
-  const skillsDir = path.join(CLAUDE_DIR, 'skills');
+  const isLegacy = source === 'shared-legacy';
+  const isDisabledShared = source === 'shared-disabled';
+  const isInactiveShared = source === 'shared-inactive';
   const isDisabled = itemId.startsWith(DISABLED_PREFIX);
   const newDirName = isDisabled ? itemId.slice(DISABLED_PREFIX.length) : DISABLED_PREFIX + itemId;
+  const skillsDir = isLegacy ? path.join(CLAUDE_DIR, 'skills')
+    : (isDisabledShared || (source !== 'shared-legacy' && !isInactiveShared && isDisabled) ? DISABLED_SHARED_SKILLS_DIR : prepareSharedSkills().shared);
+  const targetDir = isLegacy ? skillsDir : (isDisabled ? SHARED_SKILLS_DIR : DISABLED_SHARED_SKILLS_DIR);
   let oldPath, newPath;
   try {
     oldPath = resolveInside(skillsDir, itemId);
-    newPath = resolveInside(skillsDir, newDirName);
+    newPath = resolveInside(targetDir, newDirName);
   } catch (_) { return { ok: false, error: 'Invalid skill name' }; }
   if (!fs.existsSync(oldPath)) return { ok: false, error: 'Skill not found' };
   if (fs.existsSync(newPath)) {
-    // Both the enabled and disabled copies are present. The target name is
-    // already in the desired state, so drop the redundant source instead of
-    // failing.
-    try { fs.rmSync(oldPath, { recursive: true, force: true }); }
-    catch (err) { return { ok: false, error: err.message }; }
-    return { ok: true, source: 'claude', id: newDirName, dirName: newDirName, disabled: !isDisabled };
+    return { ok: false, error: 'A skill with that name already exists in the target state.' };
   }
   try {
+    fs.mkdirSync(targetDir, { recursive: true });
     fs.renameSync(oldPath, newPath);
-    return { ok: true, source: 'claude', id: newDirName, dirName: newDirName, disabled: !isDisabled };
+    if (isLegacy && !isDisabled) {
+      const sharedLink = path.join(SHARED_SKILLS_DIR, itemId);
+      try { if (isInside(SHARED_SKILLS_DIR, sharedLink) && fs.lstatSync(sharedLink).isSymbolicLink()) fs.unlinkSync(sharedLink); } catch (_) {}
+    }
+    if (isLegacy && isDisabled) {
+      const sharedLink = path.join(SHARED_SKILLS_DIR, newDirName);
+      try { fs.symlinkSync(newPath, sharedLink, process.platform === 'win32' ? 'junction' : 'dir'); } catch (_) {}
+    }
+    prepareSharedSkills();
+    return {
+      ok: true,
+      source: isDisabled ? 'shared' : 'shared-disabled',
+      id: newDirName,
+      dirName: newDirName,
+      disabled: !isDisabled,
+    };
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
@@ -9684,7 +9765,7 @@ function listGeminiSessions(opts = {}) {
       if (!id) continue;
 
       const summary = latestTranscriptTitle(fullPath, 'gemini');
-      const firstMessage = geminiFirstUserMessage(fullPath);
+      const firstMessage = withoutBrainContext(geminiFirstUserMessage(fullPath));
       // A transcript with no turn in it belongs to a chat that was opened and
       // closed without a word. It is not history, and callers that only need
       // history skip it. Resume-index and live-tab discovery pass includeEmpty
@@ -9826,12 +9907,15 @@ function parseSessionHead(fullPath) {
         // Skip slash-command and system wrappers (e.g. "<local-command-...>",
         // "<command-name>", a caveat banner, a system-reminder), which are not
         // human messages, and keep scanning for a real one.
-        if (text && !isCommandWrapperText(text)) userMessage = text;
+        if (text && !isCommandWrapperText(text)) userMessage = withoutBrainContext(text).trim() || userMessage;
       }
-      if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') queueContent = obj.content.trim();
+      if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') queueContent = withoutBrainContext(obj.content).trim();
       if (interactive && aiTitle && startedISO && userMessage && originalCwd) break;
     }
   } catch (_) { return null; }
+  if (!aiTitle && !userMessage) {
+    try { userMessage = deepFirstUserMessage(fs, fullPath, fs.statSync(fullPath).size, { skip: isCommandWrapperText }); } catch (_) { userMessage = ''; }
+  }
   return { aiTitle, userMessage, queueContent, startedISO, originalCwd, interactive };
 }
 
@@ -10063,12 +10147,94 @@ function findCopilotSessionForResume(id, cwd) {
   }) || null;
 }
 
-// List the active agent's saved sessions. Husk is tool-agnostic: the source
+// Codex stores each conversation as a rollout JSONL under
+// ~/.codex/sessions/YYYY/MM/DD. Keep this reader display-only: Husk does not
+// rewrite Codex's transcript or rely on its internal SQLite index.
+function listCodexSessions() {
+  const codexHome = process.env.CODEX_HOME || path.join(HOME, '.codex');
+  const roots = [path.join(codexHome, 'sessions'), path.join(codexHome, 'archived_sessions')];
+  const files = [];
+  const walk = (dir, depth = 0) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+    for (const ent of entries) {
+      const fullPath = path.join(dir, ent.name);
+      if (ent.isDirectory() && depth < 4) walk(fullPath, depth + 1);
+      else if (ent.isFile() && ent.name.endsWith('.jsonl')) files.push(fullPath);
+    }
+  };
+  for (const root of roots) walk(root);
+
+  const out = [];
+  for (const fullPath of files) {
+    let st;
+    try { st = fs.statSync(fullPath); } catch (_) { continue; }
+    if (!st.isFile() || st.size === 0) continue;
+    let id = path.basename(fullPath).replace(/\.jsonl$/, '').split('_')[0];
+    let project = '';
+    let startedISO = '';
+    let title = '';
+    try {
+      // The first typed message sits after the tool and instruction preamble.
+      const rc = sessionFileReads(fullPath, st);
+      const head = rc.codexHead !== undefined ? rc.codexHead : (rc.codexHead = readHead(fullPath, 262144));
+      for (const line of head.split('\n')) {
+        if (!line.trim()) continue;
+        let row;
+        try { row = JSON.parse(line); } catch (_) { continue; }
+        const payload = row && row.payload || {};
+        if (!title && row.type === 'response_item' && payload.type === 'message' && payload.role === 'user' && Array.isArray(payload.content)) {
+          const text = payload.content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).join(' ').trim();
+          // Context blocks the CLI injects open with a tag; a typed message does not.
+          if (text && !text.startsWith('<')) title = withoutBrainContext(text).trim();
+        }
+        if (row.type === 'session_meta') {
+          if (payload.id) id = String(payload.id);
+          if (payload.cwd) project = String(payload.cwd);
+          if (payload.timestamp) startedISO = String(payload.timestamp);
+        }
+        if (!title && row.type === 'event_msg' && payload.type === 'user_message') {
+          title = withoutBrainContext(String(payload.message || '')).trim();
+        }
+      }
+    } catch (_) { continue; }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(id)) continue;
+    const startedMs = Date.parse(startedISO) || st.ctimeMs || st.mtimeMs;
+    out.push({
+      id, project, projectPath: project, originalCwd: project, path: fullPath,
+      title: title.replace(/\s+/g, ' ').slice(0, 120) || 'Codex session',
+      named: false, firstMessage: title, prdSlug: '', prdPhase: '', prdProgress: '',
+      prdPath: '', startedISO: startedISO || new Date(startedMs).toISOString(),
+      startedMs, sizeBytes: st.size, mtime: st.mtimeMs,
+    });
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+// List saved sessions from every agent Husk can read, each row tagged with its
+// owner. Husk is tool-agnostic: the source
 // (and on-disk format) depends on which CLI is active. claude keeps JSONL
 // transcripts under ~/.claude/projects; copilot keeps per-session folders under
-// <COPILOT_HOME>/session-state. Agents we do not yet read return an empty list with
-// supported:false so the UI can say so instead of erroring.
+// <COPILOT_HOME>/session-state; codex keeps rollout JSONL under ~/.codex/sessions.
+// Agents we do not yet read return supported:false so the UI can say so instead
+// of erroring.
+const SESSION_LIST_AGENTS = ['claude', 'copilot', 'codex', 'gemini'];
 ipcMain.handle('sessions:list', (_e, opts = {}) => {
+  const primary = listAgentSessions(opts);
+  const sessions = [];
+  let hidden = 0;
+  for (const name of SESSION_LIST_AGENTS) {
+    let r = null;
+    try { r = name === primary.agent ? primary : listAgentSessions({ agent: name }); } catch (_) { continue; }
+    hidden += Number(r.hiddenAutopilotSessions || 0);
+    for (const s of r.sessions || []) sessions.push({ ...s, agent: name });
+  }
+  sessions.sort((a, b) => b.mtime - a.mtime);
+  return { ...primary, supported: true, currentCwd: activePtyCwd || '', sessions, hiddenAutopilotSessions: hidden };
+});
+
+function listAgentSessions(opts = {}) {
   // The list follows the agent the caller is using (the active chat tab), not
   // just the configured default, so a copilot or gemini chat's sessions show up
   // too. A claude-* alias counts as claude. A non-empty agent request names the
@@ -10077,7 +10243,7 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
   const raw = opts && typeof opts.agent === 'string' ? opts.agent.trim() : '';
   const req = raw ? agentBaseName(raw) : '';
   const reqAgent = (req === 'claude' || /^claude[-_]/.test(req)) ? 'claude' : req;
-  const agent = (reqAgent === 'claude' || reqAgent === 'copilot' || reqAgent === 'gemini') ? reqAgent : activeAgentName();
+  const agent = (reqAgent === 'claude' || reqAgent === 'copilot' || reqAgent === 'codex' || reqAgent === 'gemini') ? reqAgent : activeAgentName();
   if (agent === 'copilot') {
     const listed = listCopilotSessions({ withMeta: true });
     return {
@@ -10098,6 +10264,18 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
       sessionsDir: path.join(GEMINI_DIR, 'tmp'),
       currentCwd: activePtyCwd || '',
       sessions: listGeminiSessions(),
+      hiddenAutopilotSessions: 0,
+    };
+  }
+  if (agent === 'codex') {
+    const codexHome = process.env.CODEX_HOME || path.join(HOME, '.codex');
+    return {
+      ok: true,
+      agent,
+      supported: true,
+      sessionsDir: path.join(codexHome, 'sessions'),
+      currentCwd: activePtyCwd || '',
+      sessions: listCodexSessions(),
       hiddenAutopilotSessions: 0,
     };
   }
@@ -10206,14 +10384,14 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
           }
           if (!userMessage && obj.type === 'user' && obj.message) {
             const c = obj.message.content;
-            if (typeof c === 'string') userMessage = c.trim();
+            if (typeof c === 'string') userMessage = withoutBrainContext(c).trim();
             else if (Array.isArray(c)) {
               const t = c.find((p) => p && p.type === 'text' && typeof p.text === 'string');
-              if (t) userMessage = t.text.trim();
+              if (t) userMessage = withoutBrainContext(t.text).trim();
             }
           }
           if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') {
-            queueContent = obj.content.trim();
+            queueContent = withoutBrainContext(obj.content).trim();
           }
           // Short-circuit only when the head is partial (a big file), where the
           // title fields are already in hand. For a small file that fits
@@ -10259,6 +10437,8 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
       if (background && !headComplete && !scannedWhole) background = !(rc.human !== undefined ? rc.human : (rc.human = transcriptHasHumanTurn(fullPath, st.size)));
       if (background) continue;
 
+      // A first line longer than the head window hides the first message from it.
+      if (!aiTitle && !userMessage && !headComplete) userMessage = deepFirstUserMessage(fs, fullPath, st.size, { skip: isCommandWrapperText });
       const firstMessage = (aiTitle || userMessage || queueContent || '').slice(0, 220);
 
       const sessionStartMs = startedISO ? Date.parse(startedISO) : st.mtimeMs;
@@ -10331,7 +10511,7 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
     sessions: deduped,
     hiddenAutopilotSessions: hiddenAutopilot,
   };
-});
+}
 
 // Resolve the agent-session title for a LIVE chat tab so the tab can show the
 // same name the Sessions list shows instead of a generic "Chat N". Two modes:
@@ -10603,6 +10783,7 @@ ipcMain.handle('sessions:resumeCommand', async (_e, payload = {}) => {
     if (!index) return { ok: false, error: 'that gemini session is no longer listed' };
     return { ok: true, command: `gemini --resume ${index}` };
   }
+  if (agent === 'codex') return { ok: true, command: `codex resume ${id}` };
   return { ok: false, error: `resume is not supported for ${agent} sessions` };
 });
 
@@ -11180,10 +11361,11 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
     if (kind === 'skill') {
       const skillName = baseName.replace(/\.md$/i, '');
       if (!/^[A-Za-z0-9._-]+$/.test(skillName)) return { ok: false, error: 'Invalid skill name' };
-      destDir = path.resolve(path.join(CLAUDE_DIR, 'skills', skillName));
-      const skillsRoot = path.resolve(path.join(CLAUDE_DIR, 'skills'));
+      destDir = path.resolve(path.join(SHARED_SKILLS_DIR, skillName));
+      const skillsRoot = path.resolve(SHARED_SKILLS_DIR);
       if (!destDir.startsWith(skillsRoot + path.sep)) return { ok: false, error: 'Refusing path outside skills/' };
-      fs.mkdirSync(destDir, { recursive: true });
+      prepareSharedSkills();
+      fs.mkdirSync(destDir);
       dest = path.join(destDir, 'SKILL.md');
     } else {
       destDir = path.resolve(path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT'));
@@ -11196,6 +11378,7 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
     const fd = fs.openSync(dest, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
       | (fs.constants.O_NOFOLLOW || 0), 0o644);
     try { fs.writeFileSync(fd, buf); } finally { fs.closeSync(fd); }
+    if (kind === 'skill') prepareSharedSkills();
     return { ok: true, dest };
   } catch (err) { return { ok: false, error: err.message }; }
 });
@@ -12889,6 +13072,7 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     applyPaiState(config.paiEnabled !== false);
     bootstrapPaiIfNeeded();
+    prepareSharedSkills();
     bootstrapHuskPromptsIfNeeded();
     // Make existing Husk agents available to every installed CLI (writes any
     // missing agent files into ~/.claude/agents and ~/.copilot/agents).

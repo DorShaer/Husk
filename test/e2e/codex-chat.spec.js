@@ -33,7 +33,7 @@ async function launch(homeDir, bin) {
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
+    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, CODEX_HOME: path.join(homeDir, '.codex'), PATH: `${bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
     timeout: 30_000,
   });
   const win = await app.firstWindow({ timeout: 30_000 });
@@ -83,23 +83,6 @@ test('codex opens as a Husk thread and answers an approval', async () => {
   } finally { await app.close(); }
 });
 
-test('/mcp shows what the CLI itself prints, not a pointer to its terminal', async () => {
-  const { homeDir, bin } = makeHome();
-  const { app, win } = await launch(homeDir, bin);
-  try {
-    const pane = win.locator('.chat-pane.show');
-    await chatReady(win);
-    await pane.locator('.chat-input').fill('/mcp');
-    await pane.locator('.chat-input').press('Enter');
-    await expect(pane.locator('.chat-item-user .chat-bubble')).toHaveText('/mcp');
-    await expect(pane.locator('.chat-item-text code').first()).toHaveText('codex mcp list');
-    await expect(pane.locator('.chat-item-text pre')).toContainText('fixture  node     enabled');
-    await expect(pane.locator('.chat-meta .chat-meta-line')).toContainText('Done');
-    // The command never reached the agent, so no turn of its own was played.
-    await expect(pane.locator('.chat-tool')).toHaveCount(0);
-  } finally { await app.close(); }
-});
-
 test('the footer and Status panel follow the focused chat, and chats reorder by drag', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
@@ -140,3 +123,35 @@ test('the default zoom is the level the renderer calls its baseline', async () =
     expect(z.base).toBeGreaterThan(0);
   } finally { await app.close(); }
 });
+
+
+for (const archived of [false, true]) {
+test(`resuming a ${archived ? 'archived' : 'saved'} Codex rollout shows history and continues the original thread`, async () => {
+  const { homeDir, bin } = makeHome();
+  const id = '01a1d208-8467-7c32-8e5a-27d5e8d10a95';
+  const dir = archived ? path.join(homeDir, '.codex', 'archived_sessions') : path.join(homeDir, '.codex', 'sessions', '2026', '11', '13');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `rollout-2026-11-13T01-12-15-${id}.jsonl`), [
+    { type: 'session_meta', payload: { id, cwd: REPO_ROOT, timestamp: '2026-11-13T01:12:15Z' } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Check the release tests' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'All 292 end-to-end tests passed.' }] } },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n');
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await chatReady(win);
+    await win.evaluate(({ sessionId, project }) => resumeSessionInChat({ id: sessionId, owner: 'codex', project, title: 'Release checks' }), { sessionId: id, project: REPO_ROOT }); // eslint-disable-line no-undef
+    await chatReady(win);
+    const pane = win.locator('.chat-pane.show');
+    await expect(pane).toContainText('Check the release tests');
+    await expect(pane).toContainText('All 292 end-to-end tests passed.');
+    const sessions = await win.evaluate(() => window.husk.chat.list());
+    expect(sessions.sessions.some((s) => s.sessionId === id)).toBe(true);
+    await pane.locator('.chat-input').fill('continue');
+    await pane.locator('.chat-input').press('Enter');
+    await expect(pane.locator('.chat-perm')).toBeVisible();
+    await pane.locator('.chat-perm-btn', { hasText: /^Allow$/ }).click();
+    await expect(pane).toContainText('decision was accept');
+    await expect(pane).toContainText('All 292 end-to-end tests passed.');
+  } finally { await app.close(); }
+});
+}

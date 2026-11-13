@@ -44,6 +44,14 @@ async function launch(homeDir, bin) {
   return { app, win };
 }
 
+async function setWindowContentSize(app, width, height) {
+  await app.evaluate(({ BrowserWindow }, size) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    win.setContentSize(size.width, size.height);
+    return true;
+  }, { width, height });
+}
+
 test('a chat tab streams text, shows a tool card, answers a permission and ends the turn', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
@@ -52,6 +60,7 @@ test('a chat tab streams text, shows a tool card, answers a permission and ends 
 
   // The pane is up, with the footer naming the agent and no xterm pane shown.
   const pane = win.locator('.chat-pane.show');
+  await expect(win.locator('#btn-restart')).toHaveCount(0);
   await expect(pane).toBeVisible();
   await expect(pane.locator('.chat-composer-meta')).toContainText('gemini');
   await expect(win.locator('.term-pane.show')).toHaveCount(0);
@@ -134,6 +143,49 @@ async function chatReady(win) {
     return i && !/Starting/.test(i.placeholder);
   });
 }
+
+test('same chat titles from different agents are labeled in tabs and the sessions column', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  const labels = await win.evaluate(() => {
+    const template = [...TABS.values()][0];
+    const makeTab = (id, command) => ({
+      ...template,
+      id,
+      command,
+      launchCommand: command,
+      mode: 'chat',
+      isShell: false,
+      title: 'Shared investigation',
+      customTitle: null,
+      titleEarned: true,
+      agentId: null,
+      agentIdProvisional: false,
+      chatState: { items: [] },
+      chatRunning: false,
+      chatAlive: true,
+      createdAt: Date.now(),
+    });
+    TABS.clear();
+    TABS.set('same-claude', makeTab('same-claude', 'claude'));
+    TABS.set('same-codex', makeTab('same-codex', 'codex'));
+    activeTabId = 'same-codex';
+    cs.list = [];
+    renderTabStrip();
+    const tabs = [...document.querySelectorAll('#tab-strip .chat-tab')].map((el) => ({
+      title: el.title,
+      vendor: el.querySelector('.chat-tab-vendor')?.textContent || '',
+    }));
+    const cards = csModel().groups.flatMap((group) => group.cards).map((card) => card.displayTitle);
+    return { tabs, cards };
+  });
+  expect(labels.tabs).toEqual([
+    { title: 'Shared investigation · Claude', vendor: 'Claude' },
+    { title: 'Shared investigation · Codex', vendor: 'Codex' },
+  ]);
+  expect(labels.cards).toEqual(['Shared investigation · Claude', 'Shared investigation · Codex']);
+  await app.close();
+});
 
 test('a reload keeps the chat tab, its thread and its live agent', async () => {
   const { homeDir, bin } = makeHome();
@@ -348,6 +400,7 @@ test('the Sessions column lists live tabs with their state, + New adds a second 
 
   // + New opens a second tab, which gets its own card and becomes the active one.
   await col.locator('#cs-new').click();
+  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(live).toHaveCount(2);
   await expect(col.locator('.cs-card.is-active')).toHaveCount(1);
@@ -391,7 +444,7 @@ test('a tool row opens into its card, Formatted and Raw switch, the top bar coun
     firstRunDone: true, skipWelcome: true, agentCommand: 'gemini', theme: 'ember',
   }));
   const { app, win } = await launch(homeDir, bin);
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1500, 900); });
+  await setWindowContentSize(app, 1500, 900);
   await expect(win.locator('body')).toHaveAttribute('data-theme', 'ember');
   await expect(win.locator('#pref-theme option[value="ember"]')).toHaveText('Ember');
   expect(await win.locator('#pref-theme').inputValue()).toBe('ember');
@@ -475,7 +528,8 @@ function seedPastSession(homeDir, bin, extraConfig) {
   const when = new Date(Date.now() - 1800 * 1000).toISOString();
   fs.writeFileSync(path.join(dir, 'workspace.yaml'), `id: ${id}\ncwd: ${work}\ncreated_at: ${when}\nupdated_at: ${when}\nname: Yesterday's thread\n`);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), [
-    { type: 'user.message', data: { content: 'where were we' } },
+    // As it went to the agent: recalled notes ahead of what was typed.
+    { type: 'user.message', data: { content: '[Husk Brain: notes kept for this workspace that may bear on the message below.]\n- installer: the installer lives in installer/\n[End of Husk Brain notes]\n\nwhere were we' } },
     { type: 'assistant.message', data: { content: 'We were fixing the installer.' } },
   ].map((o) => JSON.stringify(o)).join('\n') + '\n');
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify(Object.assign({
@@ -503,6 +557,7 @@ test('a cold boot resumes the newest session into Chat instead of opening an emp
   await expect(pane.locator('.chat-item-user')).toHaveCount(2);
   // + New still opens a fresh chat beside it.
   await win.locator('#cs-new').click();
+  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(win.locator('.chat-pane.show .chat-item-user')).toHaveCount(0);
   await app.close();
@@ -788,7 +843,7 @@ test('Report a bug and Request a feature live in the top bar and the Help menu, 
   await expect(win.locator('#btn-report-bug')).toBeHidden();
   // Right side reads as groups: agents/status, help, then the two actions.
   const groups = await win.evaluate(() => [...document.querySelectorAll('.topbar-side-right > *')].map((n) => n.id || n.className.split(' ')[0]));
-  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-help', 'tb-sep', 'btn-new-session', 'btn-status-toggle']);
+  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
   const bug = await win.evaluate(() => window.husk.feedback.url('bug'));
   expect(bug.ok).toBe(true);
   const u = new URL(bug.url);

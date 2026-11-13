@@ -177,6 +177,7 @@ contextBridge.exposeInMainWorld('husk', {
     signal: (s, ctx) => { try { return sessionView.signal(s, ctx); } catch (_) { return null; } },
     scent: (s, sig, names) => { try { return sessionView.scent(s, sig, names); } catch (_) { return ''; } },
     titleOf: (s, names) => { try { return sessionView.titleOf(s, names); } catch (_) { return ''; } },
+    disambiguateTitles: (items) => { try { return sessionView.disambiguateTitles(items); } catch (_) { return []; } },
     sessionCwd: (s) => { try { return sessionView.sessionCwd(s); } catch (_) { return ''; } },
     basename: (p) => { try { return sessionView.basename(p); } catch (_) { return ''; } },
     inCurrentProject: (s, cwd) => { try { return sessionView.inCurrentProject(s, cwd); } catch (_) { return false; } },
@@ -302,6 +303,7 @@ contextBridge.exposeInMainWorld('husk', {
     isLive: (state) => { try { return agentIsLive(state); } catch (_) { return false; } },
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
+    authCommand: (command, verb) => ipcRenderer.invoke('agents:authCommand', { command, verb }),
     onInstallProgress: (cb) => ipcRenderer.on('agents:install:progress', (_e, p) => cb(p)),
   },
   // The artifact ledger: what runs left behind, from the two stores that

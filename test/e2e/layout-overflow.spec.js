@@ -13,6 +13,17 @@ const fs = require('node:fs');
 const os = require('node:os');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
+// Resolve the main-process evaluation before resizing. The resize tears down
+// Playwright's main-frame bridge on some Electron runs while it is still
+// awaiting the evaluation result.
+async function setWindowContentSize(app, width, height) {
+  await app.evaluate(({ BrowserWindow }, size) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    win.setContentSize(size.width, size.height);
+    return true;
+  }, { width, height });
+}
+
 test('short window keeps the rail bottom and status footer visible', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
@@ -37,7 +48,7 @@ test('short window keeps the rail bottom and status footer visible', async () =>
     return !!fit && fit.children.length > 0 && fit.scrollHeight > 0;
   }, null, { timeout: 15_000 });
 
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 620); });
+  await setWindowContentSize(app, 1100, 620);
 
   // Fill the rail so its middle section has to scroll, then wait for the layout
   // and the status panel's fit pass (driven by a ResizeObserver) to settle.
@@ -190,13 +201,13 @@ test('the status rows keep both edges at any fit scale', async () => {
 
   // Two window heights, both inside the smallest screen this runs on. The rows
   // reach the same two edges at either height.
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 760); });
+  await setWindowContentSize(app, 1100, 760);
   await win.waitForTimeout(700);
   const tall = await gaps();
   expect(Math.abs(tall.left - tall.right), JSON.stringify(tall)).toBeLessThanOrEqual(1);
 
   // Short enough that the fit has more work to do, at whatever scale comes out.
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1100, 460); });
+  await setWindowContentSize(app, 1100, 460);
   await win.waitForTimeout(900);
   const short = await gaps();
   expect(Math.abs(short.left - short.right), JSON.stringify(short)).toBeLessThanOrEqual(1);

@@ -82,46 +82,44 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
     await win.click('#br-add-files');
     await expect(win.locator('#br-list .br-row[data-kind="file"]')).toHaveCount(1);
     await expect(win.locator('#br-last')).toContainText('Learned 1 file');
-    // The note, the file and its passage are all on the canvas.
-    await expect.poll(() => win.evaluate(() => window.Brain._state().dots)).toBe(3);
+    await expect(win.locator('#br-network .br-neuron')).toHaveCount(3);
+    await expect(win.locator('#br-network .br-synapse-line')).toHaveCount(1);
+    await expect(win.locator('#br-network .br-recall-ring')).toHaveCount(0);
+    await win.click('#br-network-full');
+    await expect.poll(() => win.evaluate(() => !!document.fullscreenElement)).toBe(true);
+    await expect(win.locator('#br-network-full')).toHaveText('Exit full screen');
+    await win.click('#br-network-full');
+    await expect.poll(() => win.evaluate(() => !!document.fullscreenElement)).toBe(false);
+    // The synapse view zooms from its controls and the wheel, slides under a
+    // drag, and Fit shows all of it again.
+    await expect(win.locator('#br-net-zoom')).toHaveText('100%');
+    await win.click('#br-net-in');
+    await expect(win.locator('#br-net-zoom')).not.toHaveText('100%');
+    const boxOf = () => win.evaluate(() => document.getElementById('br-network').getAttribute('viewBox').split(' ').map(Number));
+    const zoomed = await boxOf();
+    await win.locator('#br-network').hover({ position: { x: 30, y: 30 } });
+    await win.mouse.wheel(0, -300);
+    await expect.poll(async () => (await boxOf())[2]).toBeLessThan(zoomed[2]);
+    const held = await boxOf();
+    await win.locator('#br-network').dragTo(win.locator('#br-network'), { sourcePosition: { x: 30, y: 30 }, targetPosition: { x: 110, y: 30 } });
+    expect((await boxOf())[0]).toBeLessThan(held[0]);
+    await win.click('#br-net-fit');
+    await expect(win.locator('#br-net-zoom')).toHaveText('100%');
+    // A connection is a fine curve: it is picked by a click on the line itself.
+    const onLine = await win.evaluate(() => {
+      const line = document.querySelector('#br-network .br-synapse .br-synapse-hit');
+      const at = line.getPointAtLength(line.getTotalLength() / 2).matrixTransform(line.getScreenCTM());
+      return { x: at.x, y: at.y };
+    });
+    await win.mouse.click(onLine.x, onLine.y);
+    await expect(win.locator('#br-detail')).toContainText('Part of a file');
+    await win.fill('#br-search', 'blue pipeline');
+    await expect(win.locator('#br-list .br-row')).toHaveCount(1);
+    await win.fill('#br-search', 'no matching memory');
+    await expect(win.locator('#br-list')).toContainText('Nothing matches');
+    await win.fill('#br-search', '');
+    await expect(win.locator('#br-list .br-row')).toHaveCount(2);
     await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'brain-page.png') });
-
-    // The sphere zooms from its controls and from the wheel, turns under a
-    // drag, and fits back.
-    const view = () => win.evaluate(() => window.Brain._state());
-    await expect.poll(async () => (await view()).auto).toBe(true);
-    const before = (await view()).zoom;
-    await win.click('#br-zoom-in');
-    expect((await view()).zoom).toBeGreaterThan(before);
-    expect((await view()).auto).toBe(false);
-    await expect(win.locator('#br-zoom')).toHaveText(Math.round((await view()).zoom * 100) + '%');
-    const zoomedIn = (await view()).zoom;
-    await win.locator('#br-canvas').hover({ position: { x: 200, y: 200 } });
-    await win.mouse.wheel(0, 600);
-    await expect.poll(async () => (await view()).zoom).toBeLessThan(zoomedIn);
-    const yaw0 = (await view()).yaw;
-    await win.locator('#br-canvas').dragTo(win.locator('#br-canvas'), { sourcePosition: { x: 300, y: 300 }, targetPosition: { x: 380, y: 300 } });
-    expect((await view()).yaw).toBeGreaterThan(yaw0 + 0.3);
-    await win.click('#br-fit');
-    await expect.poll(async () => (await view()).auto).toBe(true);
-
-    // Full screen gives the field the whole window; the button or Esc gives it back.
-    const stageBox = async () => win.locator('.br-stage').boundingBox();
-    const small = await stageBox();
-    await win.click('#br-full');
-    const size = await win.evaluate(() => ({ w: innerWidth, h: innerHeight }));
-    await expect.poll(async () => Math.round((await stageBox()).width)).toBe(size.w);
-    expect(Math.round((await stageBox()).height)).toBe(size.h);
-    await expect(win.locator('#br-full')).toHaveAttribute('aria-pressed', 'true');
-    // Over the page, not through it: the field paints a solid colour of its own.
-    const paint = await win.evaluate(() => { const c = getComputedStyle(document.querySelector('.br-stage')); return { color: c.backgroundColor, image: c.backgroundImage }; });
-    expect(paint.color).toMatch(/^rgb\(/);
-    expect(paint.image).not.toMatch(/\/ 0?\.\d+\)/);
-    await win.keyboard.press('Escape');
-    await expect.poll(async () => Math.round((await stageBox()).width)).toBe(Math.round(small.width));
-    await win.click('#br-full');
-    await win.click('#br-full');
-    await expect(win.locator('#br-full')).toHaveAttribute('aria-pressed', 'false');
 
     // The counts say what is here; nothing has been asked yet.
     await expect(win.locator('#br-stats .br-stat')).toHaveCount(6);
@@ -141,6 +139,20 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
     // The dot is unhidden; on the collapsed rail that makes the icon itself blink.
     await expect(win.locator('#rail-brain-pulse')).toHaveJSProperty('hidden', false);
     await expect(win.locator('#rail-brain .ri-icon')).toHaveCSS('animation-name', 'ap-icon-blink');
+    // While the turn runs, the Brain page shows the memory it was handed: the
+    // cell is marked and named, and the line under the network says so.
+    await win.evaluate(() => setPage('brain')); // eslint-disable-line no-undef
+    await expect(win.locator('#br-network .br-neuron.is-handed')).toHaveCount(1);
+    await expect(win.locator('#br-network-caption')).toContainText('In this turn: The staging cluster deploy');
+    // The agent's words reaching a memory mark it and send a light down its
+    // connections; moving on clears the mark.
+    const handedId = await win.evaluate(() => document.querySelector('#br-network .br-neuron.is-handed').dataset.id);
+    await win.evaluate((id) => window.Brain._activity({ kind: 'think', ids: [id], busy: true }), handedId);
+    await expect(win.locator('#br-network .br-neuron.is-touching')).toHaveCount(1);
+    await expect(win.locator('#br-network-caption')).toContainText('The agent is on: The staging cluster deploy');
+    await win.evaluate(() => window.Brain._activity({ kind: 'think', ids: [], busy: true }));
+    await expect(win.locator('#br-network .br-neuron.is-touching')).toHaveCount(0);
+    await win.evaluate(() => setPage('chat')); // eslint-disable-line no-undef
     // The thread shows what was typed, not what was added for the agent.
     await expect(pane.locator('.chat-item-user .chat-bubble')).toHaveText('how does the staging cluster deploy work?');
     await pane.locator('.chat-perm:not(.is-resolved) .chat-perm-btn', { hasText: /^Allow$/ }).click();
@@ -149,8 +161,12 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
 
     // The finished turn is a memory now.
     await win.evaluate(() => setPage('brain')); // eslint-disable-line no-undef
-    await expect(win.locator('#br-list .br-row[data-kind="decision"]')).toHaveCount(1);
-    await expect(win.locator('#br-list .br-row[data-kind="decision"] .br-row-title')).toHaveText('how does the staging cluster deploy work?');
+    // A finished turn is not a row in the list; it is in the Activity log, which
+    // is where the chat's own record is read.
+    await expect(win.locator('#br-list .br-row[data-kind="decision"]')).toHaveCount(0);
+    await win.click('.br-tab[data-tab="activity"]');
+    await expect(win.locator('#br-list .br-act').first()).toContainText('Remembered the outcome of');
+    await win.click('.br-tab[data-tab="memories"]');
     // The numbers moved with it, and the log says what happened, newest first.
     await expect(win.locator('#br-stats .br-stat').nth(3)).toContainText('1');
     await expect(win.locator('#br-stats .br-stat').nth(4)).toContainText('100%');
@@ -161,31 +177,13 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
     await expect(win.locator('#br-stats .br-stat').nth(0).locator('.br-stat-bar i')).toHaveCount(3);
     await expect(win.locator('#br-stats .br-stat').nth(4).locator('.br-meter i')).toHaveCount(1);
 
-    // A line on the field can be picked. The decision shares words with the
-    // note, so a synapse joins them, and picking it says which words.
-    const pick = async (kind) => {
-      await expect.poll(async () => {
-        const at = await win.evaluate((k) => window.Brain._edgeMid(k), kind);
-        if (!at) return null;
-        await win.locator('#br-canvas').click({ position: at });
-        return (await view()).edge;
-      }).toBeTruthy();
-    };
-    await pick('synapse');
+    // A connection is picked on the synapse network.
+    await win.locator('#br-network .br-synapse:not(.is-part)').first().dispatchEvent('click');
     await expect(win.locator('#br-detail')).toContainText('Connection');
-    await expect(win.locator('#br-detail .br-end')).toHaveCount(2);
-    await expect(win.locator('#br-detail')).toContainText('blue pipeline');
     await expect(win.locator('#br-detail')).toContainText('Strength');
     await expect(win.locator('#br-detail .br-chip', { hasText: 'staging' })).toHaveCount(1);
-    await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'brain-synapse.png') });
-    // Either end leads to its memory, and that lets go of the line.
     await win.locator('#br-detail .br-end[data-kind="note"]').click();
     await expect(win.locator('#br-list .br-row.is-selected')).toHaveCount(1);
-    expect((await view()).edge).toBe(null);
-    // The line from a file to its passage is not a dead one either.
-    await pick('part');
-    await expect(win.locator('#br-detail')).toContainText('Part of a file');
-    await expect(win.locator('#br-list .br-row.is-selected')).toHaveCount(0);
 
     await win.click('.br-tab[data-tab="activity"]');
     await expect(win.locator('#br-list .br-act').first()).toContainText('Remembered the outcome of');
@@ -202,7 +200,7 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
     await pane.locator('.chat-perm:not(.is-resolved) .chat-perm-btn', { hasText: /^Allow$/ }).click();
     await expect(pane.locator('.chat-item-text').last()).toContainText('brain=no');
     await win.evaluate(() => setPage('brain')); // eslint-disable-line no-undef
-    await expect(win.locator('#br-list .br-row[data-kind="decision"]')).toHaveCount(1);
+    await expect(win.locator('#br-list .br-row[data-kind="decision"]')).toHaveCount(0);
 
     // Forgetting the file takes its passages with it.
     await win.locator('#br-list .br-row[data-kind="file"]').click();

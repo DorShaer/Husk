@@ -19,7 +19,7 @@ const {
 } = require('./chat-events');
 const { openaiTurn } = require('./openai-stream');
 const {
-  APP_SERVER_ARGS, codexModel, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision,
+  APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision,
 } = require('./codex-app-server');
 
 const STDERR_KEEP = 2000;
@@ -31,7 +31,6 @@ const LOG_MAX_TEXT = 400000;
 
 const ALLOW_ALL = 'allow-all';
 
-const AUTH_HINT = 'Switch this tab to Terminal mode to sign in, then switch back to Chat.';
 // An ACP agent answers initialize within a second or two; one that never does
 // (an older build, a wrapper that ignores --acp) must fail the start instead
 // of leaving the tab on "Starting" forever.
@@ -50,14 +49,21 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
   // are kept as-is since the resolved event follows them in the log.
   function record(s, ev) {
     if (!s || !ev) return;
+    const timed = ev.type === 'user' || ev.type === 'text' || ev.type === 'text_final';
+    const rawAt = Number(ev.at);
+    const item = timed
+      ? Object.assign({}, ev, { at: Number.isFinite(rawAt) && rawAt > 0 ? rawAt : Date.now() })
+      : ev;
     const log = s.log;
     const last = log[log.length - 1];
-    if ((ev.type === 'text' || ev.type === 'thought') && last && last.type === ev.type) {
-      last.text += ev.text;
-      s.logText += ev.text.length;
+    if ((item.type === 'text' || item.type === 'thought') && last && last.type === item.type) {
+      last.text += item.text;
+      s.logText += item.text.length;
     } else {
-      log.push(ev.type === 'text' || ev.type === 'thought' ? { type: ev.type, text: ev.text } : ev);
-      if (ev.text) s.logText += String(ev.text).length;
+      log.push(item.type === 'text' || item.type === 'thought'
+        ? Object.assign({ type: item.type, text: item.text }, item.at === undefined ? {} : { at: item.at })
+        : item);
+      if (item.text) s.logText += String(item.text).length;
     }
     while (log.length > LOG_MAX_EVENTS || (s.logText > LOG_MAX_TEXT && log.length > 1)) {
       const dropped = log.shift();
@@ -260,11 +266,11 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       } catch (e) {
         const detail = tailStderr(s) || (e && e.message) || 'ACP handshake failed';
         // An agent that is not signed in refuses the session (auth_required
-        // in ACP terms, or its own login error on stderr). The way back is the
-        // CLI's interactive login, which lives in Terminal mode.
+        // in ACP terms, or its own login error on stderr). The result says
+        // so, and the host opens the CLI's own sign-in.
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail) || (e && e.code === -32000);
         await stop({ tabId });
-        return { ok: false, error: authy ? `${detail}\n${AUTH_HINT}` : detail };
+        return { ok: false, error: detail, auth: authy };
       }
       return { ok: true, transport, sessionId: s.sessionId };
     }
@@ -303,7 +309,9 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
           s.acp.notify('initialized');
           // The model list only feeds the picker; a CLI without it still chats.
           const models = await s.acp.request('model/list', {}).catch(() => null);
-          const thread = await s.acp.request('thread/start', Object.assign({ cwd: cwd || process.cwd() }, s.codexModel ? { model: s.codexModel } : {}));
+          const resumeId = codexResumeId(command);
+          const thread = await s.acp.request(resumeId ? 'thread/resume' : 'thread/start', Object.assign(
+            { cwd: cwd || process.cwd() }, resumeId ? { threadId: resumeId, excludeTurns: true } : {}, s.codexModel ? { model: s.codexModel } : {}));
           return { thread, models: models && models.data };
         })();
         const res = await Promise.race([handshake, expiry]);
@@ -316,7 +324,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         const detail = (e && e.message) || tailStderr(s) || 'app-server handshake failed';
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail);
         await stop({ tabId });
-        return { ok: false, error: authy ? `${detail}\n${AUTH_HINT}` : detail };
+        return { ok: false, error: detail, auth: authy };
       }
       return { ok: true, transport, sessionId: s.sessionId };
     }
@@ -394,16 +402,17 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
   // context is reference text Husk adds for the agent alone (what the Brain
   // recalled). It rides ahead of the prompt on the wire and stays out of the
   // replay log, so the thread shows what the user typed.
-  async function prompt({ tabId, text, images, context } = {}) {
+  async function prompt({ tabId, text, images, context, at } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const body = String(text || '');
     const pics = cleanImages(images);
     if (!body.trim() && !pics.length) return { ok: false, error: 'empty prompt' };
     const wire = context && body.trim() ? String(context) + '\n\n' + body : body;
+    const sentAt = Number.isFinite(Number(at)) && Number(at) > 0 ? Number(at) : Date.now();
     // The renderer paints the user's bubble itself before calling here, so the
     // log takes it directly rather than echoing it back.
-    record(s, Object.assign({ type: 'user', text: body }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
+    record(s, Object.assign({ type: 'user', text: body, at: sentAt }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
     if (s.transport === 'openai') {
       s.messages.push({ role: 'user', content: wire });
       s.turnOpen = true;

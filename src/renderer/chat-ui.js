@@ -39,6 +39,8 @@
     rerun: [['path', { d: 'M3 12a9 9 0 1 0 3-6.7L3 8' }], ['path', { d: 'M3 3v5h5' }]],
     terminal: [['rect', { x: '3', y: '4', width: '18', height: '16', rx: '2' }], ['path', { d: 'M7 9l3 3-3 3' }], ['path', { d: 'M12 15h5' }]],
     down: [['path', { d: 'M6 9l6 6 6-6' }]],
+    diff: [['path', { d: 'M12 4v9M7.5 8.5h9M7.5 19h9' }]],
+    pr: [['circle', { cx: '6', cy: '6', r: '2.5' }], ['circle', { cx: '6', cy: '18', r: '2.5' }], ['circle', { cx: '18', cy: '18', r: '2.5' }], ['path', { d: 'M6 8.5v7M18 15.5V10a4 4 0 0 0-4-4h-2' }]],
   };
 
   function icon(name, cls) {
@@ -187,6 +189,12 @@
     return out;
   }
 
+  // Slash commands a CLI answers with an interface of its own (a picker, a
+  // manager, a form) and ones that act on the running conversation. The first
+  // kind opens in the CLI; the second always goes to the agent in this chat.
+  const CLI_OWN = new Set(['mcp', 'config', 'settings', 'permissions', 'agents', 'hooks', 'plugin', 'plugins', 'status', 'doctor', 'memory', 'theme', 'statusline', 'terminal-setup', 'ide', 'vim', 'privacy-settings', 'install-github-app', 'tools', 'extensions', 'auth']);
+  const CONVERSATION = new Set(['clear', 'compact', 'context', 'cost', 'usage', 'rewind', 'resume', 'export', 'model', 'effort', 'fast', 'plan', 'review', 'init', 'add-dir', 'help', 'login', 'logout']);
+
   // What an empty chat offers to start with: things worth asking of any project.
   const STARTERS = [
     ['Explain this project', 'Read through this project and explain what it does, how it is laid out, and where I should start.'],
@@ -225,14 +233,16 @@
   // its fingerprint moves, so an idle thread costs one string per item a frame.
   function sigOf(it, pending, waiting) {
     switch (it.kind) {
-      case 'user': return 'u';
-      case 'text':
+      case 'user': return 'u:' + str(it.at);
+      case 'text': return str(it.at) + '|' + (it.open ? 'o' : 'c') + (it.final ? 'f' : '') + str(it.text).length + ':' + str(it.text).slice(-24);
       case 'thought': return (it.open ? 'o' : 'c') + (it.final ? 'f' : '') + str(it.text).length + ':' + str(it.text).slice(-24);
       case 'tool': return [it.status, it.title, it.toolKind, it.detail, str(it.output).length,
         Array.isArray(it.diffs) ? it.diffs.length : 0, it.input === undefined ? 0 : 1,
         Array.isArray(it.locations) ? it.locations.length : 0, waiting && waiting.has(it.id) ? 'w' : ''].join('|');
       case 'permission': return str(it.decision) + '|' + (pending.indexOf(it.requestId) !== -1 ? 'p' : 'x');
       case 'plan': try { return JSON.stringify(it.entries || []); } catch (_) { return String(Date.now()); }
+      case 'changes': return (Array.isArray(it.files) ? it.files.length : 0) + '|' + it.adds + '|' + it.dels;
+      case 'pr': { const c = it.checks || {}; return [it.number, it.title, c.state, c.failed, c.pending, c.total].join('|'); }
       default: return 'm';
     }
   }
@@ -272,6 +282,27 @@
   function clock(d) {
     const p = (x) => (x < 10 ? '0' : '') + x;
     return p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function timestampValue(value) {
+    let ms = typeof value === 'number' ? value : Date.parse(str(value));
+    if (!Number.isFinite(ms) || ms <= 0) return 0;
+    if (ms < 1e11) ms *= 1000;
+    return ms;
+  }
+
+  function messageTime(value) {
+    const ms = timestampValue(value);
+    if (!ms) return null;
+    const date = new Date(ms);
+    const today = new Date();
+    const isToday = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
+    const day = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const label = isToday ? clock(date) : `${day}${date.getFullYear() === today.getFullYear() ? '' : ', ' + date.getFullYear()} · ${clock(date)}`;
+    const time = el('time', 'chat-message-time', label);
+    time.dateTime = date.toISOString();
+    time.title = date.toLocaleString();
+    return time;
   }
 
   // ─── composer autocomplete (pure) ──────────────────────────────────────────
@@ -597,6 +628,7 @@
     form.addEventListener('drop', (e) => { form.classList.remove('is-dropping'); if (takeImagesFrom(e.dataTransfer)) { e.preventDefault(); e.stopPropagation(); } });
 
     let queued = [];
+    let sendNowItem = null;
     function paintQueue() {
       queueBox.replaceChildren();
       queued.forEach((q, i) => {
@@ -604,13 +636,47 @@
         const bubble = el('div', 'chat-bubble', q.text || (q.images && q.images.length ? '' : ''));
         if (q.images && q.images.length) bubble.prepend(imageRow(q.images));
         row.appendChild(bubble);
+        const time = messageTime(q.at);
+        if (time) row.appendChild(time);
         const tag = el('span', 'chat-queued-tag');
         tag.appendChild(el('span', 'chat-queued-label', 'Queued'));
+        const sendNow = el('button', 'chat-queue-send', q === sendNowItem ? 'Sending now…' : 'Send now');
+        sendNow.type = 'button';
+        sendNow.disabled = starting || exited || destroyed || !!sendNowItem;
+        sendNow.title = q === sendNowItem
+          ? 'Interrupting the current reply to send this message'
+          : 'Stop the current reply and send this message now';
+        sendNow.addEventListener('click', () => {
+          if (starting || exited || destroyed || sendNowItem) return;
+          const index = queued.indexOf(q);
+          if (index < 0) return;
+          queued.splice(index, 1);
+          if (running) {
+            queued.unshift(q);
+            sendNowItem = q;
+            paintQueue();
+            doStop().then((res) => {
+              if (res && res.ok === false && sendNowItem === q) {
+                sendNowItem = null;
+                paintQueue();
+                apply({ type: 'error', text: 'Could not interrupt the current reply. The message remains queued.' });
+              }
+            });
+            return;
+          }
+          paintQueue();
+          doSend(q.text, q.images);
+        });
+        tag.appendChild(sendNow);
         const x = el('button', 'chat-queue-x', '\u00d7');
         x.type = 'button';
         x.title = 'Remove from queue';
         x.setAttribute('aria-label', 'Remove from queue');
-        x.addEventListener('click', () => { queued.splice(i, 1); paintQueue(); });
+        x.addEventListener('click', () => {
+          if (q === sendNowItem) sendNowItem = null;
+          queued.splice(i, 1);
+          paintQueue();
+        });
         tag.appendChild(x);
         row.appendChild(tag);
         queueBox.appendChild(row);
@@ -624,6 +690,7 @@
     function flushQueue() {
       if (!queued.length || running || starting || exited || destroyed) return;
       const next = queued.shift();
+      if (next === sendNowItem) sendNowItem = null;
       paintQueue();
       doSend(next.text, next.images);
     }
@@ -676,6 +743,15 @@
         : starting ? `Starting ${agentName}...`
           : running ? `Message ${agentName}  (Enter queues it for after this reply)`
             : `Message ${agentName}  (Enter to send, Shift+Enter for a new line)`;
+    }
+
+    // A command the agent does not offer over the wire, unless it is one that
+    // acts on this conversation, is the CLI's own to show.
+    function opensInCli(name) {
+      if (CONVERSATION.has(name)) return false;
+      if (CLI_OWN.has(name)) return true;
+      const known = Array.isArray(state.commands) ? state.commands : [];
+      return known.length > 0 && !known.some((k) => String(k.name).toLowerCase() === name);
     }
 
     function paintMeta() {
@@ -802,7 +878,7 @@
       if (typeof o.onModelChange === 'function') { try { o.onModelChange(modelId, modelName); } catch (_) {} }
     }
 
-    function doSend(textArg, imagesArg) {
+    function doSend(textArg, imagesArg, atArg) {
       const text = str(textArg === undefined ? input.value : textArg).replace(/\s+$/, '').replace(/^\s*\n/, '');
       const images = imagesArg !== undefined ? (imagesArg || []) : (textArg === undefined ? pendingImages.slice() : []);
       if ((!text.trim() && !images.length) || exited || destroyed) return false;
@@ -813,16 +889,23 @@
         if (mm[1]) chooseModel(mm[1], mm[1]); else openModelMenu();
         return true;
       }
-      // Signing in and out are the CLI's interactive commands: over the wire it
-      // answers that they are not available here. The host opens them in a
-      // terminal instead, where they work, and says so in the thread.
+      // Signing in and out are the CLI's interactive commands; the host opens
+      // the CLI's own, here.
       const auth = /^\/(login|logout)\s*$/.exec(text);
       if (auth && textArg === undefined) {
         input.value = ''; autogrow(); closeAc(); syncComposer();
         if (typeof o.onAuth === 'function') { try { o.onAuth(auth[1]); } catch (_) {} }
-        else apply({ type: 'status', text: `Run ${auth[1] === 'logout' ? 'claude auth logout' : 'claude auth login'} in a Terminal tab.` });
         return true;
       }
+      // A command that lives in the CLI's own interface opens there, in this
+      // chat, instead of being answered for it.
+      const own = /^\/([a-z][\w-]*)(?:\s|$)/i.exec(text);
+      if (own && textArg === undefined && typeof o.onNative === 'function' && opensInCli(own[1].toLowerCase())) {
+        input.value = ''; autogrow(); closeAc(); syncComposer();
+        try { o.onNative(text); } catch (_) {}
+        return true;
+      }
+      const sentAt = timestampValue(atArg) || Date.now();
       histIdx = -1;
       if (editingKey && textArg === undefined) {
         // The edited prompt and its reply leave the thread before the new one lands.
@@ -834,20 +917,20 @@
         paint();
       }
       if (running || starting) {
-        queued.push({ text, images });
+        queued.push({ text, images, at: sentAt });
         if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; paintAttachments(); }
         paintQueue();
         return true;
       }
       if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; paintAttachments(); }
-      apply({ type: 'user', text, images: images.map((im) => ({ mimeType: im.mimeType, data: im.dataUrl })) });
+      apply({ type: 'user', text, at: sentAt, images: images.map((im) => ({ mimeType: im.mimeType, data: im.dataUrl })) });
       forceScroll = true;
       // Running flips now rather than on the next frame, so a second Enter in
       // the same frame cannot send twice.
       setRunningInternal(true);
       if (typeof o.onSend === 'function') { try { o.onSend(text); } catch (_) {} }
       Promise.resolve()
-        .then(() => api.prompt({ tabId, text, images: images.map((im) => ({ mimeType: im.mimeType, data: im.data })) }))
+        .then(() => api.prompt({ tabId, text, at: sentAt, images: images.map((im) => ({ mimeType: im.mimeType, data: im.data })) }))
         .then((res) => { if (res && res.ok === false) apply({ type: 'error', text: res.error || 'The agent did not take that message.' }); })
         .catch((err) => apply({ type: 'error', text: (err && err.message) || 'The agent did not take that message.' }));
       syncComposer();
@@ -855,8 +938,8 @@
     }
 
     function doStop() {
-      if (!running) return;
-      Promise.resolve().then(() => api.cancel({ tabId })).catch(() => {});
+      if (!running) return Promise.resolve({ ok: true });
+      return Promise.resolve().then(() => api.cancel({ tabId })).catch(() => ({ ok: false }));
     }
 
     // ── autocomplete ──
@@ -1040,6 +1123,7 @@
         if (e.key === 'ArrowUp' && !walking && !input.value && queued.length) {
           e.preventDefault();
           const q = queued.pop();
+          if (q === sendNowItem) sendNowItem = null;
           paintQueue();
           pendingImages = (q.images || []).slice();
           paintAttachments();
@@ -1077,6 +1161,8 @@
       const bubble = el('div', 'chat-bubble', it.text);
       if (Array.isArray(it.images) && it.images.length) bubble.prepend(imageRow(it.images));
       row.appendChild(bubble);
+      const time = messageTime(it.at);
+      if (time) row.appendChild(time);
       return { el: row, update() {} };
     }
 
@@ -1085,7 +1171,11 @@
       return {
         el: row,
         update(it) {
-          row.replaceChildren(md(it.text));
+          const content = el('div', 'chat-text-content');
+          content.appendChild(md(it.text));
+          row.replaceChildren(content);
+          const time = messageTime(it.at);
+          if (time) row.appendChild(time);
           row.classList.toggle('is-streaming', !!it.open);
         },
       };
@@ -1374,6 +1464,10 @@
             const qs = it.input.questions;
             const picks = qs.map(() => new Set());
             const wrap = el('div', 'chat-ask');
+            const submit = el('button', 'btn-primary chat-perm-btn', 'Submit');
+            submit.type = 'button';
+            submit.disabled = true;
+            submit.title = 'Select at least one option for each question to submit';
             qs.forEach((q, qi) => {
               const block = el('div', 'chat-ask-q');
               if (q && q.header) block.appendChild(el('span', 'chat-ask-tag', str(q.header)));
@@ -1394,6 +1488,7 @@
                     const lbl = btn.querySelector('.chat-ask-label');
                     btn.classList.toggle('is-sel', !!(lbl && set.has(lbl.textContent)));
                   }
+                  submit.disabled = !picks.length || picks.some((picked) => picked.size === 0);
                 });
                 list.appendChild(b);
               }
@@ -1411,9 +1506,8 @@
               apply({ type: 'permission_resolved', requestId, optionId });
             };
             const askActions = el('div', 'chat-perm-actions');
-            const submit = el('button', 'btn-primary chat-perm-btn', 'Submit');
-            submit.type = 'button';
             submit.addEventListener('click', () => {
+              if (!picks.length || picks.some((picked) => picked.size === 0)) return;
               const answers = {};
               qs.forEach((q, qi) => {
                 const labels = [...picks[qi]];
@@ -1488,6 +1582,85 @@
       };
     }
 
+    // Files that moved in the working tree while the turn ran. The card lists
+    // them; the diff itself opens beside the thread.
+    const CHANGE_LETTER = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'A', conflicted: 'U' };
+    const CHANGES_SHOWN = 6;
+    function openCanvas(req) {
+      if (typeof o.onOpenCanvas === 'function') { try { o.onOpenCanvas(req); } catch (_) {} }
+    }
+    function statSpan(adds, dels) {
+      const box = el('span', 'chat-changes-stat');
+      if (adds > 0) box.appendChild(el('span', 'is-add', '+' + adds));
+      if (dels > 0) box.appendChild(el('span', 'is-del', '-' + dels));
+      return box;
+    }
+    function buildChanges() {
+      const card = el('div', 'chat-item chat-changes');
+      return {
+        el: card,
+        update(it) {
+          card.replaceChildren();
+          const files = Array.isArray(it.files) ? it.files : [];
+          const head = el('button', 'chat-changes-head');
+          head.type = 'button';
+          head.title = 'Files in the working tree that changed while this turn ran';
+          head.appendChild(icon('diff', 'chat-changes-icon'));
+          head.appendChild(el('span', 'chat-changes-title', files.length === 1 ? '1 file changed during this turn' : files.length + ' files changed during this turn'));
+          head.appendChild(statSpan(it.adds, it.dels));
+          head.appendChild(el('span', 'chat-changes-open', 'View'));
+          head.appendChild(icon('chevron', 'chat-changes-chev'));
+          head.addEventListener('click', () => openCanvas({ tab: 'changes', path: files[0] ? files[0].path : '' }));
+          card.appendChild(head);
+          const ul = el('div', 'chat-changes-list');
+          for (const f of files.slice(0, CHANGES_SHOWN)) {
+            const row = el('button', 'chat-changes-row');
+            row.type = 'button';
+            row.title = str(f.path);
+            const letter = el('span', 'chat-changes-letter', CHANGE_LETTER[f.status] || 'M');
+            letter.dataset.status = str(f.status);
+            row.appendChild(letter);
+            row.appendChild(el('span', 'chat-changes-path', str(f.path)));
+            row.appendChild(statSpan(f.adds, f.dels));
+            row.addEventListener('click', () => openCanvas({ tab: 'changes', path: str(f.path) }));
+            ul.appendChild(row);
+          }
+          if (files.length > CHANGES_SHOWN) {
+            const more = el('button', 'chat-changes-row chat-changes-more', 'and ' + (files.length - CHANGES_SHOWN) + ' more');
+            more.type = 'button';
+            more.addEventListener('click', () => openCanvas({ tab: 'changes', path: '' }));
+            ul.appendChild(more);
+          }
+          card.appendChild(ul);
+        },
+      };
+    }
+
+    // The branch's pull request, with where its checks stand.
+    function buildPr() {
+      const chip = el('button', 'chat-item chat-pr');
+      chip.type = 'button';
+      return {
+        el: chip,
+        update(it) {
+          chip.replaceChildren();
+          const c = it.checks || {};
+          const state = str(c.state) || 'none';
+          chip.dataset.checks = state;
+          chip.appendChild(icon('pr', 'chat-pr-icon'));
+          chip.appendChild(el('span', 'chat-pr-num', 'PR #' + it.number));
+          chip.appendChild(el('span', 'chat-pr-title', str(it.title)));
+          if (state !== 'none') {
+            chip.appendChild(el('span', 'chat-pr-dot'));
+            const word = state === 'failing' ? (c.failed === 1 ? '1 check failing' : c.failed + ' checks failing')
+              : state === 'pending' ? 'checks running' : 'checks passing';
+            chip.appendChild(el('span', 'chat-pr-state', word));
+          }
+          chip.onclick = () => openCanvas({ tab: state === 'failing' || state === 'pending' ? 'checks' : 'pr' });
+        },
+      };
+    }
+
     // The turn a footer closes: the user message that opened it and every
     // reply block since, read from the live state when an action is pressed.
     function turnOf(key) {
@@ -1556,7 +1729,7 @@
       };
     }
 
-    const BUILDERS = { user: buildUser, text: buildText, thought: buildThought, tool: buildTool, permission: buildPermission, plan: buildPlan, meta: buildMeta };
+    const BUILDERS = { user: buildUser, text: buildText, thought: buildThought, tool: buildTool, permission: buildPermission, plan: buildPlan, changes: buildChanges, pr: buildPr, meta: buildMeta };
 
     // ── paint ──
 
@@ -1631,10 +1804,12 @@
           prev._merged += str(ev.text);
           continue;
         }
-        if (ev.type === 'text' || ev.type === 'thought') out.push({ type: ev.type, _merged: str(ev.text) });
+        if (ev.type === 'text' || ev.type === 'thought') out.push({ type: ev.type, _merged: str(ev.text), _at: ev.at });
         else out.push(ev);
       }
-      return out.map((e) => (e._merged !== undefined ? { type: e.type, text: e._merged } : e));
+      return out.map((e) => (e._merged !== undefined
+        ? Object.assign({ type: e.type, text: e._merged }, e._at === undefined ? {} : { at: e._at })
+        : e));
     }
 
     function drain() {
@@ -1662,7 +1837,12 @@
     function apply(eventArg) {
       if (destroyed || !eventArg || typeof eventArg !== 'object') return;
       let event = eventArg;
-      if (event.type === 'user') turnStartedAt = Date.now();
+      if (event.type === 'user') {
+        turnStartedAt = Date.now();
+        event = Object.assign({}, event, { at: timestampValue(event.at) || turnStartedAt });
+      } else if (event.type === 'text' || event.type === 'text_final') {
+        event = Object.assign({}, event, { at: timestampValue(event.at) || Date.now() });
+      }
       // ACP reports no turn duration, so the footer falls back to the time
       // since the message was sent, measured here.
       if (event.type === 'turn_end' && typeof event.durationMs !== 'number' && turnStartedAt) {
@@ -1705,6 +1885,8 @@
 
     function reset() {
       queue = [];
+      queued = [];
+      sendNowItem = null;
       state = emptyThread();
       nodes.clear();
       list.replaceChildren();
@@ -1747,13 +1929,14 @@
         if (!on && state.turnOpen) state = Object.assign({}, state, { turnOpen: false });
         setRunningInternal(on);
       },
-      setStarting(on) { starting = !!on; syncComposer(); },
+      setStarting(on) { starting = !!on; syncComposer(); paintQueue(); },
       setExited(on) {
         exited = !!on;
         if (exited && queued.length) {
           // Nobody will take them now; back into the field, in order.
           const back = queued.map((q) => q.text).filter(Boolean).join('\n');
           queued = [];
+          sendNowItem = null;
           paintQueue();
           setInputValue(input.value ? back + '\n' + input.value : back);
         }
@@ -1802,6 +1985,8 @@
         if (frame !== null && typeof window.cancelAnimationFrame === 'function') { try { window.cancelAnimationFrame(frame); } catch (_) {} }
         frame = null;
         queue = [];
+        queued = [];
+        sendNowItem = null;
         nodes.clear();
         closeAc();
         try { document.removeEventListener('click', onDocClick); } catch (_) {}

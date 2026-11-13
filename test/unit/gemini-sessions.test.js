@@ -54,6 +54,7 @@ function load(home) {
     fs, path, os, JSON, Map, Buffer, Date, Number, String, Array, Object,
     HOME: home,
     GEMINI_DIR: path.join(home, '.gemini'),
+    withoutBrainContext: require('../../src/lib/brain').withoutContext,
   };
   vm.createContext(ctx);
   vm.runInContext(`${CODE}\nthis.listGeminiSessions = listGeminiSessions; this.geminiResumeIndex = geminiResumeIndex;`, ctx);

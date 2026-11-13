@@ -1,21 +1,7 @@
 'use strict';
 
-// Brain: what Husk remembers, drawn as it works.
-//
-// The field is a sphere in space. Memories hang inside it in three dimensions,
-// each workspace a constellation of its own; it turns slowly, turns under a
-// drag, and a memory picked from the list is brought round to face the reader.
-//
-// The store and the recall live in the main process (src/lib/brain.js). This
-// page shows them: every memory is a dot, a line joins two that share rare
-// words, and a firing travels along those lines when a prompt wakes a memory
-// or a finished turn leaves one behind. Beside the field sit the numbers that
-// say whether it is earning its place (how often a prompt found something, how
-// much it added) and the log of what it did. The rail icon blinks on the same
-// signal, on every page.
-//
-// Titles and text are whatever the user typed or a file held, so every string
-// reaches the DOM through textContent.
+// Brain: searchable memories, recall history, and contextual connections.
+// User content is rendered with textContent.
 
 (function () {
   const api = window.husk && window.husk.brain;
@@ -46,43 +32,15 @@
     syncRail();
   }
 
-  // ─── State ────────────────────────────────────────────────────────────────
-  // The canvas draws at most this many dots. Notes, files and decisions always
-  // make it; chunks fill what is left, the ones recall has used first.
-  const DRAW_MAX = 320;
-  const ZOOM_MIN = 0.2;
-  const ZOOM_MAX = 6;
   const KIND_LABEL = { note: 'Note', file: 'File', chunk: 'Passage', decision: 'Decision' };
-  const KIND_RADIUS = { note: 6, file: 8, chunk: 3.5, decision: 5 };
-  const KIND_HUE = { note: 'accent', file: 'info', chunk: 'info', decision: 'emerald' };
-
   const state = {
     open: false,
-    data: { nodes: [], edges: [], log: [], stats: { prompts: 0, recalled: 0, chars: 0 }, enabled: true, scopeName: '' },
-    sim: new Map(),      // id -> { node, x, y, z, vx, vy, vz, glow } and where it was last drawn
-    edges: [],           // drawn edges, both ends on the canvas
-    signals: [],         // firings in flight: { a, b, t0 }
-    heat: 0,             // how unsettled the layout is; the loop idles at zero
-    selected: null,
-    hover: null,
-    edge: null,          // the picked line, as { a, b }
-    hoverEdge: null,
-    query: '',
-    tab: 'memories',
-    raf: 0,
-    settle: 0,
-    lastSpark: 0,
-    view: { k: 1, x: 0, y: 0, yaw: 0.5, pitch: -0.3 },
-    focus: null,         // the yaw and pitch the camera is easing toward
-    anchors: new Map(),  // workspace -> where its constellation gathers
-    globe: 120,          // radius of the sphere, eased toward its memories
-    pointerIn: false,
-    dragging: false,
-    // The whole brain, or only what the open workspace can reach.
+    data: { nodes: [], edges: [], log: [], stats: {}, enabled: true },
+    selected: null, edge: null, query: '', tab: 'memories',
+    handed: new Set(), touching: new Set(), pos: new Map(), made: '',
     all: (() => { try { return localStorage.getItem('husk.brain.all') !== '0'; } catch (_) { return true; } })(),
-    // The view follows the field until the user zooms or drags; Fit hands it back.
-    auto: true,
   };
+  const isEdge = (e, pick) => !!pick && ((e.a === pick.a && e.b === pick.b) || (e.a === pick.b && e.b === pick.a));
 
   // ─── Data ─────────────────────────────────────────────────────────────────
   // Every call to the main process goes through here, so one that fails says
@@ -103,511 +61,383 @@
     const res = await call(() => api.graph({ all: state.all }));
     if (!res || !res.ok) { const empty = byId('br-empty'); if (empty) empty.hidden = false; return; }
     state.data = Object.assign({ log: [], stats: { prompts: 0, recalled: 0, chars: 0 } }, res);
-    const anchors = res.nodes.filter((n) => n.kind !== 'chunk');
-    const chunks = res.nodes.filter((n) => n.kind === 'chunk')
-      .sort((a, b) => (b.hits - a.hits) || (b.createdAt - a.createdAt))
-      .slice(0, Math.max(0, DRAW_MAX - anchors.length));
-    const drawn = anchors.slice(-DRAW_MAX).concat(chunks);
-    const keep = new Set(drawn.map((n) => n.id));
-    for (const id of [...state.sim.keys()]) if (!keep.has(id)) state.sim.delete(id);
-    setAnchors(drawn);
-    drawn.forEach((n, i) => {
-      if (state.sim.has(n.id)) { state.sim.get(n.id).node = n; return; }
-      // A new dot starts near its parent, or around its workspace's place on
-      // the sphere, each in its own direction so nothing stacks.
-      const o = (n.parent && state.sim.get(n.parent)) || anchorOf(n.scope);
-      const up = 1 - 2 * ((i * 0.618034) % 1);
-      const flat = Math.sqrt(1 - up * up);
-      const ang = i * 2.399963;
-      const rad = n.parent ? 24 : 30 + 14 * Math.cbrt(i + 1);
-      state.sim.set(n.id, {
-        node: n, glow: 0, vx: 0, vy: 0, vz: 0, sx: 0, sy: 0, f: 1, near: 0.5,
-        x: o.x + Math.cos(ang) * flat * rad, y: o.y + up * rad, z: o.z + Math.sin(ang) * flat * rad,
+    if (state.selected && !res.nodes.some((n) => n.id === state.selected)) state.selected = null;
+    if (state.edge && !state.data.edges.some((e) => isEdge(e, state.edge))) state.edge = null;
+    // A page opened while a turn is running shows what that turn holds.
+    if (res.live) { state.handed = new Set(res.live.handed); state.touching = new Set(res.live.touching); }
+    paintChrome();
+  }
+
+  // ─── What the agent is doing, on the network ──────────────────────────────
+  // Nothing here moves by itself. Three real things are shown:
+  //   handed    the memories recalled into the prompt of a turn in flight
+  //   touching  the memories the agent's own words, thoughts and tool calls
+  //             match as it goes, reported by the main process as they change
+  //   made      the connections a finished turn's new memory was given
+  // A cell rings and sends a light down its connections when it is first
+  // touched; a dashed line marks the step from the last memory touched to the
+  // next; a new memory's connections are drawn in one after another.
+  const NS = 'http://www.w3.org/2000/svg';
+  const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const cellOf = (id) => byId('br-network').querySelector(`.br-neuron[data-id="${CSS.escape(String(id))}"]`);
+  const titleOf = (id) => { const n = state.data.nodes.find((x) => x.id === id); return n ? (n.title || KIND_LABEL[n.kind]) : ''; };
+  let effects = [];
+  let effectFrame = 0;
+  function runEffects() {
+    if (effectFrame || !effects.length) return;
+    const tick = (now) => {
+      effectFrame = 0;
+      effects = effects.filter((fx) => {
+        if (now < fx.t0) return true;
+        const t = Math.min(1, (now - fx.t0) / fx.ms);
+        fx.step(t);
+        if (t < 1) return true;
+        if (fx.end) fx.end();
+        return false;
+      });
+      if (effects.length && state.open) effectFrame = requestAnimationFrame(tick);
+      else stopRecallMotion();
+    };
+    effectFrame = requestAnimationFrame(tick);
+  }
+  function stopRecallMotion() {
+    cancelAnimationFrame(effectFrame);
+    effectFrame = 0;
+    for (const fx of effects) { if (fx.end) fx.end(); }
+    effects = [];
+    for (const node of document.querySelectorAll('.br-recall-ring, .br-signal, .br-signal-glow, .br-trail')) node.remove();
+  }
+  const mark = (tag, attrs) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+    return node;
+  };
+  // A ring that opens out from a cell once.
+  function ring(id, delay) {
+    const cell = cellOf(id);
+    if (!cell) return;
+    const node = mark('circle', { class: 'br-recall-ring', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.2, r: 0 });
+    cell.appendChild(node);
+    effects.push({ t0: performance.now() + (delay || 0), ms: 1400, step: (t) => { node.setAttribute('r', String(5 + t * 22)); node.setAttribute('opacity', String((1 - t) * 0.9)); }, end: () => node.remove() });
+  }
+  // A light that leaves a cell along each of its connections.
+  function signalsFrom(id, delay) {
+    const svg = byId('br-network');
+    if (!state.view) return;
+    const per = panelShape().w / state.view.w;
+    for (const group of svg.querySelectorAll('.br-synapse')) {
+      const fromA = group.dataset.a === id;
+      if (!fromA && group.dataset.b !== id) continue;
+      const line = group.querySelector('.br-synapse-line');
+      const length = line.getTotalLength();
+      const halo = mark('circle', { class: 'br-signal-glow', r: 8 / per });
+      const dot = mark('circle', { class: 'br-signal', r: 2.4 / per });
+      svg.appendChild(halo);
+      svg.appendChild(dot);
+      group.classList.add('is-carrying');
+      effects.push({
+        t0: performance.now() + (delay || 0), ms: 900,
+        step: (t) => {
+          const at = line.getPointAtLength(length * (fromA ? t : 1 - t));
+          halo.setAttribute('cx', at.x); halo.setAttribute('cy', at.y);
+          dot.setAttribute('cx', at.x); dot.setAttribute('cy', at.y);
+        },
+        end: () => { halo.remove(); dot.remove(); group.classList.remove('is-carrying'); },
+      });
+    }
+  }
+  // The step from one memory the agent touched to the next: not a stored
+  // connection, so it is dashed and fades.
+  function trail(from, to) {
+    const a = state.pos.get(from);
+    const b = state.pos.get(to);
+    if (!a || !b) return;
+    const node = mark('path', { class: 'br-trail', d: `M${a.x},${a.y} L${b.x},${b.y}` });
+    byId('br-network').appendChild(node);
+    effects.push({ t0: performance.now(), ms: 2400, step: (t) => node.setAttribute('opacity', String(1 - t)), end: () => node.remove() });
+  }
+  // Marks the cells a turn in flight holds and is touching, and the
+  // connections of the ones being touched.
+  function markLive() {
+    const svg = byId('br-network');
+    if (!svg) return;
+    for (const cell of svg.querySelectorAll('.br-neuron')) {
+      cell.classList.toggle('is-handed', state.handed.has(cell.dataset.id));
+      cell.classList.toggle('is-touching', state.touching.has(cell.dataset.id));
+    }
+    for (const group of svg.querySelectorAll('.br-synapse')) group.classList.toggle('is-live', state.touching.has(group.dataset.a) || state.touching.has(group.dataset.b));
+    paintCaption();
+  }
+  // Says under the network what is going on in it.
+  function paintCaption() {
+    const el = byId('br-network-caption');
+    if (!el) return;
+    const names = (set) => [...set].map(titleOf).filter(Boolean).map((t) => (t.length > 34 ? t.slice(0, 33) + '…' : t)).join(' · ');
+    if (state.touching.size) el.textContent = 'The agent is on: ' + names(state.touching);
+    else if (state.handed.size) el.textContent = `In this turn: ${names(state.handed)}`;
+    else if (busy) el.textContent = 'A turn is running. No memory has come up in it yet.';
+    else el.textContent = state.made || 'Scroll to zoom, drag to move. Select a memory or connection to explore it.';
+    el.classList.toggle('is-live', busy || state.touching.size > 0);
+  }
+  // A turn began with these memories in its prompt: they are brought into
+  // view, and each rings and lights its connections.
+  function showRecall(ids) {
+    state.made = '';
+    const cells = ids.map((id) => state.pos.get(id)).filter(Boolean);
+    if (cells.length) { state.view = viewAround(cells); applyView(); }
+    if (!state.open || still()) return;
+    ids.forEach((id, i) => { ring(id, i * 160); signalsFrom(id, i * 160); });
+    runEffects();
+  }
+  // The agent's words moved on to these memories.
+  function showThinking(ids, before) {
+    if (!state.open || still()) return;
+    const fresh = ids.filter((id) => !before.includes(id));
+    fresh.forEach((id, i) => { ring(id, i * 120); signalsFrom(id, i * 120); });
+    if (before.length && fresh.length) trail(before[0], fresh[0]);
+    runEffects();
+  }
+  // A finished turn became a memory: its cell is brought into view and its
+  // connections are drawn in, one after another.
+  function showCapture(id) {
+    const at = state.pos.get(id);
+    if (!at) return;
+    const svg = byId('br-network');
+    const lines = [...svg.querySelectorAll('.br-synapse')].filter((g) => g.dataset.a === id || g.dataset.b === id);
+    const joined = lines.map((g) => state.pos.get(g.dataset.a === id ? g.dataset.b : g.dataset.a)).filter(Boolean);
+    state.view = viewAround([at, ...joined]);
+    applyView();
+    state.made = `Remembered “${titleOf(id).slice(0, 40)}” · ${plural(lines.length, 'connection', 'connections')} made`;
+    paintCaption();
+    if (!state.open || still()) return;
+    const per = panelShape().w / state.view.w;
+    ring(id);
+    lines.forEach((group, i) => {
+      const line = group.querySelector('.br-synapse-line');
+      const length = line.getTotalLength() * per;
+      const fromA = group.dataset.a === id;
+      group.classList.add('is-made');
+      line.style.strokeDasharray = String(length);
+      line.style.strokeDashoffset = String(fromA ? length : -length);
+      effects.push({
+        t0: performance.now() + 250 + i * 220, ms: 800,
+        step: (t) => { line.style.strokeDashoffset = String((fromA ? 1 : -1) * length * (1 - t)); },
+        end: () => { line.style.strokeDasharray = ''; line.style.strokeDashoffset = ''; setTimeout(() => group.classList.remove('is-made'), 2600); },
       });
     });
-    state.edges = res.edges.filter((e) => keep.has(e.a) && keep.has(e.b));
-    if (state.selected && !res.nodes.some((n) => n.id === state.selected)) state.selected = null;
-    if (state.edge && !state.edges.some((e) => isEdge(e, state.edge))) state.edge = null;
-    state.hoverEdge = null;
-    state.heat = 1;
-    paintChrome();
-    kick();
+    runEffects();
+  }
+  async function toggleNetworkFull() {
+    const panel = document.querySelector('.br-network-panel');
+    try {
+      if (document.fullscreenElement === panel) await document.exitFullscreen();
+      else await panel.requestFullscreen();
+    } catch (_) { say('The synapse view could not enter full screen.'); }
   }
 
-  // ─── Layout ───────────────────────────────────────────────────────────────
-  // Memories settle in three dimensions. Each workspace pulls its own toward a
-  // point of the sphere, so a whole brain reads as constellations; what belongs
-  // everywhere gathers at the centre.
-  const ORIGIN = { x: 0, y: 0, z: 0 };
-  const baseName = (p) => String(p).split(/[\\/]/).filter(Boolean).pop() || String(p);
-  const anchorOf = (scope) => state.anchors.get(scope || '') || ORIGIN;
-
-  function setAnchors(nodes) {
-    const scopes = [...new Set(nodes.map((n) => n.scope || ''))].filter(Boolean).sort();
-    const spread = 110 + 7 * Math.sqrt(nodes.length);
-    state.anchors = new Map();
-    scopes.forEach((s, i) => {
-      // One workspace sits at the centre; several spread evenly over a sphere.
-      if (scopes.length < 2) { state.anchors.set(s, ORIGIN); return; }
-      const y = 1 - (2 * (i + 0.5)) / scopes.length;
-      const r = Math.sqrt(1 - y * y);
-      const a = i * 2.399963;
-      state.anchors.set(s, { x: Math.cos(a) * r * spread, y: y * spread, z: Math.sin(a) * r * spread, name: baseName(s) });
-    });
+  // ─── The view onto the synapses ─────────────────────────────────────────────
+  // The network is laid out once in a field of its own size; the view is the
+  // part of that field on screen. It keeps the panel's shape, so nothing is
+  // letterboxed, and it is what zooming and dragging change.
+  const VIEW_MIN = 200;   // the closest the view goes, in field units across
+  function panelShape() {
+    const svg = byId('br-network');
+    const w = (svg && svg.clientWidth) || 800;
+    const h = (svg && svg.clientHeight) || 340;
+    return { w, h, ratio: w / h };
   }
-
-  function step() {
-    const pts = [...state.sim.values()];
-    const n = pts.length;
-    for (let i = 0; i < n; i++) {
-      const a = pts[i];
-      for (let j = i + 1; j < n; j++) {
-        const b = pts[j];
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        let dz = a.z - b.z;
-        let d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < 1) { dx = (i % 2 ? 1 : -1); dy = (j % 2 ? 1 : -1); dz = ((i + j) % 2 ? 1 : -1); d2 = 3; }
-        if (d2 > 40000) continue;
-        const f = 520 / d2;
-        const d = Math.sqrt(d2);
-        a.vx += (dx / d) * f; a.vy += (dy / d) * f; a.vz += (dz / d) * f;
-        b.vx -= (dx / d) * f; b.vy -= (dy / d) * f; b.vz -= (dz / d) * f;
-      }
-      // With several workspaces the pull home is firmer, so each keeps its own sky.
-      const home = anchorOf(a.node.scope);
-      const pull = state.anchors.size > 1 ? 0.012 : 0.004;
-      a.vx -= (a.x - home.x) * pull;
-      a.vy -= (a.y - home.y) * pull;
-      a.vz -= (a.z - home.z) * pull;
-    }
-    for (const e of state.edges) {
-      const a = state.sim.get(e.a);
-      const b = state.sim.get(e.b);
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dz = b.z - a.z;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-      // A synapse between two workspaces is a long thread, not a tether.
-      const far = e.kind !== 'part' && (a.node.scope || '') !== (b.node.scope || '');
-      const f = (d - (e.kind === 'part' ? 34 : 70)) * (far ? 0.0015 : 0.012);
-      a.vx += (dx / d) * f; a.vy += (dy / d) * f; a.vz += (dz / d) * f;
-      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f; b.vz -= (dz / d) * f;
-    }
-    let moved = 0;
-    for (const p of pts) {
-      p.vx *= 0.82; p.vy *= 0.82; p.vz *= 0.82;
-      p.x += p.vx * state.heat; p.y += p.vy * state.heat; p.z += p.vz * state.heat;
-      moved += Math.abs(p.vx) + Math.abs(p.vy) + Math.abs(p.vz);
-    }
-    state.heat = n && moved / n > 0.02 ? Math.max(0.05, state.heat * 0.992) : 0;
+  // The whole field, centred, in the panel's shape.
+  function wholeView() {
+    const { ratio } = panelShape();
+    const world = state.world || { x: 0, y: 0, w: 800, h: 460 };
+    const w = Math.max(world.w, world.h * ratio);
+    const h = w / ratio;
+    return { x: world.x + (world.w - w) / 2, y: world.y + (world.h - h) / 2, w, h };
   }
-
-  // ─── View ─────────────────────────────────────────────────────────────────
-  // The camera looks at the centre of the sphere from CAM away. Yaw and pitch
-  // turn the sphere under it; k scales it; x and y slide it off centre.
-  const CAM = 900;
-  const PITCH_MAX = 1.35;
-  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let trig = { cy: 1, sy: 0, cp: 1, sp: 0 };
-
-  function turn(x, y, z) {
-    const x1 = x * trig.cy + z * trig.sy;
-    const z1 = z * trig.cy - x * trig.sy;
-    return [x1, y * trig.cp - z1 * trig.sp, y * trig.sp + z1 * trig.cp];
+  // A view that holds the given cells, with room round them for their names.
+  function viewAround(cells) {
+    const { ratio } = panelShape();
+    let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+    for (const c of cells) { x0 = Math.min(x0, c.x); x1 = Math.max(x1, c.x); y0 = Math.min(y0, c.y); y1 = Math.max(y1, c.y); }
+    const pad = 110;
+    let w = Math.max(560, x1 - x0 + pad * 2);
+    let h = Math.max(w / ratio, y1 - y0 + pad * 2);
+    w = Math.max(w, h * ratio);
+    h = w / ratio;
+    const whole = wholeView();
+    if (w >= whole.w) return whole;
+    return { x: (x0 + x1) / 2 - w / 2, y: (y0 + y1) / 2 - h / 2, w, h };
   }
-
-  // How far the outermost memory sits from the centre.
-  function reach() {
-    let r2 = 3600;
-    for (const p of state.sim.values()) r2 = Math.max(r2, p.x * p.x + p.y * p.y + p.z * p.z);
-    return Math.sqrt(r2);
-  }
-
-  // The figures float over the top of the field, so the sphere is framed in
-  // what is left below them.
-  function inset() {
-    const strip = byId('br-stats');
-    return strip && strip.offsetHeight ? strip.offsetHeight + 12 : 0;
-  }
-
-  function fitZoom(w, hgt) {
-    return Math.min(3, Math.max(ZOOM_MIN, (Math.min(w, hgt - inset()) / 2 - 14) / (state.globe * 1.36)));
-  }
-
-  // Scales about a point on the canvas, so what is under the pointer stays there.
-  function zoomAt(factor, cx, cy) {
-    const cv = byId('br-canvas');
+  // Shows the view: the part of the field, the size of cells and names for
+  // that closeness, and which names are worth showing.
+  function applyView() {
+    const svg = byId('br-network');
     const v = state.view;
-    const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.k * factor));
-    const ox = cx - cv.clientWidth / 2;
-    const oy = cy - (cv.clientHeight + inset()) / 2;
-    v.x = ox - (ox - v.x) * (k / v.k);
-    v.y = oy - (oy - v.y) * (k / v.k);
-    v.k = k;
-    state.auto = false;
-    paintZoom();
-    kick();
+    if (!svg || !v) return;
+    const { w, ratio } = panelShape();
+    v.h = v.w / ratio;
+    svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+    const per = w / v.w;   // screen pixels per field unit
+    // Cells shrink less than the field does, so they can still be hit from far out.
+    svg.style.setProperty('--br-node', String(Math.min(2.6, Math.max(0.6, Math.pow(per, -0.6)))));
+    svg.style.setProperty('--br-font', `${12.5 / per}px`);
+    svg.style.setProperty('--br-hair', `${1 / per}px`);
+    svg.classList.toggle('is-near', per >= 0.7);
+    svg.classList.toggle('is-close', per >= 1.5);
+    const readout = byId('br-net-zoom');
+    if (readout) readout.textContent = Math.round((wholeView().w / v.w) * 100) + '%';
   }
-
-  function zoomStep(factor) {
-    const cv = byId('br-canvas');
-    zoomAt(factor, cv.clientWidth / 2, cv.clientHeight / 2);
-  }
-
-  function fit() {
-    state.auto = true;
-    kick();
-  }
-
-  // Turns the sphere until a memory faces the camera.
-  function face(id) {
-    const p = state.sim.get(id);
-    if (!p) return;
-    const flat = Math.sqrt(p.x * p.x + p.z * p.z);
-    state.focus = { yaw: Math.atan2(-p.x, p.z), pitch: Math.max(-PITCH_MAX, Math.min(PITCH_MAX, Math.atan2(p.y, flat))) };
-    kick();
-  }
-
-  // The field takes the whole window, or goes back to its place on the page.
-  // Either way its box changed, so it is framed again.
-  function setFull(on) {
-    const stage = document.querySelector('.br-stage');
-    const btn = byId('br-full');
-    if (!stage || !btn) return;
-    stage.classList.toggle('is-full', on);
-    btn.classList.toggle('is-on', on);
-    btn.title = on ? 'Back to the page (Esc)' : 'Fill the window';
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    fit();
-  }
-  const isFull = () => !!document.querySelector('.br-stage.is-full');
-
-  function paintZoom() {
-    const z = byId('br-zoom');
-    if (z) z.textContent = Math.round(state.view.k * 100) + '%';
-  }
-
-  // The sphere turns on its own while nobody is holding it or reading from it.
-  function spinning() {
-    return !still && !state.pointerIn && !state.dragging && !state.focus && !state.selected && !state.edge && state.sim.size > 0;
-  }
-
-  // ─── Lines ────────────────────────────────────────────────────────────────
-  // A line is the same line whichever end it is read from.
-  const isEdge = (e, pick) => !!pick && ((e.a === pick.a && e.b === pick.b) || (e.a === pick.b && e.b === pick.a));
-
-  // The line under a point on the canvas, within a few pixels of it. Reads
-  // where the last frame drew each end.
-  function edgeAt(mx, my) {
-    let best = null;
-    let bestD = 6 * 6;
-    for (const e of state.edges) {
-      const a = state.sim.get(e.a);
-      const b = state.sim.get(e.b);
-      const dx = b.sx - a.sx; const dy = b.sy - a.sy;
-      const t = Math.min(1, Math.max(0, ((mx - a.sx) * dx + (my - a.sy) * dy) / (dx * dx + dy * dy || 1)));
-      const px = a.sx + dx * t - mx; const py = a.sy + dy * t - my;
-      const d = px * px + py * py;
-      if (d < bestD) { bestD = d; best = e; }
-    }
-    return best;
-  }
-
-  // ─── Sky ──────────────────────────────────────────────────────────────────
-  // Stars and a few clouds of colour, fixed to the sky: they turn with the
-  // sphere but never come closer, which is what gives the field its depth.
-  // Seeded, so the sky is the same one every time the page opens.
-  let seed = 20261111;
-  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  const skyPoint = () => {
-    const y = rnd() * 2 - 1;
-    const r = Math.sqrt(1 - y * y);
-    const a = rnd() * Math.PI * 2;
-    return { x: Math.cos(a) * r, y, z: Math.sin(a) * r };
-  };
-  const STARS = Array.from({ length: 700 }, () => Object.assign(skyPoint(), { size: 0.8 + rnd() * rnd() * 1.7, lum: 0.3 + rnd() * 0.7, rate: 0.0006 + rnd() * 0.0016, phase: rnd() * 6.28 }));
-  const CLOUDS = ['accent', 'info', 'emerald', 'info', 'accent', 'info'].map((hue) => Object.assign(skyPoint(), { hue, size: 0.55 + rnd() * 0.4 }));
-
-  // ─── Drawing ──────────────────────────────────────────────────────────────
-  // The stage carries its own colours (space is dark in every theme), so the
-  // palette is read from it, once a frame.
-  function palette(stage) {
-    const cs = getComputedStyle(stage);
-    const get = (name) => cs.getPropertyValue(name).trim() || '#888';
-    return { accent: get('--accent'), info: get('--info'), emerald: get('--emerald'), text: get('--text'), text2: get('--text-2'), text3: get('--text-3'), font: cs.fontFamily || 'sans-serif' };
-  }
-
-  // A soft round glow in one colour, drawn once and stamped wherever it is needed.
-  const sprites = new Map();
-  function glowSprite(color) {
-    let s = sprites.get(color);
-    if (s) return s;
-    s = document.createElement('canvas');
-    s.width = s.height = 64;
-    const g = s.getContext('2d');
-    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grad.addColorStop(0, color);
-    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    g.globalAlpha = 0.9;
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 64, 64);
-    if (sprites.size > 24) sprites.clear();
-    sprites.set(color, s);
-    return s;
-  }
-  function glow(g, color, x, y, radius, alpha) {
-    if (alpha <= 0.01) return;
-    g.globalAlpha = Math.min(1, alpha);
-    g.drawImage(glowSprite(color), x - radius, y - radius, radius * 2, radius * 2);
-    g.globalAlpha = 1;
-  }
-
-  // A dot says what it is once there is room to read it: the anchors when the
-  // field is small or zoomed in, passages only up close, and always the one
-  // under the pointer, the selected one, the ends of a picked line and
-  // anything firing. The far side of the sphere keeps quiet.
-  function wantsLabel(p, anchors) {
-    const n = p.node;
-    if (n.id === state.selected || n.id === state.hover || p.glow > 0.3) return true;
-    if (state.edge && (n.id === state.edge.a || n.id === state.edge.b)) return true;
-    if (p.near < 0.45) return false;
-    if (n.kind === 'chunk') return state.view.k >= 2.6;
-    // Names never overlap, so the near face can always offer some.
-    return anchors <= 14 || state.view.k >= 1.15 || p.near > 0.62;
-  }
-
-  function draw(now) {
-    const cv = byId('br-canvas');
-    if (!cv) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = cv.clientWidth;
-    const hgt = cv.clientHeight;
-    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(hgt * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hgt * dpr); }
-    const g = cv.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, w, hgt);
-    const C = palette(cv.parentElement);
+  // Scales the view about a point of the panel, so what is under the pointer stays there.
+  function zoomNetwork(factor, px, py) {
     const v = state.view;
+    if (!v) return;
+    const { w, h } = panelShape();
+    const whole = wholeView();
+    const next = Math.min(whole.w, Math.max(VIEW_MIN, v.w / factor));
+    const fx = px === undefined ? 0.5 : px / w;
+    const fy = py === undefined ? 0.5 : py / h;
+    const wx = v.x + v.w * fx;
+    const wy = v.y + v.h * fy;
+    v.w = next;
+    v.h = next / (w / h);
+    v.x = wx - v.w * fx;
+    v.y = wy - v.h * fy;
+    if (next >= whole.w) state.view = whole;
+    applyView();
+  }
+  function fitNetwork() {
+    state.view = wholeView();
+    applyView();
+  }
 
-    // The camera: eased toward its fit, toward a memory it was asked to face,
-    // or drifting on its own.
-    state.globe += (reach() - state.globe) * 0.1;
-    if (state.auto) {
-      const k = fitZoom(w, hgt);
-      v.k += (k - v.k) * 0.085; v.x += -v.x * 0.12; v.y += -v.y * 0.12;
-      paintZoom();
+  // A deterministic force layout: no enclosing model or perpetual animation.
+  function paintNetwork() {
+    const svg = byId('br-network');
+    if (!svg) return;
+    const ns = 'http://www.w3.org/2000/svg';
+    const el = (tag, attrs) => {
+      const node = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, String(value));
+      return node;
+    };
+    const relevant = new Set([state.selected, state.edge && state.edge.a, state.edge && state.edge.b]);
+    for (const e of state.data.edges) {
+      if (e.a === state.selected) relevant.add(e.b);
+      if (e.b === state.selected) relevant.add(e.a);
     }
-    if (state.focus) {
-      const dy = Math.atan2(Math.sin(state.focus.yaw - v.yaw), Math.cos(state.focus.yaw - v.yaw));
-      const dp = state.focus.pitch - v.pitch;
-      v.yaw += dy * 0.12; v.pitch += dp * 0.12;
-      if (Math.abs(dy) + Math.abs(dp) < 0.004) state.focus = null;
-    } else if (spinning()) v.yaw += 0.0011;
-    trig = { cy: Math.cos(v.yaw), sy: Math.sin(v.yaw), cp: Math.cos(v.pitch), sp: Math.sin(v.pitch) };
-    const cx = w / 2 + v.x;
-    const cy = (hgt + inset()) / 2 + v.y;
-
-    // Sky first. Only the half in front of the camera is in view.
-    const sky = Math.max(w, hgt) * 0.8;
-    for (const c of CLOUDS) {
-      const [x, y, z] = turn(c.x, c.y, c.z);
-      if (z < 0) glow(g, C[c.hue], w / 2 + x * sky, hgt / 2 + y * sky, sky * c.size, 0.34 * -z);
-    }
-    g.fillStyle = C.text;
-    for (const s of STARS) {
-      const [x, y, z] = turn(s.x, s.y, s.z);
-      if (z >= 0) continue;
-      g.globalAlpha = s.lum * (still ? 0.8 : 0.65 + 0.35 * Math.sin(now * s.rate + s.phase));
-      g.fillRect(w / 2 + x * sky, hgt / 2 + y * sky, s.size, s.size);
-    }
-    g.globalAlpha = 1;
-
-    // The sphere itself: a breath of light at its edge and three great circles.
-    const R = state.globe * 1.12;
-    const rim = R * v.k * (CAM / Math.sqrt(CAM * CAM - R * R));
-    if (state.sim.size) {
-      const halo = g.createRadialGradient(cx, cy, rim * 0.72, cx, cy, rim * 1.1);
-      halo.addColorStop(0, 'rgba(0, 0, 0, 0)');
-      halo.addColorStop(0.82, C.accent);
-      halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      g.globalAlpha = 0.1;
-      g.fillStyle = halo;
-      g.beginPath(); g.arc(cx, cy, rim * 1.1, 0, Math.PI * 2); g.fill();
-      g.strokeStyle = C.text;
-      g.lineWidth = 1;
-      for (let ring = 0; ring < 3; ring++) {
-        g.globalAlpha = 0.07;
-        g.beginPath();
-        for (let i = 0; i <= 72; i++) {
-          const a = (i / 72) * Math.PI * 2;
-          const c = Math.cos(a) * R; const s = Math.sin(a) * R;
-          const [x, y, z] = ring === 0 ? turn(c, 0, s) : ring === 1 ? turn(c, s, 0) : turn(0, c, s);
-          const f = (CAM / (CAM - z)) * v.k;
-          if (i) g.lineTo(cx + x * f, cy + y * f); else g.moveTo(cx + x * f, cy + y * f);
+    const inUse = (n) => state.handed.has(n.id) || state.touching.has(n.id);
+    const ranked = [...state.data.nodes].sort((a, b) => Number(inUse(b)) - Number(inUse(a)) || Number(relevant.has(b.id)) - Number(relevant.has(a.id)) || Number(b.kind !== 'chunk') - Number(a.kind !== 'chunk')).slice(0, 120);
+    const nodes = state.data.nodes.length <= 120 ? state.data.nodes : ranked;
+    // The field is as large as what it holds needs, so cells have room; the
+    // view onto it is what zooms and moves.
+    const grown = Math.max(1, Math.sqrt(nodes.length / 9));
+    const W = 800 * grown;
+    const H = 460 * grown;
+    const points = new Map(nodes.map((n, i) => {
+      const angle = i * 2.399963;
+      const r = Math.sqrt((i + 0.5) / Math.max(1, nodes.length));
+      return [n.id, { n, x: W / 2 + Math.cos(angle) * r * W * 0.42, y: H / 2 + Math.sin(angle) * r * H * 0.4 }];
+    }));
+    const edges = state.data.edges.filter((e) => points.has(e.a) && points.has(e.b));
+    const pts = [...points.values()];
+    for (let step = 0; step < 90; step++) {
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          const a = pts[i], b = pts[j];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const d2 = Math.max(36, dx * dx + dy * dy);
+          // Cells only push on their neighbours, so none is driven to the edge.
+          if (d2 > 240 * 240) continue;
+          const force = 440 / d2;
+          a.x += dx * force; a.y += dy * force;
+          b.x -= dx * force; b.y -= dy * force;
         }
-        g.stroke();
       }
-      g.globalAlpha = 1;
+      for (const e of edges) {
+        const a = points.get(e.a), b = points.get(e.b);
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy) || 1;
+        const pull = (distance - 150) / distance * 0.018;
+        a.x += dx * pull; a.y += dy * pull;
+        b.x -= dx * pull; b.y -= dy * pull;
+      }
+      for (const p of pts) {
+        p.x = Math.max(40, Math.min(W - 40, p.x + (W / 2 - p.x) * 0.002));
+        p.y = Math.max(36, Math.min(H - 36, p.y + (H / 2 - p.y) * 0.002));
+      }
     }
-
-    // Where every memory lands on the canvas this frame. The pointer reads these.
-    const span = state.globe * 2 || 1;
-    const pts = [...state.sim.values()];
+    stopRecallMotion();
+    svg.replaceChildren();
+    // A different set of cells is a different field: it is shown whole. The
+    // same set keeps the view the reader left it on.
+    const key = `${nodes.length}:${state.all}`;
+    // What the whole view has to hold: the cells as they settled, with room round them.
+    const span = pts.reduce((b, q) => ({ x0: Math.min(b.x0, q.x), y0: Math.min(b.y0, q.y), x1: Math.max(b.x1, q.x), y1: Math.max(b.y1, q.y) }), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+    state.world = pts.length ? { x: span.x0 - 70, y: span.y0 - 70, w: span.x1 - span.x0 + 140, h: span.y1 - span.y0 + 140 } : { x: 0, y: 0, w: W, h: H };
+    if (state.viewKey !== key || !state.view) { state.viewKey = key; state.view = wholeView(); }
+    byId('br-network-count').textContent = nodes.length < state.data.nodes.length
+      ? `${nodes.length} of ${state.data.nodes.length} memories · selection first`
+      : `${nodes.length} memories · ${edges.length} connections`;
+    const activate = (node, fn) => {
+      node.addEventListener('click', fn);
+      node.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+      });
+    };
+    const focus = !!state.selected || !!state.edge;
+    for (const e of edges) {
+      const a = points.get(e.a), b = points.get(e.b);
+      const lit = isEdge(e, state.edge) || e.a === state.selected || e.b === state.selected;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const nx = -dy / length, ny = dx / length;
+      // One fine line with a gentle bow, always to the same side for the same
+      // pair, so the weave is calm and a line can be followed by eye.
+      const lean = (e.a < e.b ? 1 : -1) * Math.min(46, length * 0.16);
+      const d = `M${a.x},${a.y} Q${(a.x + b.x) / 2 + nx * lean},${(a.y + b.y) / 2 + ny * lean} ${b.x},${b.y}`;
+      const group = el('g', { class: 'br-synapse' + (e.kind === 'part' ? ' is-part' : '') + (lit ? ' is-lit' : '') + (focus && !lit ? ' is-muted' : ''), role: 'button', tabindex: 0, 'aria-label': `Connection: ${a.n.title} to ${b.n.title}` });
+      group.dataset.a = e.a;
+      group.dataset.b = e.b;
+      group.appendChild(el('path', { d, class: 'br-synapse-glow' }));
+      group.appendChild(el('path', { d, class: 'br-synapse-line' }));
+      group.appendChild(el('path', { d, class: 'br-synapse-hit' }));
+      activate(group, () => selectEdge(e));
+      svg.appendChild(group);
+    }
     for (const p of pts) {
-      const [x, y, z] = turn(p.x, p.y, p.z);
-      const f = (CAM / (CAM - Math.min(z, CAM - 60))) * v.k;
-      p.sx = cx + x * f; p.sy = cy + y * f; p.f = f / v.k;
-      p.near = Math.min(1, Math.max(0, z / span + 0.5));
+      const lit = relevant.has(p.n.id);
+      const group = el('g', { style: `transform: translate(${p.x}px, ${p.y}px) scale(var(--br-node, 1))`, class: 'br-neuron is-' + p.n.kind + (p.n.kind === 'chunk' ? ' is-fine' : '') + (lit ? ' is-lit' : '') + (focus && !lit ? ' is-muted' : ''), role: 'button', tabindex: 0, 'aria-label': `${KIND_LABEL[p.n.kind]}: ${p.n.title}` });
+      const title = el('title'); title.textContent = p.n.title; group.appendChild(title);
+      group.dataset.id = p.n.id;
+      // A round bead in the colour of its kind, larger the more it has been
+      // recalled, with a soft ring round it.
+      const size = (p.n.kind === 'chunk' ? 3.2 : p.n.kind === 'file' ? 7.5 : 5.8) + Math.min(4, Math.sqrt(p.n.hits || 0) * 1.3);
+      group.appendChild(el('circle', { r: size + 5, class: 'br-neuron-glow' }));
+      group.appendChild(el('circle', { r: size, class: 'br-neuron-body' }));
+      group.appendChild(el('circle', { cx: -size * 0.28, cy: -size * 0.3, r: size * 0.3, class: 'br-neuron-core' }));
+      // Every cell has its name; which names show is a matter of how close
+      // the view is, decided in the stylesheet.
+      const label = el('text', { y: size + 17, 'text-anchor': p.x < 120 ? 'start' : p.x > W - 120 ? 'end' : 'middle', class: pts.length <= 8 ? 'is-always' : '' });
+      label.textContent = (p.n.title || KIND_LABEL[p.n.kind]).slice(0, 34);
+      group.appendChild(label);
+      activate(group, () => select(p.n.id));
+      svg.appendChild(group);
     }
-
-    for (const e of state.edges) {
-      const a = state.sim.get(e.a);
-      const b = state.sim.get(e.b);
-      const lit = Math.max(a.glow, b.glow);
-      const chosen = state.selected && (e.a === state.selected || e.b === state.selected);
-      // The picked line stays lit; the one under the pointer says it can be picked.
-      const picked = isEdge(e, state.edge);
-      const over = isEdge(e, state.hoverEdge);
-      const depth = 0.35 + 0.65 * (a.near + b.near) / 2;
-      g.lineWidth = picked ? 2 : over ? 1.5 : 1;
-      if (picked) { g.strokeStyle = C.accent; g.globalAlpha = 1; }
-      else if (lit > 0.05) { g.strokeStyle = C.accent; g.globalAlpha = 0.25 + lit * 0.6; }
-      else if (chosen || over) { g.strokeStyle = C.text2; g.globalAlpha = 0.9; }
-      else { g.strokeStyle = C.text3; g.globalAlpha = (e.kind === 'part' ? 0.24 : 0.38) * depth; }
-      g.beginPath(); g.moveTo(a.sx, a.sy); g.lineTo(b.sx, b.sy); g.stroke();
+    if (!nodes.length) {
+      const label = el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', class: 'br-network-placeholder' });
+      label.textContent = 'Your connections will grow as Husk learns.';
+      svg.appendChild(label);
     }
-    g.globalAlpha = 1;
-    g.lineWidth = 1;
-
-    // A firing is a bright point travelling one synapse.
-    const SIGNAL_MS = 900;
-    state.signals = state.signals.filter((s) => now - s.t0 < SIGNAL_MS && state.sim.has(s.a) && state.sim.has(s.b));
-    for (const s of state.signals) {
-      const a = state.sim.get(s.a);
-      const b = state.sim.get(s.b);
-      const t = (now - s.t0) / SIGNAL_MS;
-      const x = a.sx + (b.sx - a.sx) * t;
-      const y = a.sy + (b.sy - a.sy) * t;
-      glow(g, C.accent, x, y, 9, 1 - t * 0.5);
-      g.fillStyle = C.text;
-      g.beginPath(); g.arc(x, y, 1.6, 0, Math.PI * 2); g.fill();
-      if (t > 0.85) b.glow = Math.max(b.glow, 0.5);
+    // A fresh pick is brought into view with what it is joined to.
+    const picked = state.selected || (state.edge ? state.edge.a + '|' + state.edge.b : '');
+    if (picked && picked !== state.framed) {
+      const group = pts.filter((q) => relevant.has(q.n.id));
+      if (group.length) state.view = viewAround(group);
     }
-
-    // Each workspace names its constellation, from just outside it.
-    if (state.anchors.size > 1) {
-      g.font = '600 10px ' + C.font;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillStyle = C.text2;
-      for (const a of state.anchors.values()) {
-        const [x, y, z] = turn(a.x * 1.5, a.y * 1.5, a.z * 1.5);
-        const f = (CAM / (CAM - z)) * v.k;
-        g.globalAlpha = 0.25 + 0.5 * Math.min(1, Math.max(0, z / span + 0.5));
-        g.fillText(a.name.toUpperCase().slice(0, 28), cx + x * f, cy + y * f);
-      }
-      g.globalAlpha = 1;
-      g.textAlign = 'left';
-    }
-
-    let anchors = 0;
-    for (const p of pts) if (p.node.kind !== 'chunk') anchors += 1;
-    g.font = '11px ' + C.font;
-    g.textBaseline = 'middle';
-    // Far side first, so what is near is drawn over it.
-    pts.sort((a, b) => a.near - b.near);
-    for (const p of pts) {
-      const n = p.node;
-      // Dots shrink a little with the sphere, so a far view is not a blot.
-      const r = (KIND_RADIUS[n.kind] + Math.min(4, n.hits * 0.4)) * p.f * Math.min(1.4, Math.max(0.6, Math.sqrt(v.k)));
-      const x = p.sx;
-      const y = p.sy;
-      p.glow = p.glow > 0.02 ? p.glow * 0.965 : 0;
-      if (x < -60 || y < -20 || x > w + 60 || y > hgt + 20) continue;
-      const color = C[KIND_HUE[n.kind]];
-      const depth = 0.4 + 0.6 * p.near;
-      // Every memory is a small star; one that is firing flares.
-      glow(g, color, x, y, r * 3.2, (n.kind === 'chunk' ? 0.3 : 0.55) * depth);
-      if (p.glow) glow(g, C.accent, x, y, r * 3 + 8 + p.glow * 22, p.glow * 0.8);
-      g.globalAlpha = (n.kind === 'chunk' ? 0.7 : 1) * depth;
-      g.fillStyle = color;
-      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-      g.globalAlpha = 1;
-      const marked = n.id === state.selected || n.id === state.hover;
-      if (n.pinned || marked) {
-        g.strokeStyle = n.id === state.selected ? C.text : C.text2;
-        g.lineWidth = 1.5;
-        g.beginPath(); g.arc(x, y, r + 3, 0, Math.PI * 2); g.stroke();
-        g.lineWidth = 1;
-      }
-      p.r = r;
-    }
-
-    // Names, nearest first, and never one over another: what must be read
-    // (picked, hovered, firing) claims its place before the rest.
-    const placed = [];
-    const loudOf = (p) => p.node.id === state.selected || p.node.id === state.hover || p.glow > 0.3
-      || (state.edge && (p.node.id === state.edge.a || p.node.id === state.edge.b));
-    const named = pts.filter((p) => p.sx > -60 && p.sx < w + 60 && p.sy > -20 && p.sy < hgt + 20 && wantsLabel(p, anchors))
-      .sort((a, b) => (loudOf(b) - loudOf(a)) || (b.near - a.near));
-    for (const p of named) {
-      const n = p.node;
-      const label = n.title.length > 30 ? n.title.slice(0, 29) + '…' : n.title;
-      const loud = loudOf(p);
-      const box = { x: p.sx + p.r + 6, y: p.sy - 8, w: g.measureText(label).width, h: 16 };
-      if (!loud && placed.some((o) => box.x < o.x + o.w + 6 && o.x < box.x + box.w + 6 && box.y < o.y + o.h && o.y < box.y + box.h)) continue;
-      placed.push(box);
-      g.fillStyle = loud ? C.text : C.text2;
-      g.globalAlpha = loud ? 1 : 0.45 + 0.55 * p.near;
-      g.fillText(label, box.x, p.sy);
-    }
-    g.globalAlpha = 1;
-  }
-
-  // While a turn runs the field keeps a low hum: a stray firing now and then.
-  function hum(now) {
-    if (!busy || !state.edges.length || now - state.lastSpark < 260) return;
-    state.lastSpark = now;
-    const e = state.edges[Math.floor(Math.random() * state.edges.length)];
-    state.signals.push(Math.random() < 0.5 ? { a: e.a, b: e.b, t0: now } : { a: e.b, b: e.a, t0: now });
-  }
-
-  // The sky twinkles for as long as the page is open, so the loop only rests
-  // for someone who asked for less motion.
-  function alive() {
-    if (!still || state.heat > 0 || state.signals.length || busy || state.focus) return true;
-    for (const p of state.sim.values()) if (p.glow > 0.02) return true;
-    return false;
-  }
-
-  function frame(now) {
-    state.raf = 0;
-    if (!state.open) return;
-    if (state.heat > 0) step();
-    hum(now);
-    draw(now);
-    // The view eases toward its fit for a few frames after the layout rests.
-    if (alive() || state.settle-- > 0) state.raf = requestAnimationFrame(frame);
-  }
-  function kick() {
-    state.settle = 60;
-    if (state.open && !state.raf) state.raf = requestAnimationFrame(frame);
-  }
-
-  // Lights the memories that fired and sends a signal down each of their synapses.
-  function fire(ids) {
-    const now = performance.now();
-    for (const id of ids) {
-      const p = state.sim.get(id);
-      if (!p) continue;
-      p.glow = 1;
-      for (const e of state.edges) {
-        if (e.a === id) state.signals.push({ a: e.a, b: e.b, t0: now });
-        else if (e.b === id) state.signals.push({ a: e.b, b: e.a, t0: now });
-      }
-    }
-    kick();
+    state.framed = picked;
+    state.pos = new Map(pts.map((q) => [q.n.id, { x: q.x, y: q.y }]));
+    applyView();
+    markLive();
   }
 
   // ─── Words and numbers ────────────────────────────────────────────────────
@@ -675,7 +505,7 @@
           held ? Object.keys(kinds).filter((k) => kinds[k]).map((k) => plural(kinds[k], k, k + 's')).join(' · ') : 'Nothing kept yet', held ? split() : null],
         ['Passages', compact(chunks), 'Pieces of the files it learned from, each recallable on its own',
           chunks ? 'from ' + plural(kinds.file, 'file', 'files') : 'No files learned yet'],
-        ['Connections', compact(synapses), 'Pairs of memories that share rare words. Click a line on the field to see why',
+        ['Connections', compact(synapses), 'Pairs of memories that share rare words. Select a memory to explore its connections',
           synapses ? `${linked.size} of ${d.nodes.length} linked` : 'None found yet'],
       ]],
       ['What the Brain has done', [
@@ -710,10 +540,9 @@
     const d = state.data;
     const sub = byId('br-sub');
     if (sub) {
-      const shown = state.sim.size;
       const spaces = new Set(d.nodes.map((n) => n.scope).filter(Boolean)).size;
       sub.textContent = d.nodes.length
-        ? (state.all ? `Everything Husk remembers${spaces > 1 ? `, across ${spaces} workspaces` : ''}` : `In ${d.scopeName || 'this workspace'}`) + (shown < d.nodes.length ? `. The field shows ${shown} of ${d.nodes.length}, the most used first` : '')
+        ? (state.all ? `Everything Husk remembers${spaces > 1 ? `, across ${spaces} workspaces` : ''}` : `In ${d.scopeName || 'this workspace'}`)
         : 'What Husk remembers, and how it connects';
     }
     const sw = byId('br-enabled');
@@ -724,12 +553,13 @@
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
     const empty = byId('br-empty');
-    if (empty) empty.hidden = d.nodes.length > 0;
+    if (empty) empty.hidden = !!state.selected || !!state.edge;
     const count = byId('br-tab-activity-count');
     if (count) count.textContent = d.log.length ? String(d.log.length) : '';
     paintStats();
     paintTab();
     paintDetail();
+    paintNetwork();
   }
 
   function paintTab() {
@@ -749,6 +579,9 @@
     const q = state.query.trim().toLowerCase();
     const rows = state.data.nodes
       .filter((n) => n.kind !== 'chunk')
+      // Finished chat turns are the chat's own record; they live in the network
+      // and the Activity tab. A pinned turn is kept in the list.
+      .filter((n) => n.kind !== 'decision' || n.pinned)
       .filter((n) => !q || (n.title + ' ' + n.text).toLowerCase().includes(q))
       .sort((a, b) => (b.pinned - a.pinned) || (b.createdAt - a.createdAt));
     list.replaceChildren();
@@ -762,7 +595,10 @@
       row.dataset.id = n.id;
       row.dataset.kind = n.kind;
       row.appendChild(h('span', 'br-dot'));
-      row.appendChild(h('span', 'br-row-title', n.title || KIND_LABEL[n.kind]));
+      const copy = h('span', 'br-row-copy');
+      copy.appendChild(h('span', 'br-row-title', n.title || KIND_LABEL[n.kind]));
+      copy.appendChild(h('span', 'br-row-preview', n.text || n.source || KIND_LABEL[n.kind]));
+      row.appendChild(copy);
       row.appendChild(h('span', 'br-row-meta', n.pinned ? 'pinned' : (n.hits ? `${n.hits}×` : KIND_LABEL[n.kind].toLowerCase())));
       row.addEventListener('click', () => select(n.id, true));
       list.appendChild(row);
@@ -792,7 +628,7 @@
       row.appendChild(h('span', 'br-act-title', e.title || '(no text)'));
       // The line points back at the memories it is about.
       row.disabled = !ids.length;
-      row.addEventListener('click', () => { select(ids[0], true); fire(ids); });
+      row.addEventListener('click', () => { select(ids[0], true); });
       list.appendChild(row);
     }
   }
@@ -826,6 +662,7 @@
     const n = state.data.nodes.find((x) => x.id === state.selected);
     const line = state.edge && state.data.edges.find((e) => isEdge(e, state.edge));
     box.hidden = !n && !line;
+    byId('br-empty').hidden = !!n || !!line;
     box.replaceChildren();
     if (line) { paintEdgeDetail(box, line); return; }
     if (!n) return;
@@ -855,7 +692,16 @@
     if (n.kind === 'chunk') linkRows(box, 'From', state.data.nodes.filter((x) => x.id === n.parent));
     linkRows(box, `${plural(parts.length, 'passage', 'passages')} learned`, parts.slice(0, 8));
     if (parts.length > 8) box.appendChild(h('div', 'br-detail-meta', `${parts.length - 8} more not listed`));
-    linkRows(box, 'Connected to', neighbours(n.id).slice(0, 6).map((x) => x.node));
+    const connections = state.data.edges.filter((e) => e.kind === 'synapse' && (e.a === n.id || e.b === n.id));
+    if (connections.length) box.appendChild(h('div', 'section-label br-detail-sub', 'Connections'));
+    for (const e of connections) {
+      const other = state.data.nodes.find((x) => x.id === (e.a === n.id ? e.b : e.a));
+      if (!other) continue;
+      const row = h('button', 'br-link', other.title || KIND_LABEL[other.kind]);
+      row.type = 'button';
+      row.addEventListener('click', () => selectEdge(e));
+      box.appendChild(row);
+    }
   }
 
   // A picked line says what it joins and, for a synapse, why: how alike the two
@@ -869,7 +715,10 @@
       row.type = 'button';
       row.dataset.kind = n.kind;
       row.appendChild(h('span', 'br-dot'));
-      row.appendChild(h('span', 'br-row-title', n.title || KIND_LABEL[n.kind]));
+      const copy = h('span', 'br-row-copy');
+      copy.appendChild(h('span', 'br-row-title', n.title || KIND_LABEL[n.kind]));
+      copy.appendChild(h('span', 'br-row-preview', n.text || n.source || KIND_LABEL[n.kind]));
+      row.appendChild(copy);
       row.appendChild(h('span', 'br-row-meta', KIND_LABEL[n.kind].toLowerCase()));
       row.addEventListener('click', () => select(n.id, true));
       box.appendChild(row);
@@ -896,25 +745,27 @@
 
   // Picks a line: it stays lit, a signal runs it both ways, and the panel explains it.
   function selectEdge(e) {
+    if (isEdge(e, state.edge)) {
+      state.edge = null;
+      if (state.tab === 'memories') paintList();
+      paintDetail();
+      paintNetwork();
+      return;
+    }
     state.selected = null;
     state.edge = { a: e.a, b: e.b };
-    const now = performance.now();
-    for (const id of [e.a, e.b]) { const p = state.sim.get(id); if (p) p.glow = Math.max(p.glow, 0.6); }
-    state.signals.push({ a: e.a, b: e.b, t0: now }, { a: e.b, b: e.a, t0: now });
     if (state.tab === 'memories') paintList();
     paintDetail();
-    kick();
+    paintNetwork();
   }
 
-  // `turn` brings the memory round to face the reader: for picks made off the
-  // canvas, where it may be on the far side.
-  function select(id, turnTo) {
+  // Selecting a memory opens it in the reading panel.
+  function select(id) {
     state.edge = null;
     state.selected = id || null;
-    if (id && turnTo) face(id);
     if (state.tab === 'memories') paintList();
     paintDetail();
-    kick();
+    paintNetwork();
   }
 
   function say(text) {
@@ -922,90 +773,55 @@
     if (last) last.textContent = text;
   }
 
-  // ─── Canvas pointer ───────────────────────────────────────────────────────
-  function nodeAt(ev) {
-    const cv = byId('br-canvas');
-    const r = cv.getBoundingClientRect();
-    const mx = ev.clientX - r.left;
-    const my = ev.clientY - r.top;
-    let best = null;
-    let bestD = 14 * 14;
-    // Reads where the last frame drew each dot; of two that overlap, the nearer.
-    for (const p of state.sim.values()) {
-      const dx = p.sx - mx;
-      const dy = p.sy - my;
-      const d = dx * dx + dy * dy - p.near;
-      if (d < bestD) { bestD = d; best = p; }
-    }
-    return { p: best, mx, my };
-  }
-
   function wire() {
-    const cv = byId('br-canvas');
-    const tip = byId('br-tip');
-    // A press that moves turns the sphere (or slides it, with Shift held); one
-    // that does not is a click.
-    let drag = null;
-    cv.addEventListener('mousedown', (ev) => {
-      if (ev.button !== 0) return;
-      drag = { x: ev.clientX, y: ev.clientY, vx: state.view.x, vy: state.view.y, yaw: state.view.yaw, pitch: state.view.pitch, slide: ev.shiftKey, moved: false };
-    });
-    window.addEventListener('mousemove', (ev) => {
-      if (!drag) return;
-      const dx = ev.clientX - drag.x;
-      const dy = ev.clientY - drag.y;
-      if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
-      drag.moved = true;
-      state.dragging = true;
-      state.focus = null;
-      if (drag.slide) {
-        state.auto = false;
-        state.view.x = drag.vx + dx;
-        state.view.y = drag.vy + dy;
-      } else {
-        state.view.yaw = drag.yaw + dx * 0.006;
-        state.view.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, drag.pitch + dy * 0.006));
-      }
-      cv.style.cursor = 'grabbing';
-      kick();
-    });
-    window.addEventListener('mouseup', (ev) => {
-      if (!drag) return;
-      const moved = drag.moved;
-      drag = null;
-      state.dragging = false;
-      cv.style.cursor = 'grab';
-      if (moved || ev.target !== cv) return;
-      // A dot wins over the line it sits on; a line over the empty field.
-      const hit = nodeAt(ev);
-      const line = hit.p ? null : edgeAt(hit.mx, hit.my);
-      if (line) selectEdge(line); else select(hit.p ? hit.p.node.id : null);
-    });
-    cv.addEventListener('mousemove', (ev) => {
-      if (drag && drag.moved) { if (tip) tip.hidden = true; return; }
-      const hit = nodeAt(ev);
-      const id = hit.p ? hit.p.node.id : null;
-      const line = hit.p ? null : edgeAt(hit.mx, hit.my);
-      state.pointerIn = true;
-      cv.style.cursor = hit.p || line ? 'pointer' : 'grab';
-      if (tip) {
-        tip.hidden = !hit.p && !line;
-        if (hit.p) tip.textContent = `${KIND_LABEL[hit.p.node.kind]}: ${hit.p.node.title}`;
-        else if (line) tip.textContent = `${line.kind === 'synapse' ? 'Connection' : 'Part of'}: ${state.sim.get(line.a).node.title} ↔ ${state.sim.get(line.b).node.title}`;
-        tip.style.left = `${hit.mx + 14}px`; tip.style.top = `${hit.my + 10}px`;
-      }
-      if (id !== state.hover || line !== state.hoverEdge) { state.hover = id; state.hoverEdge = line; kick(); }
-    });
-    cv.addEventListener('mouseleave', () => { state.pointerIn = false; state.hover = null; state.hoverEdge = null; if (tip) tip.hidden = true; kick(); });
-    // The wheel zooms about the pointer; nothing on the field scrolls.
-    cv.addEventListener('wheel', (ev) => {
-      ev.preventDefault();
-      const r = cv.getBoundingClientRect();
-      zoomAt(Math.exp(-ev.deltaY * 0.0015), ev.clientX - r.left, ev.clientY - r.top);
+    byId('br-network-full').addEventListener('click', toggleNetworkFull);
+    byId('br-net-in').addEventListener('click', () => zoomNetwork(1.4));
+    byId('br-net-out').addEventListener('click', () => zoomNetwork(1 / 1.4));
+    byId('br-net-fit').addEventListener('click', fitNetwork);
+    const net = byId('br-network');
+    // The wheel zooms about the pointer; a press that moves slides the view.
+    net.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = net.getBoundingClientRect();
+      zoomNetwork(Math.exp(-e.deltaY * 0.0016), e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
-    cv.addEventListener('dblclick', fit);
-    new ResizeObserver(() => kick()).observe(cv);
-
+    let slide = null;
+    net.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !state.view) return;
+      slide = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y, moved: false };
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!slide) return;
+      const dx = e.clientX - slide.x;
+      const dy = e.clientY - slide.y;
+      if (!slide.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+      slide.moved = true;
+      net.classList.add('is-sliding');
+      const per = panelShape().w / state.view.w;
+      state.view.x = slide.vx - dx / per;
+      state.view.y = slide.vy - dy / per;
+      applyView();
+    });
+    window.addEventListener('pointerup', () => {
+      if (!slide) return;
+      const moved = slide.moved;
+      slide = null;
+      net.classList.remove('is-sliding');
+      // The click that ends a slide is not a pick.
+      if (moved) net.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); }, { capture: true, once: true });
+    });
+    new ResizeObserver(() => { if (state.view) applyView(); }).observe(net);
+    byId('br-network').addEventListener('dblclick', (e) => {
+      if (!e.target.closest('[role="button"]')) toggleNetworkFull();
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const full = document.fullscreenElement === document.querySelector('.br-network-panel');
+      const button = byId('br-network-full');
+      button.textContent = full ? 'Exit full screen' : 'Full screen';
+      button.setAttribute('aria-pressed', String(full));
+      button.setAttribute('aria-label', full ? 'Exit synapse full screen' : 'Expand synapse network');
+      if (!full && state.open) button.focus();
+    });
     for (const b of document.querySelectorAll('.br-scope-btn')) {
       b.addEventListener('click', () => {
         state.all = b.dataset.all === '1';
@@ -1013,15 +829,6 @@
         load();
       });
     }
-
-    byId('br-zoom-in').addEventListener('click', () => zoomStep(1.25));
-    byId('br-zoom-out').addEventListener('click', () => zoomStep(1 / 1.25));
-    byId('br-zoom').addEventListener('click', fit);
-    byId('br-fit').addEventListener('click', fit);
-    byId('br-full').addEventListener('click', () => setFull(!isFull()));
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && state.open && isFull()) { e.preventDefault(); setFull(false); }
-    });
 
     for (const t of document.querySelectorAll('.br-tab')) {
       t.addEventListener('click', () => { state.tab = t.dataset.tab; paintTab(); });
@@ -1046,7 +853,6 @@
       text.value = '';
       await load();
       select(res.node.id, true);
-      fire([res.node.id]);
     });
 
     byId('br-add-files').addEventListener('click', async () => {
@@ -1056,46 +862,47 @@
       if (res.added.length) say(`Learned ${plural(res.added.length, 'file', 'files')}${bad ? `. Skipped ${bad}` : ''}`);
       else if (bad) say(`Skipped ${bad}`);
       await load();
-      fire(res.added.map((a) => a.id));
     });
   }
 
   // ─── Activity ─────────────────────────────────────────────────────────────
-  api.onActivity(async (a) => {
+  const onActivity = async (a) => {
     if (!a) return;
     busy = !!a.busy;
     const ids = Array.isArray(a.ids) ? a.ids : [];
     if (a.kind !== 'idle' && (ids.length || a.kind === 'recall')) flash();
     syncRail();
     if (!state.open) return;
+    // The agent's words moved on: the cells are marked where they stand, and
+    // the page is only redrawn if one of them is not on it yet.
+    if (a.kind === 'think') {
+      const before = [...state.touching];
+      state.touching = new Set(ids);
+      if (ids.some((id) => !cellOf(id))) paintNetwork(); else markLive();
+      showThinking(ids, before);
+      return;
+    }
+    if (a.kind === 'recall') { state.handed = new Set(ids); state.touching = new Set(); }
+    if (a.kind === 'idle' || a.kind === 'capture') { state.handed = new Set(); state.touching = new Set(); }
     // Every firing moves the counts and the log, so the page reads them again
-    // before it lights what fired.
-    if (a.kind !== 'idle') await load();
+    // before refreshing the selected memory.
+    if (a.kind !== 'idle') await load(); else markLive();
     if (a.kind === 'recall') say(ids.length ? `Recalled ${plural(ids.length, 'memory', 'memories')} into the last prompt` : 'Nothing in memory matched the last prompt');
-    if (a.kind === 'capture') say('Kept how the last turn ended');
-    fire(ids);
-  });
+    if (a.kind === 'recall') showRecall(ids);
+    if (a.kind === 'capture') { say('Kept how the last turn ended'); if (ids[0]) showCapture(ids[0]); }
+  };
+  api.onActivity(onActivity);
 
   let wired = false;
   window.Brain = {
     open() {
       if (!wired) { wire(); wired = true; }
       state.open = true;
-      // Arriving: the camera starts far out and falls in toward the sphere.
-      if (!still) { state.view.k = ZOOM_MIN; state.view.x = 0; state.view.y = 0; state.auto = true; }
-      if (!byId('br-last').textContent) say('Drag to turn the sphere, scroll to zoom, click a memory or a line.');
+      if (!byId('br-last').textContent) say('Select a memory to see its details and connections.');
       load();
     },
-    // Leaving the page while the field fills the window would strand it there.
-    close() { state.open = false; if (isFull()) setFull(false); },
-    // For tests: what the canvas is holding.
-    _state: () => ({ dots: state.sim.size, edges: state.edges.length, signals: state.signals.length, busy, zoom: state.view.k, auto: state.auto, x: state.view.x, yaw: state.view.yaw, all: state.all, edge: state.edge ? state.edge.a + '|' + state.edge.b : null }),
-    // For tests: the middle of the first line of a kind, in canvas pixels.
-    _edgeMid(kind) {
-      const e = state.edges.find((x) => x.kind === kind);
-      if (!e) return null;
-      const a = state.sim.get(e.a); const b = state.sim.get(e.b);
-      return { x: (a.sx + b.sx) / 2, y: (a.sy + b.sy) / 2 };
-    },
+    // For tests: an activity report, as the main process would send it.
+    _activity: (a) => onActivity(a),
+    close() { state.open = false; stopRecallMotion(); if (document.fullscreenElement === document.querySelector('.br-network-panel')) document.exitFullscreen().catch(() => {}); },
   };
 })();

@@ -301,7 +301,7 @@ test('claude allow-session hands the permission suggestions back as updatedPermi
   assert.equal(c.stdinLines[c.stdinLines.length - 1].response.response.updatedPermissions, undefined);
 });
 
-test('an ACP handshake refused for auth points the user at Terminal mode', async () => {
+test('an ACP handshake refused for auth says so in its result', async () => {
   const { rt, children } = harness();
   const p = rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
   await tick();
@@ -311,7 +311,8 @@ test('an ACP handshake refused for auth points the user at Terminal mode', async
   const r = await p;
   assert.equal(r.ok, false);
   assert.match(r.error, /Authentication required/);
-  assert.match(r.error, /Terminal mode to sign in/);
+  assert.equal(r.auth, true);
+  assert.doesNotMatch(r.error, /Terminal/);
 });
 
 test('on Windows a .cmd shim runs through the command interpreter', async () => {

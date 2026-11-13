@@ -10,7 +10,7 @@ const path = require('node:path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-test('the rail opens a shell tab on the Terminal page and the shell answers', async () => {
+test('terminal entry points open renameable shared tabs and the shell answers', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-term-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, agentCommand: 'true', chatView: 'terminal' }));
@@ -36,21 +36,29 @@ test('the rail opens a shell tab on the Terminal page and the shell answers', as
   // No Chat / Terminal toggle in the chat page head any more.
   expect(await win.locator('#chat-mode-toggle').count()).toBe(0);
 
+  const before = await win.locator('#tab-strip .chat-tab').count();
   await item.click();
-  await expect(win.locator('.page-terminal')).toBeVisible();
-  await expect(win.locator('#tm-panes .tm-pane')).toHaveCount(1);
-  await expect(win.locator('#tm-strip .tm-tab:not(.tm-add)')).toHaveCount(1);
-  // A real shell: it echoes what we type.
+  await expect(win.locator('#tab-strip .chat-tab')).toHaveCount(before + 1);
+  await expect(win.locator('#tab-strip .chat-tab.active .chat-tab-label')).toHaveText('Terminal');
   await win.waitForTimeout(800);
   await win.keyboard.type('echo husk-shell-$((20+22))');
   await win.keyboard.press('Enter');
   await expect.poll(async () => win.evaluate(() => {
-    const pane = document.querySelector('#tm-panes .tm-pane:not([hidden])');
-    return pane ? pane.textContent : '';
+    const t = TABS.get(activeTabId);
+    if (!t) return '';
+    const buffer = t.term.buffer.active;
+    return Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i).translateToString()).join('\n');
   }), { timeout: 10_000 }).toContain('husk-shell-42');
-
-  // A second tab opens beside the first.
-  await win.locator('#tm-strip .tm-add').click();
-  await expect(win.locator('#tm-strip .tm-tab:not(.tm-add)')).toHaveCount(2);
+  await win.locator('#tab-strip .chat-tab.active .chat-tab-edit').click();
+  await win.locator('.chat-tab-rename').fill('Build logs');
+  await win.locator('.chat-tab-rename').press('Enter');
+  await expect(win.locator('#tab-strip .chat-tab.active .chat-tab-label')).toHaveText('Build logs');
+  await win.locator('#cs-new').click();
+  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'Open Terminal' }).click();
+  await expect(win.locator('#tab-strip .chat-tab')).toHaveCount(before + 2);
+  await expect(win.locator('#tab-strip .chat-tab.active .chat-tab-label')).toHaveText('Terminal');
+  await expect(win.locator('#tab-strip')).toContainText('Build logs');
+  await item.click();
+  await expect(win.locator('#tab-strip .chat-tab')).toHaveCount(before + 3);
   await app.close();
 });

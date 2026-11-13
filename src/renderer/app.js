@@ -533,6 +533,7 @@ function activateTab(id) {
   renderChatModeToggle();
   fitNow();
   try { focusActiveChat(); } catch (_) {}
+  if (window.ChatCanvas && window.ChatCanvas.isOpen()) window.ChatCanvas.refresh();
   // Refresh the status panel for the newly focused tab. Switch the main
   // process's active session first so stats:get resolves this tab's
   // transcript, then fetch and render fresh stats.
@@ -817,6 +818,40 @@ const MANUAL_UPDATE_CMD = {
 // update, and at the end of the first-run flow). Bullets are trusted static
 // strings; the <strong> lead-ins are intentional markup.
 const WHATS_NEW = {
+  '2.14.0': {
+    items: [
+      {
+        title: 'A Brain that remembers and connects your work',
+        body: 'Save notes, teach Husk from text files, or let it capture a short record after a chat. Before your next message, Husk brings back only the memories that fit. The Synapses view shows how they connect, and every memory can be pinned, edited, or removed.',
+        media: 'assets/wn-2140-brain.png',
+        mediaAlt: 'Husk Brain with three saved notes and a connection between related memories',
+      },
+      {
+        title: 'Follow code changes and GitHub from chat',
+        body: 'Connect an OpenAI-compatible provider with your own key and endpoint in Husk’s native chat. The Changes canvas shows files changed during a turn and their diffs, plus the branch’s pull request and checks. Ask the agent to explain a change or fix a failure without leaving chat.',
+        media: 'assets/wn-2140-chat.png',
+        mediaAlt: 'Husk Chat showing a conversation beside its Changes, Pull request, and Checks canvas',
+      },
+      {
+        title: 'Keep background agents in your chat',
+        body: 'See which agents are running or waiting on you. Open a background agent in Husk’s chat view to continue from its transcript, and queue follow-up messages while work is in progress.',
+        media: 'assets/wn-2140-agents.png',
+        mediaAlt: 'The Agents center showing background agents and their live activity',
+      },
+      {
+        title: 'Install a skill once for every agent',
+        body: 'Create or import a skill in Husk’s shared library. Codex, Copilot, and Gemini read it from the standard location; Claude Code and Kiro use native skill links, and Aider gets instructions to read it when relevant.',
+        media: 'assets/wn-2140-skills.png',
+        mediaAlt: 'Husk’s Skills page with the shared skill library open while Codex is selected',
+      },
+      {
+        title: 'Choose your look',
+        body: 'New installs start with the Light theme and indigo buttons. Pick from 11 themes and change Husk’s interface size in Preferences. The Brain follows your selected theme.',
+        media: 'assets/wn-2140-appearance.png',
+        mediaAlt: 'Appearance preferences with the Light theme, indigo accent, and interface size controls',
+      },
+    ],
+  },
   '2.13.2': {
     items: [
       {
@@ -1161,6 +1196,7 @@ function showWhatsNew(version) {
     const dots = $('#wn-dots');
     const backBtn = $('#wn-back');
     const skipBtn = $('#wn-skip');
+    const nextBtn = $('#wn-next');
     // eslint-disable-next-line no-unsanitized/property -- Slide copy is trusted static text.
     stage.innerHTML = slides.map((sl, i) => `
       <section class="ob-step wn-step" data-step="${i}"${i ? ' hidden' : ''}>
@@ -1170,9 +1206,6 @@ function showWhatsNew(version) {
           <p class="wn-body">${sl.body || ''}</p>
         </div>
         ${sl.media ? `<img class="wn-shot" src="${escapeAttr(sl.media)}" alt="${escapeAttr(sl.mediaAlt || sl.title || '')}" />` : ''}
-        <button class="btn-primary ob-cta wn-next" type="button" data-next="${i}">
-          ${i === slides.length - 1 ? 'Start using Husk' : 'Next'} <span class="ob-nav-arrow">&#8594;</span>
-        </button>
       </section>`).join('');
     // eslint-disable-next-line no-unsanitized/property -- Static markup, count only.
     dots.innerHTML = slides.map(() => '<span class="ob-dot"></span>').join('');
@@ -1188,8 +1221,8 @@ function showWhatsNew(version) {
       steps.forEach((sec, idx) => { sec.hidden = idx !== step; });
       dotEls.forEach((d, idx) => d.classList.toggle('active', idx === step));
       backBtn.hidden = step === 0;
-      // The last slide's own button finishes, so Skip is hidden there.
       skipBtn.hidden = step === steps.length - 1;
+      nextBtn.innerHTML = `${step === steps.length - 1 ? 'Start using Husk' : 'Next'} <span class="ob-nav-arrow">&#8594;</span>`;
       stage.scrollTop = 0;
     };
     const done = () => {
@@ -1197,9 +1230,7 @@ function showWhatsNew(version) {
       page.hidden = true;
       resolve();
     };
-    on(stage, 'click', (e) => {
-      const btn = e.target.closest('.wn-next');
-      if (!btn) return;
+    on(nextBtn, 'click', () => {
       if (step >= steps.length - 1) done(); else show(step + 1);
     });
     on(backBtn, 'click', () => show(step - 1));
@@ -1274,6 +1305,56 @@ async function pasteIntoTerminal() {
     if (!menu.hidden && e.key === 'Escape') hideMenu();
   });
   window.addEventListener('blur', hideMenu);
+}
+{
+  const menu = document.createElement('div');
+  menu.id = 'text-ctx-menu';
+  menu.className = 'ctx-menu';
+  menu.hidden = true;
+  menu.innerHTML = '<button type="button" data-action="copy">Copy</button>';
+  document.body.appendChild(menu);
+  let selectedText = '';
+
+  function hideTextMenu() { menu.hidden = true; }
+  function showTextMenu(x, y) {
+    menu.hidden = false;
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    menu.style.left = Math.max(6, Math.min(x, window.innerWidth - w - 6)) + 'px';
+    menu.style.top = Math.max(6, Math.min(y, window.innerHeight - h - 6)) + 'px';
+  }
+
+  // Husk's terminal has its own selection-aware menu. For normal page text,
+  // preserve the selection and offer a small Copy action on right-click.
+  document.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented) return;
+    const target = e.target && e.target.closest ? e.target : null;
+    if (!target || target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')) return;
+    const terminal = target.closest('#terminal');
+    if (terminal && !target.closest('.chat-pane')) return;
+    const selection = window.getSelection();
+    selectedText = selection ? selection.toString() : '';
+    if (!selectedText.trim()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showTextMenu(e.clientX, e.clientY);
+  }, true);
+
+  menu.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-action="copy"]');
+    if (!btn) return;
+    hideTextMenu();
+    try { await navigator.clipboard.writeText(selectedText); }
+    catch (_) { toast('Could not copy the selected text', 'error'); }
+    selectedText = '';
+  });
+  window.addEventListener('click', (e) => {
+    if (!menu.hidden && !e.target.closest('#text-ctx-menu')) hideTextMenu();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (!menu.hidden && e.key === 'Escape') hideTextMenu();
+  });
+  window.addEventListener('blur', hideTextMenu);
 }
 // Small trailing debounce: coalesce rapid calls (search keystrokes) so
 // an expensive repaint runs once the user pauses, not per character.
@@ -1494,6 +1575,7 @@ window.husk.pty.onData((sessionId, d) => {
   // A shell tab owns its own id. Letting it claim the frame first keeps chat
   // panes from ever being written to by a terminal, and vice versa.
   if (window.Tm && window.Tm.onData(sessionId, d)) return;
+  if (nativeCardData(sessionId, d)) return;
   const tab = TABS.get(sessionId) || (!sessionId ? TABS.get(activeTabId) : null);
   if (!tab || tab.restarting) return;
   if (captureResumeFailure(tab, d)) return;
@@ -1507,17 +1589,12 @@ window.husk.pty.onData((sessionId, d) => {
 });
 window.husk.pty.onExit((sessionId, code) => {
   if (window.Tm && window.Tm.onExit(sessionId, code)) return;
+  if (nativeCardExit(sessionId, code)) return;
   const tab = TABS.get(sessionId);
   // Skip the exit notice while this tab's PTY is being torn down on purpose.
   if (!tab || tab.restarting) return;
   tab.exited = true;
   refreshShellStatusBar();
-  const auth = authTabs.get(sessionId);
-  if (auth) {
-    authTabs.delete(sessionId);
-    finishAuthTab(tab, auth, code).catch(() => {});
-    return;
-  }
   if (code === 127) {
     // 127 = shell could not find the agent binary; route the user to setup.
     const cmd = (cfg && cfg.agentCommand || 'the agent').split(/\s+/)[0];
@@ -1740,6 +1817,48 @@ async function startPty() {
 
 // Open a brand-new chat in its own tab, leaving every existing tab's agent
 // running. Backs the "+ New chat" action.
+async function openTerminalTab() {
+  try {
+    const defaults = await window.husk.terminal.defaults();
+    if (!defaults || !defaults.ok || !defaults.shell) throw new Error('Shell unavailable');
+    setPage('chat');
+    return await openNewChatTab({ command: defaults.shell, cwd: defaults.cwd, shell: true, skipWelcome: true, skipContext: true });
+  } catch (err) { toast('Could not open terminal: ' + err.message, 'error'); }
+}
+
+function openNewTabMenu(event) {
+  event?.stopPropagation();
+  document.getElementById('new-tab-menu')?.closeMenu?.();
+  const menu = document.createElement('div');
+  menu.id = 'new-tab-menu';
+  menu.className = 'cs-menu';
+  menu.setAttribute('role', 'menu');
+  const anchor = event?.currentTarget;
+  const rect = anchor?.getBoundingClientRect();
+  Object.assign(menu.style, { position: 'fixed', top: `${Math.min((rect?.bottom || 80) + 6, innerHeight - 110)}px`, left: `${Math.max(8, Math.min(rect?.left || 300, innerWidth - 230))}px`, zIndex: '200', width: '220px' });
+  const close = () => { menu.remove(); anchor?.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside); document.removeEventListener('keydown', key); };
+  menu.closeMenu = close;
+  anchor?.setAttribute('aria-haspopup', 'menu');
+  anchor?.setAttribute('aria-expanded', 'true');
+  const outside = (e) => { if (!menu.contains(e.target)) close(); };
+  const key = (e) => { if (e.key === 'Escape') { close(); anchor?.focus(); } };
+  const active = TABS.get(activeTabId);
+  const source = active && !active.isShell ? (active.launchCommand || active.command) : '';
+  // Carry the active chat's CLI into the new tab without carrying a resume id.
+  const newChatCommand = String(source || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
+  for (const [label, action] of [['New chat', () => { setPage('chat'); openNewChatTab({ command: newChatCommand, preferChat: true }); }], ['Open Terminal', openTerminalTab]]) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'cs-menu-item'; button.textContent = label;
+    button.setAttribute('role', 'menuitem');
+    button.addEventListener('click', () => { close(); action(); });
+    menu.appendChild(button);
+  }
+  document.body.appendChild(menu);
+  menu.firstElementChild.focus();
+  document.addEventListener('click', outside);
+  document.addEventListener('keydown', key);
+}
+
 async function openNewChatTab(opts = {}) {
   // A new chat is its own single pane, so any active split ends here. Without
   // this the new tab becomes active while neither half of the split, so its
@@ -1747,6 +1866,8 @@ async function openNewChatTab(opts = {}) {
   SPLIT = null;
   splitPicking = false;
   const tab = createTab();
+  tab.isShell = !!opts.shell;
+  if (tab.isShell) { tab.title = 'Terminal'; tab.titleEarned = true; }
   tab.launchCommand = opts.command || null;
   tab.cwd = opts.cwd || null;
   // A session resumed into Chat: its past events are painted before the agent
@@ -1760,8 +1881,11 @@ async function openNewChatTab(opts = {}) {
   }
   // A new chat with another CLI (the Sessions column's New menu) opens in Chat
   // like any new chat when that CLI can; a plain launch command stays a PTY.
-  if ((!opts.command || opts.preferChat) && !opts.resumeAttempt
-    && initialTabMode(opts.command || (cfg && cfg.agentCommand)) === 'chat' && ensureChatPane(tab)) {
+  const requestedMode = opts.forceChat
+    ? (chatProtocolFor(String(opts.command || (cfg && cfg.agentCommand) || 'claude')) ? 'chat' : 'terminal')
+    : initialTabMode(opts.command || (cfg && cfg.agentCommand));
+  if ((!opts.command || opts.preferChat || opts.forceChat) && !opts.resumeAttempt
+    && requestedMode === 'chat' && ensureChatPane(tab)) {
     tab.mode = 'chat';
   }
   if (opts.resumeAttempt) {
@@ -1935,7 +2059,7 @@ async function closeTab(id) {
 // The name shown for a tab: the user's rename if set, else the generic
 // per-tab default ("Chat 1", "Chat 2", ...).
 function displayTitle(tab) {
-  return (tab.customTitle || tab.title || '').trim() || 'Chat';
+  return (tab.customTitle || (tab.isShell ? 'Terminal' : tab.title) || '').trim() || 'Chat';
 }
 
 // ── Session-title presentation helpers ───────────────────────────────────────
@@ -2022,9 +2146,9 @@ async function confirmCloseTab(id) {
   const tab = TABS.get(id);
   if (!tab) return;
   const ok = await openConfirmDialog({
-    title: 'Close this chat?',
-    bodyHtml: `Are you sure you want to close <strong>${escapeHtml(displayTitle(tab))}</strong>? Its agent will be stopped.`,
-    confirmLabel: 'Close chat',
+    title: tab.isShell ? 'Close this terminal?' : 'Close this chat?',
+    bodyHtml: `Are you sure you want to close <strong>${escapeHtml(displayTitle(tab))}</strong>? Its ${tab.isShell ? 'shell' : 'agent'} will be stopped.`,
+    confirmLabel: tab.isShell ? 'Close terminal' : 'Close chat',
     cancelLabel: 'Cancel',
   });
   if (ok) closeTab(id);
@@ -2042,16 +2166,22 @@ function renderTabStrip() {
   const strip = document.getElementById('tab-strip');
   if (!strip) return;
   const tabs = [...TABS.values()];
+  const names = window.husk.sessionView.disambiguateTitles(tabs.map((t) => ({
+    title: displayTitle(t), agent: tabAgentCommand(t),
+  })));
   strip.innerHTML = '';
-  for (const t of tabs) {
+  for (const [index, t] of tabs.entries()) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '')
       + (SPLIT && (SPLIT.a === t.id || SPLIT.b === t.id) ? ' in-split' : '');
     btn.dataset.tab = t.id;
     btn.draggable = !splitPicking;
-    const name = displayTitle(t);
+    const baseName = displayTitle(t);
+    const name = names[index] || baseName;
+    const vendorName = name.startsWith(baseName) ? name.slice(baseName.length).replace(/^\s*·\s*/, '') : '';
     btn.title = name;
+    btn.setAttribute('aria-label', name);
     const label = document.createElement('span');
     label.className = 'chat-tab-label';
     if (!t.customTitle && !t.titleEarned && !sessionTitleUsable(t.title) && (t.mode === 'chat' ? t.chatRunning : t.promptSent)) {
@@ -2060,20 +2190,26 @@ function renderTabStrip() {
       // first prompt keeps that name on every later turn.
       showThinkingDots(label);
     } else {
-      label.textContent = name;
+      label.textContent = baseName;
     }
     btn.appendChild(label);
+    if (vendorName) {
+      const vendor = document.createElement('span');
+      vendor.className = 'chat-tab-vendor';
+      vendor.textContent = vendorName;
+      btn.appendChild(vendor);
+    }
     const edit = document.createElement('span');
     edit.className = 'chat-tab-edit';
     edit.dataset.edit = t.id;
-    edit.title = 'Rename chat';
+    edit.title = t.isShell ? 'Rename terminal' : 'Rename chat';
     // eslint-disable-next-line no-unsanitized/property -- static SVG markup
     edit.innerHTML = TAB_EDIT_SVG;
     btn.appendChild(edit);
     const x = document.createElement('span');
     x.className = 'chat-tab-close';
     x.dataset.close = t.id;
-    x.title = 'Close chat';
+    x.title = t.isShell ? 'Close terminal' : 'Close chat';
     // eslint-disable-next-line no-unsanitized/property -- static SVG markup
     x.innerHTML = TAB_CLOSE_SVG;
     btn.appendChild(x);
@@ -2086,7 +2222,7 @@ function renderTabStrip() {
   add.setAttribute('aria-label', 'New chat');
   // eslint-disable-next-line no-unsanitized/property -- static SVG markup
   add.innerHTML = TAB_NEW_SVG;
-  add.addEventListener('click', () => { openNewChatTab(); });
+  add.addEventListener('click', openNewTabMenu);
   strip.appendChild(add);
   strip.classList.toggle('multi', tabs.length >= 1);
   strip.classList.toggle('is-picking', splitPicking);
@@ -2115,7 +2251,7 @@ function renderTabStrip() {
 async function linkTabs() {
   // A chat tab learns its session id from the agent itself; the PTY resolver
   // would only guess at it.
-  const pending = [...TABS.values()].filter((t) => t.mode !== 'chat' && (!t.agentId || t.agentIdProvisional));
+  const pending = [...TABS.values()].filter((t) => !t.isShell && t.mode !== 'chat' && (!t.agentId || t.agentIdProvisional));
   if (!pending.length) return;
   const claimed = [...TABS.values()]
     .filter((t) => t.agentId && !t.agentIdProvisional)
@@ -2146,6 +2282,7 @@ setInterval(linkTabs, 3000);
 // Adopt a generated session name for a tab: state, then a full repaint, then
 // the typewriter reveal over the freshly painted label.
 function adoptTabTitle(tab, title) {
+  if (tab.isShell) return;
   const clean = String(title || '').trim();
   if (!clean) return;
   const firstEarn = !tab.titleEarned;
@@ -2503,6 +2640,13 @@ function ensureChatPane(tab) {
     onRunningChange: (on) => {
       tab.chatRunning = !!on;
       renderTabStrip();
+      if (on) tab.turnBefore = turnSnapshot(tab);
+      else turnClosed(tab);
+    },
+    onOpenCanvas: (req) => {
+      if (!TABS.has(tab.id) || !window.ChatCanvas) return;
+      if (tab.id !== activeTabId) activateTab(tab.id);
+      window.ChatCanvas.open(req);
     },
     // Every paint hands over the thread state, which the Sessions column card
     // and the top bar counter read.
@@ -2519,65 +2663,343 @@ function ensureChatPane(tab) {
       // Per tab only: the next chat still opens in Chat view.
       setTabMode(tab, 'terminal');
     },
-    onAuth: (kind) => { openAuthTab(tab, kind); },
+    onAuth: (kind) => { openAuthCard(tab, kind); },
+    onNative: (text) => { openNativeCommand(tab, text); },
     title: displayTitle(tab),
   });
   return tab.chat;
 }
 
-// /login and /logout typed in a chat. The CLI's sign-in is interactive (it
-// opens a browser and waits for a code), so it runs in a terminal tab of its
-// own; when that tab's command exits the chat is told who is signed in now.
-// Tabs opened this way are kept here so their exit is read as a sign-in result
-// rather than an agent that died.
-const authTabs = new Map();
-async function openAuthTab(fromTab, kind) {
-  const cli = tabAgentCommand(fromTab).split(/\s+/)[0];
-  const verb = kind === 'logout' ? 'logout' : 'login';
-  if (cli !== 'claude') {
-    if (fromTab.chat) fromTab.chat.apply({ type: 'status', text: `${cli} signs in from its own terminal; switch this tab to Terminal to do that.` });
-    return;
-  }
-  if (fromTab.chat) {
-    fromTab.chat.apply({ type: 'status', text: verb === 'login'
-      ? 'Opening a terminal to sign in. This chat keeps the account it started with; chats started after signing in use the new one.'
-      : 'Opening a terminal to sign out.' });
-  }
-  const tab = await openNewChatTab({ command: `claude auth ${verb}`, cwd: fromTab.cwd || null, title: verb === 'login' ? 'Sign in' : 'Sign out', customTitle: true });
-  if (tab) authTabs.set(tab.id, { verb, fromTabId: fromTab.id });
+// ─── The canvas beside the chat ──────────────────────────────────────────────
+// A turn reads the working tree when it opens and again when it closes. What
+// differs is listed in the thread as a card, and the card opens the canvas.
+
+async function turnSnapshot(tab) {
+  const root = chatWorkDir(tab);
+  if (!root || !window.HuskTurnChanges) return null;
+  let s = null;
+  try { s = await window.husk.git.status(root); } catch (_) { return null; }
+  if (!s || s.ok === false || s.isRepo === false) return null;
+  return window.HuskTurnChanges.snapshot(s, window.husk.text.parseGitStatus(s.porcelain || ''));
 }
 
-async function finishAuthTab(tab, auth, code) {
-  const from = TABS.get(auth.fromTabId) || null;
-  const say = (text, kind) => { if (from && from.chat) from.chat.apply({ type: kind === 'error' ? 'error' : 'status', text }); };
-  if (code !== 0) {
-    tab.term.writeln(`\r\n\x1b[38;2;244;63;94m[sign-in did not finish (exit ${code})]\x1b[0m`);
-    say(auth.verb === 'login' ? 'Signing in did not finish. The account is unchanged.' : 'Signing out did not finish.', 'error');
-    toast(auth.verb === 'login' ? 'Sign-in did not finish' : 'Sign-out did not finish', 'error');
+async function turnClosed(tab) {
+  const pending = tab.turnBefore;
+  tab.turnBefore = null;
+  if (!pending) return;
+  const before = await pending;
+  const after = await turnSnapshot(tab);
+  if (!TABS.has(tab.id) || !tab.chat) return;
+  if (before && after) {
+    const d = window.HuskTurnChanges.changedBetween(before, after);
+    if (d.files.length) tab.chat.apply({ type: 'changes', files: d.files, adds: d.adds, dels: d.dels });
+    if (tab.id === activeTabId && window.ChatCanvas) window.ChatCanvas.setTurnPaths(d.files.map((f) => f.path));
+  }
+  if (!after || !window.ChatCanvas) return;
+  const r = await window.ChatCanvas.readPr(chatWorkDir(tab));
+  if (!TABS.has(tab.id) || !tab.chat) return;
+  if (r.pr) tab.chat.apply({ type: 'pr', number: r.pr.number, title: r.pr.title, url: r.pr.url, checks: r.pr.checks });
+  if (tab.id === activeTabId) canvasMarkRail(r);
+}
+
+// The GitHub rail item carries the count of failing checks on this branch's
+// pull request, so the page has a reason to be opened from anywhere.
+function canvasMarkRail(r) {
+  const item = document.querySelector('#rail .rail-item[data-page="github"]');
+  if (!item) return;
+  const n = r && r.pr && r.pr.checks ? Number(r.pr.checks.failed) || 0 : 0;
+  let mark = item.querySelector('.rail-mark');
+  if (!n) { if (mark) mark.remove(); item.title = 'GitHub'; return; }
+  if (!mark) { mark = document.createElement('span'); mark.className = 'rail-mark'; item.appendChild(mark); }
+  mark.textContent = String(n);
+  item.title = n === 1 ? 'GitHub: 1 check failing on this branch' : `GitHub: ${n} checks failing on this branch`;
+}
+
+function canvasSend(text) {
+  const tab = TABS.get(activeTabId);
+  if (!tab) return false;
+  if (tab.mode === 'chat' && tab.chat) { tab.chat.send(text); return true; }
+  // A terminal tab's prompt belongs to its CLI. Clicking Fix or Explain is an
+  // explicit send action, so submit it through that CLI's own input line.
+  try { window.husk.pty.write(text + '\r', tab.id); tab.term.focus(); return true; } catch (_) { return false; }
+}
+
+(function wireChatCanvas() {
+  if (!window.ChatCanvas) return;
+  const btn = $('#btn-canvas');
+  window.ChatCanvas.configure({
+    root: () => chatWorkDir(TABS.get(activeTabId)),
+    send: canvasSend,
+    goto: (page) => setPage(page),
+    onPr: canvasMarkRail,
+    onToggle: (open) => {
+      const stage = document.querySelector('.chat-stage');
+      if (stage) stage.classList.toggle('has-canvas', open);
+      if (btn) { btn.classList.toggle('is-on', open); btn.setAttribute('aria-pressed', String(open)); }
+      fitNow();
+    },
+  });
+  if (btn) btn.addEventListener('click', () => window.ChatCanvas.toggle());
+})();
+
+// ─── The agent's own answer, as a card in the thread ─────────────────────────
+// Some of what an agent's CLI does is not in its chat protocol: signing in,
+// managing its servers, its settings. Those are answered by the CLI itself,
+// and shown as a card in the conversation: the thread, the composer and the
+// tab stay as they are. The card is live while the CLI is showing something,
+// and settles into a record of what it showed when the CLI is idle again.
+// It works the same for every agent and every command; nothing here knows
+// what any command is.
+const nativeCards = new Map(); // pty id -> card
+let nativeSeq = 0;
+const NATIVE_ROWS = 16;
+
+// The last line with anything on it, with its digits dropped so a clock does
+// not make two idle screens differ. It names the state the CLI is in.
+function nativeLastLine(term) {
+  const b = term.buffer.active;
+  for (let y = b.baseY + term.rows - 1; y >= 0; y--) {
+    const l = b.getLine(y);
+    const t = l ? l.translateToString(true).replace(/[0-9]/g, '').trim() : '';
+    if (t) return t;
+  }
+  return '';
+}
+
+// What the CLI printed, as text, without its own prompt at the bottom or
+// lines that are only rules and marks.
+function nativeTranscript(term) {
+  const b = term.buffer.active;
+  const out = [];
+  for (let y = 0; y < b.baseY + term.rows; y++) {
+    const l = b.getLine(y);
+    out.push(l ? l.translateToString(true) : '');
+  }
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  out.pop();
+  while (out.length && !/[\p{L}\p{N}]/u.test(out[out.length - 1])) out.pop();
+  while (out.length && !out[0].trim()) out.shift();
+  return out.join('\n');
+}
+
+async function openNativeCard(tab, { command, title, type, onDone } = {}) {
+  const list = tab && tab.chat && tab.chat.el ? tab.chat.el.querySelector('.chat-thread-inner') : null;
+  if (!list || typeof Terminal === 'undefined') return null;
+  closeNativeCard(tab, { silent: true });
+  nativeSeq += 1;
+  const id = `native-${tab.id}-${nativeSeq}`;
+  const el = document.createElement('div');
+  el.className = 'chat-native-card is-opening';
+  const head = document.createElement('div');
+  head.className = 'chat-native-head';
+  const name = document.createElement('span');
+  name.className = 'chat-native-title';
+  name.textContent = title || '';
+  const pill = document.createElement('span');
+  pill.className = 'chat-pill chat-native-pill';
+  pill.textContent = 'opening';
+  const done = document.createElement('button');
+  done.type = 'button';
+  done.className = 'ghost-btn chat-native-done';
+  done.textContent = 'Done';
+  done.title = 'Close this and keep what it showed';
+  head.appendChild(name);
+  head.appendChild(pill);
+  head.appendChild(done);
+  const body = document.createElement('div');
+  body.className = 'chat-native-term';
+  el.appendChild(head);
+  el.appendChild(body);
+  list.appendChild(el);
+  el.scrollIntoView({ block: 'end' });
+
+  const term = new Terminal({
+    cursorBlink: true,
+    cursorInactiveStyle: 'none',
+    fontFamily: '"Ubuntu Mono", "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace',
+    fontSize: 13,
+    theme: themeForXterm(),
+    minimumContrastRatio: contrastForXterm(),
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(body);
+  try { fit.fit(); } catch (_) {}
+  const card = { id, tab, term, fit, el, pill, onDone, title: title || '', type: type || '', typed: !type, quiet: null, latest: null, check: null, ended: false, code: null, idle: '', left: false, typedAt: 0 };
+  nativeCards.set(id, card);
+  tab.nativeCard = card;
+  term.onData((d) => { if (!card.ended) window.husk.pty.write(d, id); });
+  card.ro = new ResizeObserver(() => {
+    try { fit.fit(); if (!card.ended) window.husk.pty.resize({ cols: term.cols, rows: term.rows }, id); } catch (_) {}
+  });
+  card.ro.observe(body);
+  done.addEventListener('click', () => closeNativeCard(tab));
+  // A command run for its own sake (sign-in) has nothing to wait for.
+  if (!type) nativeCardLive(card);
+  await window.husk.pty.start({ cols: term.cols, rows: term.rows, command, cwd: tab.cwd || null, sessionId: id });
+  return card;
+}
+
+function nativeCardLive(card) {
+  card.el.classList.remove('is-opening');
+  card.pill.textContent = 'live';
+  card.pill.dataset.state = 'running';
+  try { card.fit.fit(); card.term.focus(); } catch (_) {}
+  card.el.scrollIntoView({ block: 'end' });
+}
+
+// Output for a card. A command to type is typed once the CLI has drawn its
+// interface: at the first pause in its output, or a set time after it began
+// drawing, since an interface with a clock or a cursor never pauses. What
+// the CLI drew to get that far is its own start screen, which is cleared, so
+// the card opens on the answer. The text and the Enter go separately, the way
+// they come from a keyboard.
+const NATIVE_TYPE_PAUSE_MS = 350;
+const NATIVE_TYPE_LATEST_MS = 2000;
+function nativeCardData(id, d) {
+  const c = nativeCards.get(id);
+  if (!c) return false;
+  c.term.write(d);
+  if (!c.typed) {
+    const type = () => {
+      if (c.typed || c.ended) return;
+      c.typed = true;
+      clearTimeout(c.quiet);
+      clearTimeout(c.latest);
+      c.idle = nativeLastLine(c.term);
+      c.term.clear();
+      window.husk.pty.write(c.type, id);
+      setTimeout(() => {
+        if (c.ended) return;
+        window.husk.pty.write('\r', id);
+        c.typedAt = Date.now();
+        setTimeout(() => { if (!c.ended && nativeCards.has(id)) nativeCardLive(c); }, 350);
+      }, 150);
+    };
+    clearTimeout(c.quiet);
+    c.quiet = setTimeout(type, NATIVE_TYPE_PAUSE_MS);
+    if (!c.latest) c.latest = setTimeout(type, NATIVE_TYPE_LATEST_MS);
+    return true;
+  }
+  // The CLI is idle again when its last line is the one it idled on before
+  // the command, having shown something else in between.
+  // Looked at on a beat rather than after a pause, since output may never pause.
+  if (c.type && c.typedAt && !c.check) {
+    c.check = setTimeout(() => {
+      c.check = null;
+      if (c.ended || !nativeCards.has(id)) return;
+      const now = nativeLastLine(c.term);
+      if (now !== c.idle) { c.left = true; return; }
+      if (c.left && Date.now() - c.typedAt > 800) closeNativeCard(c.tab);
+    }, 300);
+  }
+  return true;
+}
+
+// The CLI exited. Cleanly, the card settles on its own; otherwise it stays
+// so what the CLI printed can be read.
+function nativeCardExit(id, code) {
+  const c = nativeCards.get(id);
+  if (!c) return false;
+  c.ended = true;
+  c.code = code;
+  if (code === 0) closeNativeCard(c.tab);
+  else {
+    c.pill.textContent = `ended (${code})`;
+    c.pill.dataset.state = 'error';
+  }
+  return true;
+}
+
+// Settles a card: the CLI is let go, and what it showed stays in the thread
+// as plain text under the card's heading, or as the heading alone.
+function closeNativeCard(tab, { silent = false } = {}) {
+  const c = tab && tab.nativeCard;
+  if (!c) return;
+  tab.nativeCard = null;
+  nativeCards.delete(c.id);
+  clearTimeout(c.quiet);
+  clearTimeout(c.latest);
+  clearTimeout(c.check);
+  const said = c.typed ? nativeTranscript(c.term) : '';
+  try { c.ro.disconnect(); } catch (_) {}
+  try { window.husk.pty.close(c.id); } catch (_) {}
+  try { c.term.dispose(); } catch (_) {}
+  if (silent) { if (c.el.parentNode) c.el.parentNode.removeChild(c.el); return; }
+  c.el.classList.remove('is-opening');
+  c.el.classList.add('is-done');
+  c.pill.textContent = c.code && c.code !== 0 ? `ended (${c.code})` : 'closed';
+  c.pill.dataset.state = c.code && c.code !== 0 ? 'error' : 'done';
+  const body = c.el.querySelector('.chat-native-term');
+  if (body) body.remove();
+  const btn = c.el.querySelector('.chat-native-done');
+  if (btn) btn.remove();
+  if (said) {
+    const pre = document.createElement('pre');
+    pre.className = 'chat-native-said';
+    pre.textContent = said;
+    c.el.appendChild(pre);
+  }
+  if (typeof c.onDone === 'function') { try { c.onDone(c.code); } catch (_) {} }
+}
+
+// Brings a chat back after something was changed in the CLI itself. A claude
+// chat picks its conversation up again; any other CLI keeps running as it
+// is, since restarting it would start a new conversation.
+async function nativeApply(tab, changed) {
+  if (!TABS.has(tab.id)) return;
+  const live = tab.chatAlive && !tab.exited;
+  if (!live) { await restartChat(tab, { command: tab.launchCommand || undefined, silent: true, skipWelcome: true }); return; }
+  if (chatProtocolFor(tabAgentCommand(tab)) === 'claude' && tab.id === activeTabId) {
+    await restartKeepingConversation();
     return;
   }
-  let st = null;
-  try { st = await window.husk.auth.status(); } catch (_) { st = null; }
-  const who = st && st.ok && st.loggedIn
-    ? `${st.email || 'your account'}${st.subscriptionType ? ` (${st.subscriptionType})` : ''}`
-    : '';
-  if (auth.verb === 'logout') {
-    tab.term.writeln('\r\n\x1b[38;2;106;115;133m[signed out; you can close this tab]\x1b[0m');
-    say('Signed out. Type /login to sign in again.', 'status');
-    toast('Signed out', 'success');
-    return;
-  }
-  tab.term.writeln(`\r\n\x1b[38;2;106;115;133m[signed in${who ? ' as ' + who : ''}; you can close this tab]\x1b[0m`);
-  say(who ? `Signed in as ${who}. Start a new chat to use this account; this one keeps the account it started with.` : 'Signed in. Start a new chat to use the new account.', 'status');
-  if (from && TABS.has(from.id) && from.mode === 'chat') {
-    toastAction(who ? `Signed in as ${who}` : 'Signed in', 'New chat', () => {
-      if (!TABS.has(from.id)) return;
-      if (from.id !== activeTabId) activateTab(from.id);
-      restartChat(from, { command: from.launchCommand || undefined, skipWelcome: true });
-    }, 'success');
-  } else {
-    toast(who ? `Signed in as ${who}` : 'Signed in', 'success');
-  }
+  if (tab.chat) tab.chat.apply({ type: 'status', text: `${changed} A new chat picks it up; this one keeps running as it was.` });
+}
+
+// Signing in and out, as the CLI does it, in a card in the chat.
+async function openAuthCard(tab, kind) {
+  const verb = kind === 'logout' ? 'logout' : 'login';
+  let how = null;
+  try { how = await window.husk.agents.authCommand(tabAgentCommand(tab), verb); } catch (_) { how = null; }
+  const cli = (how && how.program) || tabAgentCommand(tab).split(/\s+/)[0];
+  await openNativeCard(tab, {
+    command: (how && how.command) || cli,
+    title: verb === 'login' ? `Sign in to ${cli}` : `Sign out of ${cli}`,
+    // A CLI with no sign-in command of its own takes the command in its interface.
+    type: how && how.own ? '' : `/${verb}`,
+    onDone: (code) => {
+      if (code !== 0) {
+        if (tab.chat) tab.chat.apply({ type: 'status', text: verb === 'login' ? 'Sign-in was not finished. Type /login to try again.' : 'Sign-out was not finished.' });
+        return;
+      }
+      if (verb === 'logout') { if (tab.chat) tab.chat.apply({ type: 'status', text: 'Signed out. Type /login to sign in again.' }); return; }
+      (async () => {
+        // Who is signed in now, where the CLI can say.
+        let who = '';
+        if (chatProtocolFor(tabAgentCommand(tab)) === 'claude') {
+          try {
+            const st = await window.husk.auth.status();
+            if (st && st.ok && st.loggedIn) who = `${st.email || 'your account'}${st.subscriptionType ? ` (${st.subscriptionType})` : ''}`;
+          } catch (_) {}
+        }
+        await nativeApply(tab, who ? `Signed in as ${who}.` : 'Signed in.');
+        if (who && tab.chat && TABS.has(tab.id)) tab.chat.apply({ type: 'status', text: `Signed in as ${who}.` });
+      })().catch(() => {});
+    },
+  });
+}
+
+// A slash command the chat protocol does not carry: the CLI answers it, in a
+// card.
+async function openNativeCommand(tab, text) {
+  const cli = tabAgentCommand(tab).split(/\s+/)[0];
+  await openNativeCard(tab, {
+    command: cli,
+    title: `${cli} ${text}`,
+    type: text,
+    onDone: () => { nativeApply(tab, 'Changes made there are saved.').catch(() => {}); },
+  });
 }
 
 // Starts this tab's headless agent with a fresh thread. Resolves true once the
@@ -2621,6 +3043,9 @@ function startChatForTab(tab) {
       c.setExited(true);
       tab.exited = true;
       refreshShellStatusBar();
+      // Not signed in: the CLI's own sign-in opens here, and the chat starts
+      // once it is through.
+      if (res && res.auth) openAuthCard(tab, 'login').catch(() => {});
       return false;
     }
     // A resumed tab keeps the id it resumed: that is the conversation the
@@ -2837,7 +3262,7 @@ function csPastCard(s, names) {
   if (s.model) chips.push(String(s.model));
   return {
     key: `s:${s.id}`, live: false, session: s, sessionId: s.id,
-    agent: cs.agent || 'agent',
+    agent: csBase(String(s.agent || 'agent').trim().split(/\s+/)[0]),
     mtime: s.mtime || 0,
     title: SVm.titleOf(s, names) || 'Untitled chat',
     state: sig ? sig.kind : '', last: csClip(SVm.scent(s, sig, names), 140), excerpt: '',
@@ -2851,31 +3276,36 @@ function csModel() {
   const folders = Array.isArray(cfg && cfg.sessionFolders) ? cfg.sessionFolders : [];
   const folderOf = (cfg && cfg.sessionFolderOf) || {};
   const q = cs.query.trim().toLowerCase();
-  const match = (c) => !q || `${c.title}\n${c.last}\n${c.excerpt}`.toLowerCase().includes(q);
   const open = new Set();
   for (const t of TABS.values()) { const sid = tabSessionId(t); if (sid) open.add(sid); }
   const live = [...TABS.values()]
     .sort((a, b) => (b.createdAt || b.csAt || 0) - (a.createdAt || a.csAt || 0))
-    .map(csLiveCard).filter(match);
+    .map(csLiveCard);
   const past = (Array.isArray(cs.list) ? cs.list : []).filter((s) => s && !open.has(s.id))
-    .map((s) => csPastCard(s, names)).filter(match)
+    .map((s) => csPastCard(s, names))
     .sort((a, b) => b.mtime - a.mtime);
-  const recent = new Set(past.slice(0, CS_RECENT_MAX).map((c) => c.key));
+  const all = [...live, ...past];
+  const labels = SVm.disambiguateTitles(all.map((c) => ({ title: c.title, agent: c.agent })));
+  all.forEach((c, i) => { c.displayTitle = labels[i] || c.title; });
+  const match = (c) => !q || `${c.displayTitle}\n${c.title}\n${c.agent}\n${c.last}\n${c.excerpt}`.toLowerCase().includes(q);
+  const shownLive = live.filter(match);
+  const shownPast = past.filter(match);
+  const recent = new Set(shownPast.slice(0, CS_RECENT_MAX).map((c) => c.key));
 
   // The user's folders first, in the order they made them, empty ones too, the
   // way the Sessions page files them (config.sessionFolders and sessionFolderOf).
   const groups = [];
   const filed = new Set();
-  const all = [...live, ...past];
+  const allShown = [...shownLive, ...shownPast];
   for (const fo of folders) {
     if (!fo || typeof fo.id !== 'string' || !fo.id) continue;
-    const cards = all.filter((c) => c.sessionId && folderOf[c.sessionId] === fo.id);
+    const cards = allShown.filter((c) => c.sessionId && folderOf[c.sessionId] === fo.id);
     for (const c of cards) filed.add(c.key);
     if (q && !cards.length) continue;
     const name = (typeof fo.name === 'string' && fo.name.trim()) ? fo.name.trim() : 'Folder';
     groups.push({ id: `f:${fo.id}`, kind: 'folder', name, cards });
   }
-  const unfiled = all.filter((c) => !filed.has(c.key));
+  const unfiled = allShown.filter((c) => !filed.has(c.key));
   const here = cs.currentCwd;
   const inProject = (c) => c.live || (here && SVm.inCurrentProject(c.s, here));
   const project = unfiled.filter((c) => inProject(c) && (c.live || recent.has(c.key)));
@@ -2898,7 +3328,7 @@ function csModel() {
     }
   }
   if (older.length) groups.push({ id: 'older', kind: 'older', name: 'Older sessions', cards: older });
-  return { groups, empty: !live.length && !past.length };
+  return { groups, empty: !shownLive.length && !shownPast.length };
 }
 
 function csIcon(paths) {
@@ -2943,7 +3373,7 @@ function csCardEl(c) {
   if (when.title) time.title = when.title;
   top.appendChild(time);
   b.appendChild(top);
-  b.appendChild(csEl('div', 'cs-card-title', c.title));
+  b.appendChild(csEl('div', 'cs-card-title', c.displayTitle || c.title));
   if (c.last || c.excerpt) {
     const last = csEl('div', 'cs-card-last');
     if (c.live) {
@@ -2960,7 +3390,7 @@ function csCardEl(c) {
     for (const t of c.chips) chips.appendChild(csEl('span', 'cs-chip', t));
     b.appendChild(chips);
   }
-  b.title = c.title;
+  b.title = c.displayTitle || c.title;
   return b;
 }
 
@@ -3059,7 +3489,7 @@ async function resumeLastSessionOnBoot() {
     const holder = agents && agents.bySession ? agents.bySession.get(s.id) : null;
     if (holder && holder.held) continue;
     if (tried++ >= 5) break;
-    const owned = { ...s, owner: String(r.agent || ''), project: s.projectPath, prdpath: s.prdPath };
+    const owned = { ...s, owner: String(s.agent || r.agent || ''), project: s.projectPath, prdpath: s.prdPath };
     let done = false;
     try { done = await resumeIntoChat(owned, { keepPage: true }); } catch (_) { done = false; }
     if (done) return true;
@@ -3068,11 +3498,16 @@ async function resumeLastSessionOnBoot() {
 }
 
 // The same way into a past session the Sessions page uses.
+function savedSessionDisplayTitle(s) {
+  const names = (cfg && cfg.sessionNames) || {};
+  return window.husk.sessionView.titleOf(s, names) || 'Untitled chat';
+}
+
 function csOpenPast(s) {
   if (!s) return;
   const agents = (typeof sx !== 'undefined' && sx.agents) ? sx.agents : null;
   const holder = agents && agents.bySession ? agents.bySession.get(s.id) : null;
-  const owned = { ...s, owner: cs.agent, project: s.projectPath, prdpath: s.prdPath };
+  const owned = { ...s, owner: s.agent || cs.agent, project: s.projectPath, prdpath: s.prdPath };
   // A chat this window already has open is one click away, whatever the
   // agent list says about who holds it: the holder is this window's own child.
   if (focusOpenSession(s.id)) return;
@@ -3128,7 +3563,7 @@ async function resumeIntoChat(d, { keepPage = false } = {}) {
     // A fork mints its own session id, so it must not claim the parent's; the
     // resolver links it once the CLI assigns one. A plain resume keeps its id.
     sessionId: forking ? undefined : d.id,
-    title: forking ? '' : (names[d.id] || d.title || ''),
+    title: forking ? '' : savedSessionDisplayTitle(d),
     customTitle: !forking && !!names[d.id],
   });
   if (stayOn && currentPage !== stayOn) setPage(stayOn);
@@ -3144,6 +3579,9 @@ function csPaintAgentMenu() {
   const menu = document.getElementById('cs-agent-menu');
   if (!menu) return;
   menu.replaceChildren();
+  const terminal = csEl('button', 'cs-menu-item', 'Open Terminal');
+  terminal.type = 'button'; terminal.dataset.terminal = '1'; terminal.setAttribute('role', 'menuitem');
+  menu.appendChild(terminal);
   const current = String((cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
   if (!agentsCache.length) menu.appendChild(csEl('div', 'cs-menu-note', 'Looking for installed agents...'));
   for (const a of agentsCache) {
@@ -3184,7 +3622,7 @@ function csPaintAgentMenu() {
   });
   const q = document.getElementById('cs-q');
   if (q) q.addEventListener('input', () => { cs.query = q.value; csSchedule(); });
-  document.getElementById('cs-new')?.addEventListener('click', () => { csCloseMenus(); openNewChatTab(); });
+  document.getElementById('cs-new')?.addEventListener('click', (e) => { csCloseMenus(); openNewTabMenu(e); });
   document.getElementById('cs-new-caret')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const menu = document.getElementById('cs-agent-menu');
@@ -3200,6 +3638,7 @@ function csPaintAgentMenu() {
     const b = e.target.closest('.cs-menu-item');
     if (!b || b.disabled) return;
     csCloseMenus();
+    if (b.dataset.terminal) { openTerminalTab(); return; }
     const cmd = b.dataset.cmd;
     const current = String((cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
     openNewChatTab(cmd && cmd !== current ? { command: cmd, preferChat: true } : {});
@@ -3382,6 +3821,7 @@ let pageForwardStack = [];
 
 function setPage(name, opts = {}) {
   name = normalizePageName(name);
+  if (name === 'terminal') { openTerminalTab(); return; }
   // An uncommitted appearance preview belongs to Preferences, so leaving the
   // page puts the saved theme, accent and rail back.
   if (currentPage === 'prefs' && name !== 'prefs') revertAppearancePreview();
@@ -3911,7 +4351,7 @@ async function refreshStatusline() {
     <div class="sp-section">
       <div class="sp-section-head"><span class="sp-h-icon">⌬</span><span>Tools</span></div>
       <div class="sp-section-body">
-        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo(claudeTab ? 'Skills in the shared library; auto-loaded by the agent. Click to open.' : 'Skills in the shared library; use Use on the Skills page to inject one into the chat. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
+        <div class="sp-row sp-clickable" data-open="skills"><span class="sp-muted">Skills ${spInfo('Enabled skills are shared with supported agents and load when relevant. Click to open the library.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.skills)}</span></div>
         <div class="sp-row sp-clickable" data-open="workflows"><span class="sp-muted">Workflows ${spInfo('Saved Husk workflows. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.workflows)}</span></div>
         ${s.hooksApplicable ? `<div class="sp-row sp-clickable" data-open="hooks"><span class="sp-muted">Hooks ${spInfo('Hooks the agent runs at lifecycle events. Click to open.')}</span><span class="sp-mono sp-accent">${escapeHtml(s.hooks)}</span></div>` : ''}
         ${mcp.supported ? `<div class="sp-row sp-clickable" data-open="mcp"><span class="sp-muted">MCP ${spInfo('MCP servers running for the active agent, out of the total configured. Click to open the MCP page.')}</span><span class="sp-mono sp-accent">${escapeHtml(mcp.enabled)}${mcp.count > mcp.enabled ? `<span class="sp-muted"> / ${escapeHtml(mcp.count)}</span>` : ''}</span></div>` : ''}
@@ -4014,12 +4454,11 @@ function userZoomRatio() {
   try { return Math.pow(ZOOM_STEP_BASE, ui.zoomGet() - ui.zoomBase); } catch (_) { return 1; }
 }
 
-// Scale the status stack down when it is taller than the space between the
-// head and foot border lines, so more of it stays visible at a short window
-// height. The budget is the panel's height at base zoom, which keeps the
-// user's zoom intact. The shrink stops where the rows would read smaller than
-// the Context pane's beside them; past that the pane scrolls.
+// Keep the Status text size consistent across agents: fit depends on the
+// panel height, not on how many rows a provider reports. Long status stacks
+// scroll once this shared size reaches its floor.
 const STATUS_FIT_FLOOR = 0.87;
+const STATUS_REFERENCE_HEIGHT = 900;
 function fitStatusContent() {
   const box = $('#sp-content');
   const fit = $('#sp-fit');
@@ -4032,8 +4471,8 @@ function fitStatusContent() {
   if (avail <= 0) return; // panel collapsed or not laid out yet
   const need = fit.scrollHeight;
   const budget = avail * userZoomRatio();
-  if (need <= budget) return;
-  const scale = Math.max(budget / need, STATUS_FIT_FLOOR);
+  const scale = Math.max(Math.min(budget / STATUS_REFERENCE_HEIGHT, 1), STATUS_FIT_FLOOR);
+  if (scale >= 1) return;
   // Widening the wrapper by the same factor it is scaled by keeps the painted
   // width at the panel's, so the shrink reads as vertical only.
   fit.style.width = `${100 / scale}%`;
@@ -4733,7 +5172,7 @@ async function wsFillSessions(p) {
       <span class="ws-link-btn" aria-hidden="true">Resume<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg></span>
     </div>`).join('');
   list.querySelectorAll('.ws-sess').forEach((row, i) => {
-    const go = () => resumeSessionInChat({ id: rows[i].id, project: p.path, owner: rows[i].owner });
+    const go = () => resumeSessionInChat({ id: rows[i].id, project: p.path, owner: rows[i].agent });
     row.addEventListener('click', go);
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
@@ -10113,9 +10552,8 @@ async function renderSkills() {
   paintSkills(skillsCache, $('#skills-search').value);
 }
 function applyPromptsLabels() {
-  // The page is always called "Skills" regardless of agent. The difference
-  // between agents is internal: claude auto-loads ~/.claude/skills/, while
-  // generic CLIs only see Husk-managed skills via the Use button.
+  // Agent Skills are installed in Husk's shared library and exposed through
+  // each supported CLI's native skills directory.
   const railItem = document.querySelector('.rail-item[data-page="skills"]');
   if (railItem) {
     // Use aria-label, not title: the collapsed rail draws its own tooltip from
@@ -10132,9 +10570,7 @@ function applyPromptsLabels() {
     // Count what the page lists.
     const n = skillsCache.length || ((lastStats && typeof lastStats.skills === 'number') ? lastStats.skills : null);
     const count = n != null ? `${n} ${n === 1 ? 'skill' : 'skills'} · ` : '';
-    skillsSub.textContent = count + (agentKindCache === 'claude'
-      ? 'An enabled skill is called automatically whenever the agent decides it fits'
-      : 'Switch off anything this agent should not see');
+    skillsSub.textContent = count + 'Shared across your agents; each agent loads enabled skills when relevant';
   }
 }
 async function injectPromptToChat(content) {
@@ -10344,7 +10780,7 @@ $('#skills-list').addEventListener('click', async (e) => {
   if (toggleBtn) {
     e.stopPropagation();
     const id = row.dataset.id || row.dataset.dirname;
-    const source = row.dataset.source || 'claude';
+    const source = row.dataset.source || 'shared';
     const wasOn = toggleBtn.classList.contains('on');
     // Optimistic flip, CSS transition needs the same node, not a re-rendered one.
     toggleBtn.classList.toggle('on');
@@ -10500,7 +10936,8 @@ $('#ns-content').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (
 async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
   const res = await window.husk.skills.read(mdpath);
   const content = res.ok ? res.content : `Error: ${res.error}`;
-  const isDisabled = dirname.startsWith('_disabled_');
+  const item = skillsCache.find((skill) => skill.mdPath === mdpath);
+  const isDisabled = item ? item.disabled : dirname.startsWith('_disabled_');
   showDetail({
     eyebrow: 'Skill',
     title: name,
@@ -10512,7 +10949,7 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
     body: content,
     actions: [
       { label: isDisabled ? 'Enable' : 'Disable', kind: 'ghost', onClick: async () => {
-        const r = await window.husk.skills.toggle(dirname);
+        const r = await window.husk.skills.toggle({ id: dirname, source: item ? item.source : 'shared' });
         if (r.ok) { toastRestart(`${name} ${r.disabled ? 'disabled' : 'enabled'}`); closeDetail(); renderSkills(); refreshStats(); }
         else toast(r.error || 'Toggle failed', 'error');
       }},
@@ -11564,7 +12001,7 @@ function sxDetailPaint() {
   const untitled = !rawTitle || rawTitle === '(empty)';
   const title = untitled ? 'Untitled session' : rawTitle;
 
-  const eyebrow = [sx.agent ? `${sx.agent} session` : 'session', sig ? sig.tok : '']
+  const eyebrow = [(s.agent || sx.agent) ? `${s.agent || sx.agent} session` : 'session', sig ? sig.tok : '']
     .filter(Boolean).join(' · ');
   sxText(full, '#sx-d-eyebrow', eyebrow);
 
@@ -12081,7 +12518,7 @@ async function sxFileSession(sessionId, folderId) {
 function sxPrimary(s) {
   if (!s) return;
   const holder = sx.agents.bySession.get(s.id) || null;
-  const owned = { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath };
+  const owned = { ...s, owner: s.agent || sx.agent, project: s.projectPath, prdpath: s.prdPath };
   if (holder && holder.held) { resumeSessionInChat(owned); return; }
   if (focusOpenSession(s.id)) return;
   resumeSessionInChat(owned);
@@ -12089,7 +12526,7 @@ function sxPrimary(s) {
 
 function sxAct(act, el) {
   const s = sxSessionById(sx.detailId);
-  const owned = s ? { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
+  const owned = s ? { ...s, owner: s.agent || sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
   // Filing carries the folder in the action, so one branch answers every
   // folder rather than the switch growing a case per folder.
   if (typeof act === 'string' && act.startsWith('file:') && s) {
@@ -12531,6 +12968,7 @@ function resumeCommandLabel(agent, id) {
   if (agent === 'claude') return `claude --resume ${id}`;
   if (agent === 'copilot') return `copilot --resume=${id}`;
   if (agent === 'gemini') return `gemini --resume ${id}`;
+  if (agent === 'codex') return `codex resume ${id}`;
   return null;
 }
 // The same contract for the two other ways into a session: joining a running
@@ -12627,6 +13065,8 @@ async function resumeSessionInChat(d, opts) {
     // The failure watcher is for a terminal resume; a chat shows the outcome in
     // its own stream, and an attach fails its own way with no transcript to miss.
     resumeAttempt: (attaching || forking || openAsChat) ? null : { agent, id: d.id, cwd: d.project || '', previousHeader },
+    title: forking ? '' : savedSessionDisplayTitle(d),
+    customTitle: !forking && !!((cfg && cfg.sessionNames) || {})[d.id],
   });
   // The other real answer, offered rather than taken. Attaching shows the work
   // as it happens; a fork is a copy that stops tracking it.
@@ -14553,7 +14993,6 @@ window.husk.updates.onStatus((s) => {
 })();
 
 // ─── Topbar buttons ─────────────────────────────────────────────────────────────
-$('#btn-restart').addEventListener('click', restartPty);
 // Theme selection lives only in Preferences (full picker).
 // Attaching a file puts its absolute path in the agent's input and stops there,
 // quoted when it holds whitespace. Nothing is submitted, so the user types their
@@ -14663,7 +15102,7 @@ async function refreshRecentList() {
   section.hidden = false;
   // eslint-disable-next-line no-unsanitized/property -- Recent session fields are escaped via escapeHtml/escapeAttr.
   wrap.innerHTML = top.map((s) => `
-    <div class="rail-recent-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath)}" data-owner="${escapeAttr(r.agent || '')}" title="${escapeAttr(s.title)}\n${escapeAttr(s.projectPath)}">
+    <div class="rail-recent-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath)}" data-owner="${escapeAttr(s.agent || r.agent || '')}" title="${escapeAttr(s.title)}\n${escapeAttr(s.projectPath)}">
       <span class="rri-title">${escapeHtml(s.title)}</span>
       <span class="rri-meta">${escapeHtml(window.husk.sessionView.formatWhen(s.mtime, Date.now()).label)}</span>
     </div>
@@ -14734,7 +15173,7 @@ async function renderChatsPanelSessions() {
   const top = r.sessions.slice(0, 40);
   // eslint-disable-next-line no-unsanitized/property -- Session fields are escaped.
   container.innerHTML = top.map((s) => `
-    <div class="cp-session-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath || '')}" data-owner="${escapeAttr(r.agent || '')}">
+    <div class="cp-session-item" data-id="${escapeAttr(s.id)}" data-project="${escapeAttr(s.projectPath || '')}" data-owner="${escapeAttr(s.agent || r.agent || '')}">
       <span class="cp-si-title">${escapeHtml(s.title || 'Untitled chat')}</span>
       <span class="cp-si-meta">${escapeHtml(window.husk.sessionView.formatWhen(s.mtime, Date.now()).label)}</span>
     </div>
@@ -16001,7 +16440,6 @@ window.addEventListener('click', (e) => {
   if (e.target.closest('#rail-agent-pill') || e.target.closest('#rail-agent-menu')) return;
   closeAgentMenu();
 });
-$('#btn-new-session').addEventListener('click', () => openNewChatTab());
 // The zoom level is applied immediately in the keydown handler; the toast and
 // the terminal refit are debounced so a rapid burst settles to one fit (and
 // one pty.resize / SIGWINCH) instead of one per keypress.
@@ -16493,6 +16931,15 @@ async function openBgAgent(a) {
       toast((res && res.error) || 'could not open that agent', 'error');
       return;
     }
+    let history = null;
+    if (res.mode === 'resume' && window.husk.chat && typeof window.husk.chat.history === 'function') {
+      try {
+        const hist = await window.husk.chat.history({
+          agent: 'claude', sessionId: target.sessionId, cwd: res.cwd || target.cwd || '',
+        });
+        if (hist && hist.ok && Array.isArray(hist.events)) history = hist.events;
+      } catch (_) { /* the resumed CLI can still open if transcript rendering is unavailable */ }
+    }
     setPage('chat');
     const tab = await openNewChatTab({
       command: res.command,
@@ -16501,8 +16948,10 @@ async function openBgAgent(a) {
       cwd: res.cwd || target.cwd || null,
       skipContext: true,
       skipWelcome: true,
-      // A finished agent resumes like any chat; attaching joins a live stream.
+      history,
+      // A finished agent resumes in Husk chat; attaching joins a live stream.
       preferChat: res.mode !== 'attach',
+      forceChat: res.mode === 'resume',
     });
     if (tab) {
       // The tab is the chat, so an agent that lives inside one keeps the chat's

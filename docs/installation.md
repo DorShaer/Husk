@@ -23,7 +23,14 @@ Only x86_64 is published today: there is no arm64 Linux build, and the binaries 
 | apt repo | Debian / Ubuntu / Mint | The one-liner's default. `apt upgrade` keeps Husk current. Installs to `/opt/husk`. |
 | `husk-v<version>-linux-x86_64.AppImage` | Zero install, no root | Needs `libfuse2` (Ubuntu 24.04 ships fuse3 only: `sudo apt install libfuse2`). The installer places it at `~/.local/share/husk/Husk.AppImage` under a version-less name, which is what lets in-app auto-update replace it in place. |
 | `husk-v<version>-linux-amd64.deb` | Debian / Ubuntu, manual | `sudo apt install ./husk-v<version>-linux-amd64.deb` |
-| `husk-v<version>-linux-x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./husk-v<version>-linux-x86_64.rpm` |
+| `husk-v<version>-linux-x86_64.rpm` | Fedora / RHEL | `sudo dnf install ./husk-v<version>-linux-x86_64.rpm` |
+| `husk-v<version>-linux-x86_64.rpm` | openSUSE | `sudo zypper install ./husk-v<version>-linux-x86_64.rpm` |
+
+For a downloaded Fedora/RHEL RPM, run this from its download directory:
+
+```bash
+sudo dnf install ./husk-v<version>-linux-x86_64.rpm
+```
 
 **Updating.** On `.deb` and `.rpm` the in-app updater installs through the system package manager, so the desktop asks for your password once. If that prompt is dismissed or your desktop has no polkit agent, Husk tells you and hands you the command to finish it yourself (`sudo apt install --only-upgrade husk`). AppImage updates apply in place with no prompt.
 

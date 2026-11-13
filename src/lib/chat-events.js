@@ -4,8 +4,8 @@
 // top-level name would land in the page's shared scope.
 (function () {
 
-// Husk's chat event model. Two agent protocols (ACP, claude stream-json) are
-// normalized into one small vocabulary so the renderer never knows which CLI
+// Husk's chat event model. Agent protocols (ACP, claude stream-json and Codex
+// app-server) are normalized into one small vocabulary so the renderer never knows which CLI
 // it is talking to. Everything here is pure: normalizers take one wire
 // message and return an array of chat events; reduceThread folds events into
 // an immutable thread state the renderer paints.
@@ -13,9 +13,9 @@
 // Chat events:
 //   { type: 'session', sessionId, model?, modes?, commands?, models? { current, available: [{ id, name }] } }
 //   { type: 'turn_start' }
-//   { type: 'user', text, images? [{ mimeType, data? }] }  the user's prompt (renderer-side)
-//   { type: 'text', text }                       append to the open assistant text
-//   { type: 'text_final', text }                 replace the open text (claude full message)
+//   { type: 'user', text, images? [{ mimeType, data? }], at? }  the user's prompt (renderer-side)
+//   { type: 'text', text, at? }                  append to the open assistant text
+//   { type: 'text_final', text, at? }            replace the open text (claude full message)
 //   { type: 'block_end' }                        close the open text/thought block
 //   { type: 'thought', text }                    append to the open thought block
 //   { type: 'tool', id, title?, kind?, status?, detail?, input?, output?, diffs?, locations? }
@@ -32,6 +32,8 @@
 //   { type: 'status', text }
 //   { type: 'truncate', key }                   drop the item with this key and everything after it
 //   { type: 'error', text }
+//   { type: 'changes', files: [{ path, status, adds, dels }], adds, dels }   working-tree files that moved during the turn
+//   { type: 'pr', number, title, url, checks: { total, failed, pending, state } }   the branch's pull request
 //
 // Thread state:
 //   { items: [], turnOpen: bool, sessionId, model, commands, modes, pending: [requestId] }
@@ -311,12 +313,16 @@ function replaceLast(state, item) {
 // another kind that is still open (a thought the agent moved on from without
 // any end marker, as ACP agents do) is closed first so it stops reading as
 // live.
-function appendStream(state, kind, text) {
+function appendStream(state, kind, text, at) {
   const last = lastItem(state);
   if (last && last.kind === kind && last.open) {
-    return replaceLast(state, Object.assign({}, last, { text: last.text + text }));
+    const patch = { text: last.text + text };
+    if (last.at === undefined && at !== undefined) patch.at = at;
+    return replaceLast(state, Object.assign({}, last, patch));
   }
-  return appendItem(closeOpen(state), { kind, text, open: true });
+  const item = { kind, text, open: true };
+  if (at !== undefined) item.at = at;
+  return appendItem(closeOpen(state), item);
 }
 
 function closeOpen(state) {
@@ -331,7 +337,11 @@ function reduceThread(state, event) {
   if (!event || typeof event !== 'object') return s;
   switch (event.type) {
     case 'user':
-      return appendItem(closeOpen(s), Object.assign({ kind: 'user', text: str(event.text) }, Array.isArray(event.images) && event.images.length ? { images: event.images.map((im) => ({ mimeType: str(im && im.mimeType) || 'image/png', data: im && im.data ? str(im.data) : undefined })) } : {}), { turnOpen: true });
+      return appendItem(closeOpen(s), Object.assign(
+        { kind: 'user', text: str(event.text) },
+        event.at === undefined ? {} : { at: event.at },
+        Array.isArray(event.images) && event.images.length ? { images: event.images.map((im) => ({ mimeType: str(im && im.mimeType) || 'image/png', data: im && im.data ? str(im.data) : undefined })) } : {},
+      ), { turnOpen: true });
     case 'session':
       return Object.assign({}, s, {
         sessionId: event.sessionId || s.sessionId,
@@ -343,7 +353,7 @@ function reduceThread(state, event) {
     case 'turn_start':
       return Object.assign({}, closeOpen(s), { turnOpen: true });
     case 'text':
-      return appendStream(s, 'text', str(event.text));
+      return appendStream(s, 'text', str(event.text), event.at);
     case 'thought':
       return appendStream(s, 'thought', str(event.text));
     case 'block_end':
@@ -353,9 +363,14 @@ function reduceThread(state, event) {
       // the authoritative text. Replace the latest text block when there is
       // one in this turn, else append.
       const idx = findLastIndex(s.items, (it) => it.kind === 'text' && !it.final);
-      if (idx === -1) return appendItem(s, { kind: 'text', text: str(event.text), open: false, final: true });
+      if (idx === -1) return appendItem(s, Object.assign(
+        { kind: 'text', text: str(event.text), open: false, final: true },
+        event.at === undefined ? {} : { at: event.at },
+      ));
       const items = s.items.slice();
-      items[idx] = Object.assign({}, items[idx], { text: str(event.text), open: false, final: true });
+      const patch = { text: str(event.text), open: false, final: true };
+      if (items[idx].at === undefined && event.at !== undefined) patch.at = event.at;
+      items[idx] = Object.assign({}, items[idx], patch);
       return withItems(s, items);
     }
     case 'tool': {
@@ -436,6 +451,22 @@ function reduceThread(state, event) {
       const idx = s.items.findIndex((it) => it.key === event.key);
       if (idx === -1) return s;
       return withItems(s, s.items.slice(0, idx), { turnOpen: false, pending: [] });
+    }
+    case 'changes': {
+      const files = Array.isArray(event.files) ? event.files : [];
+      if (!files.length) return s;
+      return appendItem(s, { kind: 'changes', files, adds: event.adds || 0, dels: event.dels || 0 });
+    }
+    // One card per pull request: a later read of the same number updates the
+    // card in place, so the thread carries its current state once.
+    case 'pr': {
+      if (!event.number) return s;
+      const item = { kind: 'pr', number: event.number, title: str(event.title), url: str(event.url), checks: event.checks || null };
+      const idx = findLastIndex(s.items, (it) => it.kind === 'pr' && it.number === event.number);
+      if (idx === -1) return appendItem(s, item);
+      const items = s.items.slice();
+      items[idx] = Object.assign({}, items[idx], item);
+      return withItems(s, items);
     }
     case 'error':
       return appendItem(closeOpen(s), { kind: 'meta', isError: true, text: str(event.text) }, { turnOpen: false });

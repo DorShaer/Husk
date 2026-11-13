@@ -31,6 +31,15 @@ function codexModel(agentCommand) {
   return null;
 }
 
+// Saved-session commands use `codex resume <id>`; app-server needs the
+// same id explicitly on thread/resume instead of thread/start.
+function codexResumeId(agentCommand) {
+  const tokens = str(agentCommand).trim().split(/\s+/).filter(Boolean);
+  const i = tokens.indexOf('resume', 1);
+  const id = i < 0 ? '' : tokens[i + 1];
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(id || '') ? id : null;
+}
+
 // One user turn as codex input items. Images go as data URLs.
 function codexInput(text, images) {
   const input = [];
@@ -228,6 +237,6 @@ function codexDecision(optionId) {
 }
 
 module.exports = {
-  APP_SERVER_ARGS, codexModel, codexInput, codexSession, diffSides,
+  APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, diffSides,
   normalizeCodexNotification, normalizeCodexApproval, codexDecision,
 };

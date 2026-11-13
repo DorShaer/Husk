@@ -30,8 +30,8 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <div align="center">
 
-<img src="docs/images/husk-chat.png" alt="Chat with the agent inside Husk" width="900" />
-<br /><sub><i>A native chat for your CLI agent: every session on the left, streamed replies, tool calls that open into their diff, and the model, mode and context use in the composer.</i></sub>
+<img src="docs/images/husk-chat.png" alt="A Husk chat beside its Changes, Pull request, and Checks canvas" width="900" />
+<br /><sub><i>Keep the conversation, changed files, pull request, and check status together in Husk's Chat page.</i></sub>
 
 <br /><br />
 
@@ -91,6 +91,9 @@ sudo apt update && sudo apt install husk
 
 # Or install a downloaded .deb by hand
 sudo dpkg -i husk-v*-linux-amd64.deb || sudo apt -f install
+
+# Fedora / RHEL: install a downloaded RPM with DNF
+sudo dnf install ./husk-v*-linux-x86_64.rpm
 
 # Or run the portable AppImage (no root; needs libfuse2)
 chmod +x husk-v*-linux-x86_64.AppImage && ./husk-v*-linux-x86_64.AppImage
@@ -182,8 +185,8 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 
 1. Launch Husk from your applications menu, or run `husk` from a terminal after installing.
 2. On first run, Husk asks for the agent's name (default: Husk) and the agent command (default: `claude`). Both are saved to `~/.config/husk/config.json` and can be edited later in Preferences.
-3. Start chatting. Agents with a machine protocol (Claude over stream-json; Copilot, Gemini and Kiro over the Agent Client Protocol) open as a **native chat**. Aider and Codex have none yet, so they open in the agent's own terminal, a real PTY where slash commands, stdin and ctrl-c all work. You can pin every agent to the terminal view in Preferences (Chat view).
-   - **The thread.** Replies stream as markdown. A thought folds under `Thinking`. Each tool call is one line you can open into its input, output and diff (Formatted or Raw). A permission request becomes a card with the agent's own choices. A live row at the foot of the thread says when the agent is thinking or running a tool.
+3. Start chatting. Agents with a machine protocol (Claude over stream-json; Copilot, Gemini and Kiro over the Agent Client Protocol; Codex over its app-server) open as a **native chat**. Aider opens in the agent's own terminal, a real PTY where slash commands, stdin and ctrl-c all work. You can pin every agent to the terminal view in Preferences (Chat view).
+   - **The thread.** Replies stream as markdown. A thought folds under `Thinking`. Each tool call is one line you can open into its input, output and diff (Formatted or Raw). A permission request becomes a card with the agent's own choices. A live row at the foot of the thread says when the agent is thinking or running a tool. When a turn changes files, open the Changes canvas to inspect the working-tree diff, pull request and checks beside the conversation.
    - **Sessions.** The column beside the thread lists every past session, grouped by folder, project and day, with its live state. Click one to reopen it with its history. A cold start reopens your newest session (set `resumeLastOnLaunch: false` in config to start empty instead). Chat tabs survive a reload.
    - **The composer.** `/` lists every command the agent offers; scroll, or keep typing to narrow. `@` completes a file path. Up and Down recall earlier prompts. Alt+Backspace and Alt+Delete remove a word. Paste or drop an image and it goes with your next message.
    - **While it works.** Enter queues your next message and sends it when the agent is free. Up on an empty field takes the last queued message back, to edit or to delete. **Edit and resend** under a reply rewrites that prompt and replaces everything after it.
@@ -195,14 +198,14 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 
 ### Pages
 
-- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Drag-drop files and images; the status panel folds out on the right and its width is yours to drag. Split the view to run two chats side by side (`Ctrl+\`).
+- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right and its width is yours to drag. Split the view to run two chats side by side (`Ctrl+\`).
 - **Terminal**: a real shell in your project, in tabs, pinned in the rail above the tool selector.
 - **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`).
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
 - **Autopilot**: hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across collaborating parallel runs. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run.
 - **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
-- **Skills**: toggle the skills bundled with Husk plus any skills you keep in `~/.claude/skills/`.
+- **Skills**: install and manage Agent Skills in the shared `~/.agents/skills/` library. Husk exposes them through each agent's native skill location, so one skill can be used across agents.
 - **MCP**: install / toggle / health-check Model Context Protocol servers. Clone one to start a variant from its settings.
 - **Plugins**: browse and manage Husk plugins.
 - **Source**: read the working-tree diff, stage a file or an individual change, and commit, on the branch you are on.
@@ -228,7 +231,7 @@ husk/
 │   │   ├── user-path.js       Inherit shell PATH on GUI launch
 │   │   ├── agent-md.js        Agent markdown frontmatter parser
 │   │   ├── workflow-graph.js  Sanitize, migrate, traverse, route
-│   │   ├── chat-runtime.js    Chat view: one headless agent per tab (ACP or stream-json)
+│   │   ├── chat-runtime.js    Chat view: one headless agent per tab (ACP, stream-json, or Codex app-server)
 │   │   ├── chat-events.js     Both wires normalized into one event model + thread reducer
 │   │   ├── mcp/               Per-agent MCP adapters
 │   │   ├── autonomy/          Autopilot budget, audit log, snapshot, supervisor
@@ -236,6 +239,7 @@ husk/
 │   └── renderer/              UI (single-page Electron view)
 │       ├── index.html
 │       ├── app.js
+│       ├── chat-canvas.js     Changes, pull request, and checks beside a chat
 │       ├── styles.css
 │       ├── assets/
 │       └── vendor/            Bundled xterm.js + addons
@@ -260,7 +264,7 @@ husk/
 |  - node-pty        |   PTY stream    |  - chat surface       |
 |  - headless chat   |   chat events   |    (native thread or  |
 |    agents (ACP /   |  ------------>  |    agent terminal)    |
-|    stream-json)    |                 |  - agents + workflows |
+|    Codex / stream) |                 |  - agents + workflows |
 |  - per-platform    |                 |                       |
 |    spawn (see lib) |                 |  - skills + prompts   |
 |  - all IPC handlers|                 |  - sessions + files   |
@@ -269,17 +273,16 @@ husk/
 +--------------------+                 +-----------------------+
          |                                        |
          v                                        v
-   ~/.claude/*                             contextBridge
-   (bootstrapped from                      window.husk API
-    libs/pai on first                      (src/preload.js)
-    install)
+   ~/.agents/*, ~/.claude/*,               contextBridge
+   ~/.kiro/*, ~/.config/husk/*              window.husk API
+   (agent skills and user state)            (src/preload.js)
 ```
 
-- `src/main.js` is the Electron main process. It assembles the PTY spawn per platform (see `src/lib/pty-spawn.js`): direct `pty.spawn(exe, argv)` on macOS, `/usr/bin/script -q -c <argv>` on Linux so `claude --resume` gets its TIOCSCTTY setup, and PATH+PATHEXT resolution before `pty.spawn` on Windows. It also runs the Chat view's headless agents (Agent Client Protocol or Claude's stream-json, one child per tab) and exposes IPC handlers for chat, skills, sessions, voice, MCP servers, file drops, workflows, agents, projects, and live stats.
+- `src/main.js` is the Electron main process. It assembles the PTY spawn per platform (see `src/lib/pty-spawn.js`): direct `pty.spawn(exe, argv)` on macOS, `/usr/bin/script -q -c <argv>` on Linux so `claude --resume` gets its TIOCSCTTY setup, and PATH+PATHEXT resolution before `pty.spawn` on Windows. It also runs the Chat view's headless agents (Agent Client Protocol, Codex app-server, or Claude stream-json, one child per tab) and exposes IPC handlers for chat, shared skills, sessions, voice, MCP servers, file drops, workflows, agents, projects, and live stats.
 - `src/lib/` holds the pure helpers: shell-quote, path-confine, pty-spawn, user-path, agent-md, workflow-graph, the `mcp/` per-agent adapters, the `autonomy/` Autopilot safety modules, and about twenty more (see `docs/architecture.md`). Each is small, with no Electron / fs / spawn coupling, and unit-tested. New IPC handler logic should land here.
 - `src/preload.js` exposes a narrow `window.husk` API to the renderer through `contextBridge`. The renderer never gets Node access.
 - `src/renderer/` is the renderer: a single-page Electron view with rail navigation, the native chat thread (`chat-ui.js`, `chat-md.js`) beside an embedded xterm, a status panel, and the Chat / Terminal / Agents / Workflows / Autopilot / Projects / Prompts / Skills / MCP / Plugins / Source / Files / Schedule / Artifacts / GitHub / Sessions surfaces plus Preferences.
-- `libs/lifeos/` is the bundled LifeOS framework, copied into `~/.claude/` on first install. Contains the system prompt, Algorithm phase machine, agents, commands, hooks, the identity scaffold, and the curated skills set. An install that already has the older `~/.claude/PAI/` layout is left alone rather than given a second framework beside it.
+- `libs/lifeos/` is the bundled LifeOS framework, copied into `~/.claude/` on first install. It contains the system prompt, Algorithm phase machine, agents, commands, hooks, the identity scaffold and curated skills. Husk exposes enabled skills through the shared Agent Skills library. An install that already has the older `~/.claude/PAI/` layout is left alone rather than given a second framework beside it.
 - `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
 - `installer/` holds the source installers (`install.sh`, `install.ps1`, `uninstall.sh`) alongside the packaging assets they use. `scripts/` holds the published one-line installers and the dev launcher (`run.sh`). The repo root stays free of loose scripts.
 
@@ -339,7 +342,7 @@ All settings live in `~/.config/husk/config.json` and are editable from the Pref
 - **Active agent profiles**: one or more agent personas applied to the next session
 - **Chat view** (`chatView`: `chat` or `terminal`): how a new chat opens, native chat or the agent's own terminal. Chat is the default for CLIs with a protocol
 - **Active project**: drives the agent's working directory so per-folder trust prompts work
-- **Theme** (11 themes: Ember, the default for a new install, Midnight, Dark, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula, Light, Sepia) and **accent color** (orange / cyan / indigo / emerald / rose)
+- **Theme** (11 themes: Light, the default for a new install with the indigo accent, Sepia, Ember, Midnight, Dark, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula) and **accent color** (orange / cyan / indigo / emerald / rose)
 - **Voice** (enable, voice model, speaking rate)
 - **Show recap line** (when off, suppresses end-of-response summaries)
 - **Reopen the last session on launch** (`resumeLastOnLaunch`, on by default)

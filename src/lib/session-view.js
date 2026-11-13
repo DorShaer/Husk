@@ -94,6 +94,47 @@ function titleOf(s, names) {
   return t === '(empty)' ? '' : t;
 }
 
+function agentKey(value) {
+  const raw = String(value || '').trim().split(/\s+/)[0].split(/[\\/]/).pop()
+    .replace(/\.(exe|cmd|bat|ps1)$/i, '').toLowerCase().replace(/[_\s]+/g, '-');
+  if (!raw) return '';
+  if (raw === 'claude' || /^claude[-_]/.test(raw)) return 'claude';
+  if (raw === 'codex' || /^codex[-_]/.test(raw)) return 'codex';
+  if (raw === 'copilot' || /^github-copilot/.test(raw)) return 'copilot';
+  if (raw === 'gemini' || /^gemini[-_]/.test(raw)) return 'gemini';
+  if (raw === 'kiro' || raw === 'kiro-cli') return 'kiro';
+  if (raw === 'aider' || /^aider[-_]/.test(raw)) return 'aider';
+  return raw;
+}
+
+function agentLabel(value) {
+  const key = agentKey(value);
+  const known = { claude: 'Claude', codex: 'Codex', copilot: 'Copilot', gemini: 'Gemini', kiro: 'Kiro', aider: 'Aider' };
+  if (known[key]) return known[key];
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Agent';
+}
+
+// Add the vendor only when two agents currently expose the same chat title.
+// This keeps ordinary titles compact and avoids changing saved session names.
+function disambiguateTitles(items) {
+  const rows = Array.isArray(items) ? items : [];
+  const groups = new Map();
+  for (const item of rows) {
+    const title = String(item && item.title || '').replace(/\s+/g, ' ').trim();
+    const key = norm(title);
+    if (!key || key === 'new chat' || key === 'chat' || /^new .+ chat$/.test(key) || /^chat \d+$/.test(key)) continue;
+    if (!groups.has(key)) groups.set(key, new Set());
+    groups.get(key).add(agentKey(item && item.agent));
+  }
+  return rows.map((item) => {
+    const title = String(item && item.title || '').replace(/\s+/g, ' ').trim();
+    const key = norm(title);
+    const agents = groups.get(key);
+    if (!title || !agents || agents.size < 2) return title;
+    return `${title} · ${agentLabel(item && item.agent)}`;
+  });
+}
+
 // ─── Liveness ───────────────────────────────────────────────────────────────
 
 // What the row says about work in flight, or null when nothing is. Blocked
@@ -521,6 +562,7 @@ module.exports = {
   basename,
   inCurrentProject,
   titleOf,
+  disambiguateTitles,
   signal,
   signalKind,
   scent,

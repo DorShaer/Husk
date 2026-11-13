@@ -154,7 +154,7 @@ const PR_JSON = JSON.stringify([{
 test('a pull request row carries the fields the list draws and nothing else', () => {
   const r = G.parsePrList(PR_JSON).rows[0];
   assert.deepStrictEqual(Object.keys(r).sort(), [
-    'additions', 'author', 'base', 'changedFiles', 'checks', 'createdAt', 'deletions',
+    'additions', 'author', 'base', 'changedFiles', 'checkRuns', 'checks', 'createdAt', 'deletions',
     'head', 'isDraft', 'labels', 'mergeable', 'number', 'reviewDecision', 'state',
     'title', 'updatedAt', 'url',
   ]);

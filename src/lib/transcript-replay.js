@@ -2,7 +2,7 @@
 
 // Turns an agent's on-disk session log into Husk chat events, so resuming a
 // past session in Chat view shows the conversation so far instead of an empty
-// thread. Two formats, both sampled from real logs on 2026-10-26:
+// thread. Agent formats sampled from real session logs:
 //   claude   ~/.claude/projects/<cwd-encoded>/<sessionId>.jsonl
 //            one JSON object per line; `user` / `assistant` lines carry a
 //            message with string or block-array content; many other line
@@ -13,6 +13,8 @@
 //            tool.execution_start / tool.execution_complete,
 //            permission.requested / permission.completed, assistant.turn_end,
 //            session.model_change
+//   codex    ~/.codex/sessions/**/rollout-*.jsonl (also archived_sessions)
+//            response_item messages/tool calls plus event_msg turn boundaries
 // Output uses the vocabulary in chat-events.js and replays through its
 // reducer. Pure: no fs here, the caller reads the file.
 
@@ -21,7 +23,19 @@ const { toolDetail, kindForTool } = require('./chat-events');
 const MAX_EVENTS = 4000;
 const MAX_TEXT = 400000;
 
+const { withoutContext } = require('./brain');
+
 function str(v) { return v === null || v === undefined ? '' : String(v); }
+
+function timestampField(...records) {
+  for (const record of records) {
+    const raw = record && (record.timestamp || (record.message && record.message.timestamp));
+    if (raw === undefined || raw === null || raw === '') continue;
+    const value = typeof raw === 'number' ? (raw < 1e11 ? raw * 1000 : raw) : Date.parse(str(raw));
+    if (Number.isFinite(value) && value > 0) return { at: value };
+  }
+  return {};
+}
 
 // Synthetic prompts the CLI writes for itself (local command echoes, hook
 // output, system reminders, background task notifications) start with a tag
@@ -110,7 +124,7 @@ function claudeTranscriptToEvents(raw) {
       if (typeof content === 'string') {
         if (!content.trim()) continue;
         endTurn();
-        events.push({ type: 'user', text: content });
+        events.push(Object.assign({ type: 'user', text: withoutContext(content) }, timestampField(o)));
         turnOpen = true;
         continue;
       }
@@ -131,7 +145,7 @@ function claudeTranscriptToEvents(raw) {
       }
       if (texts.length) {
         endTurn();
-        events.push({ type: 'user', text: texts.map((c) => str(c.text)).join('\n') });
+        events.push(Object.assign({ type: 'user', text: withoutContext(texts.map((c) => str(c.text)).join('\n')) }, timestampField(o)));
         turnOpen = true;
       }
       continue;
@@ -142,7 +156,7 @@ function claudeTranscriptToEvents(raw) {
     if (!turnOpen) { events.push({ type: 'turn_start' }); turnOpen = true; }
     for (const b of content) {
       if (!b || typeof b !== 'object') continue;
-      if (b.type === 'text' && str(b.text).trim()) events.push({ type: 'text_final', text: str(b.text) });
+      if (b.type === 'text' && str(b.text).trim()) events.push(Object.assign({ type: 'text_final', text: str(b.text) }, timestampField(o)));
       else if (b.type === 'thinking' && str(b.thinking).trim()) { events.push({ type: 'thought', text: str(b.thinking) }); events.push({ type: 'block_end' }); }
       else if (b.type === 'tool_use') events.push({ type: 'tool', id: str(b.id), title: str(b.name), kind: kindForTool(b.name), status: 'running', detail: toolDetail(b.name, b.input), input: b.input });
     }
@@ -167,7 +181,7 @@ function copilotEventsToEvents(raw) {
       case 'user.message':
         if (!str(d.content).trim()) break;
         endTurn();
-        events.push({ type: 'user', text: str(d.content) });
+        events.push(Object.assign({ type: 'user', text: withoutContext(d.content) }, timestampField(o, d)));
         turnOpen = true;
         break;
       case 'assistant.turn_start':
@@ -175,7 +189,7 @@ function copilotEventsToEvents(raw) {
         break;
       case 'assistant.message': {
         if (!turnOpen) { events.push({ type: 'turn_start' }); turnOpen = true; }
-        if (str(d.content).trim()) events.push({ type: 'text_final', text: str(d.content) });
+        if (str(d.content).trim()) events.push(Object.assign({ type: 'text_final', text: str(d.content) }, timestampField(o, d)));
         for (const r of Array.isArray(d.toolRequests) ? d.toolRequests : []) {
           if (!r) continue;
           events.push({ type: 'tool', id: str(r.toolCallId), title: str(r.name), kind: kindForTool(r.name), status: 'running', input: r.arguments, detail: typeof r.arguments === 'string' ? r.arguments.split('\n')[0].slice(0, 160) : toolDetail(r.name, r.arguments) });
@@ -215,12 +229,63 @@ function copilotEventsToEvents(raw) {
   return bound(events);
 }
 
+// Codex rollouts include response items and UI events for the same messages.
+// Read response items when present so the conversation is not shown twice.
+function codexTranscriptToEvents(raw) {
+  const rows = parseLines(raw);
+  const hasMessages = rows.some((o) => o.type === 'response_item' && o.payload && o.payload.type === 'message' && ['user', 'assistant'].includes(o.payload.role));
+  const events = [];
+  let turnOpen = false;
+  const endTurn = () => { if (turnOpen) { events.push({ type: 'turn_end', stopReason: 'end_turn' }); turnOpen = false; } };
+  const message = (role, text, row) => {
+    if (!text.trim() || isSyntheticPrompt(text)) return;
+    if (role === 'user') {
+      // Codex records its instruction/environment preamble as user messages.
+      if (/^\s*<(?:environment_context|permissions instructions|turn_aborted|user_instructions)(?:\s|>)/.test(text) || text.startsWith('# AGENTS.md instructions')) return;
+      text = withoutContext(text);
+      if (!text.trim()) return;
+      endTurn();
+      events.push(Object.assign({ type: 'user', text }, timestampField(row)));
+    } else {
+      if (!turnOpen) events.push({ type: 'turn_start' });
+      events.push(Object.assign({ type: 'text_final', text }, timestampField(row)));
+      events.push({ type: 'block_end' });
+    }
+    turnOpen = true;
+  };
+  for (const row of rows) {
+    const p = row.payload || {};
+    if (row.type === 'response_item') {
+      if (p.type === 'message' && ['user', 'assistant'].includes(p.role)) {
+        const text = (Array.isArray(p.content) ? p.content : [])
+          .filter((c) => c && ['text', 'input_text', 'output_text'].includes(c.type))
+          .map((c) => str(c.text)).join('\n');
+        message(p.role, text, row);
+      } else if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+        let input = p.arguments || p.input;
+        if (typeof input === 'string') { try { input = JSON.parse(input); } catch (_) {} }
+        events.push({ type: 'tool', id: str(p.call_id), title: str(p.name), kind: kindForTool(p.name), status: 'running', input, detail: toolDetail(p.name, input) });
+      } else if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
+        const output = typeof p.output === 'string' ? p.output : JSON.stringify(p.output || '');
+        events.push({ type: 'tool', id: str(p.call_id), status: 'done', output });
+      }
+    } else if (row.type === 'event_msg') {
+      if (!hasMessages && p.type === 'user_message') message('user', str(p.message), row);
+      if (!hasMessages && p.type === 'agent_message') message('assistant', str(p.message), row);
+      if (p.type === 'task_complete' || p.type === 'turn_aborted') endTurn();
+    }
+  }
+  endTurn();
+  return bound(events);
+}
+
 // transcriptToEvents picks the parser by agent name.
 function transcriptToEvents(agent, raw) {
   const a = str(agent).toLowerCase();
   if (a === 'copilot') return copilotEventsToEvents(raw);
   if (a === 'claude') return claudeTranscriptToEvents(raw);
+  if (a === 'codex') return codexTranscriptToEvents(raw);
   return [];
 }
 
-module.exports = { claudeTranscriptToEvents, copilotEventsToEvents, transcriptToEvents, isSyntheticPrompt, isSystemTurn };
+module.exports = { codexTranscriptToEvents, claudeTranscriptToEvents, copilotEventsToEvents, transcriptToEvents, isSyntheticPrompt, isSystemTurn };

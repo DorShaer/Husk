@@ -40,6 +40,7 @@ test('copilot gets an instructions-file plan at .github/copilot-instructions.md'
   assert.equal(plan.method, 'instructions-file');
   assert.equal(plan.filePath, '.github/copilot-instructions.md');
   assert.ok(plan.body.includes('Husk'));
+  assert.ok(plan.body.includes('~/.agents/skills/'));
   // The speech-balloon line the desktop voice reads.
   assert.ok(plan.body.includes('\u{1F5E3}'));
 });

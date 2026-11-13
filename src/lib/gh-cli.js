@@ -197,7 +197,7 @@ function checks(rollup) {
     if (status && status !== 'COMPLETED') { out.pending += 1; continue; }
     if (conclusion === 'SUCCESS' || conclusion === 'NEUTRAL' || conclusion === 'SKIPPED') out.passed += 1;
     else if (conclusion === 'FAILURE' || conclusion === 'TIMED_OUT' || conclusion === 'CANCELLED' || conclusion === 'ACTION_REQUIRED' || conclusion === 'STARTUP_FAILURE') out.failed += 1;
-    else if (!conclusion) out.pending += 1;
+    else if (!conclusion || conclusion === 'PENDING' || conclusion === 'EXPECTED') out.pending += 1;
     else out.failed += 1;
   }
   // One word for the row's mark. A failure outranks a pending run: the answer
@@ -205,6 +205,28 @@ function checks(rollup) {
   if (out.failed) out.state = 'failing';
   else if (out.pending) out.state = 'pending';
   else if (out.passed) out.state = 'passing';
+  return out;
+}
+
+// The same rollup one row per check, for a surface that lists them. The state
+// words match checks() so a count and its rows never disagree.
+const MAX_CHECK_RUNS = 60;
+function checkRuns(rollup) {
+  const out = [];
+  if (!Array.isArray(rollup)) return out;
+  for (const c of rollup) {
+    if (!c || typeof c !== 'object') continue;
+    const one = checks([c]);
+    const name = str(c.name || c.context, 200);
+    if (!name || !one.total) continue;
+    out.push({
+      name,
+      workflow: str(c.workflowName, 200),
+      state: one.state,
+      url: str(c.detailsUrl || c.targetUrl, 400),
+    });
+    if (out.length >= MAX_CHECK_RUNS) break;
+  }
   return out;
 }
 
@@ -231,6 +253,7 @@ function prRow(raw) {
     mergeable: str(raw.mergeable, 20).toUpperCase(),
     url: str(raw.url, 400),
     checks: checks(raw.statusCheckRollup),
+    checkRuns: checkRuns(raw.statusCheckRollup),
   };
 }
 
@@ -355,5 +378,5 @@ module.exports = {
   filterRows,
   labelCounts,
   // exported for unit tests; not part of the public API.
-  _internal: { checks, labels, prRow, issueRow, repoRow, clampLimit, pickState },
+  _internal: { checks, checkRuns, labels, prRow, issueRow, repoRow, clampLimit, pickState },
 };
