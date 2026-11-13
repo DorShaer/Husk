@@ -45,11 +45,11 @@ async function launch(homeDir, bin) {
 }
 
 async function setWindowContentSize(app, width, height) {
-  await app.evaluate(({ BrowserWindow }, size) => {
+  const result = await app.evaluateHandle(({ BrowserWindow }, size) => {
     const win = BrowserWindow.getAllWindows()[0];
     win.setContentSize(size.width, size.height);
-    return true;
   }, { width, height });
+  await result.dispose();
 }
 
 test('a chat tab streams text, shows a tool card, answers a permission and ends the turn', async () => {

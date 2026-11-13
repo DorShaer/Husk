@@ -13,15 +13,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-// Resolve the main-process evaluation before resizing. The resize tears down
-// Playwright's main-frame bridge on some Electron runs while it is still
-// awaiting the evaluation result.
+// A handle avoids Playwright's asynchronous value serialization during a
+// native resize, when Electron can collect its temporary evaluation promise.
 async function setWindowContentSize(app, width, height) {
-  await app.evaluate(({ BrowserWindow }, size) => {
+  const result = await app.evaluateHandle(({ BrowserWindow }, size) => {
     const win = BrowserWindow.getAllWindows()[0];
     win.setContentSize(size.width, size.height);
-    return true;
   }, { width, height });
+  await result.dispose();
 }
 
 test('short window keeps the rail bottom and status footer visible', async () => {

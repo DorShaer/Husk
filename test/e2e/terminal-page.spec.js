@@ -23,6 +23,7 @@ test('terminal entry points open renameable shared tabs and the shell answers', 
   const win = await app.firstWindow({ timeout: 30_000 });
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
+  await expect(win.locator('#tab-strip .chat-tab')).toHaveCount(1);
 
   // The rail item sits in its own section directly above the tool selector.
   const item = win.locator('.rail-section-term .rail-item[data-page="terminal"]');
