@@ -1222,7 +1222,10 @@ function showWhatsNew(version) {
       dotEls.forEach((d, idx) => d.classList.toggle('active', idx === step));
       backBtn.hidden = step === 0;
       skipBtn.hidden = step === steps.length - 1;
-      nextBtn.innerHTML = `${step === steps.length - 1 ? 'Start using Husk' : 'Next'} <span class="ob-nav-arrow">&#8594;</span>`;
+      const arrow = document.createElement('span');
+      arrow.className = 'ob-nav-arrow';
+      arrow.textContent = '→';
+      nextBtn.replaceChildren(document.createTextNode(`${step === steps.length - 1 ? 'Start using Husk' : 'Next'} `), arrow);
       stage.scrollTop = 0;
     };
     const done = () => {

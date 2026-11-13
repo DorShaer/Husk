@@ -55,7 +55,7 @@ function str(v) { return v === null || v === undefined ? '' : String(v); }
 
 // Note text is carried as plain text: frame markers inside it lose their bracket.
 function unframed(text) {
-  return str(text).replace(/\[(\s*(?:end\s+of\s+)?husk\s+brain)/gi, '($1');
+  return str(text).replace(/\[(\s*end\s+of\s+husk\s+brain|\s*husk\s+brain)/gi, '($1');
 }
 
 // Words worth matching on: lowercased, three characters and up, no stopwords.
