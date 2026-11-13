@@ -1691,7 +1691,7 @@ body[data-page="boot"] .page { display: none !important; }
 .page-projects .page-head .page-title {
   font-size: var(--fs-page);
   font-weight: var(--fw-page);
-  color: var(--text-2);
+  color: var(--text);
 }
 .page-agents .page-sub,
 .page-skills .page-sub,
