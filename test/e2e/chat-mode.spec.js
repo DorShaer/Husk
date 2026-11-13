@@ -10,6 +10,7 @@ const { test, expect, _electron: electron } = require('@playwright/test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { setWindowContentSize } = require('../helpers/electron-window');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FIXTURE = path.join(__dirname, 'fixtures', 'fake-acp-agent.js');
@@ -42,15 +43,6 @@ async function launch(homeDir, bin) {
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
   await win.waitForFunction(() => window.husk && window.husk.chat && window.HuskChat && document.querySelector('.chat-stage'));
   return { app, win };
-}
-
-async function setWindowContentSize(app, width, height) {
-  await app.evaluate(({ BrowserWindow }, size) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    setTimeout(() => win.setContentSize(size.width, size.height), 50);
-    return true;
-  }, { width, height });
-  await new Promise((resolve) => setTimeout(resolve, 150));
 }
 
 test('a chat tab streams text, shows a tool card, answers a permission and ends the turn', async () => {
