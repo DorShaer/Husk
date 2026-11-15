@@ -67,3 +67,43 @@ test('dragging the side panel edge resizes it, the width persists, and double-cl
   await expect.poll(() => JSON.parse(fs.readFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), 'utf8')).statusWidth).toBe(null);
   await app.close();
 });
+
+for (const column of [
+  { page: 'prefs', panel: '#rail', grip: '#rail-resize', key: 'railWidth', initial: 232 },
+  { page: 'chat', panel: '#chat-sessions', grip: '#sessions-resize', key: 'sessionsWidth', initial: 272 },
+]) {
+  test(`${column.key} can be dragged, restored after reload and reset`, async () => {
+    const { app, win, homeDir } = await launch();
+    try {
+      await win.evaluate((page) => setPage(page), column.page);
+      const width = () => win.locator(column.panel).evaluate((el) => Math.round(el.getBoundingClientRect().width));
+      await expect.poll(width).toBe(column.initial);
+      const grip = win.locator(column.grip);
+      await expect(grip).toBeVisible();
+      const box = await grip.boundingBox();
+      await win.mouse.move(box.x + 3, box.y + 100);
+      await win.mouse.down();
+      await win.mouse.move(box.x + 83, box.y + 100, { steps: 8 });
+      await win.mouse.up();
+      const resized = await width();
+      expect(resized).toBeGreaterThan(column.initial + 70);
+      const saved = () => JSON.parse(fs.readFileSync(path.join(homeDir, '.config/husk/config.json'), 'utf8'))[column.key];
+      await expect.poll(saved).toBe(resized);
+      await win.reload();
+      await win.waitForFunction(() => !!cfg);
+      await win.evaluate((page) => setPage(page), column.page);
+      await expect.poll(width).toBe(resized);
+      await grip.focus();
+      await win.keyboard.press('ArrowLeft');
+      await expect.poll(width).toBe(resized - 16);
+      await expect.poll(saved).toBe(resized - 16);
+      await grip.dblclick();
+      await expect.poll(width).toBe(column.initial);
+      await expect.poll(saved).toBe(null);
+      if (column.key === 'railWidth') {
+        await win.evaluate(() => { document.body.dataset.rail = 'collapsed'; });
+        await expect(grip).toBeHidden();
+      }
+    } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+  });
+}

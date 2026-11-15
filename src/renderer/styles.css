@@ -1440,7 +1440,7 @@ body[data-theme="light"] #btn-theme .theme-moon { display: none; }
   position: relative;
 }
 /* Expanded rail: a labeled sidebar (icons + names + section heads + recent). */
-body[data-rail="expanded"] #main { --rail-w: 232px; }
+body[data-rail="expanded"] #main { --rail-w: var(--nav-width, 232px); }
 
 /* Side column: the context pane, collapsed to nothing, or the detail panel. */
 body[data-status="collapsed"] #main { --side-w: 0px; }
@@ -1501,7 +1501,7 @@ body[data-context-pane="off"] #btn-status-toggle { display: none; }
 body[data-rail="collapsed"] .rail-toggle-btn svg { transform: rotate(180deg); }
 /* Icon-only rail: applies ONLY when collapsed. Expanded shows the labeled
    sidebar (names, section heads, recent chats, files in context). */
-body[data-rail="expanded"] .rail { width: 232px; }
+body[data-rail="expanded"] .rail { width: var(--rail-w); }
 body[data-rail="collapsed"] .rail .ri-label { display: none !important; }
 body[data-rail="collapsed"] .rail .rail-section-head { display: none !important; }
 body[data-rail="collapsed"] .rail .ra-name, body[data-rail="collapsed"] .rail .ra-label, body[data-rail="collapsed"] .rail .ra-chev { display: none !important; }
@@ -5232,8 +5232,8 @@ body .chat-pane .chat-composer textarea.chat-input:focus-visible {
    Live tabs and past sessions in one list on the left of the thread. Shown
    while body[data-sessions-col="on"], which app.js sets on the chat page. */
 .chat-sessions {
-  flex: 0 0 272px;
-  width: 272px; min-width: 0;
+  flex: 0 0 var(--sessions-width, 272px);
+  width: var(--sessions-width, 272px); min-width: 0;
   display: none; flex-direction: column;
   min-height: 0;
   margin: 10px 0 10px 10px;
@@ -11398,7 +11398,7 @@ kbd {
    explicitly expanded it. The rail keeps its preference. */
 @media (max-width: 1180px) {
   #main { --rail-w: 72px; }
-  body[data-rail="expanded"] #main { --rail-w: 220px; }
+  body[data-rail="expanded"] #main { --rail-w: var(--nav-width, 220px); }
   /* Collapsed gives the column back entirely; the top bar holds the way in. */
   body:not([data-status="expanded"]) #main { --side-w: 0px; }
   body[data-context-pane="off"] #main { --side-w: 0px; }
@@ -18387,3 +18387,16 @@ body:has(#bg-layer:not([hidden])) .term-pane { background: var(--term-bg); }
 .chat-handoff-offer > span { flex-basis: 100%; }
 
 .pref-row .accent-picker { display: grid; grid-template-columns: repeat(5, 24px); gap: 10px; }
+
+/* The two left columns keep independent user widths. */
+.left-resize {
+  position: absolute; right: -4px; top: 0; bottom: 0; width: 7px;
+  cursor: col-resize; z-index: 45; touch-action: none;
+}
+.left-resize:hover, .left-resize:focus-visible, .left-resize.is-dragging {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+body[data-rail="collapsed"] #rail-resize { display: none; }
+@media (max-width: 960px) { #rail-resize { display: none; } }
+body.is-resizing-left { cursor: col-resize; user-select: none; }
+body.is-resizing-left iframe, body.is-resizing-left .term-pane { pointer-events: none; }

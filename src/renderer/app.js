@@ -4301,6 +4301,77 @@ function currentStatusWidth() {
     try { cfg = await window.husk.config.set({ statusWidth: null }); } catch (_) {}
   });
 })();
+// Both left columns resize from their right edge and remember independent widths.
+const LEFT_COLUMNS = [
+  { id: 'rail', grip: 'rail-resize', key: 'railWidth', css: '--nav-width', min: 176, max: 400, fallback: 232 },
+  { id: 'chat-sessions', grip: 'sessions-resize', key: 'sessionsWidth', css: '--sessions-width', min: 200, max: 480, fallback: 272 },
+];
+function applyLeftWidths() {
+  const main = document.getElementById('main');
+  for (const column of LEFT_COLUMNS) {
+    const value = cfg && cfg[column.key];
+    const n = Number(value);
+    const width = value != null && Number.isFinite(n) ? Math.min(column.max, Math.max(column.min, n)) : null;
+    if (width === null) main.style.removeProperty(column.css);
+    else main.style.setProperty(column.css, `${Math.round(width)}px`);
+    const grip = document.getElementById(column.grip);
+    grip.setAttribute('aria-valuemin', column.min);
+    grip.setAttribute('aria-valuemax', column.max);
+    grip.setAttribute('aria-valuenow', width || column.fallback);
+  }
+}
+for (const column of LEFT_COLUMNS) {
+  const grip = document.getElementById(column.grip);
+  const panel = document.getElementById(column.id);
+  let dragging = false, width = column.fallback, frame = null;
+  const apply = (value) => {
+    width = Math.round(Math.max(column.min, Math.min(column.max, innerWidth * 0.4, value)));
+    document.getElementById('main').style.setProperty(column.css, `${width}px`);
+    grip.setAttribute('aria-valuenow', width);
+    if (!frame) frame = requestAnimationFrame(() => { frame = null; fitNow(); });
+  };
+  const move = (event) => { if (dragging) apply(event.clientX - panel.getBoundingClientRect().left); };
+  const save = async (value) => { try { cfg = await window.husk.config.set({ [column.key]: value }); } catch (_) {} };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    grip.classList.remove('is-dragging');
+    document.body.classList.remove('is-resizing-left');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+    window.removeEventListener('blur', stop);
+    fitNow();
+    save(width);
+  };
+  grip.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    width = panel.getBoundingClientRect().width;
+    dragging = true;
+    grip.classList.add('is-dragging');
+    document.body.classList.add('is-resizing-left');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    window.addEventListener('blur', stop);
+  });
+  const reset = () => {
+    document.getElementById('main').style.removeProperty(column.css);
+    grip.setAttribute('aria-valuenow', column.fallback);
+    fitNow();
+    save(null);
+  };
+  grip.addEventListener('dblclick', reset);
+  grip.addEventListener('keydown', (event) => {
+    if (event.key === 'Home') { event.preventDefault(); reset(); }
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      apply(panel.getBoundingClientRect().width + (event.key === 'ArrowRight' ? 16 : -16));
+      save(width);
+    }
+  });
+}
 // One control owns the side panel, in the top bar, so it is in the same place
 // whether the panel is showing or hidden.
 const topStatusToggle = $('#btn-status-toggle');
@@ -20669,6 +20740,7 @@ async function boot() {
   // toggle saves the choice in statusCollapsed.
   document.body.dataset.status = cfg.statusCollapsed ? 'collapsed' : 'expanded';
   applyStatusWidth(cfg.statusWidth);
+  applyLeftWidths();
   syncChatLayout();
   syncRailToggleTitle();
   syncStatusToggleTitle();
