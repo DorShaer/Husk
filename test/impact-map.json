@@ -94,7 +94,9 @@
         "src/lib/autopilot-status.js",
         "src/lib/autopilot-integrate.js",
         "src/lib/autonomy",
-        "src/lib/race-judge.js"
+        "src/lib/race-judge.js",
+        "src/lib/task-routing.js",
+        "src/lib/chat-connection.js"
       ]
     },
     "workflows": {
