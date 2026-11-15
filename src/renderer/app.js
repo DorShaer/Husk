@@ -1902,6 +1902,62 @@ async function switchDiscussion(tab, command, cwd, carry) {
   noteAgentUsed(command);
 }
 
+function chatIdentity(tab) {
+  return { id: tabSessionId(tab) || tab.chatState?.sessionId || '',
+    owner: tab.connection === 'endpoint' ? 'openai' : tabAgentCommand(tab).trim().split(/\s+/)[0].split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, ''),
+    project: chatWorkDir(tab) };
+}
+async function copyChatIdentity(session, command = false) {
+  const id = String(session.id || '');
+  if (!id) { toast('This chat has not reported its ID yet.', 'info'); return; }
+  if (!command) { await sxCopy(id, 'Chat ID'); return; }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(id)) { toast('This chat has no CLI resume command.', 'info'); return; }
+  const agent = session.owner || session.agent;
+  const result = await window.husk.sessions.resumeCommand({ agent, id, cwd: session.project || session.projectPath || '' });
+  if (!result?.ok || !result.command) { toast(result?.error || 'This chat has no CLI resume command.', 'info'); return; }
+  // Copy the ordinary resume form even when the open session could be attached.
+  const text = agent === 'claude' ? `claude --resume ${id}` : result.command;
+  await sxCopy(text, 'Resume command');
+}
+function chatCopyActions(session) {
+  return [
+    { label: 'Copy chat ID', run: () => copyChatIdentity(session) },
+    { label: 'Copy resume command', run: () => copyChatIdentity(session, true) },
+  ];
+}
+window.huskChatActions = (tabId, anchor) => {
+  const tab = TABS.get(tabId);
+  if (tab) contextMenu(anchor, chatCopyActions(chatIdentity(tab)));
+};
+async function moveDiscussionToId(source, vendor) {
+  const id = await openTextDialog({ title: 'Move discussion to a chat', label: `${vendor} chat ID`, placeholder: 'Paste the destination chat ID', confirmLabel: 'Move discussion', maxLength: 200 });
+  if (!id) return;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(id)) { toast('Enter a chat ID only, without a command or path.', 'error'); return; }
+  let target = [...TABS.values()].find((tab) => chatIdentity(tab).id === id && chatIdentity(tab).owner === vendor);
+  if (source.tabId && target?.id === source.tabId) { toast('Choose a different destination chat.', 'info'); return; }
+  if (!target) {
+    const listed = await window.husk.sessions.list({ agent: vendor });
+    const session = listed?.sessions?.find((item) => item.id === id && (item.owner || item.agent || vendor) === vendor);
+    if (!session) { toast('That chat ID was not found for this vendor. Open the chat in Husk first, then try again.', 'error'); return; }
+    if (!(await resumeIntoChat({ ...session, owner: vendor, project: session.originalCwd || session.projectPath || session.project || '' }, { forceChat: true }))) {
+      toast('This destination cannot receive a discussion in Native Chat.', 'error'); return;
+    }
+    target = [...TABS.values()].find((tab) => chatIdentity(tab).id === id && chatIdentity(tab).owner === vendor);
+  }
+  if (!target?.chat || target.mode !== 'chat') { toast('Open the destination in Native Chat first.', 'error'); return; }
+  const result = await window.husk.chat.handoffTo({ source, targetTabId: target.id });
+  if (!result?.ok) { toast(result?.error || 'Could not move the discussion.', 'error'); return; }
+  setPage('chat'); activateTab(target.id);
+  target.chat.apply({ type: 'status', text: 'Discussion context is ready. Your next message will include it; this chat’s existing history is preserved.' });
+  target.chat.focus();
+  toast('Discussion ready in the destination chat. Send a message to continue.', 'success');
+}
+function chooseDestinationChat(source, anchor) {
+  contextMenu(anchor, detectedAgents().filter((a) => chatProtocolFor(a.command)).map((a) => ({
+    label: `Chat ID in ${a.label}`, run: () => moveDiscussionToId(source, a.command),
+  })));
+}
+
 function chooseContinuation(tab, anchor, command, cwd) {
   contextMenu(anchor, [
     { label: 'Continue this discussion', run: () => switchDiscussion(tab, command, cwd, true) },
@@ -1921,11 +1977,10 @@ window.huskMoveDiscussion = async (tabId, anchor) => {
   await refreshAgentMenu();
   const carry = !!tab.chatState?.items?.some((item) => item.kind === 'user' || item.kind === 'text');
   const alternatives = detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0]);
-  if (!alternatives.length) { toast('Install another agent CLI to move this discussion.', 'info'); return; }
-  contextMenu(anchor, alternatives.map((a) => ({
+  contextMenu(anchor, [{ label: 'Move to a specific chat ID…', run: () => chooseDestinationChat({ tabId: tab.id }, anchor) }, ...alternatives.map((a) => ({
     label: `Continue with ${a.label}`,
     run: () => switchDiscussion(tab, a.command, chatWorkDir(tab), carry),
-  })));
+  }))]);
 };
 async function offerFolderSwitch(tab, anchor) {
   const folders = projectsCache.filter((p) => p && p.path).map((p) => ({
@@ -1963,14 +2018,14 @@ window.huskOfferHandoff = async (tabId, info = {}) => {
 
 async function offerSavedHandoff(session, anchor) {
   await refreshAgentMenu();
-  contextMenu(anchor, detectedAgents().map((a) => ({ label: `Continue with ${a.label}`, run: async () => {
+  contextMenu(anchor, [...chatCopyActions({ ...session, owner: session.owner || session.agent }), { label: 'Move to a specific chat ID…', run: () => chooseDestinationChat({ agent: session.agent || session.owner, sessionId: session.id, cwd: session.originalCwd || session.projectPath || session.project }, anchor) }, ...detectedAgents().map((a) => ({ label: `Continue with ${a.label}`, run: async () => {
     const source = { agent: session.agent || session.owner, sessionId: session.id, cwd: session.originalCwd || session.projectPath || session.project };
     const prepared = await window.husk.chat.handoff(source);
     if (!prepared?.ok) { toast(prepared?.error || 'No discussion to continue', 'error'); return; }
     setPage('chat');
     const tab = await openNewChatTab({ command: a.command, cwd: source.cwd, forceChat: true, skipWelcome: true, handoff: source });
     if (tab && tab.mode !== 'chat') setTimeout(() => { try { tab.term.paste(prepared.context + "\n\nContinue the discussion from where it stopped."); } catch (_) {} }, 1000);
-  } })));
+  } }))]);
 }
 
 // When each CLI last started a chat here, so menus can list the latest first.
@@ -2366,6 +2421,7 @@ function renderTabStrip() {
     btn.className = 'chat-tab' + (t.id === activeTabId ? ' active' : '')
       + (SPLIT && (SPLIT.a === t.id || SPLIT.b === t.id) ? ' in-split' : '');
     btn.dataset.tab = t.id;
+    btn.addEventListener('contextmenu', (event) => { event.preventDefault(); window.huskChatActions(t.id, btn); });
     btn.draggable = !splitPicking;
     const baseName = displayTitle(t);
     const name = names[index] || baseName;
@@ -3570,8 +3626,10 @@ function csCardEl(c) {
   if (c.state) b.dataset.state = c.state;
   b.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
-    const saved = cs.list.find((s) => s.id === c.sessionId || s.id === c.id);
-    if (saved) offerSavedHandoff(saved, b);
+    const saved = (cs.list || []).find((s) => s.id === c.sessionId || s.id === c.id);
+    const live = c.tabId && TABS.get(c.tabId);
+    if (live) window.huskChatActions(live.id, b);
+    else if (saved) offerSavedHandoff(saved, b);
   });
   const top = csEl('div', 'cs-card-top');
   top.appendChild(csEl('span', 'cs-card-agent', c.agent));
@@ -3730,8 +3788,8 @@ function csOpenPast(s) {
 // preference, the CLI has no chat protocol or no readable log, or the session
 // is held and needs attaching or a copy), so the caller takes the Terminal
 // resume path instead.
-async function resumeIntoChat(d, { keepPage = false } = {}) {
-  if (preferredTabMode() !== 'chat') return false;
+async function resumeIntoChat(d, { keepPage = false, forceChat = false } = {}) {
+  if (!forceChat && preferredTabMode() !== 'chat') return false;
   if (!window.husk.chat || typeof window.husk.chat.history !== 'function') return false;
   const agent = String(d.owner || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0].toLowerCase();
   const cwd = d.project || '';
@@ -3764,6 +3822,7 @@ async function resumeIntoChat(d, { keepPage = false } = {}) {
     command: plan.command,
     cwd: cwd || null,
     preferChat: true,
+    forceChat,
     skipWelcome: true,
     skipContext: true,
     history: hist.events,
@@ -4054,6 +4113,9 @@ buildAppearancePickers();
 function applyBackground(bg) {
   const layer = $('#bg-layer');
   layer.hidden = !bg;
+  document.body.dataset.background = bg ? 'on' : 'off';
+  const preview = document.getElementById('pref-bg-preview');
+  if (preview) { preview.hidden = !bg; preview.style.backgroundImage = bg ? `url("husk-bg://image/${bg.hash}.${bg.ext}")` : ''; }
   $('#bg-layer-image').style.backgroundImage = bg ? `url("husk-bg://image/${bg.hash}.${bg.ext}")` : '';
   layer.style.setProperty('--bg-image-dim', bg ? String(bg.dim / 100) : '1');
   layer.style.setProperty('--bg-image-blur', `${bg ? bg.blur : 0}px`);
@@ -12901,6 +12963,7 @@ function sxAct(act, el) {
     case 'focus': if (s) focusOpenSession(s.id); break;
     case 'resume': if (owned) resumeSessionInChat(owned); break;
     case 'copy-id': if (s) sxCopy(s.id, 'Session id'); break;
+    case 'copy-resume': if (s) copyChatIdentity({ ...s, owner: s.owner || s.agent }, true); break;
     case 'copy-path': if (s) sxCopy(s.projectPath, 'Project path'); break;
     case 'copy-value': sxCopy(el.dataset.value, el.dataset.label || 'Value'); break;
     case 'open-path': if (el.dataset.path) window.husk.fs.open(el.dataset.path); break;
@@ -12988,7 +13051,8 @@ function sxDetailMenuItems() {
   const items = [];
   if (s.prdPath) items.push(['Open work item', 'open-work', '']);
   items.push(['Open file', 'open-file', '']);
-  items.push(['Copy id', 'copy-id', '']);
+  items.push(['Copy chat ID', 'copy-id', '']);
+  items.push(['Copy resume command', 'copy-resume', '']);
   items.push(['Copy path', 'copy-path', '']);
   items.push(['Rename', 'rename', '']);
   // Where this session is filed. Offered only once there is somewhere to file

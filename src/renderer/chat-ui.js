@@ -521,6 +521,11 @@
     foot.appendChild(attach);
     foot.appendChild(meta);
     foot.appendChild(move);
+    const actions = el('button', 'ce-composer-btn chat-actions', '⋯');
+    actions.title = 'Chat actions'; actions.setAttribute('aria-label', 'Chat actions');
+    actions.type = 'button'; actions.setAttribute('aria-haspopup', 'menu');
+    actions.addEventListener('click', (event) => { event.stopPropagation(); window.huskChatActions?.(tabId, actions); });
+    foot.appendChild(actions);
     foot.appendChild(allowAll);
     foot.appendChild(el('span', 'chat-composer-spacer'));
     foot.appendChild(stop);

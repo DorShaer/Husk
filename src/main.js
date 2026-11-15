@@ -2036,6 +2036,19 @@ ipcMain.handle('chat:handoff', (_e, src = {}) => {
   return r.ok ? { ok: true, mode: r.mode, context: r.context, from: r.from, turns: r.turns } : r;
 });
 
+// Stage a transcript for an existing chat without sending or replacing its history.
+ipcMain.handle('chat:handoffTo', (_e, { source, targetTabId } = {}) => {
+  const target = chatRuntime.info(targetTabId);
+  if (!target) return { ok: false, error: 'The destination chat is no longer open.' };
+  if (source?.tabId === targetTabId) return { ok: false, error: 'Choose a different destination chat.' };
+  if (target.turnOpen) return { ok: false, error: 'Wait for the destination reply to finish before moving this discussion.' };
+  if (pendingHandoffs.has(targetTabId)) return { ok: false, error: 'This chat already has discussion context waiting for its next message.' };
+  const carried = prepareHandoff(source);
+  if (!carried.ok) return carried;
+  pendingHandoffs.set(targetTabId, { context: carried.context, from: carried.from });
+  return { ok: true, turns: carried.turns, from: carried.from };
+});
+
 // Who the claude CLI is signed in as, for the notice after a sign-in finishes.
 // Read from the CLI itself rather than its credential files.
 ipcMain.handle('auth:status', async (_e, { tabId } = {}) => {
@@ -2369,6 +2382,7 @@ ipcMain.handle('openai:models', (_e, { baseUrl, apiKey } = {}) => new Promise((r
 }));
 ipcMain.handle('chat:setModel', (_e, { tabId, modelId, modelName } = {}) => chatRuntime.setModel({ tabId, modelId, modelName }));
 ipcMain.handle('chat:stop', async (_e, { tabId } = {}) => {
+  pendingHandoffs.delete(tabId);
   const r = await chatRuntime.stop({ tabId });
   brainTurnOver(tabId);
   dropChatShadowSession(tabId);

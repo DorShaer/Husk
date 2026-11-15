@@ -29,11 +29,11 @@ function makeHome() {
   return { homeDir, bin };
 }
 
-async function launch(homeDir, bin) {
+async function launch(homeDir, bin, extraEnv = {}) {
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, CODEX_HOME: path.join(homeDir, '.codex'), PATH: `${bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' },
+    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, CODEX_HOME: path.join(homeDir, '.codex'), PATH: `${bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1', ...extraEnv },
     timeout: 30_000,
   });
   const win = await app.firstWindow({ timeout: 30_000 });
@@ -227,5 +227,82 @@ test('job model selectors use chat protocol names and discover Codex models with
       await loadAutopilotRunModels();
     });
     await expect(win.locator('#aut-run-model option[value="gpt-fake"]')).toHaveText('GPT Fake');
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('chat actions copy real IDs and resume commands, and move context to an existing chat ID once', async () => {
+  const { homeDir, bin } = makeHome();
+  const log = path.join(homeDir, 'handoff-prompts.jsonl');
+  const { app, win } = await launch(homeDir, bin, { HUSK_FAKE_ACP_PROMPTS: log });
+  try {
+    await chatReady(win);
+    const source = await win.evaluate(() => ({ tabId: activeTabId, id: chatIdentity(TABS.get(activeTabId)).id }));
+    await win.locator('.chat-pane.show .chat-actions').click();
+    await win.getByRole('menuitem', { name: 'Copy chat ID', exact: true }).click();
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(source.id);
+    await win.locator('.chat-pane.show .chat-actions').click();
+    await win.getByRole('menuitem', { name: 'Copy resume command', exact: true }).click();
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(`codex resume ${source.id}`);
+    await win.evaluate(() => window.husk.chat.allowAll({ tabId: activeTabId, on: true }));
+    await win.locator('.chat-pane.show .chat-input').fill('Keep source requirement blue');
+    await win.locator('.chat-pane.show .chat-input').press('Enter');
+    await expect(win.locator('.chat-pane.show')).toContainText('decision was accept');
+    await win.evaluate(() => openNewChatTab({ command: 'gemini', preferChat: true }));
+    await chatReady(win);
+    const target = await win.evaluate(() => ({ tabId: activeTabId, id: chatIdentity(TABS.get(activeTabId)).id }));
+    await win.locator('.chat-pane.show .chat-input').fill('Keep destination notes green');
+    await win.locator('.chat-pane.show .chat-input').press('Enter');
+    await win.locator('.chat-pane.show').getByRole('button', { name: 'Allow once', exact: true }).click();
+    await expect(win.locator('.chat-pane.show')).toContainText('Done, permission was');
+    await win.evaluate((id) => activateTab(id), source.tabId);
+    await win.locator('.chat-pane.show .chat-move-discussion').click();
+    await win.getByRole('menuitem', { name: 'Move to a specific chat ID…', exact: true }).click();
+    await win.getByRole('menuitem', { name: /Chat ID in Gemini/ }).click();
+    await win.locator('#text-input').fill(target.id);
+    await win.locator('#text-ok').click();
+    await expect.poll(() => win.evaluate(() => activeTabId)).toBe(target.tabId);
+    await expect(win.locator('.chat-pane.show')).toContainText('Keep destination notes green');
+    expect(await win.evaluate(({ source, target }) => window.husk.chat.handoffTo({ source: { tabId: source.tabId }, targetTabId: target.tabId }), { source, target })).toMatchObject({ ok: false });
+    expect(await win.evaluate((id) => window.husk.chat.handoffTo({ source: { tabId: id }, targetTabId: id }), source.tabId)).toMatchObject({ ok: false });
+    await win.reload(); await chatReady(win);
+    await win.locator('.chat-pane.show .chat-input').fill('Continue in the destination');
+    await win.locator('.chat-pane.show .chat-input').press('Enter');
+    await expect(win.locator('.chat-pane.show')).toContainText('Continued from');
+    await expect.poll(() => fs.readFileSync(log, 'utf8')).toContain('Keep source requirement blue');
+    await win.locator('.chat-pane.show').getByRole('button', { name: 'Allow once', exact: true }).click();
+    await expect(win.locator('.chat-pane.show .chat-input')).toBeEnabled();
+    await win.locator('.chat-pane.show .chat-input').fill('One more message');
+    await win.locator('.chat-pane.show .chat-input').press('Enter');
+    await expect.poll(() => fs.readFileSync(log, 'utf8').trim().split('\n').length).toBe(3);
+    expect(JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n').at(-1)).text).not.toContain('Keep source requirement blue');
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('move to ID resumes a saved destination in Native Chat and preserves its prior history', async () => {
+  const { homeDir, bin } = makeHome();
+  const id = '01a1d208-8467-7c32-8e5a-27d5e8d10a96';
+  const dir = path.join(homeDir, '.codex/sessions/2026/11/13');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `rollout-2026-11-13T01-12-15-${id}.jsonl`), [
+    { type: 'session_meta', payload: { id, cwd: REPO_ROOT, timestamp: '2026-11-13T01:12:15Z' } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Original destination instructions' }] } },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n');
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await chatReady(win);
+    await win.evaluate(() => window.husk.chat.allowAll({ tabId: activeTabId, on: true }));
+    await win.locator('.chat-pane.show .chat-input').fill('Source discussion to continue');
+    await win.locator('.chat-pane.show .chat-input').press('Enter');
+    await expect(win.locator('.chat-pane.show')).toContainText('decision was accept');
+    await win.evaluate(() => { cfg.chatView = 'terminal'; });
+    await win.locator('.chat-pane.show .chat-move-discussion').click();
+    await win.getByRole('menuitem', { name: 'Move to a specific chat ID…', exact: true }).click();
+    await win.getByRole('menuitem', { name: /Chat ID in OpenAI Codex/ }).click();
+    await win.locator('#text-input').fill(id);
+    await win.locator('#text-ok').click();
+    await expect(win.locator('.chat-pane.show')).toContainText('Original destination instructions');
+    await expect(win.locator('.chat-pane.show')).toContainText('Discussion context is ready');
+    expect(await win.evaluate(() => chatIdentity(TABS.get(activeTabId)).id)).toBe(id);
+    expect((await win.evaluate(() => window.husk.chat.list())).sessions).toHaveLength(2);
   } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
 });

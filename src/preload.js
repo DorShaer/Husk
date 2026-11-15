@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld('husk', {
     // A discussion as text for another CLI. { tabId } | { agent, sessionId, cwd }
     // -> { ok, mode, context, from, turns, error? }
     handoff: (src) => ipcRenderer.invoke('chat:handoff', src || {}),
+    handoffTo: (opts) => ipcRenderer.invoke('chat:handoffTo', opts || {}),
     // { tabId, text, images? [{ mimeType, data (base64) }] } -> { ok, error? }
     prompt: (opts) => ipcRenderer.invoke('chat:prompt', opts || {}),
     // { tabId } -> { ok }

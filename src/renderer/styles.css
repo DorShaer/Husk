@@ -18400,3 +18400,21 @@ body[data-rail="collapsed"] #rail-resize { display: none; }
 @media (max-width: 960px) { #rail-resize { display: none; } }
 body.is-resizing-left { cursor: col-resize; user-select: none; }
 body.is-resizing-left iframe, body.is-resizing-left .term-pane { pointer-events: none; }
+
+/* Let the chosen image reach the reading area while cards remain readable. */
+body[data-background="on"] #main,
+body[data-background="on"] #terminal,
+body[data-background="on"] .pages,
+body[data-background="on"] .page,
+body[data-background="on"] .chat-main,
+body[data-background="on"] .chat-stage,
+body[data-background="on"] .chat-pane { background: transparent !important; }
+body[data-background="on"] #rail,
+body[data-background="on"] #status-panel,
+body[data-background="on"] .chat-sessions {
+  background: color-mix(in srgb, var(--bg) 82%, transparent) !important;
+}
+.pref-bg-preview {
+  height: 110px; margin: 12px 0; border-radius: var(--radius-md);
+  background-position: center; background-size: cover; border: 1px solid var(--line);
+}

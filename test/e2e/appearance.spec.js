@@ -22,7 +22,10 @@ test('themes and the picked background render through the stored image scheme', 
     const validImage = await win.evaluate(() => { const c = document.createElement('canvas'); c.width = 200; c.height = 100; const x = c.getContext('2d'); x.fillStyle = '#3377aa'; x.fillRect(0, 0, 200, 100); return c.toDataURL('image/png').split(',')[1]; });
     fs.writeFileSync(image, Buffer.from(validImage, 'base64'));
     await app.evaluate(({ dialog }, image) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [image] }); }, image);
-    const result = await win.evaluate(() => window.husk.background.choose());
+    await win.evaluate(() => openPrefs('appearance'));
+    await win.locator('#pref-bg-choose').click();
+    await win.waitForFunction(() => !!cfg.background);
+    const result = await win.evaluate(() => ({ ok: true, background: cfg.background }));
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(result.background.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(result)).not.toContain(image);
@@ -34,17 +37,28 @@ test('themes and the picked background render through the stored image scheme', 
       return new Promise((resolve) => { image.onload = () => resolve(image.naturalWidth); image.onerror = () => resolve(0); image.src = `husk-bg://image/${bg.hash}.${bg.ext}`; });
     }, result.background);
     expect(response).toBe(200);
+    await expect(win.locator('#pref-bg-preview')).toBeVisible();
+    await win.evaluate(() => setPage('chat'));
+    expect(await win.locator('.chat-pane.show').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+    expect(await win.locator('#terminal').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+    await win.evaluate(async () => takeBackgroundResult(await window.husk.background.setDisplay({ dim: 45, blur: 4 })));
+    await win.reload();
+    await win.waitForFunction(() => cfg?.background?.dim === 45);
+    await expect(win.locator('#bg-layer')).toBeVisible();
+    expect(await win.evaluate(() => cfg.background.blur)).toBe(4);
     await win.evaluate(() => window.husk.ui.zoomSet(0));
     fs.mkdirSync('/tmp/husk-review', { recursive: true });
     for (const theme of ['solarized-light', 'kanagawa', 'hc-dark']) {
       await win.evaluate(async (theme) => { cfg = await window.husk.config.set({ theme }); setPage('chat'); applyTheme(theme); }, theme);
-      await win.screenshot({ path: `/tmp/husk-review/${theme}-chat.png` });
+      await win.screenshot({ animations: 'disabled', path: `/tmp/husk-review/${theme}-chat.png` });
       await win.evaluate(() => openPrefs('appearance'));
-      await win.screenshot({ path: `/tmp/husk-review/${theme}-prefs.png` });
+      await win.screenshot({ animations: 'disabled', path: `/tmp/husk-review/${theme}-prefs.png` });
     }
     const stored = fs.readdirSync(path.join(config, 'backgrounds'));
     expect(stored).toHaveLength(1);
-    await win.evaluate(() => window.husk.background.remove());
+    await win.locator('#pref-bg-remove').click();
+    await expect(win.locator('#bg-layer')).toBeHidden();
+    await expect(win.locator('#pref-bg-preview')).toBeHidden();
     expect(fs.readdirSync(path.join(config, 'backgrounds'))).toHaveLength(0);
   } finally { await app.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });

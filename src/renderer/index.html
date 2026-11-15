@@ -3047,6 +3047,40 @@
 
               <div class="pref-section" data-prefs-section="appearance">
                 <section class="pref-card">
+                  <div class="pref-card-title section-label">Background image</div>
+                  <div id="pref-bg-preview" class="pref-bg-preview" role="img" aria-label="Your background image" hidden></div>
+                  <div class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Background image</span>
+                      <span class="pref-desc">A PNG, JPEG or WebP picture behind the interface, up to 15 MB. Husk keeps its own resized copy.</span>
+                    </span>
+                    <span class="pref-inline-group">
+                      <button class="ghost-btn" id="pref-bg-remove" type="button" hidden>Remove image</button>
+                      <button class="ghost-btn" id="pref-bg-choose" type="button">Choose image</button>
+                    </span>
+                  </div>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Dim</span>
+                      <span class="pref-desc">How much of the theme colour covers the image.</span>
+                    </span>
+                    <span class="pref-rate-group">
+                      <span class="pref-range-value" id="pref-bg-dim-display"></span>
+                      <input type="range" id="pref-bg-dim" min="30" max="95" step="1" />
+                    </span>
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Blur</span>
+                      <span class="pref-desc">Softens the image so it stays behind the text.</span>
+                    </span>
+                    <span class="pref-rate-group">
+                      <span class="pref-range-value" id="pref-bg-blur-display"></span>
+                      <input type="range" id="pref-bg-blur" min="0" max="24" step="1" />
+                    </span>
+                  </label>
+                </section>
+                <section class="pref-card">
                   <div class="pref-card-title section-label">Appearance</div>
                   <label class="pref-row">
                     <span class="pref-row-text">
@@ -3118,39 +3152,7 @@
                     <button class="ghost-btn" id="pref-replay-onboarding" type="button">Replay</button>
                   </div>
                 </section>
-                <section class="pref-card">
-                  <div class="pref-card-title section-label">Background</div>
-                  <div class="pref-row">
-                    <span class="pref-row-text">
-                      <span class="pref-label">Background image</span>
-                      <span class="pref-desc">A PNG, JPEG or WebP picture behind the interface, up to 15 MB. Husk keeps its own resized copy.</span>
-                    </span>
-                    <span class="pref-inline-group">
-                      <button class="ghost-btn" id="pref-bg-remove" type="button" hidden>Remove image</button>
-                      <button class="ghost-btn" id="pref-bg-choose" type="button">Choose image</button>
-                    </span>
-                  </div>
-                  <label class="pref-row">
-                    <span class="pref-row-text">
-                      <span class="pref-label">Dim</span>
-                      <span class="pref-desc">How much of the theme colour covers the image.</span>
-                    </span>
-                    <span class="pref-rate-group">
-                      <span class="pref-range-value" id="pref-bg-dim-display"></span>
-                      <input type="range" id="pref-bg-dim" min="30" max="95" step="1" />
-                    </span>
-                  </label>
-                  <label class="pref-row">
-                    <span class="pref-row-text">
-                      <span class="pref-label">Blur</span>
-                      <span class="pref-desc">Softens the image so it stays behind the text.</span>
-                    </span>
-                    <span class="pref-rate-group">
-                      <span class="pref-range-value" id="pref-bg-blur-display"></span>
-                      <input type="range" id="pref-bg-blur" min="0" max="24" step="1" />
-                    </span>
-                  </label>
-                </section>
+
               </div><!-- /pref-section appearance -->
 
               <div class="pref-section" data-prefs-section="files">
