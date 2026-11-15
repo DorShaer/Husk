@@ -35,6 +35,11 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <br /><br />
 
+<img src="docs/images/husk-brain.png" alt="Brain page with saved memories and the connections between them" width="900" />
+<br /><sub><i>Save notes, teach Husk from text files, or let it keep a short record after a chat. Before your next message it brings back only the memories that fit, and the Synapses view shows how they connect.</i></sub>
+
+<br /><br />
+
 <img src="docs/images/husk-agents.png" alt="Agents page" width="450" />
 <img src="docs/images/husk-workflows.png" alt="Workflows hub" width="450" />
 <br /><sub><i>Curate the agent personas active for the next session. Start a multi-step automation from a ready-made topology, or build your own in the graph editor.</i></sub>
@@ -200,6 +205,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 
 - **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right and its width is yours to drag. Split the view to run two chats side by side (`Ctrl+\`).
 - **Terminal**: a real shell in your project, in tabs, pinned in the rail above the tool selector.
+- **Brain**: what Husk remembers. Save notes, teach it from text files, or let it capture a short record after a chat; the memories that fit are recalled into your next message. Every memory can be pinned, edited, or removed, and the Synapses view shows how they connect.
 - **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`).
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
