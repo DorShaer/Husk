@@ -8968,11 +8968,17 @@ body[data-mode="light"] .sx {
   #pref-theme { max-width: none; }
 }
 .aut-model-card.modal-card-md {
-  width: 700px;
+  box-sizing: border-box;
+  width: 860px;
   max-width: 94vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
   padding: 24px 26px 22px;
 }
-.aut-model-card .modal-head { margin-bottom: 12px; }
+.aut-model-card .modal-head { margin-bottom: 12px; flex-shrink: 0; }
+.aut-model-card .modal-foot { flex-shrink: 0; }
+.aut-model-card .modal-body { overflow-y: auto; min-height: 0; gap: 12px; }
 .modal-card.aut-model-card .modal-title {
   font-family: inherit;
   font-size: var(--fs-h2);
@@ -9068,12 +9074,23 @@ body[data-mode="light"] .sx {
   padding: 18px 0;
 }
 .aut-model-picker {
-  flex: 0 0 370px;
-  max-width: 54%;
-  display: flex;
-  flex-direction: column;
+  flex: 0 0 440px;
+  max-width: 57%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+.aut-model-picker label:first-child { grid-column: 1; grid-row: 1; }
+.aut-model-picker select:nth-child(2) { grid-column: 1; grid-row: 2; }
+.aut-model-picker label:nth-child(3) { grid-column: 2; grid-row: 1; }
+.aut-model-picker select:nth-child(4) { grid-column: 2; grid-row: 2; }
+.aut-model-picker input, .aut-routing-status { grid-column: 1 / -1; }
+.aut-routing-label { color: var(--text-2); font-size: var(--fs-small); }
+.aut-routing-status { color: var(--text-3); font-size: var(--fs-micro); line-height: 1.45; overflow-wrap: anywhere; }
+.aut-routing-status[data-state="error"] { color: var(--amber); }
+.aut-run-routing { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.aut-run-routing .mig-hint { grid-column: 1 / -1; margin: 0; }
+.aut-run-routing select { width: 100%; min-width: 0; height: 36px; color: var(--text); background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--radius-lg); font: inherit; }
 .aut-model-card .aut-model-picker select,
 .aut-model-card .aut-model-picker input[type="text"] {
   width: 100%;
@@ -9100,7 +9117,7 @@ body[data-mode="light"] .sx {
 .aut-model-card .aut-model-picker select:disabled,
 .aut-model-card .aut-model-picker input[type="text"]:disabled {
   opacity: 0.58;
-  cursor: wait;
+  cursor: default;
 }
 @media (max-width: 760px) {
   .aut-model-summary { align-items: stretch; flex-direction: column; }

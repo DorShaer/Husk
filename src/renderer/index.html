@@ -1613,38 +1613,60 @@
           </div>
         </div>
 
-        <!-- CONFIGURE ORCHESTRATOR AGENTS MODAL -->
+        <!-- JOB MODEL ROUTING MODAL -->
         <div id="aut-orch-modal" class="modal" hidden>
           <div class="modal-card modal-card-md aut-model-card">
             <div class="modal-head">
-              <h2 class="modal-title">Configure orchestrator models</h2>
+              <h2 class="modal-title">Configure job models</h2>
               <button class="modal-close" id="aut-orch-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ai-hint">Husk reads the active provider's model catalog instead of guessing. Pick explicit models for each tier, or leave Automatic so Husk chooses per task and explains the decision in the run log.</p>
-              <div class="aut-model-summary">
-                <div class="aut-model-provider">
-                  <span class="aut-model-eyebrow">Active provider</span>
-                  <strong id="aut-orch-vendor">your agent</strong>
-                  <span id="aut-model-command" class="aut-model-command"></span>
-                </div>
-                <button class="ghost-btn" id="aut-model-refresh" type="button">Refresh models</button>
+              <p class="ai-hint">Choose a vendor and model for each kind of job, or let Husk decide. These choices are independent of the default for new chats. Changes apply to future runs.</p>
+              <div class="aut-model-summary"><div id="aut-model-status" class="aut-routing-status" role="status">Finding installed vendors...</div><button class="ghost-btn" id="aut-model-refresh" type="button">Refresh models</button></div>
+              <div class="pref-row aut-model-row">
+                <span class="pref-row-text"><span class="pref-label">Simple tasks</span><span class="pref-desc">Mechanical work such as formatting, renames and dependency updates.</span></span>
+                <span class="aut-model-picker">
+                  <label class="aut-routing-label" for="aut-vendor-simple">Vendor</label>
+                  <select id="aut-vendor-simple" aria-label="Simple tasks vendor"><option value="auto">Automatic (Husk decides)</option></select>
+                  <label class="aut-routing-label" for="aut-mr-simple">Model</label>
+                  <select id="aut-mr-simple" aria-label="Simple tasks model"><option value="">Automatic (Husk decides)</option></select>
+                  <input type="text" id="aut-mr-simple-custom" aria-label="Simple tasks custom model" placeholder="Exact model id" autocomplete="off" spellcheck="false" hidden />
+                  <span class="aut-routing-status" id="aut-model-status-simple" role="status"></span>
+                </span>
               </div>
-              <div id="aut-model-status" class="aut-model-status" role="status">Loading model catalog…</div>
-              <label class="pref-row aut-model-row">
-                <span class="pref-row-text"><span class="pref-label">Simple tasks</span><span class="pref-desc">Mechanical work: dep bumps, formatting, renames, TODO hunts.</span></span>
+              <div class="pref-row aut-model-row">
+                <span class="pref-row-text"><span class="pref-label">Complex tasks</span><span class="pref-desc">Design, debugging and implementation that needs reasoning.</span></span>
                 <span class="aut-model-picker">
-                  <select id="aut-mr-simple"></select>
-                  <input type="text" id="aut-mr-simple-custom" placeholder="Enter a model id, e.g. gpt-5.5" autocomplete="off" spellcheck="false" hidden />
+                  <label class="aut-routing-label" for="aut-vendor-complex">Vendor</label>
+                  <select id="aut-vendor-complex" aria-label="Complex tasks vendor"><option value="auto">Automatic (Husk decides)</option></select>
+                  <label class="aut-routing-label" for="aut-mr-complex">Model</label>
+                  <select id="aut-mr-complex" aria-label="Complex tasks model"><option value="">Automatic (Husk decides)</option></select>
+                  <input type="text" id="aut-mr-complex-custom" aria-label="Complex tasks custom model" placeholder="Exact model id" autocomplete="off" spellcheck="false" hidden />
+                  <span class="aut-routing-status" id="aut-model-status-complex" role="status"></span>
                 </span>
-              </label>
-              <label class="pref-row aut-model-row">
-                <span class="pref-row-text"><span class="pref-label">Complex tasks</span><span class="pref-desc">Reasoning: design, debugging, non-trivial implementation.</span></span>
+              </div>
+              <div class="pref-row aut-model-row">
+                <span class="pref-row-text"><span class="pref-label">Team planner</span><span class="pref-desc">Splits a team goal into jobs and chooses the workers.</span></span>
                 <span class="aut-model-picker">
-                  <select id="aut-mr-complex"></select>
-                  <input type="text" id="aut-mr-complex-custom" placeholder="Enter a model id, e.g. claude-sonnet-5" autocomplete="off" spellcheck="false" hidden />
+                  <label class="aut-routing-label" for="aut-vendor-planner">Vendor</label>
+                  <select id="aut-vendor-planner" aria-label="Team planner vendor"><option value="auto">Automatic (Husk decides)</option></select>
+                  <label class="aut-routing-label" for="aut-mr-planner">Model</label>
+                  <select id="aut-mr-planner" aria-label="Team planner model"><option value="">Automatic (Husk decides)</option></select>
+                  <input type="text" id="aut-mr-planner-custom" aria-label="Team planner custom model" placeholder="Exact model id" autocomplete="off" spellcheck="false" hidden />
+                  <span class="aut-routing-status" id="aut-model-status-planner" role="status"></span>
                 </span>
-              </label>
+              </div>
+              <div class="pref-row aut-model-row">
+                <span class="pref-row-text"><span class="pref-label">Team integrator</span><span class="pref-desc">Combines and verifies the completed team jobs.</span></span>
+                <span class="aut-model-picker">
+                  <label class="aut-routing-label" for="aut-vendor-integrator">Vendor</label>
+                  <select id="aut-vendor-integrator" aria-label="Team integrator vendor"><option value="auto">Automatic (Husk decides)</option></select>
+                  <label class="aut-routing-label" for="aut-mr-integrator">Model</label>
+                  <select id="aut-mr-integrator" aria-label="Team integrator model"><option value="">Automatic (Husk decides)</option></select>
+                  <input type="text" id="aut-mr-integrator-custom" aria-label="Team integrator custom model" placeholder="Exact model id" autocomplete="off" spellcheck="false" hidden />
+                  <span class="aut-routing-status" id="aut-model-status-integrator" role="status"></span>
+                </span>
+              </div>
             </div>
             <div class="modal-foot">
               <button class="ghost-btn" id="aut-orch-cancel">Cancel</button>
@@ -3384,6 +3406,11 @@
             <label for="aut-goal">Goal <span class="req" aria-hidden="true">*</span></label>
             <textarea id="aut-goal" class="aut-goal-input" rows="4" placeholder="e.g. find every TODO that mentions security, draft a fix per occurrence, do not push" spellcheck="false"></textarea>
             <div class="mig-hint">Plain text. The model sees this as the first message.</div>
+          </div>
+          <div class="aut-run-routing">
+            <div class="mcp-input-group"><label for="aut-run-vendor">Job vendor</label><select id="aut-run-vendor"><option value="auto">Use job routing</option></select></div>
+            <div class="mcp-input-group"><label for="aut-run-model">Model</label><select id="aut-run-model" disabled><option value="">Use job routing</option></select></div>
+            <p class="mig-hint" id="aut-run-model-status">Simple and complex jobs use Models routing. Team planner and integrator keep their own choices.</p>
           </div>
           <div class="aut-caps-grid">
             <div class="mcp-input-group">

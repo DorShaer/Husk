@@ -14737,219 +14737,186 @@ function showPrefsSection(section) {
   });
 })();
 
-// Orchestrator model routing, configured from the "Configure" button next to
-// Start a run. The catalog is loaded from the active provider instead of a
-// hardcoded list (Copilot/Claude/Gemini via /model, Aider via --list-models).
-let orchCatalog = {
-  loading: false,
-  vendor: '',
-  providerLabel: '',
-  command: '',
-  flag: '',
-  models: [],
-  source: 'none',
-  sourceLabel: '',
-  error: '',
-};
+// Each job role owns its vendor and model; new-chat defaults do not redirect jobs.
+const ORCH_ROLES = [
+  { id: 'simple', key: 'cheap', label: 'Simple tasks' },
+  { id: 'complex', key: 'smart', label: 'Complex tasks' },
+  { id: 'planner', key: 'planner', label: 'Team planner' },
+  { id: 'integrator', key: 'integrator', label: 'Team integrator' },
+];
+const ORCH_VENDORS = ['claude', 'codex', 'copilot', 'gemini', 'aider', 'kiro-cli'];
+let orchDraft = null;
+let orchAgents = [];
+const orchCatalogs = new Map();
+let orchCatalogSeq = 0;
 function orchVendor() {
   return (cfg && cfg.agentCommand ? cfg.agentCommand : 'claude')
     .trim().split(/\s+/)[0].split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
 }
-function orchModelFlagFor(vendor) {
-  return vendor === 'gemini' ? '-m'
-    : ['claude', 'copilot', 'codex', 'aider', 'kiro-cli'].includes(vendor) ? '--model'
-    : '';
-}
 function isUsableModelValue(value) {
   const raw = String(value || '').trim();
-  if (!raw || raw.length > 90) return false;
-  if (/\s/.test(raw)) return false;
+  if (!raw || raw.length > 90 || /\s/.test(raw)) return false;
   if (/not logged in|use \/login|authenticate|plan:|session:|aic used|context\b/i.test(raw)) return false;
-  // Reject config-path and doc tokens (claude/settings.json, claude-api),
-  // which are not model ids.
   if (/\.(json|jsonc|ya?ml|md|txt|log|lock|toml|ini|cfg|conf|sh|mjs|cjs|js|ts)$/i.test(raw)) return false;
   if (/(^|[-./_])(api|sdk|cli|docs?|settings|config|readme|help)$/i.test(raw)) return false;
-  return /^[A-Za-z0-9][A-Za-z0-9._:+/-]*$/.test(raw);
+  return /^[A-Za-z0-9][A-Za-z0-9._:+/\[\]-]*$/.test(raw);
 }
-function orchSavedModels(vendor) {
-  const mr = ((cfg && cfg.modelRouting) || {})[vendor] || {};
-  return [mr.cheap, mr.smart].filter(isUsableModelValue).map((value) => ({ value, label: prettyModel(value) || value }));
-}
-function orchMergedModels(vendor) {
-  const source = Array.isArray(orchCatalog.models) ? orchCatalog.models : [];
-  const seen = new Set();
-  const out = [];
-  for (const m of source.concat(orchSavedModels(vendor))) {
-    const value = String((m && m.value) || '').trim();
-    if (!value || seen.has(value.toLowerCase())) continue;
-    seen.add(value.toLowerCase());
-    out.push({ value, label: String((m && m.label) || prettyModel(value) || value) });
-  }
-  return out;
-}
-function updateOrchCatalogStatus() {
-  const status = $('#aut-model-status');
-  if (!status) return;
-  status.className = 'aut-model-status';
-  if (orchCatalog.loading) {
-    status.classList.add('is-loading');
-    status.textContent = 'Checking available models...';
-    return;
-  }
-  const count = Array.isArray(orchCatalog.models) ? orchCatalog.models.length : 0;
-  if (count) {
-    status.classList.add('is-live');
-    status.textContent = `Loaded ${count} available model${count === 1 ? '' : 's'}`;
-    return;
-  }
-  if (orchCatalog.error) {
-    status.classList.add('is-error');
-    status.textContent = orchCatalog.error;
-    return;
-  }
-  status.textContent = 'No model catalog yet. Use Refresh models, or enter an exact model id manually.';
-}
-function orchCatalogReady() {
-  return !orchCatalog.loading && Array.isArray(orchCatalog.models) && orchCatalog.models.length > 0;
-}
-function orchCatalogBusy() {
-  return !!orchCatalog.loading;
-}
-function fillOrchSelect(sel, customInput, vendor, current) {
-  if (!sel) return;
-  current = isUsableModelValue(current) ? current : '';
-  sel.replaceChildren();
-  const add = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; sel.appendChild(o); };
-  const ready = orchCatalogReady();
-  add('', ready ? 'Automatic (Husk decides)' : (orchCatalog.loading ? 'Loading models...' : 'No models loaded'));
-  const models = orchMergedModels(vendor);
-  if (models.length) {
-    const group = document.createElement('optgroup');
-    group.label = `${orchCatalog.providerLabel || vendor} models`;
-    for (const m of models) {
-      const o = document.createElement('option');
-      o.value = m.value;
-      // The label names the model and the raw id lives in the tooltip, so a
-      // long row stays inside the control's width.
-      o.textContent = m.label || m.value;
-      if (m.label !== m.value) o.title = m.value;
-      group.appendChild(o);
+function orchInitialRouting() {
+  const saved = cfg && cfg.taskRouting;
+  const legacyVendor = orchVendor();
+  const legacy = ((cfg && cfg.modelRouting) || {})[legacyVendor] || {};
+  return Object.fromEntries(ORCH_ROLES.map(({ key }) => {
+    const route = saved && saved[key];
+    if (route && (route.vendor === 'auto' || ORCH_VENDORS.includes(route.vendor))) {
+      return [key, { vendor: route.vendor, model: route.vendor !== 'auto' && isUsableModelValue(route.model) ? route.model : '' }];
     }
-    sel.appendChild(group);
-  }
-  add('__custom__', 'Enter model id…');
-  const known = models.some((m) => m.value === current);
-  if (current && !known) { sel.value = '__custom__'; if (customInput) { customInput.value = current; customInput.hidden = false; } }
-  else { sel.value = current || ''; if (customInput) { customInput.hidden = true; customInput.value = ''; } }
-  sel.disabled = orchCatalogBusy();
-  if (customInput) customInput.disabled = orchCatalogBusy();
+    const model = !saved && isUsableModelValue(legacy[key]) ? legacy[key] : '';
+    return [key, { vendor: model && ORCH_VENDORS.includes(legacyVendor) ? legacyVendor : 'auto', model }];
+  }));
 }
-function readOrchValue(sel, customInput) {
-  if (!sel) return '';
-  return sel.value === '__custom__' ? ((customInput && customInput.value) || '').trim() : (sel.value || '');
+function orchAgentLabel(vendor) {
+  return orchAgents.find((a) => a.command === vendor)?.label || vendor;
+}
+function orchVendorOptions(select, current, automaticLabel = 'Automatic (Husk decides)') {
+  select.replaceChildren();
+  const add = (value, label) => { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); };
+  add('auto', automaticLabel);
+  for (const agent of orchAgents) add(agent.command, agent.label);
+  if (current !== 'auto' && !orchAgents.some((a) => a.command === current)) add(current, `${current} (not installed)`);
+  select.value = current;
+}
+function fillOrchSelect(select, custom, vendor, current, status) {
+  if (!select) return;
+  const catalog = orchCatalogs.get(vendor) || {};
+  const models = (catalog.models || []).filter((m) => isUsableModelValue(m.value));
+  select.replaceChildren();
+  const add = (value, label) => { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); };
+  add('', 'Automatic (Husk decides)');
+  for (const model of models) add(model.value, model.label || model.value);
+  if (vendor !== 'auto') add('__custom__', 'Enter model id...');
+  const unknown = current && !models.some((m) => m.value === current);
+  select.value = unknown ? '__custom__' : current || '';
+  select.disabled = vendor === 'auto';
+  if (custom) { custom.hidden = !unknown; custom.value = unknown ? current : ''; custom.disabled = vendor === 'auto'; }
+  if (status) {
+    const installed = orchAgents.some((a) => a.command === vendor);
+    status.textContent = vendor === 'auto' ? 'Husk chooses an installed vendor and a model for this job.'
+      : !installed ? 'This vendor is not installed. Choose an installed vendor or Automatic.'
+      : catalog.loading ? `Loading ${orchAgentLabel(vendor)} models...`
+      : catalog.error ? `${catalog.error} Automatic is still available.`
+      : models.length ? `${models.length} models. ${catalog.sourceLabel || ''}`
+      : 'No models loaded. Use Automatic, refresh, or enter an exact model id.';
+    status.dataset.state = vendor !== 'auto' && (!installed || catalog.error) ? 'error' : catalog.loading ? 'loading' : 'ready';
+  }
+}
+function readOrchValue(select, custom) {
+  return select?.value === '__custom__' ? (custom?.value || '').trim() : select?.value || '';
 }
 function bindOrchestratorConfig() {
-  const vendor = orchVendor();
-  const label = $('#aut-orch-vendor'); if (label) label.textContent = orchCatalog.providerLabel || vendor;
-  const cmd = $('#aut-model-command');
-  const flag = orchCatalog.flag || orchModelFlagFor(vendor);
-  if (cmd) cmd.textContent = `${(cfg && cfg.agentCommand) || vendor}${flag ? ` · ${flag}` : ''}`;
-  const mr = ((cfg && cfg.modelRouting) || {})[vendor] || {};
-  fillOrchSelect($('#aut-mr-simple'), $('#aut-mr-simple-custom'), vendor, mr.cheap || '');
-  fillOrchSelect($('#aut-mr-complex'), $('#aut-mr-complex-custom'), vendor, mr.smart || '');
-  updateOrchCatalogStatus();
-  const save = $('#aut-mr-save');
-  if (save) save.disabled = orchCatalogBusy();
+  if (!orchDraft) orchDraft = orchInitialRouting();
+  for (const role of ORCH_ROLES) {
+    const vendor = $(`#aut-vendor-${role.id}`);
+    if (!vendor) continue;
+    const route = orchDraft[role.key];
+    orchVendorOptions(vendor, route.vendor);
+    fillOrchSelect($(`#aut-mr-${role.id}`), $(`#aut-mr-${role.id}-custom`), route.vendor, route.model, $(`#aut-model-status-${role.id}`));
+  }
+  const summary = $('#aut-model-status');
+  if (summary) summary.textContent = orchAgents.length ? `${orchAgents.length} vendors installed. Each role can use a different vendor.` : 'No supported vendors detected. Install a CLI to run jobs.';
+}
+async function orchLoadVendor(vendor, refresh = false) {
+  if (vendor === 'auto' || !ORCH_VENDORS.includes(vendor)) return;
+  const existing = orchCatalogs.get(vendor);
+  if (!refresh && existing && (existing.loading || existing.loaded)) return;
+  const seq = ++orchCatalogSeq;
+  orchCatalogs.set(vendor, { loading: true, seq, models: existing?.models || [] });
+  bindOrchestratorConfig();
+  let catalog;
+  try { catalog = await window.husk.models.list({ command: vendor, refresh, fast: !refresh }); }
+  catch (err) { catalog = { error: err.message || 'Could not read models.', models: [] }; }
+  if (orchCatalogs.get(vendor)?.seq !== seq) return;
+  orchCatalogs.set(vendor, { ...catalog, models: catalog?.models || [], loading: false, loaded: true, seq });
+  bindOrchestratorConfig();
 }
 async function loadOrchModelCatalog(refresh = false) {
-  const vendor = orchVendor();
-  orchCatalog = {
-    loading: true,
-    vendor,
-    providerLabel: vendor,
-    command: (cfg && cfg.agentCommand) || vendor,
-    flag: '',
-    models: [],
-    source: 'loading',
-    sourceLabel: '',
-    error: '',
-  };
-  bindOrchestratorConfig();
-  const refreshBtn = $('#aut-model-refresh');
-  if (refreshBtn) refreshBtn.disabled = true;
   try {
-    const res = await window.husk.models.list({ refresh });
-    orchCatalog = Object.assign({
-      loading: false,
-      vendor,
-      providerLabel: vendor,
-      command: (cfg && cfg.agentCommand) || vendor,
-      flag: '',
-      models: [],
-      source: 'none',
-      sourceLabel: '',
-      error: '',
-    }, res || {}, { loading: false });
-  } catch (err) {
-    orchCatalog = {
-      loading: false,
-      vendor,
-      providerLabel: vendor,
-      command: (cfg && cfg.agentCommand) || vendor,
-      flag: '',
-      models: [],
-      source: 'error',
-      sourceLabel: '',
-      error: (err && err.message) || 'Could not read models.',
-    };
-  } finally {
-    if (refreshBtn) refreshBtn.disabled = false;
+    await refreshAgentMenu();
+    orchAgents = detectedAgents().filter((a) => ORCH_VENDORS.includes(a.command));
+  } catch (_) { orchAgents = []; }
+  bindOrchestratorConfig();
+  await Promise.all([...new Set(Object.values(orchDraft).map((r) => r.vendor))].map((vendor) => orchLoadVendor(vendor, refresh)));
+}
+for (const role of ORCH_ROLES) {
+  const vendor = $(`#aut-vendor-${role.id}`), select = $(`#aut-mr-${role.id}`), custom = $(`#aut-mr-${role.id}-custom`);
+  vendor?.addEventListener('change', () => {
+    if (!orchDraft) orchDraft = orchInitialRouting();
+    orchDraft[role.key] = { vendor: vendor.value, model: '' };
     bindOrchestratorConfig();
-  }
-}
-function wireOrchCustomToggle(sel, customInput) {
-  if (!sel || !customInput) return;
-  sel.addEventListener('change', () => {
-    const isCustom = sel.value === '__custom__';
-    customInput.hidden = !isCustom;
-    if (isCustom) customInput.focus();
+    orchLoadVendor(vendor.value);
   });
+  select?.addEventListener('change', () => {
+    custom.hidden = select.value !== '__custom__';
+    if (select.value === '__custom__') custom.focus();
+    orchDraft[role.key].model = readOrchValue(select, custom);
+  });
+  custom?.addEventListener('input', () => { orchDraft[role.key].model = custom.value.trim(); });
 }
-wireOrchCustomToggle($('#aut-mr-simple'), $('#aut-mr-simple-custom'));
-wireOrchCustomToggle($('#aut-mr-complex'), $('#aut-mr-complex-custom'));
 function openOrchestratorModal() {
-  if (autopilotActive) {
-    toast('Model routing can only be changed before starting a run', 'info');
-    return;
-  }
+  orchDraft = orchInitialRouting();
+  bindOrchestratorConfig();
+  $('#aut-orch-modal').hidden = false;
   loadOrchModelCatalog(false);
-  const m = $('#aut-orch-modal'); if (m) m.hidden = false;
 }
-function closeOrchestratorModal() {
-  const m = $('#aut-orch-modal'); if (m) m.hidden = true;
-}
-$('#aut-configure-orch') && $('#aut-configure-orch').addEventListener('click', openOrchestratorModal);
-$('#aut-orch-close') && $('#aut-orch-close').addEventListener('click', closeOrchestratorModal);
-$('#aut-orch-cancel') && $('#aut-orch-cancel').addEventListener('click', closeOrchestratorModal);
-$('#aut-model-refresh') && $('#aut-model-refresh').addEventListener('click', () => loadOrchModelCatalog(true));
-if ($('#aut-mr-save')) {
-  $('#aut-mr-save').addEventListener('click', async () => {
-    const vendor = orchVendor();
-    const cheap = readOrchValue($('#aut-mr-simple'), $('#aut-mr-simple-custom'));
-    const smart = readOrchValue($('#aut-mr-complex'), $('#aut-mr-complex-custom'));
-    if ((cheap && !isUsableModelValue(cheap)) || (smart && !isUsableModelValue(smart))) {
-      toast('Enter a model id only, not status text or CLI output.', 'error');
-      return;
-    }
-    const mr = Object.assign({}, (cfg && cfg.modelRouting) || {});
-    const flag = orchCatalog.flag || orchModelFlagFor(vendor);
-    const entry = Object.assign({}, (cheap || smart) && flag ? { flag } : {}, cheap ? { cheap } : {}, smart ? { smart } : {});
-    if (Object.keys(entry).length) mr[vendor] = entry; else delete mr[vendor];
-    cfg = await window.husk.config.set({ modelRouting: mr });
+function closeOrchestratorModal() { $('#aut-orch-modal').hidden = true; }
+$('#aut-configure-orch')?.addEventListener('click', openOrchestratorModal);
+$('#aut-orch-close')?.addEventListener('click', closeOrchestratorModal);
+$('#aut-orch-cancel')?.addEventListener('click', closeOrchestratorModal);
+$('#aut-model-refresh')?.addEventListener('click', () => loadOrchModelCatalog(true));
+$('#aut-mr-save')?.addEventListener('click', async () => {
+  if (!orchDraft) return;
+  for (const { id, key } of ORCH_ROLES) {
+    const route = orchDraft[key];
+    route.model = route.vendor === 'auto' ? '' : readOrchValue($(`#aut-mr-${id}`), $(`#aut-mr-${id}-custom`));
+    if (route.model && !isUsableModelValue(route.model)) { toast('Enter a model id only, not status text or CLI output.', 'error'); return; }
+    if (route.vendor !== 'auto' && !orchAgents.some((a) => a.command === route.vendor)) { toast(`${orchAgentLabel(route.vendor)} is not installed. Choose another vendor or Automatic.`, 'error'); return; }
+  }
+  try {
+    cfg = await window.husk.config.set({ taskRouting: JSON.parse(JSON.stringify(orchDraft)) });
     closeOrchestratorModal();
-    toast('Model routing saved', 'success');
-  });
+    toast('Job routing saved. Running jobs keep their original choices.', 'success');
+  } catch (err) { toast(err.message || 'Could not save job routing', 'error'); }
+});
+let autRunCatalogSeq = 0;
+async function loadAutopilotRunModels() {
+  const vendor = $('#aut-run-vendor')?.value || 'auto';
+  const seq = ++autRunCatalogSeq;
+  const select = $('#aut-run-model');
+  const status = $('#aut-run-model-status');
+  if (!select) return;
+  select.replaceChildren();
+  const option = document.createElement('option'); option.value = ''; option.textContent = vendor === 'auto' ? 'Use job routing' : 'Automatic (Husk decides)'; select.append(option);
+  select.disabled = vendor === 'auto';
+  if (status) status.textContent = vendor === 'auto' ? 'Simple and complex jobs use Models routing. Team planner and integrator keep their own choices.' : 'Loading models...';
+  if (vendor === 'auto') return;
+  let catalog;
+  try { catalog = await window.husk.models.list({ command: vendor, fast: true }); }
+  catch (err) { catalog = { error: err.message }; }
+  if (seq !== autRunCatalogSeq || $('#aut-run-vendor').value !== vendor) return;
+  for (const model of catalog?.models || []) {
+    if (!isUsableModelValue(model.value)) continue;
+    const item = document.createElement('option'); item.value = model.value; item.textContent = model.label || model.value; select.append(item);
+  }
+  if (status) status.textContent = catalog?.error || catalog?.sourceLabel || 'Choose a model or leave Automatic.';
 }
+async function bindAutopilotRunRouting() {
+  const select = $('#aut-run-vendor');
+  if (!select) return;
+  orchVendorOptions(select, 'auto', 'Use job routing');
+  loadAutopilotRunModels();
+  try { await refreshAgentMenu(); orchAgents = detectedAgents().filter((a) => ORCH_VENDORS.includes(a.command)); } catch (_) {}
+  orchVendorOptions(select, select.value || 'auto', 'Use job routing');
+}
+$('#aut-run-vendor')?.addEventListener('change', loadAutopilotRunModels);
 $('#pref-save').addEventListener('click', async () => {
   const name = ($('#pref-agent-name').value || '').trim().slice(0, 40) || 'Husk';
   const cwdInput = $('#pref-agent-cwd');
@@ -20840,6 +20807,7 @@ function openAutopilotStart() {
   if (foot) foot.hidden = !hasProject;
   $('#aut-goal').classList.remove('field-invalid');
   $('#autopilot-start-modal').hidden = false;
+  bindAutopilotRunRouting();
   if (hasProject) setTimeout(() => { try { $('#aut-goal').focus(); } catch (_) {} }, 0);
 }
 function closeAutopilotStart() {
@@ -20874,6 +20842,7 @@ async function startAutopilot() {
     toast('Caps must be zero or a positive number; invalid values were reset to the default', 'error');
   }
   const caps = { minutes: cMin.value, tokens: cTok.value, dollars: cUsd.value };
+  const routing = { vendor: $('#aut-run-vendor')?.value || 'auto', model: $('#aut-run-model')?.value || '' };
   // Snapshot is opt-in via the wizard toggle. Users who manage state with
   // git can skip it; revert/diff are then unavailable for the run.
   const snapEl = $('#aut-snapshot-toggle');
@@ -20932,7 +20901,7 @@ async function startAutopilot() {
     paintAutopilotBanner();
     pushActivity(['Planning the team (this can take a minute or two)...'], '_orch');
     try {
-      const r = await window.husk.autopilot.startCollab({ goal, caps, snapshot });
+      const r = await window.husk.autopilot.startCollab({ goal, caps, snapshot, routing });
       if (!r || !r.ok) throw new Error((r && r.error) || 'Could not start the team');
       toast(`Team of ${r.agents.length} started`, 'success');
     } catch (err) {
@@ -20947,7 +20916,7 @@ async function startAutopilot() {
     return;
   }
   try {
-    const r = await window.husk.autopilot.start({ goal, caps, snapshot });
+    const r = await window.husk.autopilot.start({ goal, caps, snapshot, routing });
     if (!r || !r.ok) {
       toast((r && r.error) || 'Could not start autopilot', 'error');
       if (status) { status.hidden = true; status.textContent = ''; }
