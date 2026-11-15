@@ -210,6 +210,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
 - **Autopilot**: hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across collaborating parallel runs. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run.
+  Models lets you assign a vendor and model independently to Simple tasks, Complex tasks, Planner, and Integrator. A job can override the worker vendor/model without changing planner or integrator settings. Automatic chooses an installed CLI; models left on Automatic use that CLI's default. Routing is captured when work starts so later settings changes do not redirect queued jobs. See [multi-vendor routing](docs/multi-vendor-routing.md).
 - **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
 - **Skills**: install and manage Agent Skills in the shared `~/.agents/skills/` library. Husk exposes them through each agent's native skill location, so one skill can be used across agents.
 - **MCP**: install / toggle / health-check Model Context Protocol servers. Clone one to start a variant from its settings.

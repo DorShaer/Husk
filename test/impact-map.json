@@ -330,7 +330,8 @@
         "src/lib/model-catalog.js",
         "src/lib/model-routing.js",
         "src/lib/ui-zoom.js",
-        "src/lib/pai-state.js"
+        "src/lib/pai-state.js",
+        "src/lib/task-routing.js"
       ]
     },
     "terminal": {
@@ -417,7 +418,8 @@
         "chat-handoff.spec.js",
         "usage-bell.spec.js",
         "appearance.spec.js",
-        "foundation.spec.js"
+        "foundation.spec.js",
+        "chat-vendor-isolation.spec.js"
       ],
       "tokens": [
         "chat",
@@ -455,7 +457,8 @@
         "src/lib/market-bundle.js",
         "src/lib/artifact-scan.js",
         "src/renderer/foundation.js",
-        "src/lib/bounded-file.js"
+        "src/lib/bounded-file.js",
+        "src/lib/chat-connection.js"
       ]
     }
   }

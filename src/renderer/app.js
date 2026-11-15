@@ -1920,7 +1920,9 @@ window.huskMoveDiscussion = async (tabId, anchor) => {
   if (!tab || tab.mode !== 'chat') return;
   await refreshAgentMenu();
   const carry = !!tab.chatState?.items?.some((item) => item.kind === 'user' || item.kind === 'text');
-  contextMenu(anchor, detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0]).map((a) => ({
+  const alternatives = detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0]);
+  if (!alternatives.length) { toast('Install another agent CLI to move this discussion.', 'info'); return; }
+  contextMenu(anchor, alternatives.map((a) => ({
     label: `Continue with ${a.label}`,
     run: () => switchDiscussion(tab, a.command, chatWorkDir(tab), carry),
   })));
@@ -2803,7 +2805,7 @@ function ensureChatPane(tab) {
   const cmd = tabAgentCommand(tab);
   tab.chat = window.HuskChat.mount(tab, {
     host: $('#terminal'),
-    agentName: cmd.split(/\s+/)[0],
+    agentName: tab.connection === 'endpoint' ? 'API endpoint' : cmd.split(/\s+/)[0],
     agentCommand: cmd,
     onAgentPick: (anchor) => offerAgentSwitch(tab, anchor),
     onFolderPick: (anchor) => offerFolderSwitch(tab, anchor),
@@ -14812,7 +14814,7 @@ function fillOrchSelect(select, custom, vendor, current, status) {
   if (custom) { custom.hidden = !unknown; custom.value = unknown ? current : ''; custom.disabled = vendor === 'auto'; }
   if (status) {
     const installed = orchAgents.some((a) => a.command === vendor);
-    status.textContent = vendor === 'auto' ? 'Husk chooses an installed vendor and a model for this job.'
+    status.textContent = vendor === 'auto' ? 'Husk chooses an installed vendor; its default model handles this job.'
       : !installed ? 'This vendor is not installed. Choose an installed vendor or Automatic.'
       : catalog.loading ? `Loading ${orchAgentLabel(vendor)} models...`
       : catalog.error ? `${catalog.error} Automatic is still available.`
