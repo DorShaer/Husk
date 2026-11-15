@@ -36,7 +36,7 @@ function makeHome() {
 
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand: 'codex', resumeLastOnLaunch: false, agentCwd: repo, theme: 'midnight',
+    firstRunDone: true, skipWelcome: true, agentCommand: 'codex', resumeLastOnLaunch: false, agentCwd: repo, theme: process.env.HUSK_CANVAS_THEME || 'midnight',
   }));
   const bin = path.join(homeDir, 'bin');
   fs.mkdirSync(bin);

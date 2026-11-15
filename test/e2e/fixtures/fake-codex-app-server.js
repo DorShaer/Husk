@@ -68,7 +68,8 @@ function handle(msg) {
   if (msg.id === undefined) return;
   switch (msg.method) {
     case 'initialize': send({ id: msg.id, result: { userAgent: 'fake-codex', codexHome: '/tmp' } }); break;
-    case 'model/list': send({ id: msg.id, result: { data: [{ id: 'gpt-fake', displayName: 'GPT Fake', description: 'The fixture model.', hidden: false, isDefault: true }], nextCursor: null } }); break;
+    // A capture for the docs names its model through the environment; specs see the fixture name.
+    case 'model/list': send({ id: msg.id, result: { data: [{ id: 'gpt-fake', displayName: process.env.FAKE_CODEX_MODEL_NAME || 'GPT Fake', description: 'The fixture model.', hidden: false, isDefault: true }], nextCursor: null } }); break;
     case 'thread/resume':
       THREAD = msg.params.threadId;
       send({ id: msg.id, result: { thread: { id: THREAD }, model: 'gpt-fake' } });

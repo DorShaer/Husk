@@ -18,6 +18,10 @@ const { _electron: electron } = require('playwright');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const OUT_DIR = path.resolve(process.argv[2] || path.join(REPO_ROOT, 'docs', 'images'));
+// Every docs image shares one theme and one window size, so the README reads as one product.
+const THEME = 'light';
+const SHOT_WIDTH = 1760;
+const SHOT_HEIGHT = 1040;
 
 const sanitize = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
 const sid = (n) => `d0cd0c00-0000-4dc7-abb3-${String(n).padStart(12, '0')}`;
@@ -71,8 +75,8 @@ function workflowGraph(steps, agentCommand) {
     agentCommand,
     prompt: s[1],
     passContext: 'full',
-    x: 120 + (i % 2) * 320,
-    y: 90 + i * 190,
+    x: 80 + i * 340,
+    y: 220,
   }));
   const edges = nodes.slice(1).map((n, i) => ({
     id: `e${i + 1}`, from: nodes[i].id, to: n.id, condition: { type: 'always', value: '' },
@@ -199,7 +203,8 @@ function makeHome() {
     // The release highlights are their own surface; a product capture opens on
     // the page it is meant to show.
     lastSeenVersion: require(path.join(REPO_ROOT, 'package.json')).version,
-    theme: 'midnight',
+    theme: THEME,
+    resumeLastOnLaunch: false,
     agentCommand: 'agent',
     profiles,
     projects: [
@@ -283,14 +288,16 @@ async function main() {
     const win = await app.firstWindow({ timeout: 30_000 });
     win.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
     win.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: 1640, height: 1020 });
-    });
+    await app.evaluate(({ BrowserWindow }, size) => {
+      BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, ...size });
+    }, { width: SHOT_WIDTH, height: SHOT_HEIGHT });
     await win.waitForLoadState('domcontentloaded');
     await win.waitForFunction(() => typeof setPage === 'function', null, { timeout: 20_000 });
     await win.waitForTimeout(7000);
-
-    await shoot(win, 'husk-chat.png');
+    // Zoom level 0 makes one CSS pixel one screenshot pixel, so the capture
+    // covers the whole window instead of its top-left corner.
+    await win.evaluate(() => window.husk.ui.zoomSet(0));
+    await win.waitForTimeout(500);
 
     for (const [page, name] of [
       ['agents', 'husk-agents.png'],
@@ -319,16 +326,35 @@ async function main() {
     try {
       await win.evaluate(() => { runWorkflow('wf-demo-1'); });
       await win.waitForTimeout(7000);
-      await shoot(win, 'husk-workflow-run.png');
+      // The connectors animate while a run is live; freezing them draws them mid-jump.
+      await shoot(win, 'husk-workflow-run.png', { animations: 'allow' });
     } catch (err) { console.log(`  husk-workflow-run.png FAILED: ${err.message}`); }
 
-    console.log(`\n${shots.length} images written to ${OUT_DIR}`);
     if (errors.length) console.log(`console errors:\n${errors.slice(0, 8).join('\n')}`);
   } finally {
-    await app.close();
+    // A close that never answers must not hold the harness open.
+    await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 8000))]);
   }
+  shootChat();
+  console.log(`\n${shots.length} images written to ${OUT_DIR}`);
 }
 
-if (require.main === module) main();
+// The chat image is the chat canvas spec's own capture: that spec stages a turn
+// with a changed file, a pull request and its checks, which this profile has not.
+function shootChat() {
+  const file = path.join(OUT_DIR, 'husk-chat.png');
+  try {
+    execFileSync(process.execPath, [path.join(REPO_ROOT, 'scripts', 'run-e2e.js'), 'test/playwright.config.js', 'chat-canvas.spec.js'], {
+      cwd: REPO_ROOT,
+      stdio: 'ignore',
+      env: { ...process.env, HUSK_CANVAS_SHOT: file, HUSK_CANVAS_THEME: THEME, FAKE_CODEX_MODEL_NAME: 'Default' },
+    });
+  } catch (err) { console.log(`  husk-chat.png FAILED: ${err.message.split('\n')[0]}`); return; }
+  if (!fs.existsSync(file)) { console.log('  husk-chat.png FAILED: the spec wrote no image'); return; }
+  shots.push('husk-chat.png');
+  console.log('  husk-chat.png');
+}
+
+if (require.main === module) main().then(() => process.exit(0), (err) => { console.error(err); process.exit(1); });
 
 module.exports = { makeHome, launch, AGENT_SHIM, sid, MIN, HOUR };
