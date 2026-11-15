@@ -10,4 +10,13 @@ function resolveChatConnection({ config = {}, connection, command } = {}) {
   return { ok: true, connection: 'endpoint', openai: { baseUrl, model, apiKey: String(config.agentApiKey || '').trim() } };
 }
 
-module.exports = { resolveChatConnection };
+function applyCliEndpoint(env, config = {}, command) {
+  if (config.agentVendor !== 'claude' || !command || require('./agent-oneshot').agentBaseName(command) !== 'claude') return env;
+  const baseUrl = typeof config.agentBaseUrl === 'string' ? config.agentBaseUrl.trim() : '';
+  const apiKey = typeof config.agentApiKey === 'string' ? config.agentApiKey.trim() : '';
+  if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl;
+  if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+  return env;
+}
+
+module.exports = { resolveChatConnection, applyCliEndpoint };

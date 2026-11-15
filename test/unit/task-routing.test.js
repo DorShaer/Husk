@@ -81,3 +81,14 @@ test('workflow defaults follow role routes while explicit node vendors stay pinn
   assert.equal(result.routes.a.vendor, 'codex');
   assert.equal(resolveWorkflowRoutes({ available, nodes: [{ id: 'missing', agentCommand: 'gemini' }] }).ok, false);
 });
+
+test('explicit workflow commands preserve their arguments and paths with node model overriding command model', () => {
+  const { resolveWorkflowRoutes } = require('../../src/lib/task-routing');
+  const result = resolveWorkflowRoutes({ available, nodes: [
+    { id: 'a', agentCommand: 'codex --profile work --model old', model: 'replacement' },
+    { id: 'b', agentCommand: '/local/tools/claude --setting custom' },
+  ] });
+  assert.equal(result.ok, true);
+  assert.equal(result.routes.a.command, 'codex --profile work --model replacement');
+  assert.equal(result.routes.b.command, '/local/tools/claude --setting custom');
+});

@@ -21,3 +21,15 @@ test('missing endpoint settings fail; local endpoint without key works', () => {
   assert.equal(resolveChatConnection({ config: { ...config, agentApiKey: '' }, connection: 'endpoint' }).ok, true);
   assert.equal(resolveChatConnection({ config, connection: 'invalid' }).ok, false);
 });
+
+test('OpenAI endpoint settings never leak into CLI environments', () => {
+  const { applyCliEndpoint } = require('../../src/lib/chat-connection');
+  for (const command of ['claude', 'codex', 'gemini', undefined]) {
+    assert.deepEqual(applyCliEndpoint({ PATH: '/fixture' }, config, command), { PATH: '/fixture' });
+  }
+  const anthropic = { ...config, agentVendor: 'claude' };
+  assert.deepEqual(applyCliEndpoint({}, anthropic, 'codex'), {});
+  assert.deepEqual(applyCliEndpoint({}, anthropic), {});
+  assert.deepEqual(applyCliEndpoint({}, anthropic, 'claude'), { ANTHROPIC_BASE_URL: config.agentBaseUrl, ANTHROPIC_API_KEY: config.agentApiKey });
+  assert.deepEqual(applyCliEndpoint({ ANTHROPIC_API_KEY: 'shell-owned' }, config, 'claude'), { ANTHROPIC_API_KEY: 'shell-owned' });
+});

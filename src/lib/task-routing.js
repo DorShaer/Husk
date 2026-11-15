@@ -108,6 +108,7 @@ function resolveWorkflowRoutes({ config = {}, nodes = [], available = [] } = {})
     const role = classifyTier(node.prompt || '');
     const requested = node.agentCommand ? { vendor: agentBaseName(node.agentCommand), model: node.model || '' } : undefined;
     let route = resolveTaskRoute({ config, role, requested, available });
+    if (route.ok && node.agentCommand) route = { ...route, command: commandWithModel(node.agentCommand, route.vendor, node.model || '') };
     if (route.ok && !node.agentCommand && node.model) route = resolveTaskRoute({ config, role, requested: { vendor: route.vendor, model: node.model }, available });
     if (!route.ok) return { ok: false, error: `${node.name || node.id}: ${route.error}` };
     routes[node.id] = route;

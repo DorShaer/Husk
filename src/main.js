@@ -1052,7 +1052,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   // login shell asynchronously, so force-prepend it here the same way as bun.
   const localBin = path.join(HOME, '.local', 'bin');
   if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
-  applyByok(env);
+  applyByok(env, overrideCmd || config.agentCommand);
 
   const rawCmd = (overrideCmd || config.agentCommand || 'claude').trim();
   // Kept on the session so the status readouts describe this tab's own agent.
@@ -1805,7 +1805,7 @@ ipcMain.handle('feedback:open', (_e, { kind } = {}) => ({ ok: true, url: openFee
 // chatEnv mirrors spawnPty's env: the same PATH recovery for GUI launches and
 // the HUSK_HOST marker so PAI hooks skip their terminal chrome. CLAUDECODE is
 // dropped so a claude child never believes it is nested inside another one.
-function chatEnv() {
+function chatEnv(command) {
   const env = Object.assign({}, process.env, { CLAUDE_DIR, HUSK_HOST: '1', HUSK_CHAT: '1' });
   // Husk launched from inside a claude session inherits its nesting markers;
   // a child that sees them turns off transcript saving and refuses to nest.
@@ -1816,7 +1816,7 @@ function chatEnv() {
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}${path.delimiter}${env.PATH}`;
   const localBin = path.join(HOME, '.local', 'bin');
   if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}${path.delimiter}${env.PATH}`;
-  return applyByok(env);
+  return applyByok(env, command);
 }
 
 // Which claude sessions are Husk's own chats, so the Sessions list can keep
@@ -2413,7 +2413,7 @@ const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
 const { classifyTier } = require('./lib/model-routing');
 const { resolveTaskRoute, availableRoutes, resolveCollabRoutes, resolveWorkflowRoutes } = require('./lib/task-routing');
-const { resolveChatConnection } = require('./lib/chat-connection');
+const { resolveChatConnection, applyCliEndpoint } = require('./lib/chat-connection');
 const { agentBaseName } = require('./lib/agent-oneshot');
 const {
   modelFlagFor,
@@ -3308,7 +3308,7 @@ function injectGoalToRunPty(runId, text) {
     // (see flushRunOutput).
     r.injectTextLen = body.length;
     r.bytesSinceInject = 0;
-    const agentKind = activeAgentName();
+    const agentKind = r.agent;
     if (agentKind === 'claude') {
       r.pty.write('\x1b[200~' + body + '\x1b[201~');
       setTimeout(() => { try { if (r.pty) r.pty.write('\r'); } catch (_) {} }, 120);
@@ -3568,7 +3568,7 @@ async function startCollabTeam(payload = {}) {
     vendors: available.map((a) => a.vendor),
     cwd: workspaceRoot,
     maxAgents: Math.min(4, maxConcurrent),
-    env: buildAgentEnv(),
+    env: buildAgentEnv(plannerRoute.command),
     onChild: (c) => { planChild = c; if (planCancelled) { try { c.kill('SIGKILL'); } catch (_) {} } },
   });
   activePlanning = null;
@@ -6130,26 +6130,18 @@ ipcMain.handle('workflows:list', () => loadWorkflows().map(migrateWorkflow));
 // Environment for spawned one-shot CLI agents (workflow steps, prompt
 // generation). Mirrors the PTY env so PAI hooks resolve: ~/.bun/bin must be
 // on PATH or every bun-based SessionEnd hook fails with 'bun: not found'.
-function buildAgentEnv() {
+function buildAgentEnv(command) {
   const env = Object.assign({}, process.env, { CLAUDE_DIR, HUSK_HOST: '1' });
   const bunBin = path.join(HOME, '.bun', 'bin');
   if (env.PATH && !env.PATH.includes(bunBin)) env.PATH = `${bunBin}:${env.PATH}`;
   const localBin = path.join(HOME, '.local', 'bin');
   if (env.PATH && !env.PATH.includes(localBin)) env.PATH = `${localBin}:${env.PATH}`;
-  return applyByok(env);
+  return applyByok(env, command);
 }
 
-// Bring your own key: point claude at a custom Anthropic-compatible endpoint (a
-// vendor's own, or a local proxy like litellm fronting OpenAI/ollama) with your
-// own key. Applied to every agent-spawn env (terminal, chat, background) so the
-// whole app honors it; a no-op unless configured, so the default subscription
-// path is untouched.
-function applyByok(env) {
-  const baseUrl = typeof config.agentBaseUrl === 'string' ? config.agentBaseUrl.trim() : '';
-  const apiKey = typeof config.agentApiKey === 'string' ? config.agentApiKey.trim() : '';
-  if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl;
-  if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
-  return env;
+// Legacy Anthropic-compatible settings apply only to an explicitly named Claude CLI.
+function applyByok(env, command) {
+  return applyCliEndpoint(env, config, command);
 }
 
 // How the active agent is billed, so the UI can be honest about the dollar
@@ -8073,7 +8065,9 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   };
 
   const route = run.taskRoutes[step.id];
-  const cmd = route.vendor;
+  const commandTokens = route.command.trim().split(/\s+/);
+  const cmd = commandTokens.shift();
+  const prefixArgs = commandTokens;
   step = { ...step, model: route.model };
   activity('status', route.reason);
   // Steps run the agent found on PATH, by name only. A name carrying a path
@@ -8116,8 +8110,7 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   }
 
   let args;
-  const modelFlag = step.model ? modelFlagFor(cmd) : null;
-  const modelArgs = (modelFlag && step.model) ? [modelFlag, String(step.model)] : [];
+  const modelArgs = prefixArgs;
   if (cmd === 'claude') {
     args = ['-p', prompt, '--append-system-prompt', wfSystem, '--output-format', 'stream-json', '--verbose'];
     if (modelArgs.length) args = [...args, ...modelArgs];
@@ -8134,7 +8127,7 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   // falls through the chain below instead.
   const wfCwd = run.cwd || activePtyCwd || (config && config.treeRoot) || HOME;
   // spawnName resolves the allowlisted name to the file it refers to.
-  const child = spawn(spawnName(cmd), args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv() });
+  const child = spawn(spawnName(cmd), args, { cwd: wfCwd, stdio: ['ignore', 'pipe', 'pipe'], env: buildAgentEnv(cmd) });
   run.children.add(child);
   activity('status', step.model ? `Starting ${cmd} (${step.model})...` : `Starting ${cmd}...`);
 

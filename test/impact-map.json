@@ -75,6 +75,7 @@
     "autopilot": {
       "specs": [
         "autopilot-stop-confirm.spec.js",
+        "autopilot-multi-vendor.spec.js",
         "autopilot-survives-chat.spec.js",
         "autopilot-usage-labels.spec.js"
       ],
